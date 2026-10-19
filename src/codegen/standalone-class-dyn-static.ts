@@ -69,6 +69,7 @@
 
 import type { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import { ts as tsApi } from "../ts-api.js";
 import { emitClassStaticSidecar } from "./class-static-sidecar.js";
 import { mintClassStaticReflectiveViews } from "./class-static-descriptor.js"; // (#6767)
@@ -125,7 +126,7 @@ function declaresInstallableStatic(ctx: CodegenContext, className: string): bool
  * reaches it by both routes ends up with the ONE singleton.
  */
 export function mintStandaloneClassStaticBuilders(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   // (#6767) The reflective views need the same position (before the arity
   // dispatchers) and are not gated on the runtime-key demand below.
   mintClassStaticReflectiveViews(ctx);

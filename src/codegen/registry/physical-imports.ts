@@ -78,8 +78,8 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
  * {@link reserveLinkedExnTag} exists to make that window practically empty.
  */
 function peerExnTagNamespace(ctx: CodegenContext): string | undefined {
-  if (!ctx.standalone) return undefined;
-  if (ctx.standaloneGlobalThisImport?.exceptionTag !== undefined) return ctx.standaloneGlobalThisImport.module;
+  if (ctx.targetProfile.backend !== "wasmgc") return undefined;
+  if (ctx.linkedGlobalThisImport?.exceptionTag !== undefined) return ctx.linkedGlobalThisImport.module;
   if (ctx.exportsConsumedByWasm === true) return undefined;
   const namespaces = [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort();
   return namespaces[0];
@@ -97,29 +97,10 @@ export function reserveLinkedExnTag(ctx: CodegenContext): void {
   ensureExnTag(ctx);
 }
 
-/**
- * (#7014, #5247) Late-bound "the module now throws" hook. The export-boundary
- * rethrow import must be registered the moment the module first needs its
- * `__exn` tag, while bodies are still compiling — an import added at finalize
- * would shift function indices already baked into tables and manifests (see
- * `export-throw-boundary.ts`). It used to be called from here directly; that
- * call was lost when `ensureExnTag` moved into this module (#5715,
- * c4008d7cab), so no JS-host module minted the rethrow wrapper and an
- * uncaught `throw new RangeError(…)` reached the host as a bare
- * `WebAssembly.Exception` again. A registration hook keeps this narrow module
- * free of the codegen import graph it deliberately avoids.
- */
-let exnTagFirstUseHook: ((ctx: CodegenContext) => void) | undefined;
-
-export function registerExnTagFirstUseHook(hook: (ctx: CodegenContext) => void): void {
-  exnTagFirstUseHook = hook;
-}
-
 /** Lazily register the shared, peer-imported, or module-local exception tag. */
 export function ensureExnTag(ctx: CodegenContext): number {
   if (ctx.exnTagIdx >= 0) return ctx.exnTagIdx;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], []);
-  exnTagFirstUseHook?.(ctx);
   if (ctx.sharedExnTag) {
     ctx.exnTagIdx = ctx.mod.imports.filter((imp) => imp.desc.kind === "tag").length;
     addImport(ctx, "env", "__exn", { kind: "tag", typeIdx });
@@ -128,7 +109,7 @@ export function ensureExnTag(ctx: CodegenContext): number {
   const peer = ctx.indexSpaceFrozen ? undefined : peerExnTagNamespace(ctx);
   if (peer !== undefined) {
     const absolute = ctx.mod.imports.filter((imp) => imp.desc.kind === "tag").length;
-    const name = ctx.standaloneGlobalThisImport?.exceptionTag ?? "__exn_tag";
+    const name = ctx.linkedGlobalThisImport?.exceptionTag ?? "__exn_tag";
     if (addImport(ctx, peer, name, { kind: "tag", typeIdx }) !== undefined) {
       ctx.exnTagIdx = absolute;
       ctx.exnTagImported = true;

@@ -13,8 +13,9 @@
 import type { FuncTypeDef, Instr, ValType } from "../../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
-import { defaultValueInstrs } from "../type-coercion.js";
+import { buildVecFromExternMaterializer, defaultValueInstrs } from "../type-coercion.js";
 import { classifyTupleRestCarrier } from "./tuple-rest-carrier.js";
+import type { ApplyTailDispatch } from "./apply-extras-tail.js";
 
 export type ClosureDispatchRestInfo =
   | {
@@ -61,6 +62,37 @@ export type ClosureDispatchRestInfo =
  * carrier is statically one of the buildable kinds.
  */
 export type ClosureDispatchRestCarrier = Exclude<ClosureDispatchRestInfo, { kind: "unsupported" }>;
+
+/** Reserve before a dispatcher captures import-sensitive helper/global indices. */
+export function prepareClosureDispatchRestMaterializers(
+  ctx: CodegenContext,
+  entries: readonly { rest?: ClosureDispatchRestCarrier }[],
+  arity: number,
+): void {
+  if (!ctx.applyClosureReserved || arity < 5) return;
+  for (const entry of entries) {
+    if (
+      entry.rest?.kind === "vec" &&
+      entry.rest.vecTypeIdx !== ctx.vecTypeMap.get("externref") &&
+      buildVecFromExternMaterializer(ctx, entry.rest.vecTypeIdx) === undefined
+    )
+      throw Error("Native apply rest vector could not reserve its element materializer");
+  }
+}
+
+export function completeClosureDispatchRest(
+  ctx: CodegenContext,
+  rest: ClosureDispatchRestCarrier,
+  instructions: Instr[],
+  externVecTypeIdx: number,
+  extrasGlobalIdx: number,
+  tail?: ApplyTailDispatch,
+): Instr[] {
+  if (!tail) return instructions;
+  const vec = rest.kind === "externref" ? externVecTypeIdx : rest.kind === "vec" ? rest.vecTypeIdx : undefined;
+  const materializer = vec === undefined ? undefined : ctx.funcMap.get(`__vec_from_extern_${vec}`);
+  return tail.materializeRest(instructions, vec, extrasGlobalIdx, materializer);
+}
 
 /**
  * Recover the concrete carrier needed for a source rest parameter.

@@ -64,7 +64,6 @@ import {
 } from "./async-cps.js";
 import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
-  asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
   buildAsyncFrameInfo,
@@ -91,7 +90,7 @@ import { filterResultNeedsDynamicCarrier } from "./array-filter-spec-access.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js"; // (#2103) memoized own-locals oracle
 import { dedupeDiagnosticsFrom, reportError } from "./context/errors.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { jsValueBoundary } from "./context/types.js";
+import { jsValueBoundary, wasmGcBackend } from "./context/types.js";
 import { usesJsEnvironmentPlatformGlobal } from "./extern-declarations.js";
 import { compileFunctionBody, dumpFrameBreach, registerInlinableFunction } from "./audited-function-body.js";
 import { _hasRuntimeComputedKey, objectLiteralForcesHostPath } from "./literals.js"; // (#3024/#4638) module-global externref routing in lockstep with the literal's own host-path gate
@@ -108,8 +107,6 @@ import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
 import { emitThrowJsError, noJsHost } from "./js-errors.js";
 import {
-  addArrayIteratorImports,
-  addForInImports,
   addGeneratorImports,
   addIteratorImports,
   addStringImports,
@@ -138,10 +135,9 @@ import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import {
-  ensureNativeDynamicBoundaryTag,
+  ensureNativeDynamicBoundaryBridge,
   prepareStandaloneNativePromiseUndefinedBoundary,
 } from "./native-dynamic-boundary-tag.js";
 import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
@@ -351,45 +347,6 @@ function taViewGlobalIsRebound(
 }
 
 /**
- * Emit the narrow JS/Wasm adapter for native `any`/`unknown` boundary values.
- *
- * JS primitives are converted to existing native carriers before invoking a
- * user export. Null and undefined need distinct `$AnyValue` carriers because a
- * bare JS externref cannot be classified as undefined by Wasm alone. The tag
- * classifier maps only those two boundary carriers back; all other values stay
- * under their ordinary string/number/boolean/bigint/object adapters.
- */
-function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
-  ensureNativeStringBoundaryBridge(ctx);
-  addUnionImports(ctx);
-  ensureAnyHelpers(ctx);
-
-  for (const name of [
-    "__box_number",
-    "__box_boolean",
-    "__box_bigint",
-    "__typeof_number",
-    "__unbox_number",
-    "__typeof_boolean",
-    "__unbox_boolean",
-    "__typeof_bigint",
-    "__to_bigint",
-    "__any_box_null",
-    "__any_box_undefined",
-  ]) {
-    const funcIdx = ctx.funcMap.get(name);
-    if (funcIdx === undefined) continue;
-    const func = definedFuncAt(ctx, funcIdx);
-    if (func) func.exported = true;
-    if (!ctx.mod.exports.some((entry) => entry.name === name)) {
-      ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
-    }
-  }
-
-  ensureNativeDynamicBoundaryTag(ctx);
-}
-
-/**
  * (#6879) `export { parse }` exports a function declared elsewhere in the
  * file; only `export function` recorded its boundary signature, so on the
  * native regime the adapter passed such an export's JS arguments through raw
@@ -403,7 +360,7 @@ function recordExportListSignature(
   localName: string,
   exportedName: string,
 ): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (!jsValueBoundary(ctx)) return;
   if (ctx.exportSignatures.has(exportedName)) return;
   const decl = sourceFile.statements.find(
     (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
@@ -473,10 +430,10 @@ function recordExportSignature(
   if (!anyHit) return;
   ctx.exportSignatures.set(exportName, { params, result });
   if (ctx.nativeStrings && stringHit) ensureNativeStringBoundaryBridge(ctx);
-  if ((symbolHit || dynamicHit) && ctx.targetProfile.semanticProviders === "native-first") {
+  if (symbolHit || dynamicHit) {
     ensureNativeSymbolBoundaryBridge(ctx);
   }
-  if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
+  if (dynamicHit) {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
   if (promiseHit) {
@@ -3318,10 +3275,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             // pre-unwrap under the carrier so the declared result matches the
             // raw-T body (else externref-result vs f64-body = invalid Wasm).
             // Carrier-gated → off-carrier bytes identical.
-            const effRetType =
-              isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-                ? unwrapPromiseType(retType, ctx.checker)
-                : retType;
+            const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
             const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
             const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
             const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3388,10 +3342,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // function-expression export; pre-unwrap an async fn's Promise<T>
           // result under the carrier so the declared result matches the raw-T
           // body. Carrier-gated → off-carrier bytes identical.
-          const effRetType =
-            isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-              ? unwrapPromiseType(retType, ctx.checker)
-              : retType;
+          const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
           const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
           const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
           const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3515,7 +3466,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // stored the `$Object` into a struct-typed global (or kept the closed
     // struct), seeding `$proto = null` at `new F()` and killing every
     // inherited read.
-    if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) return true;
+    if (wasmGcBackend(ctx) && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) return true;
     // (#3369) An untyped empty object literal is constructed by literals.ts as
     // a host `$Object` (`__new_plain_object`). Keep the module global on the
     // same externref representation unless a shape pre-pass deliberately

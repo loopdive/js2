@@ -391,7 +391,7 @@ function emitMemoizedNestedFnClosure(
   fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
   fctx.body.push({ op: "local.set", index: memoLocal });
   // (#6987) Give a constructor its `__closure_proto_of` identity key.
-  if (constructible && !isSelfRef && (ctx.standalone || ctx.wasi)) {
+  if (constructible && !isSelfRef && ctx.targetProfile.backend === "wasmgc") {
     fctx.body.push({ op: "local.get", index: memoLocal }, ...publishNestedFnValueInstrs(ctx, funcName));
   }
 

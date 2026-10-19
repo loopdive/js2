@@ -16,7 +16,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { numberIsPredicateOps } from "./number-is-predicate-ops.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { emitStandaloneDateNowValue } from "./standalone-clock-capability.js";
 import { addUnionImports, TYPED_ARRAY_NAMES, typedArrayPackedSignedness } from "./index.js";
 import {
@@ -27,8 +27,9 @@ import {
   skipTransparentExpressions,
   valTypesMatch,
 } from "./shared.js";
-import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitObjectCreateValueBody } from "./object-create-value-body.js";
+import { emitObjectAssignValueBody } from "./object-model/object-assign-value-body.js";
 import { allocLocal } from "./context/locals.js";
 import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
@@ -84,6 +85,7 @@ import {
   emitStringFromCharCodeValueBody,
   prepareStringFromCharCodeValueRead,
 } from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
+import { isVariadicValueStatic } from "./closures/native-variadic-builtins.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
 import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
@@ -92,14 +94,8 @@ import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
   ensurePromiseSettleFunctions,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
-import {
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  ensureSymbolRegistry,
-  usesNativeSymbolProvider,
-} from "./symbol-native.js";
+import { ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier, ensureSymbolRegistry } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
@@ -429,9 +425,9 @@ function hasNativeBuiltinConstantHandler(builtinName: string, propName: string):
  *
  * Spec basis: ECMA-262 §23.1.2.3 delegates to IsArray (§7.2.2).
  *
- * Two regimes (#2047 — unified):
+ * Two backends (#2047 — unified):
  *
- * - **`--target standalone`**: route through the in-module native
+ * - **WasmGC**: route through the in-module native
  *   `__extern_is_array` helper. That helper is reserved with the object runtime
  *   and *filled at finalize* (`fillExternIsArray`) with the COMPLETE, filtered
  *   array-carrier list, so a value-read of `Array.isArray` taken before a later
@@ -440,7 +436,7 @@ function hasNativeBuiltinConstantHandler(builtinName: string, propName: string):
  *   (`const f = Array.isArray; f(boolean[])` ⇒ `false`) and excludes the
  *   exclusively-non-array byte carriers (`i32_byte` ArrayBuffer/DataView,
  *   `i8_byte` Uint8Array) per §7.2.2.
- * - **Host / WASI**: keep the inline `ref.test` chain over every registered vec
+ * - **Legacy provider**: keep the inline `ref.test` chain over every registered vec
  *   type (it detects compiled WasmGC array values materialised into an externref
  *   slot — #1678), ORed in host mode with the real JS `Array.isArray` host
  *   predicate for foreign JS arrays (#1328). Host output is unchanged.
@@ -449,11 +445,9 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   // (#2047) Standalone: defer entirely to the finalize-filled native helper.
   // It owns the complete, byte-carrier-filtered carrier list (late binding),
   // so neither declaration order nor lazy vec registration can produce a wrong
-  // answer here. WASI is intentionally NOT routed here: its
-  // `__extern_is_array` does not resolve to the native object-runtime func
-  // (OBJECT_RUNTIME_HELPER_NAMES routing is `ctx.standalone`-only), so it stays
-  // on the inline chain below.
-  if (ctx.standalone) {
+  // answer here. Every WasmGC environment resolves the helper through the
+  // native object runtime, including WASI.
+  if (wasmGcBackend(ctx)) {
     const nativeIdx = ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
     if (nativeIdx !== undefined) {
       flushLateImportShifts(ctx, fctx);
@@ -469,7 +463,7 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
 
   const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
   const isArrIdx =
-    !noJsHost(ctx) && !ctx.strictNoHostImports
+    !wasmGcBackend(ctx) && !ctx.strictNoHostImports
       ? ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }])
       : undefined;
 
@@ -738,7 +732,7 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (!wasmGcBackend(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const metaProp = expr.name.text;
   if (metaProp !== "length" && metaProp !== "name") return undefined;
   const memberAccess = skipTransparentExpressions(expr.expression);
@@ -815,7 +809,7 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (!wasmGcBackend(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const inner = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(inner)) return undefined;
   if (inner.name.text !== "prototype") return undefined;
@@ -934,7 +928,7 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
 
   const key = skipTransparentExpressions(expr.argumentExpression);
   if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
@@ -1028,17 +1022,19 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
-    case "Object.assign":
+    case "Object.assign": {
       // Deno snapshots Object.assign into its primordials object, then invokes
       // that captured function while constructing `Deno.core`. Register the
       // native object runtime before minting the closure so every funcidx used
-      // by the body is settled. The closure exposes the builtin's declared
-      // two-argument shape; its second argument is packed into the same
-      // `$ObjVec` consumed by the direct Object.assign lowering.
+      // by the body is settled. The physical ABI carries every supplied
+      // argument; reflective .length remains the independent spec value 2.
       ensureObjVecBuilders(ctx);
-      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (getArrTypeIdxFromVec(ctx, vecTypeIdx) < 0) return null;
+      paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
       returnType = { kind: "externref" };
       break;
+    }
     case "Object.keys":
       paramTypes = [{ kind: "externref" }];
       // Standalone Object.keys returns the object-runtime `$ObjVec` as an
@@ -1145,12 +1141,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // the same native registry / scheduler used by direct calls.
     case "Symbol.for":
     case "Symbol.keyFor":
-      if (!usesNativeSymbolProvider(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       ensureObjectRuntime(ctx);
       ensureNativeSymbolBoundaryBridge(ctx);
       ensureSymbolCarrier(ctx);
@@ -1160,12 +1150,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Promise.resolve":
     case "Promise.reject":
-      if (!isStandalonePromiseActive(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       // Register the whole settle substrate before the closure function is
       // minted. The emitters below then append instructions only, avoiding a
       // mid-body function-index registration hazard.
@@ -1261,7 +1245,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // only the value read fell to the generic "not yet implemented in --target
     // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
     case "ArrayBuffer.isView": {
-      if (!noJsHost(ctx)) return null;
+      if (!wasmGcBackend(ctx)) return null;
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;
@@ -1372,20 +1356,8 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "local.get", index: 1 });
       emitArrayIsArrayExternrefPredicate(ctx, closureFctx);
     } else if (key === "Object.assign") {
-      const { newIdx, pushIdx } = ensureObjVecBuilders(ctx);
-      const assignIdx = ctx.funcMap.get("__object_assign");
-      if (assignIdx === undefined) return null;
-      const sourcesLocal = allocLocal(closureFctx, "assign_sources", { kind: "externref" });
-      closureFctx.body.push(
-        { op: "call", funcIdx: newIdx },
-        { op: "local.set", index: sourcesLocal },
-        { op: "local.get", index: sourcesLocal },
-        { op: "local.get", index: 2 },
-        { op: "call", funcIdx: pushIdx },
-        { op: "local.get", index: 1 },
-        { op: "local.get", index: sourcesLocal },
-        { op: "call", funcIdx: assignIdx },
-      );
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (!emitObjectAssignValueBody(ctx, closureFctx, vecTypeIdx, getArrTypeIdxFromVec(ctx, vecTypeIdx))) return null;
     } else if (key === "Object.keys") {
       const keysIdx = ensureLateImport(ctx, "__object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (keysIdx === undefined) return null;
@@ -1825,7 +1797,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // Math.min share the SAME lifted func type (one vec param → one `ref.test`
   // arm serves both; `call_ref` dispatches to the right body via the funcref
   // value). Idempotent — the wrapper types are cached per signature.
-  if ((key === "Math.max" || key === "Math.min" || key === "String.fromCharCode") && !genericThrowBody) {
+  if (isVariadicValueStatic(builtinName, propName) && !genericThrowBody) {
     const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
     ctx.variadicBuiltinClosure = {
       funcTypeIdx: wrapperTypes.liftedFuncTypeIdx,

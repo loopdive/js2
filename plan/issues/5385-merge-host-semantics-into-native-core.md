@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-10-18
+updated: 2026-10-19
 priority: high
 horizon: xl
 feasibility: hard
@@ -928,3 +928,489 @@ explicit native-first (`drop-excess` / `default-value-lossy` /
 `call-arg-coerce`). Both baselines now gate the new default. The stack-balance
 numbers remain explicit Phase 2 emitter debt; the rebank prevents S6 from
 comparing different provider families and does not declare the repairs clean.
+
+### 2026-10-19 — S7 current-work PR handoff
+
+The in-flight shared-code refactoring is published in
+[Separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762).
+The detailed handoff lives in [S7: delete the host-semantic implementation](6979-s7-delete-host-semantic-implementation.md),
+sections "S7-c native constructor lookup checkpoint and landing handoff",
+"S7-c carrier materialization deduplication handoff", and
+"S7-d orphaned host JSON retirement handoff", and "S7-d private operator
+retirement handoff". The JSON retirement proves a closed private group before
+deleting 422 lines; the operator retirement removes another 316 dead lines,
+bringing runtime source to 11,328 with live boundary conversion retained.
+The 98-row JSON and 70-row operator populations respectively remain unchanged.
+The latter handoff also records an open native dynamic-instanceof gap for
+JS-owned constructors/handlers; preserving object identity at admission does
+not yet make those operator cases correct.
+It records the implementation, parent-controlled test evidence, substantial
+constructor-program binary growth, dependency stack and remaining decisions.
+Native lookup and JS-owned boundary identities pass their focused controls,
+but the import policy is **456 against an unchanged 452 ceiling**. The PR
+remains draft, not merged; publishing the checkpoint does not approve a
+ceiling increase or complete the migration. Resume with that decision and
+the binary-cost review, not another untracked refactoring slice.
+
+The later "S7 native dynamic-instanceof suspended-work handoff" section in
+the same issue preserves the unsuccessful five-file IR/shared-runtime
+prototype as a non-executable audit patch, with a self-contained repro and
+ordered next steps. It still fails both JS-owned positive cases and only
+achieves hybrid IR patching (`param-signature-unstable`), not IR-only body
+ownership. The published runnable compiler does not enable that prototype;
+publication in the existing PR is a handoff, not a merge or acceptance claim.
+
+Subsequent local work is documented under "Local repair verified; still
+unpublished" in that same S7 issue: the JS-owned default-constructor and
+custom-handler cases now pass through prepared IR bodies (zero legacy body
+emissions), with 28/28 focused controls versus 7/28 on the clean parent.
+The original failed prototype stays archived for provenance. The new repair
+remains local because signing is blocked; the published PR head is unchanged.
+Ordinary membership after an own nullish Symbol.hasInstance override still
+fails positively, and the full migration/import/dependency acceptance remains
+open. Do not equate the focused repair or PR publication with completion.
+
+The latest "S7-f foreign prototype identity and signed-publication handoff"
+section records the next repair: ordinary JS-owned prototype identity now
+works through a native walk plus one admission-gated identity primitive, and
+a native type probe removes observable JS-Proxy classification reads. The
+focused population is 55/55; the 189-case comparison has twelve improvements
+and no new failures, retaining ten known failures and eleven skips. The new
+identity primitive changes the import gate to **457/452**, still unapproved.
+An existing matching macOS signing agent was found, allowing signed checkpoint
+publication without bypassing hooks. This supersedes the earlier signing
+blocker, not the PR's dependency, semantic acceptance or readiness blockers.
+
+The subsequent "S7-g runtime binder retirement handoff" closes a low-level
+runtime bypass: ambient shims no longer permit retired semantic manifests.
+Six missing builtin class names are retired, and unreachable class-specific
+host handlers are deleted. Runtime source is now **10,580 lines**, a **744-line**
+net reduction, with **97/97** focused controls. A fresh **194-case** comparison
+retains **128 passing/41 failing/25 skipped**, with no new failures; six native
+binaries and all 33 import inventories match. The **457/452** gate, 8,000-line
+runtime target and full program acceptance remain open. The scoped proof is
+`plan/audit/6979-runtime-binder-retirement-20261019.json`.
+
+Its qualified-capability follow-up distinguishes explicit API namespaces from
+same-named global builtins, keeping eleven declared API constructors live.
+The final focused population is **100/100**; native binaries/import inventories
+and the 194-case population remain unchanged. Runtime source is **10,581**
+lines after namespace-first constructor resolution. Compiled `api.Function`
+and `api.Date` are still failing lowerer probes (Number/Map work), explicitly
+recorded with a repro in the S7 handoff. Do not infer full host interop or
+program acceptance from the low-level binder controls.
+
+A further missing-provider control prevents a missing arbitrary namespace
+from silently selecting global Date/RegExp/SharedArrayBuffer instead. Final
+focused controls pass **101/101**, with runtime source **10,582** lines
+(**742 net removed** since `f99bd729cc`). The 457/452 gate and full acceptance
+remain open; selected Intl binding and declared capability identity are kept.
+
+### 2026-10-19 — qualified constructor prepared-IR checkpoint
+
+The S7 issue's "S7-h qualified constructor IR handoff" now supersedes the
+specific compiled API Function/Date failures above. Exact ambient namespace
+constructors use prepared IR and full qualified registry keys, preserving
+same-leaf providers and JS-owned result/exception identity without copying.
+No frozen direct-AST semantic body or new host semantic provider was added.
+
+Local boundary/support controls pass **125/125**. The focused parent comparison
+is **17/24 → 24/24**, including six ownership assertions, not six new runtime
+wins. The separate four-shape execution probe improves **2/4 → 4/4**.
+Fresh broad **194-case** and prepared **145-case** comparisons retain exactly
+their existing **41** and **16** failures respectively; six native binaries and
+33 detailed import inventories match the parent. See
+`plan/audit/6979-qualified-extern-ir-20261019.json` for provenance and limits.
+
+Published as another checkpoint in [PR 6762](https://github.com/loopdive/js2/pull/6762),
+not merge-ready: predecessor PR 6701 remains unmerged, the import gate is
+**457/452**, runtime remains **10,582** lines against the 8,000-line target,
+and full compatibility/conformance, strict closure and other S7 acceptance
+remain open. Continue from the detailed S7 handoff; do not mark this parent
+issue complete from the scoped repair or PR publication.
+
+### 2026-10-19 — remaining runtime provider retirement
+
+The detailed S7 issue now has "S7-i remaining provider retirement handoff".
+It removes orphaned Promise provider closures/registry state and unreachable
+host call/array materializer providers, including two private provider modules.
+Lifecycle imports now admit exactly eleven implemented registrations; unknown
+builtin registration spellings reject instead of slipping through a prefix
+allowance. Explicitly declared embedder functions remain capabilities.
+
+Boundary/support controls pass **137/137**. The fresh **230-case** parent
+comparison retains **155 passing/50 failing/25 skipped**, with only two
+failure stack coordinates relocated to the exact same runtime source line.
+Six native binaries and all 33 detailed import inventories match.
+Runtime source is **10,160 lines**, **422 net removed**; the 8,000-line target
+still has a **2,160-line gap**, and the hard import gate remains **457/452**.
+See `plan/audit/6979-provider-retirement-20261019.json` for scoped proof and
+source hashes. The live gap families, predecessor stack and full acceptance
+remain open; do not mark this parent complete.
+
+### 2026-10-19 — exact declared capability / accelerator identities
+
+The S7 issue's "S7-j declared capability / accelerator isolation handoff"
+records a verified boundary repair: same-named API Date/RegExp classes no
+longer coerce compiled object arguments, qualified Test262Error receives a
+normal live facade, and nested Intl capabilities cannot select global
+constructors or receive the intrinsic Intl wrapper merely by prefix.
+Selected intrinsic accelerators remain intact. JS object/result/exception
+identity is preserved, without copying or a frozen AST body-emitter change.
+
+Boundary controls pass **151/151**. The focused parent comparison improves
+**57/68 → 68/68**; the broad **230-case** population remains **155 passing/50
+failing/25 skipped**. Six native binaries and all 33 import inventories match.
+Evidence and proof limits are in
+`plan/audit/6979-capability-accelerator-isolation-20261019.json`.
+
+Runtime is now **10,163 lines** (three additional routing lines), leaving
+**2,163** against the 8,000-line target. The **457/452** import gate and all
+remaining program/dependency acceptance stay open. This corrects interop at
+the existing shared boundary; the measured object-argument body still uses
+the existing direct route and is not claimed as new IR-only coverage.
+
+### 2026-10-19 — import-budget blocker closed by native key filtering
+
+The S7 issue's "S7-k native boundary key filtering / import gate handoff"
+supersedes the preceding **457/452** blocker. The unchanged official
+33-probe gate now passes at **433/452**, with zero unknown/gap entries in that
+population. Native string/symbol filtering shares the existing admitted-object
+own-key primitive: **44** redundant provider occurrences removed, **20**
+existing-primitive occurrences added, **24 fewer net imports**. No baseline,
+probe or detector relaxation.
+
+Boundary controls pass **158/158**; the **230-case** and **145-case** parent
+comparisons retain their existing outcomes after explicitly re-pinning the
+removed-import expectation. Six native binaries are byte-identical. Three
+measured JS key programs grow **319/319/443 bytes**; that tradeoff and the
+remaining program-wide cost review are not hidden by the import reduction.
+See `plan/audit/6979-native-boundary-own-keys-20261019.json`.
+
+Runtime remains **10,163 lines**, **2,163** above target. The predecessor stack,
+opaque bound functions, raw-mode retirement, named native-provider gaps,
+strict closure and full compatibility/conformance/accelerator acceptance
+remain open. Do not mark this parent complete from the now-green import gate.
+
+### 2026-10-19 — one shared native object-source runtime on WASI
+
+The S7 issue's "S7-l shared native object source handoff" removes three
+obsolete mode guards that made WASI silently skip closed-struct and Proxy
+Object.assign sources. The same screened classifier also enables the existing
+JSON.stringify and Object.defineProperties closed-struct paths on WASI.
+No AST body, selector, JS semantic provider or boundary identity change.
+
+The new matrix passes **33/33**; nine WASI rows fail on the unchanged parent
+and pass now. The **170-case** comparison improves **158/12 → 167/3** with
+the three existing linked object-rest failures unchanged. All **33** JS
+policy binaries and inventories are byte-identical; the hard gate stays
+**433/452**. Five of six minimal native controls match; WASI dynamic grows
+**1,443 bytes**, and two minimal WASI assign probes grow **1,434/1,475 bytes**.
+No overall size/performance improvement or new IR coverage is claimed.
+
+Raw mode references fall **804 → 799** without banking the 818 ceiling.
+Runtime stays **10,163 lines**. The discovered captured-Object.assign
+variadic-argument loss is still open, alongside the earlier migration
+acceptance gaps and prerequisite stack. Exact evidence:
+`plan/audit/6979-shared-native-object-sources-20261019.json`.
+
+### 2026-10-19 — native captured Object.assign ABI and JS boundary sources
+
+The S7 issue's "S7-m native Object.assign argv and boundary-source handoff"
+reuses the native variadic ABI for every supplied source, preserves captured
+result storage as externref and copies admitted JS-owned source properties
+through the same native MOP loop. Exact value/key/throw identity is retained;
+there is no boundary object-graph copy or new host semantic implementation.
+WASI shares strict Proxy write rejection and Object member patch handling.
+
+New controls pass **69/69**. The **268-case** comparison improves
+**227/41 → 265/3**, zero skipped, with 38 changed rows in the new test and
+the same three linked object-rest failures. All **33** policy inventories match
+and the gate stays **433/452**. Five JS probe binaries shrink while two native
+dynamic controls grow **547/3,418 bytes**; the separately measured gc fixture
+needs three more occurrences of existing value adapters (**19 → 22**).
+No overall footprint/performance win or new IR body coverage is claimed.
+
+Raw mode references fall **799 → 795** without banking the 818 ceiling.
+Primitive-target wrappers and generic patched-Math aliases still fail all six
+target/fixture controls exactly as on the parent. A newly checked import-cycle
+gate also fails on both parent/candidate with the same reported violations.
+Those, runtime retirement (**10,163 lines**), strict closure and the remaining
+program acceptance/predecessor stack stay open. Evidence and exact source
+hashes: `plan/audit/6979-native-object-assign-argv-20261019.json`.
+The final callable-escape probe also remains broken on both parent/candidate:
+returning native Object.assign to JS produces a function-shaped facade whose
+call dispatchers were not exported. Full host interoperability is not certified.
+The flat-directory gate is now satisfied at **833** files by locating the new
+helpers under existing subsystems and moving the unchanged boundary filters;
+binary/test equivalence of that relocation is recorded in the audit.
+
+### 2026-10-19 — native callable argv at the live boundary
+
+The S7 issue's "S7-n native callable argv and returned-function handoff"
+corrects the preceding dispatch diagnosis: exports existed, but a duplicate
+return wrapper ignored them. Returned functions now use the existing cached
+bridge; exact native builtin identity declares packed argv through the
+authenticated rest discriminator, independently of reflective arity. Existing
+argument-list adapters preserve JS target/source/token identity and all native
+builtin arguments, including 32-argument calls. Ordinary callback objects and
+receivers are admitted live, with native primitive/error translation. No host
+semantic implementation, new import, frozen AST body or selector change.
+
+New controls pass **17/17**. The **376-case / 22-file** comparison improves
+**349/27 → 366/10**, zero skipped; no previous expectations changed. Two of
+the retained failures are linked-harness controls whose pinned test data is
+present but QuickJS execution is unavailable, not compatibility passes.
+All **33** import inventories match and the guard stays **433/452**. Eleven
+policy binaries match, eighteen grow **5 bytes**, four grow **149**; two native
+dynamic controls grow **83 bytes**, with all six native controls still
+import-free. No overall size/performance improvement is claimed.
+
+Runtime is **10,161 lines**, **2,161** above target. Wider ordinary rest calls,
+five-parameter returned functions, JS facade name/length and typed JS array
+identity/mutations/aggregate returns remain failing in fresh controls. The
+previous six primitive-target / patched-Math controls also remain unchanged.
+These, inherited cycle failures, strict closure, opaque bound functions,
+source retirement, the prerequisite stack and full program acceptance stay
+open. Do not mark this parent complete. Evidence:
+`plan/audit/6979-callable-boundary-argv-20261019.json`.
+
+### 2026-10-19 — bounded native callable argv publication
+
+The S7 issue's "S7-o bounded native callable argv publication and handoff"
+publishes the existing native apply contract through an instance-authenticated
+boundary, rather than widening JS dispatch ladders. Ordinary five/nine-formal
+calls and `any[]` rest calls through 32 inputs now pass the scoped controls;
+objects/receivers/throw tokens remain live identities. Native enumerable string
+keys use existing OwnPropertyKeys/descriptor primitives. No new host semantic
+implementation, frozen AST semantic body, selector or IR coverage claim.
+
+The new matrix passes **31/31**. The **495-case / 26-file** comparison improves
+**467/28 → 483/12**, zero skipped. All 16 changed rows are new controls,
+including structural/inventory assertions, not independent defect counts.
+The audit records retained failure shapes, not just aggregate counts. Import
+policy passes **437/452** on 33 probes with zero unknown/gap entries, versus
+parent 433. Its required-adapter assertion changes to the new primitive contract
+and now forbids the retired enumerable-key selector; population and ceiling
+do not change. Nine policy binaries match and 24 grow. The typed-callable fixture
+grows **22,678 → 107,033 bytes**; six native standalone/WASI binaries remain
+byte-identical and import-free. Runtime grows 74 lines to **10,235**. Footprint
+is an open tradeoff, not a claimed improvement.
+
+Typed rest with 32 inputs still observes 5, null receivers still normalize incorrectly, and
+wide fixed over-application explicitly throws until native extras are fixed.
+Callback construct rejection, init-window/opaque callable handling, facade
+metadata, typed JS array identity/mutations, prior primitive/Math residuals,
+source retirement, strict modeled closure/cycles and full program acceptance
+remain open. Keep this issue in progress and PR6762 draft on the prerequisite
+stack. Detailed source/gate hashes, transitions, costs and negative-control
+source: `plan/audit/6979-complete-callable-argv-20261019.json`.
+
+### 2026-10-19 — shared native argument-tail repair
+
+The S7 issue's "S7-p shared native argument-tail repair" fixes typed numeric
+rest truncation, above-cap extras and padded argc through the existing native
+calling contract. Preserve the actual count across reentrant getters, avoid
+out-of-range Get when padding, and use existing typed-vector element conversion
+on the full canonical extras list. The temporary JS wide-over-application
+refusal is removed after native nine/fourteen-formal execution controls pass.
+No frozen AST semantic body, driver/selector, new host import or IR-coverage
+claim; no baseline/ceiling/allowance changes.
+
+New controls pass **107/107** across standalone/WASI/JS boundary. The **638-case /
+30-file** comparison improves **569/69 → 623/15**, zero skipped or status
+regressions. All 15 retained normalized full errors match. Import policy remains
+**437/452** with all 33 inventories identical. Nine policy binaries match,
+twelve shrink 95 bytes and twelve grow 377–4202; two native dynamic controls grow
+1499/1486 bytes, with all six still import-free. Runtime drops 5 lines to 10230.
+
+Fresh boolean/string rest probes also improve, but BigInt/native Number still
+overflows and typed JS-object rest elements still fail (property error → illegal
+cast), not live identity/mutation preservation. These, strict receiver and
+callable semantics, typed-array/aggregate interop, tuple-rest compile failures,
+source/raw-mode retirement, strict closure/cycles and full acceptance remain
+open. Both migration issues stay in progress and PR6762 draft on its prerequisite
+stack. Detailed evidence and next steps:
+`plan/audit/6979-native-argument-tails-20261019.json`.
+
+### 2026-10-19 — IR object identity and typed-object ABI diagnosis
+
+The S7 issue's "S7-q IR object identity and live typed-object ABI handoff"
+adds native IR identity comparison for logical objects through the canonical
+boxing/equality engine, without changing selectors, prepared admission or
+frozen AST bodies. New controls pass 32/32; the 670-case/31-file comparison is
+643/27→655/15, zero skipped or status regressions. The 12 changed rows prove
+actual IR body emission, not 12 newly fixed JS interop behaviors. All 15
+retained full errors match after tree normalization. All 33 policy inventories
+and binaries and six native control binaries match; policy remains 437/452.
+
+The separate 16-case boundary diagnostic remains 5/11: every JS-owned typed
+object case still fails. Its native/dynamic controls work, but typed public
+parameters require GC structs. Read/write/echo have IR overlays after direct
+emission, not prepared ownership; the signature vocabulary excludes logical
+objects. The implementation must declare a foreign-capable native interop ABI
+and propagate its carrier/operations through calls and returns, not just relax
+an admission guard or copy fields. The old architecture doc's deep-copy proposal
+is replaced by the normative live-reference contract with these gaps explicit.
+
+Runtime remains 10230 lines and the full migration remains in progress. Source
+hashes, counters, expected/actual negative cases, costs and next steps:
+`plan/audit/6979-live-object-abi-and-ir-identity-20261019.json`.
+
+### 2026-10-19 — reference-object backend carrier and early effect projection
+
+S7-r continues from signed `ad1907e64cc732376ab116fcda0981b49f02a8e8`.
+The same logical object IR can now lower over an explicitly declared reference
+ABI, with structural Get/Set callable providers and consistent signatures,
+SSA spills, construction erasure, calls and returns. Property operations become
+real IR calls **before optimization**, preserving getter effects through DCE,
+GVN and scheduling; late raw reference field lowering fails closed. Native-only
+lowering stays unchanged. No frozen AST/selector/admission changes, graph
+copier, nominal default-field wrapper, new host import or extra semantic engine.
+
+The new backend matrix passes **26/26**, including live JS references and native
+zero-import controls, but its primitive providers are manually bound fixtures.
+This is **not production entry/provider/ABI publication**. Existing 670-case
+comparison stays 655 passing/15 failing; additional 49 backend cases stay
+47 passing/2 failing. All 17 retained normalized errors match. All 33 policy
+binaries/inventories and six native binaries match; unchanged guard 437/452.
+The separate public typed-object diagnostic stays **5/16 passing, 11 failing**,
+with an identical binary. Do not convert backend-fixture results into a claim
+that public source interop or exclusive prepared ownership is fixed.
+
+Next: attach the projection before source optimization, plan exact native
+property resources and complete reachable reference-capable callable ABIs,
+then publish authenticated boundary metadata atomically. Mutable physical
+slots, nested/container/vector/rest/class/capture carriers and all earlier
+acceptance obligations remain open. Runtime remains 10230 lines; strict
+modeled closure and inherited cycle gates still fail. Both migration issues
+remain in progress and PR6762 stays draft. Detailed handoff and exact evidence:
+`plan/audit/6979-reference-object-lowering-20261019.json`.
+
+### 2026-10-19 — source write policy and logical record contract handoff
+
+S7-s continues from signed `de036a4a4f71a208f816b5e7cf6610b66a2df63b`.
+Source ObjectSet now preserves strict/sloppy failed-write behavior; early
+reference projection requires that fact and the corresponding structurally
+declared setter. Unknown policy or absent provider fails closed. One frontend
+strictness owner serves IR and compatibility callers, also fixing inheritance
+through enclosing arrows/accessors: four real standalone/WASI probes change
+-1→42 with no imports. Their bodies remain direct, not newly IR-owned.
+
+Checker-derived logical record contracts now survive whole-program source
+preparation and codec replay for aliases/interfaces/inheritance/nested/generic
+records. Unsupported recursive/optional/indexed/empty/union/nominal shapes
+fail explicitly; expanding generic recursion is bounded. Logical annotation
+is not physical-layout or foreign-entry authority. The prepared driver still
+rejects read/echo/write at physical acceptance, and the public typed-object
+diagnostic remains **5/16 passing, 11 failing**, identical binary.
+
+Focused candidate **73/73**, exact parent **36/73** with identical tests;
+33 transitions concern source/provider contracts and four actual native
+strictness behavior. Existing cohorts stay **655/670**, **66/68** and **35/41**,
+with all 23 retained normalized full errors matching, zero skips. All 33
+policy inventories/binaries and six zero-import native binaries match; guard
+437/452. Typecheck/lint/format, size/function/coercion/oracle, layering/fallback,
+flat/inventory and issue checks pass without new allowances. Strict modeled
+closure remains open; cycles now also expose frontend→ir 17→18,
+frontend→ts-api 2→5, ir→frontend 7→9, not waived or called green.
+
+Next owner: project on raw source IR **before optimization**, plan the complete
+reachable reference-callable component and canonical native strict/sloppy
+Get/Set resources, then atomically publish authenticated ABI/entry metadata.
+Plan mutable/container/rest/class/capture carriers and actual-carrier equality;
+cut the measured cycles. No graph copy, frozen AST/selector/admission expansion
+or new host imports. Complete component planning/public entry publication and
+all prior retirement/acceptance obligations remain open. Both issues stay in
+progress; PR6762 stays draft pending prerequisites. Detailed actionable handoff:
+the S7 issue's "S7-s source write-mode and logical record contracts" section and
+`plan/audit/6979-source-reference-contracts-20261019.json`.
+
+### 2026-10-19 — reference planning in the real source preparation transaction
+
+S7-t continues from signed `b0d73c4b9f3dfa4ee03c98cab2cae50db7c92bc9`.
+An internal live projection now derives the complete current logical record
+population and exact per-field Get/strict-Set/sloppy-Set declarations in the
+existing Program ABI. Property operations become calls before hygiene;
+direct-call signatures are checked before optimization, including imported
+callees. The logical plan is frozen with the program and authenticated against
+current shapes/declarations after codec replay. Backend adapters consume the
+same pure semantic projection; no backend handles or TypeScript dependencies
+cross the clean program boundary, and no boundary rule was weakened.
+
+New matrix **17/17**, prior focused matrix **73/73**; genuine preparation retains
+an unused getter, strict and sloppy source stores, exact thrown tokens, aliases
+and nested contracts. Emitted record bodies still use test-only admitted
+foreign primitive bindings, not canonical production resources. Independent
+WasmGC/standalone and linear/WASI scalar controls execute with zero imports
+and identical bytes with projection off/on. Four paired existing-API record
+probes still reject at physical acceptance; public typed-object diagnostic
+stays **5/16 passing, 11 failing**, identical binary.
+
+Fresh **779-case / 38-file** comparison against the published parent stays
+**756 passing / 23 failing**, zero skips/transitions; all 23 normalized full
+errors match. All 33 policy binaries/inventories and six native binaries match;
+guard 437/452. Normal size/function/coercion/oracle, typecheck/lint/format,
+layering/fallback, flat/inventory and issue checks pass without new allowances.
+The inherited five cycle pairs and two strict-closure dynamic imports remain
+open; runtime stays 10230 lines.
+
+Next: reserve/fill canonical native property resources with actual native
+record allocation/carrier ownership, complete storage and indirect-callable
+representation, then atomically publish authenticated entries. An old native
+fixed-field struct does not automatically have ordinary-object descriptor/
+prototype semantics. No copied graph/default-field wrapper or partially
+reference-capable public entry is permitted. The plan currently declares all
+three operation contracts per field, not a proof of physical cost or unused
+provider elision. All prior retirement/acceptance/prerequisite obligations stay
+open. Both issues stay in progress; PR6762 stays draft. Detailed S7-t handoff
+and exact evidence: `plan/audit/6979-reference-program-planning-20261019.json`.
+
+### S7-u handoff: preserve construction inputs, not a completed constructor
+
+The current checkpoint in [refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762)
+preserves literal insertion order separately from canonical storage order,
+distinguishes special `__proto__`/method requirements, and retains detached
+allocation source facts through cloning and replay. Structural validation of
+facts is not a runtime/provider certificate. No host import, graph copy or
+public interop admission was added.
+
+Native construction remains next: join actual source allocations and operands,
+then compose canonical storage, descriptors and value resources. The full native
+Object/Function realm is not complete; implicit default prototypes must not be
+replaced with null or fake Object.prototype. An explicit-prototype kernel would
+be a prerequisite, not full literal semantics. Physical property providers,
+actual foreign field-value carriers and publication remain open.
+
+Detailed next-owner instructions and current verification are in the S7-u
+section of `plan/issues/6979-s7-delete-host-semantic-implementation.md`
+(**S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators**).
+Both issues remain in progress; PR6762 remains a draft handoff, not a merge-ready
+migration. The existing prerequisite stack and inherited acceptance failures
+are unchanged. Tracking stays in repo Markdown; no GitHub issues or comments.
+
+### S7-v: owned native record initialization prerequisite
+
+The next checkpoint implements real explicit-prototype WasmGC initialization
+from actual prepared record allocations, using the canonical storage,
+descriptor and primitive owners. Source insertion order is independent of
+storage order; nested references retain identity. Canonical fills, complete
+dependency ownership and current source requirements are required—not caller
+placeholders or type/layout lookalikes. Duplicate logical fields are rejected
+by source-fact validation.
+
+New native-resource tests pass **13/13**, alongside the prior **135/135** focused
+cases. Three instances execute without imports, including displaced indices and
+codec replay. Fresh parent/candidate resource tests retain **147 pass / 14 fail
+of 161** with identical full errors; the 779-case cohort retains **756 pass /
+23 fail**. All 33 policy binaries/inventories, six native controls and the
+5-pass/11-fail public typed-object diagnostic remain unchanged.
+
+This does not complete source default prototypes, the native Object/Function
+realm, foreign field carriers, provider wiring, callable/storage closure,
+Linear/WASI record construction or public boundary publication. Architecture
+cycles now include backend→ir 115→117; no waiver is added. The detailed S7-v
+handoff also records an inferred method-object return erased to void, which
+must not become an absence/construction proof. Both issues remain in progress;
+PR6762 stays draft. Evidence:
+`plan/audit/6979-native-construction-resource-20261019.json`.

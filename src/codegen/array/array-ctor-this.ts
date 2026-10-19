@@ -44,9 +44,9 @@ const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
 
 const armed = new WeakSet<CodegenContext>();
 
-/** Pre-scan hook: `Array.from.call(…)` / `Array.of.apply(…)` & co. (standalone). */
+/** Pre-scan hook: `Array.from.call(…)` / `Array.of.apply(…)` & co. */
 export function noteArrayCtorThisCall(ctx: CodegenContext, node: ts.Node): void {
-  if (!ctx.standalone || armed.has(ctx) || !ts.isCallExpression(node)) return;
+  if (armed.has(ctx) || !ts.isCallExpression(node)) return;
   const callee = node.expression;
   if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) return;
   const method = callee.expression;
@@ -164,7 +164,7 @@ const SPECIES_CREATORS = new Set(["concat", "filter", "flat", "flatMap", "map", 
 
 /**
  * `var r = <call>` whose checker type is an Array but whose VALUE is not a
- * fresh array of the binding's element type (standalone):
+ * fresh array of the binding's element type:
  *
  * - `Array.from.call(C, …)` / `Array.of.apply(C, …)` with a `this` other than
  *   `Array` — `Construct(C)`'s object (`Array/of/return-a-custom-instance.js`,
@@ -184,7 +184,7 @@ export function reflectiveArrayCallNeedsExternref(
   ctx: CodegenContext,
   initializer: ts.Expression | undefined,
 ): boolean {
-  if (!ctx.standalone || !initializer || !ts.isCallExpression(initializer)) return false;
+  if (!initializer || !ts.isCallExpression(initializer)) return false;
   const callee = initializer.expression;
   if (!ts.isPropertyAccessExpression(callee) || (callee.name.text !== "call" && callee.name.text !== "apply")) {
     return false;

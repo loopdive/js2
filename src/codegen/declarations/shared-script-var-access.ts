@@ -43,7 +43,7 @@ export function prepareSharedScriptVarAccess(
 ): void {
   const { emitGlobalEnvironmentKey, emitGlobalEnvironmentObject, ensureGlobalEnvironmentOperation, localGlobalIdx } =
     services;
-  if (!ctx.standaloneScriptVarBindings || ctx.sourceIsModule) return;
+  if (!ctx.sharedScriptVarBindings || ctx.sourceIsModule) return;
   if (accessPlans.has(ctx)) return;
   const plan: Access[] = [];
   accessPlans.set(ctx, plan);

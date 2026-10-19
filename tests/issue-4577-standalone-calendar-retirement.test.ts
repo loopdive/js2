@@ -578,7 +578,7 @@ function expectExactCapabilityContracts(result: CompileResult, lane: "IR" | "dir
         "value-adapter": 0,
         "instance-lifecycle": 0,
         "host-accelerator": 0,
-        "legacy-semantic": 0,
+        "regime-gap": 0,
         unknown: 0,
       },
       byFamily: { clock: 1, dom: 8, [DOM_INTERACTION_CAPABILITY_ID]: 2 },

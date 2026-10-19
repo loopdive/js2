@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6771 S8/S9) Vec element fidelity across the externref boundary,
- * `--target standalone`.
+ * (#6771 S8/S9) Vec element fidelity across the externref boundary in the
+ * native WasmGC semantic core.
  *
  * ## S8 — an `undefined` element crossing into an f64 vec stays `undefined`
  *
@@ -54,13 +54,13 @@ const storesUndefElems = new WeakSet<CodegenContext>();
 
 /** Register `__extern_is_undefined` for an f64-element vec materialization. Call BEFORE the caller's flush. */
 export function prepareVecF64UndefElem(ctx: CodegenContext, elemType: ValType): void {
-  if (!ctx.standalone || elemType.kind !== "f64") return;
+  if (elemType.kind !== "f64") return;
   ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
 }
 
 /** externref element (on the stack) → f64 slot value: `undefined` → `UNDEF_F64_BITS`, else `__unbox_number`. */
 export function vecF64ElemFromExternInstrs(ctx: CodegenContext, fctx: FunctionContext, unboxIdx: number): Instr[] {
-  const isUndefIdx = ctx.standalone ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+  const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
   if (isUndefIdx === undefined) return [{ op: "call", funcIdx: unboxIdx }];
   storesUndefElems.add(ctx);
   const elem = allocLocal(fctx, `__vec_f64_elem_${fctx.locals.length}`, { kind: "externref" });
@@ -123,7 +123,7 @@ function inRangeVecElemArm(vecTypeIdx: number, arrTypeIdx: number, iLocal: numbe
 }
 
 /**
- * Finalize fill (standalone), run right after `fillExternGetIdxVecArms` and
+ * Finalize fill, run right after `fillExternGetIdxVecArms` and
  * before the vec overlay prologue is spliced in front — so the overlay still
  * answers first and these arms precede the ordinary vec arms. S8: an f64
  * element holding exactly `UNDEF_F64_BITS`, in a module that stored one, reads
@@ -131,7 +131,7 @@ function inRangeVecElemArm(vecTypeIdx: number, arrTypeIdx: number, iLocal: numbe
  * `__box_boolean`.
  */
 export function fillVecElemGetIdxArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.externGetIdxReserved) return;
+  if (!ctx.externGetIdxReserved) return;
   const funcIdx = ctx.funcMap.get("__extern_get_idx");
   const fn = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
   if (!fn || fn.body.length < 3 || fn.body[2]?.op !== "local.set") return;

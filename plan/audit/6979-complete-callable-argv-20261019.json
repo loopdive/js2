@@ -1,0 +1,1167 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-o bounded native argv publication; migration incomplete",
+  "parentCommit": "0c7c877d2ad659a2d1a3b47f9f18c8ea37280c0c",
+  "candidate": "working tree, sourceHashes below; later signed commit identifies publication",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "lane": "default WasmGC native-first with JS boundary",
+    "flags": ["--experimental-wasm-exnref"],
+    "forks": 2,
+    "test262HarnessPin": "b363f29d3c43c626dc852744ad64a0b48a003693",
+    "fullTest262Run": false
+  },
+  "scope": {
+    "newHostImportImplementations": false,
+    "frozenAstSemanticBodyChanges": false,
+    "driverOrSelectorChanges": false,
+    "newIrBodyCoverage": false,
+    "baselineOrCeilingChanges": false,
+    "gateAssertionChanged": true
+  },
+  "sourceHashes": {
+    "scripts/check-host-import-policy.ts": "06fddcabf5a0994e4896df5627f243b71359d7d2c35e6f085fa65398f492e6c1",
+    "scripts/compiler-boundaries.json": "c3bde5d92fadebc722f225881e8eaca5a518c4083967d9bd4f56a2248bec8d15",
+    "src/codegen/closure-exports.ts": "cc4172c3966aff5d7ae40db359d264fcb9aac18a6f88d9049057363e8d7c4768",
+    "src/codegen/declarations.ts": "c118c17021b85dcd28d09ff4daf72c1c9ebd9e09006b62a7aa6f56c98deaedb9",
+    "src/codegen/host-bridge-exports.ts": "e6f4280b1a0a21b39a0300eb80642061e04ff58aed205f66e1cfcfc454f6ad93",
+    "src/codegen/native-dynamic-boundary-tag.ts": "5feaab46c1a823aa19f16cbbdee402fae49bdd12b0a310f44eb6fefa91cbd8f8",
+    "src/codegen/object-model/boundary-own-key-filters.ts": "de597844b89d79eeb7ef08d11ae25dd8938f5891ed6e438e8071583982d88a3a",
+    "src/codegen/object-runtime.ts": "6468015da88cc2d59dadf5a938998b25adf09c3b0c335a3f8ade7cb0ec605e27",
+    "src/ir/runtime/host-capabilities.ts": "9282e05d106f1e4a379ece06e5bedb748cbf6b3cc7dee66dd4e4478bfdb25b13",
+    "src/runtime.ts": "363cb6e5f8345d32ab4e5b752295869488186b0e8a4ac3b5aec1e2c59c74787a",
+    "src/runtime/contracts/closure-call-abi.ts": "4f7b9778a3df877796ab814d7365f292f6459553a863ada94a882e69e7c47718",
+    "src/runtime/contracts/host-capability-schema.ts": "9717d5389a4c8e295f8ad3982e1fe66c5e7e682f5d48040558805b9e06f0a252",
+    "src/codegen/closures/bridge-export-provenance.ts": "546c30d4505db1514938a9f43e54a52931b615473f270527455e8d50aad75e43",
+    "tests/issue-6979-complete-callable-argv.test.ts": "cf00bef73735d1471d9634cbb73d23f6bd502418524d4c36760476f294277b9a",
+    "tests/issue-6979-native-enumerable-boundary-keys.test.ts": "d7f49a54b5d67aa0d5fa0e774e273a9bd706417b25124051645ced19292322a7",
+    "scripts/check-import-cycles.mjs": "bf560d65767445f356ab5e9848734bcb1860864279880b8ddef2eaef15192d97",
+    "scripts/audit-legacy-reachability.mjs": "845eccef70e069401e2c90dc7ba7fe960c4adfbb830d23812832f3ea45b955af",
+    "scripts/check-func-budget.mjs": "28b19990ad4e55205a36cdcdb56bfd936d13fdae9dd1fc7a986389ce67ef57b7",
+    "scripts/check-loc-budget.mjs": "3657c0d30186bd852f2927c51a83235794ea77fc4c9e99799e39c614eef8386b"
+  },
+  "tests": {
+    "composition": "26-file final cohort, replacing the two new files with their final 31-case reruns on both trees; the new files are repeated after helper-only extraction. Sanctioned fast pre-commit keeps lint-staged and budgets; slow checks were run manually because two modified schema rows retain measured parent failures.",
+    "parent": {
+      "files": 26,
+      "cases": 495,
+      "passed": 467,
+      "failed": 28,
+      "skipped": 0
+    },
+    "candidate": {
+      "files": 26,
+      "cases": 495,
+      "passed": 483,
+      "failed": 12,
+      "skipped": 0
+    },
+    "transitions": [
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary binds the complete-vector entry to its exact compiler alias",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary calls a returned five-parameter function",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary calls an above-cap nine-parameter function",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary refuses wide fixed over-application until native extras are preserved",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary preserves 9 ordinary rest arguments and the receiver",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary preserves 32 ordinary rest arguments and the receiver",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary preserves a prefixed rest vector beyond the positional cap",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary preserves arguments.length and a far extra argument",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary adapts non-integer numeric arguments in an isolated typed-only module",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary accepts the exact raw exports object after instance association",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary refuses copied records instead of trusting complete-vector helper names",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary cannot redirect a pinned callable through a mutated or donor binding",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "complete-argv export provenance strips compiler descriptors, preserving same-spelled user copies",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "complete-argv export provenance rejects an unrecorded copy targeting the native adapter before freeze",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "complete-argv export provenance rejects a renamed recorded descriptor before freeze",
+        "before": "failed",
+        "after": "passed"
+      },
+      {
+        "file": "issue-6979-native-enumerable-boundary-keys.test.ts",
+        "name": "native enumerable string-key selection over live JS objects uses own-key and descriptor primitives instead of a JS key selector",
+        "before": "failed",
+        "after": "passed"
+      }
+    ],
+    "retainedFailures": [
+      {
+        "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+        "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+        "parentFirstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "parentErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f",
+        "candidateErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-1058-unmatched-closure-host-call.test.ts",
+        "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+        "parentFirstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "candidateFirstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "parentErrorSha256": "79021a3c754710ea056eb18fb1e3df4b21b3530a0f1a91cb21235ec3145d12fb",
+        "candidateErrorSha256": "79021a3c754710ea056eb18fb1e3df4b21b3530a0f1a91cb21235ec3145d12fb",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-2623-p7-finally-bridge.test.ts",
+        "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+        "parentFirstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "parentErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797",
+        "candidateErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+        "parentFirstLine": "AssertionError: expected [] to include 'install'",
+        "candidateFirstLine": "AssertionError: expected [] to include 'install'",
+        "parentErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140",
+        "candidateErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+        "parentFirstLine": "AssertionError: expected {} to be undefined",
+        "candidateFirstLine": "AssertionError: expected function to throw an error, but it didn't",
+        "parentErrorSha256": "41b9079b4c0e10e34f873d1c6523fbed61e932a90057323b9ffac6cac7923622",
+        "candidateErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90",
+        "normalizedFullErrorEqual": false
+      },
+      {
+        "file": "issue-3526-callable-boundary-schema.test.ts",
+        "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits imports the fixed-arity members and the array sibling TOGETHER on gc-host",
+        "parentFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(2) ] to include 'env.__call_function'",
+        "candidateFirstLine": "AssertionError: expected [ 'env.__boundary_object_get', …(15) ] to include 'env.__call_function'",
+        "parentErrorSha256": "ae29f2b53d1862f1dc567c36717e2e635b726cd1959537de50606f3cb754e29c",
+        "candidateErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4",
+        "normalizedFullErrorEqual": false
+      },
+      {
+        "file": "issue-3526-callable-boundary-schema.test.ts",
+        "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits matches the maker siblings' emitted import ABI",
+        "parentFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(16) ] to include 'env.__make_getter_callback'",
+        "candidateFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(15) ] to include 'env.__make_getter_callback'",
+        "parentErrorSha256": "a35b09842542fa9dae54aacdb9a7a939e560e5e05fac52dc0d3ef687dfa47038",
+        "candidateErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3",
+        "normalizedFullErrorEqual": false
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6",
+        "candidateErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699",
+        "candidateErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b",
+        "candidateErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+        "parentFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1",
+        "candidateErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+        "parentFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a",
+        "candidateErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a",
+        "normalizedFullErrorEqual": true
+      }
+    ],
+    "normativeExpectationChanges": [
+      "Manifest bit18/19-slot apply ABI, reserved bit moved to19, same-size externref table negative control",
+      "Declarative exported callable schema count6 to7",
+      "Native enumeration inventory now requires ownKeys/descriptor instead of retired keys selector; no functional expectations repinned"
+    ],
+    "failureShapeNotes": [
+      "The one-shot callback now passes invocation/receiver assertions and stops later at missing construct rejection; this is not an unchanged error or a passing test.",
+      "Two schema failures still require retired legacy host imports; inventory contents differ.",
+      "Two linked tests have pinned harness data but QuickJS execution is unavailable.",
+      "An isolated combined null receiver/argument test failed with -1 vs42; removed from the new passing matrix and retained as a negative probe below. An earlier concrete nullable-reference fixture aborted beforeAll and is not execution evidence."
+    ]
+  },
+  "policy": {
+    "parent": {
+      "probes": 33,
+      "imports": 433,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "candidate": {
+      "probes": 33,
+      "imports": 437,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "ceiling": 452,
+    "initialOverflow": 461,
+    "detectorChanges": "Unchanged33-probe population and452 ceiling. Replace required retired keys import with ownKeys/descriptor/get, and reject retired keys import in every probe. Parent uses original guard; candidate uses updated guard. Earlier candidate failed both461 ceiling and old obsolete keys-presence assertion.",
+    "migrationMetrics": {
+      "runtimeTsLines": 10235,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 896,
+      "explicitCapabilityLines": 1194
+    },
+    "rows": [
+      {
+        "name": "core",
+        "parentBytes": 600741,
+        "candidateBytes": 600954,
+        "deltaBytes": 213,
+        "parentSha256": "9cbdf0ede10c660ab53faf64729dcb5bf554c171c02babc6a4695f56a03721fa",
+        "candidateSha256": "24a2d04a6b836f42baa734112d3e8f551088f30fb1010c7b6d7fcea888be6048",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "regexp",
+        "parentBytes": 116664,
+        "candidateBytes": 116815,
+        "deltaBytes": 151,
+        "parentSha256": "f3d1d96d390faa80a744c70dd8587cc8188ebcecf42a18c9b981b57315f9b4c4",
+        "candidateSha256": "14504e4ac373853082a4af7f22cf0ad887199c71427a3b5759b48341ef0dded2",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "collections",
+        "parentBytes": 104657,
+        "candidateBytes": 104809,
+        "deltaBytes": 152,
+        "parentSha256": "ecf863a79ed10c9fd1e23240704605024abbea3dc8bfb7891414ed2d86b76a2b",
+        "candidateSha256": "ff62f6152adfe86014ce02cf3ef6b5b23ea656c2d47b3fc309b300e1c45f4bff",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "promise",
+        "parentBytes": 122978,
+        "candidateBytes": 123503,
+        "deltaBytes": 525,
+        "parentSha256": "bc12c84685f65d7a2f457cbd989ae3b78ad867f8cfd65c184c8fa3c7b7087c13",
+        "candidateSha256": "69adfb3c4a1d9a8634d0f081b8d0bfe2050aee04f10feb47c46041bbba45f97f",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "date",
+        "parentBytes": 50950,
+        "candidateBytes": 118714,
+        "deltaBytes": 67764,
+        "parentSha256": "ca7b1848dbe583a09ce06a1f0d754d6b4ea2e63a188a5e8604e8f743cae666b9",
+        "candidateSha256": "5b89a8bc195dbdadb77b150f75808c844e9209a466f9f43d7fc6c6486fd37602",
+        "removedImports": [],
+        "addedImports": [
+          "env.__boundary_object_get:func",
+          "env.__boundary_object_set:func",
+          "env.__boundary_object_has:func",
+          "env.__boundary_object_delete:func",
+          "env.__boundary_object_call:func",
+          "env.__boundary_object_get_prototype:func",
+          "env.__boundary_object_set_prototype:func",
+          "env.__boundary_object_get_own_property_descriptor:func",
+          "env.__boundary_object_define_property_value:func",
+          "env.__boundary_object_define_property_accessor:func",
+          "env.__boundary_object_own_keys:func",
+          "env.__boundary_object_is_admitted:func",
+          "env.__boundary_object_for_in_keys:func"
+        ]
+      },
+      {
+        "name": "dataView",
+        "parentBytes": 114600,
+        "candidateBytes": 114749,
+        "deltaBytes": 149,
+        "parentSha256": "99960792b0061800ed931bf66d504a3cc5d032d009f8fbbb58d95c94e2551ca6",
+        "candidateSha256": "6cdbd46126ab2e1c29da2d6c1d28677b0e3897cb30088bb37602b51742484fc8",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "bigint",
+        "parentBytes": 39336,
+        "candidateBytes": 39336,
+        "deltaBytes": 0,
+        "parentSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "candidateSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "bigintFormatting",
+        "parentBytes": 38560,
+        "candidateBytes": 38560,
+        "deltaBytes": 0,
+        "parentSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "candidateSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "number",
+        "parentBytes": 30248,
+        "candidateBytes": 30248,
+        "deltaBytes": 0,
+        "parentSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "candidateSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "textGlobals",
+        "parentBytes": 47103,
+        "candidateBytes": 47103,
+        "deltaBytes": 0,
+        "parentSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "candidateSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "object",
+        "parentBytes": 122030,
+        "candidateBytes": 122166,
+        "deltaBytes": 136,
+        "parentSha256": "a13ed7566b8ff5c951a7daccab87be402c48eadc4d6cd746ce3fdc7060d8269e",
+        "candidateSha256": "b1d82635ab9910b0e942cf40adb97872f2cfa98499be0c030416bf432425c428",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "objectRest",
+        "parentBytes": 106746,
+        "candidateBytes": 107055,
+        "deltaBytes": 309,
+        "parentSha256": "a6de245ffbe73c844ce2a2bdcb3cf58053b9ff26182bf3eccf21e98e457ed908",
+        "candidateSha256": "f8b409dcd7703bce630637add8ffc20cfb174e7ef60da38deb4ec13b4ddce4da",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "functionBind",
+        "parentBytes": 114893,
+        "candidateBytes": 115109,
+        "deltaBytes": 216,
+        "parentSha256": "ffa1171f0d2306e9707171dc5010888d554be0ed4f4493170df3273b9dd90ff0",
+        "candidateSha256": "9ef2f08fe1ef145d8736bed24d54edfa6a23f48074ce7f56e382603cc143fe23",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "proxy",
+        "parentBytes": 718839,
+        "candidateBytes": 719048,
+        "deltaBytes": 209,
+        "parentSha256": "2ee2564e1dc5db55dc711ed1cd38ccc35e9a662797d551991b65026f1fbb3ff2",
+        "candidateSha256": "492fcee5e9ccdc0c54a071c3b9024be6de10f4c8218ba09c1ac1d274bb9566c6",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "typedArrays",
+        "parentBytes": 41676,
+        "candidateBytes": 41676,
+        "deltaBytes": 0,
+        "parentSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "candidateSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "objectDescriptors",
+        "parentBytes": 109264,
+        "candidateBytes": 109568,
+        "deltaBytes": 304,
+        "parentSha256": "7d15fda3ec21583b951a91e1ea8807dc09028c666d31d06eb748aad541bb3e12",
+        "candidateSha256": "462481c5c9b0949823d389176892504f999d37084db56f90250208e0afe3fa94",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "objectPrototype",
+        "parentBytes": 252267,
+        "candidateBytes": 252783,
+        "deltaBytes": 516,
+        "parentSha256": "e74fb8c40b005788dd1ff79b29bd6b546ad8b519ee9a1d564d576463c0f9bc67",
+        "candidateSha256": "018a8f49ecabf6dc202c66421e50da8f8485efdcd3a4a91b3757a503bf82d1e2",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "functionCall",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "deltaBytes": 0,
+        "parentSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "candidateSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "functionApply",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "deltaBytes": 0,
+        "parentSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "candidateSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "errors",
+        "parentBytes": 103005,
+        "candidateBytes": 103157,
+        "deltaBytes": 152,
+        "parentSha256": "e6212c0015eb97551a1770a30a6431cb385de3a7e19abcd60816f1bff6eb7316",
+        "candidateSha256": "71b3942888811d699008e91e920a61bd202700c8137e979bf11ecf357a9df24d",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "generators",
+        "parentBytes": 129195,
+        "candidateBytes": 129718,
+        "deltaBytes": 523,
+        "parentSha256": "c1ee0a8c57e6f9fdbd856f7100d9fd207bb5d3df32f7d82ce47607372b90df43",
+        "candidateSha256": "b4bd28b3b1222a40e1b0c63e9fa2725541cdda6447c095c6ed4612fa2fabaf6f",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "iterators",
+        "parentBytes": 40985,
+        "candidateBytes": 40985,
+        "deltaBytes": 0,
+        "parentSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "candidateSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "promiseCombinators",
+        "parentBytes": 128447,
+        "candidateBytes": 128973,
+        "deltaBytes": 526,
+        "parentSha256": "640de7a074bd835d2aba08afc3a7ec185e533194f872a3eb5c77c8390238afca",
+        "candidateSha256": "f1d018758a92ffb0dc63cd26855f5d8ec29091c215dc1f0c62545db035409b55",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "promiseAnyRace",
+        "parentBytes": 124013,
+        "candidateBytes": 124538,
+        "deltaBytes": 525,
+        "parentSha256": "61334b13e8a202a7ea7da851f7b5bab46cf3b9f5563030e9334347c685c43a96",
+        "candidateSha256": "e35b2af6a7687475b70b73d41dea9b9e697a5ca514522ed73aa32a49ddba13dc",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "regexpDynamic",
+        "parentBytes": 151330,
+        "candidateBytes": 151481,
+        "deltaBytes": 151,
+        "parentSha256": "7ae9da748ac271bdae391dbebda67f41dcf2326ccac16fb5d606ab8f2b0718b7",
+        "candidateSha256": "4cf6cc267a18c826397687c5c86c70062fd365ecd9572fcb5de4397413a8e36c",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "mapIteration",
+        "parentBytes": 42951,
+        "candidateBytes": 42951,
+        "deltaBytes": 0,
+        "parentSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "candidateSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "removedImports": [],
+        "addedImports": []
+      },
+      {
+        "name": "setIteration",
+        "parentBytes": 46222,
+        "candidateBytes": 111433,
+        "deltaBytes": 65211,
+        "parentSha256": "e7a1ca759e4848f4523f12442b9cf5d3ec1a2040bf10965ac2d2f4f0a65db33b",
+        "candidateSha256": "e84561b141fd3380745d5102ef0d7c59d359620d9162f13ba252749c4c066ee9",
+        "removedImports": [],
+        "addedImports": [
+          "env.__boundary_object_get:func",
+          "env.__boundary_object_set:func",
+          "env.__boundary_object_has:func",
+          "env.__boundary_object_delete:func",
+          "env.__boundary_object_call:func",
+          "env.__boundary_object_get_prototype:func",
+          "env.__boundary_object_set_prototype:func",
+          "env.__boundary_object_get_own_property_descriptor:func",
+          "env.__boundary_object_define_property_value:func",
+          "env.__boundary_object_define_property_accessor:func",
+          "env.__boundary_object_own_keys:func",
+          "env.__boundary_object_is_admitted:func",
+          "env.__boundary_object_for_in_keys:func"
+        ]
+      },
+      {
+        "name": "reflect",
+        "parentBytes": 115368,
+        "candidateBytes": 115516,
+        "deltaBytes": 148,
+        "parentSha256": "a2109f68ec0376b5ec51c9fe63ce71519c8f299750135e9ef8ccb6646e8fa0a6",
+        "candidateSha256": "aa47d6cadff30b807114fd60a617271e6f4317f14cdc14a4927508702493c3df",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "dynamicOps",
+        "parentBytes": 104587,
+        "candidateBytes": 104740,
+        "deltaBytes": 153,
+        "parentSha256": "c29bb1ca7b8cbe38f2cb0751b7a2c473da1ded65cec7bda8a62a2c2107f27e6c",
+        "candidateSha256": "3f99a1b2323b5f64a46d682be8cc7b6934e3188c8426802802c79b38bde7e33c",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "destructuring",
+        "parentBytes": 109619,
+        "candidateBytes": 109767,
+        "deltaBytes": 148,
+        "parentSha256": "b57a1571c6a1739af46b8bd8bd9472ead04f98601c9e59a7b045544310c8e996",
+        "candidateSha256": "b29fe80ba15ce4b6ef24ae52f010d1f8ab432c212b14a78b00ac961e7200a323",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "proxyMop",
+        "parentBytes": 594027,
+        "candidateBytes": 594545,
+        "deltaBytes": 518,
+        "parentSha256": "eb62e78103504ea5febdd41608015726f3844cf9fe64dbaca63fdc7cc514dfbb",
+        "candidateSha256": "4031f7d590819f5e71f8feb36852663bc0c07a4d626d83696ddd5ed470c4bc19",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "proxyRevocable",
+        "parentBytes": 594017,
+        "candidateBytes": 594532,
+        "deltaBytes": 515,
+        "parentSha256": "40a76a60f277481bf68b64773be3434086a5418dc8f178fcb558117b0fdf561c",
+        "candidateSha256": "17fa847f0043da7b29b01f0d0c7f2768b1a29fe79fb43b30112eb58f663a5bb3",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      },
+      {
+        "name": "stringProtocols",
+        "parentBytes": 121563,
+        "candidateBytes": 121712,
+        "deltaBytes": 149,
+        "parentSha256": "4e9d9e3265dec4e2ec4bdc0ea53b1541dc5cf64adaabde9f669514e5cd9a0a4b",
+        "candidateSha256": "dbe376c780b1a58c1aaa71de2ddf8f908d6467b71cceecf907b71c95af91504a",
+        "removedImports": ["env.__boundary_object_keys:func"],
+        "addedImports": []
+      }
+    ]
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "parentBytes": 11413,
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "parentBytes": 33185,
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 146816,
+      "sha256": "22686ce8db34ef5e2fe6053952683e075f4df0f98cd317d144345826ebf51490",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "22686ce8db34ef5e2fe6053952683e075f4df0f98cd317d144345826ebf51490",
+      "parentBytes": 146816,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "parentBytes": 22719,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "parentBytes": 52928,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 145997,
+      "sha256": "2b905598dcb10b5343da74c9107a2e801eaa57e98b06ae3277176ab67ec6a3f2",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "2b905598dcb10b5343da74c9107a2e801eaa57e98b06ae3277176ab67ec6a3f2",
+      "parentBytes": 145997,
+      "byteIdentical": true
+    }
+  ],
+  "negativeAndLegacyProbes": [
+    {
+      "lane": "parent",
+      "name": "typedDecimal",
+      "source": "export function get():(a:number,b:number)=>number{return function(a:number,b:number):number{return a+b;};}",
+      "expected": 42,
+      "bytes": 22678,
+      "sha256": "2b85bfcb9488d68e1505f111f22a62d31d27ab0d272a54bb95cc0bcef643979f",
+      "imports": ["env.__str_from_mem", "env.__str_to_mem", "env.__str_extern_len"],
+      "slots": 18
+    },
+    {
+      "lane": "parent",
+      "name": "typedRest",
+      "source": "export function get():any{return function(...a:number[]):number{return a.length;};}",
+      "expected": 32,
+      "bytes": 116569,
+      "sha256": "ca442ad07a699d5baccfccb63a196df5ad89b99a67e842421bff0271082187e1",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_apply",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys",
+        "env.__unwrap_for_wasm",
+        "env.__boundary_object_callable_kind"
+      ],
+      "slots": 18,
+      "actual": 5
+    },
+    {
+      "lane": "parent",
+      "name": "nullArgument",
+      "source": "export function get():any{return function(a:any):number{return a===null?42:-1;};}",
+      "expected": 42,
+      "bytes": 111466,
+      "sha256": "52f12c8d1f2657b2353b855caaba8ecf903c0046c88f1db36b4acd0ec61b5c5f",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 18,
+      "actual": 42
+    },
+    {
+      "lane": "parent",
+      "name": "nullReceiver",
+      "source": "export function get():any{return function(this:any):number{return this===null?42:-1;};}",
+      "expected": 42,
+      "bytes": 112163,
+      "sha256": "018029661eb0d46010bf7204b8eeb3e6962f14df12785a869534c7a393b33c3e",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 18,
+      "actual": -1
+    },
+    {
+      "lane": "parent",
+      "name": "wideArgc",
+      "source": "export function get():any{return function(a:number,b:number,c:number,d:number,e:number,f:number,g:number,h:number,i:number):number{return arguments.length*100+arguments[31];};}",
+      "expected": 3201,
+      "bytes": 112847,
+      "sha256": "8df7e78af5855a054f49cd42c15d43c203e0e6970e4c6a5610ac9e3328ca71d0",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 18,
+      "error": "Wasm closure returned to JS host has no authenticated call dispatcher"
+    },
+    {
+      "lane": "candidate",
+      "name": "typedDecimal",
+      "source": "export function get():(a:number,b:number)=>number{return function(a:number,b:number):number{return a+b;};}",
+      "expected": 42,
+      "bytes": 107033,
+      "sha256": "8c05dff41ece46827fb8655e7ec3c03cfc9fb60a1ab3eba088953591b5bb6e17",
+      "imports": [
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys",
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len"
+      ],
+      "slots": 19,
+      "actual": 42
+    },
+    {
+      "lane": "candidate",
+      "name": "typedRest",
+      "source": "export function get():any{return function(...a:number[]):number{return a.length;};}",
+      "expected": 32,
+      "bytes": 116770,
+      "sha256": "f679e93a34bf1816b79a5c0c11d51b1fd7ff0e8cabdb65b29b00ede42d1958d0",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_call",
+        "env.__boundary_object_apply",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys",
+        "env.__unwrap_for_wasm",
+        "env.__boundary_object_callable_kind"
+      ],
+      "slots": 19,
+      "actual": 5
+    },
+    {
+      "lane": "candidate",
+      "name": "nullArgument",
+      "source": "export function get():any{return function(a:any):number{return a===null?42:-1;};}",
+      "expected": 42,
+      "bytes": 111682,
+      "sha256": "aed4d7a579c37a6b5ea72083a618b0919d76e9b55be9a7f6ae9c1840e7f2f7fb",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 19,
+      "actual": 42
+    },
+    {
+      "lane": "candidate",
+      "name": "nullReceiver",
+      "source": "export function get():any{return function(this:any):number{return this===null?42:-1;};}",
+      "expected": 42,
+      "bytes": 112379,
+      "sha256": "cde757c19aa8c96d76e4c94851f7c39f89e0d0594a6d44f740635e3f3652e6b2",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 19,
+      "actual": -1
+    },
+    {
+      "lane": "candidate",
+      "name": "wideArgc",
+      "source": "export function get():any{return function(a:number,b:number,c:number,d:number,e:number,f:number,g:number,h:number,i:number):number{return arguments.length*100+arguments[31];};}",
+      "expected": 3201,
+      "bytes": 113063,
+      "sha256": "0ce7f28cc5a0d2240a4f2b40579f488ed8844df3a841cb7e32a1ee2ea97cf1bd",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 19,
+      "error": "Wide fixed callable over-application is not yet supported"
+    },
+    {
+      "lane": "legacy18-new-runtime",
+      "name": "typedDecimal",
+      "source": "export function get():(a:number,b:number)=>number{return function(a:number,b:number):number{return a+b;};}",
+      "expected": 42,
+      "bytes": 22678,
+      "sha256": "2b85bfcb9488d68e1505f111f22a62d31d27ab0d272a54bb95cc0bcef643979f",
+      "imports": ["env.__str_from_mem", "env.__str_to_mem", "env.__str_extern_len"],
+      "slots": 18
+    },
+    {
+      "lane": "legacy18-new-runtime",
+      "name": "typedRest",
+      "source": "export function get():any{return function(...a:number[]):number{return a.length;};}",
+      "expected": 32,
+      "bytes": 116569,
+      "sha256": "ca442ad07a699d5baccfccb63a196df5ad89b99a67e842421bff0271082187e1",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_apply",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys",
+        "env.__unwrap_for_wasm",
+        "env.__boundary_object_callable_kind"
+      ],
+      "slots": 18,
+      "actual": 5
+    },
+    {
+      "lane": "legacy18-new-runtime",
+      "name": "nullArgument",
+      "source": "export function get():any{return function(a:any):number{return a===null?42:-1;};}",
+      "expected": 42,
+      "bytes": 111466,
+      "sha256": "52f12c8d1f2657b2353b855caaba8ecf903c0046c88f1db36b4acd0ec61b5c5f",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 18,
+      "actual": 42
+    },
+    {
+      "lane": "legacy18-new-runtime",
+      "name": "nullReceiver",
+      "source": "export function get():any{return function(this:any):number{return this===null?42:-1;};}",
+      "expected": 42,
+      "bytes": 112163,
+      "sha256": "018029661eb0d46010bf7204b8eeb3e6962f14df12785a869534c7a393b33c3e",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 18,
+      "actual": -1
+    },
+    {
+      "lane": "legacy18-new-runtime",
+      "name": "wideArgc",
+      "source": "export function get():any{return function(a:number,b:number,c:number,d:number,e:number,f:number,g:number,h:number,i:number):number{return arguments.length*100+arguments[31];};}",
+      "expected": 3201,
+      "bytes": 112847,
+      "sha256": "8df7e78af5855a054f49cd42c15d43c203e0e6970e4c6a5610ac9e3328ca71d0",
+      "imports": [
+        "env.__str_from_mem",
+        "env.__str_to_mem",
+        "env.__str_extern_len",
+        "env.__boundary_object_get",
+        "env.__boundary_object_set",
+        "env.__boundary_object_has",
+        "env.__boundary_object_delete",
+        "env.__boundary_object_keys",
+        "env.__boundary_object_call",
+        "env.__boundary_object_get_prototype",
+        "env.__boundary_object_set_prototype",
+        "env.__boundary_object_get_own_property_descriptor",
+        "env.__boundary_object_define_property_value",
+        "env.__boundary_object_define_property_accessor",
+        "env.__boundary_object_own_keys",
+        "env.__boundary_object_is_admitted",
+        "env.__boundary_object_for_in_keys"
+      ],
+      "slots": 18,
+      "error": "Wasm closure returned to JS host has no authenticated call dispatcher"
+    }
+  ],
+  "probeSource": "import { createHash } from 'node:crypto';\nimport { compile as candidateCompile } from '../src/index.ts';\nimport { compile as parentCompile } from '../../codex-6979-s7o-parent/src/index.ts';\nimport * as candidateRuntime from '../src/runtime.ts';\nimport * as parentRuntime from '../../codex-6979-s7o-parent/src/runtime.ts';\nconst fixtures = {\n  typedDecimal: {source:'export function get():(a:number,b:number)=>number{return function(a:number,b:number):number{return a+b;};}',args:[1.5,40.5],expected:42},\n  typedRest: {source:'export function get():any{return function(...a:number[]):number{return a.length;};}',args:Array(32).fill(1),expected:32},\n  nullArgument: {source:'export function get():any{return function(a:any):number{return a===null?42:-1;};}',args:[null],expected:42},\n  nullReceiver: {source:'export function get():any{return function(this:any):number{return this===null?42:-1;};}',args:[],expected:42},\n  wideArgc: {source:'export function get():any{return function(a:number,b:number,c:number,d:number,e:number,f:number,g:number,h:number,i:number):number{return arguments.length*100+arguments[31];};}',args:Array(32).fill(1),expected:3201},\n};\nfor(const [lane,compile,runtime] of [['parent',parentCompile,parentRuntime],['candidate',candidateCompile,candidateRuntime],['legacy18-new-runtime',parentCompile,candidateRuntime]] as const){\n  for(const [name,fixture]of Object.entries(fixtures)){\n    let evidence:any={lane,name,source:fixture.source,expected:fixture.expected};\n    try{\n      const r=await compile(fixture.source,{skipSemanticDiagnostics:true});\n      if(!r.success)throw Error(JSON.stringify(r.errors));\n      const imports=runtime.buildCompiledImports(r);\n      const{instance}=await WebAssembly.instantiate(r.binary,imports);imports.setInstance?.(instance);\n      const ex=runtime.wrapCompiledExports(r,instance) as any;\n      evidence={...evidence,bytes:r.binary.length,sha256:createHash('sha256').update(r.binary).digest('hex'),imports:WebAssembly.Module.imports(new WebAssembly.Module(r.binary)).map(x=>x.module+'.'+x.name),slots:(instance.exports as any).$cu?.length};\n      const actual=ex.get().apply(null,fixture.args);\n      evidence.actual=actual===undefined?'<undefined>':actual;\n    }catch(e:any){evidence.error=e?.message??String(e);}\n    console.log(JSON.stringify(evidence));\n  }\n}\n",
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "functionBudget": "PASS after extracting legacy width assertion; no new allowance",
+    "locBudget": "PASS",
+    "irLayering": "PASS87 import lines/15 files against90",
+    "flatDirectory": "PASS833",
+    "compilerInventory": "PASS; new leaf explicitly unmigrated/mixed-needs-split",
+    "irFallbacks": "PASS via node --import tsx; direct node invocation initially failed module resolution",
+    "importCycles": {
+      "parent": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+      "candidate": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+      "status": "FAIL on both; no waiver or whole-graph equality claim"
+    },
+    "deadExports": "core-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)\ncore-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)\nmoved-runtime gate: FAIL (production-rooted evidence incomplete)\n  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412\n  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151\npreservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses\ngraph OPEN; strict modeled closure FAIL\nretirement/deletion NOT CERTIFIED\n"
+  },
+  "remaining": [
+    "Native typed rest vector concatenation still truncates32 to5",
+    "Wide fixed over-application explicitly refused until native extras/arguments preservation is implemented",
+    "Null receiver normalization still wrong, parent and candidate -1 vs42; null argument42 retained",
+    "Legacy18 modules accepted with same measured outcomes and limitations, not retroactively widened",
+    "JS facade name/length and typed JS array identity/mutation/aggregate return residuals from preceding handoff require fresh work",
+    "Init-window complete argv, bound opaque function slots, primitive Object.assign and patched Math, source/runtime/raw-mode retirement, strict modeled closure and cycles",
+    "Prerequisite PR6701 and recovered S7-b; full equivalence/conformance/npm compatibility/accelerator/cost acceptance"
+  ]
+}

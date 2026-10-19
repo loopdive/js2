@@ -32,34 +32,32 @@ export function registerObjectSameValueHelper(
   // range — undefined at __defineProperty_value" hard emit error (loopdive/js2wasm#389).
   // The compatibility-provider path still owns `__object_is` via its JS import,
   // so its output stays byte-identical.
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    addUnionImportsViaRegistry(ctx);
-    const bigintEqualityIdx = ensureBigIntCarrierEq(ctx);
-    if (bigintEqualityIdx === undefined) throw new Error("native SameValue requires canonical BigInt carrier equality");
-    const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
-    const typeofBoolIdx = ctx.funcMap.get("__typeof_boolean")!;
-    const typeofBigIdx = ctx.funcMap.get("__typeof_bigint")!;
-    const unboxNumIdx = ctx.funcMap.get("__unbox_number")!;
-    const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean")!;
-    registerNative(
-      "__object_is",
-      [{ kind: "externref" }, { kind: "externref" }],
-      [{ kind: "i32" }],
-      [
-        { name: "aa", type: { kind: "anyref" } },
-        { name: "ba", type: { kind: "anyref" } },
-      ],
-      buildObjectSameValueBody({
-        typeofNumIdx,
-        typeofBoolIdx,
-        typeofBigIdx,
-        unboxNumIdx,
-        unboxBoolIdx,
-        bigint: { kind: "carrier", equalIdx: bigintEqualityIdx },
-        anyStrTypeIdx,
-        strFlattenIdx,
-        strEqualsIdx,
-      }),
-    );
-  }
+  addUnionImportsViaRegistry(ctx);
+  const bigintEqualityIdx = ensureBigIntCarrierEq(ctx);
+  if (bigintEqualityIdx === undefined) throw new Error("native SameValue requires canonical BigInt carrier equality");
+  const typeofNumIdx = ctx.funcMap.get("__typeof_number")!;
+  const typeofBoolIdx = ctx.funcMap.get("__typeof_boolean")!;
+  const typeofBigIdx = ctx.funcMap.get("__typeof_bigint")!;
+  const unboxNumIdx = ctx.funcMap.get("__unbox_number")!;
+  const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean")!;
+  registerNative(
+    "__object_is",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+    [
+      { name: "aa", type: { kind: "anyref" } },
+      { name: "ba", type: { kind: "anyref" } },
+    ],
+    buildObjectSameValueBody({
+      typeofNumIdx,
+      typeofBoolIdx,
+      typeofBigIdx,
+      unboxNumIdx,
+      unboxBoolIdx,
+      bigint: { kind: "carrier", equalIdx: bigintEqualityIdx },
+      anyStrTypeIdx,
+      strFlattenIdx,
+      strEqualsIdx,
+    }),
+  );
 }

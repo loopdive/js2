@@ -47,7 +47,7 @@ import {
   undefinedExternInstrs,
 } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#3125) IsCallable arms
-import type { CodegenContext, OptionalParamInfo, RestParamInfo } from "./context/types.js";
+import { type CodegenContext, type OptionalParamInfo, type RestParamInfo, wasmGcBackend } from "./context/types.js";
 import { restDispatchInfo, restVecArgInstrs } from "./object-model/closed-dispatch-rest-arm.js"; // (#7021)
 import { classMemberFuncKey } from "./class-member-keys.js";
 import {
@@ -80,7 +80,6 @@ import { defaultValueInstrs } from "./type-coercion.js";
 // (#5383 S2g) The externref-argument marshalling this file used to own inline;
 // `standalone-class-construct.ts` is the second caller.
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
-import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
 import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#6693) JS call arity
@@ -213,7 +212,7 @@ function nullishReceiverMessage(methodName: string): string {
 
 /** Reserve-time registration of the nullish-receiver TypeError machinery. */
 function reserveNullishReceiverThrow(ctx: CodegenContext, methodName: string): void {
-  if (!ctx.standalone && !ctx.wasi) return;
+  if (!wasmGcBackend(ctx)) return;
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   ensureExnTag(ctx);
   addStringConstantGlobal(ctx, nullishReceiverMessage(methodName));
@@ -223,11 +222,11 @@ function reserveNullishReceiverThrow(ctx: CodegenContext, methodName: string): v
  * Fill-time guard instrs: throw TypeError when the receiver is nullish.
  * `__nullish_to_null` canonicalizes the (#2106 S1) undefined singleton to
  * null first; a bare null receiver is caught either way. Empty when the
- * machinery is absent (host lane, or the reserve never ran).
+ * machinery is absent (linear backend, or the reserve never ran).
  */
 function nullishReceiverGuardInstrs(ctx: CodegenContext, methodName: string): Instr[] {
-  if (!ctx.standalone && !ctx.wasi) return [];
-  // (#4394) `.then` is exempt: the standalone then-chain native (async-scheduler
+  if (!wasmGcBackend(ctx)) return [];
+  // (#4394) `.then` is exempt: the native then-chain (async-scheduler
   // + then-thenable-miss) OWNS then-receiver semantics — its thenable/miss arms
   // must observe the receiver themselves, and guarding here composes into an
   // illegal cast on a user-thenable receiver (measured: the guard alone flips
@@ -293,7 +292,7 @@ function nullishReceiverGuardInstrs(ctx: CodegenContext, methodName: string): In
  * Reserving is idempotent, so asking is free to repeat.
  */
 export function callSiteNullishReceiverGuardApplies(ctx: CodegenContext, methodName: string): boolean {
-  if (!ctx.standalone && !ctx.wasi) return false;
+  if (!wasmGcBackend(ctx)) return false;
   if (methodName === "then") return false; // the #4394 exemption, unchanged
   reserveNullishReceiverThrow(ctx, methodName);
   return ctx.funcMap.get("__new_TypeError") !== undefined && ctx.exnTagIdx >= 0;
@@ -320,8 +319,6 @@ export function buildCallSiteNullishReceiverGuard(ctx: CodegenContext, recvLocal
  * -> externref`; the call site coerces each argument to externref before the
  * call, and the fill side coerces each back to the method's declared param type.
  *
- * The JS-host lane also uses this for ambiguous user methods on an `any`
- * receiver; its fallback builds a real host argument array.
  */
 export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: string, arity = 0): number {
   const name = dispatcherName(methodName, arity);
@@ -336,24 +333,7 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__objvec_new`/`__objvec_push`/`__extern_method_call`; the method-name
   // string constant is materialized for the fallback
   // `__extern_method_call(recv, "<name>", [args…])`.
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjVecBuilders(ctx);
-  } else {
-    ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-    ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-    ensureLateImport(
-      ctx,
-      "__extern_method_call",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    // A dynamic JS call may omit a formal parameter even when the source was
-    // allowJs and TypeScript did not preserve an `?` marker.  The closed
-    // dispatcher must pass the host's real `undefined`, not a null externref,
-    // so the callee's defaulting and null checks see the same value as Node.
-    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
-    addUnionImportsViaRegistry(ctx);
-  }
+  ensureObjVecBuilders(ctx);
   addStringConstantGlobal(ctx, methodName);
   reserveNullishReceiverThrow(ctx, methodName);
 
@@ -363,18 +343,18 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // NOW so `fillApplyClosure` (which runs before this module's fill) gives it a
   // real body and the fill only READS funcMap (#1719). Degrades to the
   // undefined sentinel when no closure dispatcher exists — never traps.
-  if (ctx.standalone || ctx.wasi) reserveApplyClosure(ctx);
+  if (wasmGcBackend(ctx)) reserveApplyClosure(ctx);
 
   // (#2583) For the callback-free array search/predicate methods, the fill adds
   // a native `$__vec_base` brand arm so a genuinely-`any` array receiver runs
   // instead of falling to the open-`$Object` arm. Register ALL of that arm's
   // dependencies NOW (reserve time) so their funcIdx values are stable before
   // `fillClosedMethodDispatch` (which only READS funcMap — #1719). The arm is
-  // standalone-only (the helpers self-gate on `ctx.standalone || ctx.wasi`);
+  // WasmGC-only (the helpers self-gate on the same backend query);
   // `ensureObjVecBuilders`→`ensureObjectRuntime` already pulled in
   // `__extern_length`/`__extern_get_idx`, and the $__vec_base supertype is
   // idempotently registered here.
-  if ((ctx.standalone || ctx.wasi) && VEC_SEARCH_METHODS.has(methodName) && arity >= 1) {
+  if (wasmGcBackend(ctx) && VEC_SEARCH_METHODS.has(methodName) && arity >= 1) {
     getOrRegisterVecBaseType(ctx);
     ensureExternStrictEqHelper(ctx); // indexOf / lastIndexOf (also a SameValueZero dep)
     if (methodName === "includes") ensureExternSameValueZeroHelper(ctx);
@@ -386,7 +366,7 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // #3507 — the `$NativeRegExp` test/1 brand arm returns a real JS boolean.
   // Register boxing before the call site mints the helper so finalize remains
   // read-only and no import shift can invalidate baked indices.
-  if (ctx.standalone && methodName === "test" && arity === 1) {
+  if (wasmGcBackend(ctx) && methodName === "test" && arity === 1) {
     addUnionImportsViaRegistry(ctx);
   }
 
@@ -396,8 +376,8 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // length that the arm boxes). The carrier-generic helper is reserved by the
   // CALL SITE (`calls.ts`, which already imports
   // `reserveVecMethodHelper` from `../index.js` — importing it here would form an
-  // eval-time circular-import cycle). Standalone/wasi only.
-  if ((ctx.standalone || ctx.wasi) && VEC_MUTATE_METHODS.has(methodName) && isVecMutateForm(methodName, arity)) {
+  // eval-time circular-import cycle). WasmGC only.
+  if (wasmGcBackend(ctx) && VEC_MUTATE_METHODS.has(methodName) && isVecMutateForm(methodName, arity)) {
     getOrRegisterVecBaseType(ctx);
     addUnionImportsViaRegistry(ctx); // __box_number for the push new-length result
   }
@@ -409,8 +389,8 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // (defined funcs, append-only) — so `fillClosedMethodDispatch` only READS
   // `ctx.mapHelpers`/`funcMap` (#1719). The module edge → map-runtime.ts is
   // eval-time-cycle-safe (the hof-native.ts ↔ this-module precedent; all uses
-  // are inside function bodies). Standalone/wasi only.
-  if ((ctx.standalone || ctx.wasi) && COLLECTION_METHODS.has(methodName) && isCollectionMethodForm(methodName, arity)) {
+  // are inside function bodies). WasmGC only.
+  if (wasmGcBackend(ctx) && COLLECTION_METHODS.has(methodName) && isCollectionMethodForm(methodName, arity)) {
     addUnionImportsViaRegistry(ctx);
     ensureMapHelpers(ctx);
     ensureSetHelpers(ctx);
@@ -422,11 +402,9 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // register the `$__vec_base` supertype for the fill's brand test. The fill
   // adds a `$__vec_base`/`$ObjVec` arm that runs the loop natively and invokes
   // the callback through `__apply_closure` — retiring the `env.__make_callback`
-  // host bridge on this lane (unsatisfiable standalone: the import leak made
-  // the whole module fail to instantiate). Standalone only: the
-  // `__extern_get_idx` vec/array-like arms the loop reads through are emitted
-  // only under `ctx.standalone` (see `objArrayLikeArms` in object-runtime.ts —
-  // same gate as the vararg dispatcher above).
+  // host bridge on this lane. The `__extern_get_idx` vec/array-like arms the
+  // loop reads through belong to the same WasmGC object runtime (see
+  // `objArrayLikeArms` in object-runtime.ts).
   // (#6651 E-S1) Arity 0 is admitted too: `sample.every()` is `IsCallable(undefined)`
   // → TypeError per §23.1.3.x step 3, and without the arm the zero-arg call fell
   // to the open-`$Object` bottom arm, where `__extern_method_call` answers
@@ -434,7 +412,7 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // throw (`<m>/callbackfn-{not-callable,is-not-callable}-throws.js`, the
   // "no arg(s)" assertion). The arm passes the canonical `undefined` as the
   // callback so the helper's own IsCallable gate raises the TypeError.
-  if (ctx.standalone && NATIVE_HOF_METHODS.has(methodName)) {
+  if (wasmGcBackend(ctx) && NATIVE_HOF_METHODS.has(methodName)) {
     getOrRegisterVecBaseType(ctx);
     ensureNativeArrayHof(ctx, methodName);
   }
@@ -447,8 +425,8 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__extern_method_call` answers `undefined` for a non-`$Object` brand by
   // construction — which is how `n.concat(r, i)` came back undefined inside the
   // compiled Temporal provider and took every property-bag entry point with it.
-  // Same shape and same gate as the #2927 mutator arm above. Standalone only.
-  if (ctx.standalone && DYN_ARRAY_PRODUCER_METHODS.has(methodName) && isDynArrayProducerForm(methodName, arity)) {
+  // Same shape and same WasmGC gate as the #2927 mutator arm above.
+  if (wasmGcBackend(ctx) && DYN_ARRAY_PRODUCER_METHODS.has(methodName) && isDynArrayProducerForm(methodName, arity)) {
     getOrRegisterVecBaseType(ctx);
     ensureNativeArrayProducer(ctx, methodName);
   }
@@ -460,8 +438,8 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // that is neither a closed struct with the method, nor a vec/$ObjVec, nor a
   // `$Object`, is exactly the generator/driven-frame/iterator-carrier set that
   // previously fell to `__extern_method_call`'s non-`$Object` arm and silently
-  // answered `undefined`. Standalone only.
-  if (ctx.standalone && NATIVE_ITER_HOF_METHODS.has(methodName) && isIterHofForm(methodName, arity)) {
+  // answered `undefined`. WasmGC only.
+  if (wasmGcBackend(ctx) && NATIVE_ITER_HOF_METHODS.has(methodName) && isIterHofForm(methodName, arity)) {
     ensureNativeIterHof(ctx, methodName);
   }
 
@@ -470,8 +448,8 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
   // `__iter_lazy_<name>` + shared steppers NOW (append-only; the fill only READS
   // funcMap — #1719). The fill adds a lazy arm under the same non-vec/non-$Object
   // iterator split as the eager arm; for map/filter it sits UNDER the #3098 vec
-  // HOF arm so a vec receiver still eager-maps. Standalone only.
-  if (ctx.standalone && LAZY_ITER_METHODS.has(methodName) && isLazyIterForm(methodName, arity)) {
+  // HOF arm so a vec receiver still eager-maps. WasmGC only.
+  if (wasmGcBackend(ctx) && LAZY_ITER_METHODS.has(methodName) && isLazyIterForm(methodName, arity)) {
     ensureNativeLazyIter(ctx, methodName);
   }
 
@@ -515,8 +493,8 @@ export function reserveClosedMethodDispatch(ctx: CodegenContext, methodName: str
  * Like the fixed-arity reserve, all fallback-arm dependencies are registered NOW
  * (during compilation) so the fill only READS funcMap — `ensureObjVecBuilders`
  * pulls in the object runtime including `__extern_get_idx` / `__extern_length`,
- * which the per-struct arms read args through. Idempotent. Only meaningful under
- * `ctx.standalone || ctx.wasi`.
+ * which the per-struct arms read args through. Idempotent. Only meaningful on
+ * the WasmGC backend.
  */
 export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodName: string): number {
   const name = varargDispatcherName(methodName);
@@ -526,23 +504,12 @@ export function reserveClosedMethodDispatchVararg(ctx: CodegenContext, methodNam
   // Pulls in the object runtime (`__objvec_new`/`__objvec_push`/
   // `__extern_method_call` AND `__extern_get_idx`/`__extern_length`) so the fill
   // is read-only. The method-name string constant backs the fallback call.
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjVecBuilders(ctx);
-  } else {
-    ensureLateImport(
-      ctx,
-      "__extern_method_call",
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-    addUnionImportsViaRegistry(ctx);
-  }
+  ensureObjVecBuilders(ctx);
   addStringConstantGlobal(ctx, methodName);
   reserveNullishReceiverThrow(ctx, methodName);
   // (#3117) Field-stored-closure arms invoke via `__apply_closure` — see the
   // fixed-arity reserve above.
-  if (ctx.standalone || ctx.wasi) reserveApplyClosure(ctx);
+  if (wasmGcBackend(ctx)) reserveApplyClosure(ctx);
 
   // Signature: (recv: externref, args: externref) -> externref.
   const typeIdx = addFuncType(
@@ -641,7 +608,7 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
     if (!funcType || funcType.kind !== "func") continue;
     const paramTypes = funcType.params.slice(1);
     const optionalParams = ctx.funcOptionalParams.get(fullName) ?? [];
-    const hostDynamic = !ctx.standalone && !ctx.wasi && ctx.hostDynamicClassMethodNames.has(methodName);
+    const hostDynamic = !wasmGcBackend(ctx) && ctx.hostDynamicClassMethodNames.has(methodName);
     // A fixed-arity call may under-apply a method only when every omitted
     // formal has a default/optional marker AND `buildEntryArm` can faithfully
     // stand in for it. Those are two different questions, and (#4466) treating
@@ -824,8 +791,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
   const mod = ctx.mod;
   const ci: CoerceIdxs = buildCoerceIdxs(ctx);
   const methodCallIdx = ctx.funcMap.get("__extern_method_call");
-  const objVecNewIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_new" : "__js_array_new");
-  const objVecPushIdx = ctx.funcMap.get(ctx.standalone || ctx.wasi ? "__objvec_push" : "__js_array_push");
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
 
   // ── Fixed-arity dispatchers (#2151 Slices 1–3) ──────────────────────────
@@ -977,7 +944,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       const objTypeIdxForIter = ctx.objectRuntimeTypes?.objectTypeIdx;
       const objVecTypeIdxForIter = ctx.objectRuntimeTypes?.objVecTypeIdx;
       if (
-        ctx.standalone &&
+        wasmGcBackend(ctx) &&
         iterHofIdx !== undefined &&
         NATIVE_ITER_HOF_METHODS.has(methodName) &&
         isIterHofForm(methodName, arity) &&
@@ -1055,7 +1022,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       const objTypeIdxForLazy = ctx.objectRuntimeTypes?.objectTypeIdx;
       const objVecTypeIdxForLazy = ctx.objectRuntimeTypes?.objVecTypeIdx;
       if (
-        ctx.standalone &&
+        wasmGcBackend(ctx) &&
         lazyCtorIdx !== undefined &&
         LAZY_ITER_METHODS.has(methodName) &&
         isLazyIterForm(methodName, arity) &&
@@ -1121,14 +1088,10 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // carrier through the fully-armed `__iterator_next` and materialize a REAL
     // §7.4.11 result object. Placed outermost: a user closed struct with its own
     // `next` is neither carrier, so the `ref.test` misses and precedence holds.
-    // (#6484 S3 review) `ctx.wasi` joined the gate. WASI is the other no-JS-host
-    // lane and builds the same `$IterRec` carriers, but this arm was
-    // `ctx.standalone`-only, so `it.next()` on a typed-array iterator fell to
-    // `__extern_method_call` and threw `next is not a function` under
-    // `--target wasi` while standalone answered correctly. Map/Set hid the gap:
-    // map-runtime.ts prepends its OWN `$__IterRec.next()` arm to
-    // `__extern_method_call`, so only the vec carriers were exposed.
-    if ((ctx.standalone || ctx.wasi) && methodName === "next" && arity === 0) {
+    // (#6484 S3 review) Every WasmGC environment builds the same `$IterRec`
+    // carriers. Map/Set also prepend their own `$__IterRec.next()` arm to
+    // `__extern_method_call`; this shared arm covers the remaining vec carriers.
+    if (wasmGcBackend(ctx) && methodName === "next" && arity === 0) {
       const stepResultIdx = ctx.funcMap.get("__iter_next_result");
       const carrierTypeIdxs = [ctx.structMap.get("__IterRec"), ctx.structMap.get("$LazyIterHelper")].filter(
         (t): t is number => t !== undefined,
@@ -1159,7 +1122,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // IteratorClose once, never after exhaustion, answer `{undefined, true}`.
     const returnResultIdx = ctx.funcMap.get("__iter_return_result");
     const lazyHelperTypeIdx = ctx.structMap.get("$LazyIterHelper");
-    if ((ctx.standalone || ctx.wasi) && methodName === "return" && arity === 0 && returnResultIdx !== undefined) {
+    if (wasmGcBackend(ctx) && methodName === "return" && arity === 0 && returnResultIdx !== undefined) {
       if (lazyHelperTypeIdx !== undefined) {
         current = [
           { op: "local.get", index: anyLocalIdx },
@@ -1184,8 +1147,8 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // fall to the open-`$Object` bottom arm and return `undefined`. We service it
     // natively (no closure bridge) via `__extern_length`/`__extern_get_idx` +
     // `__extern_strict_eq`/`__extern_same_value_zero`, mirroring the typed
-    // array-method path's semantics (#1461/#54). Standalone/wasi only — gated on
-    // the deps being present (all registered at reserve time).
+    // array-method path's semantics (#1461/#54). WasmGC-only, gated on the deps
+    // being present (all registered at reserve time).
     //
     // Scratch locals `$len`/`$i` (f64) sit AFTER `__any`/`__argvec`; their
     // indices are computed from the locals array below so they stay in sync.
@@ -1196,7 +1159,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     const sameValueZeroIdx = ctx.funcMap.get("__extern_same_value_zero");
     const eqIdx = methodName === "includes" ? sameValueZeroIdx : strictEqIdx;
     const wantVecArm =
-      (ctx.standalone || ctx.wasi) &&
+      wasmGcBackend(ctx) &&
       VEC_SEARCH_METHODS.has(methodName) &&
       arity >= 1 &&
       ctx.vecBaseTypeIdx >= 0 &&
@@ -1493,7 +1456,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // `__vec_pop` helpers (reserved at reserve-time; body filled in the finalize
     // vec-export pass).
     const wantVecMutArm =
-      (ctx.standalone || ctx.wasi) &&
+      wasmGcBackend(ctx) &&
       VEC_MUTATE_METHODS.has(methodName) &&
       isVecMutateForm(methodName, arity) &&
       ctx.vecBaseTypeIdx >= 0;
@@ -1592,7 +1555,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // `concat`/`map`/`Object.keys` themselves produce — which is what makes
     // `n.concat(r, i).sort()` work end-to-end rather than only its first half.
     if (
-      ctx.standalone &&
+      wasmGcBackend(ctx) &&
       DYN_ARRAY_PRODUCER_METHODS.has(methodName) &&
       isDynArrayProducerForm(methodName, arity) &&
       ctx.vecBaseTypeIdx >= 0 &&
@@ -1635,9 +1598,9 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // SameValueZero agree across the typed and any-receiver lanes. Sits UNDER
     // the closed-struct/field arms (a user `{ get(){…} }` still wins); a
     // `$Map` never matches a vec/DV test, so order among brand arms is
-    // behavior-neutral. Standalone/wasi only.
+    // behavior-neutral. WasmGC only.
     if (
-      (ctx.standalone || ctx.wasi) &&
+      wasmGcBackend(ctx) &&
       ctx.mapTypeIdx >= 0 &&
       COLLECTION_METHODS.has(methodName) &&
       isCollectionMethodForm(methodName, arity)
@@ -1751,13 +1714,13 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // `__hof_<name>(recv, cb, thisArg)` — dispatcher arity 1 passes
     // undefined thisArg, arity ≥2 forwards arg1 (extra args ignored per
     // spec); reduce family `__hof_<name>(recv, cb, init, hasInit)` — arity 1
-    // means no initial value. Standalone only (gated at reserve; the helper
-    // is simply absent otherwise). Sits UNDER the closed-struct arms so a
+    // means no initial value. WasmGC-only (gated at reserve; the helper is
+    // absent on linear). Sits UNDER the closed-struct arms so a
     // user object-literal `{ map(cb){…} }` still wins.
     {
       const hofFuncIdx = ctx.funcMap.get(`__hof_${methodName}`);
       const objVecTypeIdx = ctx.objectRuntimeTypes?.objVecTypeIdx;
-      if (ctx.standalone && hofFuncIdx !== undefined && ctx.vecBaseTypeIdx >= 0 && objVecTypeIdx !== undefined) {
+      if (wasmGcBackend(ctx) && hofFuncIdx !== undefined && ctx.vecBaseTypeIdx >= 0 && objVecTypeIdx !== undefined) {
         const isReduceForm = methodName === "reduce" || methodName === "reduceRight";
         const hofCall: Instr[] = [
           { op: "local.get", index: 0 }, // recv (externref)
@@ -1790,10 +1753,10 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
     // bounds → op, minted at the CALL SITE in calls.ts — the fill only READS
     // funcMap, #1719). Sits UNDER the closed-struct arms (a user `{ getUint8(){…} }`
     // still wins); a `$__dv_window` can never match a closed-struct arm, so the
-    // relative order is behavior-neutral there. Standalone/wasi only.
+    // relative order is behavior-neutral there. WasmGC only.
     {
       const dvHelperIdx = ctx.funcMap.get(`__dv_m_${methodName}`);
-      if ((ctx.standalone || ctx.wasi) && dvHelperIdx !== undefined && ctx.dvWindowTypeIdx >= 0) {
+      if (wasmGcBackend(ctx) && dvHelperIdx !== undefined && ctx.dvWindowTypeIdx >= 0) {
         // Helper signature: recv + (get → offset, le | set → offset, value, le).
         const helperArgs = methodName.startsWith("get") ? 2 : 3;
         const dvCall: Instr[] = [{ op: "local.get", index: 0 }];
@@ -1832,7 +1795,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       const regexpTestIdx = ctx.funcMap.get(isExec ? "__regexp_exec_carrier" : "__regexp_test_carrier");
       const boxBoolIdx = ctx.funcMap.get("__box_boolean");
       if (
-        ctx.standalone &&
+        wasmGcBackend(ctx) &&
         (methodName === "test" || isExec) &&
         arity === 1 &&
         regexpTypeIdx !== undefined &&
@@ -1923,41 +1886,12 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         arity,
         mixedClassAndLiteralEntries,
       );
-      // An own property installed at runtime beats this class's prototype
-      // method for THIS receiver (marked's `use()` hooks). Only user classes,
-      // only names the reserve saw a callable member write for; object-literal
-      // carriers keep their arm untouched (their own slot IS the struct field
-      // the arm already reads).
-      const armBodyForEntry =
-        hasOwnIdx !== undefined &&
-        methodCallIdx !== undefined &&
-        objVecNewIdx !== undefined &&
-        (arity === 0 || objVecPushIdx !== undefined) &&
-        ctx.classSet.has(entry.structName) &&
-        closedDispatchGuardsOwnSlot(ctx, methodName)
-          ? ([
-              { op: "local.get", index: 0 },
-              ...stringConstantExternrefInstrs(ctx, methodName),
-              { op: "call", funcIdx: hasOwnIdx },
-              {
-                op: "if",
-                blockType: { kind: "val", type: { kind: "externref" } },
-                then: [
-                  { op: "local.get", index: 0 },
-                  ...stringConstantExternrefInstrs(ctx, methodName),
-                  ...buildFixedArgVec(arity, anyLocalIdx + 1, objVecNewIdx, objVecPushIdx),
-                  { op: "call", funcIdx: methodCallIdx },
-                ],
-                else: callAndCoerce,
-              },
-            ] satisfies Instr[])
-          : callAndCoerce;
       current = [
         // (#6608) NOMINAL claim: `ref.test` alone is structural, and every
         // same-shaped class in the ladder passes it — so the outermost arm ran
         // for every receiver. Byte-identical when no layout collides.
         ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
-        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: armBodyForEntry, else: current },
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
       ];
     }
 
@@ -2133,8 +2067,7 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
  * Only READS funcMap/type space (#1719): `__extern_get` + the "then" string
  * constant were registered at reserve time (`reserveClosedMethodDispatchVararg`
  * from `ensurePromiseThenableSubstrate`). No-op unless the substrate reserved
- * the predicate (`ctx.promiseThenableReserved` — standalone/wasi only, so
- * gc/host stays byte-identical).
+ * the predicate (`ctx.promiseThenableReserved` — native WasmGC only).
  */
 export function fillPromiseThenableHelpers(ctx: CodegenContext): void {
   if (!ctx.promiseThenableReserved) return;

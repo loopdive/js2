@@ -57,8 +57,8 @@
  * it. That module is still consulted for its other, independent job — the slot
  * widening above.
  *
- * Host/gc mode is excluded on #4264's grounds: there `undefined` IS the null
- * extern, and the singleton would surface to host helpers as an object.
+ * The linear backend is excluded on #4264's grounds: it keeps its
+ * backend-defined missing-value carrier rather than the WasmGC singleton.
  */
 import type { ts } from "../../ts-api.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
@@ -85,11 +85,11 @@ export function emitModuleVarUndefinedSeeds(
   sourceFile: ts.SourceFile,
   initFctx: FunctionContext,
 ): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
+  if (ctx.targetProfile.backend !== "wasmgc") return;
   // Context-owned object-record bindings are created only when absent by
   // emitScriptGlobalVarBindings. A private-slot seed would reset a prior
   // Script's live value after all accesses are routed to the shared record.
-  if (ctx.standaloneScriptVarBindings && !ctx.sourceIsModule) return;
+  if (ctx.sharedScriptVarBindings && !ctx.sourceIsModule) return;
   const seeded = new Set<number>();
   let seededNames = seededModuleVarNames.get(ctx);
   if (seededNames === undefined) seededModuleVarNames.set(ctx, (seededNames = new Set()));

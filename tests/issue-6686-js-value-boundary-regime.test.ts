@@ -4,18 +4,9 @@
 // objects, JS callables are called through the boundary adapter, and compiled
 // objects handed back into a closure export are unwrapped from their facade.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
-
-const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-beforeAll(() => {
-  process.env.JS2WASM_NATIVE_REGIME_JS = "1";
-});
-afterAll(() => {
-  if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-  else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-});
 
 async function instantiateRegime(source: string) {
   const result = await compile(source, { fileName: "issue-6686.ts", semanticProviders: "native-first" });
@@ -28,6 +19,40 @@ async function instantiateRegime(source: string) {
 }
 
 describe("#6686 JS value boundary under the native regime", () => {
+  it("returns a JS-owned constructor and object property without replacing either identity", async () => {
+    const { exports } = await instantiateRegime(`
+      export function read(value: any, key: string): any { return value[key]; }
+    `);
+    class Foreign {}
+    const object = new Foreign();
+    const sentinel = { marker: 42 };
+    Object.defineProperty(object, "payload", {
+      get() {
+        expect(this).toBe(object);
+        return sentinel;
+      },
+    });
+    expect(exports.read(object, "constructor")).toBe(Foreign);
+    expect(exports.read(object, "payload")).toBe(sentinel);
+  });
+
+  it("reflectively calls a JS-owned function with its original receiver and argument list", async () => {
+    const { exports } = await instantiateRegime(`
+      export function callIt(fn: any, receiver: any): any { return fn.call(receiver, 3, 4); }
+      export function applyIt(fn: any, receiver: any, args: any): any { return fn.apply(receiver, args); }
+    `);
+    const receiver = { base: 7 };
+    let calls = 0;
+    function fn(this: typeof receiver, left: number, right: number) {
+      expect(this).toBe(receiver);
+      calls++;
+      return this.base + left + right;
+    }
+    expect(exports.callIt(fn, receiver)).toBe(14);
+    expect(exports.applyIt(fn, receiver, [5, 6])).toBe(18);
+    expect(calls).toBe(2);
+  });
+
   it("marshals string params and results as JS primitives", async () => {
     const { exports } = await instantiateRegime(`
       export function value(): string { return "  alpha-beta  ".trim().toUpperCase().slice(0, 5); }
@@ -65,6 +90,25 @@ describe("#6686 JS value boundary under the native regime", () => {
         expect.objectContaining({ name: "__boundary_callback_call_1", classification: "value-adapter" }),
       ]),
     );
+  });
+
+  it("preserves JS-owned receivers through IR dynamic method calls", async () => {
+    const { exports, result } = await instantiateRegime(`
+      export function callNoArg(target: any): any { return target.f(); }
+      export function callOneArg(target: any): any { return target.f(3); }
+    `);
+    expect(result.irCompiledFuncs).toEqual(expect.arrayContaining(["callNoArg", "callOneArg"]));
+    let calls = 0;
+    const target = {
+      f(this: unknown, value = 0) {
+        expect(this).toBe(target);
+        calls++;
+        return value + 42;
+      },
+    };
+    expect(exports.callNoArg(target)).toBe(42);
+    expect(exports.callOneArg(target)).toBe(45);
+    expect(calls).toBe(2);
   });
 
   it("unwraps a compiled object's host facade before a closure export casts it", async () => {

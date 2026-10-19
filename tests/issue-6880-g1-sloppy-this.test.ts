@@ -13,18 +13,9 @@
 // `typeof this === "undefined"`. Standalone had the same defect whenever the
 // eval stayed reachable.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildCompiledImports } from "../src/runtime.js";
-
-const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-beforeAll(() => {
-  process.env.JS2WASM_NATIVE_REGIME_JS = "1";
-});
-afterAll(() => {
-  if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-  else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-});
 
 type Lane = "regime" | "standalone";
 

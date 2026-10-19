@@ -48,12 +48,11 @@
  * match a foreign struct and read its field as a bag).
  *
  * ## Eligibility (the `collectAnonymousExpandoDeleteCandidates` screen)
- * Standalone/WASI only (the JS-host lane never reserves these helpers, so gc
- * output is byte-identical); not in a linked module; `__anon_*` name with a
- * single structMap alias; a bare struct (no supertype) that is nobody's
- * supertype (a parent's prefix must not grow); above the `__vec_base` brand
- * anchor; not in `noBrandShapeTypes` (a baked sibling downcast treats it as
- * interchangeable with a same-layout twin, which a new field would break).
+ * Not in a linked module; `__anon_*` name with a single structMap alias; a
+ * bare struct (no supertype) that is nobody's supertype (a parent's prefix
+ * must not grow); above the `__vec_base` brand anchor; not in
+ * `noBrandShapeTypes` (a baked sibling downcast treats it as interchangeable
+ * with a same-layout twin, which a new field would break).
  * A type that fails the screen simply keeps the registry route — slower, never
  * wrong.
  */
@@ -84,17 +83,12 @@ function stateOf(ctx: CodegenContext): AnonBagSlotState {
   return state;
 }
 
-function hostFree(ctx: CodegenContext): boolean {
-  return ctx.standalone || ctx.wasi;
-}
-
 /** Phase 1a — remember which struct type an object literal was compiled to. */
 export function recordObjectLiteralCarrier(
   ctx: CodegenContext,
   literal: ts.ObjectLiteralExpression,
   structTypeIdx: number,
 ): void {
-  if (!hostFree(ctx)) return;
   stateOf(ctx).literalCarrier.set(literal, structTypeIdx);
 }
 
@@ -118,7 +112,6 @@ function skipTransparent(expr: ts.Expression): ts.Expression {
  * already lowered to a struct, mark that struct as an expando receiver.
  */
 export function noteStaticExpandoWrite(ctx: CodegenContext, receiver: ts.Expression, propName: string): void {
-  if (!hostFree(ctx)) return;
   const id = skipTransparent(receiver);
   if (!ts.isIdentifier(id)) return;
   const decl = ctx.oracle.variableDeclarationOf(id);
@@ -165,7 +158,6 @@ function isEligible(ctx: CodegenContext, typeIdx: number, anchorIdx: number): bo
  * the field WILL have after {@link appendAnonExpandoBagSlots}.
  */
 export function commitAnonExpandoBagRoots(ctx: CodegenContext): { typeIdx: number; bagIdx: number }[] {
-  if (!hostFree(ctx)) return [];
   const state = states.get(ctx);
   if (!state || state.expandoReceivers.size === 0) return [];
   if (linkBrandRoleOf(ctx) !== undefined) return [];

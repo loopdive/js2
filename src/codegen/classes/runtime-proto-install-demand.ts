@@ -21,8 +21,8 @@
  * the miss. A closed `$H` struct serves its declared fields and members; the
  * dynamic `__extern_get` / `__extern_method_call` ladder reaches the class's
  * prototype `$Object` only through `__class_proto_lookup`, and that arm is
- * minted per class on DEMAND (`ctx.standaloneRuntimeKeyClassProtos`, #5383
- * S2h). The demand is recorded at runtime-KEY read sites (`o[k]`, `k in o`, a
+ * minted per class on DEMAND (the runtime-key class-prototype set, #5383 S2h).
+ * The demand is recorded at runtime-KEY read sites (`o[k]`, `k in o`, a
  * dynamic `.prototype` read), never at a statically-named `h.getE` — so the
  * same probe answered correctly as soon as an unrelated `o[k]` appeared
  * anywhere in the module, and `undefined` otherwise.
@@ -106,7 +106,7 @@ export function recordRuntimeProtoInstallDemand(
   protoRead: ts.Node | undefined,
   className: string,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || protoRead === undefined) return;
+  if (ctx.targetProfile.backend !== "wasmgc" || protoRead === undefined) return;
   if (!isRuntimeProtoMutationTarget(protoRead)) return;
   const structTypeIdx = ctx.structMap.get(className);
   // No struct, no instances to serve: recording would widen to every class.

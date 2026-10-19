@@ -12,7 +12,10 @@ import {
 import { createHostImportCallState } from "../src/runtime/host-import-call-state.js";
 
 type Lane = "facade" | "scalar replay";
-const lanes: readonly Lane[] = ["facade", "scalar replay"];
+// (#6979) The "facade" lane bound the runtime's host `Promise_*` /
+// `__get_undefined` builtin providers through `buildImports`; those providers
+// are deleted with the host-semantic lane, so only scalar replay is exercised.
+const lanes: readonly Lane[] = ["scalar replay"];
 const builtins: readonly HostAsyncPromiseBuiltinName[] = [
   "Promise_resolve",
   "Promise_new_pending",
@@ -231,31 +234,6 @@ describe("shared host async handlers and scalar replay boundary", () => {
     );
     await observed;
     await expect(derivative).resolves.toBeUndefined();
-  });
-
-  it("keeps facade object thenables and native Promise identity", async () => {
-    const resolve = adapters("facade").promiseBuiltin("Promise_resolve");
-    const native = Promise.resolve(42);
-    expect(resolve(native)).toBe(native);
-    const events: unknown[] = [];
-    const thenable = {
-      get then() {
-        events.push("get");
-        return function (this: unknown, fulfill: (value: number) => void) {
-          events.push(this);
-          fulfill(42);
-        };
-      },
-    };
-    const promise = resolve(thenable);
-    expect(events).toEqual(["get"]);
-    await expect(promise).resolves.toBe(42);
-    expect(events).toEqual(["get", thenable]);
-    const imported = adapters("facade");
-    const pending = imported.promiseBuiltin("Promise_new_pending")();
-    const object = { fulfilled: 3518 };
-    imported.promiseBuiltin("Promise_settle_resolve")(pending, object);
-    await expect(pending).resolves.toBe(object);
   });
 
   it("keeps the facade object number walker and per-instance caught identity", () => {

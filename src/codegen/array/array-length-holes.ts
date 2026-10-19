@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6771 S3) `Array(n)` / `new Array(n)` holes are holes, `--target standalone`.
+ * (#6771 S3) `Array(n)` / `new Array(n)` holes are holes in the native WasmGC
+ * semantic core.
  *
  * §23.1.1.1 step 4 builds an array of `n` HOLES — ArrayCreate(len) sets only
  * `length`. The length-form builders (`literals.ts::compileArrayConstructorCall`,
@@ -15,8 +16,8 @@
  * `$Hole` marker the elision literal `[1, , 3]` stores (array-holes.ts, #2001),
  * whose reads map it to `undefined` wherever `ctx.usesArrayHoles` arms them.
  * So: the pre-scan arms `usesArrayHoles` for a module containing the length
- * form (standalone only — the host lane keeps its bytes), the builders fill the
- * backing with the marker, and the static `k in arr` fold learns the marker.
+ * form, the builders fill the backing with the marker, and the static `k in
+ * arr` fold learns the marker.
  */
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -47,11 +48,11 @@ function arrayHoldsExternref(ctx: CodegenContext, arrTypeIdx: number): boolean {
 
 /**
  * The backing allocation of the length form. Expects `(…, size:i32)` on the
- * stack, like `array.new_default`, which it returns unchanged for every lane /
+ * stack, like `array.new_default`, which it returns unchanged for every
  * element kind that has no marker.
  */
 export function holeFilledArrayNewInstrs(ctx: CodegenContext, fctx: FunctionContext, arrTypeIdx: number): Instr[] {
-  if (!ctx.standalone || !ctx.usesArrayHoles || !arrayHoldsExternref(ctx, arrTypeIdx)) {
+  if (!ctx.usesArrayHoles || !arrayHoldsExternref(ctx, arrTypeIdx)) {
     return [{ op: "array.new_default", typeIdx: arrTypeIdx }];
   }
   const size = allocTempLocal(fctx, { kind: "i32" });
@@ -76,7 +77,7 @@ export function vecStaticIndexPresenceInstrs(
   vecTypeIdx: number,
   idx: number,
 ): Instr[] | undefined {
-  if (!ctx.standalone || !ctx.usesArrayHoles || idx > 0x7fffffff) return undefined;
+  if (!ctx.usesArrayHoles || idx > 0x7fffffff) return undefined;
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0 || !arrayHoldsExternref(ctx, arrTypeIdx)) return undefined;
   const vec = allocTempLocal(fctx, { kind: "ref_null", typeIdx: vecTypeIdx });
@@ -121,12 +122,11 @@ export function vecStaticIndexPresenceInstrs(
  * test262 shape that pairs a hole with an index INHERITED from
  * `Array.prototype` / `Object.prototype` (the flat vec cannot see it; the map
  * answers `undefined`, which is what that inherited getter-less accessor
- * yields). Standalone keeps the map only where such a write exists
- * (`protoIndexDirty`); elsewhere nothing can be inherited, the hole is absent,
- * and the raw marker never strict-equals a search value — so
- * `new Array(3).indexOf(undefined)` stays `-1` now that the length form stores
- * holes (S3) instead of `null`. The host lane keeps its bytes.
+ * yields). Keep the map only where such a write exists (`protoIndexDirty`);
+ * elsewhere nothing can be inherited, the hole is absent, and the raw marker
+ * never strict-equals a search value — so `new Array(3).indexOf(undefined)`
+ * stays `-1` now that the length form stores holes (S3) instead of `null`.
  */
 export function holeSearchReadsUndefined(ctx: CodegenContext): boolean {
-  return !ctx.standalone || ctx.protoIndexDirty;
+  return ctx.protoIndexDirty;
 }

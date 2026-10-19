@@ -19,7 +19,7 @@ import { buildImports } from "../src/runtime.js";
  */
 
 async function runHost(source: string): Promise<unknown> {
-  const r = await compile(source, { semanticProviders: "host-assisted" });
+  const r = await compile(source);
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
@@ -99,7 +99,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
   // them WORSE by routing them to a constructing path. We assert the
   // construct-closure import is NOT emitted for these shapes.
   async function constructClosureImportEmitted(source: string): Promise<boolean> {
-    const r = await compile(source, { semanticProviders: "host-assisted" });
+    const r = await compile(source);
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     return (r.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
       const n = i.name ?? i.intent?.name;
@@ -162,7 +162,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
   // the call through the host helper (the deliverable), not the end-to-end
   // capturing-closure run.
   async function importEmitted(source: string, importName: string): Promise<boolean> {
-    const r = await compile(source, { semanticProviders: "host-assisted" });
+    const r = await compile(source);
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     return (r.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
       const n = i.name ?? i.intent?.name;

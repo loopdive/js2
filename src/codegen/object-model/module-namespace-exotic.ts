@@ -84,7 +84,7 @@ export function markBindingEntryInstrs(
 ): Instr[] {
   const types = ctx.objectRuntimeTypes;
   const findIdx = ctx.funcMap.get("__obj_find");
-  if (!ctx.standalone || types === undefined || findIdx === undefined) return [];
+  if (types === undefined || findIdx === undefined) return [];
   const obj = (): Instr[] => [
     { op: "local.get", index: objLocal },
     { op: "any.convert_extern" },

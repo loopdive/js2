@@ -22,8 +22,7 @@
  *      Symbol throws), then the shared clamp and scan (array-search-core.ts),
  *      the same instructions the direct `.call` borrow runs.
  *
- * Gated on the native regime (`ctx.standalone || ctx.wasi`); host-assisted
- * `gc` keeps its fixed-slot closure type and its host bridge, byte-identical.
+ * The native WasmGC semantic core owns this ABI in every environment.
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -45,8 +44,8 @@ import {
 const SEARCH_MEMBERS: ReadonlySet<string> = new Set(["indexOf", "lastIndexOf", "includes"]);
 
 /** True when `Array.prototype.<member>`'s closure uses the packed variadic ABI for the search family. */
-export function isArraySearchVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return SEARCH_MEMBERS.has(member) && (ctx.standalone || ctx.wasi);
+export function isArraySearchVariadicMember(member: string): boolean {
+  return SEARCH_MEMBERS.has(member);
 }
 
 const EXT: ValType = { kind: "externref" };
@@ -55,15 +54,14 @@ const I32: ValType = { kind: "i32" };
 
 /**
  * Emit the search-family closure body. Returns `undefined`, emitting nothing,
- * off the native regime or when a dependency is unavailable — the caller keeps
- * its refusal.
+ * when a dependency is unavailable — the caller keeps its refusal.
  */
 export function emitArraySearchProtoMemberBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
   member: string,
 ): ValType | undefined {
-  if (!isArraySearchVariadicMember(ctx, member)) return undefined;
+  if (!isArraySearchVariadicMember(member)) return undefined;
   const isLast = member === "lastIndexOf";
   const isIncludes = member === "includes";
 

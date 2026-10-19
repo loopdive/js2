@@ -212,13 +212,49 @@ export interface ClosureArgumentState {
   readonly extrasArrTypeIdx: number;
 }
 
+/** Dispatcher padding is storage, not supplied arguments. Negative argc is legacy unknown. */
+function suppliedExtrasCount(arity: number, closureArity: number, argc: number): Instr[] {
+  const full: Instr[] = [{ op: "i32.const", value: arity - closureArity }];
+  return [
+    { op: "global.get", index: argc },
+    { op: "i32.const", value: 0 },
+    { op: "i32.lt_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: full,
+      else: [
+        { op: "global.get", index: argc },
+        { op: "i32.const", value: closureArity },
+        { op: "i32.le_s" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [{ op: "i32.const", value: 0 }],
+          else: [
+            { op: "global.get", index: argc },
+            { op: "i32.const", value: arity },
+            { op: "i32.lt_s" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "i32" } },
+              then: [{ op: "global.get", index: argc }, { op: "i32.const", value: closureArity }, { op: "i32.sub" }],
+              else: structuredClone(full),
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 /** The legacy method dispatcher's actual argc/extras setup. */
 export function buildClosureMethodArgumentState(
   arity: number,
   closureArity: number,
   state: ClosureArgumentState,
 ): Instr[] {
-  const setupInstrs: Instr[] = [
+  const clamp: Instr[] = [
     { op: "global.get", index: state.argc },
     { op: "i32.const", value: 0 },
     { op: "i32.ge_s" },
@@ -240,9 +276,10 @@ export function buildClosureMethodArgumentState(
     },
     { op: "global.set", index: state.argc },
   ];
+  const setupInstrs: Instr[] = [];
   if (arity > closureArity) {
     const extrasCount = arity - closureArity;
-    setupInstrs.push({ op: "i32.const", value: extrasCount });
+    setupInstrs.push(...suppliedExtrasCount(arity, closureArity, state.argc));
     for (let i = closureArity; i < arity; i++) {
       setupInstrs.push({ op: "local.get", index: i + 2 });
     }
@@ -254,6 +291,7 @@ export function buildClosureMethodArgumentState(
     setupInstrs.push({ op: "global.set", index: state.extrasArgv });
   }
 
+  setupInstrs.push(...clamp);
   return setupInstrs;
 }
 

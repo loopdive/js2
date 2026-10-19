@@ -13,8 +13,9 @@
  *  2. It answered `index < length`, which is not [[HasProperty]] once an index
  *     can be absent: `delete arr[i]` (#2130/#4222), an elision, a `length`
  *     shrink, an accessor define or an inherited index all leave `length`
- *     alone. Its narrower escape hatch also called the HOST `__extern_has_idx`
- *     on the js-host lane, which has no vec arm and answered 0 for every index.
+ *     alone. The retired host-semantic branch's narrower escape hatch also
+ *     called a host `__extern_has_idx` with no vec arm and answered 0 for every
+ *     index.
  *  3. A key that is not a compile-time constant (`i in arr`) fell through to
  *     the "fully dynamic" fallback and folded to `false`.
  *
@@ -26,14 +27,10 @@
  *    in-bounds index absent ({@link arrayCarriersStaticallyDense}).
  *  - Standalone externref slots retain #6771 S3's length/capacity/$Hole
  *    check when no overlay or dynamic code can override physical presence.
- *  - Everything else asks the lane's presence chokepoint, the one that already
- *    knows each carrier's absence representation. Native lanes (standalone /
- *    WASI) use `__extern_has_idx`, whose finalize-time arms cover the #3251
- *    overlay's `FLAG_DELETED_INDEX`, the f64 `HOLE_F64_BITS` marker, the
- *    externref `$Hole`, the #4222 holey carrier and the prototype index store.
- *    The js-host lane uses `__extern_has`, whose `_wasmStructHasOwn` vec arm
- *    reads the host delete tombstone and asks the minting module through
- *    `__vec_has_own_index` (#6482).
+ *  - Everything else asks the native core's presence chokepoint,
+ *    `__extern_has_idx`, whose finalize-time arms cover the #3251 overlay's
+ *    `FLAG_DELETED_INDEX`, the f64 `HOLE_F64_BITS` marker, the externref
+ *    `$Hole`, the #4222 holey carrier and the prototype index store.
  *  - A dynamic key evaluates first (§13.10.1 steps 1-2), then the receiver,
  *    and both go to `__extern_has` on every lane; its vec arm classifies the
  *    key (index / `length` / named) at run time.
@@ -166,10 +163,9 @@ function emitConstantIndexIn(
   deps: ArrayCarrierInDependencies,
 ): InnerResult {
   const dense = arrayCarriersStaticallyDense(ctx);
-  const native = ctx.standalone || ctx.wasi;
   // Register the helper BEFORE either operand is emitted when it is certainly
   // needed, so no instruction already in the body has to be index-shifted.
-  if (!dense) ensurePresenceHelper(ctx, fctx, native, deps);
+  if (!dense) ensurePresenceHelper(ctx, fctx, deps);
   // §13.10.1 steps 1-2: the key is evaluated for its side effects (a comma
   // key); its value is the compile-time constant `index`.
   if (deps.compileExpression(ctx, fctx, expr.left)) fctx.body.push({ op: "drop" });
@@ -194,13 +190,11 @@ function emitConstantIndexIn(
     }
     return booleanResult();
   }
-  const helper = ensurePresenceHelper(ctx, fctx, native, deps);
+  const helper = ensurePresenceHelper(ctx, fctx, deps);
   emitRawReceiverExternref(ctx, fctx, recv, deps);
   fctx.body.push({ op: "f64.const", value: index });
-  // The host `__extern_has` takes the key as a JS value; the native
   // `__extern_has_idx` takes the raw f64 (`index` is integral, so its
   // truncating bounds test is exact).
-  if (!native) deps.coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
   fctx.body.push({ op: "call", funcIdx: helper });
   return booleanResult();
 }
@@ -230,20 +224,17 @@ function emitStaticHolePresence(
 }
 
 /**
- * The lane's index-presence chokepoint: native `__extern_has_idx(obj, f64)`,
- * host `__extern_has(obj, key)` (the host `__extern_has_idx` has no vec arm).
+ * The native index-presence chokepoint: `__extern_has_idx(obj, f64)`.
  */
-function ensurePresenceHelper(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  native: boolean,
-  deps: ArrayCarrierInDependencies,
-): number {
-  const funcIdx = native
-    ? deps.ensureLateImport(ctx, "__extern_has_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "i32" }])
-    : deps.ensureLateImport(ctx, "__extern_has", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+function ensurePresenceHelper(ctx: CodegenContext, fctx: FunctionContext, deps: ArrayCarrierInDependencies): number {
+  const funcIdx = deps.ensureLateImport(
+    ctx,
+    "__extern_has_idx",
+    [{ kind: "externref" }, { kind: "f64" }],
+    [{ kind: "i32" }],
+  );
   if (funcIdx === undefined) {
-    throw new Error(`#6777: \`in\` presence helper ${native ? "__extern_has_idx" : "__extern_has"} unavailable`);
+    throw new Error("#6777: `in` presence helper __extern_has_idx unavailable");
   }
   deps.flushLateImportShifts(ctx, fctx);
   return funcIdx;
@@ -251,10 +242,8 @@ function ensurePresenceHelper(
 
 /**
  * Leave the compiled array receiver on the stack as an externref that IS the
- * vec. A bare `extern.convert_any`, not `coerceType`: on the js-host lane the
- * latter hands a vec to `__make_iterable`, whose detached JS mirror knows
- * nothing about the delete tombstone or the hole markers — `delete a[2]` on an
- * array of objects then still answered `2 in a` true from the mirror.
+ * vec. A bare `extern.convert_any`, not `coerceType`, preserves the native
+ * carrier and its delete tombstone / hole markers.
  */
 function emitRawReceiverExternref(
   ctx: CodegenContext,

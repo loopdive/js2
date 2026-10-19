@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#4516) Small standalone-only tails for primitive-wrapper prototype methods.
+ * (#4516) Native WasmGC tails for primitive-wrapper prototype methods.
  *
  * These paths live outside the receiver-method dispatcher so the large shared
  * dispatch function does not grow for one ES5 compatibility bucket.  The
@@ -12,7 +12,7 @@ import { ts } from "../../ts-api.js";
 import { isBooleanWrapperType, isNumberWrapperType, isStringWrapperType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { ensureBoxedValueOfHelper } from "../boxed-proto-valueof.js";
 import { emitBrandCheckTypeError } from "../native-proto.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -108,7 +108,7 @@ export function tryCompileStandaloneDeletedStringToString(
   ) => InnerResult,
 ): InnerResult | undefined {
   if (
-    !ctx.standalone ||
+    !wasmGcBackend(ctx) ||
     propAccess.name.text !== "toString" ||
     !isStringWrapperType(receiverType) ||
     !ctx.deletedBuiltinPrototypeMembers?.has("String.prototype.toString")
@@ -150,7 +150,7 @@ export function tryCompileStandaloneDeletedBooleanToString(
   ) => InnerResult,
 ): InnerResult | undefined {
   if (
-    !ctx.standalone ||
+    !wasmGcBackend(ctx) ||
     propAccess.name.text !== "toString" ||
     receiverType.getSymbol()?.name !== "Boolean" ||
     !ctx.deletedBuiltinPrototypeMembers?.has("Boolean.prototype.toString")
@@ -191,7 +191,7 @@ export function tryCompileStandaloneBooleanToString(
     expectedType?: ValType,
   ) => InnerResult,
 ): InnerResult | undefined {
-  if (!ctx.standalone || receiverType.getSymbol()?.name !== "Boolean" || propAccess.name.text !== "toString") {
+  if (!wasmGcBackend(ctx) || receiverType.getSymbol()?.name !== "Boolean" || propAccess.name.text !== "toString") {
     return undefined;
   }
 
@@ -294,7 +294,7 @@ export function tryCompileStandaloneNumberPrototypeTail(
   expectedType: ValType | undefined,
   callbacks: NumberPrototypeTailCallbacks,
 ): InnerResult | undefined {
-  if (!ctx.standalone || propAccess.name.text !== "toString") return undefined;
+  if (!wasmGcBackend(ctx) || propAccess.name.text !== "toString") return undefined;
 
   if (
     callbacks.sourceOverridesBuiltinPrototypeMember(ctx, callExpr, "Number", "toString") &&

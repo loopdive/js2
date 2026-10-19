@@ -125,14 +125,14 @@ describe("#4399 extracted JavaScript adapters", () => {
     expect(definitions).toBeGreaterThan(0);
   });
 
-  it("refuses compatibility semantics through a native-first low-level adapter", () => {
+  it("refuses retired compatibility semantics through every low-level adapter (#6979)", () => {
     const manifest = [descriptor("__host_compare", { type: "host_compare" }, 2)];
     expect(() => buildImports(manifest, undefined, [], { ambientCompatibility: false })).toThrow(
-      /Native-first adapter cannot bind env::__host_compare: legacy-semantic import/,
+      /Native-first adapter cannot bind env::__host_compare: host language operation .*#6979/,
     );
-
-    const compatibility = buildImports(manifest, undefined, [], { ambientCompatibility: true });
-    expect(compatibility.env.__host_compare(1, 2)).toBe(-1);
-    expect(compatibility.env.__host_compare(Number.NaN, 2)).toBe(2);
+    // Ambient shims cannot bypass the same retired-import policy.
+    expect(() => buildImports(manifest, undefined, [], { ambientCompatibility: true })).toThrow(
+      /Native-first adapter cannot bind env::__host_compare: host language operation .*#6979/,
+    );
   });
 });

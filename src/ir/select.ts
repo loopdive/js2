@@ -56,6 +56,15 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
+import { nativeDynamicInstanceOfShape } from "./instanceof-selection.js";
+import type { IrQualifiedExternConstructorResolver } from "./qualified-extern-constructor.js";
+import { scanFixedDynamicMethodArguments } from "./dynamic-move-call.js";
+import {
+  isKnownExternClass,
+  NATIVE_TYPED_ARRAY_CLASSES,
+  LEGACY_ERROR_CONSTRUCTOR_CLASSES,
+  HOST_FREE_EXTERN_CONSTRUCTORS,
+} from "./constructor-selection.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
@@ -356,6 +365,7 @@ export interface IrModuleInitAssessment {
 }
 
 export interface IrSelectionOptions extends IrAsyncSelectionOptions {
+  readonly resolveQualifiedExternConstructor?: IrQualifiedExternConstructorResolver;
   readonly experimentalIR?: boolean;
   /**
    * Exact shared #3518 proof for a counted string append loop. When omitted,
@@ -619,6 +629,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-function-prototype-call"
       | "standalone-native-regexp-test-carrier"
       | "standalone-wrapper-instanceof"
+      | "native-dynamic-instanceof"
       | "primitive-wrapper-loose-equality"
       | "legacy-numeric-array-global"
       | "number-to-string",
@@ -2752,20 +2763,16 @@ function dynamicUsesAreMoveOnly(
     if (ts.isIdentifier(e)) {
       return dynNames.has(e.text) === expectDyn;
     }
+    if (ts.isNewExpression(e) && currentSelectionOptions?.resolveQualifiedExternConstructor?.(e)) {
+      if (expectDyn && !currentDynamicRuntimeBuildable) return false;
+      return (e.arguments ?? []).every(
+        (argument) => !ts.isSpreadElement(argument) && scanExpr(argument, isDynShaped(argument)),
+      );
+    }
     if (ts.isCallExpression(e)) {
       const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
       if (receiverFirstMethod !== undefined) {
-        if (!expectDyn || e.arguments.length !== receiverFirstMethod.arity) return false;
-        for (const argument of e.arguments) {
-          if (ts.isSpreadElement(argument)) return false;
-          const dynamic = isDynShaped(argument);
-          if (dynamic) {
-            if (!scanExpr(argument, true)) return false;
-          } else if (!scanExpr(argument, false)) {
-            return false;
-          }
-        }
-        return true;
+        return scanFixedDynamicMethodArguments(e, expectDyn, receiverFirstMethod.arity, isDynShaped, scanExpr);
       }
       if (
         currentDynamicRuntimeBuildable &&
@@ -2825,11 +2832,10 @@ function dynamicUsesAreMoveOnly(
       if (
         op === ts.SyntaxKind.InstanceOfKeyword &&
         !expectDyn &&
-        leftIsDyn &&
-        ts.isIdentifier(e.right) &&
-        selectorSupportsStandaloneWrapperInstanceOf(e.right)
+        ((rightIsDyn && currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-instanceof") === true) ||
+          (leftIsDyn && ts.isIdentifier(e.right) && selectorSupportsStandaloneWrapperInstanceOf(e.right)))
       ) {
-        return scanExpr(e.left, true);
+        return scanExpr(e.left, leftIsDyn) && (!rightIsDyn || scanExpr(e.right, true));
       }
       // #3797 — statement-position stores used by Acorn's stable
       // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
@@ -3095,6 +3101,9 @@ function dynamicUsesAreMoveOnly(
       if (!returnIsDynamic) return scanExpr(s.expression, false);
       if (isDynShaped(s.expression)) return scanExpr(s.expression, true);
       const concrete = unwrap(s.expression);
+      if (ts.isNewExpression(concrete) && currentSelectionOptions?.resolveQualifiedExternConstructor?.(concrete)) {
+        return scanExpr(concrete, true);
+      }
       // `coerceReturnValue` boxes only after the expression has lowered.
       // A mixed concrete ternary cannot form its join before that boundary;
       // keep it on direct codegen until branch-local boxing is represented.
@@ -6216,80 +6225,6 @@ function isPhase1TypeNode(node: ts.TypeNode): boolean {
   );
 }
 
-/**
- * Slice 10 (#1169i) — host-class names known to the IR. Mirrors the legacy
- * `ctx.externClasses` registration set (see `registerBuiltinExternClasses`
- * in `src/codegen/index.ts:5527-5715`). Functions that USE values of
- * these classes (construction, method calls, property access, RegExp
- * literals) become IR-claimable; the actual lowering throws cleanly if
- * the resolver doesn't carry metadata for the class, falling the
- * function back to legacy via `safeSelection`.
- *
- * Kept in sync with the legacy registration list — drift produces
- * over-claims that fall back at lowering, which is acceptable but
- * suboptimal.
- */
-const KNOWN_EXTERN_CLASSES = new Set<string>([
-  "RegExp",
-  "Date",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "URIError",
-  "EvalError",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "ArrayBuffer",
-  "SharedArrayBuffer",
-  "DataView",
-  "Uint8Array",
-  "Int8Array",
-  "Uint8ClampedArray",
-  "Uint16Array",
-  "Int16Array",
-  "Uint32Array",
-  "Int32Array",
-  "Float32Array",
-  "Float64Array",
-  "BigInt64Array",
-  "BigUint64Array",
-  "Promise",
-]);
-
-// Typed arrays are handled by the legacy backend's native vec constructor
-// path, not by the IR extern-class registry. Treating them as generic extern
-// classes therefore claims `new Uint8Array(...)` without a matching builder
-// producer. Keep them pre-claim until a representation-polymorphic IR typed-
-// array constructor lands.
-const NATIVE_TYPED_ARRAY_CLASSES = new Set<string>([
-  "Uint8Array",
-  "Int8Array",
-  "Uint8ClampedArray",
-  "Uint16Array",
-  "Int16Array",
-  "Uint32Array",
-  "Int32Array",
-  "Float32Array",
-  "Float64Array",
-  "BigInt64Array",
-  "BigUint64Array",
-]);
-
-// The measured #3529 constructor gap: these ambient constructors are owned
-// by the legacy exception runtime and have no IrClass/extern producer.
-const LEGACY_ERROR_CONSTRUCTOR_CLASSES = new Set<string>(["Error", "TypeError", "RangeError"]);
-
-// (#6981) Known extern classes whose construction has a host-free IR arm.
-const HOST_FREE_EXTERN_CONSTRUCTORS = new Set<string>(["Map", "RegExp", "Date"]);
-
-function isKnownExternClass(name: string): boolean {
-  return KNOWN_EXTERN_CLASSES.has(name);
-}
-
 function unwrapPhase1Parens(expr: ts.Expression): ts.Expression {
   let current = expr;
   while (ts.isParenthesizedExpression(current)) current = current.expression;
@@ -9168,6 +9103,14 @@ function phase1NewExpression(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  if (currentSelectionOptions?.resolveQualifiedExternConstructor?.(expr)) {
+    return (
+      (expr.typeArguments?.length ?? 0) === 0 &&
+      (expr.arguments ?? []).every(
+        (argument) => !ts.isSpreadElement(argument) && isPhase1Expr(argument, scope, localClasses),
+      )
+    );
+  }
   if (!ts.isIdentifier(expr.expression)) return shapeNo("expr-new-callee-nonident", expr.expression);
   const fnctorAdmission = phase1FnctorNewExpression(expr, scope, localClasses);
   if (fnctorAdmission !== undefined) return fnctorAdmission;
@@ -9575,15 +9518,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       return isPhase1Expr(expr.left, scope, localClasses);
     }
-    // (#4276) Fast standalone owns a native wrapper-brand predicate over the
-    // real `$Object.[[PrimitiveValue]]` representation. Admit only an exact
-    // ambient wrapper constructor; source/local shadows keep legacy semantics.
-    if (
-      binOp === ts.SyntaxKind.InstanceOfKeyword &&
-      ts.isIdentifier(expr.right) &&
-      selectorSupportsStandaloneWrapperInstanceOf(expr.right)
-    ) {
-      return isPhase1Expr(expr.left, scope, localClasses);
+    if (binOp === ts.SyntaxKind.InstanceOfKeyword) {
+      if (ts.isIdentifier(expr.right) && selectorSupportsStandaloneWrapperInstanceOf(expr.right)) {
+        return isPhase1Expr(expr.left, scope, localClasses);
+      }
+      return nativeDynamicInstanceOfShape(expr, currentSelectionOptions, () =>
+        probeShape(() => isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses)),
+      );
     }
     // (#5164 S3) `<key> in <dynamic receiver>` — last of the special binary
     // arms, so every module guard above has had its say. TERMINAL like the
@@ -10934,6 +10875,10 @@ export function buildLocalCallGraph(
         // resolve as external identifier calls.  Uncertified `new Promise`
         // shapes retain the ordinary graph behavior below.
         if (currentSelectionOptions?.promiseDelays?.resolve(node)) return;
+        if (currentSelectionOptions?.resolveQualifiedExternConstructor?.(node)) {
+          for (const argument of node.arguments ?? []) visit(argument);
+          return;
+        }
         // #3521 — an admitted function-style constructor is also a certified
         // leaf for the local call graph.  Only the exact resolver may suppress
         // the ordinary unknown-constructor rejection; its arguments still

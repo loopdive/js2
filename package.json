@@ -118,6 +118,7 @@
     "check:edition-ratchet:update": "npx tsx scripts/test262-edition-ratchet.ts --update",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",
     "check:host-import-policy": "node --import tsx scripts/check-host-import-policy.ts",
+    "check:standalone-arms": "node scripts/check-standalone-arms.mjs",
     "check:ir-only": "npx tsx scripts/check-ir-only.ts",
     "audit:standalone-ir-cutover-corpus": "node -e \"require('node:fs').mkdirSync('.tmp', { recursive: true }); require('node:fs').writeFileSync('.tmp/standalone-ir-cutover-audit.jsonl', '')\" && JS2WASM_IR_CUTOVER_AUDIT=.tmp/standalone-ir-cutover-audit.jsonl node --import tsx scripts/run-standalone-ir-cutover-corpus.mjs --output .tmp/standalone-ir-cutover-corpus.jsonl",
     "check:standalone-ir-cutover": "node scripts/check-standalone-ir-cutover.mjs",

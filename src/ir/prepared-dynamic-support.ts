@@ -57,15 +57,19 @@ export interface PreparedDynamicSupportEntry {
  * `null` means "this slice cannot name the physical symbol for this
  * instruction" — the owning unit is then dropped, never guessed at.
  *
- * Deliberately narrow, and narrow BY MEASUREMENT: the externref arms of
- * `emitBox`/`emitUnbox` are identity sequences that call nothing at all (so no
- * callable ref can honestly satisfy `implicitSupportRequirement`), and no unit
+ * Declared extern objects use an exact identity witness: their canonical box
+ * emits no instructions on the externref carrier, so no callable is invented.
+ * Other externref arms (including strings) remain unsupported, and no unit
  * in the measured cohort reaches a prepared component with an `unbox` or a
  * `dyn.*` instruction, so naming a helper for those would be unverifiable code.
  */
-function exactHostHelperName(instr: IrInstr, types: ReadonlyMap<IrValueId, IrType>): "__box_number" | null {
+function exactHostHelperName(
+  instr: IrInstr,
+  types: ReadonlyMap<IrValueId, IrType>,
+): "__box_number" | "identity" | null {
   if (instr.kind !== "box" || instr.toType.kind !== "dynamic") return null;
   const operand = types.get(instr.value);
+  if (operand?.kind === "extern") return "identity";
   // The host arm dispatches on the OPERAND kind FIRST: an f64 operand calls
   // `__box_number` whatever the tag refinement says (measured — the module-init
   // box of `let a: any = 1` carries tag 3 and still takes the f64 arm). The
@@ -120,10 +124,11 @@ export function prepareDynamicInstructionSupportForUnits(input: {
   const support = new Map<IrUnitId, PreparedDynamicInstructionSupportEvidence>();
   // Plan first, mint nothing: `plans` holds only units whose every dynamic
   // instruction resolved to an exact physical symbol.
-  const plans = new Map<IrUnitId, Map<IrInstr, "__box_number">>();
+  const plans = new Map<IrUnitId, Map<IrInstr, "__box_number" | "identity">>();
+  const identityTypes = new Map<IrInstr, IrType>();
   for (const entry of entries) {
     const types = valueTypesOf(entry.fn);
-    const planned = new Map<IrInstr, "__box_number">();
+    const planned = new Map<IrInstr, "__box_number" | "identity">();
     let nameable = true;
     for (const block of entry.fn.blocks) {
       for (const root of block.instrs) {
@@ -131,7 +136,10 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           if (!isDynamicInstruction(instr)) return;
           const name = exactHostHelperName(instr, types);
           if (name === null) nameable = false;
-          else planned.set(instr, name);
+          else {
+            planned.set(instr, name);
+            if (name === "identity" && instr.kind === "box") identityTypes.set(instr, types.get(instr.value)!);
+          }
         });
       }
     }
@@ -146,7 +154,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
   if (plans.size === 0 || !ctx.programAbiTypes) return support;
   const carrierValType = resolveIrDynamicCarrierType(ctx);
   if (carrierValType.kind !== "externref") return support;
-  const needsBoxNumber = [...plans.values()].some((planned) => planned.size > 0);
+  const needsBoxNumber = [...plans.values()].some((planned) => [...planned.values()].includes("__box_number"));
   const boxNumber = needsBoxNumber
     ? exactPreparedDynamicHelperRef(
         ctx,
@@ -157,13 +165,27 @@ export function prepareDynamicInstructionSupportForUnits(input: {
         [{ kind: "externref" }],
       )
     : undefined;
-  const usable = [...plans].filter(([, planned]) => planned.size === 0 || boxNumber !== undefined);
+  const usable = [...plans].filter(
+    ([, planned]) => ![...planned.values()].includes("__box_number") || boxNumber !== undefined,
+  );
   if (usable.length === 0) return support;
   const carrier = ctx.programAbiTypes.prepareDynamicCarrier(carrierValType);
   for (const [unitId, planned] of usable) {
     const instructionCallables = new Map<IrInstr, readonly IrFuncRef[]>();
-    if (boxNumber) for (const instr of planned.keys()) instructionCallables.set(instr, [boxNumber]);
-    support.set(unitId, Object.freeze({ dynamicCarrierRef: carrier.carrierRef, instructionCallables }));
+    const identityBoxes = new Map<IrInstr, { operandType: IrType; carrier: typeof carrierValType }>();
+    for (const [instr, name] of planned) {
+      if (name === "identity")
+        identityBoxes.set(instr, { operandType: identityTypes.get(instr)!, carrier: carrierValType });
+      else if (boxNumber) instructionCallables.set(instr, [boxNumber]);
+    }
+    support.set(
+      unitId,
+      Object.freeze({
+        dynamicCarrierRef: carrier.carrierRef,
+        instructionCallables,
+        ...(identityBoxes.size ? { identityBoxes } : {}),
+      }),
+    );
   }
   return support;
 }

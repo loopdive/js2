@@ -409,6 +409,14 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
     ["externref"],
     "host-bridge-gated",
   ),
+  exportRecord(
+    "callable.export.argv_apply",
+    "__call_fn_apply",
+    "$ci",
+    ["externref", "externref", "externref"],
+    ["externref"],
+    "host-bridge-gated",
+  ),
   // The unmatched-callee host fallback, HOST spellings — a declared sibling
   // PAIR, not an either/or. `host-call-fallback.ts:20` selects the fixed-arity
   // member when `knob !== "0" && arity <= 4`, and the array member otherwise,

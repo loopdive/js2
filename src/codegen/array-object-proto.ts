@@ -164,7 +164,7 @@ import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4
 import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { emitDateProtoToJsonBody } from "./date-proto-to-json.js"; // (#6775 S8)
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { primitiveCarrierTestInstrs } from "./object-model/primitive-carrier-test.js"; // (#6651 V10a)
 import {
   emitStandalonePromiseFinally,
@@ -1185,7 +1185,7 @@ function emitStringProtoMemberBody(ctx: CodegenContext, fctx: FunctionContext, m
       emitStringReplaceMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
       emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
     );
-  if (member === "normalize" && (ctx.standalone || ctx.wasi))
+  if (member === "normalize" && ctx.targetProfile.backend === "wasmgc")
     return (
       emitStringNormalizeMemberBody(ctx, fctx, () => emitStringRequireObjectCoercible(ctx, fctx, member)) ??
       emitProtoMemberBodyRefusal(ctx, fctx, "String", member)
@@ -2222,7 +2222,7 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
  * read, without changing that general-purpose dispatcher.
  */
 function emitErrorProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
-  if (!ctx.standalone) return null;
+  if (ctx.targetProfile.backend !== "wasmgc") return null;
 
   // Register all runtime dependencies before capturing function indices. The
   // object runtime owns the native __extern_get implementation; no host import
@@ -2231,7 +2231,7 @@ function emitErrorProtoToStringBody(ctx: CodegenContext, fctx: FunctionContext):
   // The reflective callee can be compiled before its argument expression. Make
   // the native carrier available at body-mint time so the later `Symbol()`
   // argument is still recognized by this already-emitted `ref.test` arm.
-  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
   ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
   ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
@@ -2490,7 +2490,7 @@ function emitPromiseProtoCatchBody(ctx: CodegenContext, fctx: FunctionContext): 
   ) {
     return null;
   }
-  if (usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
+  ensureSymbolCarrier(ctx); // (#6651 V10a) the primitive-`this` test below
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const argsLocal = allocLocal(fctx, `__pcatch_args_${fctx.locals.length}`, { kind: "externref" });
 
@@ -2644,7 +2644,7 @@ function makeGlue(
         }
       : {}),
     // (#6770 S5) Annex B §B.2.2.1 `Object.prototype.__proto__`, same kind.
-    ...(name === "Object" && ctx.standalone
+    ...(name === "Object" && ctx.targetProfile.backend === "wasmgc"
       ? {
           accessorProps: [
             { key: "__proto__", get: OBJECT_PROTO_GETTER_MEMBER, set: OBJECT_PROTO_SETTER_MEMBER },
@@ -2679,19 +2679,19 @@ function makeGlue(
       if (name !== "String") return 0;
       // All pre-existing String slot overrides are shared with host/native-first
       // closure ABIs. Only normalize's new optional-form slot belongs to the
-      // native standalone/WASI body.
-      if (member === "normalize" && !(ctx.standalone || ctx.wasi)) return 0;
+      // native WasmGC body.
+      if (member === "normalize" && ctx.targetProfile.backend !== "wasmgc") return 0;
       return STRING_PROTO_METHOD_PARAM_SLOTS[member] ?? 0;
     },
     memberIsVariadic: (member) =>
       // (#6709) reduce/reduceRight need the argument COUNT (initialValue presence).
       (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
       (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
-      (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
+      (name === "Array" && isArrayFillVariadicMember(member)) ||
       (name === "Array" &&
-        (isArraySearchVariadicMember(ctx, member) ||
-          isArrayCopyMethodVariadicMember(ctx, member) ||
-          isArraySortVariadicMember(ctx, member))) || // (#6912)
+        (isArraySearchVariadicMember(member) ||
+          isArrayCopyMethodVariadicMember(member) ||
+          isArraySortVariadicMember(member))) || // (#6912)
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||
@@ -2939,7 +2939,7 @@ export function ensureArrayNativeProtoGlue(ctx: CodegenContext): number | undefi
  * that never reflects on a builtin prototype keeps its bytes.
  */
 export function demandArrayProtoDynamicCompanion(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (ctx.targetProfile.backend !== "wasmgc") return;
   const brand = ensureArrayNativeProtoGlue(ctx);
   if (brand !== undefined) ensureNativeProtoCompanionSeeder(ctx, brand);
 }
@@ -3052,7 +3052,7 @@ export function ensurePromiseNativeProtoGlue(ctx: CodegenContext): number | unde
     // each body TWICE (a probe for the result type, then the committed
     // emission), and minting a function inside either would shift funcidxs
     // under a body already being written.
-    if (ctx.standalone === true || ctx.wasi === true) reserveClosedMethodDispatchVararg(ctx, "then");
+    if (ctx.targetProfile.backend === "wasmgc") reserveClosedMethodDispatchVararg(ctx, "then");
     registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Promise", PROMISE_PROTO_METHODS, "Promise"));
   }
   return brand;
@@ -3984,7 +3984,7 @@ export function emitAsyncGeneratorFunctionPrototypeSingleton(
  */
 export function emitNativeGlobalThisObject(ctx: CodegenContext, fctx: FunctionContext): ValType | null {
   ensureObjectRuntime(ctx);
-  const linkedGlobal = ctx.standaloneGlobalThisImport;
+  const linkedGlobal = ctx.linkedGlobalThisImport;
   if (linkedGlobal !== undefined) {
     const getterIdx = ensureLateImport(ctx, linkedGlobal.name, [], [{ kind: "externref" }], linkedGlobal.module);
     if (linkedGlobal.call !== undefined) {

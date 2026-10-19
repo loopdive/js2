@@ -66,7 +66,7 @@ const OBJECT_FN = "__standalone_console_object";
  * {@link tryEmitStandaloneConsoleValue}.
  */
 function isRegimeAmbientConsoleRead(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): boolean {
-  if (!ctx.standalone || ctx.standaloneGlobalThisImport !== undefined) return false;
+  if (!ctx.standalone || ctx.linkedGlobalThisImport !== undefined) return false;
   if (id.text !== "console") return false;
   if (fctx.localMap.has("console") || (fctx.boxedCaptures?.has("console") ?? false)) return false;
   if (runtimeEvalStateMayShadowBinding(ctx, fctx, "console")) return false;

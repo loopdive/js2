@@ -90,8 +90,7 @@ const READ_ONLY_KEY_LIST_METHODS = new Set(["indexOf", "lastIndexOf", "includes"
  * same cast. The coercion only copies a foreign value, so a reassigned binding
  * still reads correctly.
  */
-function isStandaloneOwnKeyListCall(ctx: CodegenContext, expr: ts.Expression, methodName: string): boolean {
-  if (!ctx.standalone) return false;
+function isOwnKeyListReceiver(ctx: CodegenContext, expr: ts.Expression, methodName: string): boolean {
   if (isOwnKeyListCall(expr)) return true;
   if (!ts.isIdentifier(expr) || !READ_ONLY_KEY_LIST_METHODS.has(methodName)) return false;
   const decl = ctx.oracle.valueDeclarationOf(expr);
@@ -112,7 +111,7 @@ export function withOwnKeyListReceiverAsVec<T>(
   methodName: string,
   lower: () => T | undefined,
 ): T | undefined {
-  if (!eligible || !isStandaloneOwnKeyListCall(ctx, receiverExpr, methodName)) return undefined;
+  if (!eligible || !isOwnKeyListReceiver(ctx, receiverExpr, methodName)) return undefined;
   return withArraySubclassReceiverAsVec(
     ctx,
     fctx,
@@ -323,7 +322,6 @@ export function nonObjectEnumerableOwnInstrs(ctx: CodegenContext, entries: boole
   const newIdx = ctx.funcMap.get("__objvec_new");
   const pushIdx = ctx.funcMap.get("__objvec_push");
   if (
-    !ctx.standalone ||
     keysIdx === undefined ||
     lengthIdx === undefined ||
     getIdxIdx === undefined ||

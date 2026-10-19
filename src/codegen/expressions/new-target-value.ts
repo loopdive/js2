@@ -17,7 +17,7 @@
 //     `NEW_TARGET_LEXICAL_LOCAL`, which the closure captures like any binding.
 import { ts, forEachChild } from "../../ts-api.js";
 import type { ValType, Instr } from "../../ir/types.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { coerceType, compileExpression, resolveEnclosingClassName } from "../shared.js";
 // Late-bound: a direct import of late-imports.ts would close an import cycle (#6797).
@@ -130,7 +130,7 @@ function emitClassNewTargetValue(ctx: CodegenContext, fctx: FunctionContext, cla
  * binding: a creator read compiled after it may execute before it is written.
  */
 export function snapshotArrowNewTarget(ctx: CodegenContext, fctx: FunctionContext, arrow: ts.Node): void {
-  if (!ctx.standalone || !ts.isArrowFunction(arrow) || !referencesOwnNewTarget(arrow)) return;
+  if (!wasmGcBackend(ctx) || !ts.isArrowFunction(arrow) || !referencesOwnNewTarget(arrow)) return;
   compileNewTargetValue(ctx, fctx);
   const slot = fctx.newTargetSnapshotLocal ?? allocLocal(fctx, "__new_target_snapshot", { kind: "externref" });
   fctx.newTargetSnapshotLocal = slot;
@@ -140,7 +140,7 @@ export function snapshotArrowNewTarget(ctx: CodegenContext, fctx: FunctionContex
 /** The capture-analysis twin: does this arrow capture the creator's snapshot? */
 export function arrowCapturesNewTarget(ctx: CodegenContext, fctx: FunctionContext, arrow: ts.Node): boolean {
   return (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     fctx.newTargetSnapshotLocal !== undefined &&
     ts.isArrowFunction(arrow) &&
     referencesOwnNewTarget(arrow)

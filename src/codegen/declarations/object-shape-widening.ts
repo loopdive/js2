@@ -472,7 +472,7 @@ export function collectEmptyObjectWidening(
 ): void {
   // (#2071) Lazily computed: most files have no foreign-return constructor.
   let foreignReturnCtors: Set<ts.FunctionLikeDeclaration> | undefined;
-  if (ctx.standalone || ctx.wasi) {
+  if (ctx.targetProfile.backend === "wasmgc") {
     foreignReturnCtors = computeForeignReturnCtors(checker, sourceFile);
     if (foreignReturnCtors.size > 0) poisonForeignCtorAssignedGlobals(ctx, checker, foreignReturnCtors);
   }
@@ -505,7 +505,7 @@ export function collectEmptyObjectWidening(
           // stays a `$Object`. Scan the whole enclosing statement list (the same
           // tree `collectPropsFromStatements` walks).
           //
-          // History: originally `ctx.standalone`-gated (#2584) on the assumption
+          // History: originally regime-gated (#2584) on the assumption
           // "host keeps the struct fast path via the live-mirror Proxy". #2849
           // dropped the gate (the Proxy does NOT bridge the for-in-write →
           // static-struct-read divergence, so host mis-read `getOptions`-shaped
@@ -539,7 +539,7 @@ export function collectEmptyObjectWidening(
           // (#2071) Returned from a foreign-return-capable constructor → the
           // literal escapes as the construct result; keep it an open `$Object`
           // (see varEscapesViaForeignReturnCtor above).
-          if ((ctx.standalone || ctx.wasi) && !ctx.objectHashConsumerVars.has(varName)) {
+          if (ctx.targetProfile.backend === "wasmgc" && !ctx.objectHashConsumerVars.has(varName)) {
             foreignReturnCtors ??= computeForeignReturnCtors(checker, sourceFile);
             if (varEscapesViaForeignReturnCtor(foreignReturnCtors, decl, varName)) {
               ctx.objectHashConsumerVars.add(varName);
@@ -558,7 +558,7 @@ export function collectEmptyObjectWidening(
           // `__delete_property` tombstones give correct delete → read / `in` /
           // hasOwnProperty semantics. Standalone-gated: the host lane's
           // sidecar + live-mirror handles struct deletes (byte-inert).
-          if (ctx.standalone && !ctx.objectHashConsumerVars.has(varName)) {
+          if (ctx.targetProfile.backend === "wasmgc" && !ctx.objectHashConsumerVars.has(varName)) {
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, ctx.objectHashConsumerVars);
             }
@@ -579,7 +579,7 @@ export function collectEmptyObjectWidening(
           // the 15.2.3.6-4-75 / 4-82-* runner-wrapped family flips to pass).
           // Standalone-gated: the host lane applies accessor defines through the
           // live-mirror Proxy onto the real JS object (byte-inert there).
-          if (ctx.standalone && !ctx.objectHashConsumerVars.has(varName)) {
+          if (ctx.targetProfile.backend === "wasmgc" && !ctx.objectHashConsumerVars.has(varName)) {
             for (const s of stmts) {
               markStandaloneAccessorDefineTargets(s, varName, ctx.objectHashConsumerVars);
             }
@@ -594,7 +594,7 @@ export function collectEmptyObjectWidening(
           // stored closure has the same mutation effect as its direct spelling.
           // Baking these flags into a widened closed shape would incorrectly
           // share one instance's integrity state with every same-shape object.
-          if (ctx.standalone && !ctx.objectHashConsumerVars.has(varName)) {
+          if (ctx.targetProfile.backend === "wasmgc" && !ctx.objectHashConsumerVars.has(varName)) {
             for (const s of stmts) {
               markStandaloneObjectMutationTargets(ctx, s, varName, ctx.objectHashConsumerVars);
               markStandaloneReflectiveWriteTargets(s, varName, ctx.objectHashConsumerVars); // (#6770 S2/S4)
@@ -630,7 +630,7 @@ export function collectEmptyObjectWidening(
           // bracket-form (`obj["p"]`) already proves correct on main. Host-gated
           // so standalone stays byte-identical (also avoids colliding with
           // in-flight #2042); WASI is standalone (no host MOP).
-          if (!ctx.standalone && !ctx.objectHashConsumerVars.has(varName)) {
+          if (ctx.targetProfile.backend !== "wasmgc" && !ctx.objectHashConsumerVars.has(varName)) {
             for (const s of stmts) {
               markRuntimeStoreDefineTargets(s, varName, ctx.objectHashConsumerVars);
             }
@@ -690,7 +690,7 @@ export function collectEmptyObjectWidening(
             // host `$Object` fails the decl-init cast, and the var is null from
             // the first instruction — the acorn `Parser`/`getOptions` escape
             // shape in TS-mode typing (tests/issue-2944.test.ts).
-            if (!ctx.standalone) {
+            if (ctx.targetProfile.backend !== "wasmgc") {
               // Preserve the host lane's evolved-variable-only poison. Its
               // live-mirror/sidecar provider still relies on the initializer
               // retaining main's closed-struct representation.
@@ -1003,7 +1003,7 @@ function collectRedeclaredObjectIdentityLiterals(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
-  if (!ctx.standalone) return;
+  if (ctx.targetProfile.backend !== "wasmgc") return;
   const widenedNames = collectRedeclarationWidenedModuleVarNames(ctx.oracle, sourceFile);
   if (widenedNames.size === 0) return;
 
@@ -1086,7 +1086,7 @@ function collectRedeclaredShapeDivergentObjects(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
-  if (!ctx.standalone) return;
+  if (ctx.targetProfile.backend !== "wasmgc") return;
   const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
   const visit = (node: ts.Node): void => {
     if (
@@ -1337,7 +1337,7 @@ export function collectGrowableObjectLiterals(
           // Pin the declaration itself to the open-object representation so
           // the published value keeps both identity and reflective fields.
           const isNestedDynamicCallArgument = (id: ts.Identifier): boolean => {
-            if (!(ctx.standalone || ctx.wasi) || id.text !== varName) return false;
+            if (ctx.targetProfile.backend !== "wasmgc" || id.text !== varName) return false;
             const property = id.parent;
             if (
               !(
@@ -1410,7 +1410,7 @@ export function collectGrowableObjectLiterals(
           // Keep this standalone-only block for its existing direct receiver
           // delete/accessor paths; it must not re-admit a W1 target whose alias
           // or ABI proof declined the open-object promotion.
-          if (ctx.standalone) {
+          if (ctx.targetProfile.backend === "wasmgc") {
             const mopSet = new Set<string>();
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
@@ -1489,7 +1489,7 @@ export function collectGrowableObjectLiterals(
               ts.isPropertyAccessExpression(node.left)
             ) {
               const info = propertyChainRoot(node.left); // gc/host `V.__proto__ =` is the setter, not a field add (#2747 d)
-              const isHostProtoWrite = !ctx.standalone && node.left.name.text === "__proto__";
+              const isLinearProtoWrite = ctx.targetProfile.backend !== "wasmgc" && node.left.name.text === "__proto__";
               if (info && info.root === varName) {
                 if (info.depth >= 2) {
                   // A deep write does not necessarily grow the ROOT object.
@@ -1516,7 +1516,7 @@ export function collectGrowableObjectLiterals(
                   if (!targetsDeclaredNestedField) {
                     grows = true;
                   }
-                } else if (info.depth === 1 && !shape.has(node.left.name.text) && !isHostProtoWrite) {
+                } else if (info.depth === 1 && !shape.has(node.left.name.text) && !isLinearProtoWrite) {
                   grows = true; // direct out-of-shape field add
                 }
               }
@@ -1617,7 +1617,7 @@ export function collectGrowableObjectLiterals(
             // discipline as the rest of this pass. Host-gated; standalone has its
             // own arm above and stays byte-identical.
             if (
-              !ctx.standalone &&
+              ctx.targetProfile.backend !== "wasmgc" &&
               ts.isCallExpression(node) &&
               ts.isPropertyAccessExpression(node.expression) &&
               ts.isIdentifier(node.expression.expression) &&
@@ -1693,7 +1693,7 @@ function pinNameMatchedGrowableLiteralTypes(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
-  if (!ctx.standalone || ctx.growableObjectLiteralVars.size === 0) return;
+  if (ctx.targetProfile.backend !== "wasmgc" || ctx.growableObjectLiteralVars.size === 0) return;
   const visit = (node: ts.Node): void => {
     if (
       ts.isVariableDeclaration(node) &&
@@ -2672,7 +2672,7 @@ export function collectPropsFromStatements(
           // read route through the native runtime consistently. Host mode keeps
           // the struct fast path (the host `__defineProperty_desc` import
           // reflects back through the live-mirror Proxy onto the struct sidecar).
-          if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
+          if (ctx.targetProfile.backend === "wasmgc" && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
             ctx.sidecarDefinedPropertyKeys.add(`${varName}:${propName}`);
             recordSidecarPropertyOwner(ctx, `${varName}:${propName}`);

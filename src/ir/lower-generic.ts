@@ -45,6 +45,7 @@
 import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";
 import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backend/lower-contracts.js";
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
+import { emitObjectOperation, resolveObjectReference } from "./lowering/object-reference.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
 import type { IrVecLowering } from "./backend/handles.js";
@@ -266,6 +267,8 @@ export function lowerIrFunctionBody<S, Slot>(
       `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
     );
   }
+  if (resolver.resolveObjectReference && emitter.backend !== "wasmgc")
+    throw new Error(`ir/lower: reference-object ABI requires WasmGC (${func.name})`);
   const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
@@ -1943,56 +1946,11 @@ export function lowerIrFunctionBody<S, Slot>(
       case "string.char_code_at":
         emitStringOperation(instr, stringOperationContext, out);
         return;
-      case "object.new": {
-        const obj = resolver.resolveObject?.(instr.shape, instr.alloc);
-        if (!obj) {
-          throw new Error(`ir/lower: resolver cannot lower object<${describeShape(instr.shape)}> (${func.name})`);
-        }
-        // Push values in canonical (sorted) field order — same order as
-        // shape.fields, which is also the WasmGC struct's declared field
-        // order. The builder enforces value-count parity with shape arity,
-        // so this loop always produces the right stack shape.
-        // (a2) struct/object family (#1584 §2a): route through emitAggregateNew
-        // — byte-identical {op:"struct.new"} on WasmGC, OP.STRUCT_NEW on bytecode.
-        for (const v of instr.values) emitValue(v, out);
-        emitter.emitAggregateNew(obj, instr.values.length, out);
+      case "object.new":
+      case "object.get":
+      case "object.set":
+        emitObjectOperation(instr, { resolver, emitter, emitValue, typeOf, funcName: func.name, describeShape }, out);
         return;
-      }
-      case "object.get": {
-        const valueIrType = typeOf(instr.value);
-        if (valueIrType.kind !== "object") {
-          throw new Error(
-            `ir/lower: object.get value must be an object IrType, got ${valueIrType.kind} (${func.name})`,
-          );
-        }
-        const obj = resolver.resolveObject?.(valueIrType.shape);
-        if (!obj) {
-          throw new Error(`ir/lower: resolver cannot lower object<${describeShape(valueIrType.shape)}> (${func.name})`);
-        }
-        // (a2): route through emitFieldGet — byte-identical {op:"struct.get"}
-        // on WasmGC, OP.STRUCT_GET <fieldIdx> on bytecode.
-        emitValue(instr.value, out);
-        emitter.emitFieldGet(obj, instr.name, out);
-        return;
-      }
-      case "object.set": {
-        const valueIrType = typeOf(instr.value);
-        if (valueIrType.kind !== "object") {
-          throw new Error(
-            `ir/lower: object.set value must be an object IrType, got ${valueIrType.kind} (${func.name})`,
-          );
-        }
-        const obj = resolver.resolveObject?.(valueIrType.shape);
-        if (!obj) {
-          throw new Error(`ir/lower: resolver cannot lower object<${describeShape(valueIrType.shape)}> (${func.name})`);
-        }
-        // (a2): route through emitFieldSet — byte-identical {op:"struct.set"}
-        // on WasmGC, OP.STRUCT_SET <fieldIdx> on bytecode.
-        emitValue(instr.value, out);
-        emitValue(instr.newValue, out);
-        emitter.emitFieldSet(obj, instr.name, out);
-        return;
-      }
       // Slice 3 (#1169c): closure / ref-cell ops.
       case "closure.new": {
         const liftedIdx = resolver.resolveFunc(instr.liftedFunc);
@@ -2642,6 +2600,7 @@ export function lowerIrFunctionBody<S, Slot>(
           (opTy.kind === "val" && opTy.val.kind === "externref") ||
           opTy.kind === "extern" ||
           opTy.kind === "callable" ||
+          (opTy.kind === "object" && resolveObjectReference(resolver, opTy.shape) !== undefined) ||
           (opTy.kind === "string" && resolver.resolveString?.()?.kind === "externref");
         if (!alreadyExternref) {
           emitter.emitToExternref(out);
@@ -4027,7 +3986,10 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
   }
   if (t.kind === "object") {
-    // Object IrTypes always lower to a (ref $struct) — mutability of the
+    const reference = resolveObjectReference(resolver, t.shape);
+    if (reference) return reference.carrier;
+    // Without an explicit reference ABI, objects lower to a (ref $struct).
+    // Mutability of the
     // backing reference is decided by the caller (locals/params get a
     // non-null ref since `object.new` produces a definite struct; field
     // slots get a ref_null in the struct definition itself, see

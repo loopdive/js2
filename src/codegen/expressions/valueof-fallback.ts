@@ -2,7 +2,7 @@
 
 import type { ValType } from "../../ir/types.js";
 import type { ts } from "../../ts-api.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { tryEmitDynamicValueOfCall } from "../wrapper-valueof.js";
 import { compileExpression } from "../shared.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
@@ -30,9 +30,9 @@ export function tryEmitValueOfFallback(
   // Receiver-precise, so a module that does not override `valueOf` on this
   // binding compiles byte-identically. Measured flips:
   // `Number/prototype/valueOf/S15.7.4.4_A2_T0{3,4,5}` block #1.
-  if (ctx.standalone && sourceOverridesMethodOnReceiver(access.expression, "valueOf")) return undefined;
+  if (wasmGcBackend(ctx) && sourceOverridesMethodOnReceiver(access.expression, "valueOf")) return undefined;
   const receiverFact = ctx.oracle.typeFactOf(access.expression).kind;
   const dynamicReceiver = receiverFact === "any" || receiverFact === "unknown";
-  if (!ctx.standalone && dynamicReceiver) return undefined;
+  if (!wasmGcBackend(ctx) && dynamicReceiver) return undefined;
   return tryEmitDynamicValueOfCall(ctx, fctx, access) ?? compileExpression(ctx, fctx, access.expression);
 }

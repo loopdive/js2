@@ -56,6 +56,7 @@
 // verified by sha256 A/B over 6 modules × {gc, standalone} in #5383's S2h notes.
 
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
 import { emitLazyProtoGet } from "./expressions/extern.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -94,7 +95,7 @@ function ancestorsOf(ctx: CodegenContext, className: string): string[] {
  * host) so a read site can call both unconditionally.
  */
 export function recordStandaloneRuntimeKeyClassMemberRead(ctx: CodegenContext, receiverStructTypeIdx?: number): void {
-  if (!(ctx.standalone || ctx.wasi) || ctx.classSet.size === 0) return;
+  if (!wasmGcBackend(ctx) || ctx.classSet.size === 0) return;
   let classes: Iterable<string>;
   if (receiverStructTypeIdx === undefined) {
     classes = ctx.classSet;
@@ -135,7 +136,7 @@ export function recordStandaloneRuntimeKeyClassMemberRead(ctx: CodegenContext, r
  * one identical singleton (`c.m === C.prototype.m`, §15.7.14).
  */
 export function mintStandaloneClassProtoBuilders(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
+  if (!wasmGcBackend(ctx)) return;
   // (#5383 S2h) A module compiled as a linked PROVIDER for a wasm consumer has
   // no read site of its own to record the demand — the read happens in the
   // OTHER module, and reaches this one through the S2d boundary terminal

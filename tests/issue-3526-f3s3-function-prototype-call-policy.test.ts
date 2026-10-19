@@ -243,11 +243,13 @@ describe("#3526 F3-S3 census is byte-unchanged across the target and fast axes",
 // (c) the backstop, and the projection that makes it unreachable
 // --------------------------------------------------------------------------
 describe("#3526 F3-S3 the resolver projects a decided policy, the preregister admits it", () => {
-  it("projects the policy ONCE, before the freeze, from the target axis alone", () => {
+  it("projects the single native semantic policy once before the freeze", () => {
     const start = INTEGRATION_SOURCE.indexOf("function integrationFunctionPrototypeCallPolicy(");
     expect(start).toBeGreaterThan(0);
     const projection = INTEGRATION_SOURCE.slice(start, INTEGRATION_SOURCE.indexOf("\n}", start));
-    expect(projection).toContain("ctx.standalone && !ctx.wasi");
+    expect(projection).toContain('call: "native"');
+    expect(projection).not.toContain("ctx.standalone");
+    expect(projection).not.toContain("ctx.wasi");
     // The `fast` axis is a different question and must never enter this table.
     expect(projection).not.toContain("ctx.fast");
     // No live manifest read: this runs before the freeze.

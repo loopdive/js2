@@ -23,6 +23,7 @@ import type {
   IrDynamicLowering,
   IrFnctorLowering,
   IrObjectStructLowering,
+  IrObjectReferenceLowering,
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
@@ -35,6 +36,7 @@ export type {
   IrDynamicLowering,
   IrFnctorLowering,
   IrObjectStructLowering,
+  IrObjectReferenceLowering,
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
@@ -77,6 +79,16 @@ export interface IrLowerResolver {
    * converge on a single WasmGC struct for any given shape.
    */
   resolveObject?(shape: IrObjectShape, alloc?: AllocSiteId): IrObjectStructLowering | null;
+  /**
+   * Whole-component reference-object policy, independent of environment.
+   * Absence retains the native layout ABI. Presence selects externref for ALL
+   * logical objects; null means unsupported, never an implicit native fallback.
+   * resolveObject still owns native allocations, which are erased once after
+   * construction. Field providers must handle both admitted foreign references
+   * and native allocations reachable in this component. This hook alone does
+   * not establish prepared ownership or authorize a public boundary adapter.
+   */
+  resolveObjectReference?(shape: IrObjectShape): IrObjectReferenceLowering | null;
   /**
    * Slice 3 / #3214 B0: resolve the per-signature allocation wrapper and its
    * exact lifted funcref type. The wrapper is used by `closure.new` (and as the

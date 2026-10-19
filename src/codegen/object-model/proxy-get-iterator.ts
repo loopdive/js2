@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#6651 U3) GetIterator (§7.4.1) over a `$Proxy` whose target is an Array and
- * whose handler has no `get` trap, under `--target standalone`.
+ * whose handler has no `get` trap.
  *
  * ```js
  * var p = new Proxy([1, 2, 3], {});
@@ -45,7 +45,7 @@ const TRAP_GET = 0;
 export function prependProxyArrayGetIteratorArm(ctx: CodegenContext): void {
   // `proxyDirty`: the pre-scan saw the identifier `Proxy` (#6651 H6). A module
   // whose proxy runtime was reserved for any other reason keeps its bytes.
-  if (!ctx.standalone || ctx.proxyDirty !== true) return;
+  if (ctx.proxyDirty !== true) return;
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
   const iteratorIdx = ctx.funcMap.get("__iterator");
   const isArrayIdx = ctx.funcMap.get("__extern_is_array");

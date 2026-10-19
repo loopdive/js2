@@ -18,18 +18,25 @@
  * the same imports unwrapped.
  */
 
+import { externClassAcceleratorFamily, INTL_EXTERN_CONSTRUCTOR_NAMES } from "../extern-class-identity.js";
+
 type Exports = Record<string, Function>;
 type ExportsSource = { getExports(): Exports | undefined };
 
 /** Is `imp` an `Intl.*` extern-class import routed by the selected `intl` accelerator? */
 export function isIntlAcceleratedImport(
-  imp: { intent: { type: string; name?: string; namespacePath?: readonly string[] } },
+  imp: { intent: { type: string; name?: string; className?: string; namespacePath?: readonly string[] } },
   accelerators: readonly string[] | undefined,
 ): boolean {
   if (accelerators?.includes("intl") !== true) return false;
   if (imp.intent.type === "builtin") return intlBuiltinTarget(imp.intent.name) !== undefined;
   if (imp.intent.type === "declared_global") return imp.intent.name === "Intl";
-  return imp.intent.type === "extern_class" && imp.intent.namespacePath?.[0] === "Intl";
+  return (
+    imp.intent.type === "extern_class" &&
+    typeof imp.intent.className === "string" &&
+    externClassAcceleratorFamily({ className: imp.intent.className, namespacePath: imp.intent.namespacePath }) ===
+      "intl"
+  );
 }
 
 /** The locale-sensitive builtin methods codegen routes as `__intl_<method>` (host-intl-locale.ts). */
@@ -105,15 +112,7 @@ export function intlHostConstructors(): Record<string, Function> {
   const out: Record<string, Function> = {};
   if (typeof Intl === "undefined") return out;
   const intl = Intl as unknown as Record<string, unknown>;
-  for (const name of [
-    "ListFormat",
-    "NumberFormat",
-    "DateTimeFormat",
-    "Collator",
-    "PluralRules",
-    "RelativeTimeFormat",
-    "DisplayNames",
-  ]) {
+  for (const name of INTL_EXTERN_CONSTRUCTOR_NAMES) {
     if (typeof intl[name] === "function") out[name] = intl[name] as Function;
   }
   return out;

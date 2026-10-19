@@ -28,7 +28,12 @@ import type { NullableElemParamOverride } from "../array-hof-nullable-elem-param
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
-import type { CompileTargetProfile } from "../../target-profile.js";
+import {
+  hostFreeEnvironment as profileHostFreeEnvironment,
+  jsValueBoundary as profileJsValueBoundary,
+  wasmGcBackend as profileWasmGcBackend,
+  type CompileTargetProfile,
+} from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 import type * as BodyRouteAudit from "./body-route-audit.js";
@@ -2343,8 +2348,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * (#4160) Set when `ensureObjectRuntime` reserved the prototype-index-store
    * helpers (`__protoidx_*`, proto-index-store.ts) — the runtime companions
    * that make `Object.prototype[i]` / `Array.prototype[i]` writes visible
-   * through the prototype chain. Reserved ONLY under
-   * `ctx.standalone && ctx.protoIndexDirty` (pre-scan flag, #4128), so a
+   * through the prototype chain. Reserved only for a native WasmGC module with
+   * `protoIndexDirty` set by the pre-scan (#4128), so a
    * flag-clear module carries no trace; bodies + chokepoint arms are filled by
    * `fillProtoIndexStore` at FINALIZE.
    */
@@ -3880,19 +3885,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Widened empty-object fields introduced by Object.defineProperty rather than assignment. */
   widenedDefinePropertyKeys: Set<string>;
   /**
-   * (#2372) Standalone-only: receiver var names that are the target of at least
+   * (#2372) Native-WasmGC-only: receiver var names that are the target of at least
    * one `Object.defineProperty(var, key, desc)` where `desc` is a *dynamic*
    * (non-inline-literal) descriptor. Such defines are applied via the native
    * `__obj_define_from_desc` `$Object` runtime, which the struct-widening read
    * path (`struct.get`) cannot observe. Membership here suppresses
    * struct-widening for the receiver so it stays on the `$Object` representation
    * and both the dynamic write and the read-back route through the native
-   * runtime consistently. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * runtime consistently. Empty on the linear backend.
    */
   dynamicDescriptorWidenVars: Set<string>;
   /**
-   * (#2584) Standalone-only: receiver var names that are the subject of at least
+   * (#2584) Native-WasmGC-only: receiver var names that are the subject of at least
    * one `$Object`-hash-only operation — bracket read/write (`o[k]`), `key in o`,
    * `Object.keys/values/entries/getOwnPropertyDescriptor/getOwnPropertyNames(o)`,
    * `Object.assign(o, …)` / `Object.assign(…, o)`, or `for (… in o)`. These
@@ -3903,8 +3907,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * struct-widening for the receiver so it stays a `__new_plain_object` /
    * `$Object`; dot-writes then route through `__extern_set` and every access form
    * reads the same hash consistently. Mirrors `dynamicDescriptorWidenVars`; the
-   * two sets are additive. Empty in host/gc/wasi mode (only populated under
-   * `ctx.standalone`).
+   * two sets are additive. Empty on the linear backend.
    */
   objectHashConsumerVars: Set<string>;
   /**
@@ -4273,8 +4276,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  `__unbox_string`, `__str_from_mem`, `__str_to_mem`,
    *  `__str_extern_len`). Implies `nativeStrings === true`. */
   standalone: boolean;
-  /** Linked zero-argument getter for the canonical standalone realm-global object. */
-  standaloneGlobalThisImport?: {
+  /** Linked zero-argument getter for the canonical realm-global object. */
+  linkedGlobalThisImport?: {
     module: string;
     name: string;
     call?: string;
@@ -4282,8 +4285,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
     owns?: string;
     get?: string;
   };
-  standaloneMicrotaskNotifyImport?: { module: string; name: string };
-  standaloneScriptVarBindings?: boolean;
+  microtaskNotifyImport?: { module: string; name: string };
+  sharedScriptVarBindings?: boolean;
   /** (#5383 S2p) True while the outlined `__native_globalThis_ensure` seed body
    *  is under construction, so a re-entrant realm-global read inside the seed
    *  itself takes the legacy inline splice instead of calling a function whose
@@ -4335,8 +4338,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  a post-delete read returned the stale value (#2179). Delete-free modules
    *  keep the byte-identical inline fast-path (zero overhead). */
   moduleUsesDelete?: boolean;
-  /** (#4223) True when the module syntactically READS a `constructor` property
-   *  (`x.constructor` / `x["constructor"]`) and the target is standalone.
+  /** (#4223) True when a WasmGC module can read a `constructor` property
+   *  (`x.constructor`, `x["constructor"]`, or an unknown computed key).
    *  Pre-scanned once at module setup; it is the demand gate for the
    *  primitive-wrapper constructor carriers
    *  (`ensureWrapperConstructorCarriers`, wrapper-constructor-carrier.ts) and
@@ -4344,15 +4347,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  never reads `.constructor` mints nothing and emits byte-identical
    *  output. */
   wrapperCtorCarrierDemanded?: boolean;
-  /** (#4232) True when `wrapperCtorCarrierDemanded` holds AND the module
-   *  mentions the `Object` identifier — the NARROWER gate for the
-   *  ordinary-object (`Object(null)`) arm alone. That arm answers from
-   *  `emitBuiltinNamespaceObject`, which materializes the whole `Object`
-   *  static surface as closures and thereby arms the JS-host method-closure
-   *  bridge; riding the shared flag put that surface into every standalone
-   *  module reading `.constructor` anywhere, including ones only ever asking
-   *  about a primitive wrapper (#4034's unconditional-pull-in hazard). */
-  plainCtorCarrierDemanded?: boolean;
   /** (#4187/#4745) Identifier names appearing as the receiver of a member
    *  delete (`delete r.k` / `delete r[e]`) or Reflect.deleteProperty(r, …),
    *  pre-scanned by `scanModuleMemberDeletes`. Consulted by the
@@ -4674,22 +4668,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   directCallTrampolines?: Map<string, import("../typed-this.js").DirectCallTrampoline>;
   /**
-   * `"__ownshadow_<Class>_<method>_<arity>"` → the reserved own-property guard
-   * wrapper for that class method. Reserved at the first static call site whose
-   * file could install an own callable member of that name, and FILLED at
-   * finalize (`fillOwnShadowWrappers`) so the reserve stays index-safe.
-   * See `expressions/own-property-method-shadow.ts`.
-   */
-  ownShadowWrappers?: Map<string, import("../expressions/own-property-method-shadow.js").OwnShadowWrapper>;
-  /**
-   * Method names whose CLOSED dispatcher (`__call_m_<name>_<arity>`) must ask
-   * the receiver for an own slot before running a user-class arm. Recorded at
-   * dispatcher-reserve time, when the call's SourceFile is still in hand — the
-   * finalize fill has no node to scan. See
-   * `expressions/own-property-method-shadow.ts`.
-   */
-  ownShadowDispatchNames?: Set<string>;
-  /**
    * (#3683 S3) `"<F>/<m>"` → the compiled typed TWIN of that prototype method:
    * its wasm function NAME (never a raw index — funcMap is the shift-maintained
    * source of truth) and its exact param/result ValTypes, so the finalize fill
@@ -4950,12 +4928,12 @@ export type { SourcePos };
 
 /**
  * (#5385 S1, #6685) Is there NO JavaScript embedder? Answers the environment
- * question only (`targetProfile.environment !== "javascript"`); which
- * ECMAScript implementation lowers the module is `ctx.standalone`. Console
- * sinks and other environment-shaped arms key on this, never on the regime.
+ * question only (`targetProfile.environment !== "javascript"`); the WasmGC
+ * backend owns the native ECMAScript implementation. Console sinks and other
+ * environment-shaped arms key on this, never on the semantic backend.
  */
-export function hostFreeEnvironment(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.environment !== "javascript";
+export function hostFreeEnvironment(ctx: Pick<CodegenContext, "targetProfile">): boolean {
+  return profileHostFreeEnvironment(ctx.targetProfile);
 }
 
 /**
@@ -4963,6 +4941,11 @@ export function hostFreeEnvironment(ctx: CodegenContext): boolean {
  * admitted-object MOP, callbacks)? `"required"` = JS embedder + bridge on; the
  * host-free `hostBridge: "always"` projection (`"enabled"`) may not import it.
  */
-export function jsValueBoundary(ctx: CodegenContext): boolean {
-  return ctx.targetProfile.hostValueInterop === "required";
+export function jsValueBoundary(ctx: Pick<CodegenContext, "targetProfile">): boolean {
+  return profileJsValueBoundary(ctx.targetProfile);
+}
+
+/** Does this context emit the native WasmGC backend rather than linear Wasm? */
+export function wasmGcBackend(ctx: Pick<CodegenContext, "targetProfile">): boolean {
+  return profileWasmGcBackend(ctx.targetProfile);
 }

@@ -81,6 +81,7 @@ export const RUNTIME_HOST_CAPABILITY_EXPORT_IDS = Object.freeze([
   "callable.export.call_fn.2",
   "callable.export.call_fn.3",
   "callable.export.call_fn.4",
+  "callable.export.argv_apply",
 ] as const);
 
 export type RuntimeHostCapabilityFuncId = (typeof RUNTIME_HOST_CAPABILITY_FUNC_IDS)[number];

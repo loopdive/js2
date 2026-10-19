@@ -28,7 +28,7 @@
  * candidate when the reader is not externref), so no index shifts under it.
  */
 import type { Instr, ValType } from "../../ir/types.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { addUnionImportsViaRegistry, flushLateImportShifts } from "../shared.js";
 
 /** The native union helpers this bridge calls (ToNumber / ToBoolean of a boxed value). */
@@ -42,7 +42,7 @@ function definedHelper(ctx: CodegenContext, name: string): number | undefined {
 
 /** The pure-Wasm result conversion for a live arm, or `null` to keep the placeholder. */
 export function hostFreeCallableResultBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
-  if (!(ctx.standalone || ctx.wasi)) return null;
+  if (!wasmGcBackend(ctx)) return null;
   if (from.kind !== "externref") return null;
   if (to.kind === "f64" && to.undefSentinel !== true) {
     const unbox = definedHelper(ctx, TO_NUMBER);
@@ -64,7 +64,7 @@ export function ensureHostFreeCallableResultHelper(
   fctx: FunctionContext,
   expectedReturn: ValType | null,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
+  if (!wasmGcBackend(ctx) || expectedReturn === null) return;
   const wantsNumber = expectedReturn.kind === "f64" && expectedReturn.undefSentinel !== true;
   const wantsBoolean = expectedReturn.kind === "i32" && expectedReturn.boolean === true;
   if (!wantsNumber && !wantsBoolean) return;

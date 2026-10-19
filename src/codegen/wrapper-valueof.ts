@@ -55,7 +55,7 @@
  */
 import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -90,7 +90,7 @@ export function tryEmitDynamicValueOfCall(
   fctx: FunctionContext,
   propAccess: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const fact = ctx.oracle.typeFactOf(propAccess.expression).kind;
   // (#4491 wave-5 T2) …plus the one receiver whose static type is a LIE about
   // its shape: `new Object(<primitive>)` types as `Object`, but §20.1.1.1 makes

@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "parentCommit": "5c3b2ca62e0a0eac683aaa98fe18f145bc1d3b6b",
+  "sourcePath": "src/runtime.ts",
+  "scope": "Private host JSON serializer/reviver declarations only; not a whole-runtime retirement certificate",
+  "analysis": "TypeScript symbol-bound references, module exports and direct-eval scan; noLib/noResolve module analysis",
+  "declarations": [
+    {
+      "name": "_JsonRep",
+      "referenceLines": [3959, 4224, 4291, 4330],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_liveIsArray",
+      "referenceLines": [3961, 3986, 4054, 4278],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_liveGet",
+      "referenceLines": [3974, 4052, 4077, 4232, 4243],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_hasReachableToJSON",
+      "referenceLines": [4031, 4039, 4046, 4066, 4077],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_isJsonCallable",
+      "referenceLines": [4053, 4082, 4244, 4271],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_invokeJsonCallable",
+      "referenceLines": [4095, 4194, 4245, 4250],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_internalizeJSONProperty",
+      "referenceLines": [4157, 4173, 4184],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_liveGetEnumerableKeys",
+      "referenceLines": [4074, 4197, 4304],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_quoteJSON",
+      "referenceLines": [4216, 4263, 4310],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_serializeJSONProperty",
+      "referenceLines": [4221, 4308, 4349],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_serializeJSONObject",
+      "referenceLines": [4281, 4289],
+      "externalReferenceLines": []
+    },
+    {
+      "name": "_serializeJSONArray",
+      "referenceLines": [4279, 4328],
+      "externalReferenceLines": []
+    }
+  ],
+  "declarationCount": 12,
+  "boundReferenceCount": 42,
+  "moduleExportCount": 30,
+  "directEvalCount": 0,
+  "positiveControl": {
+    "inMemoryOnly": true,
+    "injectedReference": "const __json_island_control = _serializeJSONProperty;",
+    "result": "rejected: outside reference detected",
+    "outsideReferenceLines": [12068]
+  },
+  "retainedBoundaryRoots": [
+    "buildCompiledImports",
+    "buildCompiledAdapterImports",
+    "wrapCompiledExports",
+    "_wasmToPlain",
+    "_wrapForHost"
+  ],
+  "runtimeSourceLines": {
+    "before": 12066,
+    "after": 11644,
+    "removed": 422
+  },
+  "importCeiling": 452
+}

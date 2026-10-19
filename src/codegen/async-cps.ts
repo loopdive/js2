@@ -2804,7 +2804,7 @@ export function planForAwaitCfg(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPl
     } else {
       fctx.body.push({ op: "ref.null.extern" });
     }
-    const iterIdx = ensureAsyncIterator(ctx, fctx);
+    const iterIdx = ensureAsyncIterator(ctx);
     if (iterIdx === undefined) {
       // Only reachable if the native iterator runtime is unavailable (not the
       // standalone/wasi drive lane this planner runs on); leave iter null.
@@ -3826,7 +3826,7 @@ export function planAsyncGenCfg(
         } else {
           fctx.body.push({ op: "ref.null.extern" });
         }
-        const iterIdx = ensureAsyncIterator(ctx, fctx);
+        const iterIdx = ensureAsyncIterator(ctx);
         if (iterIdx === undefined) {
           // Native iterator runtime unavailable (not the standalone/wasi drive
           // lane this plan runs on) — leave iter null; pump faults done=1.

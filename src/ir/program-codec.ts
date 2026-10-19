@@ -441,6 +441,7 @@ export function reauthenticatePreparedIrProgram(persisted: PreparedIrProgram): P
     allocations: persisted.allocations,
     ...(persisted.sourceMap === undefined ? {} : { sourceMap: persisted.sourceMap }),
     ...(persisted.runtimeSupport === undefined ? {} : { runtimeSupport: persisted.runtimeSupport }),
+    ...(persisted.objectReferences === undefined ? {} : { objectReferences: persisted.objectReferences }),
     runtime: Object.freeze(runtime),
     reconciliation: persisted.reconciliation,
     sealed: persisted.sealed,
@@ -507,6 +508,11 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     return invalid(`program.reconciliation must be "complete", got ${String(program.reconciliation)}`);
   }
   if (program.sealed !== true) return invalid("program.sealed must be true");
+  if (Object.hasOwn(program, "objectReferences")) {
+    const plan = requireRecord(program.objectReferences, "program.objectReferences");
+    if (plan.schema !== "ir-object-reference-plan-v1") return invalid("unsupported object reference plan schema");
+    requireArray(plan.shapes, "program.objectReferences.shapes");
+  }
   if (Object.hasOwn(program, "runtimeSupport")) {
     const support = requireRecord(program.runtimeSupport, "program.runtimeSupport");
     if (support.schema !== "ir-runtime-support-v1") return invalid("unsupported runtime support schema");

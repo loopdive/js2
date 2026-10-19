@@ -1,0 +1,1359 @@
+{
+  "schema": "6979-native-object-assign-argv-v1",
+  "date": "2026-10-19",
+  "parentCommit": "6b8825052304cb9233de6f277ba620ad2d1ab8e3",
+  "candidate": "Containing commit; exact source hashes below.",
+  "scope": "Native builtin argv ABI, shared storage-carrier facts and native Object.assign MOP loop. No new host semantic implementation, AST body path, selector change or IR adoption claim.",
+  "implementation": {
+    "argv": "Reuse the canonical vec_externref argv convention, retain spec metadata length=2/name=assign, pack all trailing sources without copying their object graphs, delegate source processing to the existing native helper.",
+    "population": "One receiver-independent builtin population is shared by registration, alias preparation and exact dynamic apply metadata-id/signature guards. User rest functions retain their receiver-aware path.",
+    "result": "Stable captured Object.assign call/call/apply results keep externref storage; an unannotated call/apply result previously narrowed to f64 on standalone/gc. No broad result coercion or object copy is introduced.",
+    "mop": "Admitted JS-owned sources use the existing boundary ownKeys primitive; native proxies use the existing native MOP. One native loop asks each live descriptor, gets enumerable values and performs strict Set, preserving key/token/value identity.",
+    "wasi": "Remove the old strict Proxy false-set rejection exclusion; accepted, rejected, throwing and trap-absent forwarding controls cover all three targets.",
+    "mutation": "Object member patch facts and existing native property reads are shared with WASI. Object.assign aliases reject patched-member identity claims; rebound aliases and captures before mutation retain the real callable."
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4 fork pool, --experimental-wasm-exnref, VITEST_MAX_FORKS=2",
+    "parent": "Detached published checkpoint, tracked production unchanged; only identical new test and ignored harness files copied.",
+    "native": "Standalone requires zero imports. Throwing WASI matrix binds only standard wasi_snapshot_preview1 with real node:wasi. Minimal native controls remain zero-import.",
+    "reference": "Residual JS reference executes in an isolated node:vm realm, inputs 7 and 13."
+  },
+  "validation": {
+    "newCases": 69,
+    "newPassing": 69,
+    "cohort": {
+      "parent": {
+        "files": 13,
+        "total": 268,
+        "passing": 227,
+        "failing": 41,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 13,
+        "total": 268,
+        "passing": 265,
+        "failing": 3,
+        "skipped": 0
+      },
+      "uniqueKeys": 268,
+      "changes": [
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone many",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone called",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone applied",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone aliasChain",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone destructured",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone order",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — standalone abrupt",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi many",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi called",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi applied",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi aliasChain",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi destructured",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi order",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi abrupt",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — wasi rejected",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc many",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc called",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc applied",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc aliasChain",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc destructured",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc order",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc abrupt",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 captured Object.assign native argv contract — gc rejected",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -2 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values copy: retains original target, nested value and exact symbols",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected undefined to be {} // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values copyCall: retains original target, nested value and exact symbols",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected undefined to be {} // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values copyApply: retains original target, nested value and exact symbols",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected undefined to be {} // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values directCopy: retains original target, nested value and exact symbols",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected undefined to be {} // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values observes one ownKeys and each live descriptor before Get, without prototype probes",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected [] to deeply equal [ 'keys', [ 'desc', 'hidden' ], …(5) ]",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values propagates the original getter token and retains only earlier writes",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected undefined to be {} // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values throws on a rejected JS target write",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected function to throw an error, but it didn't",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values propagates an original JS set-trap token",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected undefined to be {} // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 native Object.assign over identity-backed JS boundary values checks each descriptor live after an earlier getter changes a later key",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected {} to deeply equal { a: 7 }",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 builtin identity guard — standalone / patchedObject",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 builtin identity guard — standalone / capturedBeforePatch",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 builtin identity guard — wasi / patchedObject",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 builtin identity guard — wasi / capturedBeforePatch",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 builtin identity guard — gc / patchedObject",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        },
+        {
+          "test": "tests/issue-6979-native-assign-argv.test.ts :: #6979 builtin identity guard — gc / capturedBeforePatch",
+          "parent": "failed",
+          "candidate": "passed",
+          "parentError": "AssertionError: expected -1 to be 42 // Object.is equality",
+          "candidateError": null
+        }
+      ],
+      "unchangedFailures": [
+        {
+          "test": "tests/issue-6426-linked-object-rest-source.test.ts :: #6426 — an object-rest source keeps its values across a package boundary single module",
+          "error": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+          "fullNormalizedErrorsSha256": "eb61ed2c5d928e332adbacabdda851df575d4d0e9a3a0e77ef039a2060649432"
+        },
+        {
+          "test": "tests/issue-6426-linked-object-rest-source.test.ts :: #6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+          "error": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+          "fullNormalizedErrorsSha256": "919b7a3e3d136e6a87dd99775fcea16c1123fabfb7df2e8e0ea13be902515f50"
+        },
+        {
+          "test": "tests/issue-6426-linked-object-rest-source.test.ts :: #6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+          "error": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+          "fullNormalizedErrorsSha256": "2308ab12b97afa76a43e6fc6072bcb9de3d6ea8d1d1f6555333f700760997fa2"
+        }
+      ]
+    },
+    "normalization": "Only the parent worktree directory is replaced; all unchanged failure arrays compare exactly in full.",
+    "carrierSlots": {
+      "parent": [
+        {
+          "target": "standalone",
+          "slots": {
+            "run": "(local $r externref)",
+            "call": "(local $r f64)",
+            "apply": "(local $r f64)"
+          }
+        },
+        {
+          "target": "wasi",
+          "slots": {
+            "run": "(local $r externref)",
+            "call": "(local $r externref)",
+            "apply": "(local $r externref)"
+          }
+        },
+        {
+          "target": "gc",
+          "slots": {
+            "run": "(local $r externref)",
+            "call": "(local $r f64)",
+            "apply": "(local $r f64)"
+          }
+        }
+      ],
+      "candidate": [
+        {
+          "target": "standalone",
+          "slots": {
+            "run": "(local $r externref)",
+            "call": "(local $r externref)",
+            "apply": "(local $r externref)"
+          }
+        },
+        {
+          "target": "wasi",
+          "slots": {
+            "run": "(local $r externref)",
+            "call": "(local $r externref)",
+            "apply": "(local $r externref)"
+          }
+        },
+        {
+          "target": "gc",
+          "slots": {
+            "run": "(local $r externref)",
+            "call": "(local $r externref)",
+            "apply": "(local $r externref)"
+          }
+        }
+      ]
+    },
+    "frozenScopesUnchanged": [
+      "src/ir",
+      "src/codegen/expressions",
+      "src/codegen/statements",
+      "src/codegen/index.ts",
+      "src/codegen/property-access.ts",
+      "src/codegen/property-access-dispatch.ts"
+    ],
+    "semanticControls": [
+      {
+        "target": "standalone",
+        "parentBytes": 136419,
+        "candidateBytes": 129233,
+        "deltaBytes": -7186,
+        "parentSha256": "f24ff0f2435fea49c5bc85362c49146f623aa321f3e14206f014308c0d769719",
+        "candidateSha256": "9ce6f6f336c0c1c3facb690adfabdf17ed7ec58b05376b6553be44438507d314",
+        "parentOutcomes": {
+          "run": [-1, -1],
+          "call": [-1, -1],
+          "apply": [-1, -1]
+        },
+        "candidateOutcomes": {
+          "run": [42, 42],
+          "call": [42, 42],
+          "apply": [42, 42]
+        },
+        "parentRoutes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "call",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "apply",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "foreign",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "candidateRoutes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "call",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "apply",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "foreign",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ]
+      },
+      {
+        "target": "wasi",
+        "parentBytes": 131971,
+        "candidateBytes": 130870,
+        "deltaBytes": -1101,
+        "parentSha256": "3b45c7141c0fe3fcb4dd446d0865bc5c92707c4fcb935356d108253fe89529b7",
+        "candidateSha256": "501896cd7ed2fc4832b45ddc9e6d7b919bdc6eba0cde6ca26f8baba6b058b76b",
+        "parentOutcomes": {
+          "run": [-1, -1],
+          "call": [-1, -1],
+          "apply": [-1, -1]
+        },
+        "candidateOutcomes": {
+          "run": [42, 42],
+          "call": [42, 42],
+          "apply": [42, 42]
+        },
+        "parentRoutes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "call",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "apply",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "foreign",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "candidateRoutes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "call",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "apply",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "foreign",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ]
+      },
+      {
+        "target": "gc",
+        "parentBytes": 141925,
+        "candidateBytes": 135898,
+        "deltaBytes": -6027,
+        "parentSha256": "6a145bbb01301a42608e155a71a89650b71228fdbacdb314cfe9446d9aca71ce",
+        "candidateSha256": "475bd468c7963891e36a798c8692d11574f87477f20b904bc3a00fe8d5ed319f",
+        "parentOutcomes": {
+          "run": [-1, -1],
+          "call": [-1, -1],
+          "apply": [-1, -1]
+        },
+        "candidateOutcomes": {
+          "run": [42, 42],
+          "call": [42, 42],
+          "apply": [42, 42]
+        },
+        "parentForeign": {
+          "same": true,
+          "token": false
+        },
+        "candidateForeign": {
+          "same": true,
+          "a": 42,
+          "token": true
+        },
+        "parentRoutes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "call",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "apply",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "foreign",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ],
+        "candidateRoutes": [
+          {
+            "name": "run",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "call",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "apply",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "foreign",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          },
+          {
+            "name": "<module-init>",
+            "kind": "unsupported",
+            "direct": 1,
+            "ir": 0
+          }
+        ]
+      }
+    ]
+  },
+  "imports": {
+    "officialGate": "PASS: 433 <= unchanged 452",
+    "totals": {
+      "probes": 33,
+      "imports": 433,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "selectedAccelerators": {
+      "regexp": 4,
+      "date": 1,
+      "intl": 4
+    },
+    "namedGapControls": {
+      "eager-generator-buffer": [
+        "__create_async_generator",
+        "__gen_create_buffer",
+        "__gen_push_f64",
+        "__gen_push_ref",
+        "__gen_result_value_f64"
+      ],
+      "shared-array-buffer": ["SharedArrayBuffer_new"],
+      "temporal-strings": ["__temporal_plain_date_from_string_field", "__temporal_plain_date_to_string"]
+    },
+    "policyProbes": [
+      {
+        "probe": "core",
+        "parentBytes": 604252,
+        "candidateBytes": 600592,
+        "deltaBytes": -3660,
+        "parentSha256": "0b57c9904e2e4667c9a725b73c13a2b08f78ba5cebef7a1fdc1a5709829f0839",
+        "candidateSha256": "198f1d7e0e4266cb11bd57e3ad80071d9f450a237a5d27d73989db8cf498d7f5",
+        "inventorySha256": "03893f30b32ce4c253dc5fa7e93bab7b622787bcb08142355e790371f959e16d"
+      },
+      {
+        "probe": "regexp",
+        "parentBytes": 116659,
+        "candidateBytes": 116659,
+        "deltaBytes": 0,
+        "parentSha256": "1fac4c40d18c41f4278f982027e186857ee4a2b50c9deed0f2726aaa0d25795e",
+        "candidateSha256": "1fac4c40d18c41f4278f982027e186857ee4a2b50c9deed0f2726aaa0d25795e",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "collections",
+        "parentBytes": 104652,
+        "candidateBytes": 104652,
+        "deltaBytes": 0,
+        "parentSha256": "6fe769c8339285af77c9f32b0930386d4b6b1a2bbf47f9abdfc325cd6dac68f2",
+        "candidateSha256": "6fe769c8339285af77c9f32b0930386d4b6b1a2bbf47f9abdfc325cd6dac68f2",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "promise",
+        "parentBytes": 122973,
+        "candidateBytes": 122973,
+        "deltaBytes": 0,
+        "parentSha256": "d9bae89d70d666f77e49dae9311803a77a6d1c4cdde3d9898736f54d65724d90",
+        "candidateSha256": "d9bae89d70d666f77e49dae9311803a77a6d1c4cdde3d9898736f54d65724d90",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039"
+      },
+      {
+        "probe": "date",
+        "parentBytes": 50950,
+        "candidateBytes": 50950,
+        "deltaBytes": 0,
+        "parentSha256": "ca7b1848dbe583a09ce06a1f0d754d6b4ea2e63a188a5e8604e8f743cae666b9",
+        "candidateSha256": "ca7b1848dbe583a09ce06a1f0d754d6b4ea2e63a188a5e8604e8f743cae666b9",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "dataView",
+        "parentBytes": 114595,
+        "candidateBytes": 114595,
+        "deltaBytes": 0,
+        "parentSha256": "1d4a629c71e85b5d4962a2db3ce39a8de51bc577475691fcbcd26fb947bde042",
+        "candidateSha256": "1d4a629c71e85b5d4962a2db3ce39a8de51bc577475691fcbcd26fb947bde042",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "bigint",
+        "parentBytes": 39336,
+        "candidateBytes": 39336,
+        "deltaBytes": 0,
+        "parentSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "candidateSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "bigintFormatting",
+        "parentBytes": 38560,
+        "candidateBytes": 38560,
+        "deltaBytes": 0,
+        "parentSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "candidateSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "number",
+        "parentBytes": 30248,
+        "candidateBytes": 30248,
+        "deltaBytes": 0,
+        "parentSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "candidateSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "textGlobals",
+        "parentBytes": 47103,
+        "candidateBytes": 47103,
+        "deltaBytes": 0,
+        "parentSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "candidateSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "object",
+        "parentBytes": 125795,
+        "candidateBytes": 122025,
+        "deltaBytes": -3770,
+        "parentSha256": "7ff3e706cc5550a1903fec49c551e9de6f419afab2c5e2c5c4ed6e55d8c9d11f",
+        "candidateSha256": "19201ade1731f6742bb899a268bb691695599d18c08ec993a4cc2594c0a01025",
+        "inventorySha256": "a372e23a0c583d09c74185ebf9ce845de483319fb1778766d3b546ef15daddd9"
+      },
+      {
+        "probe": "objectRest",
+        "parentBytes": 106741,
+        "candidateBytes": 106741,
+        "deltaBytes": 0,
+        "parentSha256": "db482018f3577fb9b0af14a63d3d3b416edb0bbe0ab64b270199a8081c96846e",
+        "candidateSha256": "db482018f3577fb9b0af14a63d3d3b416edb0bbe0ab64b270199a8081c96846e",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "functionBind",
+        "parentBytes": 114888,
+        "candidateBytes": 114888,
+        "deltaBytes": 0,
+        "parentSha256": "6c96a1e58710ae8eef06487a65ee5e72d2c6e9c3cccbe2339709eb5a3cacd733",
+        "candidateSha256": "6c96a1e58710ae8eef06487a65ee5e72d2c6e9c3cccbe2339709eb5a3cacd733",
+        "inventorySha256": "742a3fba7a153bfbf4148c78a92fc0a72c4086a38569a9a9a4a1e8a10a6e848a"
+      },
+      {
+        "probe": "proxy",
+        "parentBytes": 722350,
+        "candidateBytes": 718690,
+        "deltaBytes": -3660,
+        "parentSha256": "5d6c55014ac92b88165e1a216681c9efb552724a8fd92da10c0b8de96103271b",
+        "candidateSha256": "a700f53b3bc727a3799a9694132d20a300b9e739688cec650823c0c22ac42dd4",
+        "inventorySha256": "b7d7f90509a1b2243fe2e64f418bfd7bca218a4a438bcf7ae3c0ba0d1949f5c1"
+      },
+      {
+        "probe": "typedArrays",
+        "parentBytes": 41676,
+        "candidateBytes": 41676,
+        "deltaBytes": 0,
+        "parentSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "candidateSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "objectDescriptors",
+        "parentBytes": 109259,
+        "candidateBytes": 109259,
+        "deltaBytes": 0,
+        "parentSha256": "0841207e9dde6fc8167c886cae8b0453e3ed1e369d6d9f7527687cabc884699d",
+        "candidateSha256": "0841207e9dde6fc8167c886cae8b0453e3ed1e369d6d9f7527687cabc884699d",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45"
+      },
+      {
+        "probe": "objectPrototype",
+        "parentBytes": 252262,
+        "candidateBytes": 252262,
+        "deltaBytes": 0,
+        "parentSha256": "87d0b63c6012d5df80ee11ace54d2353603bb1089acc4f9dfdfb94145d3d37e9",
+        "candidateSha256": "87d0b63c6012d5df80ee11ace54d2353603bb1089acc4f9dfdfb94145d3d37e9",
+        "inventorySha256": "566f1b53f13636428998d4f691228d2bbcf19eb5dea5a2b8595cb7a2b3983936"
+      },
+      {
+        "probe": "functionCall",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "deltaBytes": 0,
+        "parentSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "candidateSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "inventorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "probe": "functionApply",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "deltaBytes": 0,
+        "parentSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "candidateSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "inventorySha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "probe": "errors",
+        "parentBytes": 103000,
+        "candidateBytes": 103000,
+        "deltaBytes": 0,
+        "parentSha256": "6bc0349c7832ece674265429335ee8c0e185c0cd713ff8ebe04905639e40b490",
+        "candidateSha256": "6bc0349c7832ece674265429335ee8c0e185c0cd713ff8ebe04905639e40b490",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "generators",
+        "parentBytes": 129190,
+        "candidateBytes": 129190,
+        "deltaBytes": 0,
+        "parentSha256": "1c76a61042738e321775098a6afd39b0911e200af6eb55061d42507cb9ffb679",
+        "candidateSha256": "1c76a61042738e321775098a6afd39b0911e200af6eb55061d42507cb9ffb679",
+        "inventorySha256": "adcf03203bd1e5c02f9888a2d0b573adcc08af9e30f816afffa7ad02469f5b87"
+      },
+      {
+        "probe": "iterators",
+        "parentBytes": 40985,
+        "candidateBytes": 40985,
+        "deltaBytes": 0,
+        "parentSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "candidateSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "promiseCombinators",
+        "parentBytes": 128442,
+        "candidateBytes": 128442,
+        "deltaBytes": 0,
+        "parentSha256": "d7b30f224ecdfcc34400d23122a5d993de3abc49f3ae1a6f37d1640643e62113",
+        "candidateSha256": "d7b30f224ecdfcc34400d23122a5d993de3abc49f3ae1a6f37d1640643e62113",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039"
+      },
+      {
+        "probe": "promiseAnyRace",
+        "parentBytes": 124008,
+        "candidateBytes": 124008,
+        "deltaBytes": 0,
+        "parentSha256": "64cf635ee649c193daf99be5c5a2917c76068d6450a5d6b29738c6cec1e93467",
+        "candidateSha256": "64cf635ee649c193daf99be5c5a2917c76068d6450a5d6b29738c6cec1e93467",
+        "inventorySha256": "a82a2c9f1b4bcafe25a11d190dd018c1fdb0225bb978645139eb686aef36d039"
+      },
+      {
+        "probe": "regexpDynamic",
+        "parentBytes": 151325,
+        "candidateBytes": 151325,
+        "deltaBytes": 0,
+        "parentSha256": "2223024810b4862283d10c478d01a2cb6651b9e42e6228a7626f22d8912458f0",
+        "candidateSha256": "2223024810b4862283d10c478d01a2cb6651b9e42e6228a7626f22d8912458f0",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "mapIteration",
+        "parentBytes": 42951,
+        "candidateBytes": 42951,
+        "deltaBytes": 0,
+        "parentSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "candidateSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "setIteration",
+        "parentBytes": 46222,
+        "candidateBytes": 46222,
+        "deltaBytes": 0,
+        "parentSha256": "e7a1ca759e4848f4523f12442b9cf5d3ec1a2040bf10965ac2d2f4f0a65db33b",
+        "candidateSha256": "e7a1ca759e4848f4523f12442b9cf5d3ec1a2040bf10965ac2d2f4f0a65db33b",
+        "inventorySha256": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2"
+      },
+      {
+        "probe": "reflect",
+        "parentBytes": 115363,
+        "candidateBytes": 115363,
+        "deltaBytes": 0,
+        "parentSha256": "21a2489d003e6e3dea28ec8254e354a56e3bb0d5e6c4052732b88ddd2fd2afac",
+        "candidateSha256": "21a2489d003e6e3dea28ec8254e354a56e3bb0d5e6c4052732b88ddd2fd2afac",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45"
+      },
+      {
+        "probe": "dynamicOps",
+        "parentBytes": 104582,
+        "candidateBytes": 104582,
+        "deltaBytes": 0,
+        "parentSha256": "7d54406659d3eeeb49398127ddecad9d639a388dac5a4c4be5c019a9436f19ba",
+        "candidateSha256": "7d54406659d3eeeb49398127ddecad9d639a388dac5a4c4be5c019a9436f19ba",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      },
+      {
+        "probe": "destructuring",
+        "parentBytes": 109614,
+        "candidateBytes": 109614,
+        "deltaBytes": 0,
+        "parentSha256": "9360490b0226c42baaeaae6817156a6fbf478b0d8ed7f9d9fe5f74fff9a7c77c",
+        "candidateSha256": "9360490b0226c42baaeaae6817156a6fbf478b0d8ed7f9d9fe5f74fff9a7c77c",
+        "inventorySha256": "de626d164772129678e288dab7fd540d6fc4e2ab4ce06c81e781397a7f848d45"
+      },
+      {
+        "probe": "proxyMop",
+        "parentBytes": 597538,
+        "candidateBytes": 593878,
+        "deltaBytes": -3660,
+        "parentSha256": "12f1a7c31c7c97c566e71e03db44ee358dc3f4aceda00c2fe9e600d8debeff70",
+        "candidateSha256": "4e11b82de2d76185fb6fd144ccad81627c42b2404b8a80ea2d7ad2f791f56823",
+        "inventorySha256": "d092fe86b2632f687facfd2de27ceb7647ab121f3f64b331bcd17d2c55e3bdf6"
+      },
+      {
+        "probe": "proxyRevocable",
+        "parentBytes": 597528,
+        "candidateBytes": 593868,
+        "deltaBytes": -3660,
+        "parentSha256": "0512bf72edef8beeee1308860a2ad20debf26d999f053faebce358adc14c9f35",
+        "candidateSha256": "37c0009124179cd1c6595ae905c4b0701472f75ba859f791f5fb2be5f8b4ee49",
+        "inventorySha256": "701e32a63daf1d5f637c9ed12d9e17640c0c170b7cff9112512f1cbf03785e6c"
+      },
+      {
+        "probe": "stringProtocols",
+        "parentBytes": 121558,
+        "candidateBytes": 121558,
+        "deltaBytes": 0,
+        "parentSha256": "ad6158133c58be010cdf0f14f8d45b6b0f490fcffecf150a22ccd84f1b9814cb",
+        "candidateSha256": "ad6158133c58be010cdf0f14f8d45b6b0f490fcffecf150a22ccd84f1b9814cb",
+        "inventorySha256": "a5279e5f9b3c62d6126626a280f1360443df1d9cd1a4d5e338bc3866b60f1533"
+      }
+    ],
+    "comparison": "33/33 detailed inventories are exactly equal; 28 binaries match and five shrink. This is not general byte neutrality.",
+    "customFixture": {
+      "parentImports": 19,
+      "candidateImports": 22,
+      "addedEntries": [
+        {
+          "module": "env",
+          "name": "__boundary_object_apply",
+          "kind": "func",
+          "intentType": "boundary_object",
+          "classification": "value-adapter",
+          "family": "boundary-object",
+          "ownerIssue": 4399,
+          "nativeFallback": false,
+          "reason": "explicit access to a JS-owned object admitted at the module boundary"
+        },
+        {
+          "module": "env",
+          "name": "__unwrap_for_wasm",
+          "kind": "func",
+          "intentType": "builtin",
+          "classification": "value-adapter",
+          "family": "js-value-bridge",
+          "ownerIssue": 4399,
+          "nativeFallback": true,
+          "reason": "JS/Wasm value marshaling or exception transfer"
+        },
+        {
+          "module": "env",
+          "name": "__boundary_object_callable_kind",
+          "kind": "func",
+          "intentType": "boundary_object",
+          "classification": "value-adapter",
+          "family": "boundary-object",
+          "ownerIssue": 4399,
+          "nativeFallback": false,
+          "reason": "explicit access to a JS-owned object admitted at the module boundary"
+        }
+      ],
+      "explanation": "Three additional occurrences of already-registered value adapters in this separately measured fixture; not three new import implementations or a budget/probe change."
+    }
+  },
+  "costs": {
+    "nativeControls": [
+      {
+        "target": "standalone",
+        "name": "scalar",
+        "parentBytes": 11413,
+        "candidateBytes": 11413,
+        "deltaBytes": 0,
+        "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+        "candidateSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+        "parentOutputs": [42, 7],
+        "candidateOutputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "standalone",
+        "name": "flat",
+        "parentBytes": 33185,
+        "candidateBytes": 33185,
+        "deltaBytes": 0,
+        "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+        "candidateSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+        "parentOutputs": [42, 7],
+        "candidateOutputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "standalone",
+        "name": "dynamic",
+        "parentBytes": 146186,
+        "candidateBytes": 146733,
+        "deltaBytes": 547,
+        "parentSha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+        "candidateSha256": "335b6fe892a7a51b5fe166ecd8a03c1041eb13c90027ef90e8ce91dd6840d93e",
+        "parentOutputs": [42, 7],
+        "candidateOutputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "scalar",
+        "parentBytes": 22719,
+        "candidateBytes": 22719,
+        "deltaBytes": 0,
+        "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+        "candidateSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+        "parentOutputs": [42, 7],
+        "candidateOutputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "flat",
+        "parentBytes": 52928,
+        "candidateBytes": 52928,
+        "deltaBytes": 0,
+        "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+        "candidateSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+        "parentOutputs": [42, 7],
+        "candidateOutputs": [42, 7],
+        "imports": []
+      },
+      {
+        "target": "wasi",
+        "name": "dynamic",
+        "parentBytes": 142496,
+        "candidateBytes": 145914,
+        "deltaBytes": 3418,
+        "parentSha256": "30d8f7852fb26b02b7f6870cd7d1fc6d360e11ab497b6de306518421f52b4ee5",
+        "candidateSha256": "9c0c89c54bccab13b5b850990e31ebec65ead6d11936ddb2fbb0d538b95499ef",
+        "parentOutputs": [42, 7],
+        "candidateOutputs": [42, 7],
+        "imports": []
+      }
+    ],
+    "semanticControls": [
+      {
+        "target": "standalone",
+        "parentBytes": 136419,
+        "candidateBytes": 129233,
+        "deltaBytes": -7186,
+        "parentSha256": "f24ff0f2435fea49c5bc85362c49146f623aa321f3e14206f014308c0d769719",
+        "candidateSha256": "9ce6f6f336c0c1c3facb690adfabdf17ed7ec58b05376b6553be44438507d314",
+        "parentOutcomes": {
+          "run": [-1, -1],
+          "call": [-1, -1],
+          "apply": [-1, -1]
+        },
+        "candidateOutcomes": {
+          "run": [42, 42],
+          "call": [42, 42],
+          "apply": [42, 42]
+        }
+      },
+      {
+        "target": "wasi",
+        "parentBytes": 131971,
+        "candidateBytes": 130870,
+        "deltaBytes": -1101,
+        "parentSha256": "3b45c7141c0fe3fcb4dd446d0865bc5c92707c4fcb935356d108253fe89529b7",
+        "candidateSha256": "501896cd7ed2fc4832b45ddc9e6d7b919bdc6eba0cde6ca26f8baba6b058b76b",
+        "parentOutcomes": {
+          "run": [-1, -1],
+          "call": [-1, -1],
+          "apply": [-1, -1]
+        },
+        "candidateOutcomes": {
+          "run": [42, 42],
+          "call": [42, 42],
+          "apply": [42, 42]
+        }
+      },
+      {
+        "target": "gc",
+        "parentBytes": 141925,
+        "candidateBytes": 135898,
+        "deltaBytes": -6027,
+        "parentSha256": "6a145bbb01301a42608e155a71a89650b71228fdbacdb314cfe9446d9aca71ce",
+        "candidateSha256": "475bd468c7963891e36a798c8692d11574f87477f20b904bc3a00fe8d5ed319f",
+        "parentOutcomes": {
+          "run": [-1, -1],
+          "call": [-1, -1],
+          "apply": [-1, -1]
+        },
+        "candidateOutcomes": {
+          "run": [42, 42],
+          "call": [42, 42],
+          "apply": [42, 42]
+        },
+        "parentForeign": {
+          "same": true,
+          "token": false
+        },
+        "candidateForeign": {
+          "same": true,
+          "a": 42,
+          "token": true
+        }
+      }
+    ],
+    "summary": "Four of six minimal native binaries match; standalone dynamic grows 547 bytes and WASI dynamic 3418. The three semantic fixture modules shrink 7186/1101/6027 bytes; five policy fixtures shrink 3660–3770. No performance or whole-program size claim."
+  },
+  "migrationMetrics": {
+    "runtimeTsLines": 10163,
+    "resolveImportLines": 1371,
+    "resolveImportCases": 7,
+    "ownedAdapterLines": 896,
+    "explicitCapabilityLines": 1194,
+    "rawModes": {
+      "parent": {
+        "scannedFiles": 1952,
+        "matchingFiles": 356,
+        "references": 799
+      },
+      "candidate": {
+        "scannedFiles": 1954,
+        "matchingFiles": 354,
+        "references": 795
+      },
+      "ceiling": 818,
+      "banked": false
+    },
+    "newModulesRemainInventoryDebt": true
+  },
+  "residuals": {
+    "callableFacade": {
+      "target": "gc",
+      "source": "export function getAssign():any{return Object.assign;}",
+      "invocation": "const f=exports.getAssign(); f(target,{a:token},{b:7})",
+      "parentError": "TypeError: Wasm closure returned to JS host is not callable: __call_fn_0/__call_fn_1 not exported",
+      "candidateError": "TypeError: Wasm closure returned to JS host is not callable: __call_fn_0/__call_fn_1 not exported",
+      "scope": "Both expose a function-shaped wrapper but lack the callable export dispatchers; this remains an open bridge/registration gap, not a newly introduced working-to-broken transition."
+    },
+    "parent": [
+      {
+        "name": "primitiveTarget",
+        "target": "standalone",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "primitiveTarget",
+        "target": "wasi",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "primitiveTarget",
+        "target": "gc",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "patchedMath",
+        "target": "standalone",
+        "expected": [42, 42],
+        "error": "[object WebAssembly.Exception]"
+      },
+      {
+        "name": "patchedMath",
+        "target": "wasi",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "patchedMath",
+        "target": "gc",
+        "expected": [42, 42],
+        "error": "TypeError: Cannot access property on null or undefined at 1:103"
+      }
+    ],
+    "candidate": [
+      {
+        "name": "primitiveTarget",
+        "target": "standalone",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "primitiveTarget",
+        "target": "wasi",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "primitiveTarget",
+        "target": "gc",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "patchedMath",
+        "target": "standalone",
+        "expected": [42, 42],
+        "error": "[object WebAssembly.Exception]"
+      },
+      {
+        "name": "patchedMath",
+        "target": "wasi",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      {
+        "name": "patchedMath",
+        "target": "gc",
+        "expected": [42, 42],
+        "error": "TypeError: Cannot access property on null or undefined at 1:103"
+      }
+    ],
+    "fixtures": {
+      "primitiveTarget": "const assign=Object.assign; export function run(n){const r=assign(n,{extra:n+1});return typeof r==='object' && r.valueOf()===n && r.extra===n+1?42:-1;}",
+      "patchedMath": "export function run(n){Math.max=function(...values){return n+values.length;};const fn=Math.max;return fn(1,2,3)===n+3?42:-1;}"
+    },
+    "withdrawnAllNamespaceProjection": {
+      "parentWasi": {
+        "name": "patchedMath",
+        "target": "wasi",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      "attemptWasi": {
+        "name": "patchedMath",
+        "target": "wasi",
+        "expected": [42, 42],
+        "error": "[object WebAssembly.Exception]"
+      },
+      "finalWasi": {
+        "name": "patchedMath",
+        "target": "wasi",
+        "expected": [42, 42],
+        "actual": [-1, -1]
+      },
+      "decision": "Withdraw the unproven Math/WASI fact projection; preserve its existing result while recording the ABI gap. Only Object's measured shared contract is widened."
+    }
+  },
+  "gates": {
+    "typecheck": "PASS with repository TypeScript7/tsconfig.ts7.json",
+    "lint": "PASS",
+    "locAndFunctions": "PASS without new growth allowances",
+    "coercionAndOracle": "PASS",
+    "layering": "PASS: 87 import lines/15 files, baseline 90 unchanged",
+    "irFallback": "PASS",
+    "inventory": "Valid with zero errors; architecture incomplete; both new modules unmigrated.",
+    "cycles": "FAIL inherited on exact parent and candidate: codegen→ir 298→301, ir→codegen 74→75. Same reported violations, not a whole-graph equivalence certificate. No allowance or baseline change.",
+    "deadExports": "Preservation-v1 PASS with six full/six cut witnesses; strict modeled closure NOT CERTIFIED at optimize.ts#getBinaryenModule:412 and platform-capability-adapter.ts#resolvePlatformCapabilityImport:151.",
+    "flatDirectory": "PASS: 833 at the unchanged change-set ceiling; published parent had 834. No allowance/baseline change."
+  },
+  "limits": [
+    "38 improved rows are not 38 independent bugs. Existing linked object-rest failures remain three; residual primitive-target and patched-Math programs remain six failing target/fixture combinations.",
+    "Measured run/call/apply/foreign/module-init routes match the parent and retain direct body emission. No new IR-only or whole-program compiler certificate.",
+    "Object.assign primitive-target wrappers and generic patched-rest-call ABI remain open; no full Object.assign or patched-builtin conformance claim.",
+    "Full migration remains incomplete: raw field retirement, runtime target (still 2163 lines above 8000), opaque bound functions, named provider gaps, predecessor stack, strict closure, cycle ratchet and full equivalence/conformance/npm-compat/accelerator/cost acceptance.",
+    "No full local Test262 sweep, no gate waiver/banking, no independent merge authorization."
+  ],
+  "sourceSha256": {
+    "src/codegen/apply-closure-variadic-builtin.ts": "a999b5b74351fab7620744abb5f48b96a85471fa353f4d4f3fdf96c8b6ae5d53",
+    "src/codegen/builtin-static-expando.ts": "6fa5a2ed0fbc436578fd3fe03cc07d26284e9e6870cac6ab38d187f1f1a4761e",
+    "src/codegen/builtin-static-plain-alias.ts": "7e1cc5880500c868d9d1d1f8bedbbe69fa8ff99c70bbb0919e179e887158d151",
+    "src/codegen/builtin-value-read.ts": "5cdb7a80ae7329796f86ca56479e30105f527532a73d62bcfa0a61439cd038d2",
+    "src/codegen/object-model/object-assign-primitive-operands.ts": "e4e52274c5afd2bdcaacfb94b7bd749231b49b96dbdba7ed3826f8f22bf41ce2",
+    "src/codegen/object-runtime-enumeration.ts": "712dcec23565f5c00334bddc29e5cc33bd3c1fe01a4ab0ce5491d13a0b32d1ae",
+    "src/codegen/object-runtime-proxy.ts": "323c33bca9f3d6d73ae2d181bae002f9a6da392f88d90a0f0e6f1359aef7c13e",
+    "src/codegen/source-scan-predicates.ts": "248ba0a3c49c8b776bc7145623191404bd0b529d74f06910c363caf4796867a5",
+    "src/codegen/string-fromcharcode-value-read.ts": "49c08307e5e2591629595c9559b14cefeba7be247fd251712dbd7eb3706bcc02",
+    "tests/issue-6979-native-assign-argv.test.ts": "e5cb4a64692572fd70b000cb2cd6692387f819faae860c5d840f74238ebb65cf",
+    "scripts/compiler-boundaries.json": "3300f30d15900bba168df5a86da7e5eabed000af5ea09050372fd6dc67b4679f",
+    "scripts/check-host-import-policy.ts": "d2057ac4359c9c0754ac8b050650cc2d957d665d0c36a5e6c8dc0450268109aa",
+    "plan/audit/host-import-policy-baseline.json": "3a9609b9569670d7faf58cc206e1fd56b318475644e9ba452779880ab1a89d76",
+    "scripts/check-standalone-arms.mjs": "996f96e4ad422425b22bc62a7597af06a69d42c6d546bbc091962d508479e14d",
+    "plan/audit/standalone-arms-baseline.json": "3bba16251f96bbf80fe01f582ae2e0d8f31a4fb8d172f6015b29d5d6bf9daa36",
+    "src/runtime.ts": "9289c25690c8fc2bdeca261b30ae85aa498733f10af394c2494a005261de8475",
+    "src/codegen/expressions/call-identifier.ts": "ab7e957d2e85d718014e164f1491f610ff26c6a1ce868bc29cf425fed5125c47",
+    "src/codegen/expressions/calls.ts": "954f433a2eb2b77fbccb3d3dc33ccce7b77bb2b19553326e343f37d263739a23",
+    "src/codegen/object-model/boundary-own-key-filters.ts": "b12f622810e0201301f9189d078ce14629db11358f6f6bf6f441f7f59e1392b6",
+    "src/codegen/object-model/object-assign-value-body.ts": "a486294aa23eff9e3b18394cb28f8759daf056c997186229298cf141f5de46f0",
+    "src/codegen/closures/native-variadic-builtins.ts": "39d0f3e596956104379a5d82b4151e17ef87698f95abd41e514085b57b81fd22",
+    "src/codegen/object-runtime.ts": "36ee33149fc373d94eb6df17596ecc9124c0b4640c13b3b748637f5e533d1e64"
+  },
+  "layoutRetirement": {
+    "moves": [
+      {
+        "from": "src/codegen/boundary-own-key-filters.ts",
+        "to": "src/codegen/object-model/boundary-own-key-filters.ts",
+        "bodyUnchangedIgnoringTypeOnlyImport": true,
+        "parentSourceSha256": "8d30ad7721ee57df26cb2231d30d1151385acda94ef777fe62bd81fb327d3bc6"
+      },
+      {
+        "from": "src/codegen/object-assign-value-body.ts",
+        "to": "src/codegen/object-model/object-assign-value-body.ts",
+        "scope": "New helper placed in its subsystem before commit"
+      },
+      {
+        "from": "src/codegen/native-variadic-builtins.ts",
+        "to": "src/codegen/closures/native-variadic-builtins.ts",
+        "scope": "New pure ABI population placed with closure contracts"
+      }
+    ],
+    "flatDirectory": {
+      "parent": 834,
+      "candidate": 833,
+      "changeSetBase": 833,
+      "gate": "PASS",
+      "allowanceAdded": false
+    },
+    "revalidation": "After the moves, the 268-case outcomes/errors and all 33 policy / six native / three semantic binary witnesses match the pre-move candidate exactly. No semantic body changes in this relocation."
+  }
+}

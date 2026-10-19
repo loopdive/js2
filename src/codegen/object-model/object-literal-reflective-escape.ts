@@ -147,12 +147,9 @@ export function integrityCallLiteralArg(expr: ts.Expression): ts.ObjectLiteralEx
   return ts.isObjectLiteralExpression(arg) && arg.properties.length > 0 ? arg : undefined;
 }
 
-/** Standalone: an unannotated binding initialized by such a call stays externref. */
-export function integrityLiteralResultNeedsExternref(
-  standalone: boolean,
-  initializer: ts.Expression | undefined,
-): boolean {
-  return standalone && initializer !== undefined && integrityCallLiteralArg(initializer) !== undefined;
+/** An unannotated binding initialized by such a native call stays externref. */
+export function integrityLiteralResultNeedsExternref(initializer: ts.Expression | undefined): boolean {
+  return initializer !== undefined && integrityCallLiteralArg(initializer) !== undefined;
 }
 
 /**

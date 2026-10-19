@@ -311,11 +311,8 @@ const BATCH_LANES: ReadonlyArray<readonly [string, Parameters<typeof compile>[1]
   ["standalone", { target: "standalone" }, "native"],
   ["wasi", { target: "wasi" }, "off"],
   ["gc-strict", { strictNoHostImports: true }, "off"],
-  // The EDGE cell. `nativeStrings: false` is an accepted override on target
-  // wasi, and with `strictNoHostImports: false` too the module compiles on the
-  // host string backend — only the projection's wasi term keeps the pass off
-  // there. Measured: 1000 bytes, pairwise `wasm:js-string.concat`.
-  ["wasi-host-strings", { target: "wasi", nativeStrings: false, strictNoHostImports: false }, "off"],
+  // (#6979) host-strings variant removed with the host-assisted profile (the
+  // wasi + nativeStrings: false + strictNoHostImports: false EDGE cell).
 ];
 
 describe("#3526 F2-S6 batch policy", () => {
@@ -328,14 +325,6 @@ describe("#3526 F2-S6 batch policy", () => {
       if (batch === "native") expect(wat, lane).toContain("__str_concat_3");
       if (batch === "off") expect(wat, lane).not.toContain("__concat_3");
     }
-  });
-
-  it("keeps the wasi EDGE cell on the pairwise arm — the wasi term is live, not redundant", async () => {
-    const result = await compile(CAT3, { target: "wasi", nativeStrings: false, strictNoHostImports: false });
-    expect(result.success).toBe(true);
-    expect(result.binary.length).toBe(1000);
-    expect(result.wat).toContain("wasm:js-string");
-    expect(result.wat).not.toContain("__concat_");
   });
 
   it("defaults an omitted policy closed and publishes the resolved decision", () => {

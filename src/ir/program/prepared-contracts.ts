@@ -17,6 +17,7 @@ import type { ProgramAbiDerivedUnitRecord, ProgramAbiPlanEntry } from "./abi.js"
 import type { PreparedComponentAbiLookup } from "./abi-lookup.js";
 import type { IrModuleInitPlan } from "./startup.js";
 import type { IrRuntimeSupport } from "./runtime-support.js";
+import type { IrObjectReferencePlan } from "./object-reference-contracts.js";
 
 /** Semantic contracts enrich the existing ABI entries; there is no second binding authority. */
 export type PreparedIrAbiContract =
@@ -87,6 +88,7 @@ export interface PreparedIrProgram {
   readonly startup: readonly IrModuleInitPlan[];
   readonly allocations: AllocRegistrySnapshot;
   readonly runtimeSupport?: IrRuntimeSupport;
+  readonly objectReferences?: IrObjectReferencePlan;
   readonly sourceMap?: IrPreparedSourceMap;
   readonly runtime: readonly PreparedIrProgramRuntimeProjection[];
   readonly reconciliation: "complete";

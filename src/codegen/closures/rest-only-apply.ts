@@ -138,7 +138,7 @@ export function buildRestOnlyApply(
                   { op: "local.get", index: error },
                   { op: "throw", tagIdx: ensureExnTag(ctx) },
                 ];
-                if (ctx.standalone || ctx.wasi)
+                if (ctx.targetProfile.backend === "wasmgc")
                   return buildStandardTryTable({ kind: "empty" }, protectedCall, [
                     { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: taggedRestore },
                   ]);

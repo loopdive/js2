@@ -305,21 +305,22 @@ export function getOrRegisterHoleyArrayType(ctx: CodegenContext): number {
 }
 
 /**
- * Register the nominal standalone `arguments` carrier.
+ * Register the nominal native WasmGC `arguments` carrier.
  *
  * `arguments` is array-like but §15.4.3.2 must reject it from IsArray. A
  * dedicated subtype preserves the canonical externref-vec prefix, so all
  * existing vec length/index/property machinery continues to accept it, while
- * the standalone IsArray finalizer can exclude this exact type. The subtype
+ * the native IsArray finalizer can exclude this exact type. The subtype
  * repeats the two vec fields for the same field layout convention used by the
  * sparse-array carrier above.
  */
 export function getOrRegisterArgumentsVecType(ctx: CodegenContext): number {
-  // Host-backed arguments objects already have a real JS Object identity and
-  // prototype registration. Keep their established canonical vec ABI; the
-  // nominal brand is only needed in the host-free lanes where IsArray is
-  // answered by the module-local carrier predicate.
-  if (!ctx.standalone && !ctx.wasi) return getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  // The linear backend keeps its established canonical vec ABI. WasmGC uses
+  // the nominal brand in every environment because IsArray is answered by the
+  // module-local carrier predicate, not by a host object implementation.
+  if (ctx.targetProfile.backend !== "wasmgc") {
+    return getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  }
   if (getArgumentsVecTypeIdx(ctx) >= 0) return getArgumentsVecTypeIdx(ctx);
 
   const parentVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });

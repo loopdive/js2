@@ -12,6 +12,7 @@ import type { IrProgramCallableBindingRecord } from "./callable-bindings.js";
 import type { IrPreparationControls } from "./controls.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 import type { IrRuntimeSupport } from "./runtime-support.js";
+import type { IrObjectReferencePlan } from "./object-reference-contracts.js";
 
 /** Only semantic storage facts cross the frontend boundary, never declarations. */
 export interface TypedIrProgramGlobal {
@@ -41,6 +42,7 @@ export interface TypedIrProgramInput {
   readonly globals: readonly TypedIrProgramGlobal[];
   readonly allocations: AllocRegistrySnapshot;
   readonly runtimeSupport?: IrRuntimeSupport;
+  readonly objectReferences?: IrObjectReferencePlan;
   readonly sourceMap?: IrPreparedSourceMap;
 }
 

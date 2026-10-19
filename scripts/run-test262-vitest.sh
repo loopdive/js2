@@ -38,30 +38,17 @@ if [ "$TEST262_TARGET" = "standalone" ]; then
   esac
 fi
 
-# (#6708 S6) The default policy is native-first in every environment, so the
-# default lane measures the native regime. `native-first` and `auto` are
-# spellings of that default (one lane, one result prefix); `host-assisted` is
-# the explicit control spelling for the retired pre-S6 JS-host profile —
-# measurement only, never promoted.
-TEST262_SEMANTIC_PROVIDERS="${TEST262_SEMANTIC_PROVIDERS:-auto}"
-case "$TEST262_SEMANTIC_PROVIDERS" in
-  auto|native-first) TEST262_SEMANTIC_PROVIDERS=auto ;;
-  host-assisted) ;;
-  *) echo "ERROR: TEST262_SEMANTIC_PROVIDERS must be native-first, host-assisted or auto"; exit 1 ;;
-esac
+# (#6979 S7) The native semantic regime is the only ECMAScript implementation,
+# so a lane is named by its target alone (the former TEST262_SEMANTIC_PROVIDERS
+# host-assisted control lane is gone).
 RESULT_PREFIX="test262"
 if [ "$TEST262_TARGET" != "gc" ]; then
   RESULT_PREFIX="test262-${TEST262_TARGET}"
 fi
-if [ "$TEST262_SEMANTIC_PROVIDERS" != "auto" ]; then
-  RESULT_PREFIX="${RESULT_PREFIX}-${TEST262_SEMANTIC_PROVIDERS}"
-fi
-export TEST262_SEMANTIC_PROVIDERS
 TEST262_COMPILER_PATH="${TEST262_COMPILER_PATH:-legacy}"
-# (#5385, #6708) The JS-host lane lowers with the native regime unless
-# `host-assisted` is spelled; JS2WASM_NATIVE_REGIME_JS=0 remains the kill switch.
+# (#5385, #6708) The JS-host lane lowers with the native regime.
 JS_HOST_REGIME_LANE=0
-if [ "$TEST262_TARGET" = "gc" ] && [ "$TEST262_SEMANTIC_PROVIDERS" = "auto" ]; then
+if [ "$TEST262_TARGET" = "gc" ]; then
   JS_HOST_REGIME_LANE=1
 fi
 
@@ -337,15 +324,12 @@ else
     else
       echo "Temporal provider (standalone): OFF (set JS2WASM_TEST262_TEMPORAL_STANDALONE=1 to link)"
     fi
-  elif [ "$JS_HOST_REGIME_LANE" = "1" ]; then
-    # (#6706, #6708) The default JS-host lane is the regime lane: it links a
-    # provider compiled under the native regime, stamped separately. Soft, like
-    # standalone: no stamp means the rows run unlinked (announced) — never
-    # against the host-semantics provider.
+  else
+    # (#6706, #6708) The JS-host lane links a provider compiled under the
+    # native regime, stamped separately. Soft, like standalone: no stamp means
+    # the rows run unlinked (announced).
     node scripts/prewarm-temporal-provider.mjs --target host ||
       echo "Temporal provider (native-first): UNAVAILABLE — those rows run unlinked"
-  else
-    node scripts/prewarm-temporal-provider.mjs --target host --semantic-providers "$TEST262_SEMANTIC_PROVIDERS"
   fi
 fi
 
@@ -400,7 +384,7 @@ if [ "$USE_WORKTREE" = "1" ]; then
 fi
 
 echo "Run ID: $RUN_TIMESTAMP"
-echo "Target: $TEST262_TARGET; semantic providers: $TEST262_SEMANTIC_PROVIDERS"
+echo "Target: $TEST262_TARGET"
 echo "Reporter: $TEST262_REPORTER"
 echo "Worktree at $(git -C "$WT_DIR" rev-parse --short HEAD)"
 echo "Running vitest (unified compile+execute in fork pool)..."

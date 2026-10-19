@@ -4,7 +4,7 @@ import { ensureLateImport } from "../shared.js";
 
 /** Explicit ownership, not a structural type match, selects the foreign realm. */
 export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
-  const linked = ctx.standaloneGlobalThisImport;
+  const linked = ctx.linkedGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
   ensureLateImport(ctx, linked.owns, [{ kind: "externref" }], [{ kind: "i32" }], linked.module);
   ensureLateImport(
@@ -18,7 +18,7 @@ export function reserveLinkedRealmPropertyRead(ctx: CodegenContext): void {
 
 /** Install after every getter fill so graph-local bags and caches cannot win. */
 export function fillLinkedRealmPropertyRead(ctx: CodegenContext): void {
-  const linked = ctx.standaloneGlobalThisImport;
+  const linked = ctx.linkedGlobalThisImport;
   if (!linked?.owns || !linked.get) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn) return;

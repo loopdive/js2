@@ -278,11 +278,10 @@ function wrapperArm(ctx: CodegenContext, slots: Slots): Instr[] {
 /**
  * Prepend the carrier arms to `__getPrototypeOf`. Called at finalize after
  * every other `__getPrototypeOf` fill, once the native-proto globals are known.
- * Standalone/WASI only; a module with none of the carriers (or none of their
- * intrinsics materialised) is left byte-identical.
+ * A module with none of the carriers (or none of their intrinsics
+ * materialised) is left byte-identical.
  */
 export function fillNativeCarrierGetPrototypeOfArms(ctx: CodegenContext, deps: NativeCarrierProtoDeps): void {
-  if (!ctx.standalone && !ctx.wasi) return;
   if (!ctx.nativeProtoGlobals || ctx.nativeProtoGlobals.size === 0) return;
   const fn = ctx.mod.functions.find((f) => f.name === "__getPrototypeOf");
   if (!fn?.body || ctx.funcMap.has(BASE_NAME)) return; // idempotent

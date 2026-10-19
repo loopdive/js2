@@ -42,8 +42,8 @@ const F64: ValType = { kind: "f64" };
 const VARIADIC: ReadonlySet<string> = new Set(["with", "toSpliced", "copyWithin"]);
 
 /** True when the member's closure takes the packed variadic ABI. */
-export function isArrayCopyMethodVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return VARIADIC.has(member) && (ctx.standalone || ctx.wasi);
+export function isArrayCopyMethodVariadicMember(member: string): boolean {
+  return VARIADIC.has(member);
 }
 
 const get = (index: number): Instr => ({ op: "local.get", index });
@@ -78,8 +78,8 @@ function countUp(k: number, end: Instr[], body: Instr[]): Instr {
 
 /**
  * Emit the closure body for `toReversed` / `with` / `toSpliced` / `copyWithin`.
- * Returns `undefined`, emitting nothing, for any other member, off the native
- * regime, or when a dependency is unavailable — the caller keeps its refusal.
+ * Returns `undefined`, emitting nothing, for any other member or when a
+ * dependency is unavailable — the caller keeps its refusal.
  */
 export function emitArrayCopyMethodMemberBody(
   ctx: CodegenContext,
@@ -89,7 +89,6 @@ export function emitArrayCopyMethodMemberBody(
   if (member !== "toReversed" && member !== "with" && member !== "toSpliced" && member !== "copyWithin") {
     return undefined;
   }
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (member === "copyWithin") {
     if (fctx.params.length < 3) return undefined;
     const helper = ensureNativeArrayCopyWithin(ctx);

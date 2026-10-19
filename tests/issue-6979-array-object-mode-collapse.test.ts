@@ -1,0 +1,487 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+/**
+ * #6979 S7-c — array/object semantics no longer key off `ctx.standalone`.
+ *
+ * The structural probe covers carrier storage that the old mode bit hid from
+ * WASI. The runtime probe covers a complete semantic path shared by both
+ * host-free WasmGC environments.
+ */
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+
+type NativeTarget = "standalone" | "wasi";
+
+async function compileNative(source: string, target: NativeTarget, emitWat = false) {
+  const result = await compile(source, {
+    target,
+    fileName: `issue-6979-${target}.ts`,
+    skipSemanticDiagnostics: true,
+    inferModuleStrictArguments: false,
+    deferTopLevelInit: true,
+    emitWat,
+  });
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  const module = new WebAssembly.Module(result.binary);
+  expect(WebAssembly.Module.imports(module)).toEqual([]);
+  return { result, module };
+}
+
+describe("#6979 S7-c array/object mode collapse — WASI structure", () => {
+  it("object-literal expandos use a carrier-owned bag slot", async () => {
+    const { result } = await compileNative(
+      `
+        var object = { declared: 1 };
+        object.expando = 2;
+      `,
+      "wasi",
+      true,
+    );
+    expect(result.wat.includes("$$bag"), "WAT contains the object carrier bag slot").toBe(true);
+  });
+});
+
+for (const target of ["standalone", "wasi"] as const) {
+  describe(`#6979 S7-c array/object mode collapse — ${target} runtime`, () => {
+    it("formats a Number wrapper through the native numeric receiver", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new Number(3.125);
+          export function readResult(): number { return boxed.toFixed(2) === "3.13" ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("invokes a native Boolean prototype method reflectively", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new Boolean(true);
+          export function readResult(): number { return Boolean.prototype.valueOf.call(boxed) === true ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("preserves an omitted end argument in a borrowed native slice", async () => {
+      const { module } = await compileNative(
+        `
+          export function readResult(): number { return Array.prototype.slice.call([1, 2, 3], 1).length; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(2);
+    });
+
+    it("calls a typed String wrapper method through its native primitive value", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new String("ab");
+          export function readResult(): number { return boxed.charAt(1) === "b" ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("calls Boolean wrapper toString through native dispatch", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new Boolean(true);
+          export function readResult(): number { return boxed.toString() === "true" ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("maps a packed typed array through a native callback", async () => {
+      const { module } = await compileNative(
+        `
+          export function readResult(): number {
+            var values = new Uint8Array([1, 2]);
+            var mapped = values.map((value: number) => value + 40);
+            return mapped[1];
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("runs scalar callbacks over a packed typed array", async () => {
+      const { module } = await compileNative(
+        `
+          export function readResult(): number {
+            var values = new Uint8Array([1, 2]);
+            if (!values.some((value: number) => value === 2)) return -1;
+            return values.findIndex((value: number) => value === 2);
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("passes fixed and spread arguments to an open native method", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = { add(a: number, b: number, c: number) { return a + b + c; } };
+          var rest = [20, 21];
+          export function readResult(): number { return object.add(1, ...rest); }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("converts an open native object with valueOf before numeric arithmetic", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = { valueOf() { return 42; } };
+          export function readResult(): number { return object - 1; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(41);
+    });
+
+    it("Reflect.defineProperty translates native descriptor rejection to false", async () => {
+      const { module } = await compileNative(
+        `
+          var frozen = Object.freeze({});
+          export function readResult() {
+            return Reflect.defineProperty(frozen, "x", { value: 1 }) === false ? 1 : 0;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("an any-typed numeric property read uses the native object MOP", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = {};
+          Object.defineProperty(object, "0", { value: 41 });
+          export function readResult() {
+            return object[0];
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(41);
+    });
+
+    it("an any-typed array HOF dispatches through the native method runtime", async () => {
+      const { module } = await compileNative(
+        `
+          var values: any = [1, 2, 3];
+          export function readResult() {
+            var mapped = values.map((value: number) => value + 10);
+            return mapped[1];
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(12);
+    });
+
+    it("a boxed String uses the native string-exotic object arm", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed: any = new String("ab");
+          export function readResult() {
+            return boxed[1] === "b" ? 1 : 0;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("an open object literal keeps Symbol.toPrimitive and ordinary fields in one carrier", async () => {
+      const { module } = await compileNative(
+        `
+          var object = {
+            [Symbol.toPrimitive]: function (hint: string) {
+              return hint === "string" ? "coerced" : 7;
+            },
+            value: 41,
+          };
+          var alias = object;
+          export function readResult() {
+            return String(alias) === "coerced" && alias.value === 41 ? 1 : 0;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("a promoted open literal seeds named fields before linking its prototype", async () => {
+      const { module } = await compileNative(
+        `
+          var proto = { inherited: 41 };
+          var object = { own: 1 };
+          Object.setPrototypeOf(object, proto);
+          export function readResult() {
+            return Object.getPrototypeOf(object) === proto && (proto as any).inherited === 41
+              ? (object as any).inherited + object.own
+              : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("a promoted open literal seeds method shorthand before linking its prototype", async () => {
+      const { module } = await compileNative(
+        `
+          var proto = {
+            inherited() {
+              return 41;
+            },
+          };
+          var object = { own: 1 };
+          Object.setPrototypeOf(object, proto);
+          export function readResult() {
+            return Object.getPrototypeOf(object) === proto ? (object as any).inherited() + object.own : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("runtime-keyed class members share the native prototype and static sidecars", async () => {
+      const { module } = await compileNative(
+        `
+          var keyCalls = 0;
+          function nextKey(): string {
+            keyCalls = keyCalls + 1;
+            return "answer";
+          }
+          class Example {
+            [nextKey()](): number {
+              return 40;
+            }
+            static [nextKey()](): number {
+              return 2;
+            }
+          }
+          var instance: any = new Example();
+          export function readResult() {
+            return keyCalls === 2 ? instance.answer() + (Example as any).answer() : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("a class instance keeps a dynamically replaced native prototype", async () => {
+      const { module } = await compileNative(
+        `
+          class Example {
+            own: number;
+            constructor() {
+              this.own = 2;
+            }
+          }
+          var proto = { inherited: 40 };
+          var instance: any = new Example();
+          Object.setPrototypeOf(instance, proto);
+          export function readResult() {
+            return Object.getPrototypeOf(instance) === proto && (proto as any).inherited === 40
+              ? instance.inherited + instance.own
+              : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("a runtime-keyed class generator method uses the native protocol", async () => {
+      const { module } = await compileNative(
+        `
+          var key = "values";
+          class Example {
+            *[key]() {
+              yield 40;
+              return 2;
+            }
+          }
+          var instance: any = new Example();
+          export function readResult() {
+            var iterator = instance.values();
+            var first = iterator.next();
+            var second = iterator.next();
+            return !first.done && second.done ? first.value + second.value : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("an object-literal generator method resolves super through native storage", async () => {
+      const { module } = await compileNative(
+        `
+          var base = {
+            answer() {
+              return 40;
+            },
+          };
+          var object = {
+            __proto__: base,
+            *values() {
+              yield super.answer();
+              return 2;
+            },
+          };
+          export function readResult() {
+            var iterator = object.values();
+            var first = iterator.next();
+            var second = iterator.next();
+            return !first.done && second.done ? first.value + second.value : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Object.create applies descriptor bags through the native object runtime", async () => {
+      const { module } = await compileNative(
+        `
+          var proto = {};
+          var object: any = Object.create(proto, {
+            answer: { value: 42, enumerable: true },
+          });
+          export function readResult() {
+            return Object.getPrototypeOf(object) === proto && object.answer === 42 ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Object.getOwnPropertyDescriptor canonicalizes numeric keys in native storage", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = { "-1": 42 };
+          export function readResult() {
+            var descriptor: any = Object.getOwnPropertyDescriptor(object, -1);
+            return descriptor != null && descriptor.value === 42 ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Object.fromEntries consumes a native array-of-pairs carrier", async () => {
+      const { module } = await compileNative(
+        `
+          var entries: any = [["answer", 42]];
+          var object: any = Object.fromEntries(entries);
+          export function readResult() {
+            return object.answer === 42 ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("Array.from consumes a native Map iterator", async () => {
+      const { module } = await compileNative(
+        `
+          var pairs: any = Array.from(new Map([["answer", "forty-two"]]));
+          export function readResult() {
+            return pairs.length === 1 && pairs[0][0] === "answer" && pairs[0][1] === "forty-two" ? 42 : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+  });
+}

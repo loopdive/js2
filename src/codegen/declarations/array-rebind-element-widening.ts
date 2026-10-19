@@ -86,7 +86,7 @@ export function rebindWidenedArrayVecType(
 }
 
 /**
- * (#4491) A standalone data descriptor can write a value whose JS tag cannot
+ * (#4491) A native WasmGC data descriptor can write a value whose JS tag cannot
  * live in the array's inferred primitive element carrier. The descriptor
  * overlay correctly keeps that value in its companion, but a typed element
  * read would otherwise bypass the companion and return the stale primitive
@@ -95,16 +95,15 @@ export function rebindWidenedArrayVecType(
  *
  * This is deliberately limited to statically known indexed data descriptors:
  * unknown descriptors and non-index expandos retain their existing lowering,
- * while a dynamic value remains the overlay's responsibility. The standalone
- * lane is the only one with this WasmGC vec/companion split; host arrays do not
- * need a representation change here.
+ * while a dynamic value remains the overlay's responsibility. WasmGC is the
+ * only backend with this vec/companion split.
  */
 export function descriptorValueWidenedArrayVecType(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
   decl: ts.VariableDeclaration,
 ): ValType | undefined {
-  if (!ctx.standalone || !ts.isIdentifier(decl.name)) return undefined;
+  if (ctx.targetProfile.backend !== "wasmgc" || !ts.isIdentifier(decl.name)) return undefined;
   const elementTag = jsTagOfFact(ctx.oracle.elementFactOf(decl));
   if (elementTag === undefined || !["number", "string", "boolean", "bigint"].includes(elementTag)) {
     return undefined;

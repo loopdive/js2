@@ -27,11 +27,11 @@
 // it is served by a DISTINCT helper name (`__ta_<m>_clamp_<idx>`) via the `clamp`
 // param below. The `any`-held receiver (runtime carrier-kind dispatch) remains a
 // follow-up; the caller (`expressions/calls.ts`) gates on that.
-// Standalone-only; gc/host keep the existing host path (byte-identical).
+// Shared by the native WasmGC backend in every environment.
 import type { Instr, ValType } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import {
   emitTaDynSpeciesCreate,
   emitTaDynViewValidate,
@@ -39,7 +39,7 @@ import {
   pushTaDynMethodPreamble,
 } from "./dataview-native.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { emitThrowTypeError } from "./js-errors.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterTaDynViewType } from "./registry/types.js";
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -52,7 +52,7 @@ import { WRAP_F64_TO_INT32_LOCALS, wrapF64ToInt32Instrs } from "./array/ta-int-e
  * missing or the struct is not a `{ length, data:(ref $arr) }` packed carrier).
  *
  * Signature: `(recv externref, cb externref, thisArg externref) -> (ref $vec)`.
- * Idempotent (funcMap-cached by name). Standalone-only.
+ * Idempotent (funcMap-cached by name). WasmGC only.
  *
  * `clamp` (#2903 R4c) selects the STORE conversion for the `Uint8ClampedArray`
  * view: instead of the `i32.trunc_sat_f64_s` width-truncation every other packed
@@ -68,7 +68,7 @@ export function ensureTaMapFilterHelper(
   vecTypeIdx: number,
   clamp = false,
 ): number | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const helperName = clamp ? `__ta_${methodName}_clamp_${vecTypeIdx}` : `__ta_${methodName}_${vecTypeIdx}`;
   const cached = ctx.funcMap.get(helperName);
   if (cached !== undefined) return cached;
@@ -405,7 +405,7 @@ export function beginTaDynProducer(
   paramNames: readonly [string, string, string],
   validate = true,
 ): TaDynProducerKit | undefined {
-  if (!noJsHost(ctx)) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   if (dynIdx < 0) return undefined;
   const ext: ValType = { kind: "externref" };

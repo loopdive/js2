@@ -9,7 +9,7 @@ import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { addUnionImports, preallocateBlockScopedSlots } from "../index.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
-import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "../shared.js";
+import { coerceType, compileExpression, compileStatement } from "../shared.js";
 import { walkChildren, walkInstructions } from "../walk-instructions.js";
 import {
   compileExternrefArrayDestructuringDecl,
@@ -299,7 +299,7 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
     for (let i = fctx.catchRethrowStack.length - 1; i >= 0; i--) {
       const entry = fctx.catchRethrowStack[i]!;
       if (entry.varName === thrownName) {
-        if ((ctx.wasi || ctx.standalone) && entry.exnLocalIdx !== undefined) {
+        if (entry.exnLocalIdx !== undefined) {
           const tagIdx = ensureExnTag(ctx);
           fctx.body.push({ op: "local.get", index: entry.exnLocalIdx });
           fctx.body.push({ op: "throw", tagIdx });
@@ -346,7 +346,6 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
 
 export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.TryStatement): void {
   const tagIdx = ensureExnTag(ctx);
-  const standardizedEh = ctx.wasi || ctx.standalone;
 
   // Pre-compile the finally body once so we can clone it into each
   // control-flow path instead of re-compiling the TS statements 2-5 times.
@@ -491,24 +490,17 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   // Compile catch clause (if present)
   let catches: { tagIdx: number; body: Instr[] }[] = [];
-  let catchAllBody: Instr[] | undefined;
 
-  // If there's a finally block but no catch clause, we need a catch_all
-  // that runs the finally block and then rethrows the exception.
+  // If there's a finally block but no catch clause, catch the native exception
+  // tag, run the finally block, and rethrow the same payload.
   if (finallyInstrs && !stmt.catchClause) {
     fctx.body = [];
-    if (standardizedEh) {
-      const finallyExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
-      fctx.body.push({ op: "local.set", index: finallyExnLocal }, ...ran!.rethrowIfRan(finallyExnLocal));
-      fctx.body.push(...cloneFinally());
-      fctx.body.push({ op: "local.get", index: finallyExnLocal });
-      fctx.body.push({ op: "throw", tagIdx });
-      catches = [{ tagIdx, body: fctx.body }];
-    } else {
-      fctx.body.push(...ran!.rethrowIfRan(), ...cloneFinally());
-      fctx.body.push({ op: "rethrow", depth: 0 } as any);
-      catchAllBody = fctx.body;
-    }
+    const finallyExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: finallyExnLocal }, ...ran!.rethrowIfRan(finallyExnLocal));
+    fctx.body.push(...cloneFinally());
+    fctx.body.push({ op: "local.get", index: finallyExnLocal });
+    fctx.body.push({ op: "throw", tagIdx });
+    catches = [{ tagIdx, body: fctx.body }];
   }
 
   if (stmt.catchClause) {
@@ -564,7 +556,7 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         fctx.catchRethrowStack.push({
           varName: catchVarName,
           depth: 0,
-          ...(standardizedEh && exnLocalIdx !== null ? { exnLocalIdx } : {}),
+          ...(exnLocalIdx !== null ? { exnLocalIdx } : {}),
         });
       }
 
@@ -644,14 +636,9 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       if (tbIdx >= 0) fctx.savedBodies.splice(tbIdx, 1);
     }
 
-    /** Deep-clone the catch body instructions for reuse in catch_all. */
-    function cloneCatchBody(): Instr[] {
-      return cloneInstructions(ctx, catchBodyInstrs);
-    }
-
     // Build "catch $exn" body: receives the externref value on the stack
     fctx.body = [];
-    if (ran) fctx.body.push(...(standardizedEh ? ran.payloadPrologue() : ran.rethrowIfRan()));
+    if (ran) fctx.body.push(...ran.payloadPrologue());
     if (exnLocalIdx !== null) {
       fctx.body.push({ op: "local.set", index: exnLocalIdx });
     } else {
@@ -665,34 +652,19 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       // The cloned finally inside the inner catch_all is at +2 depth relative
       // to the original outer context (outer try +1, inner try +1), but the
       // pre-compiled finallyInstrs targets +1. Bump outer branch depths by +1.
-      if (standardizedEh) {
-        const innerExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
-        const innerHandler: Instr[] = [
-          { op: "local.set", index: innerExnLocal },
-          ...ran!.rethrowIfRan(innerExnLocal),
-          ...cloneFinallyAtDepth(1),
-          { op: "local.get", index: innerExnLocal },
-          { op: "throw", tagIdx },
-        ];
-        fctx.body.push(
-          buildStandardTryTable({ kind: "empty" }, catchBodyInstrs, [
-            { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: innerHandler },
-          ]),
-        );
-      } else {
-        const innerCatchAllBody: Instr[] = [
-          ...ran!.rethrowIfRan(),
-          ...cloneFinallyAtDepth(1),
-          { op: "rethrow", depth: 0 } as any,
-        ];
-        fctx.body.push({
-          op: "try",
-          blockType: { kind: "empty" },
-          body: catchBodyInstrs,
-          catches: [],
-          catchAll: innerCatchAllBody,
-        } as any);
-      }
+      const innerExnLocal = allocLocal(fctx, `__finally_exn_${fctx.locals.length}`, { kind: "externref" });
+      const innerHandler: Instr[] = [
+        { op: "local.set", index: innerExnLocal },
+        ...ran!.rethrowIfRan(innerExnLocal),
+        ...cloneFinallyAtDepth(1),
+        { op: "local.get", index: innerExnLocal },
+        { op: "throw", tagIdx },
+      ];
+      fctx.body.push(
+        buildStandardTryTable({ kind: "empty" }, catchBodyInstrs, [
+          { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: innerHandler },
+        ]),
+      );
 
       // Finally on normal exit path (no exception in catch body) — at +1 depth
       // (the outer try frame), so use the as-compiled clone.
@@ -701,62 +673,6 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
       fctx.body.push(...catchBodyInstrs);
     }
     catches = [{ tagIdx, body: fctx.body }];
-
-    // #1473 — in no-JS-host mode (wasi / standalone) there is no JS sidecar and
-    // no engine-raised exception that doesn't come through our `$exc` tag (Wasm
-    // traps are not catchable). The `catch_all` + `__get_caught_exception`
-    // branch is therefore dead code — omit it so the module needs no
-    // `env::__get_caught_exception` host import.
-    const skipCatchAll = ctx.wasi || ctx.standalone;
-
-    // Build "catch_all" body: no value on stack from catch_all itself.
-    // Call __get_caught_exception host import to retrieve the foreign JS exception.
-    if (!skipCatchAll) {
-      // Track tryBody and catch bodies in savedBodies so late imports
-      // (e.g. __get_caught_exception) shift their function indices too.
-      fctx.savedBodies.push(tryBody);
-      for (const c of catches) fctx.savedBodies.push(c.body);
-      fctx.body = ran ? ran.rethrowIfRan() : [];
-      if (exnLocalIdx !== null) {
-        const getCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
-        flushLateImportShifts(ctx, fctx);
-        if (getCaughtIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx: getCaughtIdx });
-          fctx.body.push({ op: "local.set", index: exnLocalIdx });
-        }
-      }
-
-      if (finallyInstrs) {
-        // Same wrapping as catch $exn body above, but with cloned catch body.
-        // The cloned finally inside inner catch_all is at +2 depth — bump
-        // outer branch depths by +1 (see #993 / cloneFinallyAtDepth above).
-        const innerCatchAllBody: Instr[] = [
-          ...ran!.rethrowIfRan(),
-          ...cloneFinallyAtDepth(1),
-          { op: "rethrow", depth: 0 } as any,
-        ];
-
-        fctx.body.push({
-          op: "try",
-          blockType: { kind: "empty" },
-          body: cloneCatchBody(),
-          catches: [],
-          catchAll: innerCatchAllBody,
-        } as any);
-
-        fctx.body.push(...cloneFinally());
-      } else {
-        fctx.body.push(...cloneCatchBody());
-      }
-      catchAllBody = fctx.body;
-      // Remove tryBody and catch bodies from savedBodies (added above)
-      for (const c of catches) {
-        const ci = fctx.savedBodies.lastIndexOf(c.body);
-        if (ci >= 0) fctx.savedBodies.splice(ci, 1);
-      }
-      const tbIdx2 = fctx.savedBodies.lastIndexOf(tryBody);
-      if (tbIdx2 >= 0) fctx.savedBodies.splice(tbIdx2, 1);
-    }
 
     // Restore the previous localMap entry for the catch variable so that
     // variables in outer scopes with the same name are accessible after the
@@ -797,31 +713,20 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
   if (fctx.generatorReturnDepth !== undefined) fctx.generatorReturnDepth--;
   adjustRethrowDepth(fctx, -1);
 
-  // Embedded standalone runtimes implement the standardized EH proposal.
-  // Keep the legacy structured encoding byte-inert for JS-host output.
-  if (standardizedEh) {
-    if (catchAllBody) throw new Error("standalone try_table lowering cannot retain a legacy catch_all body");
-    fctx.body.push(
-      buildStandardTryTable(
-        { kind: "empty" },
-        tryBody,
-        catches.map((c) => ({
-          kind: "catch" as const,
-          tagIdx: c.tagIdx,
-          payloadType: { kind: "externref" as const },
-          body: c.body,
-        })),
-      ),
-    );
-  } else {
-    fctx.body.push({
-      op: "try",
-      blockType: { kind: "empty" },
-      body: tryBody,
-      catches,
-      catchAll: catchAllBody,
-    });
-  }
+  // The native semantic core uses the standardized EH proposal in every
+  // environment.
+  fctx.body.push(
+    buildStandardTryTable(
+      { kind: "empty" },
+      tryBody,
+      catches.map((c) => ({
+        kind: "catch" as const,
+        tagIdx: c.tagIdx,
+        payloadType: { kind: "externref" as const },
+        body: c.body,
+      })),
+    ),
+  );
   finishTryFinallyPreBox(fctx, tryPreBoxed);
 }
 

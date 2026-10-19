@@ -71,15 +71,13 @@ describe("#6978 host accelerator selection", () => {
         hostAccelerators: ["date"],
       }),
     ).toThrow("strictNoHostImports forbids");
-    // The host-assisted profile already uses every host provider. (`host-assisted`
-    // is the explicit spelling once #6708 slice A lands; before it, any
-    // non-native-first selection resolves to host-assisted on gc.)
+    // (#6979) The host-assisted profile itself is a compile error now.
     expect(() =>
       resolveCompileTargetProfile({
         semanticProviders: "host-assisted" as unknown as "native-first",
         hostAccelerators: ["regexp"],
       }),
-    ).toThrow("only apply to the native-first semantic regime");
+    ).toThrow("#6979 removed");
   });
 
   it("rejects the families whose host path does not work under the regime yet", () => {
@@ -116,8 +114,11 @@ describe("#6978 host accelerator selection", () => {
 describe("#6978 profile-aware host-import classification", () => {
   it("classifies a selected family as host-accelerator and leaves unselected families alone", () => {
     const regexp = descriptor("RegExp_new", { type: "extern_class", className: "RegExp", action: "new" });
-    expect(classifyHostImport(regexp, "javascript")).toMatchObject({ classification: "legacy-semantic" });
-    expect(classifyHostImport(regexp, "javascript", ["date"])).toMatchObject({ classification: "legacy-semantic" });
+    expect(classifyHostImport(regexp, "javascript")).toMatchObject({ classification: "unknown", ownerIssue: 6979 });
+    expect(classifyHostImport(regexp, "javascript", ["date"])).toMatchObject({
+      classification: "unknown",
+      ownerIssue: 6979,
+    });
     expect(classifyHostImport(regexp, "javascript", ["regexp"])).toMatchObject({
       classification: "host-accelerator",
       family: "regexp",
@@ -150,7 +151,7 @@ describe("#6978 profile-aware host-import classification", () => {
     // Families outside the four accelerators never re-classify.
     const map = descriptor("Map_new", { type: "extern_class", className: "Map", action: "new" });
     expect(classifyHostImport(map, "javascript", ["regexp", "date", "intl", "js-string"])).toMatchObject({
-      classification: "legacy-semantic",
+      classification: "unknown",
     });
   });
 });

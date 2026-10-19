@@ -52,7 +52,7 @@
 
 import type { Instr, ValType } from "../ir/types.js";
 import { emitBuiltinNamespaceObject } from "./builtin-static-globals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
@@ -69,7 +69,7 @@ export const VEC_CONSTRUCTOR_CARRIER_FN = "__vec_ctor_Array";
  * before any funcIdx is captured by name and flush afterwards.
  */
 export function ensureVecConstructorCarrier(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const existing = ctx.funcMap.get(VEC_CONSTRUCTOR_CARRIER_FN);
   if (existing !== undefined) return existing;
 
@@ -110,24 +110,23 @@ export function ensureVecConstructorCarrier(ctx: CodegenContext): number | undef
  * `fillDynamicForinVecArms`, object-runtime.ts).
  *
  * `keyEqualsConstructor` is the caller's `key == "constructor"` test (it owns
- * the param/local numbering); this returns the guarded delegation to the
- * accessor above. It answers `[]` — no arm at all — when either the accessor
+ * the param/local numbering); this walks the live prototype's constructor
+ * descriptor. It answers `[]` — no arm at all — when either the accessor
  * was never demanded or the key test is unavailable, so a module that never
  * asked for the carrier emits byte-identical output and keeps today's
  * `undefined` miss.
  *
- * The accessor call, not a bare `global.get`, is what makes the read work when
- * it is the module's FIRST demand for `Array`: the singleton's lazy init rides
- * inside it. That case is not exotic — it is the argument order of
- * `assert.sameValue(a.constructor, Array)`.
+ * Preparing the accessor above also prepares the canonical Array prototype,
+ * its companion, and its constructor identity. The prototype walk initializes
+ * them lazily even when this is the first runtime demand for the intrinsic.
  *
  * `constructor` is an ordinary writable INHERITED property, so an own write
  * (`a.constructor = 5`) must shadow it (§7.3.2). Unlike the sibling `"length"`
  * arm — whose key can never be an own expando — this one therefore consults the
  * #3537 expando side table first and declines to answer when the array carries
  * its own entry, letting the main body's `__vec_prop_get` miss arm return it.
- * Without the bag helper the guard degrades to the unconditional answer, which
- * is still strictly better than the `undefined` this replaces.
+ * Returning an intrinsic by carrier tag would ignore a replacement of
+ * `Array.prototype.constructor`; the shared prototype walk must decide it.
  */
 export function vecConstructorArmInstrs(
   ctx: CodegenContext,
@@ -136,27 +135,10 @@ export function vecConstructorArmInstrs(
 ): Instr[] {
   const byteArm = byteVecConstructorArmInstrs(ctx, keyEqualsConstructor, anyLocal);
   const carrierIdx = ctx.funcMap.get(VEC_CONSTRUCTOR_CARRIER_FN);
-  if (carrierIdx === undefined || !keyEqualsConstructor) return byteArm;
-  const bagHasIdx = ctx.funcMap.get("__carrier_bag_has");
-  const answer: Instr[] = [{ op: "call", funcIdx: carrierIdx }, { op: "return" }];
-  return [
-    ...byteArm,
-    ...keyEqualsConstructor,
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then:
-        bagHasIdx === undefined
-          ? answer
-          : [
-              { op: "local.get", index: 0 },
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: bagHasIdx },
-              { op: "i32.eqz" }, // no own `constructor` → the inherited carrier wins
-              { op: "if", blockType: { kind: "empty" }, then: answer },
-            ],
-    },
-  ];
+  if (carrierIdx === undefined || !keyEqualsConstructor || ctx.vecBaseTypeIdx < 0) return byteArm;
+  // `constructor` is inherited, not a carrier tag. The live prototype's
+  // descriptor may have been replaced; own bag entries still shadow it.
+  return [...byteArm, ...protoWalkConstructorArmInstrs(ctx, ctx.vecBaseTypeIdx, anyLocal, keyEqualsConstructor)];
 }
 
 /**

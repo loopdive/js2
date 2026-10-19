@@ -35,7 +35,6 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { ensureAnyHelpers } from "../src/codegen/any-helpers.js";
 // Side-effect import: registers the `flushLateImportShifts` codegen delegate
 // that `addUnionImports` requires (same pattern as the S5.0–S5.3 tests).
 import "../src/codegen/expressions.js";
@@ -44,10 +43,8 @@ import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import { FMOD_FN, ensureFmod } from "../src/codegen/fmod.js";
-import { JsTag } from "../src/ir/js-tag.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
 // refinement is named through the JS tag domain, not the enum.
-import { JS_TAG_IDS } from "../src/ir/js-tag-domain.js";
 import { analyzeSource } from "../src/checker/index.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { repairStructTypeMismatches } from "../src/codegen/fixups.js";
@@ -55,13 +52,11 @@ import { peepholeOptimize } from "../src/codegen/peephole.js";
 import { stackBalance } from "../src/codegen/stack-balance.js";
 import { lowerFunctionAstToIr } from "../src/ir/from-ast.js";
 import {
-  IrFunctionBuilder,
   irDynamic,
   irVal,
   lowerIrFunctionToWasm,
   makeDynamicLowering,
   verifyIrFunction,
-  type IrFuncRef,
   type IrFunction,
   type IrLowerResolver,
   type IrType,
@@ -97,16 +92,6 @@ function instrKinds(fn: IrFunction): string[] {
 // ---------------------------------------------------------------------------
 // Harness — real context, production handle, production encoder (S5.3 style)
 // ---------------------------------------------------------------------------
-
-function makeGcCtx(): CodegenContext {
-  const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
-    fast: true,
-    nativeStrings: false,
-  });
-  ensureAnyHelpers(ctx); // what preregisterDynamicSupport does for gc (registers __any_to_f64)
-  ensureFmod(ctx); // the `%` arm's shared exact-remainder helper (#2945)
-  return ctx;
-}
 
 function makeHostCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {});
@@ -286,106 +271,11 @@ describe("#2949 S5.5 — from-ast lowers dynamic numeric arithmetic via dyn.to_n
   });
 });
 
-// ---------------------------------------------------------------------------
-// gc runtime — the from-ast OUTPUT executed over the $AnyValue carrier
-// ---------------------------------------------------------------------------
-
-/**
- * gc: the exported from-ast functions take `(ref null $AnyValue)` params the JS
- * host cannot construct, so each gets a hand-built wrapper that boxes f64
- * (NumberF64) / i32 (Boolean-refined) params into the carrier and direct-calls
- * the from-ast function — the same dyn-arg → dyn-param call shape slice 2
- * claims.
- */
-/**
- * A wrapper's call target must carry a STRUCTURAL callable binding — the
- * verifier rejects legacy name-only refs ("call target is missing required
- * callable binding"). So the wrappers take the callee `IrFunction` itself and
- * read its `unitId`, rather than a bare name resolved after the fact.
- */
-function calleeRef(callee: IrFunction): IrFuncRef {
-  return { kind: "func", name: callee.name, binding: { kind: "unit", unitId: callee.unitId } };
-}
-
-function gcWrapperF64(name: string, callee: IrFunction, arity: 1 | 2): IrFunction {
-  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
-  const a = b.addParam("a", F64);
-  const c = arity === 2 ? b.addParam("c", F64) : null;
-  b.openBlock();
-  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.NumberF64));
-  const args = [da];
-  if (c !== null) args.push(b.emitBox(c, irDynamic(JS_TAG_IDS.NumberF64)));
-  const r = b.emitCall(calleeRef(callee), args, F64);
-  if (r === null) throw new Error("wrapper call produced no value");
-  b.terminate({ kind: "return", values: [r] });
-  return b.finish();
-}
-
-function gcWrapperBool(name: string, callee: IrFunction): IrFunction {
-  const b = new IrFunctionBuilder(identities.next(name), [F64], true);
-  const a = b.addParam("a", I32);
-  b.openBlock();
-  const da = b.emitBox(a, irDynamic(JS_TAG_IDS.Boolean));
-  const r = b.emitCall(calleeRef(callee), [da], F64);
-  if (r === null) throw new Error("wrapper call produced no value");
-  b.terminate({ kind: "return", values: [r] });
-  return b.finish();
-}
-
-describe("#2949 S5.5 — gc runtime: from-ast dynamic arithmetic over the $AnyValue carrier", () => {
-  it("dec/mul/div/mod/neg/toNum on boxed numbers and booleans (incl. NaN, -0, fmod edges)", async () => {
-    const fns = [
-      irFromSource(`export function dec(x) { return x - 1; }`, [DYN], F64),
-      irFromSource(`export function mul(x, y) { return x * y; }`, [DYN, DYN], F64),
-      irFromSource(`export function div(x, y) { return x / y; }`, [DYN, DYN], F64),
-      irFromSource(`export function mod(x, y) { return x % y; }`, [DYN, DYN], F64),
-      irFromSource(`export function neg(x) { return -x; }`, [DYN], F64),
-      irFromSource(`export function toNum(x) { return +x; }`, [DYN], F64),
-    ];
-    const [dec, mul, div, mod, neg, toNum] = fns;
-    const wrappers = [
-      gcWrapperF64("decW", dec!, 1),
-      gcWrapperF64("mulW", mul!, 2),
-      gcWrapperF64("divW", div!, 2),
-      gcWrapperF64("modW", mod!, 2),
-      gcWrapperF64("negW", neg!, 1),
-      gcWrapperBool("toNumB", toNum!),
-    ];
-    for (const f of [...fns, ...wrappers]) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeGcCtx();
-    install(ctx, fns); // callees first — each wrapper ref is bound to its callee unitId
-    install(ctx, wrappers);
-    const ex = await instantiateCtx(ctx);
-
-    // subtraction: the `obj[idx-1]` producer shape
-    expect(ex.decW(5)).toBe(4);
-    expect(ex.decW(0.5)).toBe(-0.5);
-    expect(ex.decW(NaN)).toBeNaN();
-    // multiplicative family
-    expect(ex.mulW(3, 4)).toBe(12);
-    expect(ex.mulW(1.5, 2)).toBe(3);
-    expect(ex.divW(9, 3)).toBe(3);
-    expect(ex.divW(1, 0)).toBe(Infinity);
-    expect(ex.divW(0, 0)).toBeNaN();
-    // fmod edges bit-for-bit with legacy's __fmod (#2945/#2056)
-    expect(ex.modW(7, 3)).toBe(1);
-    expect(ex.modW(7.5, 2)).toBe(1.5);
-    expect(ex.modW(-7, 3)).toBe(-1); // JS sign-of-dividend, not Euclidean
-    expect(ex.modW(7, 0)).toBeNaN(); // x % 0 → NaN
-    expect(Object.is(ex.modW(-0, 3), -0)).toBe(true); // -0 % x → -0
-    // unary minus incl. -0 production
-    expect(ex.negW(5)).toBe(-5);
-    expect(Object.is(ex.negW(0), -0)).toBe(true);
-    expect(ex.negW(NaN)).toBeNaN();
-    // unary plus on a Boolean-refined carrier: ToNumber(true)=1 / (false)=0
-    expect(ex.toNumB(1)).toBe(1);
-    expect(ex.toNumB(0)).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// host runtime — from-ast functions called DIRECTLY with real JS values
-// ---------------------------------------------------------------------------
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
 describe("#2949 S5.5 — host runtime: full ToNumber spectrum through the externref carrier", () => {
   it("number/string/bool/null/undefined operands across - * / % and unary -/+/!", async () => {

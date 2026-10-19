@@ -38,6 +38,7 @@
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
+import type { IrExternClassMeta } from "./extern-class-contract.js";
 import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
@@ -49,6 +50,8 @@ import {
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
+import { emitSourceObjectSet } from "../frontend/object-write.js";
+import { emitSourceObjectNew } from "../frontend/object-construction.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -103,6 +106,7 @@ import type {
 } from "../shared/contracts/ir-unit-inventory.js";
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
+import { lowerWrapperInstanceOf } from "./instanceof-lowering.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
@@ -282,6 +286,7 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
+import { tryEmitObjectIdentityEquality } from "./object-identity-equality.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -365,25 +370,7 @@ function unsupportedVoidCallExpression(detail: string): never {
   throw new IrUnsupportedError("void-call-expression", "build", detail);
 }
 
-/**
- * Slice 10 (#1169i) — the from-ast view of one extern-class entry. Mirrors
- * `ExternClassInfo` from `src/codegen/context/types.ts` but limits the
- * surface to what the from-ast layer needs to validate `new ExternClass(...)`,
- * `recv.method(...)`, and property access on extern-class receivers.
- *
- * Methods carry the LEGACY-registered signature shape: `params[0]` is the
- * receiver `externref` and `params[1..]` are the user args. The from-ast
- * lowerer slices off the receiver when matching call args against
- * `params.slice(1)`. Slicing here keeps the from-ast logic dispatch-free.
- */
-export interface IrExternClassMeta {
-  readonly className: string;
-  /** Exact legacy/import registry prefix; may differ for namespaces. */
-  readonly importPrefix: string;
-  readonly constructorParams: readonly ValType[];
-  readonly methods: ReadonlyMap<string, { readonly params: readonly ValType[]; readonly results: readonly ValType[] }>;
-  readonly properties: ReadonlyMap<string, { readonly type: ValType; readonly readonly: boolean }>;
-}
+export type { IrExternClassMeta } from "./extern-class-contract.js";
 
 /**
  * Slice 6 part 4 refactor (#1185): a narrowed view of `IrLowerResolver`
@@ -419,6 +406,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** False only for a synthetic script wrapper; lexical directives/classes still apply. */
+  inferModuleStrict?(): boolean;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -438,6 +427,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * wrapper constructor. Null keeps the operation on direct codegen.
    */
   standaloneWrapperInstanceOfPlan?(ctorName: string): { readonly funcName: string } | null;
+  /** Exact checked native operator over the externref dynamic carrier. */
+  dynamicInstanceOfTarget?(): IrFuncRef | null;
   /**
    * Resolve the canonical host ToPropertyDescriptor entry point for an
    * ambient `Object.defineProperty(target, key, descriptor)` call.
@@ -584,6 +575,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * `undefined` if no such class is registered.
    */
   getExternClassInfo?(className: string): IrExternClassMeta | undefined;
+  resolveQualifiedExternConstructor?: import("./qualified-extern-constructor.js").IrQualifiedExternConstructorResolver;
   /**
    * #1375 narrow slice — TS-narrowing fast-path for optional chaining.
    * Returns `true` when the TypeScript type of `expr` is provably non-null
@@ -6503,14 +6495,7 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       `ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`,
     );
   }
-  built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const shape: IrObjectShape = {
-    fields: built.map((b) => ({ name: b.name, type: b.type })),
-  };
-  return cx.builder.emitObjectNew(
-    shape,
-    built.map((b) => b.value),
-  );
+  return emitSourceObjectNew(cx.builder, built, expr);
 }
 
 /** Install descriptors in source order; creating a getter never invokes it. */
@@ -6655,12 +6640,7 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
     }
     built.push({ name: property.name, type: closureType, value: closure });
   }
-  built.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-  const shape: IrObjectShape = { fields: built.map(({ name, type }) => ({ name, type })) };
-  return cx.builder.emitObjectNew(
-    shape,
-    built.map(({ value }) => value),
-  );
+  return emitSourceObjectNew(cx.builder, built, expr);
 }
 
 /**
@@ -7989,14 +7969,16 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // — asking first materialized the whole `$Map` runtime on every `new`.
   const nativeMap = tryLowerNativeMapConstruction(expr, cx);
   if (nativeMap !== null) return nativeMap;
-  if (!ts.isIdentifier(expr.expression)) {
+  const qualified = cx.resolver?.resolveQualifiedExternConstructor?.(expr);
+  const identifier = ts.isIdentifier(expr.expression) ? expr.expression : undefined;
+  if (!identifier && !qualified) {
     demoteToLegacy(
       "unknown-class-construction",
       `ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`,
     );
   }
-  const className = expr.expression.text;
-  if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
+  const className = qualified?.registryKey ?? identifier!.text;
+  if (identifier && cx.resolver?.isDirectModuleBinding?.(identifier) === true) {
     demoteToLegacy(
       "unknown-class-construction",
       `ir/from-ast: module binding "${className}" is not a direct constructor (${cx.funcName})`,
@@ -8051,10 +8033,13 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // local shape rather than the ambient extern registry's name-only entry.
   // Aliases and non-class shadows have no matching shape and retain the loud
   // extern-shadow invariant below.
-  const shape = cx.classShapes?.get(className);
+  const shape = qualified ? undefined : cx.classShapes?.get(className);
   const externInfo = cx.resolver?.getExternClassInfo?.(className);
+  if (qualified && (!externInfo || externInfo.namespacePath?.join(".") !== qualified.namespacePath.join("."))) {
+    demoteToLegacy("unknown-class-construction", `ir/from-ast: qualified extern registry mismatch (${cx.funcName})`);
+  }
   if (externInfo && !shape) {
-    if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) {
+    if (identifier && cx.resolver?.isAmbientBinding?.(identifier) === false) {
       demoteToLegacy(
         "unknown-class-construction",
         `ir/from-ast: extern constructor "${className}" is shadowed (${cx.funcName})`,
@@ -8098,7 +8083,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
       const expectedTy = externInfo.constructorParams[i]!;
       args.push(emitDefaultExternArg(cx, expectedTy));
     }
-    return cx.builder.emitExternNew(externInfo.className, args, externInfo.importPrefix);
+    return cx.builder.emitExternNew(qualified ? className : externInfo.className, args, externInfo.importPrefix);
   }
 
   if (!shape) {
@@ -10194,7 +10179,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
         `ir/from-ast: assignment to .${fieldName} (${describeIrType(fieldType)}) got ${describeIrType(newValueType)} (${cx.funcName})`,
       );
     }
-    cx.builder.emitObjectSet(recv, fieldName, newValue);
+    emitSourceObjectSet(cx, recv, fieldName, newValue, expr);
     return;
   }
 
@@ -10353,7 +10338,7 @@ function lowerPropertyCompound(
     );
   }
   if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
-  else cx.builder.emitObjectSet(recv, fieldName, result);
+  else emitSourceObjectSet(cx, recv, fieldName, result, lhs);
 }
 
 /**
@@ -10576,7 +10561,7 @@ function lowerChainedAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void {
     } else if (target.kind === "class") {
       cx.builder.emitClassSet(target.recv, target.field, value);
     } else {
-      cx.builder.emitObjectSet(target.recv, target.field, value);
+      emitSourceObjectSet(cx, target.recv, target.field, value, expr);
     }
   }
 }
@@ -12994,7 +12979,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
         `ir/from-ast: assignment to with binding "${id.text}" (${describeIrType(binding.type)}) has incompatible value in ${cx.funcName}`,
       );
     }
-    cx.builder.emitObjectSet(binding.receiver, binding.name, newValue);
+    emitSourceObjectSet(cx, binding.receiver, binding.name, newValue, id);
     return;
   }
   if (binding.kind !== "slot") {
@@ -14233,9 +14218,33 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
   return result;
 }
 
+function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx, target: IrFuncRef): IrValueId {
+  const externref: ValType = { kind: "externref" };
+  const operands = [expr.left, expr.right].map((operand) => {
+    const value = lowerExpr(operand, cx, irDynamic());
+    const type = cx.builder.typeOf(value);
+    if (type.kind === "dynamic") return value;
+    // This is the module's dynamic-value carrier, not a host-call ABI seam.
+    // Use its existing tag-refined boxer rather than requesting host boxing.
+    return (
+      boxConcreteToDynamic(value, type, operand, cx) ??
+      coerceToExpectedExtern(value, externref, cx, "instanceof operand", undefined)
+    );
+  });
+  const result = cx.builder.emitCall(target, operands, IR_BOOL);
+  if (result === null) throw new Error(`ir/from-ast: native instanceof returned no value in ${cx.funcName}`);
+  return result;
+}
+
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
+  const dynamicTarget =
+    cx.resolver?.dynamicCarrierIsExternref?.() === true &&
+    (cx.oracle?.typeFactOf(expr.right).kind === "any" || cx.oracle?.typeFactOf(expr.right).kind === "unknown")
+      ? cx.resolver.dynamicInstanceOfTarget?.()
+      : null;
+  if (dynamicTarget) return lowerDynamicInstanceOf(expr, cx, dynamicTarget);
   if (!ts.isIdentifier(expr.right)) {
     demoteToLegacy(
       "operand-coercion-unsupported",
@@ -14253,54 +14262,12 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   }
   const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
   if (wrapperPlan) {
-    const lhs = lowerExpr(expr.left, cx, irDynamic());
-    const lt = cx.builder.typeOf(lhs);
-    const resultType = irVal({ kind: "i32" });
-    if (lt.kind === "dynamic") {
-      const isObject = cx.builder.emitTagTest(lhs, JS_TAG_IDS.Object);
-      let whenObject!: IrValueId;
-      const thenBody = cx.builder.collectBodyInstrs(() => {
-        const payload = cx.builder.emitUnbox(lhs, JS_TAG_IDS.Object);
-        const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [payload], resultType);
-        if (result === null) {
-          // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
-        }
-        whenObject = result;
-      });
-      let whenNotObject!: IrValueId;
-      const elseBody = cx.builder.collectBodyInstrs(() => {
-        whenNotObject = cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
-      });
-      return cx.builder.emitIfElse({
-        cond: isObject,
-        then: thenBody,
-        thenValue: whenObject,
-        else: elseBody,
-        elseValue: whenNotObject,
-        resultType,
-      });
-    }
-    const lv = asVal(lt);
-    if (lt.kind === "string" || lt.kind === "object" || lt.kind === "closure" || lt.kind === "class") {
-      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
-      return result;
-    }
-    if (lv?.kind === "anyref" || lv?.kind === "eqref" || lv?.kind === "ref" || lv?.kind === "ref_null") {
-      const result = cx.builder.emitCall(irRuntimeFuncRef(wrapperPlan.funcName), [lhs], resultType);
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      if (result === null) throw new Error(`ir/from-ast: ${wrapperPlan.funcName} produced no result in ${cx.funcName}`);
-      return result;
-    }
-    if (lv?.kind === "f64" || lv?.kind === "i32" || lv?.kind === "i64") {
-      return cx.builder.emitConst({ kind: "i32", value: 0 }, resultType);
-    }
-    throw new IrUnsupportedError(
-      "operand-coercion-unsupported",
-      "build",
-      `ir/from-ast: wrapper instanceof cannot normalize ${describeIrType(lt)} to anyref (${cx.funcName})`,
+    return lowerWrapperInstanceOf(
+      lowerExpr(expr.left, cx, irDynamic()),
+      wrapperPlan.funcName,
+      cx.builder,
+      cx.funcName,
+      describeIrType,
     );
   }
   const targetShape = cx.classShapes?.get(className);
@@ -15438,6 +15405,8 @@ function tryLowerDynamicEq(
     return withNodeSourceSite(cx, expr, () => tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx));
   const wrapperLooseEq = tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx);
   if (wrapperLooseEq !== null) return wrapperLooseEq;
+  const objectIdentity = tryEmitObjectIdentityEquality(cx.builder, ts.tokenToString(op), lhs, rhs);
+  if (objectIdentity !== null) return objectIdentity;
   if (lt.kind !== "dynamic" && rt.kind !== "dynamic") return null;
   const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
@@ -15535,6 +15504,15 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
     return withNodeSourceSite(cx, operand, () => boxConcreteToDynamic(v, t, operand, cx));
   if (t.kind === "string") {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
+  }
+  if (
+    t.kind === "extern" &&
+    ts.isNewExpression(operand) &&
+    cx.resolver?.resolveQualifiedExternConstructor?.(operand) &&
+    cx.resolver.dynamicCarrierIsExternref?.() === true
+  ) {
+    // Canonical externref-to-dynamic boxing is an identity operation, never a copy.
+    return cx.builder.emitBox(v, irDynamic());
   }
   const tv = asVal(t);
   if (!tv) return null;

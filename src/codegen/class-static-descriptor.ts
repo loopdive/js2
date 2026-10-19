@@ -107,6 +107,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { hasStaticModifier } from "./ast-modifiers.js";
 import { resolveInstallableClassMemberName } from "./class-bodies.js";
@@ -138,7 +139,7 @@ function viewBuilderName(className: string): string {
  */
 export function isClassStaticReflectiveMember(ctx: CodegenContext, className: string, propName: string): boolean {
   if (ctx.classStaticMethodNames.get(className)?.includes(propName)) return true;
-  return ctx.standalone === true && ctx.staticAccessorSet.has(`${className}_${propName}`);
+  return wasmGcBackend(ctx) && ctx.staticAccessorSet.has(`${className}_${propName}`);
 }
 
 function declaresReflectableStatic(decl: ts.ClassLikeDeclaration): boolean {
@@ -156,7 +157,7 @@ function declaresReflectableStatic(decl: ts.ClassLikeDeclaration): boolean {
  * position that precedes the closure-arity dispatcher emission.
  */
 export function mintClassStaticReflectiveViews(ctx: CodegenContext): void {
-  if (!ctx.standalone || viewsByCtx.has(ctx)) return;
+  if (!wasmGcBackend(ctx) || viewsByCtx.has(ctx)) return;
   const minted: string[] = [];
   viewsByCtx.set(ctx, minted);
   // No object runtime ⇒ no reflective native to answer through, and no `$Object`
@@ -257,7 +258,7 @@ type MopFn = { locals: { name: string; type: ValType }[]; body: Instr[] };
  * the #4770 / #6651 C class-object fills, after every competing prefix.
  */
 export function fillClassStaticReflectiveArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   const entries = liveViewEntries(ctx);
   if (entries.length === 0) return;
   const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");

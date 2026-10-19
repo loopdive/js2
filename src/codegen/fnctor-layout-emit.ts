@@ -75,7 +75,7 @@
 import type { ts } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import type { FnctorLayoutPlan } from "./fnctor-alloc-labels.js";
 import { type PresenceSlot, presenceSetInstrs, presenceTestInstrs, presenceWordName } from "./fnctor-presence-bits.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -450,7 +450,7 @@ export function emitLayoutSelectingStructNew(
   const defaultsFor = (structName: string, stamp: number): Instr[] => {
     const out: Instr[] = [];
     for (const field of ctx.structFields.get(structName) ?? []) {
-      if (ctx.standalone && field.name === "$constructor") {
+      if (wasmGcBackend(ctx) && field.name === "$constructor") {
         out.push({ op: "local.get", index: constructorIdentityParamIdx });
       } else if (field.name === LAYOUT_STAMP_FIELD) {
         out.push({ op: "i32.const", value: stamp });

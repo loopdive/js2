@@ -4,7 +4,7 @@ import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { ts } from "../ts-api.js";
 import { captureSourceSlot, recordLiftedCaptureSlots } from "./closures/capture-source-slot.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { emitFnctorCtorCallSiteArgc } from "./fnctor-ctor-arguments.js";
 import { FNCTOR_CONSTRUCTOR_FIELD, FNCTOR_PROTO_FIELD } from "./fnctor-identity-fields.js";
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./expressions/fnctor-prototype.js"; // (#6951 G3)
@@ -56,7 +56,7 @@ export function fnctorConstructorParams(
   captureParamTypes: readonly ValType[] = [],
 ): ValType[] {
   const params = [...captureParamTypes, ...userParams];
-  return ctx.wasi ? params : [...params, { kind: "externref" }];
+  return wasmGcBackend(ctx) || !ctx.wasi ? [...params, { kind: "externref" }] : params;
 }
 
 /** Recover the user-visible constructor parameters from a cached ctor signature. */
@@ -67,13 +67,13 @@ export function fnctorUserParamTypes(
 ): ValType[] | undefined {
   if (!allParamTypes) return undefined;
   const firstUser = captureLayout.allParamTypes.length;
-  const end = ctx.wasi ? undefined : -1;
+  const end = wasmGcBackend(ctx) || !ctx.wasi ? -1 : undefined;
   return allParamTypes.slice(firstUser, end);
 }
 
 /** Add the hidden parameter definition without shifting user parameter indices. */
 export function appendFnctorConstructorParam(ctx: CodegenContext, params: { name: string; type: ValType }[]): void {
-  if (!ctx.wasi) params.push({ name: "__constructor_identity", type: { kind: "externref" } });
+  if (wasmGcBackend(ctx) || !ctx.wasi) params.push({ name: "__constructor_identity", type: { kind: "externref" } });
 }
 
 /** Register synthesized ctor capture params as the body-visible bindings. */
@@ -216,12 +216,12 @@ export function emitFnctorFieldInitializers(
   // vivify can register helpers, and nothing it emits may land between the
   // `struct.new` operands.
   const protoSnapshotLocal =
-    ctx.standalone && fields.some((field) => field.name === FNCTOR_PROTO_FIELD)
+    wasmGcBackend(ctx) && fields.some((field) => field.name === FNCTOR_PROTO_FIELD)
       ? emitFnctorProtoSnapshot(ctx, fctx)
       : undefined;
   for (const field of fields) {
     let instr: Instr;
-    if (ctx.standalone && field.name === FNCTOR_CONSTRUCTOR_FIELD) {
+    if (wasmGcBackend(ctx) && field.name === FNCTOR_CONSTRUCTOR_FIELD) {
       instr = { op: "local.get", index: constructorIdentityParamIdx };
     } else if (field.name === FNCTOR_PROTO_FIELD && protoSnapshotLocal !== undefined) {
       instr = { op: "local.get", index: protoSnapshotLocal };
@@ -307,10 +307,11 @@ export function emitFnctorConstructorArguments(
   // sees the real arity. Standalone/WASI only — the JS-host lane routes the
   // same shape through `emitDynamicSpreadCall`, and widening here would
   // change its bytes for no behavioural gain.
-  const args: readonly ts.Expression[] =
-    ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs;
+  const args: readonly ts.Expression[] = wasmGcBackend(ctx)
+    ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs)
+    : rawArgs;
   let constructorIdentityLocal: number | undefined;
-  if (!ctx.wasi) {
+  if (wasmGcBackend(ctx) || !ctx.wasi) {
     const valueType = compileExpression(ctx, fctx, callee, { kind: "externref" });
     if (!valueType) {
       fctx.body.push({ op: "ref.null.extern" });

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#6772 S2) §10.2.1.3 [[Construct]] step 13 — the return-override channel for
- * struct-represented user classes (standalone).
+ * struct-represented user classes on native WasmGC.
  *
  * A class constructor compiles to `<C>_init(...params, self) -> (ref $C)`, so
  * its result can only ever be the class's own struct: `return o` / `return {}`
@@ -60,7 +60,7 @@ const markedClasses = new WeakMap<CodegenContext, Set<string>>();
 const fnctorOverrideParents = new WeakMap<CodegenContext, Set<string>>();
 const frameOverrideLocals = new WeakMap<FunctionContext, number>();
 
-/** Is `className` a return-override class (standalone only)? */
+/** Is `className` a native-WasmGC return-override class? */
 export function isCtorReturnOverrideClass(ctx: CodegenContext, className: string | undefined): boolean {
   return className !== undefined && (markedClasses.get(ctx)?.has(className) ?? false);
 }
@@ -72,7 +72,7 @@ export function isCtorReturnOverrideClass(ctx: CodegenContext, className: string
  * unsound.
  */
 export function isReturnOverrideMemberRead(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ctx.standalone || markedClasses.get(ctx) === undefined) return false;
+  if (ctx.targetProfile.backend !== "wasmgc" || markedClasses.get(ctx) === undefined) return false;
   const e = skipTransparentExpressions(expr);
   if (!ts.isPropertyAccessExpression(e) && !ts.isElementAccessExpression(e)) return false;
   if (ts.isPropertyAccessExpression(e) && ts.isPrivateIdentifier(e.name)) return false;
@@ -111,7 +111,7 @@ export function tryEmitOverrideBindingGetPrototypeOf(
   fctx: FunctionContext,
   arg: ts.Expression,
 ): ValType | undefined {
-  if (!ctx.standalone || markedClasses.get(ctx) === undefined) return undefined;
+  if (ctx.targetProfile.backend !== "wasmgc" || markedClasses.get(ctx) === undefined) return undefined;
   if (markedInstanceValueClass(ctx, arg) === undefined) return undefined;
   const gptIdx = ensureLateImport(ctx, "__getPrototypeOf", [EXTERNREF], [EXTERNREF]);
   flushLateImportShifts(ctx, fctx);
@@ -146,7 +146,7 @@ export function returnOverrideReceiverIsDynamic(
   receiver: ts.Expression,
   member: ts.MemberName | undefined,
 ): boolean {
-  if (!ctx.standalone || member === undefined || !ts.isIdentifier(member)) return false;
+  if (ctx.targetProfile.backend !== "wasmgc" || member === undefined || !ts.isIdentifier(member)) return false;
   if (!isCtorReturnOverrideClass(ctx, typeName)) return false;
   const recv = skipTransparentExpressions(receiver);
   if (recv.kind === ts.SyntaxKind.SuperKeyword) return false;
@@ -225,7 +225,7 @@ export function markCtorReturnOverrideClass(
   className: string,
   decl: ts.ClassDeclaration | ts.ClassExpression,
 ): void {
-  if (!ctx.standalone || ctx.classExternrefBackedSet.has(className)) return;
+  if (ctx.targetProfile.backend !== "wasmgc" || ctx.classExternrefBackedSet.has(className)) return;
   let set = markedClasses.get(ctx);
   const parent = ctx.classParentMap.get(className);
   const fnctorParent = parent !== undefined && fnctorParentMayReturnObject(ctx, parent, decl);
@@ -299,7 +299,9 @@ export function emitSaveParentOverride(ctx: CodegenContext, fctx: FunctionContex
  * (recorded residual).
  */
 function frameThisMayBeOverride(ctx: CodegenContext, fctx: FunctionContext): boolean {
-  if (!ctx.standalone || !fctx.isDerivedConstructor || fctx.localMap.get("this") === undefined) return false;
+  if (ctx.targetProfile.backend !== "wasmgc" || !fctx.isDerivedConstructor || fctx.localMap.get("this") === undefined) {
+    return false;
+  }
   const className = markedFrameClass(ctx, fctx);
   return parentMayOverride(ctx, className === undefined ? undefined : ctx.classParentMap.get(className));
 }

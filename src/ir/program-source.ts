@@ -2,6 +2,7 @@
 
 import { ts } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
+import { sourceLogicalRecordType, sourceCheckerScalar as checkerScalar } from "../frontend/logical-record-type.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
@@ -959,14 +960,6 @@ function unsupported(detail: string): never {
   throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
 }
 
-function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
-  const type = checker.getTypeAtLocation(node);
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
-  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
-  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
-  return undefined;
-}
-
 /** Shared logical callable conversion; this does not issue a physical carrier. */
 function checkerCallableType(checker: ts.TypeChecker, input: ts.Type, where: string): IrType | null {
   const active = new Set<ts.Type>();
@@ -1424,6 +1417,7 @@ function prepareSourceFunctionSignatures(
         param.type
           ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
             checkerCallable(checker, param.type, unit.displayName) ??
+            sourceLogicalRecordType(checker, param.type, unit.displayName) ??
             typeNodeToIr(param.type, unit.displayName))
           : propagated?.params[index]
             ? lowerTypeToIrType(propagated.params[index]!)
@@ -1449,6 +1443,7 @@ function prepareSourceFunctionSignatures(
               : returnNode
                 ? (sourceBooleanAnyResult(checker, declaration) ??
                   checkerCallable(checker, returnNode, unit.displayName) ??
+                  sourceLogicalRecordType(checker, returnNode, unit.displayName) ??
                   typeNodeToIr(returnNode, unit.displayName))
                 : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
                   (propagated ? lowerTypeToIrType(propagated.returnType) : null));

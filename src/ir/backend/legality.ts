@@ -21,6 +21,7 @@ export type IrBackendTargetCapability =
   | "standalone-function-prototype-call"
   | "standalone-native-regexp-test-carrier"
   | "standalone-wrapper-instanceof"
+  | "native-dynamic-instanceof"
   | "primitive-wrapper-loose-equality"
   | "legacy-numeric-array-global"
   | "number-to-string";
@@ -107,6 +108,8 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.allowHostImports || profile.target === "standalone" || profile.target === "wasi")
       );
+    case "native-dynamic-instanceof":
+      return profile.backend === "wasmgc" && profile.fast !== true;
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
     case "number-to-string":

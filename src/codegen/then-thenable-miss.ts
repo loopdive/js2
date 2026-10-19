@@ -27,15 +27,14 @@
  * All pieces are the module's own natives (the #3125 thenable substrate + the
  * #2151 vararg dispatcher) — no host import is introduced, so the #2961/#2903
  * host-free guarantees are unaffected. Returns false (caller keeps the legacy
- * `ref.null.extern`) when any piece is unavailable. wasi keeps its nullMiss
- * contract — callers only invoke this for standalone non-wasi.
+ * `ref.null.extern`) when any piece is unavailable on the WasmGC target.
  *
  * Leaf module by design: the emitters come through the `shared.js` late-bound
  * delegates, so no cycle back through calls.ts (which is size-frozen).
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { emitThrowTypeError } from "./js-errors.js";
@@ -55,7 +54,7 @@ export function tryEmitStandaloneThenThenableMissArm(
   args: readonly (ts.Expression | undefined)[],
   missTypeError: boolean,
 ): boolean {
-  if (ctx.standalone !== true || ctx.wasi === true) return false;
+  if (!wasmGcBackend(ctx)) return false;
   const hasThenIdx = ctx.funcMap.get("__promise_has_callable_then");
   const varargThenIdx = ctx.funcMap.get("__call_m_then_vararg");
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");

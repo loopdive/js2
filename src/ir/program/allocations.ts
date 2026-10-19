@@ -12,6 +12,7 @@ import { assertFinalAllocProvenance } from "../analysis/alloc-verification.js";
 import { irRuntimeSupportFunctions, type IrRuntimeSupport } from "./runtime-support.js";
 import type { IrPreparationControls } from "./controls.js";
 import { assertPreparedIrFunctionAllocationTypesAndStates } from "./allocation-body-validation.js";
+import { SOURCE_OBJECT_CONSTRUCTION, isSourceObjectConstruction } from "../runtime/object-construction.js";
 
 /** Support has already received its inherited self-host hygiene, not source GVN. */
 export function analyzeIrRuntimeSupportAllocations(
@@ -84,15 +85,25 @@ export function assertPreparedIrProgramAllocations(
       invalid(`metadata ${row.id} has no exact live owner`);
     metadataIds.add(row.id);
     const namespaces = new Set<string>();
-    for (const [namespace] of row.entries) {
+    for (const [namespace, value] of row.entries) {
       if (namespaces.has(namespace)) invalid(`metadata ${row.id} duplicates ${namespace}`);
+      namespaces.add(namespace);
+      if (namespace === SOURCE_OBJECT_CONSTRUCTION) {
+        const site = registry.resolve(row.id);
+        if (
+          site?.kind !== "object" ||
+          site.type.kind !== "object" ||
+          !isSourceObjectConstruction(value, site.type.shape.fields)
+        )
+          invalid(`metadata ${row.id} has malformed source construction facts`);
+        continue; // Producer facts are not recomputable analysis results or physical authority.
+      }
       if (
         namespace !== ALLOC_NAMESPACES.encoding &&
         namespace !== ALLOC_NAMESPACES.ownership &&
         namespace !== ALLOC_NAMESPACES.escape
       )
         invalid(`metadata ${row.id} has an unverifiable namespace ${namespace}`);
-      namespaces.add(namespace);
       requestedNamespaces.add(namespace);
     }
   }

@@ -42,7 +42,7 @@ import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "..
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import {
   addFuncType,
   addImport,
@@ -1227,31 +1227,29 @@ function emitObjectRestAssignment(
   const restValueIdx = allocLocal(fctx, `__rest_value_${fctx.locals.length}`, { kind: "externref" });
   // Collect excluded names, including statically-resolvable computed keys (e.g. `{ [a]: b, ...rest }`).
   const excludedKeys = collectObjectRestExcludedKeys(ctx, target);
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    const emitted = emitNativeObjectRest(
+  const emitted = emitNativeObjectRest(
+    ctx,
+    fctx,
+    () => {
+      fctx.body.push({ op: "local.get", index: tmpLocal });
+      if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+    },
+    excludedKeys,
+    restValueIdx,
+  );
+  if (emitted) {
+    fctx.body.push({ op: "local.get", index: restValueIdx });
+    emitResolvedIdentifierWriteFromStack(
       ctx,
       fctx,
-      () => {
-        fctx.body.push({ op: "local.get", index: tmpLocal });
-        if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
-          fctx.body.push({ op: "extern.convert_any" });
-        }
-      },
-      excludedKeys,
-      restValueIdx,
+      prop.expression,
+      { kind: "externref" },
+      restLocalIdx,
+      moduleGlobalIdx,
     );
-    if (emitted) {
-      fctx.body.push({ op: "local.get", index: restValueIdx });
-      emitResolvedIdentifierWriteFromStack(
-        ctx,
-        fctx,
-        prop.expression,
-        { kind: "externref" },
-        restLocalIdx,
-        moduleGlobalIdx,
-      );
-      return;
-    }
+    return;
   }
   // Host-assisted compatibility ABI: comma-joined exclusion keys.
   let restObjIdx = ctx.funcMap.get("__extern_rest_object");
@@ -5025,7 +5023,9 @@ function compilePropertyAssignment(
   // (always a struct instance), so the proto/class-object dummy path is not a
   // concern here.
   const closureAccSet =
-    S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone ? ctx.structAccessorClosure.get(accessorKey)?.setGlobal : undefined;
+    S5C_STRUCT_ACCESSOR_CLOSURE && wasmGcBackend(ctx)
+      ? ctx.structAccessorClosure.get(accessorKey)?.setGlobal
+      : undefined;
   if (closureAccSet !== undefined) {
     // recv: struct instance → externref
     const recvResult = compileExpression(ctx, fctx, target.expression);

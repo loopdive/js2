@@ -9,8 +9,7 @@
 
 import { ts, forEachChild } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
-import type { CodegenContext, ExternClassInfo } from "./context/types.js";
-import { hostFreeEnvironment } from "./context/types.js";
+import { hostFreeEnvironment, jsValueBoundary, type CodegenContext, type ExternClassInfo } from "./context/types.js";
 import {
   applyLibExternScanEffects,
   captureLibExternScanEffects,
@@ -30,6 +29,7 @@ import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerHostIntlExternClasses } from "./helpers/host-intl-classes.js";
 import { registerAmbientParseImport } from "./ambient-parse-import.js";
+import { registerAmbientFunctionValueThunk } from "./declarations/ambient-function-value-thunk.js";
 import { isStandaloneUnavailableTimerGlobal } from "./standalone-timers.js";
 import {
   heritageBaseName,
@@ -825,15 +825,14 @@ function collectExternDeclarationsImpl(
       // green on its own probes. Skip the stub here so the finalize owns the
       // native emit, exactly as parseInt/parseFloat do.
       if (
-        (ctx.targetProfile.semanticProviders === "native-first" || ctx.wasi || ctx.standalone) &&
-        (name === "parseInt" ||
-          name === "parseFloat" ||
-          name === "decodeURI" ||
-          name === "decodeURIComponent" ||
-          name === "encodeURI" ||
-          name === "encodeURIComponent" ||
-          name === "escape" ||
-          name === "unescape")
+        name === "parseInt" ||
+        name === "parseFloat" ||
+        name === "decodeURI" ||
+        name === "decodeURIComponent" ||
+        name === "encodeURI" ||
+        name === "encodeURIComponent" ||
+        name === "escape" ||
+        name === "unescape"
       ) {
         continue;
       }
@@ -895,6 +894,7 @@ function collectExternDeclarationsImpl(
           }
         }
       }
+      registerAmbientFunctionValueThunk(ctx, sourceFile, stmt);
     }
     // declare var X: { prototype: X; new(): X } (lib.dom.d.ts pattern)
     // declare var Date: DateConstructor (interface with new() pattern)
@@ -987,7 +987,7 @@ function collectExternClass(
   libIndex?: LibDeclIndex,
 ): void {
   const className = decl.name!.text;
-  if (ERROR_TYPES_SKIP.has(className)) return;
+  if (namespacePath.length === 0 && ERROR_TYPES_SKIP.has(className)) return;
   const prefix = [...namespacePath, className].join("_");
 
   const info: ExternClassInfo = {
@@ -1603,7 +1603,7 @@ export function collectDeclaredGlobals(
     if (!referencedNames.has(name) || userModuleBindings.has(name) || ctx.declaredGlobals.has(name)) continue;
     // No JS host exists for standalone/WASI modules.  Keep the host-free
     // behavior used by the variable-global path above.
-    if (ctx.strictNoHostImports || ctx.standalone || ctx.wasi) continue;
+    if (ctx.strictNoHostImports || !jsValueBoundary(ctx)) continue;
     const importName = `global_${name}`;
     if (!ctx.funcMap.has(importName)) {
       const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);

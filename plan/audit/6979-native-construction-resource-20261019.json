@@ -1,0 +1,561 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-v owned native explicit-prototype initialization prerequisite; migration incomplete",
+  "parentCommit": "4493f10dcf922dbe2cf620c0e80f576ba818796f",
+  "candidate": "working tree identified by sourceHashes; signed commit follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false
+  },
+  "sourceHashes": {
+    "src/ir/program/native-object-construction-requirements.ts": "246ad88fc6957d720177a34101bbcfc9d33371b0980c81d295fab04660c32e2f",
+    "src/backend/wasmgc/resources/native-object-construction.ts": "eb412715c4a8d47912c87abff21a76d320f2b9f60f989b09ce43bf586e60b985",
+    "src/runtime/wasmgc/values/object-construction-definition.ts": "cad11906105ddc33cd9e8aca6fde37147be09de8fdb8bc7d7039769b3424c7f9",
+    "src/ir/runtime/object-construction.ts": "8a13b61495e1496d3b1aa4d3fcd03d8a0557987ea8b40fcc500d84af575a11e1",
+    "tests/helpers/native-construction-fixture.ts": "fb08fd79ea006259124b3929b2915ddbee64bcb17bb61d62a14fe2cfaf8faeab",
+    "tests/helpers/native-descriptor-fixture.ts": "2985c6177e5212cbdf99c7e0b4d56d98fe4b4c57bd678814c13c162ee3814a2c",
+    "tests/issue-6979-native-object-construction.test.ts": "efa4c102f8341a2acdbeca2d9528a514dcf33187c85ad1ea61704a03ea677da5",
+    "scripts/compiler-boundaries.json": "61a8b1eaf762853a4e1750c8cdd6a282b2d4b1222a1cd00fc7c8657a5a07f213"
+  },
+  "scope": {
+    "actualPreparedRecordAndProjectionAllocations": true,
+    "sourceOrderAndSSAOperandChecks": true,
+    "existingPropertyCensusOwner": true,
+    "realStorageDescriptorValueDependencies": true,
+    "canonicalFillAndCompletionReceipts": true,
+    "sourceDefaultRealmCompleted": false,
+    "physicalProviderOrPublicEntryPublication": false,
+    "linearWasiConstructionImplemented": false,
+    "newHostImportOrGraphCopierOrSecondPropertyEngine": false,
+    "frozenAstOrSelectorExpansion": false
+  },
+  "tests": {
+    "newConstruction": {
+      "cases": 13,
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "rows": [
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization authenticates completion and refuses duplicate canonical fill",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization does not turn empty access demand or missing source facts into construction authority",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization executes canonical storage/descriptors/boxing with live identity (offset=false, replay=false)",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization executes canonical storage/descriptors/boxing with live identity (offset=true, replay=false)",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization executes canonical storage/descriptors/boxing with live identity (offset=true, replay=true)",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization keeps source-order variants distinct despite identical storage shapes",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization preflights duplicate keys and mismatched plans before reserving any function",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization refuses copied requirements, packs, wrong source and constructor indices",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization rejects altered projection operands instead of granting source allocation authority",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization rejects duplicate logical fields instead of certifying an incomplete key permutation",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization requires canonical dependencies and its own canonical fill, not caller-filled bodies",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization retains an explicit construction gap for prototype-setter",
+          "status": "passed"
+        },
+        {
+          "file": "issue-6979-native-object-construction.test.ts",
+          "name": "owned native explicit-prototype record initialization retains an explicit method-construction gap with a positively observed allocation",
+          "status": "passed"
+        }
+      ]
+    },
+    "priorFocused": {
+      "cases": 135,
+      "passed": 135,
+      "failed": 0,
+      "skipped": 0
+    },
+    "combinedFocused": {
+      "cases": 148,
+      "passed": 148,
+      "failed": 0,
+      "skipped": 0
+    },
+    "resourcePopulation": {
+      "parent": {
+        "cases": 161,
+        "passed": 147,
+        "failed": 14,
+        "skipped": 0
+      },
+      "candidate": {
+        "cases": 161,
+        "passed": 147,
+        "failed": 14,
+        "skipped": 0
+      },
+      "freshParentCheckout": true,
+      "fullRowsEqual": true,
+      "parentRowsSha256": "5b13088247f0001a5d6270de76f44182943a85fffd1ba4ff200205310b59906d",
+      "candidateRowsSha256": "5b13088247f0001a5d6270de76f44182943a85fffd1ba4ff200205310b59906d",
+      "retainedFailures": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_accessor instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "57deb91c6af0d2de598d2463fc110a587342d199d8dbea73642bc8738d2eba97"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_value instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "57deb91c6af0d2de598d2463fc110a587342d199d8dbea73642bc8738d2eba97"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __new_plain_object instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "27c442e7d1f208901582643ba6b268c0571db9d4d4b105fd7d84f08aa88b9ee4"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_grow instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "27c442e7d1f208901582643ba6b268c0571db9d4d4b105fd7d84f08aa88b9ee4"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_insert instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "27c442e7d1f208901582643ba6b268c0571db9d4d4b105fd7d84f08aa88b9ee4"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __object_is instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "57deb91c6af0d2de598d2463fc110a587342d199d8dbea73642bc8738d2eba97"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-descriptor…'",
+          "normalizedFullErrorSha256": "b1471e5d78d79a1b9dab1059ce43160a72d3eb9d70b810233f555433824ae4e6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-enumeratio…'",
+          "normalizedFullErrorSha256": "b1471e5d78d79a1b9dab1059ce43160a72d3eb9d70b810233f555433824ae4e6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime.ts'",
+          "normalizedFullErrorSha256": "b167e97e10af8b4da4eefc3e4cb2daa648fc969206e26848cce1797b52cb08f0"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects altered receipts, old-source substitution and unknown paths",
+          "normalizedFullErrorSha256": "b2e0bf1502d2a5f0626489e15aad5c3373c267ae8da8d841ad3b2cfab605798e"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-descriptor…' after a positive reconstruction",
+          "normalizedFullErrorSha256": "9552605870ce3b1fa0459596a67299a3dbf9ac024b4b517c2fcc419384904af9"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-enumeratio…' after a positive reconstruction",
+          "normalizedFullErrorSha256": "9552605870ce3b1fa0459596a67299a3dbf9ac024b4b517c2fcc419384904af9"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime.ts' after a positive reconstruction",
+          "normalizedFullErrorSha256": "e7df281df1180222581cff25f5d45b6d67feed9bdd5a7cf7a738185a63f3f79c"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects missing, duplicated, reordered and semantic span mutations",
+          "normalizedFullErrorSha256": "8f7803c7f3c312789d9de5c52df39466e80a84ec8229706abeefa0871b858aeb"
+        }
+      ]
+    },
+    "existing": {
+      "parent": {
+        "cases": 779,
+        "passed": 756,
+        "failed": 23,
+        "skipped": 0
+      },
+      "candidate": {
+        "cases": 779,
+        "passed": 756,
+        "failed": 23,
+        "skipped": 0
+      },
+      "parentEvidence": "Retained published 4493f10 post-commit report, not a fresh 38-file parent run this turn",
+      "files": 38,
+      "fullRowsEqual": true,
+      "parentRowsSha256": "cbd3bc10adc1fa8f1b28b6799fa6c4c15a21fc297cfa61b8fd27d0890dd90b4b",
+      "candidateRowsSha256": "cbd3bc10adc1fa8f1b28b6799fa6c4c15a21fc297cfa61b8fd27d0890dd90b4b",
+      "retainedFailures": [
+        {
+          "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+          "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+          "normalizedFullErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f"
+        },
+        {
+          "file": "issue-1058-unmatched-closure-host-call.test.ts",
+          "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+          "normalizedFullErrorSha256": "3c27262f08cd28b08605c89652894f0f052f13de1c654048b08cf2f8e5a94761"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) nested fn-decl `this` inside a plain strict function is also undefined",
+          "normalizedFullErrorSha256": "c926c367a79bd124abc17b1c97225e3bc0b08fa4da1bf95e02773170dd8afae7"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 1: strict function-expression `typeof this` is 'undefined', not 'object'",
+          "normalizedFullErrorSha256": "43f394f3accb7211b16c710e8238b55797e351d41c6ab8c64c3f8c894e74b7b3"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 2: nested fn-decl in a class method sees `this === undefined`",
+          "normalizedFullErrorSha256": "7715cb795416c9c659f0884f1daf2fc31583223f3613e82db8fdc4145cd8d1da"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 2: the class method's own `this` is still the instance (not regressed)",
+          "normalizedFullErrorSha256": "f15b774525a31c2ebf62fc1fb95c6174d614acdd6f9ecdd8ca2a7db6605bef11"
+        },
+        {
+          "file": "issue-2623-p7-finally-bridge.test.ts",
+          "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+          "normalizedFullErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797"
+        },
+        {
+          "file": "issue-3518-typed-program-preparation.test.ts",
+          "name": "source-free typed program preparation, standalone WasmGC gates intermediate allocation checks explicitly while retaining nonempty unconditional final checks",
+          "normalizedFullErrorSha256": "11c4e783c45eaa0738688f4e2d9bcb3729aa1e690e20cb54e7d2562bbfa2c46d"
+        },
+        {
+          "file": "issue-3518-typed-program-preparation.test.ts",
+          "name": "source-free typed program preparation, standalone WasmGC threads explicit false through every verifier, including final validation, with an omitted-option control",
+          "normalizedFullErrorSha256": "d88dc42591f6d81957e552e955a22b6f477b2e0a5f97b2b92ba8aa544d530a17"
+        },
+        {
+          "file": "issue-3526-callable-boundary-callback.test.ts",
+          "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+          "normalizedFullErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90"
+        },
+        {
+          "file": "issue-3526-callable-boundary-callback.test.ts",
+          "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+          "normalizedFullErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140"
+        },
+        {
+          "file": "issue-3526-callable-boundary-schema.test.ts",
+          "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits imports the fixed-arity members and the array sibling TOGETHER on gc-host",
+          "normalizedFullErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4"
+        },
+        {
+          "file": "issue-3526-callable-boundary-schema.test.ts",
+          "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits matches the maker siblings' emitted import ABI",
+          "normalizedFullErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3"
+        },
+        {
+          "file": "issue-4515-wave5.test.ts",
+          "name": "#4515 wave-5 — §13 completion value: the forms that RESET V a break inside an if carries `undefined` out of the loop",
+          "normalizedFullErrorSha256": "1c9e2e33da5a5cf071c6451d4db630ec4a85c274d641f8837e3a5a086662e310"
+        },
+        {
+          "file": "issue-4515-wave5.test.ts",
+          "name": "#4515 wave-5 — §13 completion value: the forms that RESET V a do-while still reports the last value-producing statement that ran",
+          "normalizedFullErrorSha256": "e2dd99fa30775c9e558e8542ee1365e870886dd18237c5f82eb944c4c52c0e71"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier keeps the closure reachable through the host dispatcher",
+          "normalizedFullErrorSha256": "970afa0525aa13702b2995baa8d4593b4ec2033141f455cc557c18b3cb163976"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier produces a module that validates and calls the closure with its tuple",
+          "normalizedFullErrorSha256": "3478b5d3bdf1941e82e4dba7a446c4eeebe6d8373944f13127a7343f7be3ce5f"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier still reads NaN for a tuple's .length (documented residual)",
+          "normalizedFullErrorSha256": "b5a0774872ed33a7d8b766429a3dcfdd77de5e62df1486a84ba5341ba89dfb56"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+          "normalizedFullErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+          "normalizedFullErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+          "normalizedFullErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699"
+        },
+        {
+          "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+          "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+          "normalizedFullErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1"
+        },
+        {
+          "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+          "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+          "normalizedFullErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a"
+        }
+      ]
+    },
+    "oldExpectationsChanged": false
+  },
+  "nativeConstructionBinaries": [
+    {
+      "offset": false,
+      "decoded": false,
+      "bytes": 15227,
+      "sha256": "1feafb0d34f6e59af115c215c5531fd144c172a09f50b9eaf7db7f0ea300bfb2",
+      "imports": [],
+      "number": 42,
+      "ownCount": 4,
+      "sameReference": true,
+      "constructors": 3,
+      "declaredFunctions": 5,
+      "initializerIndices": [31, 33, 35],
+      "totalFunctions": 61,
+      "totalTypes": 52,
+      "sourceDefaultRealmCompleted": false
+    },
+    {
+      "offset": true,
+      "decoded": false,
+      "bytes": 15696,
+      "sha256": "73e4d6dcb7a68760e065c820fd6672d9602e62ea78710283b6c3b5517e67d6a6",
+      "imports": [],
+      "number": 42,
+      "ownCount": 4,
+      "sameReference": true,
+      "constructors": 3,
+      "declaredFunctions": 5,
+      "initializerIndices": [33, 35, 37],
+      "totalFunctions": 63,
+      "totalTypes": 57,
+      "sourceDefaultRealmCompleted": false
+    },
+    {
+      "offset": true,
+      "decoded": true,
+      "bytes": 15696,
+      "sha256": "73e4d6dcb7a68760e065c820fd6672d9602e62ea78710283b6c3b5517e67d6a6",
+      "imports": [],
+      "number": 42,
+      "ownCount": 4,
+      "sameReference": true,
+      "constructors": 3,
+      "declaredFunctions": 5,
+      "initializerIndices": [33, 35, 37],
+      "totalFunctions": 63,
+      "totalTypes": 57,
+      "sourceDefaultRealmCompleted": false
+    }
+  ],
+  "costInterpretation": "Complete test-module bytes, not production entry or marginal module-size proof. Three demand-owned initializers plus two canonical Boolean boxing helpers: five real declared functions. Offsets add actual prefix resources; replay preserves the offset binary. No overall size/performance improvement claimed.",
+  "policy": {
+    "cases": 33,
+    "completeInventoriesAndBinariesEqual": true,
+    "rowsSha256": "ae48c6d9b52c7e2da12a05ecd41d6fd646226305fd9bb6010143819ec3d2aaf2",
+    "totals": {
+      "probes": 33,
+      "imports": 437,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "migrationMetrics": {
+      "runtimeTsLines": 10230,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 896,
+      "explicitCapabilityLines": 1194
+    }
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 148315,
+      "sha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 147483,
+      "sha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    }
+  ],
+  "publicTypedObjectDiagnostic": {
+    "cases": 16,
+    "passed": 5,
+    "failed": 11,
+    "binaryBytes": 131388,
+    "binarySha256": "33cab20d56a34d291dee8bc2b1d57db4e2e128dd2d40d34fcfa0684fde34c29b",
+    "binaryIdentical": true
+  },
+  "gates": {
+    "typecheck": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "lint": {
+      "bytes": 48,
+      "sha256": "f0692f292b338d7df662b5b5ebde489756fe8014e162b5a332a18ffb9b8e509a"
+    },
+    "format": {
+      "bytes": 66,
+      "sha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+    },
+    "loc": {
+      "bytes": 111,
+      "sha256": "ba59d8ebb48094bf6e214379a745e8adb3edd92ace11bb37adfd8dbd64420d90"
+    },
+    "func": {
+      "bytes": 102,
+      "sha256": "5589636049e7ac8887d321c0caf265962eca47742e74fb702048f24f3c83e849"
+    },
+    "coercion": {
+      "bytes": 233,
+      "sha256": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95"
+    },
+    "oracle": {
+      "bytes": 185,
+      "sha256": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a"
+    },
+    "layering": {
+      "bytes": 193,
+      "sha256": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9"
+    },
+    "flat": {
+      "bytes": 99,
+      "sha256": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f"
+    },
+    "fallbacks": {
+      "bytes": 575,
+      "sha256": "92c2a09dda32ef4ed473117e829e8e39f5a8e646cf2ef34c0506fcffd0398cc5"
+    },
+    "dead": {
+      "bytes": 597,
+      "sha256": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02"
+    },
+    "cycles": {
+      "bytes": 926,
+      "sha256": "cadb688331fc03a884cb22cb53287071d62e555207be0298152aef2fa07ce248"
+    }
+  },
+  "inventory": {
+    "valid": true,
+    "complete": false,
+    "newExactBackendRoot": "src/backend/wasmgc/resources/native-object-construction.ts",
+    "allowedEdgesOrExistingRootsOrFloorsChanged": false
+  },
+  "openArchitecture": {
+    "cycles": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[backend->ir]: 115 → 117\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[frontend->ir]: 17 → 19\n  - twoWayDirEdges[frontend->ts-api.ts]: 2 → 5\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n  - twoWayDirEdges[ir->frontend]: 7 → 10\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+    "newSinceParent": "backend→ir 115→117 adds a sixth failing directory pair; no waiver",
+    "preservationOnly": {
+      "full": 6,
+      "cut": 6
+    },
+    "strictClosure": "Same nonliteral imports in optimize.ts and runtime/platform-capability-adapter.ts",
+    "retirementCertified": false
+  },
+  "sourceCensusCaution": {
+    "source": "export function make(){return {method():number{return 1;}};}",
+    "observed": "Prepared make has resultTypes=[] and no instructions, while lifted method remains. Not an object allocation observation or construction-negative proof.",
+    "action": "Investigate inferred return handling before general-source acceptance. New negative test uses actual invocation and explicit numeric return, positively observes both object.new views."
+  },
+  "remaining": [
+    "Complete actual default Object/Function realm; all eligible source demands retain explicit default-prototype gap",
+    "Complete source special prototype/method requirements and actual foreign/dynamic field carriers",
+    "Wire physical property providers, callable/storage closure and atomic authenticated entry publication",
+    "Implement Linear/WASI native record construction; unchanged native controls are not credit for the GC kernel",
+    "Fix inferred-return erasure and cut architecture cycles/strict modeled closure",
+    "Resolve existing prerequisite stack before merging; both Markdown issues in progress and PR6762 draft"
+  ]
+}

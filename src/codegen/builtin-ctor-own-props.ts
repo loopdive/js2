@@ -58,8 +58,7 @@
  *
  * ## Scope / safety
  *
- * - **Standalone only.** Every call site is already `ctx.standalone`-gated and
- *   this module re-checks; gc/wasi emits stay byte-identical.
+ * - **Native WasmGC.** Every environment seeds the same constructor metadata.
  * - **Additive only.** The carriers had ZERO own properties before, so no
  *   previously-observable read changes: a dynamic `X["name"]` went from
  *   `undefined` to the spec value, `Object.keys(X)` stays `[]` (all three are
@@ -69,7 +68,7 @@
  * - Ctors with no `$NativeProto` brand simply skip `prototype` (the other two
  *   still land) — declining is always safe.
  */
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
 import {
   BUILTIN_CTOR_ARITY,
@@ -215,7 +214,7 @@ export function pushBuiltinCtorOwnPropSeed(
   builtinName: string,
   objLocal: number,
 ): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   const arity = BUILTIN_CTOR_ARITY[builtinName] ?? EXTRA_CTOR_ARITY[builtinName];
   if (arity === undefined) return;
 

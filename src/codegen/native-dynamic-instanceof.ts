@@ -168,17 +168,24 @@ import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) closure → prototype identity edge
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { noJsHost } from "./js-errors.js";
+import { emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { getWellKnownSymbolId } from "./literals.js"; // (#6651 I2) @@hasInstance id
 import { moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js"; // (#6651 I2)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import { ensureBoundaryCallableKind, ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import {
+  prepareForeignPrototypeIdentity,
+  foreignPrototypeChainArm,
+  foreignCallablePrototypeArm,
+} from "./native-foreign-prototype-chain.js";
 import { protoIndexOwnViewSubstituteInstrs } from "./proto-index-store.js"; // (#6774 S20)
 import { unwrapArrayProtoVecAliasInstrs } from "./vec-proto-link.js"; // (#6774 S20)
 import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#6644) linked-provider target
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { allocLocal } from "./context/locals.js";
+import { makeHelperFctx } from "./helpers/reserved-helper-funcs.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -434,6 +441,7 @@ function ensureCarrierChainWalk(ctx: CodegenContext, isProtoOfIdx: number, objec
     notOrdinary.push({ op: "local.get", index: CUR_ANY }, { op: "ref.test", typeIdx: proxyTypeIdx }, { op: "i32.or" });
   }
   const body: Instr[] = [
+    ...foreignPrototypeChainArm(ctx, getProtoIdx, CUR),
     { op: "local.get", index: 0 },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: isProtoOfIdx },
@@ -573,6 +581,13 @@ function linkedPeerPrototypeArm(ctx: CodegenContext, externGetIdx: number, guard
   ];
 }
 
+/** Positive primitive classifiers; a miss never proves an unknown carrier primitive. */
+function instanceofPrimitiveClassifiers(ctx: CodegenContext): (number | undefined)[] {
+  return ["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"].map((name) =>
+    ensureLateImport(ctx, name, [EXTERNREF], [I32]),
+  );
+}
+
 /**
  * Register (once) the native `__instanceof_dynamic` helper and return its stable
  * function handle, or `undefined` when the standalone substrate it needs is
@@ -587,6 +602,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
   // `noJsHost` each of these routes to a DEFINED function (no `env::` import is
   // added), so this registration cannot itself shift the index space.
   ensureObjectRuntime(ctx);
+  prepareForeignPrototypeIdentity(ctx);
   const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [I32]);
   const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [I32]);
   const typeofUndefinedIdx = ensureLateImport(ctx, "__typeof_undefined", [EXTERNREF], [I32]);
@@ -595,9 +611,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
   const hasOwnIdx = ensureLateImport(ctx, "__hasOwnProperty", [EXTERNREF, EXTERNREF], [I32]);
   // Positive primitive classifiers: the dynamic throw arm needs proof, not the
   // absence of an object classification.
-  const primitiveIdxs = (["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"] as const).map(
-    (n) => ensureLateImport(ctx, n, [EXTERNREF], [I32]),
-  );
+  const primitiveIdxs = instanceofPrimitiveClassifiers(ctx);
   // (#2660 M3) The function-value → prototype-object identity edge. It is a
   // RESERVED defined function (`ensureObjectRuntime` above reserves it under
   // `noJsHost`), so its funcIdx is stable here and its BODY is filled at
@@ -633,13 +647,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
     { op: "i32.or" },
   ];
   /** `slot` is `null` or the `undefined` singleton. */
-  const isNullish = (slot: number): Instr[] => [
-    { op: "local.get", index: slot },
-    { op: "ref.is_null" },
-    { op: "local.get", index: slot },
-    { op: "call", funcIdx: typeofUndefinedIdx },
-    { op: "i32.or" },
-  ];
+  const isNullish = (slot: number): Instr[] => nativeInstanceofNullish(ctx, slot, typeofUndefinedIdx);
   /** Positive primitive proof; unknown values must remain conservative false. */
   const isProvenPrimitive = (slot: number): Instr[] => {
     const out: Instr[] = [
@@ -785,6 +793,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
         // read. Order matters: a primitive V must not fire a `prototype`
         // accessor nor throw on a non-object prototype (#2702).
         ...requireObjectValue(),
+        ...foreignCallablePrototypeArm(ctx, externGetIdx, P_TARGET, L_PROTO, ordinaryHasInstanceTail),
         // A #4120-branded builtin constructor carrier is a real `$Object`, so
         // its `prototype` own property is an authoritative read. Tested by
         // reading the brand bit DIRECTLY rather than through
@@ -1079,10 +1088,85 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
 
 /** `__instanceof_operator(value, target) -> i32` — §13.10.2 over the ordinary helper. */
 const OPERATOR_HELPER_NAME = "__instanceof_operator";
+export const NATIVE_INSTANCEOF_CHECKED = "__instanceof_operator_checked";
+
+/** Checked operator entry for IR; OrdinaryHasInstance remains a separate API. */
+export function ensureNativeInstanceofOperatorChecked(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(NATIVE_INSTANCEOF_CHECKED);
+  if (existing !== undefined) return existing;
+  // A JS-owned @@hasInstance is not represented by a native closure type.
+  // Demand its existing admission-gated classifier before building the operator.
+  ensureBoundaryCallableKind(ctx);
+  const operatorIdx = ensureInstanceofOperator(ctx, true);
+  if (operatorIdx === undefined) return undefined;
+  const frame = makeHelperFctx(NATIVE_INSTANCEOF_CHECKED, "value", EXTERNREF);
+  frame.params.push({ name: "target", type: EXTERNREF });
+  frame.returnType = I32;
+  const code = allocLocal(frame, "instanceofCode", I32);
+  const throwBody = frame.body;
+  ctx.liveBodies.add(throwBody);
+  try {
+    emitThrowTypeError(ctx, frame, "Right-hand side of 'instanceof' is not callable");
+    const funcIdx = mintDefinedFunc(ctx);
+    pushDefinedFunc(ctx, funcIdx, {
+      name: NATIVE_INSTANCEOF_CHECKED,
+      typeIdx: addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]),
+      locals: frame.locals,
+      body: [
+        { op: "local.get", index: P_VALUE },
+        { op: "local.get", index: P_TARGET },
+        { op: "call", funcIdx: operatorIdx },
+        { op: "local.tee", index: code },
+        { op: "i32.const", value: 2 },
+        { op: "i32.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: throwBody },
+        { op: "local.get", index: code },
+      ],
+      exported: false,
+    });
+    ctx.funcMap.set(NATIVE_INSTANCEOF_CHECKED, funcIdx);
+    return funcIdx;
+  } finally {
+    ctx.liveBodies.delete(throwBody);
+  }
+}
 
 /** Local slots of the §13.10.2 operator wrapper (params are P_VALUE / P_TARGET). */
 const OP_L_HANDLER = 2;
 const OP_L_ARGS = 3;
+
+/** Nullish identity for raw refs and the native boxed null/undefined carriers. */
+function nativeInstanceofNullish(ctx: CodegenContext, slot: number, typeofUndefinedIdx: number): Instr[] {
+  const boxedNull: Instr[] =
+    ctx.anyValueTypeIdx < 0
+      ? [{ op: "i32.const", value: 0 }]
+      : [
+          { op: "local.get", index: slot },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.anyValueTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: I32 },
+            then: [
+              { op: "local.get", index: slot },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: ctx.anyValueTypeIdx },
+              { op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 0 },
+              { op: "i32.eqz" },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ];
+  return [
+    { op: "local.get", index: slot },
+    { op: "ref.is_null" },
+    { op: "local.get", index: slot },
+    { op: "call", funcIdx: typeofUndefinedIdx },
+    { op: "i32.or" },
+    ...boxedNull,
+    { op: "i32.or" },
+  ];
+}
 
 /**
  * (#6651 I2) §13.10.2 InstanceofOperator steps 2-4 — the `@@hasInstance`
@@ -1143,8 +1227,9 @@ const OP_L_ARGS = 3;
  * the wrapper is minted once, from the first site, and the later site keeps the
  * ordinary helper. That is a missed conversion, never a wrong answer.
  */
-function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
-  const existing = ctx.funcMap.get(OPERATOR_HELPER_NAME);
+function ensureInstanceofOperator(ctx: CodegenContext, checked = false): number | undefined {
+  const name = checked ? "__instanceof_operator_strict" : OPERATOR_HELPER_NAME;
+  const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
   const ordinaryIdx = ensureNativeDynamicInstanceOf(ctx);
@@ -1157,6 +1242,7 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
   const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
   const isTruthyIdx = ensureLateImport(ctx, "__is_truthy", [EXTERNREF], [I32]);
   const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [I32]);
+  const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [I32]);
   const typeofUndefinedIdx = ensureLateImport(ctx, "__typeof_undefined", [EXTERNREF], [I32]);
   const applyClosureIdx = reserveApplyClosure(ctx);
   flushLateImportShifts(ctx, null);
@@ -1169,6 +1255,7 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
     boxSymbolIdx === undefined ||
     isTruthyIdx === undefined ||
     typeofFunctionIdx === undefined ||
+    typeofObjectIdx === undefined ||
     typeofUndefinedIdx === undefined ||
     objVecNewIdx === undefined ||
     objVecPushIdx === undefined ||
@@ -1192,7 +1279,27 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
     { op: "return" },
   ];
 
+  const invalid: Instr[] = [{ op: "i32.const", value: 2 }, { op: "return" }];
+  // Only the new checked IR contract requests these complete operator checks.
+  // Keep the frozen direct body's historical tri-state contract unchanged.
   const body: Instr[] = [
+    ...(checked
+      ? ([
+          { op: "local.get", index: P_TARGET },
+          { op: "ref.is_null" },
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofUndefinedIdx },
+          { op: "i32.or" },
+          { op: "if", blockType: { kind: "empty" }, then: [...invalid] },
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofObjectIdx },
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.or" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [...invalid] },
+        ] satisfies Instr[])
+      : []),
     { op: "local.get", index: P_TARGET },
     { op: "ref.is_null" },
     { op: "i32.eqz" },
@@ -1205,11 +1312,18 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
         { op: "i32.const", value: hasInstanceId },
         { op: "call", funcIdx: boxSymbolIdx },
         { op: "call", funcIdx: externGetIdx },
-        { op: "local.tee", index: OP_L_HANDLER },
-        { op: "ref.is_null" },
-        { op: "local.get", index: OP_L_HANDLER },
-        { op: "call", funcIdx: typeofUndefinedIdx },
-        { op: "i32.or" },
+        ...(checked
+          ? ([
+              { op: "local.set", index: OP_L_HANDLER },
+              ...nativeInstanceofNullish(ctx, OP_L_HANDLER, typeofUndefinedIdx),
+            ] satisfies Instr[])
+          : ([
+              { op: "local.tee", index: OP_L_HANDLER },
+              { op: "ref.is_null" },
+              { op: "local.get", index: OP_L_HANDLER },
+              { op: "call", funcIdx: typeofUndefinedIdx },
+              { op: "i32.or" },
+            ] satisfies Instr[])),
         { op: "i32.eqz" },
         {
           op: "if",
@@ -1217,11 +1331,19 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
           then: [
             { op: "local.get", index: OP_L_HANDLER },
             { op: "call", funcIdx: typeofFunctionIdx },
-            { op: "if", blockType: { kind: "empty" }, then: callHandler },
+            { op: "if", blockType: { kind: "empty" }, then: callHandler, ...(checked ? { else: [...invalid] } : {}) },
           ],
         },
       ],
     },
+    ...(checked
+      ? ([
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [...invalid] },
+        ] satisfies Instr[])
+      : []),
     // steps 5-6: OrdinaryHasInstance(C, O), tri-state, unchanged.
     { op: "local.get", index: P_VALUE },
     { op: "local.get", index: P_TARGET },
@@ -1230,9 +1352,9 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
 
   const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
   const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(OPERATOR_HELPER_NAME, funcIdx);
+  ctx.funcMap.set(name, funcIdx);
   pushDefinedFunc(ctx, funcIdx, {
-    name: OPERATOR_HELPER_NAME,
+    name,
     typeIdx,
     locals: [
       { name: "hasInstanceHandler", type: EXTERNREF },

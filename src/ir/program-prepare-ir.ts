@@ -2,6 +2,8 @@
 
 import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program/input.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./program/input-contracts.js";
+import { deriveObjectReferencePlan, projectObjectReferenceProgram } from "./program/object-reference-plan.js";
+import { assertObjectReferenceCallClosure } from "./program/object-reference-closure.js";
 import { createGvnCounters, type GvnCounters } from "./passes/gvn-core.js";
 import { optimizePreparedIrProgramIr } from "./program-middleend-ir.js";
 import { prepareIrProgramAbiEntries, preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
@@ -53,7 +55,9 @@ export function prepareTypedIrProgram(
 ): IrProgramPreparationResult {
   assertCounters(counters);
   const resolved = ownTypedIrProgramOptions(options);
-  const { input: source, allocations } = ownTypedIrProgramInput(input);
+  const owned = ownTypedIrProgramInput(input);
+  const { allocations } = owned;
+  const source = projectObjectReferenceProgram(owned.input);
   assertPreparedIrProgramPopulation(source);
   assertIrRuntimeSupport(source, source.runtimeSupport);
   if (
@@ -69,6 +73,7 @@ export function prepareTypedIrProgram(
   const initialRuntime = prepareIrProgramRuntimeCallables(source);
   if (initialRuntime.kind !== "prepared") return initialRuntime;
   const initialEntries = prepareIrProgramAbiEntries(source, initialRuntime.declarations);
+  assertObjectReferenceCallClosure(source, initialEntries);
   const async = prepareWholeProgramAsyncFunctions({
     inventory: source.inventory,
     ir: source.ir,
@@ -93,6 +98,8 @@ export function prepareTypedIrProgram(
     counters,
   );
   const finalSource = { ...source, ...optimized };
+  if (finalSource.objectReferences !== undefined)
+    finalSource.objectReferences = deriveObjectReferencePlan({ ...finalSource, allocations: allocations.snapshot() });
   if (finalSource.runtimeSupport !== undefined) {
     const demandOwners = irNumberFormatDemandOwners(finalSource.ir.functions);
     finalSource.runtimeSupport = {
@@ -114,10 +121,19 @@ export function prepareTypedIrProgram(
     startup: source.startup,
     ...(source.sourceMap === undefined ? {} : { sourceMap: source.sourceMap }),
     ...(finalSource.runtimeSupport === undefined ? {} : { runtimeSupport: finalSource.runtimeSupport }),
+    ...(finalSource.objectReferences === undefined ? {} : { objectReferences: finalSource.objectReferences }),
     allocations: allocations.snapshot(),
   }) as Pick<
     PreparedIrProgram,
-    "inventory" | "ir" | "derivedUnits" | "abi" | "startup" | "allocations" | "runtimeSupport" | "sourceMap"
+    | "inventory"
+    | "ir"
+    | "derivedUnits"
+    | "abi"
+    | "startup"
+    | "allocations"
+    | "runtimeSupport"
+    | "sourceMap"
+    | "objectReferences"
   >;
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
   const demands = new Map(semantic.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));

@@ -57,7 +57,6 @@ import {
   stringConstantExternrefInstrs,
 } from "../native-strings.js";
 import { undefinedSingletonActive } from "../any-helpers.js";
-import { usesNativeJsErrors } from "../js-errors.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
 import { registerEmitWasiErrorConstructor } from "./error-constructor-delegates.js";
@@ -158,7 +157,7 @@ export function externrefBackedOwnFieldBacking(
  * `ref.null extern` placeholder, so `err.name` reads the correct value in
  * standalone mode (the property-access fast path in `property-access.ts`
  * already does `struct.get $Error_struct[2]` for `.name` under
- * `ctx.wasi || ctx.standalone`). The constant is materialized via the
+ * native WasmGC backend). The constant is materialized via the
  * shared `stringConstantExternrefInstrs` dual-mode helper: nativeStrings
  * mode builds the FlatString struct inline + `extern.convert_any`;
  * host-strings mode emits a `global.get` of the interned string constant.
@@ -180,12 +179,7 @@ registerEmitWasiErrorConstructor((ctx, errorName, argCount) => {
  * carrier and expose its stored name/message for a real host Error facade.
  */
 export function emitNativeErrorBoundaryBridge(ctx: CodegenContext): void {
-  if (
-    ctx.targetProfile.semanticProviders !== "native-first" ||
-    !ctx.emitHostBridge ||
-    ctx.errorStructTypeIdx < 0 ||
-    ctx.funcMap.has("__error_boundary_is_native")
-  ) {
+  if (!ctx.emitHostBridge || ctx.errorStructTypeIdx < 0 || ctx.funcMap.has("__error_boundary_is_native")) {
     return;
   }
 
@@ -397,7 +391,7 @@ function buildUndefinedAwareMessageSlot(
   existingLocalCount: number,
 ): { instrs: Instr[]; locals: { name: string; type: ValType }[] } | undefined {
   if (argCount <= 0) return undefined;
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
+
   if (ctx.anyValueTypeIdx < 0) return undefined;
   const anyTypeIdx = ctx.anyValueTypeIdx;
   // APPENDED after the params and any existing locals, so every index already
@@ -460,7 +454,6 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
   const NAME = "__new_SuppressedError_native";
   const cached = ctx.funcMap.get(NAME);
   if (cached !== undefined) return cached;
-  if (!usesNativeJsErrors(ctx)) return undefined;
 
   // The `$props` sidecar is an ordinary `$Object`, so this needs the object
   // runtime's property helpers. The CALLER ensures that runtime — `registry/`
@@ -587,14 +580,16 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
 /**
  * Does `fillExternGetErrorProps` build the `constructor` arm for user error
  * constructor `name`? When this module mints `$Error_struct` instances for it
- * — and (#6723 D4) always in a wasm-consumed standalone PROVIDER, which must
+ * — and (#6723 D4) always in a wasm-consumed native WasmGC PROVIDER, which must
  * also answer for instances its CONSUMER minted: the linked consumer lowers
  * `new Test262Error(…)` to its own `$Error_struct` (a canonical type, so this
  * arm sees it), and the provider's function value is the constructor both
  * modules name.
  */
 function userErrorCtorArmApplies(ctx: CodegenContext, name: string): boolean {
-  return ctx.funcMap.has(`__new_${name}`) || (ctx.standalone && ctx.exportsConsumedByWasm === true);
+  return (
+    ctx.funcMap.has(`__new_${name}`) || (ctx.targetProfile.backend === "wasmgc" && ctx.exportsConsumedByWasm === true)
+  );
 }
 
 /**
@@ -642,7 +637,6 @@ function userErrorCtorArmApplies(ctx: CodegenContext, name: string): boolean {
  * (i.e. actually constructs native errors) under wasi/standalone.
  */
 export function fillExternGetErrorProps(ctx: CodegenContext): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return;
   const errTypeIdx = ctx.errorStructTypeIdx;
   if (errTypeIdx < 0) return; // no native Error structs in this module
   const fn = ctx.mod.functions.find((f) => f.name === "__extern_get");
@@ -977,7 +971,6 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
  * No-op (byte-identical) unless the module registered `$Error_struct`.
  */
 export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return;
   const errTypeIdx = ctx.errorStructTypeIdx;
   if (errTypeIdx < 0) return;
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");

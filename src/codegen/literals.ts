@@ -19,7 +19,6 @@ import {
   collectMutatedCaptureNames,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
-  compileArrowAsCallback,
   compileArrowAsClosure,
   type SharedRefCellMap,
   emitMethodParamDefaults,
@@ -46,7 +45,7 @@ import { reportError } from "./context/errors.js";
 import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
 import { spreadSourceNeedsRuntimeCopy } from "./object-model/object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, type OptionalParamInfo, wasmGcBackend } from "./context/types.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined
@@ -93,12 +92,7 @@ import {
   registerNativeGenerator,
 } from "./generators-native.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
-import {
-  emitSymbolDescStore,
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  usesNativeSymbolProvider,
-} from "./symbol-native.js";
+import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier } from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -128,7 +122,6 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 import { foldedComputedMethodKey } from "./single-assignment-binding.js"; // (#6651 A7)
-import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { getToPrimitiveProvider } from "./coercion-engine.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
@@ -503,14 +496,9 @@ export function compileObjectLiteralAsExternref(
         // Phase B Slice 3 — native __object_assign iterates a $ObjVec).
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.targetProfile.semanticProviders === "native-first") {
-          const b = ensureObjVecBuilders(ctx);
-          arrNewIdx = b.newIdx;
-          arrPushIdx = b.pushIdx;
-        } else {
-          arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-          arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-        }
+        const b = ensureObjVecBuilders(ctx);
+        arrNewIdx = b.newIdx;
+        arrPushIdx = b.pushIdx;
         const assignIdx = ensureLateImport(
           ctx,
           "__object_assign",
@@ -554,7 +542,7 @@ export function compileObjectLiteralAsExternref(
     // host object's real `__proto__` setter already does this job, and `--target
     // wasi` keeps its bytes.
     else if (
-      ctx.standalone &&
+      wasmGcBackend(ctx) &&
       ts.isPropertyAssignment(prop) &&
       !ts.isComputedPropertyName(prop.name) &&
       resolvePropertyNameText(ctx, prop) === "__proto__"
@@ -626,7 +614,7 @@ export function compileObjectLiteralAsExternref(
       }
       const valLocal = allocLocal(fctx, `__objlit_v_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: valLocal });
-      if (ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+      if (wasmGcBackend(ctx) && ctx.runtimeEvalCallableBoundaryEnabled === true) {
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push(
           { op: "local.get", index: valLocal },
@@ -639,7 +627,12 @@ export function compileObjectLiteralAsExternref(
       addStringConstantGlobal(ctx, keyText);
       fctx.body.push(...stringConstantExternrefInstrs(ctx, keyText));
       fctx.body.push({ op: "local.get", index: valLocal });
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      // The value compile may register a late function and shift every defined
+      // function index above the import prefix. Resolve the setter again after
+      // compiling it, just like the `__proto__` arm above does for
+      // `__object_setPrototypeOf`; otherwise WASI module initialization can
+      // call a stale neighbour and silently leave the first named field absent.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
     }
     // (#3099) Method shorthand (`{ m() {…} }`) — materialize the method as a REAL
     // runtime own property so runtime-keyed consumers (`__extern_get`,
@@ -677,11 +670,14 @@ export function compileObjectLiteralAsExternref(
       // rejects — see issue note 2), store `undefined` to keep the stack balanced,
       // matching the sibling arm's `ref.null.extern` fallback.
       if (!ok) fctx.body.push({ op: "ref.null.extern" });
-      if (ok && ctx.standalone && ctx.runtimeEvalCallableBoundaryEnabled === true) {
+      if (ok && wasmGcBackend(ctx) && ctx.runtimeEvalCallableBoundaryEnabled === true) {
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push({ op: "call", funcIdx: wrapCallableIdx });
       }
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      // Method compilation can register another late function just like a data
+      // property's value compilation. Re-resolve the setter after emitting the
+      // closure so its call cannot retain a pre-shift function index.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
     }
   }
 
@@ -698,7 +694,7 @@ export function tryCompileOverriddenBuiltinProtoDescriptor(
   memberName: string | undefined,
 ): boolean {
   if (
-    !ctx.standalone ||
+    !wasmGcBackend(ctx) ||
     builtinName === undefined ||
     memberName === undefined ||
     !sourceOverridesBuiltinPrototypeMember(expr, builtinName, memberName)
@@ -830,72 +826,6 @@ export function materializeStructAsDynamicObject(
 
 registerMaterializeStructAsObject(materializeStructAsDynamicObject);
 
-/**
- * (#4435) True when a spread source is backed by a compiler-visible plain data
- * literal. In the JS-host lane a top-level spread runs during Wasm module
- * initialization, before `setExports` makes the generated struct-field readers
- * available to `_wrapForHost`. Passing the opaque struct to host
- * `Object.assign` therefore exposes zero keys. Such a source can be copied by
- * the existing struct materializer without changing observable accessor order:
- * every property is a statically named data property and there are no getters,
- * setters, methods, computed keys, or nested spreads to invoke while copying.
- *
- * Keep this deliberately narrower than a type-only "has no accessors" test.
- * The accessor-order regressions pinned by #4466 rely on the general host path
- * remaining lazy; only a direct literal, or an identifier declared from one,
- * is admitted here.
- */
-function isPlainDataLiteralSpreadSource(ctx: CodegenContext, expression: ts.Expression): boolean {
-  let current = expression;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-
-  let literal: ts.ObjectLiteralExpression | undefined;
-  if (ts.isObjectLiteralExpression(current)) {
-    literal = current;
-  } else if (ts.isIdentifier(current)) {
-    let symbol = ctx.checker.getSymbolAtLocation(current);
-    if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-      try {
-        symbol = ctx.checker.getAliasedSymbol(symbol);
-      } catch {
-        symbol = undefined;
-      }
-    }
-    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
-      let initializer = declaration.initializer;
-      while (
-        ts.isParenthesizedExpression(initializer) ||
-        ts.isAsExpression(initializer) ||
-        ts.isTypeAssertionExpression(initializer) ||
-        ts.isSatisfiesExpression(initializer) ||
-        ts.isNonNullExpression(initializer)
-      ) {
-        initializer = initializer.expression;
-      }
-      if (ts.isObjectLiteralExpression(initializer)) literal = initializer;
-    }
-  }
-
-  return (
-    literal !== undefined &&
-    literal.properties.length > 0 &&
-    literal.properties.every(
-      (property) =>
-        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
-        resolvePropertyNameText(ctx, property) !== undefined,
-    )
-  );
-}
-
 function materializableSpreadStructTypeIdx(
   ctx: CodegenContext,
   expression: ts.Expression,
@@ -904,8 +834,7 @@ function materializableSpreadStructTypeIdx(
   if (srcType.kind !== "ref" && srcType.kind !== "ref_null") return undefined;
   const typeIdx = srcType.typeIdx;
   if (!ctx.typeIdxToStructName.has(typeIdx)) return undefined;
-  if (ctx.targetProfile.semanticProviders === "native-first") return typeIdx;
-  return isPlainDataLiteralSpreadSource(ctx, expression) ? typeIdx : undefined;
+  return typeIdx;
 }
 
 /**
@@ -1233,10 +1162,7 @@ function compileObjectLiteralWithAccessors(
         // (`language/expressions/{array,new,super}/spread-obj-manipulate-outter-
         // obj-in-getter.js` all flip pass→fail). Dropping the gate to reach a
         // dogfood case in the host lane is not a safe trade.
-        const spreadStructIdx =
-          ctx.targetProfile.semanticProviders === "native-first"
-            ? materializableSpreadStructTypeIdx(ctx, prop.expression, srcType)
-            : undefined;
+        const spreadStructIdx = materializableSpreadStructTypeIdx(ctx, prop.expression, srcType);
         if (
           spreadStructIdx !== undefined &&
           materializeStructAsDynamicObject(ctx, fctx, spreadStructIdx, { skipInternalFields: true })
@@ -1248,14 +1174,9 @@ function compileObjectLiteralWithAccessors(
         }
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.targetProfile.semanticProviders === "native-first") {
-          const b = ensureObjVecBuilders(ctx);
-          arrNewIdx = b.newIdx;
-          arrPushIdx = b.pushIdx;
-        } else {
-          arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-          arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-        }
+        const b = ensureObjVecBuilders(ctx);
+        arrNewIdx = b.newIdx;
+        arrPushIdx = b.pushIdx;
         const assignIdx = ensureLateImport(
           ctx,
           "__object_assign",
@@ -1521,7 +1442,7 @@ function compileObjectLiteralWithAccessors(
       // Only @@unscopables: the iterator-protocol readers still look the other
       // well-known accessors up under their "@@name" key.
       const wkSymId =
-        ctx.standalone && propName === "@@unscopables" ? getWellKnownSymbolId(propName.slice(2)) : undefined;
+        wasmGcBackend(ctx) && propName === "@@unscopables" ? getWellKnownSymbolId(propName.slice(2)) : undefined;
       const boxSymIdx =
         wkSymId !== undefined
           ? ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }])
@@ -1602,21 +1523,16 @@ function emitObjectLiteralAccessorFn(
   // earlier rounds fixed.
   homeObjectLocal?: number,
 ): boolean {
-  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    // Same narrowing as the method arm: only a body that actually mentions
-    // `super` takes the capture, so every other accessor stays byte-stable.
-    const superHomeLocal =
-      homeObjectLocal !== undefined && fn.body !== undefined && genBodyReferencesSuper(fn.body)
-        ? homeObjectLocal
-        : undefined;
-    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
-    if (!closureType) return false;
-    if (closureType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    return true;
+  const superHomeLocal =
+    homeObjectLocal !== undefined && fn.body !== undefined && genBodyReferencesSuper(fn.body)
+      ? homeObjectLocal
+      : undefined;
+  const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
+  if (!closureType) return false;
+  if (closureType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" });
   }
-  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true, ...captureOptions });
+  return true;
 }
 
 /**
@@ -1643,19 +1559,13 @@ function emitObjectLiteralMethodFn(
   fn: ts.FunctionExpression,
   homeObjectLocal?: number,
 ): boolean {
-  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    // Keep ordinary object-literal methods byte-stable. Only a method whose
-    // own body contains `super` needs the synthetic [[HomeObject]] capture.
-    const superHomeLocal =
-      homeObjectLocal !== undefined && genBodyReferencesSuper(fn.body) ? homeObjectLocal : undefined;
-    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
-    if (!closureType) return false;
-    if (closureType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    return true;
+  const superHomeLocal = homeObjectLocal !== undefined && genBodyReferencesSuper(fn.body) ? homeObjectLocal : undefined;
+  const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
+  if (!closureType) return false;
+  if (closureType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" });
   }
-  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true });
+  return true;
 }
 
 /**
@@ -1893,7 +1803,7 @@ function _hasRealmGlobalObjectValue(ctx: CodegenContext, expr: ts.ObjectLiteralE
 // no additional raw checker query is needed. Mixed/named and non-arithmetic
 // computed shapes retain their existing representation.
 function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
-  if (!ctx.standalone || expr.properties.length === 0) return false;
+  if (!wasmGcBackend(ctx) || expr.properties.length === 0) return false;
   if (!expr.properties.every((p) => ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name))) return false;
   for (const prop of expr.properties) {
     if (!ts.isPropertyAssignment(prop) || !ts.isComputedPropertyName(prop.name)) return false;
@@ -1948,18 +1858,12 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
       // of the @@toPrimitive result, `"" + o` got hint "string" rather than
       // "default", and every host compile of such a file gained env imports.
       // Host mode's own `_toPrimitive` already handles the closed-struct case.
-      // (#5269 R3-1) REVERTED to `ctx.standalone`. R2-5 widened this to
-      // `standalone || wasi || semanticProviders === "native-first"` on the
-      // reasoning that the #5102 fix was "inert on exactly those targets".
-      // Measured against the merge-base d7f23a80bf, that is factually wrong
-      // for `--target wasi`: base wasi ALREADY answered `String(w)`,
-      // `var v = w; String(v)`, `String(hmod.w)` and `v.x` correctly by a
-      // different route. The widening bought 2 rows there and cost 12 —
-      // including `null` for a plain alias, a TypeError on `v.x`, and a
-      // `dereferencing a null pointer` trap at module init. Widen again only
-      // after the wasi lane is measured to need it and the open-object
-      // consumers on that target are shown to agree.
-      (ctx.standalone && objectLiteralTakesToPrimitiveOpenPath(expr)) ||
+      // (#5269 R3-1 / #6979 S7-c) An earlier WASI widening exposed a carrier
+      // mismatch because its open-object consumers still selected a different
+      // implementation. S7-c moves those consumers and their type/slot
+      // lockstep gates onto the same WasmGC backend decision, so this producer
+      // no longer needs a target-name exception.
+      (wasmGcBackend(ctx) && objectLiteralTakesToPrimitiveOpenPath(expr)) ||
       // A colon-form `__proto__` property is not an own data property. It sets
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the
@@ -2015,8 +1919,8 @@ export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.O
 
 /**
  * (#3037 CS1a) True when a **non-empty, spread-free, data-only** object literal
- * is produced into a genuine `any`/`unknown` contextual position under
- * `--target standalone` — a subset of the `isAnyContextNonEmpty` branch of
+ * is produced into a genuine `any`/`unknown` contextual position on a native
+ * WasmGC backend — a subset of the `isAnyContextNonEmpty` branch of
  * `compileObjectLiteral` that builds it as an open `$Object` and hands back an
  * **externref**. This is the object-identity CS1a "carrier" site: such a literal
  * assigned to an `any`-typed local is currently carried as an externref, so at
@@ -2036,11 +1940,8 @@ export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.O
  * parameter default. The pure string-index DICTIONARY case is intentionally
  * excluded (it must keep the externref carrier for runtime `o[k]=v` writes).
  */
-export function objectLiteralIsStandaloneAnyObjectCarrier(
-  ctx: CodegenContext,
-  expr: ts.ObjectLiteralExpression,
-): boolean {
-  if (!ctx.standalone) return false;
+export function objectLiteralIsNativeAnyObjectCarrier(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (ctx.targetProfile.backend !== "wasmgc") return false;
   if (expr.properties.length === 0) return false;
   if (ts.isParameter(expr.parent)) return false;
   // Data-only, spread-free, statically-named keys — matches the open-`$Object`
@@ -2068,7 +1969,7 @@ export function objectLiteralIsStandaloneAnyObjectCarrier(
  * carrier in each property before the object crosses the seam.
  */
 function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
-  if (!ctx.standalone || ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
+  if (!wasmGcBackend(ctx) || ctx.runtimeEvalCallableBoundaryEnabled !== true) return false;
   for (const prop of expr.properties) {
     const name = resolvePropertyNameText(ctx, prop);
     if (name !== "toString" && name !== "valueOf") continue;
@@ -2088,35 +1989,29 @@ function objectLiteralHasCallableProperty(ctx: CodegenContext, expr: ts.ObjectLi
 }
 
 /**
- * (#1901/#2542, extracted for #3128) The standalone open-`$Object` divert
+ * (#1901/#2542, extracted for #3128) The native WasmGC open-`$Object` divert
  * decision for a NON-EMPTY object literal: `compileObjectLiteral` builds the
  * literal as an open `$Object` handed back as **externref** (via
  * `compileObjectLiteralAsExternref`) instead of a closed struct when this
  * predicate answers true. Exported so CONSUMERS that pre-decide a slot type
  * for the literal's value can make the IDENTICAL decision — the same
  * lockstep discipline `objectLiteralSpreadTakesHostPath` (#2804) and
- * `objectLiteralIsStandaloneAnyObjectCarrier` (#1930) established. The
+ * `objectLiteralIsNativeAnyObjectCarrier` (#1930) established. The
  * inlined-IIFE return-local typing (calls.ts, #3128) consults this: typing
  * the ret-local from the TS struct type while the literal lowers dynamically
  * made the ret-value coercion's `ref.test` arm silently null the result.
  *
- * Shape gate: standalone only; data props / spreads / plain-named method
+ * Shape gate: native WasmGC only; data props / spreads / plain-named method
  * shorthand (#3099), no accessor / computed / symbol keys, not a parameter
  * default. Context gate: requires an EXPLICIT any / unknown / `object`
  * contextual type (#1897 — an ABSENT contextual type means consumers compile
  * against the inferred struct), or a PURE string-index dictionary context
  * (#2542).
  */
-export function objectLiteralTakesStandaloneAnyObjectPath(
-  ctx: CodegenContext,
-  expr: ts.ObjectLiteralExpression,
-): boolean {
-  if (ctx.standalone && ctx.redeclaredObjectIdentityLiterals.has(expr)) return true;
+export function objectLiteralTakesNativeAnyObjectPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  if (ctx.targetProfile.backend === "wasmgc" && ctx.redeclaredObjectIdentityLiterals.has(expr)) return true;
   if (
-    // (#2542) `ctx.wasi` admitted so the PURE string-index arm below can fire on
-    // the other host-free target; the #1901 any-context arm stays standalone-only,
-    // enforced at the return.
-    !(ctx.standalone || ctx.wasi) ||
+    ctx.targetProfile.backend !== "wasmgc" ||
     expr.properties.length === 0 ||
     ts.isParameter(expr.parent) ||
     // only data props / spreads / plain-named method shorthand we can build onto
@@ -2180,9 +2075,7 @@ export function objectLiteralTakesStandaloneAnyObjectPath(
   const strIndex = ctxTypeNonEmpty ? ctx.checker.getIndexInfoOfType(ctxTypeNonEmpty, ts.IndexKind.String) : undefined;
   const isPureStringIndexContext = !!strIndex && !!ctxTypeNonEmpty && ctxTypeNonEmpty.getProperties().length === 0;
   if (objectLiteralHasCallableProperty(ctx, expr)) return true;
-  // #1901's any-context arm stays standalone-only (widening it would change every
-  // any-typed literal's lowering under wasi); #2542's index arm covers both.
-  return (ctx.standalone && isAnyContextNonEmpty) || isPureStringIndexContext;
+  return isAnyContextNonEmpty || isPureStringIndexContext;
 }
 
 /**
@@ -2313,13 +2206,10 @@ export function compileObjectLiteral(
   // externref and stays in lockstep with this value representation. Falls through
   // to the normal path if the `$Object` builder is unavailable (null).
   //
-  // STANDALONE-ONLY: the dropped-link gap this fixes is standalone-only (spec §0)
-  // — in gc/host a proto receiver is already served by the host runtime's
-  // `_wasmStructProto` sidecar + host setPrototypeOf, and the gc/host inherited
-  // string-key read path (`__extern_get`) is separate host plumbing outside this
-  // slice's scope. Gate promotion to standalone so gc/host stays byte-for-byte
-  // unchanged (zero host-regression surface).
-  if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(expr)) {
+  // This is a WasmGC carrier decision. The JavaScript boundary keeps its
+  // admitted host-backed objects, while Wasm-owned literals in standalone,
+  // WASI, and the default gc target share the native `$Object` prototype slot.
+  if (wasmGcBackend(ctx) && ctx.dynamicProtoLiteralNodes.has(expr)) {
     const promoted = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (promoted !== null) return promoted;
   }
@@ -2364,7 +2254,7 @@ export function compileObjectLiteral(
     // wasi — see the #2542-follow-up note in index.ts's resolveWasmType guard);
     // gc/host keeps its existing lowering, since a JS host services `o[k]` there.
     const isPureStringIndexEmpty =
-      (ctx.standalone || ctx.wasi) &&
+      wasmGcBackend(ctx) &&
       !!ctxType &&
       ctxType.getProperties().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(ctxType, ts.IndexKind.String);
@@ -2401,15 +2291,9 @@ export function compileObjectLiteral(
   //
   // Scoped to `--target standalone` only: the open-object runtime
   // (`ensureObjectRuntime` / `__new_plain_object` / `__extern_get`) is emitted
-  // as native defined functions exclusively under `ctx.standalone` (see #1472
-  // Phase B + late-imports.ts:308 — WASI still uses the host-import object
-  // machinery, intentionally deferred). Under wasi the $Object builder would
-  // decline (`ensureLateImport` returns undefined for the runtime helpers),
-  // fall through to the struct path, and leave a `ref.test $Object`-incompatible
-  // closed struct + an unsatisfiable `env::__extern_get` read — the exact #1901
-  // failure mode the gc/host R2 fast path avoids. Gating to `ctx.standalone`
-  // keeps wasi byte-identical to main (the wasi extension is a tracked
-  // follow-on; see plan/issues/1901). gc/host mode is untouched (not standalone).
+  // as native defined functions on the WasmGC backend. S7-c gives WASI the same
+  // object runtime and property consumers, so the producer and reader now share
+  // one carrier decision; the linear provider remains outside this path.
   //
   // (#3536) EXCEPT when the Wasm-level EXPECTED type is this literal's OWN
   // shape struct. A literal in call-ARGUMENT position to a declared function
@@ -2458,7 +2342,7 @@ export function compileObjectLiteral(
   }
 
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     expectedType !== undefined &&
     (expectedType.kind === "ref" || expectedType.kind === "ref_null") &&
     expr.properties.length > 0
@@ -2486,7 +2370,7 @@ export function compileObjectLiteral(
       }
     }
   }
-  if (objectLiteralTakesStandaloneAnyObjectPath(ctx, expr)) {
+  if (objectLiteralTakesNativeAnyObjectPath(ctx, expr)) {
     const objResult = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (objResult) return objResult;
     // fall through to the struct path if the $Object builder declined.
@@ -2511,7 +2395,7 @@ export function compileObjectLiteral(
   // (whose unknown-field writes lower to `drop` and reads to `ref.null extern`).
   // NOT standalone-gated: `compileObjectLiteralAsExternref` works in host mode
   // (`__new_plain_object` + `__extern_set`), which is the mode the NM differential
-  // compiles in; the #1901 `ctx.standalone` gate above is a DECISION gate for the
+  // compiles in; the #1901 backend gate above is a DECISION gate for the
   // any-context route, not a builder limitation. Placed BEFORE the closed-struct
   // contextType resolution so a marked var never reaches `compileObjectLiteralForStruct`.
   // The builder recurses on nested object-literal values (literals.ts:298), so the
@@ -3064,55 +2948,8 @@ function compileNativeSymbolCall(ctx: CodegenContext, fctx: FunctionContext, arg
  * the host provider retains its existing registration boundary below.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
-  const nativeSymbolProvider = usesNativeSymbolProvider(ctx);
-  if (nativeSymbolProvider) {
-    // Native lowering evaluates the whole argument list into its own raw
-    // description/trailing-effect sequence before doing the §7.1.17 check.
-    // The host lane retains its existing registration ABI below.
-    ensureNativeSymbolBoundaryBridge(ctx);
-    return compileNativeSymbolCall(ctx, fctx, args);
-  }
-  // (#3481) §20.4.1.1 step 2: a description that is not `undefined` goes
-  // through `? ToString(description)`, and ToString(Symbol) throws (§7.1.17
-  // step 3). `Symbol(anotherSymbol)` used to succeed — the description
-  // argument is coerced with a STRING target, which for a bare `i32` symbol id
-  // renders the id, so the nested symbol became the description "101"
-  // (built-ins/Symbol/desc-to-string-symbol.js). Guarded before the counter is
-  // bumped so a throwing call reserves no id.
-  if (args.length > 0 && emitSymbolOperandCoercionThrow(ctx, fctx, args[0]!, "string")) {
-    return { kind: "i32" };
-  }
-  const counterIdx = ensureSymbolCounter(ctx);
-  // Increment counter first so the new id is reserved before we register a
-  // description for it: `++counter; register_desc(counter, desc); return counter`.
-  fctx.body.push({ op: "global.get", index: counterIdx });
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "global.set", index: counterIdx });
-  // (#1467) Pre-register the description so `__box_symbol(id)` later returns
-  // `Symbol(desc)` instead of `Symbol("wasm_<id>")`. This preserves
-  // `Symbol(s).description === s` and `Symbol().description === undefined`.
-  // The native provider returned above; this host lane preserves its existing
-  // description-registration boundary and associated import contract.
-  const regIdx = ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
-  if (regIdx !== undefined) {
-    fctx.body.push({ op: "global.get", index: counterIdx });
-    if (args.length > 0) {
-      const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-      if (argType && argType.kind !== "externref") {
-        coerceType(ctx, fctx, argType, { kind: "externref" });
-      }
-    } else {
-      // `Symbol()` with no arg → register `null` so the host knows to construct
-      // a Symbol with no description (so `.description === undefined`).
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    flushLateImportShifts(ctx, fctx);
-    fctx.body.push({ op: "call", funcIdx: regIdx });
-  }
-  // Push the symbol id (the counter) as the result.
-  fctx.body.push({ op: "global.get", index: counterIdx });
-  return { kind: "i32" };
+  ensureNativeSymbolBoundaryBridge(ctx);
+  return compileNativeSymbolCall(ctx, fctx, args);
 }
 
 /**
@@ -3447,20 +3284,11 @@ function emitRuntimeSpreadCopy(
     if (!runtimeSpreadSources.some((source) => source.propIndex === i)) return;
   }
 
-  let arrNewName = "__js_array_new";
-  let arrPushName = "__js_array_push";
-  let arrNewIdx: number | undefined;
-  let arrPushIdx: number | undefined;
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    const builders = ensureObjVecBuilders(ctx);
-    arrNewName = "__objvec_new";
-    arrPushName = "__objvec_push";
-    arrNewIdx = builders.newIdx;
-    arrPushIdx = builders.pushIdx;
-  } else {
-    arrNewIdx = ensureLateImport(ctx, arrNewName, [], [{ kind: "externref" }]);
-    arrPushIdx = ensureLateImport(ctx, arrPushName, [{ kind: "externref" }, { kind: "externref" }], []);
-  }
+  const arrNewName = "__objvec_new";
+  const arrPushName = "__objvec_push";
+  const builders = ensureObjVecBuilders(ctx);
+  const arrNewIdx: number | undefined = builders.newIdx;
+  const arrPushIdx: number | undefined = builders.pushIdx;
   const assignIdx = ensureLateImport(
     ctx,
     "__object_assign",
@@ -4177,7 +4005,7 @@ export function compileObjectLiteralForStruct(
       // "u32 out of range: -1" serialization defect via
       // `promoteAccessorCapturesToGlobals` — out of scope for the S5c closure
       // rework; tracked by the still-RED objlit test.)
-      if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone) {
+      if (S5C_STRUCT_ACCESSOR_CLOSURE && wasmGcBackend(ctx)) {
         const getGlobalIdx = ensureStructAccessorGlobal(ctx, typeName, propName, "get");
         if (buildAccessorClosure(ctx, fctx, prop as unknown as ts.FunctionExpression)) {
           fctx.body.push({ op: "global.set", index: getGlobalIdx });
@@ -4282,7 +4110,7 @@ export function compileObjectLiteralForStruct(
       // set-slot so the C4 write site routes through __call_accessor_set.
       // ADDITIVE: the bare `${struct}_set_${prop}` fn below still compiles to keep
       // the objlit struct shape valid.
-      if (S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone) {
+      if (S5C_STRUCT_ACCESSOR_CLOSURE && wasmGcBackend(ctx)) {
         const setGlobalIdx = ensureStructAccessorGlobal(ctx, typeName, propName, "set");
         if (buildAccessorClosure(ctx, fctx, prop as unknown as ts.FunctionExpression)) {
           fctx.body.push({ op: "global.set", index: setGlobalIdx });
@@ -4463,12 +4291,7 @@ export function compileObjectLiteralForStruct(
       // in the generator-method body block below. JS-host mode keeps the
       // externref Generator object (eager-buffer) — byte-identical.
       let objMethNativeGen = null;
-      if (
-        isGeneratorMethod &&
-        (ctx.standalone || ctx.wasi) &&
-        !isAsyncMethod &&
-        isNativeGeneratorCandidate(ctx, prop)
-      ) {
+      if (isGeneratorMethod && wasmGcBackend(ctx) && !isAsyncMethod && isNativeGeneratorCandidate(ctx, prop)) {
         // (#2581) Key the native generator by the SAME identity the method body
         // func gets, so sibling object literals that share `fullName` but own a
         // per-literal funcIdx (different bodies → `literalMethodFuncIdx` fork,
@@ -5679,7 +5502,7 @@ export function compileArrayLiteral(
       // element is a single-code-point string. Must match the element type
       // `__str_to_char_vec` produces (same key as `__str_split`'s string[]).
       elemWasm = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
-    } else if ((ctx.standalone || ctx.wasi) && /^(?:Readonly)?Map$/.test(spreadType.symbol?.name ?? "")) {
+    } else if (wasmGcBackend(ctx) && /^(?:Readonly)?Map$/.test(spreadType.symbol?.name ?? "")) {
       // (#7057) A Map yields `[key, value]` ENTRIES, not its first type argument.
       elemWasm = { kind: "externref" };
     } else {
@@ -5749,11 +5572,7 @@ export function compileArrayLiteral(
         "symLike=",
         (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0,
       );
-    if (
-      usesNativeSymbolProvider(ctx) &&
-      elemWasm.kind === "i32" &&
-      (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0
-    ) {
+    if (elemWasm.kind === "i32" && (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
       elemWasm = { kind: "externref" };
     }
     // (#2021) The first element's class type can be a SUBTYPE of the array's
@@ -6076,7 +5895,7 @@ export function compileArrayLiteral(
     // Standalone/nativeStrings only: the lossy `$Object`→struct downcast belongs to native array building;
     // the host lane uses `__js_array_new` + real JS values. This keeps host output byte-identical, while
     // primitive widenings remain ungated because both lanes need correct any[] boxing.
-    ((ctx.standalone || ctx.nativeStrings) &&
+    ((wasmGcBackend(ctx) || ctx.nativeStrings) &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
       (() => {
         const ti = (elemWasm as { typeIdx: number }).typeIdx;

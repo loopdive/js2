@@ -17,7 +17,6 @@ import {
   resolveBindingElementType,
   undefinedPreservingBindingSourceType,
 } from "../../checker/type-mapper.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { reportError, reportErrorNoNode } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -381,59 +380,21 @@ export function compileForOfDestructuring(
             // (#3241/#4397) Native semantic providers route to the Wasm-defined
             // __extern_rest_object (exclusion-object ABI). Compatibility mode
             // retains the historical host helper and its CSV-key ABI below.
-            if (ctx.targetProfile.semanticProviders === "native-first") {
-              // The loop element is a CLOSED-shape struct; reify it into an open
-              // `$Object` (#3222 C1) so `__object_keys` enumeration sees the
-              // fields — a bare `extern.convert_any` would yield an EMPTY rest.
-              emitNativeObjectRest(
-                ctx,
-                fctx,
-                () => {
-                  fctx.body.push({ op: "local.get", index: elemLocal });
-                  if (elemType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
-                  if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
-                    // Declined — struct ref still on stack; reinterpret as-is.
-                    fctx.body.push({ op: "extern.convert_any" });
-                  }
-                },
-                excludedKeys,
-                restIdx,
-              );
-              continue;
-            }
-            let restObjIdx = ctx.funcMap.get("__extern_rest_object");
-            if (restObjIdx === undefined) {
-              const importsBefore = ctx.numImportFuncs;
-              const restObjType = addFuncType(
-                ctx,
-                [{ kind: "externref" }, { kind: "externref" }],
-                [{ kind: "externref" }],
-              );
-              addImport(ctx, "env", "__extern_rest_object", {
-                kind: "func",
-                typeIdx: restObjType,
-              });
-              shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-              restObjIdx = ctx.funcMap.get("__extern_rest_object");
-            }
-            if (restObjIdx !== undefined) {
-              const excludedStr = excludedKeys.join(",");
-              addStringConstantGlobal(ctx, excludedStr);
-              const excludedStrIdx = ctx.stringGlobalMap.get(excludedStr);
-              if (excludedStrIdx !== undefined) {
+            emitNativeObjectRest(
+              ctx,
+              fctx,
+              () => {
                 fctx.body.push({ op: "local.get", index: elemLocal });
-                fctx.body.push({ op: "extern.convert_any" });
-                // (#51) `addStringConstantGlobal` stores a `-1` sentinel under
-                // nativeStrings (no host string-constant global); a bare
-                // `global.get -1` crashes binary emit ("global index out of
-                // range — -1"). Materialize the excluded-keys string inline via
-                // the dual-mode helper (inline NativeString externref standalone,
-                // host `global.get` under GC).
-                for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
-                fctx.body.push({ op: "call", funcIdx: restObjIdx });
-                fctx.body.push({ op: "local.set", index: restIdx });
-              }
-            }
+                if (elemType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
+                if (!materializeStructAsObject(ctx, fctx, structTypeIdx, { skipInternalFields: true })) {
+                  // Declined — struct ref still on stack; reinterpret as-is.
+                  fctx.body.push({ op: "extern.convert_any" });
+                }
+              },
+              excludedKeys,
+              restIdx,
+            );
+            continue;
           }
           continue;
         }
@@ -2312,42 +2273,26 @@ function compileForOfAssignDestructuringExternref(
     }
   }
 
-  // (#3100 S4) Standalone/WASI element reads use the carrier-aware native
-  // `__extern_get_idx(src, f64 i)` — the native `__extern_get` is string-keyed
-  // and misses the `$Vec` carrier `__array_from_iter_n` produces. Host mode
-  // keeps `__extern_get` + `__box_number` (byte-identical to pre-#4447).
-  const useIdxReads = ctx.standalone || ctx.wasi;
-  const readName = useIdxReads ? "__extern_get_idx" : "__extern_get";
-  const readKeyType: ValType = useIdxReads ? { kind: "f64" } : { kind: "externref" };
+  // (#3100 S4) Carrier-aware native element reads use
+  // `__extern_get_idx(src, f64 i)`. The string-keyed `__extern_get` misses the
+  // canonical `$Vec` carrier produced by `__array_from_iter_n`.
+  const readName = "__extern_get_idx";
+  const readKeyType: ValType = { kind: "f64" };
   // Ensure the reader is available (#1866: ensureLateImport routes to the
   // native object-runtime impl under --target standalone — no leaked
   // `env::__extern_get` host import — and to the host import in JS-host mode).
   ensureLateImport(ctx, readName, [{ kind: "externref" }, readKeyType], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
-  let getIdx = ctx.funcMap.get(readName);
+  const getIdx = ctx.funcMap.get(readName);
   if (getIdx === undefined) return;
 
-  // Ensure __box_number is available (host mode only — it boxes the index key).
-  let boxIdx = ctx.funcMap.get("__box_number");
-  if (!useIdxReads && boxIdx === undefined) {
-    const importsBefore = ctx.numImportFuncs;
-    const boxType = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "__box_number", { kind: "func", typeIdx: boxType });
-    shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-    boxIdx = ctx.funcMap.get("__box_number");
-    getIdx = ctx.funcMap.get(readName);
-  }
-  if ((!useIdxReads && boxIdx === undefined) || getIdx === undefined) return;
-
   /**
-   * Push `src[i]` as an externref — the single read shape this function used to
-   * inline five times. Host: `__extern_get(src, __box_number(i))`; standalone:
-   * `__extern_get_idx(src, i)`.
+   * Push `src[i]` as an externref through the native indexed reader — the
+   * single read shape this function used to inline five times.
    */
   const pushElemRead = (i: number): void => {
     fctx.body.push({ op: "local.get", index: srcLocal });
     fctx.body.push({ op: "f64.const", value: i });
-    if (!useIdxReads) fctx.body.push({ op: "call", funcIdx: boxIdx! });
     fctx.body.push({ op: "call", funcIdx: getIdx! });
   };
 

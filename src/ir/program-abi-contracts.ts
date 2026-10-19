@@ -26,6 +26,8 @@ import type { IrRuntimeCallableDeclaration } from "./runtime-callable-declaratio
 import { irRuntimeCallableHasNoSlot } from "./runtime/native-async-callables.js";
 import type { IrRuntimeSupport } from "./program/runtime-support.js";
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
+import type { IrObjectReferencePlan } from "./program/object-reference-contracts.js";
+import { objectReferenceAbiEntries } from "./program/object-reference-plan.js";
 import {
   assertPreparedIrRuntimeCallableDeclaration,
   preparedIrRuntimeAbiAnchor,
@@ -42,6 +44,7 @@ export interface PrepareIrProgramAbiInput {
   readonly startup: readonly IrModuleInitPlan[];
   readonly callables: readonly IrProgramCallableBindingRecord[];
   readonly runtimeSupport?: IrRuntimeSupport;
+  readonly objectReferences?: IrObjectReferencePlan;
 }
 
 /** Produce semantic contracts from declared bodies/storage, never from a call's guessed usage. */
@@ -177,6 +180,7 @@ export function prepareIrProgramAbiEntries(
       });
     }
   }
+  entries.push(...objectReferenceAbiEntries(input, order));
   // These are real type/function declarations, never ordinary source units or
   // slotless runtime intents. Keep the canonical runtime tail after this vector.
   for (const batch of input.runtimeSupport?.batches ?? []) {

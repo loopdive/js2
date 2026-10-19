@@ -13,10 +13,10 @@
 // Fix: `emitSetExtrasArgv` is now spread-aware. When any extra is a spread it
 // builds the extras array with a RUNTIME length, expanding each spread source by
 // representation — a typed WasmGC vec ref (`[1,2]` literal lowers to a tuple
-// struct; `number[]`/`any[]` to a `__vec_`) is read field-by-field directly
-// (works host AND standalone), an opaque JS iterable (host only) is materialized
-// via `__array_from_iter` and indexed. `__array_from_iter` also now materializes
-// an opaque WasmGC vec ref (runtime). Non-spread calls keep the static path.
+// struct; `number[]`/`any[]` to a `__vec_`) is read field-by-field directly,
+// while an opaque iterable is materialized through the native
+// `__array_from_iter_n` and indexed. The native path is shared by the JS,
+// standalone, and WASI environments. Non-spread calls keep the static path.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
@@ -24,6 +24,7 @@ type Mode = { label: string; opts: Record<string, unknown> };
 const MODES: Mode[] = [
   { label: "host", opts: {} },
   { label: "standalone", opts: { target: "standalone" } },
+  { label: "wasi", opts: { target: "wasi" } },
 ];
 
 async function run(src: string, opts: Record<string, unknown>): Promise<unknown> {
@@ -187,20 +188,19 @@ describe("#2202 — arguments.length for spread call args", () => {
   }
 
   // An `any`-typed spread source is an opaque externref (not a typed vec ref),
-  // so it routes through the host `__array_from_iter` + `__extern_length` path.
-  // That path is JS-host only (standalone has no native impl that recognizes an
-  // opaque externref array — a separate slice, see the PR notes), so this case
-  // is asserted host-only; standalone keeps the prior best-effort behaviour
-  // (no regression).
-  it("[host] any-typed spread source expands by runtime length", async () => {
-    expect(
-      await run(
-        `let log = 0;
-         let arr: any;
-         class C { m(): void { log = arguments.length; } }
-         export function test(): number { arr = [1, 2, 3, 4]; new C().m(...arr); return log; }`,
-        {},
-      ),
-    ).toBe(4);
-  });
+  // so this exercises the native materializer and indexed readers rather than
+  // the direct typed-vec projection above.
+  for (const { label, opts } of MODES) {
+    it(`[${label}] any-typed spread source expands by runtime length`, async () => {
+      expect(
+        await run(
+          `let log = 0;
+           let arr: any;
+           class C { m(): void { log = arguments.length; } }
+           export function test(): number { arr = [1, 2, 3, 4]; new C().m(...arr); return log; }`,
+          opts,
+        ),
+      ).toBe(4);
+    });
+  }
 });

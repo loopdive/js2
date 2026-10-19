@@ -1,0 +1,1877 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-q native IR object identity and live typed-object ABI diagnosis; migration incomplete",
+  "parentCommit": "519578344261746f63ad25d8d6914dcee980b033",
+  "candidate": "working tree identified by sourceHashes; signed publication follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false,
+    "test262HarnessPin": "b363f29d3c43c626dc852744ad64a0b48a003693"
+  },
+  "scope": {
+    "selectorsChanged": false,
+    "preparedAdmissionGuardsChanged": false,
+    "frozenDirectAstBodiesChanged": false,
+    "newHostImports": false,
+    "detectorProbePopulationBaselineCeilingChanges": false,
+    "IRProducerImplemented": true,
+    "exclusivePreparedOwnershipClaimed": false,
+    "typedJsObjectIngressFixed": false
+  },
+  "sourceHashes": {
+    "src/ir/object-identity-equality.ts": "5836955ab7b7ec301dc789a1048b0e56e373475949c8744c18c3024c5fa6cf95",
+    "src/ir/from-ast.ts": "06b7326cce01d0dc104d9daf58ac164edd5c1fc0bd475bf230bd2a17f6ece7de",
+    "src/ir/value-coercion.ts": "7e2855a05d03fedd8df00a19eead480d9df491381250e16f589bc57104de0152",
+    "src/ir/lower-generic.ts": "0726a6f6455e227989fb3e3910319eb611befdae173c67edd07e24e297f0811f",
+    "src/ir/backend/wasmgc-emitter.ts": "e249a16e3dc6daae930d9bef43d0b78dee8e559e6656140dbc2b5b07b7009eed",
+    "src/ir/integration.ts": "edeef7415c688500d2ea74dac7ec0efef51feba1629bf430517fa63c0e5f729f",
+    "src/codegen/ir-prepared-signature-contract.ts": "e370319042525ba7d7e951dc65054cbfe31e65e6167fe52ca4a8b59c6ace2c97",
+    "src/codegen/ir-prepared-free-functions.ts": "3f46f236d88ac82c34ada8e7996aeedaa719b92cb50aa0435be1669ef0638bf2",
+    "src/runtime.ts": "06758a4e774c9e88ef3ac92da90f9e90145bb717aa2a1f87bfa15ad1d663a6a5",
+    "src/boundary-policy.ts": "c66d95b7590730a3abf7e3884064cf74bb615162b50c325d062e099f1503dba5",
+    "docs/architecture/marshaling-contract.md": "eddebe61767a007e6b7ac94c1c2ff5fcd42232860f49f13bacdec7f066053194",
+    "tests/issue-6979-ir-object-identity.test.ts": "1a0293cb79f4b2b49104ca3dc63e5748ca1ddc8ec5eea537aebffda3abc744db",
+    "scripts/compiler-boundaries.json": "7db2c4a7b8467578f81fba511d5402165d18b285f213b91f1930a53a2b23b5e5",
+    "scripts/check-host-import-policy.ts": "06fddcabf5a0994e4896df5627f243b71359d7d2c35e6f085fa65398f492e6c1",
+    "scripts/audit-legacy-reachability.mjs": "845eccef70e069401e2c90dc7ba7fe960c4adfbb830d23812832f3ea45b955af"
+  },
+  "tests": {
+    "composition": "31-file cohort with the new32-case file replaced by final identical-source reruns on both trees; only a comment and a non-normative legacy-emission pin were removed between those runs",
+    "parent": {
+      "files": 31,
+      "cases": 670,
+      "passed": 643,
+      "failed": 27,
+      "skipped": 0
+    },
+    "candidate": {
+      "files": 31,
+      "cases": 670,
+      "passed": 655,
+      "failed": 15,
+      "skipped": 0
+    },
+    "newMatrix": {
+      "cases": 32,
+      "passed": 32
+    },
+    "transitions": [
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (standalone) actually emits the eq source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (standalone) actually emits the ne source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (standalone) actually emits the looseEq source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (standalone) actually emits the looseNe source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (wasi) actually emits the eq source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (wasi) actually emits the ne source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (wasi) actually emits the looseEq source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (wasi) actually emits the looseNe source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (gc) actually emits the eq source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (gc) actually emits the ne source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (gc) actually emits the looseEq source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-ir-object-identity.test.ts",
+        "name": "IR native object identity (gc) actually emits the looseNe source body through IR",
+        "parent": "failed",
+        "candidate": "passed"
+      }
+    ],
+    "retainedFailures": [
+      {
+        "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+        "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+        "parentFirstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "parentErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f",
+        "candidateErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-1058-unmatched-closure-host-call.test.ts",
+        "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+        "parentFirstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "candidateFirstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "parentErrorSha256": "3c27262f08cd28b08605c89652894f0f052f13de1c654048b08cf2f8e5a94761",
+        "candidateErrorSha256": "3c27262f08cd28b08605c89652894f0f052f13de1c654048b08cf2f8e5a94761",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-2623-p7-finally-bridge.test.ts",
+        "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+        "parentFirstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "parentErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797",
+        "candidateErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+        "parentFirstLine": "AssertionError: expected [] to include 'install'",
+        "candidateFirstLine": "AssertionError: expected [] to include 'install'",
+        "parentErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140",
+        "candidateErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+        "parentFirstLine": "AssertionError: expected function to throw an error, but it didn't",
+        "candidateFirstLine": "AssertionError: expected function to throw an error, but it didn't",
+        "parentErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90",
+        "candidateErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-schema.test.ts",
+        "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits imports the fixed-arity members and the array sibling TOGETHER on gc-host",
+        "parentFirstLine": "AssertionError: expected [ 'env.__boundary_object_get', …(15) ] to include 'env.__call_function'",
+        "candidateFirstLine": "AssertionError: expected [ 'env.__boundary_object_get', …(15) ] to include 'env.__call_function'",
+        "parentErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4",
+        "candidateErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-schema.test.ts",
+        "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits matches the maker siblings' emitted import ABI",
+        "parentFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(15) ] to include 'env.__make_getter_callback'",
+        "candidateFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(15) ] to include 'env.__make_getter_callback'",
+        "parentErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3",
+        "candidateErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-5329-tuple-rest-carrier.test.ts",
+        "name": "#5329 tuple-typed rest parameter carrier produces a module that validates and calls the closure with its tuple",
+        "parentFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "parentErrorSha256": "3478b5d3bdf1941e82e4dba7a446c4eeebe6d8373944f13127a7343f7be3ce5f",
+        "candidateErrorSha256": "3478b5d3bdf1941e82e4dba7a446c4eeebe6d8373944f13127a7343f7be3ce5f",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-5329-tuple-rest-carrier.test.ts",
+        "name": "#5329 tuple-typed rest parameter carrier keeps the closure reachable through the host dispatcher",
+        "parentFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "parentErrorSha256": "970afa0525aa13702b2995baa8d4593b4ec2033141f455cc557c18b3cb163976",
+        "candidateErrorSha256": "970afa0525aa13702b2995baa8d4593b4ec2033141f455cc557c18b3cb163976",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-5329-tuple-rest-carrier.test.ts",
+        "name": "#5329 tuple-typed rest parameter carrier still reads NaN for a tuple's .length (documented residual)",
+        "parentFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "parentErrorSha256": "b5a0774872ed33a7d8b766429a3dcfdd77de5e62df1486a84ba5341ba89dfb56",
+        "candidateErrorSha256": "b5a0774872ed33a7d8b766429a3dcfdd77de5e62df1486a84ba5341ba89dfb56",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6",
+        "candidateErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699",
+        "candidateErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b",
+        "candidateErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+        "parentFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1",
+        "candidateErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+        "parentFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a",
+        "candidateErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a",
+        "normalizedFullErrorEqual": true
+      }
+    ],
+    "interpretation": "All12 changed rows prove newly emitted IR comparison bodies. Native value results already passed on the parent direct bodies. These are not12 newly repaired JS-object interop behaviors. No previous test expectation changes."
+  },
+  "typedObjectDiagnostic": {
+    "separateFromVitestPopulation": true,
+    "passed": 5,
+    "failed": 11,
+    "cases": 16,
+    "skipped": 0,
+    "parent": {
+      "schemaVersion": 1,
+      "parentCommit": "519578344261746f63ad25d8d6914dcee980b033",
+      "lane": "WasmGC native-first JS boundary",
+      "targetProfile": {
+        "target": "gc",
+        "backend": "wasmgc",
+        "environment": "javascript",
+        "capabilityPolicy": "ambient-js",
+        "semanticProviders": "native-first",
+        "hostValueInterop": "required",
+        "strictEnvImportGate": false,
+        "nativeRegime": true,
+        "nativeStringsRequiredByPolicy": true
+      },
+      "node": "v24.4.1",
+      "experimentalIR": true,
+      "flags": ["--experimental-wasm-exnref"],
+      "source": "\ntype Input={n:number};\nexport function make(n:number):Input{return {n};}\nexport function read(input:Input):number{return input.n;}\nexport function write(input:Input):number{input.n=42;return input.n;}\nexport function echo(input:Input):Input{return input;}\nexport function same(a:Input,b:Input):number{return a===b?1:0;}\nexport function rest():any{return function(...v:Input[]):number{v[31].n=42;return v.length;};}\nexport function dynamic(input:any):number{input.n=42;return input.n;}\n",
+      "sourceSha256": "e9d7e7fa0a916b9f1f525e0203be73a400a8bc8295ee498b4b28102777bfd974",
+      "binaryBytes": 131654,
+      "binarySha256": "50ec127c69a1527e963d74c355f9640d6b72d57a61428589ffc8d069345481d1",
+      "sourceHashes": {
+        "src/runtime.ts": "06758a4e774c9e88ef3ac92da90f9e90145bb717aa2a1f87bfa15ad1d663a6a5",
+        "src/ir/lower-generic.ts": "0726a6f6455e227989fb3e3910319eb611befdae173c67edd07e24e297f0811f",
+        "src/ir/backend/wasmgc-emitter.ts": "e249a16e3dc6daae930d9bef43d0b78dee8e559e6656140dbc2b5b07b7009eed",
+        "src/ir/backend/handles.ts": "f6e3f9516befb445947bad64a2f0b023e5f5592e385f04e282eb0848f12e0453",
+        "src/ir/integration.ts": "edeef7415c688500d2ea74dac7ec0efef51feba1629bf430517fa63c0e5f729f",
+        "src/codegen/closures/closure-dispatch-rest.ts": "bfcc831ab79033ef83eb4830619fc4095c90964a5ee02d6e6fa7f5a97f338cf3",
+        "src/runtime/wasmgc/values/object-get-bodies.ts": "77d798fd626cd0f95e5e11b9f2acb3e8765e02f068145a2071cd223a2164584c",
+        "src/boundary-policy.ts": "c66d95b7590730a3abf7e3884064cf74bb615162b50c325d062e099f1503dba5"
+      },
+      "exportSignatures": {
+        "make": {
+          "params": ["other"],
+          "result": "aggregate"
+        },
+        "read": {
+          "params": ["aggregate"],
+          "result": "other"
+        },
+        "write": {
+          "params": ["aggregate"],
+          "result": "other"
+        },
+        "echo": {
+          "params": ["aggregate"],
+          "result": "aggregate"
+        },
+        "same": {
+          "params": ["aggregate", "aggregate"],
+          "result": "other"
+        },
+        "rest": {
+          "params": [],
+          "result": "dynamic"
+        },
+        "dynamic": {
+          "params": ["dynamic"],
+          "result": "other"
+        }
+      },
+      "boundaryPolicies": {
+        "dynamic": {
+          "params": [
+            {
+              "kind": "dynamic",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        },
+        "echo": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "aggregate",
+            "policy": "live-view"
+          }
+        },
+        "make": {
+          "params": [
+            {
+              "kind": "other",
+              "policy": "primitive-value"
+            }
+          ],
+          "result": {
+            "kind": "aggregate",
+            "policy": "live-view"
+          }
+        },
+        "read": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        },
+        "rest": {
+          "params": [],
+          "result": {
+            "kind": "dynamic",
+            "policy": "live-view"
+          }
+        },
+        "same": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            },
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        },
+        "write": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        }
+      },
+      "irCompiledFuncs": ["make", "read", "write", "echo"],
+      "irOutcomes": [
+        {
+          "key": "input.ts::function::make#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "make",
+          "ordinal": 0,
+          "line": 3,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "return-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::read#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000001",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "read",
+          "ordinal": 0,
+          "line": 4,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::write#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000002",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "write",
+          "ordinal": 0,
+          "line": 5,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::echo#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000003",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "echo",
+          "ordinal": 0,
+          "line": 6,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::same#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000004",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "same",
+          "ordinal": 0,
+          "line": 7,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 0,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": false,
+          "kind": "unsupported",
+          "code": "operand-coercion-unsupported",
+          "stage": "build",
+          "detail": "ir/from-ast: Phase 1 requires matching operand types for '===' in same"
+        },
+        {
+          "key": "input.ts::function::rest#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000005",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "rest",
+          "ordinal": 0,
+          "line": 8,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 0,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": false,
+          "kind": "unsupported",
+          "code": "body-shape-rejected",
+          "stage": "select",
+          "detail": "rest rejected by IR selection (body-shape-rejected)"
+        },
+        {
+          "key": "input.ts::function::dynamic#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000006",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "dynamic",
+          "ordinal": 0,
+          "line": 9,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 0,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": false,
+          "kind": "unsupported",
+          "code": "param-type-not-resolvable",
+          "stage": "select",
+          "detail": "dynamic rejected by IR selection (param-type-not-resolvable)"
+        },
+        {
+          "key": "input.ts::module-init::<module-init>#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "file": "input.ts",
+          "unitKind": "module-init",
+          "displayName": "<module-init>",
+          "ordinal": 0,
+          "line": 1,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "kind": "non-executable",
+          "stage": "select",
+          "legacyBodyEmitted": false,
+          "irBodyEmitted": false
+        }
+      ],
+      "typedFunctionHeaders": [
+        "  (func $read (type 47)\n    local.get 0\n    struct.get 45 0\n    return\n  )",
+        "  (func $write (type 47)\n    local.get 0\n    f64.const 42\n    struct.set 45 0\n    local.get 0",
+        "  (func $echo (param (ref null 45)) (result (ref null 45))\n    local.get 0\n    return\n  )\n  (func $same (param (ref null 45) (ref null 45)) (result f64)"
+      ],
+      "cases": 16,
+      "passed": 5,
+      "failed": 11,
+      "skipped": 0,
+      "provenanceNote": "Four functional controls and one overlay-route characterization pass. No typed JS-object case passes. The initial provenance assertion incorrectly expected no direct emission; exact outcomes proved both emissions, so the corrected characterization explicitly requires that compile-twice shape. This is not conformance credit.",
+      "rows": [
+        {
+          "name": "native-read-write",
+          "status": "passed",
+          "actual": [41, 42, 42],
+          "expected": [41, 42, 42]
+        },
+        {
+          "name": "native-roundtrip",
+          "status": "passed",
+          "actual": true,
+          "expected": true
+        },
+        {
+          "name": "native-rest-elements",
+          "status": "passed",
+          "actual": [32, 42],
+          "expected": [32, 42]
+        },
+        {
+          "name": "dynamic-live-reference",
+          "status": "passed",
+          "actual": [42, 42],
+          "expected": [42, 42]
+        },
+        {
+          "name": "typed-read-write-observed-overlay-route",
+          "status": "passed",
+          "actual": [
+            ["emitted", true, true, 1, 1, "param-signature-unstable"],
+            ["emitted", true, true, 1, 1, "param-signature-unstable"]
+          ],
+          "expected": [
+            ["emitted", true, true, 1, 1, "param-signature-unstable"],
+            ["emitted", true, true, 1, 1, "param-signature-unstable"]
+          ]
+        },
+        {
+          "name": "JS-owned-read",
+          "status": "failed",
+          "expected": 42,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at n.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:26:26)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-write",
+          "status": "failed",
+          "expected": [42, 42],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at n.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:27:50)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-roundtrip",
+          "status": "failed",
+          "expected": true,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at n.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:28:54)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-same-alias",
+          "status": "failed",
+          "expected": 1,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at ex.same.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:29:55)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-distinct-alias",
+          "status": "failed",
+          "expected": 0,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at p.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:30:36)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "inherited-getter-receiver",
+          "status": "failed",
+          "expected": [42, true],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at log (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:31:137)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "Proxy-no-eager-traversal",
+          "status": "failed",
+          "expected": [42, ["get:n"]],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at stored (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:32:301)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "inherited-setter-receiver",
+          "status": "failed",
+          "expected": [42, 42, true],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:10033:36)",
+              "    at token (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:33:167)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "getter-exact-throw-token",
+          "status": "failed",
+          "actual": {
+            "sameThrown": false,
+            "errorMessage": "type incompatibility when transforming from/to JS"
+          },
+          "expected": {
+            "sameThrown": true
+          },
+          "error": {
+            "name": "AssertionError",
+            "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   errorMessage: 'type incompatibility when transforming from/to JS',\n+   sameThrown: false\n-   errorMessage: undefined,\n-   sameThrown: true\n  }\n",
+            "stack": [
+              "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+              "+ actual - expected",
+              "",
+              "  {",
+              "+   errorMessage: 'type incompatibility when transforming from/to JS',",
+              "+   sameThrown: false",
+              "-   errorMessage: undefined,",
+              "-   sameThrown: true",
+              "  }"
+            ]
+          }
+        },
+        {
+          "name": "setter-exact-throw-token",
+          "status": "failed",
+          "actual": {
+            "sameThrown": false,
+            "errorMessage": "type incompatibility when transforming from/to JS"
+          },
+          "expected": {
+            "sameThrown": true
+          },
+          "error": {
+            "name": "AssertionError",
+            "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   errorMessage: 'type incompatibility when transforming from/to JS',\n+   sameThrown: false\n-   errorMessage: undefined,\n-   sameThrown: true\n  }\n",
+            "stack": [
+              "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+              "+ actual - expected",
+              "",
+              "  {",
+              "+   errorMessage: 'type incompatibility when transforming from/to JS',",
+              "+   sameThrown: false",
+              "-   errorMessage: undefined,",
+              "-   sameThrown: true",
+              "  }"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-typed-rest-elements",
+          "status": "failed",
+          "expected": [32, 42],
+          "error": {
+            "name": "RuntimeError",
+            "message": "illegal cast",
+            "stack": [
+              "RuntimeError: illegal cast",
+              "    at __vec_from_extern_144 (wasm://wasm/0008091a:wasm-function[390]:0x1b9c4)",
+              "    at __call_fn_method_5 (wasm://wasm/0008091a:wasm-function[410]:0x1d3e2)",
+              "    at __apply_closure (wasm://wasm/0008091a:wasm-function[209]:0x1250f)",
+              "    at __call_fn_apply (wasm://wasm/0008091a:wasm-function[434]:0x1de46)",
+              "    at _invokeNativeClosureApply (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:1433:10)",
+              "    at wasmClosureDynamicDispatch (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:1537:25)",
+              "    at wasmClosureDynamicBridge (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/src/runtime.ts:1635:13)",
+              "    at cases (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7q-parent/.tmp/s7q-live-object-matrix.ts:36:69)"
+            ]
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "schemaVersion": 1,
+      "parentCommit": "519578344261746f63ad25d8d6914dcee980b033",
+      "lane": "WasmGC native-first JS boundary",
+      "targetProfile": {
+        "target": "gc",
+        "backend": "wasmgc",
+        "environment": "javascript",
+        "capabilityPolicy": "ambient-js",
+        "semanticProviders": "native-first",
+        "hostValueInterop": "required",
+        "strictEnvImportGate": false,
+        "nativeRegime": true,
+        "nativeStringsRequiredByPolicy": true
+      },
+      "node": "v24.4.1",
+      "experimentalIR": true,
+      "flags": ["--experimental-wasm-exnref"],
+      "source": "\ntype Input={n:number};\nexport function make(n:number):Input{return {n};}\nexport function read(input:Input):number{return input.n;}\nexport function write(input:Input):number{input.n=42;return input.n;}\nexport function echo(input:Input):Input{return input;}\nexport function same(a:Input,b:Input):number{return a===b?1:0;}\nexport function rest():any{return function(...v:Input[]):number{v[31].n=42;return v.length;};}\nexport function dynamic(input:any):number{input.n=42;return input.n;}\n",
+      "sourceSha256": "e9d7e7fa0a916b9f1f525e0203be73a400a8bc8295ee498b4b28102777bfd974",
+      "binaryBytes": 131388,
+      "binarySha256": "33cab20d56a34d291dee8bc2b1d57db4e2e128dd2d40d34fcfa0684fde34c29b",
+      "sourceHashes": {
+        "src/runtime.ts": "06758a4e774c9e88ef3ac92da90f9e90145bb717aa2a1f87bfa15ad1d663a6a5",
+        "src/ir/lower-generic.ts": "0726a6f6455e227989fb3e3910319eb611befdae173c67edd07e24e297f0811f",
+        "src/ir/backend/wasmgc-emitter.ts": "e249a16e3dc6daae930d9bef43d0b78dee8e559e6656140dbc2b5b07b7009eed",
+        "src/ir/backend/handles.ts": "f6e3f9516befb445947bad64a2f0b023e5f5592e385f04e282eb0848f12e0453",
+        "src/ir/integration.ts": "edeef7415c688500d2ea74dac7ec0efef51feba1629bf430517fa63c0e5f729f",
+        "src/codegen/closures/closure-dispatch-rest.ts": "bfcc831ab79033ef83eb4830619fc4095c90964a5ee02d6e6fa7f5a97f338cf3",
+        "src/runtime/wasmgc/values/object-get-bodies.ts": "77d798fd626cd0f95e5e11b9f2acb3e8765e02f068145a2071cd223a2164584c",
+        "src/boundary-policy.ts": "c66d95b7590730a3abf7e3884064cf74bb615162b50c325d062e099f1503dba5"
+      },
+      "exportSignatures": {
+        "make": {
+          "params": ["other"],
+          "result": "aggregate"
+        },
+        "read": {
+          "params": ["aggregate"],
+          "result": "other"
+        },
+        "write": {
+          "params": ["aggregate"],
+          "result": "other"
+        },
+        "echo": {
+          "params": ["aggregate"],
+          "result": "aggregate"
+        },
+        "same": {
+          "params": ["aggregate", "aggregate"],
+          "result": "other"
+        },
+        "rest": {
+          "params": [],
+          "result": "dynamic"
+        },
+        "dynamic": {
+          "params": ["dynamic"],
+          "result": "other"
+        }
+      },
+      "boundaryPolicies": {
+        "dynamic": {
+          "params": [
+            {
+              "kind": "dynamic",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        },
+        "echo": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "aggregate",
+            "policy": "live-view"
+          }
+        },
+        "make": {
+          "params": [
+            {
+              "kind": "other",
+              "policy": "primitive-value"
+            }
+          ],
+          "result": {
+            "kind": "aggregate",
+            "policy": "live-view"
+          }
+        },
+        "read": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        },
+        "rest": {
+          "params": [],
+          "result": {
+            "kind": "dynamic",
+            "policy": "live-view"
+          }
+        },
+        "same": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            },
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        },
+        "write": {
+          "params": [
+            {
+              "kind": "aggregate",
+              "policy": "live-view"
+            }
+          ],
+          "result": {
+            "kind": "other",
+            "policy": "primitive-value"
+          }
+        }
+      },
+      "irCompiledFuncs": ["make", "read", "write", "echo", "same"],
+      "irOutcomes": [
+        {
+          "key": "input.ts::function::make#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000000",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "make",
+          "ordinal": 0,
+          "line": 3,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "return-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::read#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000001",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "read",
+          "ordinal": 0,
+          "line": 4,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::write#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000002",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "write",
+          "ordinal": 0,
+          "line": 5,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::echo#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000003",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "echo",
+          "ordinal": 0,
+          "line": 6,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::same#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000004",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "same",
+          "ordinal": 0,
+          "line": 7,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 1,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": true,
+          "kind": "emitted",
+          "stage": "patch",
+          "r2Withdrawal": {
+            "stage": "admission",
+            "reason": "param-signature-unstable"
+          }
+        },
+        {
+          "key": "input.ts::function::rest#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000005",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "rest",
+          "ordinal": 0,
+          "line": 8,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 0,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": false,
+          "kind": "unsupported",
+          "code": "body-shape-rejected",
+          "stage": "select",
+          "detail": "rest rejected by IR selection (body-shape-rejected)"
+        },
+        {
+          "key": "input.ts::function::dynamic#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Ainput.ts:root:top-level-function:0000000000000006",
+          "file": "input.ts",
+          "unitKind": "function",
+          "displayName": "dynamic",
+          "ordinal": 0,
+          "line": 9,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "prepareAttempts": 1,
+          "directBodyEmissions": 1,
+          "irBodyEmissions": 0,
+          "legacyBodyEmitted": true,
+          "irBodyEmitted": false,
+          "kind": "unsupported",
+          "code": "param-type-not-resolvable",
+          "stage": "select",
+          "detail": "dynamic rejected by IR selection (param-type-not-resolvable)"
+        },
+        {
+          "key": "input.ts::module-init::<module-init>#0",
+          "sourceId": "ir-source:v1:0000000000000000:entry:input.ts",
+          "file": "input.ts",
+          "unitKind": "module-init",
+          "displayName": "<module-init>",
+          "ordinal": 0,
+          "line": 1,
+          "column": 1,
+          "backend": "wasmgc",
+          "target": "standalone",
+          "kind": "non-executable",
+          "stage": "select",
+          "legacyBodyEmitted": false,
+          "irBodyEmitted": false
+        }
+      ],
+      "typedFunctionHeaders": [
+        "  (func $read (type 47)\n    local.get 0\n    struct.get 45 0\n    return\n  )",
+        "  (func $write (type 47)\n    local.get 0\n    f64.const 42\n    struct.set 45 0\n    local.get 0",
+        "  (func $echo (param (ref null 45)) (result (ref null 45))\n    local.get 0\n    return\n  )\n  (func $same (param (ref null 45) (ref null 45)) (result f64)"
+      ],
+      "cases": 16,
+      "passed": 5,
+      "failed": 11,
+      "skipped": 0,
+      "provenanceNote": "Four functional controls and one overlay-route characterization pass. No typed JS-object case passes. The initial provenance assertion incorrectly expected no direct emission; exact outcomes proved both emissions, so the corrected characterization explicitly requires that compile-twice shape. This is not conformance credit.",
+      "rows": [
+        {
+          "name": "native-read-write",
+          "status": "passed",
+          "actual": [41, 42, 42],
+          "expected": [41, 42, 42]
+        },
+        {
+          "name": "native-roundtrip",
+          "status": "passed",
+          "actual": true,
+          "expected": true
+        },
+        {
+          "name": "native-rest-elements",
+          "status": "passed",
+          "actual": [32, 42],
+          "expected": [32, 42]
+        },
+        {
+          "name": "dynamic-live-reference",
+          "status": "passed",
+          "actual": [42, 42],
+          "expected": [42, 42]
+        },
+        {
+          "name": "typed-read-write-observed-overlay-route",
+          "status": "passed",
+          "actual": [
+            ["emitted", true, true, 1, 1, "param-signature-unstable"],
+            ["emitted", true, true, 1, 1, "param-signature-unstable"]
+          ],
+          "expected": [
+            ["emitted", true, true, 1, 1, "param-signature-unstable"],
+            ["emitted", true, true, 1, 1, "param-signature-unstable"]
+          ]
+        },
+        {
+          "name": "JS-owned-read",
+          "status": "failed",
+          "expected": 42,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at n.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:26:26)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-write",
+          "status": "failed",
+          "expected": [42, 42],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at n.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:27:50)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-roundtrip",
+          "status": "failed",
+          "expected": true,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at n.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:28:54)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-same-alias",
+          "status": "failed",
+          "expected": 1,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at ex.same.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:29:55)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-distinct-alias",
+          "status": "failed",
+          "expected": 0,
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at p.n (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:30:36)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "inherited-getter-receiver",
+          "status": "failed",
+          "expected": [42, true],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at log (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:31:137)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "Proxy-no-eager-traversal",
+          "status": "failed",
+          "expected": [42, ["get:n"]],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at stored (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:32:301)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "inherited-setter-receiver",
+          "status": "failed",
+          "expected": [42, 42, true],
+          "error": {
+            "name": "TypeError",
+            "message": "type incompatibility when transforming from/to JS",
+            "stack": [
+              "TypeError: type incompatibility when transforming from/to JS",
+              "    at Object.invoke (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:10033:36)",
+              "    at token (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:33:167)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:76)",
+              "    at Array.map (<anonymous>)",
+              "    at <anonymous> (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:38:18)"
+            ]
+          }
+        },
+        {
+          "name": "getter-exact-throw-token",
+          "status": "failed",
+          "actual": {
+            "sameThrown": false,
+            "errorMessage": "type incompatibility when transforming from/to JS"
+          },
+          "expected": {
+            "sameThrown": true
+          },
+          "error": {
+            "name": "AssertionError",
+            "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   errorMessage: 'type incompatibility when transforming from/to JS',\n+   sameThrown: false\n-   errorMessage: undefined,\n-   sameThrown: true\n  }\n",
+            "stack": [
+              "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+              "+ actual - expected",
+              "",
+              "  {",
+              "+   errorMessage: 'type incompatibility when transforming from/to JS',",
+              "+   sameThrown: false",
+              "-   errorMessage: undefined,",
+              "-   sameThrown: true",
+              "  }"
+            ]
+          }
+        },
+        {
+          "name": "setter-exact-throw-token",
+          "status": "failed",
+          "actual": {
+            "sameThrown": false,
+            "errorMessage": "type incompatibility when transforming from/to JS"
+          },
+          "expected": {
+            "sameThrown": true
+          },
+          "error": {
+            "name": "AssertionError",
+            "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   errorMessage: 'type incompatibility when transforming from/to JS',\n+   sameThrown: false\n-   errorMessage: undefined,\n-   sameThrown: true\n  }\n",
+            "stack": [
+              "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+              "+ actual - expected",
+              "",
+              "  {",
+              "+   errorMessage: 'type incompatibility when transforming from/to JS',",
+              "+   sameThrown: false",
+              "-   errorMessage: undefined,",
+              "-   sameThrown: true",
+              "  }"
+            ]
+          }
+        },
+        {
+          "name": "JS-owned-typed-rest-elements",
+          "status": "failed",
+          "expected": [32, 42],
+          "error": {
+            "name": "RuntimeError",
+            "message": "illegal cast",
+            "stack": [
+              "RuntimeError: illegal cast",
+              "    at __vec_from_extern_144 (wasm://wasm/000804f2:wasm-function[392]:0x1b8aa)",
+              "    at __call_fn_method_5 (wasm://wasm/000804f2:wasm-function[412]:0x1d2c8)",
+              "    at __apply_closure (wasm://wasm/000804f2:wasm-function[209]:0x123de)",
+              "    at __call_fn_apply (wasm://wasm/000804f2:wasm-function[435]:0x1dd28)",
+              "    at _invokeNativeClosureApply (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:1433:10)",
+              "    at wasmClosureDynamicDispatch (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:1537:25)",
+              "    at wasmClosureDynamicBridge (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/src/runtime.ts:1635:13)",
+              "    at cases (/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms/.tmp/s7q-live-object-matrix.ts:36:69)"
+            ]
+          }
+        }
+      ]
+    },
+    "runnerSource": "import {strict as assert} from 'node:assert';\nimport {createHash} from 'node:crypto';\nimport {readFileSync} from 'node:fs';\nimport {compile} from '../src/index.ts';\nimport {buildCompiledImports,wrapCompiledExports} from '../src/runtime.ts';\nconst source=`\ntype Input={n:number};\nexport function make(n:number):Input{return {n};}\nexport function read(input:Input):number{return input.n;}\nexport function write(input:Input):number{input.n=42;return input.n;}\nexport function echo(input:Input):Input{return input;}\nexport function same(a:Input,b:Input):number{return a===b?1:0;}\nexport function rest():any{return function(...v:Input[]):number{v[31].n=42;return v.length;};}\nexport function dynamic(input:any):number{input.n=42;return input.n;}\n`;\nconst compiled=await compile(source,{target:'gc',skipSemanticDiagnostics:true,experimentalIR:true,trackIrOutcomes:true,emitWat:true});\nassert.equal(compiled.success,true,JSON.stringify(compiled.errors));\nconst module=new WebAssembly.Module(compiled.binary);\nconst instantiate=()=>{const imports=buildCompiledImports(compiled);const instance=new WebAssembly.Instance(module,imports);imports.setInstance?.(instance);return wrapCompiledExports(compiled,instance)as any;};\nconst cases:[string,(ex:any)=>unknown,unknown][]=[\n ['native-read-write',ex=>{const n=ex.make(41);return [ex.read(n),ex.write(n),ex.read(n)];},[41,42,42]],\n ['native-roundtrip',ex=>{const n=ex.make(41);return ex.echo(n)===n;},true],\n ['native-rest-elements',ex=>{const n=ex.make(1);return [ex.rest()(...Array(32).fill(n)),ex.read(n)];},[32,42]],\n ['dynamic-live-reference',ex=>{const n={n:1};return [ex.dynamic(n),n.n];},[42,42]],\n ['typed-read-write-observed-overlay-route',()=>['read','write'].map(name=>{const o=compiled.irOutcomes?.find(x=>x.displayName===name)as any;return [o?.kind,o?.irBodyEmitted,o?.legacyBodyEmitted,o?.directBodyEmissions,o?.irBodyEmissions,o?.r2Withdrawal?.reason];}),[['emitted',true,true,1,1,'param-signature-unstable'],['emitted',true,true,1,1,'param-signature-unstable']]],\n ['JS-owned-read',ex=>ex.read({n:42}),42],\n ['JS-owned-write',ex=>{const n={n:1};return [ex.write(n),n.n];},[42,42]],\n ['JS-owned-roundtrip',ex=>{const n={n:41};return ex.echo(n)===n;},true],\n ['JS-owned-same-alias',ex=>{const n={n:41};return ex.same(n,n);},1],\n ['JS-owned-distinct-alias',ex=>ex.same({n:41},{n:41}),0],\n ['inherited-getter-receiver',ex=>{let receiver:unknown;const p={get n(){receiver=this;return 42;}};const n=Object.create(p);return [ex.read(n),receiver===n];},[42,true]],\n ['Proxy-no-eager-traversal',ex=>{const log:string[]=[];const n=new Proxy({n:42},{get(t,k,r){log.push('get:'+String(k));return Reflect.get(t,k,r);},ownKeys(t){log.push('ownKeys');return Reflect.ownKeys(t);},getPrototypeOf(t){log.push('getPrototypeOf');return Reflect.getPrototypeOf(t);}});return [ex.read(n),log];},[42,['get:n']]],\n ['inherited-setter-receiver',ex=>{let receiver:unknown,stored=0;const n=Object.create({set n(v:number){receiver=this;stored=v;},get n(){return stored;}});return [ex.write(n),stored,receiver===n];},[42,42,true]],\n ['getter-exact-throw-token',ex=>{const token={};let error:unknown;try{ex.read({get n(){throw token;}});}catch(e){error=e;}return {sameThrown:error===token,errorMessage:(error as any)?.message};},{sameThrown:true,errorMessage:undefined}],\n ['setter-exact-throw-token',ex=>{const token={};let error:unknown;try{ex.write({set n(v:number){throw token;}});}catch(e){error=e;}return {sameThrown:error===token,errorMessage:(error as any)?.message};},{sameThrown:true,errorMessage:undefined}],\n ['JS-owned-typed-rest-elements',ex=>{const n={n:1};return [ex.rest()(...Array(32).fill(n)),n.n];},[32,42]],\n];\nconst rows=cases.map(([name,run,expected])=>{let actual:unknown;try{actual=run(instantiate());assert.deepEqual(actual,expected);return {name,status:'passed',actual,expected};}catch(e:any){return {name,status:'failed',actual,expected,error:{name:e?.name,message:e?.message,stack:e?.stack?.split('\\n').slice(0,9)}};}});\nassert.equal(rows.length,16);\nconst hash=(v:string|Uint8Array)=>createHash('sha256').update(v).digest('hex');\nconst files=['src/runtime.ts','src/ir/lower-generic.ts','src/ir/backend/wasmgc-emitter.ts','src/ir/backend/handles.ts','src/ir/integration.ts','src/codegen/closures/closure-dispatch-rest.ts','src/runtime/wasmgc/values/object-get-bodies.ts','src/boundary-policy.ts'];\nconst watLines=compiled.wat.split('\\n');\nconst typedFunctionHeaders=['read','write','echo'].map(name=>{const i=watLines.findIndex(l=>l.includes('(func $'+name+' '));assert(i>=0);return watLines.slice(i,i+5).join('\\n');});\nconsole.log(JSON.stringify({schemaVersion:1,parentCommit:'519578344261746f63ad25d8d6914dcee980b033',lane:'WasmGC native-first JS boundary',targetProfile:compiled.targetProfile,node:process.version,experimentalIR:true,flags:['--experimental-wasm-exnref'],source,sourceSha256:hash(source),binaryBytes:compiled.binary.length,binarySha256:hash(compiled.binary),sourceHashes:Object.fromEntries(files.map(p=>[p,hash(readFileSync(p))])),exportSignatures:compiled.exportSignatures,boundaryPolicies:compiled.exportBoundaryPolicies,irCompiledFuncs:compiled.irCompiledFuncs,irOutcomes:compiled.irOutcomes,typedFunctionHeaders,cases:rows.length,passed:rows.filter(r=>r.status==='passed').length,failed:rows.filter(r=>r.status==='failed').length,skipped:0,provenanceNote:'Four functional controls and one overlay-route characterization pass. No typed JS-object case passes. The initial provenance assertion incorrectly expected no direct emission; exact outcomes proved both emissions, so the corrected characterization explicitly requires that compile-twice shape. This is not conformance credit.',rows},null,2));\nprocess.exitCode=rows.some(r=>r.status==='failed')?1:0;\n",
+    "interpretation": "Four native/dynamic functional controls plus one truthful overlay-route characterization pass; all11 typed JS-owned cases fail. The initial exclusive-IR assertion was an incorrect assumption, corrected after exact counters showed both direct and IR emission. No conformance credit is claimed for that characterization."
+  },
+  "mechanism": "Both logical object operands erase their physical shape without field traversal, then use canonical native boxing/strict equality. Both-object abstract equality is identity too. Canonical boxing classifies the actual carrier rather than stamping an Object tag from source annotation; nullable ABI controls are included.",
+  "documentation": "Replace the obsolete incoming deep-copy proposal with the normative live-reference contract and explicit physical ABI obligations; this is not an implementation/completion claim.",
+  "policy": {
+    "parent": {
+      "probes": 33,
+      "imports": 437,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "candidate": {
+      "probes": 33,
+      "imports": 437,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "ceiling": 452,
+    "rows": [
+      {
+        "name": "core",
+        "parentBytes": 605076,
+        "candidateBytes": 605076,
+        "parentSha256": "42af8cc9ad775aeb44f1aac9f38e41327f2f4f45ebd3803ba938427948195164",
+        "candidateSha256": "42af8cc9ad775aeb44f1aac9f38e41327f2f4f45ebd3803ba938427948195164",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "regexp",
+        "parentBytes": 116720,
+        "candidateBytes": 116720,
+        "parentSha256": "a83198e379551961c9791cb7cc97327747653f262c9532097a9619c0760e51e4",
+        "candidateSha256": "a83198e379551961c9791cb7cc97327747653f262c9532097a9619c0760e51e4",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "collections",
+        "parentBytes": 104714,
+        "candidateBytes": 104714,
+        "parentSha256": "eed92b8999c06d82fa223de0d42e110f3331e6e529073cd72b93a380044568be",
+        "candidateSha256": "eed92b8999c06d82fa223de0d42e110f3331e6e529073cd72b93a380044568be",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "promise",
+        "parentBytes": 124109,
+        "candidateBytes": 124109,
+        "parentSha256": "ea26eed891845a9432e24a74d532205edcccfc87ac6bacef7d3e89db1473b677",
+        "candidateSha256": "ea26eed891845a9432e24a74d532205edcccfc87ac6bacef7d3e89db1473b677",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "date",
+        "parentBytes": 119336,
+        "candidateBytes": 119336,
+        "parentSha256": "1debd94dc276e19b958c4af427029253e4a81d7f29d786888fb174d48bddaf08",
+        "candidateSha256": "1debd94dc276e19b958c4af427029253e4a81d7f29d786888fb174d48bddaf08",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "dataView",
+        "parentBytes": 114654,
+        "candidateBytes": 114654,
+        "parentSha256": "d5664a0f958c14d30d877834fe64e649412f83bdb49908074ace88fe6a0dd9f3",
+        "candidateSha256": "d5664a0f958c14d30d877834fe64e649412f83bdb49908074ace88fe6a0dd9f3",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "bigint",
+        "parentBytes": 39336,
+        "candidateBytes": 39336,
+        "parentSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "candidateSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "bigintFormatting",
+        "parentBytes": 38560,
+        "candidateBytes": 38560,
+        "parentSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "candidateSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "number",
+        "parentBytes": 30248,
+        "candidateBytes": 30248,
+        "parentSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "candidateSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "textGlobals",
+        "parentBytes": 47103,
+        "candidateBytes": 47103,
+        "parentSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "candidateSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "object",
+        "parentBytes": 122071,
+        "candidateBytes": 122071,
+        "parentSha256": "042d3480a15385013233cb5967422aa819927d04eedee374575619df9b33e302",
+        "candidateSha256": "042d3480a15385013233cb5967422aa819927d04eedee374575619df9b33e302",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "objectRest",
+        "parentBytes": 106960,
+        "candidateBytes": 106960,
+        "parentSha256": "661fa21fd9f10c468a101526329e9bd917980479e24e774cdf900f8bd4b54aca",
+        "candidateSha256": "661fa21fd9f10c468a101526329e9bd917980479e24e774cdf900f8bd4b54aca",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "functionBind",
+        "parentBytes": 115486,
+        "candidateBytes": 115486,
+        "parentSha256": "19306245ab8c076ae26b875b23f8d5fc05ba793f3e8dfc55ee5dcc6e8168482e",
+        "candidateSha256": "19306245ab8c076ae26b875b23f8d5fc05ba793f3e8dfc55ee5dcc6e8168482e",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "proxy",
+        "parentBytes": 722941,
+        "candidateBytes": 722941,
+        "parentSha256": "319405d67cb8c11d04c845c1c2a0af17011b6f5310886cb9edf2c66b558436c9",
+        "candidateSha256": "319405d67cb8c11d04c845c1c2a0af17011b6f5310886cb9edf2c66b558436c9",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "typedArrays",
+        "parentBytes": 41676,
+        "candidateBytes": 41676,
+        "parentSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "candidateSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "objectDescriptors",
+        "parentBytes": 109473,
+        "candidateBytes": 109473,
+        "parentSha256": "dbe971f41a5fe2459e068e5e7efc72a3b163570a8c74c4a95343cfeb75ebb828",
+        "candidateSha256": "dbe971f41a5fe2459e068e5e7efc72a3b163570a8c74c4a95343cfeb75ebb828",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "objectPrototype",
+        "parentBytes": 254765,
+        "candidateBytes": 254765,
+        "parentSha256": "af6f9d9e691c9216f86f0ba7d40cf75b8ba550edab781c5e6c1361331b2677e0",
+        "candidateSha256": "af6f9d9e691c9216f86f0ba7d40cf75b8ba550edab781c5e6c1361331b2677e0",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "functionCall",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "parentSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "candidateSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "functionApply",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "parentSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "candidateSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "errors",
+        "parentBytes": 103062,
+        "candidateBytes": 103062,
+        "parentSha256": "cf2ef11b454e4b1fa0c1758b671a17d1e5d50727a15ec46f180474587b7edff6",
+        "candidateSha256": "cf2ef11b454e4b1fa0c1758b671a17d1e5d50727a15ec46f180474587b7edff6",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "generators",
+        "parentBytes": 131500,
+        "candidateBytes": 131500,
+        "parentSha256": "de2283ebfb02938fb53048937ddd8d5e03426a7b86bd8e3945f638083e633872",
+        "candidateSha256": "de2283ebfb02938fb53048937ddd8d5e03426a7b86bd8e3945f638083e633872",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "iterators",
+        "parentBytes": 40985,
+        "candidateBytes": 40985,
+        "parentSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "candidateSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "promiseCombinators",
+        "parentBytes": 129419,
+        "candidateBytes": 129419,
+        "parentSha256": "653c9dab107c7f7e3ba869048fcb02c3c82635c3e24e0e54cf28931f4348381e",
+        "candidateSha256": "653c9dab107c7f7e3ba869048fcb02c3c82635c3e24e0e54cf28931f4348381e",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "promiseAnyRace",
+        "parentBytes": 124984,
+        "candidateBytes": 124984,
+        "parentSha256": "7e2cc38bdb078e8e492f8150f1ce85e8e0a0e1827cbb12a9223013df4e169d56",
+        "candidateSha256": "7e2cc38bdb078e8e492f8150f1ce85e8e0a0e1827cbb12a9223013df4e169d56",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "regexpDynamic",
+        "parentBytes": 151386,
+        "candidateBytes": 151386,
+        "parentSha256": "f4153cbf5160d97b4ed2b12cb15665317bdcf420d7d0eb01807276dba8ffd305",
+        "candidateSha256": "f4153cbf5160d97b4ed2b12cb15665317bdcf420d7d0eb01807276dba8ffd305",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "mapIteration",
+        "parentBytes": 42951,
+        "candidateBytes": 42951,
+        "parentSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "candidateSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "setIteration",
+        "parentBytes": 111879,
+        "candidateBytes": 111879,
+        "parentSha256": "fbbe04efc78f221fd254f291a803e9531cfd8f67a1122acd9ef0a821992dec53",
+        "candidateSha256": "fbbe04efc78f221fd254f291a803e9531cfd8f67a1122acd9ef0a821992dec53",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "reflect",
+        "parentBytes": 115421,
+        "candidateBytes": 115421,
+        "parentSha256": "b59ae4cfdad1cd8016e142ff8c65256b4a1364d60eba8ad506180057f1a6a8e0",
+        "candidateSha256": "b59ae4cfdad1cd8016e142ff8c65256b4a1364d60eba8ad506180057f1a6a8e0",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "dynamicOps",
+        "parentBytes": 104645,
+        "candidateBytes": 104645,
+        "parentSha256": "b9d65e10d550f5e1be8a515f53b789d8c104293c74cd8c0bbc76f781980fecab",
+        "candidateSha256": "b9d65e10d550f5e1be8a515f53b789d8c104293c74cd8c0bbc76f781980fecab",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "destructuring",
+        "parentBytes": 109672,
+        "candidateBytes": 109672,
+        "parentSha256": "42cc3c2bf72dfab628dce45217fb9b854bfd7d232cd787733ec29b55cd655253",
+        "candidateSha256": "42cc3c2bf72dfab628dce45217fb9b854bfd7d232cd787733ec29b55cd655253",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "proxyMop",
+        "parentBytes": 598747,
+        "candidateBytes": 598747,
+        "parentSha256": "215bacf442b43b0278dbb475a3ca712fae481025a0df0fc24676cbc06c021d6c",
+        "candidateSha256": "215bacf442b43b0278dbb475a3ca712fae481025a0df0fc24676cbc06c021d6c",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "proxyRevocable",
+        "parentBytes": 598574,
+        "candidateBytes": 598574,
+        "parentSha256": "e43177016f5862e5dbaac4fd2503957fa2b8c45e3fec1718e13b4e7915183d0a",
+        "candidateSha256": "e43177016f5862e5dbaac4fd2503957fa2b8c45e3fec1718e13b4e7915183d0a",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      },
+      {
+        "name": "stringProtocols",
+        "parentBytes": 121617,
+        "candidateBytes": 121617,
+        "parentSha256": "fd17e9a5c2eb0777d29a0d5ff663e80ca08b8401525a05f99d811a2fb5eef45b",
+        "candidateSha256": "fd17e9a5c2eb0777d29a0d5ff663e80ca08b8401525a05f99d811a2fb5eef45b",
+        "inventoryIdentical": true,
+        "binaryIdentical": true
+      }
+    ],
+    "migrationMetrics": {
+      "runtimeTsLines": 10230,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 896,
+      "explicitCapabilityLines": 1194
+    }
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "parentBytes": 11413,
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "parentBytes": 33185,
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 148315,
+      "sha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "parentBytes": 148315,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "parentBytes": 22719,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "parentBytes": 52928,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 147483,
+      "sha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentSha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "parentBytes": 147483,
+      "byteIdentical": true
+    }
+  ],
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "functionLoc": "PASS; no new allowance",
+    "layering": "PASS87/90",
+    "flat": "PASS833",
+    "compilerInventory": "PASS; new IR producer explicitly unmigrated/mixed-needs-split",
+    "IRFallbacks": [
+      "Post-claim demotions (gated; must not increase): (none)",
+      "",
+      "",
+      "IR fallback gate: OK (no unintended/post-claim/module-level increases vs. baseline)."
+    ],
+    "deadExports": "core-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)\ncore-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)\nmoved-runtime gate: FAIL (production-rooted evidence incomplete)\n  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412\n  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151\npreservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses\ngraph OPEN; strict modeled closure FAIL\nretirement/deletion NOT CERTIFIED\n",
+    "cyclesParent": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+    "cyclesCandidate": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n"
+  },
+  "nextAction": "Plan an explicit native interop reference ABI through prepared IR/Program-ABI publication, not a runtime graph copier or native default-field wrapper. Propagate foreign-capable object operations and reference identity through reachable calls/returns before publishing the entry. Do not loosen the object-signature admission guard to claim completion.",
+  "remaining": [
+    "Native GC-only public typed-object parameters still reject JS objects before execution despite live-view metadata",
+    "Typed object rest elements still cast; native handles and dynamic any controls work",
+    "Prepared object signatures are excluded from the stable vocabulary; overlay emission is not compile-once ownership",
+    "BigInt/Number overflow, strict null receivers, tuple-rest compilation, opaque/init callables and typed-array/aggregate interop",
+    "Raw-mode/runtime/source retirement, inherited cycles and strict modeled closure, prerequisite resolution and full equivalence/conformance/npm/accelerator/cost acceptance"
+  ]
+}

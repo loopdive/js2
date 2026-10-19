@@ -238,52 +238,40 @@ function prepareCompilerTimerShimDynamicInstructionSupport(
 ): ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence> {
   const support = new Map<IrUnitId, PreparedDynamicInstructionSupportEvidence>();
   for (const shape of shapes.values()) {
-    let conversionCallables: readonly IrFuncRef[] | undefined;
-    if (ctx.standalone) {
-      const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
-      const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
-      if (!selected) continue;
-      const toPrimitive = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__to_primitive",
-        selected.toPrimitive,
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      const unboxNumber = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__unbox_number",
-        selected.unboxNumber,
-        [{ kind: "externref" }],
-        [{ kind: "f64" }],
-      );
-      const fusedToNumber =
-        selected.fusedToNumber === undefined
-          ? undefined
-          : exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              "__to_number",
-              selected.fusedToNumber,
-              [{ kind: "externref" }],
-              [{ kind: "f64" }],
-            );
-      if (!toPrimitive || !unboxNumber || (selected.fusedToNumber !== undefined && !fusedToNumber)) continue;
-      conversionCallables = fusedToNumber ? [fusedToNumber, toPrimitive, unboxNumber] : [toPrimitive, unboxNumber];
-    } else {
-      const unboxNumber = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__unbox_number",
-        ctx.funcMap.get("__unbox_number"),
-        [{ kind: "externref" }],
-        [{ kind: "f64" }],
-      );
-      if (!unboxNumber) continue;
-      conversionCallables = [unboxNumber];
-    }
+    const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
+    const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
+    if (!selected) continue;
+    const toPrimitive = exactPreparedDynamicHelperRef(
+      ctx,
+      callableImports,
+      "__to_primitive",
+      selected.toPrimitive,
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    const unboxNumber = exactPreparedDynamicHelperRef(
+      ctx,
+      callableImports,
+      "__unbox_number",
+      selected.unboxNumber,
+      [{ kind: "externref" }],
+      [{ kind: "f64" }],
+    );
+    const fusedToNumber =
+      selected.fusedToNumber === undefined
+        ? undefined
+        : exactPreparedDynamicHelperRef(
+            ctx,
+            callableImports,
+            "__to_number",
+            selected.fusedToNumber,
+            [{ kind: "externref" }],
+            [{ kind: "f64" }],
+          );
+    if (!toPrimitive || !unboxNumber || (selected.fusedToNumber !== undefined && !fusedToNumber)) continue;
+    const conversionCallables: readonly IrFuncRef[] = fusedToNumber
+      ? [fusedToNumber, toPrimitive, unboxNumber]
+      : [toPrimitive, unboxNumber];
     const boxNumber = exactPreparedDynamicHelperRef(
       ctx,
       callableImports,

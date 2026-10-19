@@ -29,8 +29,7 @@ import type { CodegenContext, CodegenOptions } from "./types.js";
 import { readEnv } from "../../env.js";
 
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
-  return targetProfile.target === "standalone" ||
-    (targetProfile.environment === "javascript" && targetProfile.semanticProviders === "native-first")
+  return targetProfile.target === "standalone" || targetProfile.environment === "javascript"
     ? nativeLiteralRegExpEngineConfig()
     : null;
 }
@@ -420,10 +419,10 @@ export function createCodegenContext(
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.nativeRegime, // (#5385) the native semantic regime, not the environment
-    ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
-    standaloneScriptVarBindings: options?.standaloneScriptVarBindings,
+    ...(options?.standaloneGlobalThisImport ? { linkedGlobalThisImport: options.standaloneGlobalThisImport } : {}),
+    sharedScriptVarBindings: options?.standaloneScriptVarBindings,
     ...(options?.standaloneMicrotaskNotifyImport
-      ? { standaloneMicrotaskNotifyImport: options.standaloneMicrotaskNotifyImport }
+      ? { microtaskNotifyImport: options.standaloneMicrotaskNotifyImport }
       : {}),
     directEvalMode: options?.directEval ?? "legacy",
     runtimeEvalProviderAbsent: targetProfile.target === "standalone" && options?.runtimeEvalProvider === false,
@@ -575,5 +574,19 @@ export function createCodegenContext(
     }
   }
 
+  return assertNativeRegimeOrWasi(ctx, targetProfile);
+}
+
+/**
+ * (#6979 S7-b) The host-semantic lane is gone: WasmGC codegen runs either the
+ * native semantic regime or the transitional WASI projection, never neither.
+ * Every old compound regime/WASI arm is therefore a WasmGC-backend fact, and
+ * S7-b deleted the retired host imports those arms emitted. Fail loudly if a
+ * new profile breaks the invariant instead of silently reviving them.
+ */
+function assertNativeRegimeOrWasi(ctx: CodegenContext, targetProfile: CompileTargetProfile): CodegenContext {
+  if (targetProfile.backend === "wasmgc" && !targetProfile.nativeRegime && targetProfile.environment !== "wasi") {
+    throw new Error(`#6979: WasmGC target '${targetProfile.target}' must lower with the native regime or WASI`);
+  }
   return ctx;
 }

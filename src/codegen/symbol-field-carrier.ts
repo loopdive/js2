@@ -3,7 +3,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { isSymbolType } from "../checker/type-mapper.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 export function symbolBrand(type: ts.Type, wasmType: ValType): ValType {
@@ -45,7 +45,7 @@ export function symbolBoundaryCoercionInstrs(
   fctx?: FunctionContext,
 ): Instr[] | undefined {
   if ((from.kind === "externref" || from.kind === "ref_extern") && to.kind === "i32" && to.symbol === true) {
-    if ((ctx.standalone || ctx.wasi) && ctx.symbolTypeIdx >= 0) {
+    if (wasmGcBackend(ctx) && ctx.symbolTypeIdx >= 0) {
       return [
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: ctx.symbolTypeIdx },

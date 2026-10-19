@@ -27,9 +27,14 @@ import {
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
 import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
-import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
-  addArrayIteratorImports,
+  hostFreeEnvironment,
+  jsValueBoundary,
+  type ClosureInfo,
+  type CodegenContext,
+  type FunctionContext,
+} from "./context/types.js";
+import {
   addStringImports,
   addUnionImports,
   resolveWasmType,
@@ -39,7 +44,6 @@ import {
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { funcValueCallableSignature } from "./closures/func-value-callable-signature.js"; // (#6699) value ABI, not lifted
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
-import { reserveVecMethodHelper } from "./vec-access-exports.js"; // (#4531) extern-receiver push/pop dual-lane
 import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
 import { emitTypedArraySetBoundsCheck } from "./typed-array-set-bounds.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -122,7 +126,6 @@ import {
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
-import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";
 import { isHostTypedArrayCarrierExpression } from "./expressions/typed-array-host-carrier.js";
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
@@ -397,9 +400,9 @@ function emitCallbackTypeCheck(
 /**
  * (#3126, the #3098 typed-lane residual) Gate for admitting a REF/REF_NULL
  * element receiver (native-string `string[]` vecs, object-struct `T[]`
- * arrays) into the native typed HOF impls on the HOST-FREE lanes
- * (standalone/wasi — the caller checks the lane; see hofElemKindOk for why
- * the gc host lane keeps its `__make_callback` fallback).
+ * arrays) into the native typed HOF impls. See hofElemKindOk for why a
+ * JavaScript-hosted callback that references ambient globals can still need
+ * the explicit callback boundary.
  *
  * The typed loops are element-kind agnostic on the CLOSURE path
  * (`buildClosureCallInstrs` — `call_ref` + `coercionInstrs`), but the
@@ -426,14 +429,14 @@ function refElemHofCallbackIsClosure(ctx: CodegenContext, fctx: FunctionContext,
   if (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)) return true;
   const probed = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, cbArg));
   if (probed === null || probed === undefined) return false;
-  // (#7059) Standalone: an opaque-externref callback VALUE (`Boolean`, a
+  // (#7059) WasmGC: an opaque-externref callback VALUE (`Boolean`, a
   // `var`-bound function, an object member) is admitted too. `setupArrayCallback`
   // recovers a native `call_ref` for it through the #3015/#6690 dynamic
-  // closure path (standalone-gated there, never the host bridge), so the
+  // closure path (native-semantic there, never the host bridge), so the
   // element-kind hazard this gate guards against cannot arise. Declining it
   // fell through to a generic fallback that answered `null` —
   // `["a", "", "b"].filter(Boolean)` evaluated to `[]`.
-  if (ctx.standalone && probed.kind === "externref") return true;
+  if (ctx.targetProfile.backend === "wasmgc" && probed.kind === "externref") return true;
   return (
     (probed.kind === "ref" || probed.kind === "ref_null") &&
     ctx.closureInfoByTypeIdx.has((probed as { typeIdx: number }).typeIdx)
@@ -1138,8 +1141,9 @@ export function emitClampNonNeg(fctx: FunctionContext, local: number): void {
  * #3185 §4, prioritises eliminating the abort).
  *
  * Grow only — never shrinks. A non-sparse vec (backing capacity ≥ neededLen) is
- * a runtime no-op (the `if` is not taken). Callers gate the EMISSION on
- * `ctx.standalone`/`ctx.wasi` so the host/gc lane stays byte-identical.
+ * a runtime no-op (the `if` is not taken). Callers emit it for the WasmGC
+ * semantic implementation; the legacy linear backend retains its provider
+ * lowering.
  */
 export function emitEnsureBackingCapacity(
   fctx: FunctionContext,
@@ -1522,10 +1526,9 @@ function shouldWrapDynViewTwoArm(
     !dynViewTwoArmActive.has(callExpr) &&
     ts.isPropertyAccessExpression(propAccess) &&
     DYN_VIEW_READ_METHODS.has(methodName) &&
-    // (#3162) find/findIndex only join the two-arm under standalone — their
-    // correct THEN arm is the standalone-only #3098 `__hof_<name>` substrate
-    // (see FIND_METHODS). In gc/host mode they stay on the pre-existing path.
-    (!FIND_METHODS.has(methodName) || ctx.standalone) &&
+    // (#3162) find/findIndex join the two-arm when the WasmGC semantic core is
+    // available; their correct THEN arm is the #3098 `__hof_<name>` substrate.
+    (!FIND_METHODS.has(methodName) || ctx.targetProfile.backend === "wasmgc") &&
     // (#2872) The static per-method impls the arms route to hard-require their
     // search/index argument. A 0-arg call must NOT be promoted from the
     // tolerant generic ladder into that hard CE — skip the wrap and keep the
@@ -1928,15 +1931,17 @@ function emitDynViewMethodTwoArm(
   const receiverExpr = propAccess.expression;
   if (!ts.isIdentifier(receiverExpr)) return undefined;
   const name = receiverExpr.text;
-  // (#3162 Fix B) Pre-ensure the standalone native `__hof_<name>` loop for
+  // (#3162 Fix B) Pre-ensure the WasmGC-native `__hof_<name>` loop for
   // find/findIndex BEFORE emitting any arm/receiver code, so the append-only
   // defined-func mint (and any union-import registration it triggers) settles
   // the funcIdx space up front — nothing is buffered yet to be shifted (mirrors
   // the setupArrayLoop pre-flush discipline). undefined ⇒ helper unavailable
-  // (non-standalone or missing deps): the THEN arm falls back to the legacy
+  // (non-WasmGC or missing deps): the THEN arm falls back to the legacy
   // `compileArrayMethodCall` re-entry.
   const hofMethodIdx =
-    ctx.standalone && FIND_METHODS.has(methodName) ? ensureNativeArrayHof(ctx, methodName) : undefined;
+    ctx.targetProfile.backend === "wasmgc" && FIND_METHODS.has(methodName)
+      ? ensureNativeArrayHof(ctx, methodName)
+      : undefined;
   const dynIdx = getOrRegisterTaDynViewType(ctx);
 
   // Compile the receiver ONCE → externref → recvExt; recvAny (anyref) for ref.test/cast.
@@ -2048,10 +2053,6 @@ function emitDynViewMethodTwoArm(
   return { kind: "externref" };
 }
 
-function shouldUseHostArrayMethod(ctx: CodegenContext, receiverIsExternref: boolean): boolean {
-  return receiverIsExternref && !ctx.standalone && !ctx.wasi;
-}
-
 /**
  * Compile array method calls to inline Wasm instructions.
  * Returns undefined if the call is not an array method (caller should continue).
@@ -2102,11 +2103,9 @@ export function compileArrayMethodCall(
   // builtin lowering — see builtin-proto-member-override.ts.
   const ovr = tryEmitProtoOverrideTwoArm(ctx, fctx, propAccess, callExpr, "Array", methodName, expectedType);
   if (ovr !== undefined) return ovr;
-  // (#2863 Phase 2) `toLocaleString` is array-dispatched ONLY under standalone/
-  // wasi (no host `__extern_toLocaleString` carrier). In host (gc) mode fall
-  // through to the host `__extern_toLocaleString` path (real Intl grouping +
-  // per-element abrupt-completion propagation) — return undefined here.
-  if (methodName === "toLocaleString" && !ctx.standalone && !ctx.wasi) return undefined;
+  // (#2863 Phase 2) `toLocaleString` is owned by the WasmGC semantic core.
+  // The legacy linear backend retains the provider lowering.
+  if (methodName === "toLocaleString" && ctx.targetProfile.backend !== "wasmgc") return undefined;
 
   // (#2007/#1448) Record closure-allocating array methods so the standalone
   // vec-concat join fast-path can avoid a late `number_toString` registration
@@ -2375,36 +2374,36 @@ export function compileArrayMethodCall(
 
   // (#3126, #3098 typed-lane residual) Element-kind gate for the callback-
   // consuming HOF impls below. f64/i32/externref were always admitted;
-  // ref/ref_null (native-string / object-struct) elements are admitted on the
-  // HOST-FREE lanes (standalone/wasi) when the callback provably takes the
-  // native closure path (see refElemHofCallbackIsClosure). There the generic
-  // fallback is strictly unusable — it materializes the callback via
-  // `env.__make_callback`, an unsatisfiable host import (typed `string[]`
-  // find/filter — the #3098 boundary), so routing native can only gain.
+  // ref/ref_null (native-string / object-struct) elements are admitted when
+  // the callback provably takes the native closure path (see
+  // refElemHofCallbackIsClosure). In a host-free environment the generic
+  // fallback is strictly unusable because it materializes the callback through
+  // `env.__make_callback` (typed `string[]` find/filter — the #3098 boundary).
   //
-  // The gc HOST lane is deliberately NOT widened. Its fallback compiles the
-  // inline arrow via compileArrowAsCallback (`__make_callback`), whose body
+  // A JavaScript environment is deliberately widened only for boundary-safe
+  // callbacks. Its fallback compiles the inline arrow via
+  // compileArrowAsCallback (`__make_callback`), whose body
   // resolves HOST globals (`Temporal`, `TemporalHelpers`, …) and host-object
   // method calls; the closure path (compileArrowAsClosure) does not — a
   // widened gc gate flipped 212 Temporal merge_group tests pass→fail
   // ("TemporalHelpers is not defined" inside the lifted closure) on PR #2838's
-  // first merge-group attempt. The gc-lane residual (struct-array `T[]`
+  // first merge-group attempt. The boundary residual (struct-array `T[]`
   // find/filter/some are a silent no-op through the SAME fallback when the
   // body is host-free) stays pre-existing and documented in the #3126 issue
   // file — its real root is closure-lifted host-global resolution, not this
   // gate. Mirrors the #1967 `sort` / #2688 `map` widenings otherwise.
   // Evaluated lazily: at most one probe-compile per call site, only for
-  // ref-element receivers on the host-free lanes.
+  // ref-element receivers.
   const hofElemKindOk = (et: ValType): boolean =>
     et.kind === "f64" ||
     et.kind === "i32" ||
     et.kind === "externref" ||
     ((et.kind === "ref" || et.kind === "ref_null") &&
       refElemHofCallbackIsClosure(ctx, fctx, callExpr) &&
-      // (#4616) gc HOST lane: widen only for callbacks whose body is free of
-      // host-only ambient globals — the #2838 Temporal hazard. The standalone/
-      // wasi lanes keep their unconditional widening (no host globals exist).
-      (ctx.standalone || ctx.wasi || hofRefElemClosureLaneSafe(ctx, callExpr)));
+      // (#4616) A JavaScript environment widens only for callbacks whose body
+      // is free of host-only ambient globals — the #2838 Temporal hazard. A
+      // host-free environment has no such globals to preserve.
+      (hostFreeEnvironment(ctx) || hofRefElemClosureLaneSafe(ctx, callExpr)));
 
   // (#3481) §23.1.3.1 `at(index)` step 3 and §23.1.3.14 `includes(x, fromIndex)`
   // step 4 both run `? ToIntegerOrInfinity(...)`, whose ToNumber throws on a
@@ -2460,20 +2459,12 @@ export function compileArrayMethodCall(
       break;
     }
     case "includes":
-      // Host lane: an externref receiver (a callback capture, a host proxy) may
-      // not be the inferred vec type, so it takes the host method bridge. (#6881)
-      // The regime has no host array: that bridge's `__js_array_*` builders fail
-      // the native-first gate (eval-widened script vars land here), so it takes
-      // the native vec loop, as `at`/`indexOf` already do.
-      result =
-        receiverIsExternref && !ctx.standalone
-          ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "includes")
-          : compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      // (#6881, #6979) An externref receiver takes the native vec loop, as
+      // `at`/`indexOf` do; the host `__js_array_*` method bridge is retired.
+      result = compileArrayIncludes(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "reverse":
-      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "reverse")
-        : compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = compileArrayReverse(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "push":
       result = tryCompileArrayPushDynamicSpread(
@@ -2496,30 +2487,12 @@ export function compileArrayMethodCall(
       // bridge (whose `_tryWasmVecMutation` routes a registered mirror back to
       // its source vec). Host/gc lane only — standalone and native-first keep
       // the native path (no host mirrors exist there).
-      if (
-        receiverIsExternref &&
-        !ctx.standalone &&
-        !ctx.wasi &&
-        ctx.targetProfile.semanticProviders !== "native-first" &&
-        callExpr.arguments.length === 1
-      ) {
-        result = compileExternReceiverPushPop(ctx, fctx, methodAccess, callExpr, "push");
-        if (result !== undefined) break;
-      }
+
       result = compileArrayPush(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "pop":
       // (#4531) Same dual-lane as `push` — see above.
-      if (
-        receiverIsExternref &&
-        !ctx.standalone &&
-        !ctx.wasi &&
-        ctx.targetProfile.semanticProviders !== "native-first" &&
-        callExpr.arguments.length === 0
-      ) {
-        result = compileExternReceiverPushPop(ctx, fctx, methodAccess, callExpr, "pop");
-        if (result !== undefined) break;
-      }
+
       result = compileArrayPop(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType, expectedType);
       break;
     case "shift":
@@ -2529,9 +2502,7 @@ export function compileArrayMethodCall(
       result = compileArrayUnshift(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "slice":
-      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "slice")
-        : compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = compileArraySlice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "concat":
       // Host methods such as String.prototype.split return ordinary JavaScript
@@ -2539,8 +2510,7 @@ export function compileArrayMethodCall(
       // by the native concat lowering, so preserve their Array.prototype.concat
       // semantics through the existing host fallback.
       result = receiverIsExternref
-        ? ctx.targetProfile.semanticProviders === "native-first" &&
-          callExpr.arguments.every(
+        ? callExpr.arguments.every(
             (argument) => resolveArrayInfo(ctx, ctx.checker.getTypeAtLocation(argument)) !== null,
           )
           ? compileArrayConcatNativeDynamic(ctx, fctx, methodAccess, callExpr)
@@ -2569,9 +2539,7 @@ export function compileArrayMethodCall(
       result = compileArraySplice(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "at":
-      result = shouldUseHostArrayMethod(ctx, receiverIsExternref)
-        ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "at")
-        : compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
+      result = compileArrayAt(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "fill":
       result = compileArrayFill(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
@@ -2583,17 +2551,15 @@ export function compileArrayMethodCall(
       result = compileArrayLastIndexOf(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType);
       break;
     case "sort":
-      // Host arrays use the ordinary host boundary; Wasm vecs keep native sort.
+      // Wasm vecs keep native sort (the host-array boundary is retired, #6979).
       result =
-        receiverIsExternref && !ctx.standalone && !ctx.wasi
-          ? compileArrayMethodExtern(ctx, fctx, methodAccess, callExpr, "sort")
-          : elemType.kind === "f64" ||
-              elemType.kind === "i32" ||
-              elemType.kind === "externref" ||
-              elemType.kind === "ref" ||
-              elemType.kind === "ref_null"
-            ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
-            : undefined;
+        elemType.kind === "f64" ||
+        elemType.kind === "i32" ||
+        elemType.kind === "externref" ||
+        elemType.kind === "ref" ||
+        elemType.kind === "ref_null"
+          ? compileArraySort(ctx, fctx, methodAccess, callExpr, vecTypeIdx, arrTypeIdx, elemType)
+          : undefined;
       break;
     // Functional array methods -- numeric (f64, i32) / externref element types,
     // plus ref/ref_null elements when the callback is a provable closure (#3126).
@@ -3197,8 +3163,8 @@ function compileArrayWith(
 }
 
 /**
- * Compile Array.prototype.entries/keys/values — delegates to host import
- * that creates a proper JS iterator over the WasmGC vec struct.
+ * Compile Array.prototype.entries/keys/values over the native iterator bridge
+ * (the host `__array_entries/keys/values` import is retired, #6979).
  */
 function compileArrayIteratorMethod(
   ctx: CodegenContext,
@@ -3206,39 +3172,14 @@ function compileArrayIteratorMethod(
   propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   methodName: string,
 ): ValType | null {
-  if (ctx.standalone || ctx.wasi) {
-    // #1320 Slice 1: native iterator bridge. Build a canonical externref `$Vec`
-    // (box each element here, where we have an fctx), wrap it in an `$IterRec`
-    // via the native `__iterator`. `.values()` boxes each element, `.keys()`
-    // boxes the index, and `.entries()` boxes a 2-element `[i, value]` pair vec
-    // per slot — all over the SAME canonical-externref-`$Vec` runtime (no
-    // `$GenStateBase` substrate). The consumer destructures each yielded pair
-    // externref via the existing array-access path.
-    return compileNativeArrayIterator(ctx, fctx, propAccess, methodName);
-  }
-
-  addArrayIteratorImports(ctx);
-  const importName = `__array_${methodName}`;
-  const funcIdx = ctx.funcMap.get(importName);
-  if (funcIdx === undefined) return null;
-
-  // Compile receiver and validate a branded TypedArray before the host iterator
-  // adapter observes its logical length. Native %TypedArray% iterator methods
-  // throw at call time when the receiver is detached.
-  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
-  if (
-    receiverType &&
-    (receiverType.kind === "ref" || receiverType.kind === "ref_null" || receiverType.kind === "anyref")
-  ) {
-    const receiverLocal = allocLocal(fctx, `__arr_${methodName}_recv_${fctx.locals.length}`, receiverType);
-    fctx.body.push({ op: "local.tee", index: receiverLocal });
-    emitReceiverNullGuard(ctx, fctx, receiverLocal, propAccess.expression);
-  }
-  fctx.body.push({ op: "extern.convert_any" });
-
-  // Call the host import: (externref) → externref
-  fctx.body.push({ op: "call", funcIdx });
-  return { kind: "externref" };
+  // #1320 Slice 1: native iterator bridge. Build a canonical externref `$Vec`
+  // (box each element here, where we have an fctx), wrap it in an `$IterRec`
+  // via the native `__iterator`. `.values()` boxes each element, `.keys()`
+  // boxes the index, and `.entries()` boxes a 2-element `[i, value]` pair vec
+  // per slot — all over the SAME canonical-externref-`$Vec` runtime (no
+  // `$GenStateBase` substrate). The consumer destructures each yielded pair
+  // externref via the existing array-access path.
+  return compileNativeArrayIterator(ctx, fctx, propAccess, methodName);
 }
 
 /**
@@ -3732,13 +3673,11 @@ function compileArrayIndexOf(
   // For ref/ref_null elements, use ref.eq for reference identity comparison.
   let eqInstrs: Instr[];
   if (elemType.kind === "externref") {
-    // (#2719) Standalone/WASI have no JS host, so the `__host_eq` import is
-    // unsatisfiable and the module fails to instantiate. Route element Strict
-    // Equality through the pure-Wasm `__extern_strict_eq` helper there (composed
-    // from `__any_from_extern` + `__any_strict_eq`, §7.2.16-equivalent). Host/gc
-    // mode keeps the `__host_eq` host import. Mirrors the standalone arm in
-    // `compileArrayLikePrototypeSearch` (the `.call(...)` form).
-    const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#2719) WasmGC owns element Strict Equality through the native
+    // `__extern_strict_eq` helper (composed from `__any_from_extern` +
+    // `__any_strict_eq`, §7.2.16-equivalent). The legacy linear backend keeps
+    // the provider import. Mirrors `compileArrayLikePrototypeSearch`.
+    const nativeCmp = ctx.targetProfile.backend === "wasmgc";
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -3961,10 +3900,10 @@ function compileArrayIncludes(
     // identity, cross-type → false. The wasm:js-string `equals` builtin
     // coerces both operands to strings, mis-matching object/boolean/number
     // elements (#786 — `includes` on an externref vec).
-    // (#2719) Standalone/WASI have no JS host, so the `__same_value_zero` import
-    // is unsatisfiable. Route SameValueZero through the pure-Wasm
-    // `__extern_same_value_zero` helper there; host/gc mode keeps the import.
-    const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#2719) WasmGC owns SameValueZero through the native
+    // `__extern_same_value_zero` helper; the legacy linear backend keeps the
+    // provider import.
+    const nativeCmp = ctx.targetProfile.backend === "wasmgc";
     const svzIdx = nativeCmp
       ? ensureExternSameValueZeroHelper(ctx)
       : ensureLateImport(ctx, "__same_value_zero", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -4094,9 +4033,9 @@ function compileArrayReverse(
   // backing via `a.length = N`) makes the two-pointer swap read/write `data[i]`
   // / `data[j]` up to the LOGICAL length (`j = length - 1`) and TRAP ("array
   // element access out of bounds"). Grow the backing to the logical length
-  // (`j + 1`) so the whole reversal lands in-bounds. Standalone/WASI-gated
-  // (host/gc byte-identical); dense receiver ⇒ runtime no-op.
-  if (ctx.standalone || ctx.wasi) {
+  // (`j + 1`) so the whole reversal lands in-bounds in the WasmGC semantic
+  // implementation; dense receiver ⇒ runtime no-op.
+  if (ctx.targetProfile.backend === "wasmgc") {
     const needTmp = allocLocal(fctx, `__arr_rev_need_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.get", index: jTmp });
     fctx.body.push({ op: "i32.const", value: 1 });
@@ -4159,125 +4098,6 @@ function compileArrayReverse(
   // Return same vec ref
   fctx.body.push({ op: "local.get", index: vecTmp });
   return { kind: "ref_null", typeIdx: vecTypeIdx };
-}
-
-/**
- * arr.push(val, ...) -> capacity-based amortized push supporting multiple arguments.
- * Mutates vec struct in-place: grows backing array if needed, sets elements, increments length.
- */
-/**
- * (#4531) Guarded dual-lane `push`/`pop` for an EXTERNREF-shaped receiver —
- * the class-field case where the slot may hold either the native vec (boxed
- * through externref) or its `__make_iterable` host MIRROR (prettier's
- * `this.stack`). `ref.test` the registered vec carriers: on hit call the
- * unconditionally-exported native `__vec_push`/`__vec_pop` helper; else route
- * through the host `__extern_method_call` bridge, whose `_tryWasmVecMutation`
- * resolves a registered mirror back to its source vec (runtime.ts). Mirrors
- * the #2784 S3 arm in call-receiver-method.ts. Returns undefined when a
- * required import could not be ensured (caller falls back to the native path).
- */
-function compileExternReceiverPushPop(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  propAccess: ts.PropertyAccessExpression | ts.ElementAccessExpression,
-  callExpr: ts.CallExpression,
-  methodName: "push" | "pop",
-): ValType | undefined {
-  if (!ts.isPropertyAccessExpression(propAccess)) return undefined;
-  const mcIdx = ensureLateImport(
-    ctx,
-    "__extern_method_call",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [{ kind: "externref" }],
-  );
-  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-  const boxNumIdx =
-    methodName === "push"
-      ? ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }])
-      : undefined;
-  addStringConstantGlobal(ctx, methodName);
-  flushLateImportShifts(ctx, fctx);
-  const vecOpIdx = reserveVecMethodHelper(ctx, methodName);
-  if (
-    vecOpIdx === undefined ||
-    mcIdx === undefined ||
-    arrNewIdx === undefined ||
-    arrPushIdx === undefined ||
-    (methodName === "push" && boxNumIdx === undefined)
-  ) {
-    return undefined;
-  }
-  // Receiver -> externref local.
-  const recvT = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
-  if (recvT && recvT.kind !== "externref") coerceType(ctx, fctx, recvT, { kind: "externref" });
-  else if (!recvT) fctx.body.push({ op: "ref.null.extern" });
-  const recvLocal = allocLocal(fctx, `__xr_pp_recv_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: recvLocal });
-  // push's element -> argLocal (side effects evaluated once, up front).
-  let argLocal: number | undefined;
-  if (methodName === "push") {
-    const a = callExpr.arguments[0];
-    if (a) {
-      const at = compileExpression(ctx, fctx, a, { kind: "externref" });
-      if (at && at.kind !== "externref") coerceType(ctx, fctx, at, { kind: "externref" });
-      else if (!at) fctx.body.push({ op: "ref.null.extern" });
-    } else {
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    argLocal = allocLocal(fctx, `__xr_pp_arg_${fctx.locals.length}`, { kind: "externref" });
-    fctx.body.push({ op: "local.set", index: argLocal });
-  }
-  // isVec = OR of ref.test over every registered vec carrier.
-  const anyTmp = allocLocal(fctx, `__xr_pp_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push({ op: "any.convert_extern" });
-  fctx.body.push({ op: "local.set", index: anyTmp });
-  let emitted = false;
-  for (const vi of new Set(ctx.vecTypeMap.values())) {
-    fctx.body.push({ op: "local.get", index: anyTmp });
-    fctx.body.push({ op: "ref.test", typeIdx: vi });
-    if (emitted) fctx.body.push({ op: "i32.or" });
-    emitted = true;
-  }
-  if (!emitted) {
-    fctx.body.push({ op: "i32.const", value: 0 });
-  }
-  // THEN arm: native vec op through the exported helper.
-  const thenStart = fctx.body.length;
-  if (methodName === "push") {
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push({ op: "local.get", index: argLocal! });
-    fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> i32 new length
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    fctx.body.push({ op: "call", funcIdx: boxNumIdx! }); // -> externref
-  } else {
-    fctx.body.push({ op: "local.get", index: recvLocal });
-    fctx.body.push({ op: "call", funcIdx: vecOpIdx }); // -> externref
-  }
-  const thenInstrs = fctx.body.splice(thenStart);
-  // ELSE arm: host bridge.
-  const elseStart = fctx.body.length;
-  fctx.body.push({ op: "call", funcIdx: arrNewIdx });
-  const argsLocal = allocLocal(fctx, `__xr_pp_args_${fctx.locals.length}`, { kind: "externref" });
-  fctx.body.push({ op: "local.set", index: argsLocal });
-  if (methodName === "push") {
-    fctx.body.push({ op: "local.get", index: argsLocal });
-    fctx.body.push({ op: "local.get", index: argLocal! });
-    fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-  }
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
-  fctx.body.push({ op: "local.get", index: argsLocal });
-  fctx.body.push({ op: "call", funcIdx: mcIdx });
-  const elseInstrs = fctx.body.splice(elseStart);
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: { kind: "externref" } },
-    then: thenInstrs,
-    else: elseInstrs,
-  });
-  return { kind: "externref" };
 }
 
 function compileArrayPush(
@@ -4467,7 +4287,7 @@ function tryCompileArrayPushDynamicSpread(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | undefined {
-  if (receiverIsExternref || ctx.standalone || ctx.wasi || !hasSpreadArgument(callExpr.arguments)) {
+  if (receiverIsExternref || !jsValueBoundary(ctx) || !hasSpreadArgument(callExpr.arguments)) {
     return undefined;
   }
   if (callExpr.arguments.length === 1 && ts.isSpreadElement(callExpr.arguments[0]!)) {
@@ -5498,19 +5318,19 @@ function compileArrayConcat(
   );
 
   if (!argArrayInfo) {
-    if (ctx.targetProfile.semanticProviders === "native-first" && allArgumentsAreArrays) {
+    if (allArgumentsAreArrays) {
       return compileArrayConcatNativeDynamic(ctx, fctx, propAccess, callExpr);
     }
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
   }
   if (argArrayInfo.vecTypeIdx !== vecTypeIdx) {
-    if (ctx.targetProfile.semanticProviders === "native-first" && allArgumentsAreArrays) {
+    if (allArgumentsAreArrays) {
       return compileArrayConcatNativeDynamic(ctx, fctx, propAccess, callExpr);
     }
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
   }
   if (callExpr.arguments.length > 1) {
-    if (ctx.targetProfile.semanticProviders === "native-first" && allArgumentsAreArrays) {
+    if (allArgumentsAreArrays) {
       return compileArrayConcatNativeDynamic(ctx, fctx, propAccess, callExpr);
     }
     return compileArrayConcatExtern(ctx, fctx, propAccess, callExpr);
@@ -5576,12 +5396,9 @@ function compileArrayConcat(
  * Fallback for arr.concat(arg...) when any arg is not a known WasmGC array type
  * (e.g. `any`, array-like with Symbol.isConcatSpreadable, or plain objects).
  *
- * (#4446) Per-target switch. `native-first` (`--target standalone` /
- * `--target wasi`) takes the Wasm-native §23.1.3.1 loop
- * ({@link compileArrayConcatNativeSpec}); everything else keeps the unchanged
- * `env::__array_concat_any` host bridge (`compileArrayConcatExternHost` in
- * array-method-host.ts), whose `env::*` imports the #2961 leak guard rejects
- * host-free.
+ * (#4446, #6979) Every WasmGC profile takes the Wasm-native §23.1.3.1 loop
+ * ({@link compileArrayConcatNativeSpec}); the `env::__array_concat_any` host
+ * bridge is retired.
  */
 function compileArrayConcatExtern(
   ctx: CodegenContext,
@@ -5589,11 +5406,9 @@ function compileArrayConcatExtern(
   propAccess: ts.PropertyAccessExpression,
   callExpr: ts.CallExpression,
 ): ValType | null {
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    const native = compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr);
-    if (native !== undefined) return native;
-  }
-  return compileArrayConcatExternHost(ctx, fctx, propAccess, callExpr);
+  // (#6979) The `env::__array_concat_any` host bridge is retired; a shape the
+  // native §23.1.3.1 loop declines is a compile failure.
+  return compileArrayConcatNativeSpec(ctx, fctx, propAccess, callExpr) ?? null;
 }
 
 /**
@@ -5729,11 +5544,8 @@ export function compileArrayJoinExtern(
   // delegation, and native-first must not select a JS semantic provider merely
   // because a JS host happens to instantiate the module. Both profiles walk
   // the externref array with the in-module provider instead.
-  if (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") {
-    const native = compileArrayJoinExternNative(ctx, fctx, propAccess, callExpr);
-    if (native !== null) return native;
-    // else fall through — native string helpers unavailable, best-effort host.
-  }
+  const native = compileArrayJoinExternNative(ctx, fctx, propAccess, callExpr);
+  if (native !== null) return native;
   const joinAnyIdx = ensureLateImport(
     ctx,
     "__array_join_any",
@@ -6852,14 +6664,13 @@ function setupArrayCallback(
       closureTmp = allocLocal(fctx, `__arr_${tag}_clcb_${fctx.locals.length}`, cbResult);
       fctx.body.push({ op: "local.set", index: closureTmp });
     }
-  } else if (ctx.standalone && cbResult && cbResult.kind === "externref") {
-    // (#3015) Standalone: a dynamic function-typed callback value (a function
+  } else if (ctx.targetProfile.backend === "wasmgc" && cbResult && cbResult.kind === "externref") {
+    // (#3015) WasmGC: a dynamic function-typed callback value (a function
     // PARAMETER, e.g. `arr.some(cb)`) arrives as an opaque externref and would
     // otherwise route through the `__call_1_*`/`__call_2_*` host bridge — a
-    // host import that is not instantiable host-free. Recover a native
-    // `call_ref` via the callback signature's canonical funcref wrapper. Host
-    // mode is untouched (this branch is standalone-gated) and keeps the bridge
-    // as its fast path per the dual-mode principle.
+    // boundary mechanism rather than semantic storage. Recover a native
+    // `call_ref` via the callback signature's canonical funcref wrapper; an
+    // explicit JavaScript boundary remains the fallback for actual JS values.
     // (#6690) No single static signature (`any`, overloads): an all-externref
     // wrapper whose typed arm rarely matches — the `__apply_closure` fallback
     // then calls the value by its real signature instead of the host bridge.
@@ -7008,7 +6819,7 @@ function setupArrayLoop(
     const externTmp = allocLocal(fctx, `__arr_${tag}_extern_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: externTmp });
     const fresh = buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType });
-    fctx.body.push(...vecReceiverIdentityArm(ctx, externTmp, vecTypeIdx, tag, fresh));
+    fctx.body.push(...vecReceiverIdentityArm(externTmp, vecTypeIdx, tag, fresh));
     recvExternTmp = externTmp;
   }
 
@@ -9195,14 +9006,14 @@ function compileArrayDefaultToStringSort(
   // …because `import-collector.ts` gated the two helpers this function needs on
   // DIFFERENT conditions: `string_compare` was skipped under `ctx.nativeStrings`
   // (the native `__str_compare` replaces it), while `number_toString` went
-  // native only under `ctx.wasi || ctx.standalone`. In plain `nativeStrings`
+  // native only for the old host-free modes. In plain `nativeStrings`
   // mode — i.e. `fast: true`, the whole gc-native lane — the module got the
   // JS-HOST `env.number_toString`, whose genuine JS string then failed
   // `stringifyTail`'s `any.convert_extern` + `ref.cast $AnyString` with an
   // `illegal cast` trap on every numeric `arr.sort()`.
   //
   // #3912 removed the mismatch at its source: `number_toString` is now native
-  // wherever strings are native (`usesNativeNumberFormat`), so
+  // wherever strings are native (always since #6979), so
   // `numToStrIsHostImport` can no longer be true while `ctx.nativeStrings` is —
   // the probe was dead code. Removed here, together with #3902's temporary
   // `coercion-sites-allow` for this file, exactly as #3902's frontmatter
@@ -9626,9 +9437,9 @@ function compileArrayFill(
   // of bounds"). `fill` writes its range unconditionally (§23.3.3.7 has no
   // HasProperty guard), so grow the backing to the clamped `end` first — then
   // the whole loop lands in-bounds and materialises the (formerly absent) slots
-  // as required. Standalone/WASI-gated so the host/gc lane stays byte-identical;
-  // a dense receiver (capacity ≥ end) makes the grow a runtime no-op.
-  if (ctx.standalone || ctx.wasi) {
+  // as required in the WasmGC semantic implementation. A dense receiver
+  // (capacity ≥ end) makes the grow a runtime no-op.
+  if (ctx.targetProfile.backend === "wasmgc") {
     emitEnsureBackingCapacity(fctx, vecTmp, dataTmp, vecTypeIdx, arrTypeIdx, endTmp);
   }
 
@@ -9713,8 +9524,9 @@ function compileTypedArraySet(
   let externGetIdx: number | undefined;
   let unwrapForWasmIdx: number | undefined;
   let srcExtern: number | undefined;
-  // Host-free targets have no facade: the externref IS the vec (#6659).
-  const unwrapHostFacade = dstCarrier?.kind === "externref" && !ctx.standalone && !ctx.wasi;
+  // A JavaScript value boundary can expose a facade that must be unwrapped;
+  // host-free environments carry the vec directly (#6659).
+  const unwrapHostFacade = dstCarrier?.kind === "externref" && jsValueBoundary(ctx);
   if (unwrapHostFacade) {
     unwrapForWasmIdx = ensureLateImport(ctx, "__unwrap_for_wasm", [{ kind: "externref" }], [{ kind: "externref" }]);
   }
@@ -10242,9 +10054,9 @@ function compileArrayCopyWithin(
   // ("array element access out of bounds"). Grow the backing to the logical
   // length first (target/start/end are all clamped to `len`, so
   // `target+count ≤ len` and `start+count ≤ len`); the move then lands
-  // in-bounds. Standalone/WASI-gated (host/gc byte-identical); dense receiver ⇒
-  // runtime no-op.
-  if (ctx.standalone || ctx.wasi) {
+  // in-bounds in the WasmGC semantic implementation; dense receiver ⇒ runtime
+  // no-op.
+  if (ctx.targetProfile.backend === "wasmgc") {
     emitEnsureBackingCapacity(fctx, vecTmp, dataTmp, vecTypeIdx, arrTypeIdx, lenTmp);
   }
 
@@ -10405,10 +10217,10 @@ function compileArrayLastIndexOf(
   // For ref/ref_null elements, use ref.eq for reference identity comparison.
   let liofEqInstrs: Instr[];
   if (elemType.kind === "externref") {
-    // (#2719) Standalone/WASI route element Strict Equality through the pure-Wasm
-    // `__extern_strict_eq` helper instead of the unsatisfiable `__host_eq` import;
-    // host/gc mode keeps the import. Mirrors indexOf / the `.call(...)` form.
-    const nativeCmp = ctx.standalone || ctx.wasi;
+    // (#2719) WasmGC routes element Strict Equality through the native
+    // `__extern_strict_eq` helper; the legacy linear backend keeps the provider
+    // import. Mirrors indexOf / the `.call(...)` form.
+    const nativeCmp = ctx.targetProfile.backend === "wasmgc";
     const cmpIdx = nativeCmp
       ? ensureExternStrictEqHelper(ctx)
       : ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -10812,8 +10624,8 @@ function tryCompileFlatMapNative(
 }
 
 /**
- * Compile arr.flat(depth?) — delegates to __array_flat host import (#1136).
- * Converts WasmGC vec receiver to externref, passes depth arg, returns externref.
+ * Compile arr.flat(depth?). WasmGC uses its native FlattenIntoArray semantic
+ * core; the legacy linear backend delegates to the provider import.
  */
 function compileArrayFlat(
   ctx: CodegenContext,
@@ -10824,12 +10636,9 @@ function compileArrayFlat(
   arrTypeIdx: number,
   elemType: ValType,
 ): ValType | null {
-  // (#2717) `flat` has no host-import Wasm-native arm — it delegates to the host
-  // `__array_flat` import. Under `--target standalone`/`wasi` there is no JS host
-  // to satisfy that import, so emitting it produces a module that traps at
-  // instantiation. Per the #2711 fail-loud policy, refuse loudly instead of
-  // emitting an unsatisfiable import.
-  if (ctx.standalone || ctx.wasi) {
+  // (#2717) WasmGC owns flattening semantics. Per the #2711 fail-loud policy,
+  // refuse an unsupported shape instead of falling back to a provider import.
+  if (ctx.targetProfile.backend === "wasmgc") {
     // (#3363) Native depth-1 homogeneous nested-array flatten first; falls
     // through to the loud refusal below for depth args / non-nested / mixed
     // receivers (the larger recursive/heterogeneous arm stays a #2717 follow-up).
@@ -10845,15 +10654,14 @@ function compileArrayFlat(
     reportError(
       ctx,
       callExpr,
-      `Codegen error: Array.prototype.flat() is not yet supported in --target standalone/wasi ` +
-        `(#2717) — there is no Wasm-native flatten arm and emitting the host import __array_flat ` +
-        `would produce a module that traps at instantiation. Recompile without --target ` +
-        `standalone, or avoid flat() in standalone/WASI code.`,
+      `Codegen error: this Array.prototype.flat() shape is not yet supported by the native ` +
+        `WasmGC flatten implementation (#2717). Avoid this flat() shape until the recursive ` +
+        `or heterogeneous arm is available.`,
     );
     // Return a non-null type (matching the host externref result) + `unreachable`
     // so the #1919 speculative wrapper COMMITS instead of rolling back: a rolled-
     // back null would discard the diagnostic (truncate `ctx.errors`) and emit a
-    // silent default, so the standalone build would compile to a wrong value
+    // silent default, so the WasmGC build would compile to a wrong value
     // (e.g. `flat().length === 0`) instead of failing loud. The `unreachable`
     // keeps the body well-typed; the recorded error fails the compile.
     fctx.body.push({ op: "unreachable" });
@@ -10893,8 +10701,8 @@ function compileArrayFlat(
 }
 
 /**
- * Compile arr.flatMap(callback, thisArg?) — delegates to __array_flatMap host import (#1136).
- * Converts WasmGC vec receiver to externref, passes callback and optional thisArg, returns externref.
+ * Compile arr.flatMap(callback, thisArg?). WasmGC composes the native map and
+ * flatten semantic core; the legacy linear backend delegates to its provider.
  */
 function compileArrayFlatMap(
   ctx: CodegenContext,
@@ -10908,20 +10716,20 @@ function compileArrayFlatMap(
   // §23.1.3.11 step 3: IsCallable(mapperFunction) is false → throw TypeError,
   // BEFORE any flatten work. Mirrors map/filter/forEach; covers the missing
   // callback (`[].flatMap()`) and known-non-callable args (`{}`, `0`, `null`,
-  // `Symbol()`, …). Placed above the standalone arm so both lanes get it.
+  // `Symbol()`, …). Placed above the backend split so both lanes get it.
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.flatMap")) {
     fctx.body.push({ op: "unreachable" });
     return { kind: "externref" };
   }
   if (callExpr.arguments.length < 1) return null; // flatMap requires a callback
 
-  // (#2717) On the host-free lanes `flatMap` has no host `__array_flatMap` to
-  // satisfy. `flatMap(cb)` ≡ `map(cb).flat(1)`, so try the native arm first
+  // (#2717) `flatMap(cb)` ≡ `map(cb).flat(1)`, so the WasmGC backend tries the
+  // native arm first
   // (reuses the native `map` + the #3363 depth-1 flatten); it applies when the
   // callback provably returns arrays. Otherwise fall through to the loud refusal
   // below (scalar / union / externref returns), per the #2711 fail-loud policy.
-  // Host/gc mode is unchanged — it keeps the fast `__array_flatMap` import path.
-  if (ctx.standalone || ctx.wasi) {
+  // The legacy linear backend keeps its `__array_flatMap` provider path.
+  if (ctx.targetProfile.backend === "wasmgc") {
     // (#6771 S4) Species-observable: the generic helper + ArraySpeciesCreate
     // (the typed map+flatten cannot publish onto a species result).
     const native = arraySpeciesActive(ctx)
@@ -10932,11 +10740,9 @@ function compileArrayFlatMap(
       ctx,
       callExpr,
       `Codegen error: Array.prototype.flatMap() with a non-array-returning callback is not yet ` +
-        `supported in --target standalone/wasi (#2717) — the native arm handles callbacks that ` +
-        `return arrays (flatMap ≡ map+flat(1)); scalar/union/dynamic returns would need a ` +
-        `runtime-heterogeneous flatten. Emitting the host import __array_flatMap would produce a ` +
-        `module that traps at instantiation. Recompile without --target standalone, or have the ` +
-        `flatMap callback return an array.`,
+        `supported by the native WasmGC implementation (#2717). The native arm handles callbacks ` +
+        `that return arrays (flatMap ≡ map+flat(1)); scalar, union, and dynamic returns still need ` +
+        `runtime-heterogeneous flattening. Have the callback return an array until that arm exists.`,
     );
     // Non-null type + `unreachable` so the #1919 speculative wrapper commits and
     // the diagnostic is not rolled back into a silent default (see compileArrayFlat).

@@ -52,6 +52,8 @@ import type { IrCountedStringAppendSiteId } from "./counted-string-append-proven
 // `emitUnbox`, and `emitUnbox`/`emitTagTest` take a neutral `TagId`. `js-tag.ts`
 // is no longer imported: the builder names no ECMAScript partition.
 import { defaultTagDomain } from "./producer.js";
+import { objectSetInstruction } from "./core/object-writes.js";
+import { assertObjectNewArity, objectNewInstruction } from "./core/object-creation.js";
 import type { TagDomain, TagId } from "./tag-domain.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
@@ -775,24 +777,19 @@ export class IrFunctionBuilder {
    * The arity check is enforced here so a stray slice-2 selector miss
    * surfaces immediately instead of as a malformed Wasm struct.new.
    */
-  emitObjectNew(shape: IrObjectShape, values: readonly IrValueId[]): IrValueId {
-    if (values.length !== shape.fields.length) {
-      throw new Error(
-        `IrFunctionBuilder: object.new value count ${values.length} != shape field count ${shape.fields.length} (func ${this.id.name})`,
-      );
-    }
+  emitObjectNew(
+    shape: IrObjectShape,
+    values: readonly IrValueId[],
+    metadata?: { readonly namespace: string; readonly value: unknown },
+  ): IrValueId {
+    assertObjectNewArity(shape, values, this.id.name);
     const result = this.allocator.fresh();
     const resultType: IrType = { kind: "object", shape };
     this.valueTypes.set(result, resultType);
     const alloc = this.allocId("object", resultType);
-    this.pushInstr({
-      kind: "object.new",
-      shape,
-      values: [...values],
-      result,
-      resultType,
-      alloc,
-    });
+    if (alloc !== undefined && metadata)
+      this.allocRegistry!.annotate(alloc, metadata.namespace, copyIrPreparationData(metadata.value));
+    this.pushInstr(objectNewInstruction(shape, values, result, resultType, alloc));
     return result;
   }
 
@@ -817,15 +814,8 @@ export class IrFunctionBuilder {
   /**
    * Emit `object.set` to write a named field. Void result.
    */
-  emitObjectSet(value: IrValueId, name: string, newValue: IrValueId): void {
-    this.pushInstr({
-      kind: "object.set",
-      value,
-      name,
-      newValue,
-      result: null,
-      resultType: null,
-    });
+  emitObjectSet(value: IrValueId, name: string, newValue: IrValueId, failureMode?: "throw" | "ignore"): void {
+    this.pushInstr(objectSetInstruction(value, name, newValue, failureMode));
   }
 
   // --- function-style constructor ops (#3521) ---------------------------

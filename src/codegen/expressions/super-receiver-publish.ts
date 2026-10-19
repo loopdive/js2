@@ -21,7 +21,7 @@
 import type { ValType } from "../../ir/types.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 
 /** `super.x` / `super[k]` anywhere in `root` whose `super` is the method's (arrows transparent). */
@@ -72,7 +72,7 @@ export function publishNonInstanceSuperReceiver(
   // The externref → `$C` coercion deliberately skips `ref.as_non_null` (#792),
   // so the value is `ref null $C` even when the reported kind is `ref`; the
   // backup marker is what proves a guarded cast ran on this receiver.
-  if (!ctx.standalone || recvType === null) return;
+  if (!wasmGcBackend(ctx) || recvType === null) return;
   if (recvType.kind !== "ref" && recvType.kind !== "ref_null") return;
   const backup = (fctx as CastBackupCarrier).__lastGuardedCastBackup;
   if (backup === undefined || backup === backupBefore || getLocalType(fctx, backup)?.kind !== "anyref") return;

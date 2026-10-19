@@ -38,6 +38,8 @@ import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { makeIrQualifiedExternConstructorResolver } from "./qualified-extern-constructor.js";
+import { makeIrExternClassInfoResolver } from "./extern-class-resolver.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -75,15 +77,9 @@ import {
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
-import {
-  getOrRegisterPromiseType,
-  isStandalonePromiseActive,
-  createPromiseRejectionEmissionBindings,
-} from "../codegen/async-scheduler.js";
+import { getOrRegisterPromiseType, createPromiseRejectionEmissionBindings } from "../codegen/async-scheduler.js";
 import {
   addGeneratorImports,
-  addForInImports,
-  addIteratorImports,
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
@@ -108,6 +104,10 @@ import {
   hasExactIrStringRepeatProviderAbi,
 } from "../codegen/ir-host-string-repeat.js";
 import {
+  ensureNativeInstanceofOperatorChecked,
+  NATIVE_INSTANCEOF_CHECKED,
+} from "../codegen/native-dynamic-instanceof.js";
+import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
 } from "../codegen/standalone-wrapper-instanceof.js";
@@ -129,7 +129,6 @@ import {
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
-import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ensureNativeStringHelpers,
@@ -165,8 +164,10 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
+  getOrRegisterHoleyArrayType,
 } from "../codegen/registry/types.js";
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
+import { hasHostAccelerator, hostFreeEnvironment, jsValueBoundary } from "../target-profile.js";
 import { applyIrTailCalls } from "../codegen/ir-tail-call.js";
 import { parseInlineOptions } from "../codegen/ir-inline.js";
 import { lowerPreparedIrAsyncFunction } from "../codegen/ir-async-frame.js";
@@ -1083,23 +1084,14 @@ function prepareClosureTransaction(input: {
  */
 export type IrProgramRuntimePolicyContext = Pick<
   CodegenContext,
-  | "nativeStrings"
-  | "standalone"
-  | "wasi"
-  | "strictNoHostImports"
-  | "targetProfile"
-  | "requiresStandaloneDomInteractionCapability"
+  "nativeStrings" | "wasi" | "strictNoHostImports" | "targetProfile" | "requiresStandaloneDomInteractionCapability"
 >;
 
 function integrationNumberBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): NumberBoundaryPolicy {
   const hostNumberBoundary = !ctx.nativeStrings;
   return Object.freeze({
     box: hostNumberBoundary ? ("host" as const) : ("unsupported" as const),
-    unbox: hostNumberBoundary
-      ? ("host" as const)
-      : ctx.targetProfile.semanticProviders === "native-first"
-        ? ("native" as const)
-        : ("unsupported" as const),
+    unbox: hostNumberBoundary ? ("host" as const) : ("native" as const),
   });
 }
 
@@ -1120,19 +1112,13 @@ function integrationBooleanBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): B
 /**
  * (#3526 F1-S4) This caller's already-resolved externref UNDEFINED-PROBE policy.
  *
- * The EXACT fact the from-ast strict-undefined arm used to read through the
- * `externIsUndefinedIsNative` resolver predicate (#4461,
- * `ctx.standalone || ctx.wasi || ctx.nativeStrings`), consulted once, here,
- * before freeze. Every host-free lane registers `__extern_is_undefined` as a
- * real Wasm function through `ensureObjectRuntime`, so this truth table is a
- * THIRD one again: wider than `numberBoundary` (unsupported on native-strings
- * GC) and wider than `booleanBoundary` (no native arm at all). The three name
- * different symbols and must not be merged.
+ * S7-c removes the provider-regime fork: WasmGC's undefined probe is always
+ * the object runtime's native implementation. Whether the probed externref
+ * entered through a JS boundary is an ABI question, not a semantic-provider
+ * choice.
  */
-function integrationExternIsUndefinedPolicy(ctx: IrProgramRuntimePolicyContext): ExternIsUndefinedPolicy {
-  return Object.freeze({
-    probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? ("native" as const) : ("host" as const),
-  });
+function integrationExternIsUndefinedPolicy(_ctx: IrProgramRuntimePolicyContext): ExternIsUndefinedPolicy {
+  return Object.freeze({ probe: "native" as const });
 }
 
 /** The first extern-boundary intrinsic in `fn` this policy cannot provide. */
@@ -1273,33 +1259,27 @@ function integrationStringConstPolicy(ctx: IrProgramRuntimePolicyContext): Strin
 function integrationHostCallbackWrapPolicy(ctx: IrProgramRuntimePolicyContext): HostCallbackWrapPolicy {
   if (
     ctx.requiresStandaloneDomInteractionCapability === true &&
-    ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    hostFreeEnvironment(ctx.targetProfile)
   ) {
     return Object.freeze({ wrap: "native-dispatch" as const });
   }
-  const jsHostExterns =
-    ctx.targetProfile.environment === "javascript" && ctx.targetProfile.capabilityPolicy === "ambient-js";
-  return Object.freeze({ wrap: jsHostExterns ? ("host" as const) : ("unsupported" as const) });
+  const hostBoundary = jsValueBoundary(ctx.targetProfile) && !ctx.strictNoHostImports;
+  return Object.freeze({ wrap: hostBoundary ? ("host" as const) : ("unsupported" as const) });
 }
 
 /**
  * (#3526 F3-S3) Resolve the `%Function.prototype%` CALL seam's policy, once,
  * before the freeze.
  *
- * The truth table is the resolver arm's own and is reproduced EXACTLY:
- * `ctx.standalone && !ctx.wasi`. Two neighbouring tables look like it and are
- * deliberately not folded in:
+ * S7-c removes the old target-shaped provider fork. The native WasmGC helper
+ * owns this semantic operation in every environment. Two neighbouring tables
+ * remain deliberately separate:
  *
- *  - `ensureFunctionPrototypeCallHelper` mints the helper under the WIDER
- *    `standalone || wasi`, because the LEGACY direct-AST path emits this call
- *    on the WASI lane too. Helper presence is therefore not evidence of IR
- *    support — inferring support from a minted symbol is exactly what F1-S1
- *    refused — and the measured base census confirms the split: WASI carries
- *    `__function_prototype_call` while its IR unit is refused.
+ *  - `ensureFunctionPrototypeCallHelper` still owns materialization for both
+ *    the direct-AST path and IR. Helper presence remains evidence only after
+ *    the frozen policy selected this native arm.
  *  - the selector's `standalone-function-prototype-call` backend capability
  *    (`ir/backend/legality.ts`) answers a DIFFERENT question one stage earlier
  *    — may Phase 1 select this call shape at all — and on every in-tree lane it
@@ -1310,8 +1290,8 @@ function integrationHostCallbackWrapPolicy(ctx: IrProgramRuntimePolicyContext): 
  * `ctx.fast` is NOT read here and must not be: it is a different axis, and the
  * census is identical across `{compat, fast}` in both target cells.
  */
-function integrationFunctionPrototypeCallPolicy(ctx: IrProgramRuntimePolicyContext): FunctionPrototypeCallPolicy {
-  return Object.freeze({ call: ctx.standalone && !ctx.wasi ? ("native" as const) : ("unsupported" as const) });
+function integrationFunctionPrototypeCallPolicy(_ctx: IrProgramRuntimePolicyContext): FunctionPrototypeCallPolicy {
+  return Object.freeze({ call: "native" as const });
 }
 
 /**
@@ -1331,10 +1311,10 @@ function integrationFunctionPrototypeCallPolicy(ctx: IrProgramRuntimePolicyConte
  */
 function integrationStringConcatManyPolicy(ctx: IrProgramRuntimePolicyContext): StringConcatManyPolicy {
   if (ctx.nativeStrings) {
-    return Object.freeze({ batch: ctx.standalone && !ctx.wasi ? ("native" as const) : ("off" as const) });
+    return Object.freeze({ batch: "native" as const });
   }
   return Object.freeze({
-    batch: ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? ("off" as const) : ("host" as const),
+    batch: hasHostAccelerator(ctx.targetProfile, "js-string") ? ("host" as const) : ("off" as const),
   });
 }
 
@@ -1383,7 +1363,7 @@ export function irProgramRuntimePolicy(
   backend: RuntimeManifestPolicy["backend"] = "wasmgc",
 ): RuntimeManifestPolicy {
   return {
-    target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
+    target: ctx.wasi ? "wasi" : "standalone",
     backend,
     numberBoundary: integrationNumberBoundaryPolicy(ctx),
     booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
@@ -2333,14 +2313,12 @@ export function compileIrPathFunctions(
   const fuseNativeNumberFormatCarriers =
     inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
-  const jsHostExterns = irTargetProfile.allowHostImports;
+  const jsHostExterns = !hostFreeEnvironment(ctx.targetProfile) && !ctx.strictNoHostImports;
   const standaloneDomCapability =
     ctx.requiresStandaloneDomCapability === true &&
-    ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    hostFreeEnvironment(ctx.targetProfile)
       ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
       : undefined;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -2518,7 +2496,7 @@ export function compileIrPathFunctions(
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
-      supportsHoleyArrayFilter: ctx.standalone,
+      supportsHoleyArrayFilter: true,
       implicitParamUsesNumericVecAbi,
       supportsSymbolicMathHelpers: true,
       // (#4462) Same two host-free capabilities the production planning site
@@ -6842,9 +6820,10 @@ function makeFromAstResolver(
   // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
   const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
+    inferModuleStrict: () => ctx.inferModuleStrictArguments !== false,
     ...preparedIrAsyncFromAstResolver(ctx),
     hostIndirectEvalTarget() {
-      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings) return null;
+      if (hostFreeEnvironment(ctx.targetProfile) || ctx.strictNoHostImports) return null;
       const functionIndex = ctx.funcMap.get("__extern_eval");
       const exactIndex = exactCallableImportIndex(ctx, "env", "__extern_eval");
       if (functionIndex === undefined || exactIndex === undefined || functionIndex !== exactIndex) return null;
@@ -6856,6 +6835,12 @@ function makeFromAstResolver(
       if (!ts.isIdentifier(expr.expression)) return false;
       const declaration = ctx.oracle.variableDeclarationOf(expr.expression);
       return declaration !== undefined && ctx.holeyArrayDeclarations.has(declaration);
+    },
+    dynamicInstanceOfTarget() {
+      if (!supportsBackendCapability("native-dynamic-instanceof")) return null;
+      return ensureNativeInstanceofOperatorChecked(ctx) === undefined
+        ? null
+        : irRuntimeFuncRef(NATIVE_INSTANCEOF_CHECKED);
     },
     standaloneWrapperInstanceOfPlan(ctorName: string) {
       if (
@@ -6919,8 +6904,7 @@ function makeFromAstResolver(
       return plan ? resolveStaticNumericArrayGlobal(ctx, plan, expected) : null;
     },
     objectDefinePropertyTarget() {
-      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
-      return irImportFuncRef("env", "__defineProperty_desc");
+      return null;
     },
     functionPrototypeCallTarget() {
       if (functionPrototypeCall.call !== "native") return null;
@@ -7067,8 +7051,9 @@ function makeFromAstResolver(
           trustedFuncName: null,
         };
       }
-      if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return null;
-      return { hoist: null, trustedFuncName: JSSTR_CHARCODEAT_TRUSTED_FN };
+      return hasHostAccelerator(ctx.targetProfile, "js-string")
+        ? { hoist: null, trustedFuncName: JSSTR_CHARCODEAT_TRUSTED_FN }
+        : null;
     },
     stringFromCharCodePlan() {
       return ctx.nativeStrings
@@ -7089,32 +7074,7 @@ function makeFromAstResolver(
     // method signature (the legacy stores the receiver `externref` as
     // the first param so the host import takes a flat
     // `(receiver, args...)` shape).
-    getExternClassInfo(className: string) {
-      const info = ctx.externClasses.get(className);
-      if (!info) {
-        if (className !== "Date" || ctx.standalone || ctx.wasi || ctx.strictNoHostImports) return undefined;
-        const externref = { kind: "externref" } as const;
-        const f64 = { kind: "f64" } as const;
-        return {
-          className: "Date",
-          importPrefix: "Date",
-          constructorParams: [],
-          methods: new Map([
-            ["getDate", { params: [externref], results: [f64] }],
-            ["getMonth", { params: [externref], results: [f64] }],
-            ["getFullYear", { params: [externref], results: [f64] }],
-          ]),
-          properties: new Map(),
-        };
-      }
-      return {
-        className: info.className,
-        importPrefix: info.importPrefix,
-        constructorParams: info.constructorParams,
-        methods: info.methods,
-        properties: info.properties,
-      };
-    },
+    getExternClassInfo: makeIrExternClassInfoResolver(ctx),
     // (#2856) Host-global identifier → the `global_<name>` handle import the
     // legacy `collectDeclaredGlobals` pass registered. Nothing to resolve in
     // host-free modes: that pass skips registration under
@@ -7129,7 +7089,7 @@ function makeFromAstResolver(
     // (#2856) Mode flag for the capability invariant assert at the from-ast
     // host-extern arms.
     jsHostExterns(): boolean {
-      return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+      return !hostFreeEnvironment(ctx.targetProfile) && !ctx.strictNoHostImports;
     },
     standaloneDomOperation(node: ts.Node) {
       return standaloneDomCapability?.operation(node);
@@ -7216,19 +7176,12 @@ function makeFromAstResolver(
     // supplies imports; standalone/WASI supplies the #2964 native object
     // runtime. Both variants snapshot keys and perform per-visit liveness.
     dynamicForInPlan() {
-      return ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
-        ? {
-            keys: "__object_keys_forin",
-            len: "__extern_length",
-            get: "__extern_get_idx",
-            has: "__extern_has",
-          }
-        : {
-            keys: "__for_in_keys",
-            len: "__for_in_len",
-            get: "__for_in_get",
-            has: "__for_in_has",
-          };
+      return {
+        keys: "__object_keys_forin",
+        len: "__extern_length",
+        get: "__extern_get_idx",
+        has: "__extern_has",
+      };
     },
     // (#2856 C2) TypedArray-view receiver detection for element STORES —
     // the same checker walk as the legacy `elementAccessTypedArrayName`
@@ -7258,6 +7211,7 @@ function makeFromAstResolver(
     isAmbientBinding(node: ts.Identifier): boolean {
       return moduleBindingResolver?.isAmbientBinding(node) === true;
     },
+    resolveQualifiedExternConstructor: makeIrQualifiedExternConstructorResolver(ctx.checker),
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
@@ -7441,11 +7395,11 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && isFmodIntrinsic(symbol)) {
     index = ensureFmodIntrinsic(ctx, symbol);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_CLOCK_SNAPSHOT_FN) {
-    if (ctx.standalone) {
+    if (!hasHostAccelerator(ctx.targetProfile, "date")) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        "standalone async clock snapshot escaped its constant runtime projection",
+        "native async clock snapshot escaped its constant runtime projection without the date accelerator",
       );
     }
     index = ensureLateImport(ctx, "__date_now", [], [{ kind: "f64" }]);
@@ -7465,12 +7419,8 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     index = batchedConcatProviderIndex(ctx, prepared, parseIrStringConcatManyArity(symbol)!);
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
-    if (ctx.wasi || ctx.standalone) {
-      emitWasiErrorConstructor(ctx, "ReferenceError", 1);
-      index = ctx.funcMap.get("__new_ReferenceError");
-    } else {
-      index = ensureLateImport(ctx, "__new_ReferenceError", [{ kind: "externref" }], [{ kind: "externref" }]);
-    }
+    emitWasiErrorConstructor(ctx, "ReferenceError", 1);
+    index = ctx.funcMap.get("__new_ReferenceError");
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
     index = element ? ensureVecElemSetForElement(ctx, element) : null;
@@ -8155,7 +8105,7 @@ function makeResolver(
       return ctx.exnTagIdx;
     },
     standardizedExceptions(): boolean {
-      return ctx.standalone || ctx.wasi;
+      return true;
     },
     // -------------------------------------------------------------------
     // Async / Promise dispatch (#1373b Slice 1).
@@ -8176,7 +8126,7 @@ function makeResolver(
     // (#1373b C-1) Lane discriminator for the `await` lowering: native
     // `$Promise` carrier (wasi) → one-level unwrap; JS-host → identity.
     nativePromiseCarrierActive(): boolean {
-      return isStandalonePromiseActive(ctx);
+      return true;
     },
   };
   return resolver;
@@ -8346,12 +8296,10 @@ function preregisterHostDateSnapshotSupport(ctx: CodegenContext, fns: readonly B
   }
   if (needed.size === 0) return;
   const exactStandaloneClock =
-    ctx.standalone &&
-    !ctx.wasi &&
-    ctx.requiresStandaloneClockCapability === true &&
-    ctx.targetProfile.environment === "none";
-  if ((ctx.standalone || ctx.wasi || ctx.strictNoHostImports) && !exactStandaloneClock) {
-    throw new Error("ir/integration: synthetic Date snapshots require the JS host");
+    !ctx.wasi && ctx.requiresStandaloneClockCapability === true && hostFreeEnvironment(ctx.targetProfile);
+  const hostDateAccelerator = hasHostAccelerator(ctx.targetProfile, "date");
+  if (!exactStandaloneClock && !hostDateAccelerator) {
+    throw new Error("ir/integration: synthetic Date snapshots require the date accelerator or clock capability");
   }
 
   let added = false;
@@ -8637,31 +8585,17 @@ function preregisterIteratorSupport(
       legacyName: entry.ownerName,
     });
   }
-  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") {
-    for (const owner of owners.values()) {
-      failures.set(owner.unitId, {
-        owner,
-        outcome: {
-          kind: "unsupported",
-          code: "late-preparation-unsupported",
-          stage: "resolve",
-          detail:
-            "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
-        },
-      });
-    }
-    return failures;
-  }
-  try {
-    if (readEnv("JS2WASM_TEST_INJECT_IR_ITERATOR_REGISTRATION_THROW") === "1") {
-      throw new Error("injected iterator registration failure");
-    }
-    addIteratorImports(ctx);
-  } catch (error) {
-    const failure = classifyIrFailure(error, "resolve");
-    for (const owner of owners.values()) {
-      failures.set(owner.unitId, { owner, outcome: failure });
-    }
+  for (const owner of owners.values()) {
+    failures.set(owner.unitId, {
+      owner,
+      outcome: {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail:
+          "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
+      },
+    });
   }
   return failures;
 }
@@ -8736,11 +8670,7 @@ function preregisterForInSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]
     if (used) break;
   }
   if (!used) return;
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjectRuntime(ctx);
-  } else {
-    addForInImports(ctx);
-  }
+  ensureObjectRuntime(ctx);
 }
 
 /**
@@ -8777,12 +8707,7 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
     if (used) break;
   }
   if (!used) return;
-  if (ctx.standalone || ctx.wasi) {
-    ensureObjectRuntime(ctx);
-  } else {
-    const externref: ValType = { kind: "externref" };
-    ensureLateImport(ctx, "__extern_has", [externref, externref], [{ kind: "i32" }]);
-  }
+  ensureObjectRuntime(ctx);
   flushLateImportShifts(ctx, null);
 }
 
@@ -9048,7 +8973,6 @@ function preregisterDynamicSupport(
   // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
   const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
   let usesFunctionPrototypeCall = false;
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
   let usesToNumber = false;
@@ -9201,33 +9125,13 @@ function preregisterDynamicSupport(
     }
   }
   if (usesOrdinaryToPrimitiveObjectRuntime) {
-    if (nativeSemanticProviders) {
-      ensureObjectRuntime(ctx);
-    } else {
-      ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
-      ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-      ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, null);
-    }
+    ensureObjectRuntime(ctx);
   }
   if (primitiveWrapperConstructors.size > 0) {
     // #4208 S4 — explicit runtime refs for the focused primitive-wrapper
-    // construction. Host-free lanes materialize the real `$Object` wrappers
-    // (including [[PrimitiveValue]]) through the existing object runtime;
-    // host mode registers only the exact wrapper imports observed in IR.
-    if (ctx.standalone || ctx.wasi) {
-      ensureObjectRuntime(ctx);
-    } else {
-      for (const wrapperConstructor of primitiveWrapperConstructors) {
-        ensureLateImport(
-          ctx,
-          `__new_${wrapperConstructor}`,
-          [{ kind: wrapperConstructor === "String" ? "externref" : "f64" }],
-          [{ kind: "externref" }],
-        );
-      }
-      flushLateImportShifts(ctx, null);
-    }
+    // construction. The native semantic core materializes real `$Object`
+    // wrappers (including [[PrimitiveValue]]) through the object runtime.
+    ensureObjectRuntime(ctx);
   }
   admitFunctionPrototypeCall(ctx, usesFunctionPrototypeCall, functionPrototypeCallArm);
   if (usesRuntimeUnboxNumber) addUnionImports(ctx);
@@ -9277,8 +9181,8 @@ function preregisterDynamicSupport(
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
   }
   if (!usesDynamicOps) return;
-  if (usesToNumber && ctx.standalone) {
-    // The canonical standalone ToNumber sequence performs
+  if (usesToNumber) {
+    // The canonical native ToNumber sequence performs
     // ToPrimitive("number") before unboxing. Reserve that provider now so
     // emitToNumber cannot introduce a late func-index shift while Phase 3
     // already owns detached IR body buffers.
@@ -9300,17 +9204,8 @@ function preregisterDynamicSupport(
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
     if (usesEq) {
-      if (nativeSemanticProviders) {
-        ensureExternStrictEqHelper(ctx);
-        ensureExternLooseEqHelper(ctx);
-      } else {
-        ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-        ensureLateImport(ctx, "__host_loose_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-        // Settle the batch before Phase 3 captures patch-slot and call-target
-        // indices. Leaving these two imports pending can shift the eventual IR
-        // replacement onto a sibling legacy slot.
-        flushLateImportShifts(ctx, null);
-      }
+      ensureExternStrictEqHelper(ctx);
+      ensureExternLooseEqHelper(ctx);
     }
   }
   // #3053 U1 — a `dyn.member_get` present in any IR body needs the unified
@@ -9327,22 +9222,12 @@ function preregisterDynamicSupport(
   // `dyn.member_get` in a claimed function today, so `usesMemberGet` is never
   // set in a production compile.
   if (usesMemberGet) {
-    if (nativeSemanticProviders) ensureObjectRuntime(ctx);
+    ensureObjectRuntime(ctx);
     ctx.usesDynMemberGet = true;
     ensureDynMemberGet(ctx);
   }
   if (usesMemberSet) {
-    if (nativeSemanticProviders) {
-      ensureObjectRuntime(ctx);
-    } else {
-      ensureLateImport(
-        ctx,
-        "__extern_set_strict",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      flushLateImportShifts(ctx, null);
-    }
+    ensureObjectRuntime(ctx);
     ensureDynMemberSet(ctx);
   }
 }
@@ -9377,7 +9262,6 @@ function preregisterDynamicSupport(
  *     plumbed through — a later producer slice.
  */
 export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | null {
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   if (ctx.fast) {
     ensureAnyValueType(ctx);
     const anyTypeIdx = ctx.anyValueTypeIdx;
@@ -9650,13 +9534,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
     emitStrictEq(negate: boolean): readonly Instr[] {
       // Compatibility semantics delegate to JS. Native-first semantics use the
       // externref classifier + AnyValue comparison helper even with a JS host.
-      const helper = nativeSemanticProviders ? "__extern_strict_eq" : "__host_eq";
+      const helper = "__extern_strict_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitLooseEq(negate: boolean): readonly Instr[] {
       // Compatibility semantics delegate to JS. Native-first classifies both
       // externref carriers and routes through the native `__any_eq` engine.
-      const helper = nativeSemanticProviders ? "__extern_loose_eq" : "__host_loose_eq";
+      const helper = "__extern_loose_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitMemberGet(): readonly Instr[] {

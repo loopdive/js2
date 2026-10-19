@@ -41,11 +41,7 @@ import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import {
-  emitStandalonePromiseReject,
-  emitStandalonePromiseResolve,
-  isStandalonePromiseActive,
-} from "./async-scheduler.js";
+import { emitStandalonePromiseReject, emitStandalonePromiseResolve } from "./async-scheduler.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitUndefined } from "./expressions/late-imports.js";
@@ -60,7 +56,7 @@ export function parkedAsyncClosureWrapsPromise(
   ctx: CodegenContext,
   closureReturnType: { kind: string } | null,
 ): boolean {
-  return isStandalonePromiseActive(ctx) && closureReturnType === null;
+  return closureReturnType === null;
 }
 
 /**
@@ -127,7 +123,6 @@ export function parkedAsyncDeclarationWrapsPromise(
   decl: ts.FunctionDeclaration | undefined,
   results: readonly ValType[],
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
   // Only the void-result shape — the same scoping as the closure arm.
   if (results.length !== 0) return false;
   if (!decl || decl.body === undefined) return false;

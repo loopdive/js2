@@ -309,7 +309,7 @@ export function ensureEnumerableOwnKeysNative(ctx: CodegenContext): number | und
 /** Can this module hold a `$Proxy` at all? (It names `Proxy` and has the type.) */
 function proxyFilterApplies(ctx: CodegenContext, node: ts.Node): number | undefined {
   const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
-  if (!ctx.standalone || proxyTypeIdx === undefined || !node.getSourceFile().text.includes("Proxy")) return undefined;
+  if (proxyTypeIdx === undefined || !node.getSourceFile().text.includes("Proxy")) return undefined;
   return proxyTypeIdx;
 }
 
@@ -578,7 +578,6 @@ export function installProxyKeyBagGuards(
   proxyTypeIdx: number,
   findBody: (name: string) => Instr[] | undefined,
 ): void {
-  if (!ctx.standalone) return;
   const gopdsBody = findBody("__object_getOwnPropertyDescriptors");
   const gopdsIdx = gopdsBody ? ensureProxyOwnPropertyDescriptors(ctx) : undefined;
   if (gopdsBody && gopdsIdx !== undefined) gopdsBody.unshift(...proxyFrontGuard(proxyTypeIdx, 0, [0], gopdsIdx));
@@ -691,7 +690,6 @@ function ensureProxyEnumerableOwnProperties(ctx: CodegenContext, withKeys: boole
  * 2=out 3=n 4=i 5=k
  */
 export function installClosedStructPropertiesGuard(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const fn = ctx.mod.functions.find((f) => f.name === "__defineProperties");
   const selfIdx = ctx.funcMap.get("__defineProperties");
   const classifier = ctx.funcMap.get("__object_assign_closed_struct_source");

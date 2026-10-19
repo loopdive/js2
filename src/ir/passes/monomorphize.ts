@@ -70,6 +70,7 @@ import {
 } from "../nodes.js";
 import type { ValType } from "../types.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
+import { cloneSourceAllocation } from "../analysis/clone-source-allocation.js";
 import { createDerivedIrUnitId } from "../../shared/contracts/identity-values.js";
 import type { IrDerivedUnitProvenance, IrUnitId } from "../identity.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
@@ -594,8 +595,7 @@ function forkSpecializationAllocations(
   let forked: IrInstr;
   if (registry && located.alloc !== undefined && site?.origin) {
     const allocation = registry.resolve(located.alloc);
-    forked =
-      allocation === null ? located : { ...located, alloc: registry.fresh(allocation.kind, allocation.type, site) };
+    forked = allocation === null ? located : { ...located, alloc: cloneSourceAllocation(registry, allocation, site) };
   } else {
     forked = forkAllocInInstr(located, registry);
   }

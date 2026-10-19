@@ -85,6 +85,7 @@ import {
   type IrValueId,
 } from "../nodes.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
+import { cloneSourceAllocation } from "../analysis/clone-source-allocation.js";
 import type { IrUnitId } from "../identity.js";
 import { forkAllocInInstr, retireAllocsIn } from "./alloc-discipline.js";
 
@@ -117,7 +118,7 @@ function forkInlineAllocation(instr: IrInstr, registry: AllocSiteRegistry | unde
   if (!instr.site?.origin || !registry || instr.alloc === undefined) return forkAllocInInstr(instr, registry);
   const allocation = registry.resolve(instr.alloc);
   if (allocation === null) return instr;
-  return { ...instr, alloc: registry.fresh(allocation.kind, allocation.type, instr.site) };
+  return { ...instr, alloc: cloneSourceAllocation(registry, allocation, instr.site) };
 }
 
 const MAX_CALLEE_INSTRS = 10;

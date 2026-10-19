@@ -1,0 +1,453 @@
+{
+  "schema": "6979-provider-retirement-checkpoint-v1",
+  "date": "2026-10-19",
+  "parentCommit": "b2c3aaaf89eed66524198207e544fc6bbb6b69ad",
+  "candidate": "Containing commit; exact implementation hashes below.",
+  "scope": "Retire unreachable host providers and orphaned Promise closure state; explicit lifecycle name policy. Not full S7 acceptance.",
+  "behaviorChange": "Unknown builtin __register_* names and the orphaned Promise subclass registration are now rejected before dependencies or ambient shims. Explicit declared_function capabilities remain supported regardless of spelling.",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4, fork pool, VITEST_MAX_FORKS=2, --experimental-wasm-exnref",
+    "lane": "Native-first JS and explicitly selected standalone/WASI lanes in each test",
+    "parentSupport": "Only the new provider-retirement test and ignored harness scripts copied; parent tracked production source unchanged."
+  },
+  "retirementProof": {
+    "nestedDeclarations": [
+      {
+        "name": "_vecToArray",
+        "references": [9013],
+        "outside": []
+      },
+      {
+        "name": "_wrapThenable",
+        "references": [9036, 9066, 9083, 9088, 9118],
+        "outside": []
+      },
+      {
+        "name": "_wrapPromiseReaction",
+        "references": [9064],
+        "outside": []
+      },
+      {
+        "name": "_toIterable",
+        "references": [9068],
+        "outside": []
+      },
+      {
+        "name": "_resolveCtor",
+        "references": [9142],
+        "outside": []
+      }
+    ],
+    "parentRemovalRanges": [
+      {
+        "reason": "retired provider module import",
+        "start": 2545,
+        "end": 2655
+      },
+      {
+        "reason": "retired provider module import",
+        "start": 4605,
+        "end": 4693
+      },
+      {
+        "reason": "write-only retired Promise registry state promiseSubclassBodies",
+        "start": 358852,
+        "end": 359285
+      },
+      {
+        "reason": "write-only retired Promise registry state promiseSubclassCtors",
+        "start": 359286,
+        "end": 359418
+      },
+      {
+        "reason": "retired provider resolver binding fixedMethodArity",
+        "start": 408622,
+        "end": 408686
+      },
+      {
+        "reason": "policy-rejected builtin dispatcher fixedMethodArity !== undefined",
+        "start": 408687,
+        "end": 409089
+      },
+      {
+        "reason": "policy-rejected builtin dispatcher /^__call_dynamic_class_parent_\\d+$/.test(name)",
+        "start": 430520,
+        "end": 432272
+      },
+      {
+        "reason": "retired provider resolver binding arrayIterationImport",
+        "start": 432273,
+        "end": 432384
+      },
+      {
+        "reason": "policy-rejected builtin dispatcher arrayIterationImport",
+        "start": 432385,
+        "end": 432445
+      },
+      {
+        "reason": "policy-rejected builtin dispatcher isHostCallImportName(name)",
+        "start": 432446,
+        "end": 433220
+      },
+      {
+        "reason": "unreferenced Promise provider closure _vecToArray",
+        "start": 435091,
+        "end": 436267
+      },
+      {
+        "reason": "unreferenced Promise provider closure _wrapThenable",
+        "start": 436268,
+        "end": 437438
+      },
+      {
+        "reason": "unreferenced Promise provider closure _wrapPromiseReaction",
+        "start": 437439,
+        "end": 437678
+      },
+      {
+        "reason": "unreferenced Promise provider closure _toIterable",
+        "start": 437679,
+        "end": 441553
+      },
+      {
+        "reason": "unreferenced Promise provider closure _resolveCtor",
+        "start": 441554,
+        "end": 444587
+      },
+      {
+        "reason": "retire orphaned Promise registration",
+        "start": 444588,
+        "end": 446467
+      },
+      {
+        "reason": "policy-rejected builtin dispatcher /^__call_dyn_\\d+$/.test(name)",
+        "start": 460292,
+        "end": 462155
+      },
+      {
+        "reason": "duplicate unreachable lifecycle dispatcher",
+        "start": 462156,
+        "end": 462980
+      }
+    ],
+    "positiveControl": "In-memory shorthand reference to _vecToArray outside the deletion ranges rejected with live references outside deletion.",
+    "newlyUnreachableFunctions": [
+      {
+        "name": "_isEmptyTupleCarrier",
+        "line": 2970,
+        "lines": 42,
+        "live": false,
+        "roots": [],
+        "references": [2970],
+        "calls": ["_isEmptyTupleCarrier", "_isWasmStruct", "_hasOwn", "_safeGet"]
+      },
+      {
+        "name": "_isWasmClosureValue",
+        "line": 1686,
+        "lines": 16,
+        "live": false,
+        "roots": [],
+        "references": [1686],
+        "calls": ["_isWasmClosureValue", "_isWasmStruct"]
+      }
+    ],
+    "finalPrivateGraph": {
+      "functions": 167,
+      "exports": 30,
+      "directEval": 0,
+      "unreachable": []
+    },
+    "retainedYieldStarBodies": [
+      {
+        "name": "isCallable",
+        "sha256": "24d4aaf879cf1b71a01174c8a9cf49d9c5df7d6f10377b14721c22c51f86a519"
+      },
+      {
+        "name": "isObjectValue",
+        "sha256": "fba5f32399b0e8dc2c6d7283338c13ea56950e27b04f457cdab568e510cd557d"
+      },
+      {
+        "name": "invokeCallable",
+        "sha256": "a4faf10ee551f127a31dc7f6111e6c20c782fd023c98922ad6fd177e109d2b2c"
+      },
+      {
+        "name": "yieldStarStep",
+        "sha256": "77530bc51360361b25acd9275dc9ce5bee4d871728ea3a7063ed8a2ab0b3ea55"
+      }
+    ],
+    "moduleDeletion": "Only production static imports were in the removed runtime dispatchers; no package.json export publishes either deleted module. No general strict whole-program closure certificate."
+  },
+  "validation": {
+    "focused": {
+      "parent": {
+        "files": 7,
+        "total": 85,
+        "passing": 81,
+        "failing": 4,
+        "skipped": 0
+      },
+      "candidate": {
+        "files": 7,
+        "total": 85,
+        "passing": 85,
+        "failing": 0,
+        "skipped": 0
+      },
+      "uniqueParentKeys": 85,
+      "uniqueCandidateKeys": 85,
+      "changes": [
+        {
+          "test": "tests/issue-5131-es2015-strict-spread-iterator.test.ts :: #5131 strict spread iterator provider uses init-registered marshal helpers before the instance export view exists",
+          "before": "passed",
+          "after": null,
+          "beforeError": null,
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-provider-retirement.test.ts :: #6979 explicit runtime lifecycle and provider retirement rejects unknown lifecycle spellings before dependencies — compatibility undefined",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: __register_unknown: expected 'instance-lifecycle' to be 'unknown' // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-provider-retirement.test.ts :: #6979 explicit runtime lifecycle and provider retirement rejects unknown lifecycle spellings before dependencies — compatibility true",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: __register_unknown: expected 'instance-lifecycle' to be 'unknown' // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-provider-retirement.test.ts :: #6979 explicit runtime lifecycle and provider retirement rejects unknown lifecycle spellings before dependencies — compatibility false",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: __register_unknown: expected 'instance-lifecycle' to be 'unknown' // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-6979-provider-retirement.test.ts :: #6979 explicit runtime lifecycle and provider retirement deletes orphaned Promise closures and preserves live adapter implementations",
+          "before": "failed",
+          "after": "passed",
+          "beforeError": "AssertionError: _vecToArray: expected true to be false // Object.is equality",
+          "afterError": null
+        },
+        {
+          "test": "tests/issue-5131-es2015-strict-spread-iterator.test.ts :: #5131 strict spread iterator provider rejects the retired host materializer rather than installing an init-window provider",
+          "before": null,
+          "after": "passed",
+          "beforeError": null,
+          "afterError": null
+        }
+      ],
+      "runtimeCoordinateRelocations": []
+    },
+    "boundaries": {
+      "files": 12,
+      "total": 137,
+      "passing": 137,
+      "failing": 0,
+      "skipped": 0
+    },
+    "broad": {
+      "parent": {
+        "files": 14,
+        "total": 230,
+        "passing": 155,
+        "failing": 50,
+        "skipped": 25
+      },
+      "candidate": {
+        "files": 14,
+        "total": 230,
+        "passing": 155,
+        "failing": 50,
+        "skipped": 25
+      },
+      "uniqueParentKeys": 230,
+      "uniqueCandidateKeys": 230,
+      "changes": [],
+      "runtimeCoordinateRelocations": [
+        {
+          "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) CONTROL — the Request init dictionary is unchanged",
+          "frames": [
+            {
+              "parentLine": 8162,
+              "candidateLine": 8053,
+              "column": 18,
+              "unchangedSourceLine": "          return new Ctor(...args);"
+            }
+          ]
+        },
+        {
+          "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) CONTROL — the Request init dictionary is unchanged across the link",
+          "frames": [
+            {
+              "parentLine": 8162,
+              "candidateLine": 8053,
+              "column": 18,
+              "unchangedSourceLine": "          return new Ctor(...args);"
+            }
+          ]
+        }
+      ]
+    },
+    "comparisonNormalization": "Replace only the control directory. For two broad failure stacks, runtime coordinates relocate to exact same source line and column; all other text must match.",
+    "replacementTest": "One obsolete direct host-materializer unit is replaced with rejection of its retired public manifest. Native strict-spread protocol matrix is unchanged. That passing test-key replacement is not credited as a fix.",
+    "focusedAttribution": "Three unknown-lifecycle negative tests and one source-retirement assertion improve; these are not four runtime semantic correctness wins.",
+    "native": {
+      "byteIdentical": 6,
+      "rows": [
+        {
+          "target": "standalone",
+          "name": "scalar",
+          "bytes": 11413,
+          "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "flat",
+          "bytes": 33185,
+          "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "dynamic",
+          "bytes": 146186,
+          "sha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "scalar",
+          "bytes": 22719,
+          "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "flat",
+          "bytes": 52928,
+          "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "dynamic",
+          "bytes": 141053,
+          "sha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        }
+      ]
+    },
+    "imports": {
+      "totals": {
+        "probes": 33,
+        "imports": 457,
+        "unknown": 0,
+        "regimeGap": 0
+      },
+      "identicalDetailedInventories": 33,
+      "perProbeSha256": {
+        "core": "978bc260c6c3946cc00fce4f0f338bd7425dd58d2cdd877166e0b62635ef63a7",
+        "regexp": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "collections": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "promise": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+        "date": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "dataView": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "bigint": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "bigintFormatting": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "number": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "textGlobals": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "object": "11483f0d34aaeb5abf5d1752ea59abef82b4ee9db5d7bb90ea23a3c239b4d559",
+        "objectRest": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "functionBind": "693f94552e9c5cae5a35f88209a53caf844f1df7c6e25ab6e13ae2ff19af86a3",
+        "proxy": "3880ade8aba827352dd07007c7ae489cc7db63b672dbc31d94f581e184e477f2",
+        "typedArrays": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "objectDescriptors": "5bfc0985a85fffdcb6c0e5cdcc203f75d55a6dc6e823283b52e5a963ce1d778a",
+        "objectPrototype": "b3e73453cdf6ad9f7b1e11cfff5eae20c643fdbfd180bd23d98174fa899032bb",
+        "functionCall": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "functionApply": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "errors": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "generators": "804345448dd1449a2ac4cd6cd197e978b65641468d0b4cd7bf7050e4d6d7f21f",
+        "iterators": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "promiseCombinators": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+        "promiseAnyRace": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+        "regexpDynamic": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "mapIteration": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "setIteration": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+        "reflect": "1fb396e359d67f420fb8fd0cc1aced3065ba4a0fef83158cad9aedde5cf84b85",
+        "dynamicOps": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+        "destructuring": "5bfc0985a85fffdcb6c0e5cdcc203f75d55a6dc6e823283b52e5a963ce1d778a",
+        "proxyMop": "b2892de09fb3c2c3f7d42b21213403a10892e3cbc7b9e1efc80610e67ec54426",
+        "proxyRevocable": "7b806933d15686f4369723812df3b01562ea6ff49a573d050ccb87239993d296",
+        "stringProtocols": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82"
+      },
+      "budgetViolations": ["native-first imports 457 > maximum 452"]
+    }
+  },
+  "runtimeMetrics": {
+    "parent": {
+      "runtimeTsLines": 10582,
+      "resolveImportLines": 1682,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "candidate": {
+      "runtimeTsLines": 10160,
+      "resolveImportLines": 1369,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "netRuntimeLinesRemoved": 422,
+    "runtimeTarget": 8000,
+    "remainingRuntimeTargetGap": 2160
+  },
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "format": "PASS",
+    "loc": "PASS",
+    "functionBudget": "PASS",
+    "coercion": "PASS",
+    "oracle": "PASS",
+    "layering": "PASS: 87 lines / 15 files, unbanked",
+    "irFallbacks": "PASS",
+    "compilerInventory": "Valid, architecture incomplete",
+    "deadExports": "6/6 full and 6/6 cut preservation witnesses; strict closure remains uncertified at optimize.ts and platform-capability-adapter.ts nonliteral imports",
+    "hostImports": "FAIL unchanged: 457 > 452, unapproved"
+  },
+  "remaining": [
+    "No frozen direct-AST semantic body changes; dead emitter strings in those files remain retirement debt.",
+    "Live generator/Temporal/SharedArrayBuffer regime gaps, opaque bound functions, runtime target, strict closure, full compatibility/conformance/accelerator acceptance and binary-cost review remain open.",
+    "Predecessor PR 6701 and recovered S7-b dependency still block independent merge. No ceiling raised or banked."
+  ],
+  "sourceSha256": {
+    "src/host-import-policy.ts": "161ebcb587a5f589022377a0cb268ee1e70a9fc729ca18f3ed96608ea57950fa",
+    "src/runtime.ts": "379038d3f35f5208601da714d46a5f43e2f15fcdd048c48fcf385ca4e921800b",
+    "src/runtime/strict-iterator-host.ts": "5af056ea1a843cb18b09f663187a39918ba53209ae7d9a079118c21a0d25b4e8",
+    "scripts/compiler-boundaries.json": "2d0c9abbfeca837fbbce242d7de7dc2302f7f0d52ddd9b2a911c9f13f22ef9f7",
+    "tests/issue-6979-provider-retirement.test.ts": "14ce2fe92177f0f7c458a407879e72050ec76868d8dc073a3bf97d0d0ae18f95",
+    "tests/issue-5131-es2015-strict-spread-iterator.test.ts": "f1baf5bbe999b81f70f8f87d1f229f34eb66870c1b9d5dd5a3e882fbddc562c5"
+  },
+  "deletedSourceSha256": {
+    "src/runtime/fixed-extern-method-call.ts": "531d6f68f3555c61b276f3dd869955330a9f023ed60ace7ea8ce83a13046cd70",
+    "src/runtime/host-call-abi.ts": "d8129d31e112945cde3ee715351ba4b3d374cd4429f3393de30e4c651c23e7aa"
+  }
+}

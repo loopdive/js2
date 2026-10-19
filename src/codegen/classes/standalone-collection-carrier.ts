@@ -25,7 +25,7 @@
  *     `super()` straight to the builtin, which would skip the carrier
  *     constructor and the parent's own constructor body.
  *
- * Standalone/WASI only. The JS-host lane keeps the host `externClass` path.
+ * Native WasmGC only. The linear backend keeps its own `externClass` path.
  */
 import { ts } from "../../ts-api.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
@@ -110,27 +110,27 @@ export function prepareCollectionSubclassHeritage(
   ensureMapRuntimeTypes: (ctx: CodegenContext) => void,
 ): string | undefined {
   if (!ctx.nativeStrings) return undefined;
-  const standalone = ctx.standalone || ctx.wasi;
+  const nativeWasmGC = ctx.targetProfile.backend === "wasmgc";
   if (parentIsUserClass) {
-    return standalone && isCollectionCarrierClass(ctx, parentClassName)
-      ? `Codegen error: 'class ${className} extends ${parentClassName}' is not yet supported in --target standalone ` +
+    return nativeWasmGC && isCollectionCarrierClass(ctx, parentClassName)
+      ? `Codegen error: 'class ${className} extends ${parentClassName}' is not yet supported on native WasmGC ` +
           `(#6754): '${parentClassName}' stores instance fields on its native collection, and a subclass's ` +
-          `super() would bypass that storage. Extend the builtin directly or recompile without --target standalone.`
+          `super() would bypass that storage. Extend the builtin directly or use the linear backend.`
       : undefined;
   }
   if (!isNativeCollectionBuiltin(parentClassName)) return undefined;
   const declaresAccessor = decl.members.some((m) => ts.isGetAccessorDeclaration(m) || ts.isSetAccessorDeclaration(m));
   const declaresField = decl.members.some((m) => ts.isPropertyDeclaration(m));
-  if (!declaresAccessor && (standalone || !declaresField)) {
-    if (standalone && mayDeclareOwnFields(decl)) ensureMapRuntimeTypes(ctx);
+  if (!declaresAccessor && (nativeWasmGC || !declaresField)) {
+    if (nativeWasmGC && mayDeclareOwnFields(decl)) ensureMapRuntimeTypes(ctx);
     return undefined;
   }
   return (
     `Codegen error: 'class ${className} extends ${parentClassName}' with a declared ` +
-    `${standalone ? "accessor" : "property or accessor"} is not yet supported in --target standalone (#2620/#3972/#6754). ` +
+    `${nativeWasmGC ? "accessor" : "property or accessor"} is not yet supported on native WasmGC (#2620/#3972/#6754). ` +
     `Construction, inherited methods and instance fields are native — but an accessor on a ` +
     `native-collection subclass is not implemented, and would trap at runtime rather than fail here. ` +
-    `Drop the accessor, use ${parentClassName} directly, or recompile without --target standalone.`
+    `Drop the accessor, use ${parentClassName} directly, or use the linear backend.`
   );
 }
 
@@ -147,7 +147,7 @@ export function applyCollectionCarrierLayout(
   structDef: StructTypeDef,
   fields: FieldDef[],
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || !ctx.nativeStrings) return;
+  if (ctx.targetProfile.backend !== "wasmgc" || !ctx.nativeStrings) return;
   if (!ctx.classExternrefBackedSet.has(className)) return;
   const builtinParent = ctx.classBuiltinParentMap.get(className);
   if (builtinParent === undefined || !isNativeCollectionBuiltin(builtinParent)) return;
@@ -283,7 +283,7 @@ export function compileCollectionSuperMethodCall(
   className: string,
   native: { readonly map: NativeCollectionMethodCall; readonly set: NativeCollectionMethodCall },
 ): InnerResult | undefined {
-  if (!(ctx.standalone || ctx.wasi) || !ctx.classExternrefBackedSet.has(className)) return undefined;
+  if (ctx.targetProfile.backend !== "wasmgc" || !ctx.classExternrefBackedSet.has(className)) return undefined;
   const parent = ctx.classBuiltinParentMap.get(className);
   const callee = expr.expression;
   if (parent === undefined || !isNativeCollectionBuiltin(parent) || !ts.isPropertyAccessExpression(callee)) {

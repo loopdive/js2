@@ -31,10 +31,11 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { buildExternGetIdxBody } from "./object-runtime.js";
 import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // (#4010 S3) carrier-bag key enumeration
 // (#4160) prototype-index companion consult for the vec OOB Has (resolves to
-// `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
+// `undefined` unless the native prototype-index store was demanded).
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
 import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
 import { definedFuncAt } from "./func-space.js";
+import { objectAssignSourceKeys } from "./object-model/object-assign-value-body.js";
 import { orProxyArrayLikeTest, proxyArrayLikeTypeIdx } from "./proxy-array-like.js"; // (#6651 H6)
 import { stringExoticAssignSourceInstrs } from "./object-model/object-assign-primitive-operands.js"; // (#6770 S1)
 import { nonObjectEnumerableOwnInstrs } from "./object-model/object-own-key-order.js"; // (#6770 S3)
@@ -51,7 +52,7 @@ export interface ObjectEnumerationHelperState {
     locals: { name: string; type: ValType }[],
     body: Instr[],
   ) => number;
-  /** `ctx.standalone` — gates the native $Object array-like arms. */
+  /** Whether the caller has registered native $Object array-like support. */
   objArrayLikeArms: boolean;
   /** Native `$Symbol` carrier index, ensured before this helper is built. */
   symbolTypeIdx: number;
@@ -244,10 +245,16 @@ export function buildArrayLikeToLengthFromExternref(ctx: CodegenContext, symbolT
 /** `$Object` arm: Get first, then the shared ordinary ToLength conversion. */
 function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number, symbolTypeIdx: number): Instr[] {
   const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
+  const admitted = ctx.funcMap.get("__boundary_object_is_admitted");
   return [
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: objectTypeIdx },
     ...orProxyArrayLikeTest(ctx, 1), // (#6651 H6) §7.3.18 on a Proxy
+    // The same Get/ToLength walk applies to admitted JS-owned array-likes.
+    // No host-free import or prototype probe is needed to recognize them.
+    ...(admitted === undefined
+      ? []
+      : ([{ op: "local.get", index: 0 }, { op: "call", funcIdx: admitted }, { op: "i32.or" }] satisfies Instr[])),
     {
       op: "if",
       blockType: { kind: "val", type: { kind: "f64" } },
@@ -1124,15 +1131,15 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   // Finalized once the complete closed-struct shape set is known. Keeping this
   // false while eager helpers are built prevents arbitrary externref sources
   // (builtins, strings, symbols, proxies) from being mistaken for structs.
-  const closedSourceClassifierIdx = ctx.standalone
-    ? registerNative(
-        "__object_assign_closed_struct_source",
-        [{ kind: "externref" }],
-        [{ kind: "i32" }],
-        [],
-        [{ op: "i32.const", value: 0 }],
-      )
-    : undefined;
+  // JSON serialization and descriptor-map application share this exact screen;
+  // all WasmGC environments must reserve it before those consumers are built.
+  const closedSourceClassifierIdx = registerNative(
+    "__object_assign_closed_struct_source",
+    [{ kind: "externref" }],
+    [{ kind: "i32" }],
+    [],
+    [{ op: "i32.const", value: 0 }],
+  );
 
   // ── __object_assign(externref target, externref sources) -> externref ─────
   //
@@ -1161,20 +1168,17 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     const nullishPredicateIdx = ctx.funcMap.get("__extern_is_nullish");
     const targetNullishCheck: Instr =
       nullishPredicateIdx !== undefined ? { op: "call", funcIdx: nullishPredicateIdx } : { op: "ref.is_null" };
-    const nativeTargetGuard: Instr[] =
-      ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
-        ? [
-            { op: "local.get", index: 0 },
-            targetNullishCheck,
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
-                forceInModuleCtor: true,
-              }),
-            },
-          ]
-        : [];
+    const nativeTargetGuard: Instr[] = [
+      { op: "local.get", index: 0 },
+      targetNullishCheck,
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+          forceInModuleCtor: true,
+        }),
+      },
+    ];
     // The `$Object` table walk remains the fast path. A stored builtin function
     // value can receive a closed compiler struct through its uniform externref
     // ABI, though: Deno reflectively copies `Object.assign` into primordials,
@@ -1183,8 +1187,6 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // The finalized `__object_keys` and `__extern_get` helpers already model
     // closed-struct enumerable properties; reuse them only for that miss.
     const classifiedClosedStructSourceCopy: Instr[] =
-      ctx.standalone &&
-      closedSourceClassifierIdx !== undefined &&
       objectKeysIdx !== undefined &&
       externLengthIdx !== undefined &&
       externGetIdx !== undefined &&
@@ -1449,30 +1451,32 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
 }
 
 /**
- * (#4749) Prepend the standalone Proxy-source arm to `__object_assign`.
+ * (#4749, #6979) Prepend the shared native MOP-source arm to `__object_assign`.
  *
  * `$Proxy` is deliberately not a subtype of `$Object`, so the original
  * open-object loop skips it entirely.  CopyDataProperties must instead ask
  * the Proxy for its own keys, retrieve each own descriptor (which invokes the
  * getOwnPropertyDescriptor trap), filter on `enumerable`, then read and set
- * the value through the existing Proxy-aware helpers.  This is filled after
+ * the value through the existing Proxy-aware helpers. Admitted JS-owned sources
+ * use the same native loop through their identity-backed boundary operations.
+ * This is filled after
  * the descriptor and Proxy runtimes are registered so all dispatch indices
  * are available and their front-guards are already installed.
  */
 export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx: number, objectTypeIdx: number): void {
-  if (!ctx.standalone) return;
-
   const objectAssignIdx = ctx.funcMap.get("__object_assign");
   const objectAssign = objectAssignIdx === undefined ? undefined : definedFuncAt(ctx, objectAssignIdx);
   if (!objectAssign) return;
 
   const objectKeysIdx = ctx.funcMap.get("__object_keys");
   const ownKeysAllIdx = ctx.funcMap.get("__proxy_ownkeys_names_dispatch"); // (#6770 S7) [[OwnPropertyKeys]]
+  const admittedIdx = ctx.funcMap.get("__boundary_object_is_admitted");
+  const boundaryKeysIdx = ctx.funcMap.get("__boundary_object_own_keys");
   const externLengthIdx = ctx.funcMap.get("__extern_length");
   const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
   const getOwnPropertyDescriptorIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
   const externGetIdx = ctx.funcMap.get("__extern_get");
-  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const externSetIdx = ctx.funcMap.get("__extern_set_strict");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   const isTruthyIdx = ctx.funcMap.get("__is_truthy");
   if (
@@ -1504,24 +1508,21 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
 
   // Params 0/1 are followed by the eleven locals registered by the original
   // helper (indices 2..12). Append scratch locals for the Proxy arm.
-  const keyListLocal = 2 + objectAssign.locals.length;
-  const keyListLengthLocal = keyListLocal + 1;
-  const keyIndexLocal = keyListLocal + 2;
-  const keyLocal = keyListLocal + 3;
-  const descriptorLocal = keyListLocal + 4;
-  const enumerableLocal = keyListLocal + 5;
-  objectAssign.locals.push(
-    { name: "proxyKeys", type: { kind: "externref" } },
-    { name: "proxyKeysLength", type: { kind: "i32" } },
-    { name: "proxyKeyIndex", type: { kind: "i32" } },
-    { name: "proxyKey", type: { kind: "externref" } },
-    { name: "proxyDescriptor", type: { kind: "externref" } },
-    { name: "proxyEnumerable", type: { kind: "externref" } },
-  );
+  const sourceKeys = objectAssignSourceKeys({
+    firstLocal: 2 + objectAssign.locals.length,
+    sourceLocal: 12,
+    admissionIdx: admittedIdx,
+    boundaryKeysIdx,
+    proxyKeysIdx: ownKeysAllIdx,
+    objectKeysIdx,
+  });
+  const { keyListLocal, keyListLengthLocal, keyIndexLocal, keyLocal, descriptorLocal, enumerableLocal } = sourceKeys;
+  objectAssign.locals.push(...sourceKeys.locals);
 
   const proxyArm: Instr[] = [
     { op: "local.get", index: 6 },
     { op: "ref.test", typeIdx: proxyTypeIdx },
+    ...sourceKeys.admissionTest,
     {
       op: "if",
       blockType: { kind: "empty" },
@@ -1530,10 +1531,7 @@ export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx
         // strings AND symbols (#6770 S7: `__object_keys` is now the
         // enumerable-string projection, which would drop symbols and run the
         // gopd trap a second time per key).
-        { op: "local.get", index: 12 },
-        ...(ownKeysAllIdx !== undefined
-          ? ([{ op: "ref.null.extern" }, { op: "call", funcIdx: ownKeysAllIdx }] satisfies Instr[])
-          : ([{ op: "call", funcIdx: objectKeysIdx }] satisfies Instr[])),
+        ...sourceKeys.keys,
         { op: "local.set", index: keyListLocal },
         // length = ToLength(keys.length), narrowed to the bounded native loop
         { op: "local.get", index: keyListLocal },

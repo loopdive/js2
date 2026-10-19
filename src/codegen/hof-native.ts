@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * #3098 — native standalone array-HOF loops for dynamic (`any`/externref)
+ * #3098 — native WasmGC array-HOF loops for dynamic (`any`/externref)
  * receivers. Subsystem module (kept out of object-runtime.ts per the #3102
  * LOC-regrowth ratchet / compiler-consolidation plan): object-runtime owns the
  * open-object MOP substrate; this module owns the callback-consuming HOF loops
@@ -11,7 +11,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { wasmGcBackend, type CodegenContext, type FunctionContext } from "./context/types.js";
 import { pushElemSizeForKind, pushTaDynViewInBoundsLen } from "./dataview-native.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#5194 step 4) IsCallable gate
@@ -20,7 +20,7 @@ import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 
 /**
- * (#3098) Native standalone array HOF loops for DYNAMIC (`any`/externref)
+ * (#3098) Native WasmGC array HOF loops for DYNAMIC (`any`/externref)
  * receivers — `__hof_<name>(recv, cb, thisArg) -> externref` (predicate/map
  * family) and `__hof_reduce{,Right}(recv, cb, init, hasInit: i32) -> externref`.
  *
@@ -50,7 +50,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
  *    6), and a non-callable `callbackfn` throws before the loop. This was a
  *    documented return-undefined boundary, justified by the #1839-class
  *    late-registration index-shift hazard — but that hazard does not apply:
- *    under standalone (the only mode this helper serves)
+ *    under WasmGC (the only backend this helper serves)
  *    `buildThrowJsErrorInstrs` resolves to the IN-MODULE `__new_TypeError`,
  *    which is an append-only minted defined func, exactly the invariant this
  *    helper already relies on. Sparse-array holes are still not skipped
@@ -59,8 +59,8 @@ import { addUnionImportsViaRegistry } from "./shared.js";
  *
  * Emitted at RESERVE time (append-only defined funcs — no funcIdx shift, same
  * invariant as `ensureObjectGroupBy`), so `fillClosedMethodDispatch` only
- * READS funcMap (#1719). Standalone-only: the `__extern_get_idx` array-like
- * arms this loop relies on are emitted only under `ctx.standalone` (see
+ * READS funcMap (#1719). WasmGC-only: the `__extern_get_idx` array-like
+ * arms this loop relies on are emitted only for the WasmGC backend (see
  * `objArrayLikeArms` in `ensureObjectRuntime`). Idempotent per method name.
  */
 const NATIVE_HOF_EACH = new Set([
@@ -104,7 +104,7 @@ export function ensureNativeArrayHof(
   methodName: string,
   options: NativeArrayHofOptions = {},
 ): number | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (!NATIVE_HOF_METHODS.has(methodName)) return undefined;
   const helperName = options.helperName ?? `__hof_${methodName}`;
   const existing = ctx.funcMap.get(helperName);
@@ -114,7 +114,7 @@ export function ensureNativeArrayHof(
   // the object runtime (`__extern_length`/`__extern_get_idx`/`__objvec_*`),
   // the native union helpers (`__box_number`/`__box_boolean`/`__is_truthy`),
   // and the closure bridge. ensureObjectRuntime already registers the union
-  // natives under standalone, but call the registry wrapper explicitly so this
+  // natives under WasmGC, but call the registry wrapper explicitly so this
   // helper never depends on that internal ordering.
   ensureObjectRuntime(ctx);
   addUnionImportsViaRegistry(ctx);
@@ -340,10 +340,10 @@ export function ensureNativeArrayHof(
   // iteration and returned a value instead of throwing, so
   // `<m>/callbackfn-not-callable-throws.js` saw no exception at all. The
   // length read is not observable on a TypedArray receiver, so the gate goes
-  // first. `__typeof_function` is the canonical standalone callable predicate;
+  // first. `__typeof_function` is the canonical WasmGC callable predicate;
   // when the module never registered it the guard is omitted and the body is
   // byte-identical to before (no late import is added here — #1839 discipline).
-  // `ensureNativeArrayHof` is standalone-only, so the throw always resolves to
+  // `ensureNativeArrayHof` is WasmGC-only, so the throw always resolves to
   // the IN-MODULE `__new_TypeError` (no host import, nothing to flush).
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   const callableGuard: Instr[] =
@@ -599,7 +599,7 @@ export function fillHofTaDynViewPresenceBypass(ctx: CodegenContext): void {
   const dynIdx = ctx.taDynViewTypeIdx;
   const hasIdx = ctx.funcMap.get("__extern_has_idx");
   const externLengthIdx = ctx.funcMap.get("__extern_length");
-  if (!ctx.standalone || dynIdx < 0 || externLengthIdx === undefined) return;
+  if (!wasmGcBackend(ctx) || dynIdx < 0 || externLengthIdx === undefined) return;
   type Nested = Instr & { then?: Instr[]; else?: Instr[]; body?: Instr[] };
   const walk = (arr: Instr[], visit: (arr: Instr[], j: number) => number): void => {
     for (let j = 0; j < arr.length; j++) {
