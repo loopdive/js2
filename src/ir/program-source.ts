@@ -2,7 +2,12 @@
 
 import { ts } from "../ts-api.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
-import { sourceLogicalRecordType, sourceCheckerScalar as checkerScalar } from "../frontend/logical-record-type.js";
+import {
+  sourceLogicalRecordType,
+  sourceCheckerScalar as checkerScalar,
+  sourceInferredReturnType,
+  sourceInferredCallableResult,
+} from "../frontend/logical-record-type.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
@@ -1015,30 +1020,6 @@ function checkerCallable(checker: ts.TypeChecker, node: ts.TypeNode, where: stri
   return result;
 }
 
-/** Preserve a real inferred callable return instead of the scalar lattice's null fallback. */
-function checkerInferredCallableResult(
-  checker: ts.TypeChecker,
-  declaration: ts.FunctionDeclaration,
-  where: string,
-): IrType | undefined {
-  if (
-    declaration.type ||
-    !declaration.body ||
-    declaration.asteriskToken ||
-    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-  )
-    return undefined;
-  const signature = checker.getSignatureFromDeclaration(declaration);
-  if (!signature) return undefined;
-  const type = checker.getReturnTypeOfSignature(signature);
-  const parts = type.isUnionOrIntersection() ? type.types : [type];
-  if (!parts.some((part) => checker.getSignaturesOfType(part, ts.SignatureKind.Call).length)) return undefined;
-  if (type.isUnionOrIntersection()) unsupported(`inferred callable result in ${where} has an ambiguous contract`);
-  const result = checkerCallableType(checker, type, where);
-  if (result?.kind !== "callable") unsupported(`inferred callable result in ${where} lost its checker contract`);
-  return result;
-}
-
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
 function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
   return checker.getTypeAtLocation(node) === checker.getAnyType() ? { kind: "dynamic" } : undefined;
@@ -1445,8 +1426,13 @@ function prepareSourceFunctionSignatures(
                   checkerCallable(checker, returnNode, unit.displayName) ??
                   sourceLogicalRecordType(checker, returnNode, unit.displayName) ??
                   typeNodeToIr(returnNode, unit.displayName))
-                : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
-                  (propagated ? lowerTypeToIrType(propagated.returnType) : null));
+                : sourceInferredReturnType(
+                    checker,
+                    declaration,
+                    sourceInferredCallableResult(checker, declaration, unit.displayName, (type) =>
+                      checkerCallableType(checker, type, unit.displayName),
+                    ) ?? (propagated ? lowerTypeToIrType(propagated.returnType) : null),
+                  );
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
       funcKind: isAsync ? "async" : "regular",

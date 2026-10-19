@@ -18,8 +18,33 @@ export function sourceCheckerScalar(checker: ts.TypeChecker, node: ts.Node): IrT
   return scalar(checker.getTypeAtLocation(node));
 }
 
-/** Logical source contract only: no native layout, own-property or boundary authority. */
-export function sourceLogicalRecordType(checker: ts.TypeChecker, node: ts.TypeNode, where: string): IrType | undefined {
+/** Keep source callable inference at the same frontend boundary as record facts. */
+export function sourceInferredCallableResult(
+  checker: ts.TypeChecker,
+  declaration: ts.FunctionDeclaration,
+  where: string,
+  convert: (type: ts.Type) => IrType | null,
+): IrType | undefined {
+  if (
+    declaration.type ||
+    !declaration.body ||
+    declaration.asteriskToken ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+  )
+    return undefined;
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  if (!signature) return undefined;
+  const type = checker.getReturnTypeOfSignature(signature);
+  const parts = type.isUnionOrIntersection() ? type.types : [type];
+  if (!parts.some((part) => checker.getSignaturesOfType(part, ts.SignatureKind.Call).length)) return undefined;
+  if (type.isUnionOrIntersection()) unsupported(where, "inferred callable result has an ambiguous contract");
+  const result = convert(type);
+  if (result?.kind !== "callable") unsupported(where, "inferred callable result lost its checker contract");
+  return result;
+}
+
+/** Annotation and inferred data records share one logical field conversion. */
+function recordType(checker: ts.TypeChecker, input: ts.Type, where: string, inferred: boolean): IrType {
   const active = new Set<ts.Type>();
   const convert = (type: ts.Type): IrType => {
     const primitive = scalar(type);
@@ -40,17 +65,20 @@ export function sourceLogicalRecordType(checker: ts.TypeChecker, node: ts.TypeNo
     )
       return unsupported(where, "array, index, callable or nominal class carrier needs its separate contract");
     const properties = checker.getPropertiesOfType(type);
-    if (!properties.length) return unsupported(where, "empty object does not declare record fields");
+    if (!properties.length && !inferred) return unsupported(where, "empty object does not declare record fields");
     active.add(type);
     try {
       const fields = properties.map((property) => {
         const declaration = property.valueDeclaration ?? property.declarations?.[0];
         if (
           !declaration ||
-          !ts.isPropertySignature(declaration) ||
-          declaration.questionToken ||
+          !(
+            ts.isPropertySignature(declaration) ||
+            (inferred && (ts.isPropertyAssignment(declaration) || ts.isShorthandPropertyAssignment(declaration)))
+          ) ||
+          (ts.isPropertySignature(declaration) && declaration.questionToken) ||
           property.flags & ts.SymbolFlags.Optional ||
-          !declaration.type ||
+          (!inferred && (!ts.isPropertySignature(declaration) || !declaration.type)) ||
           (!ts.isIdentifier(declaration.name) &&
             !ts.isStringLiteral(declaration.name) &&
             !ts.isNumericLiteral(declaration.name))
@@ -64,6 +92,11 @@ export function sourceLogicalRecordType(checker: ts.TypeChecker, node: ts.TypeNo
       active.delete(type);
     }
   };
+  return convert(input);
+}
+
+/** Logical source contract only: no native layout, own-property or boundary authority. */
+export function sourceLogicalRecordType(checker: ts.TypeChecker, node: ts.TypeNode, where: string): IrType | undefined {
   const type = checker.getTypeFromTypeNode(node);
   if (
     !(type.flags & ts.TypeFlags.Object) ||
@@ -72,8 +105,81 @@ export function sourceLogicalRecordType(checker: ts.TypeChecker, node: ts.TypeNo
     checker.isTupleType(type)
   )
     return undefined;
-  const declared = convert(type),
-    observed = convert(checker.getTypeAtLocation(node));
+  const declared = recordType(checker, type, where, false),
+    observed = recordType(checker, checker.getTypeAtLocation(node), where, false);
   if (!irTypeEquals(declared, observed)) return unsupported(where, "annotation disagrees with its checker contract");
   return declared;
+}
+
+/** Known undefined may use the existing zero-result ABI, not a fabricated value carrier. */
+function sourceReturnsOnlyUndefined(checker: ts.TypeChecker, declaration: ts.FunctionDeclaration): boolean {
+  const globalUndefined = checker.resolveName("undefined", undefined, ts.SymbolFlags.Value, false);
+  let known = true;
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node) && node.expression) {
+      let value = node.expression;
+      while (
+        ts.isParenthesizedExpression(value) ||
+        ts.isAsExpression(value) ||
+        ts.isTypeAssertionExpression(value) ||
+        ts.isNonNullExpression(value)
+      )
+        value = value.expression;
+      if (
+        !ts.isVoidExpression(value) &&
+        !(
+          ts.isIdentifier(value) &&
+          value.text === "undefined" &&
+          globalUndefined &&
+          checker.getSymbolAtLocation(value) === globalUndefined
+        )
+      )
+        known = false;
+    }
+    ts.forEachChild(node, visit);
+  };
+  if (!declaration.body) return false;
+  visit(declaration.body);
+  return known;
+}
+
+/** A failed lattice conversion is unknown, never proof that the source returns void. */
+export function sourceInferredReturnType(
+  checker: ts.TypeChecker,
+  declaration: ts.FunctionDeclaration,
+  propagated: IrType | null,
+): IrType | null {
+  const where = declaration.name?.text ?? "anonymous source function";
+  const signature = checker.getSignatureFromDeclaration(declaration);
+  if (!signature) return unsupported(where, "missing actual inferred return signature");
+  const callableResult = checker.getReturnTypeOfSignature(signature);
+  const async = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+  const result = async ? checker.getAwaitedType(callableResult) : callableResult;
+  if (!result) return unsupported(where, "inferred fulfillment contract is unresolved");
+  const primitive = scalar(result);
+  if (
+    primitive?.kind === "val" &&
+    primitive.val.kind === "f64" &&
+    propagated?.kind === "val" &&
+    propagated.val.kind === "i32"
+  )
+    return propagated; // Preserve an existing positive integer-domain proof.
+  if (primitive) return primitive;
+  // The checker preserves Boolean brands and complete nested field contracts
+  // that the bounded scalar propagation lattice can widen or discard.
+  if (
+    (result.flags & ts.TypeFlags.Object) !== 0 &&
+    !checker.getSignaturesOfType(result, ts.SignatureKind.Call).length &&
+    !checker.isArrayType(result) &&
+    !checker.isTupleType(result)
+  )
+    return recordType(checker, result, where, true);
+  // Keep existing positive propagation/callable proofs, including recursive
+  // numeric kernels whose checker result is any. No null coalescing to void.
+  if (propagated) return propagated;
+  if ((result.flags & ts.TypeFlags.Void) !== 0) return null;
+  if ((result.flags & ts.TypeFlags.Undefined) !== 0 && sourceReturnsOnlyUndefined(checker, declaration)) return null;
+  if ((result.flags & ts.TypeFlags.Object) !== 0) return recordType(checker, result, where, true);
+  return unsupported(where, "inferred return has no owned value contract; it is not void");
 }

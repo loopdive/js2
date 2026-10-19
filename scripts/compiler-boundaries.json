@@ -15899,7 +15899,7 @@
       "layer": "mixed-needs-split",
       "destination": "frontend-ts",
       "owner": "6979",
-      "nextBoundary": "Checker-certified scalar/record annotation contracts, including aliases and nested records. Logical shapes do not certify physical layout, own properties, Get/Set providers or foreign entry publication."
+      "nextBoundary": "Checker-certified scalar/record annotations and inferred return contracts, including aliases, nested data records and proven undefined-only returns. Unknown lattice results are not void. Logical shapes do not certify physical layout, own properties, Get/Set providers or foreign entry publication."
     },
     {
       "path": "src/frontend/object-construction.ts",

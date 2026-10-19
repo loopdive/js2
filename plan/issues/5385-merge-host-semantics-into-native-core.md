@@ -1414,3 +1414,28 @@ handoff also records an inferred method-object return erased to void, which
 must not become an absence/construction proof. Both issues remain in progress;
 PR6762 stays draft. Evidence:
 `plan/audit/6979-native-construction-resource-20261019.json`.
+
+### S7-w: do not erase inferred object returns into void
+
+Whole-source preparation now distinguishes an unknown lattice result from void.
+Inferred data/empty records retain their allocations and Boolean brands;
+unknown method/cast results are explicit unsupported contracts. Callable returns
+remain intact. Proven literal undefined keeps its valid zero-result ABI without
+adding a host import or claiming a general undefined value carrier.
+
+Fresh paired probes confirm the parent emitted deep/empty object factories as
+52/51-byte functions returning undefined. The candidate preserves four/one
+allocations and constructor demands, then correctly exposes incomplete native
+default-realm/carrier ownership. This is removal of false acceptance, not public
+interop completion. Both scalar targets still execute identical 85-byte modules
+returning 42/7, and known undefined retains its 51-byte binary.
+
+**15/15 new / 184/184 focused** cases pass. Existing 779-case and fresh paired
+161-case resource populations retain **756/23** and **147/14** pass/fail rows,
+respectively, with identical full errors. All 33 policy binaries/inventories,
+six native controls and the 5-pass/11-fail public typed-object diagnostic remain
+unchanged. The six cycle pairs and strict-closure gaps remain open; no waiver or
+full Test262 claim. Exact evidence:
+`plan/audit/6979-inferred-return-contracts-20261019.json`.
+Both issues remain in progress; default realm, actual field carriers, provider
+publication, Linear/WASI construction and architecture completion still remain.

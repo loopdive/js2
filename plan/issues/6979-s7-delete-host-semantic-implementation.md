@@ -4297,3 +4297,80 @@ construction remains open, not claimed by unchanged scalar/native controls.
 Investigate the inferred-return erasure above and cut architecture cycles.
 The migration and both issues remain in progress; the PR remains draft and
 must not be merged independently of its existing prerequisite stack.
+
+### S7-w inferred source return contracts (2026-10-19, Codex)
+
+Continue from signed `a5004601dd6efb537e8ba53c1cd08c58a235a306`.
+Fix whole-program source preparation treating an unrepresentable inferred
+return as void. Preserve representable return values and their construction
+demand; distinguish an actual void contract from an unknown/unsupported result.
+Do not obtain an empty census by erasing returned records or runtime effects.
+Keep explicit unsupported results honest while completing the semantic owners;
+no frozen AST/selector expansion, new host import, graph copy or premature
+boundary publication.
+
+#### S7-w verified implementation and handoff
+
+The scalar lattice's null conversion means **unknown/unrepresentable**, not
+void. Whole-source preparation now distinguishes it from checker-certified
+void and a proven undefined-only return. Source data-record inference preserves
+the complete nested shape and Boolean brands; inferred empty records have an
+actual object.new/constructor demand, not an empty function. Explicit empty
+object annotations remain ambiguous and do not acquire carrier authority.
+Callable inference stays intact and its syntax/type selection moves into the
+existing frontend owner. The source driver shrinks; no new module, allowance,
+selector/frozen AST expansion, host import or physical entry publication.
+
+Known literal undefined keeps its existing zero-result ABI, verified by actual
+execution on both no-host backends. That bounded proof checks the canonical
+undefined symbol (or actual void expression), not an arbitrary annotation or
+cast. First-class undefined values/consumption remain a separate native value
+carrier obligation; this is not a general Undefined value implementation.
+
+Exact-parent `a5004601dd` versus candidate, Node24.4.1 / Vitest3.2.4:
+
+- **15/15 new cases**, **184/184 focused overall** (includes the prior reference,
+  source, allocation, construction and getter-result cases). Actual zero-import
+  scalar/direct-call execution returns 42/7 on standalone and WASI; known
+  undefined returns undefined. Empty/deep record allocations survive preparation
+  and codec replay, and join the real constructor census. A decoded/offset
+  zero-field constructor executes through canonical native resources, preserves
+  explicit prototypes and inherits properties without inventing own fields.
+- Fresh paired source probe, **nine rows per tree**: parent deep/empty factories
+  emit accepted 52/51-byte functions that return undefined instead of objects.
+  Candidate retains four/one object allocations and their constructor demands,
+  and physical acceptance correctly refuses the missing default-realm/carrier
+  ownership. This removes false acceptance; it is not new public object support.
+  Scalar binaries remain identical 85-byte modules on both targets; proven
+  undefined retains the identical 51-byte zero-result binary. Inferred Boolean
+  record contracts now agree with the actual Boolean brand (two logical shapes
+  collapse to one), not a claim of physical size/performance improvement.
+- Method/cast-to-undefined unknown returns become located unsupported results,
+  not void. The parent's method/cast rows also throw a native realm literal-plan
+  ownership error during physical acceptance; that is captured as an error, not
+  green evidence or a claimed general fix to realm literal ownership. The any
+  parameter probe remains unsupported on both sides and earns no improvement
+  credit. Negative tests allow future correctly retained values, not permanent
+  refusal pins.
+- Existing **779 cases / 38 files** remain **756 passing / 23 failing** against
+  the retained published-parent report, with identical normalized full rows.
+  Fresh exact-parent and candidate resource populations remain **147 passing /
+  14 failing of 161** across three files, with identical full errors. Zero
+  skips/transitions; no old expectations changed and no full Test262 claim.
+- All **33** complete policy inventories/binaries and **six** native control
+  binaries remain identical. Public typed-object diagnostic stays **5/16
+  passing, 11 failing**, same 131388-byte binary. Typecheck/lint/format,
+  size/function, coercion/oracle, layering/fallback, flat/inventory and issue
+  checks pass with no new allowances, roots, floors or allowed-edge changes.
+- The same **six** cycle pairs remain red, with unchanged output versus S7-v;
+  no waiver. Strict modeled closure retains the two nonliteral imports;
+  preservation-only six full/six cut does not certify retirement. Runtime stays
+  10230 lines. Migration/default-realm/public-entry completion is not claimed.
+
+Evidence and source/report hashes:
+`plan/audit/6979-inferred-return-contracts-20261019.json`.
+The earlier S7-v inferred-return caution is now addressed for these measured
+source cases. Default Object/Function realm completion, source method/prototype
+semantics, actual foreign field carriers, provider/callable/storage closure,
+Linear/WASI record construction, architecture closure and the prerequisite stack
+remain open. Both issues stay in progress and PR6762 stays draft.

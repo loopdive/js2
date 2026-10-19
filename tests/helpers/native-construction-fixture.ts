@@ -39,8 +39,9 @@ export function constructionSource(text = RECORD_SOURCE, decoded = false) {
   const program = decoded ? decodePreparedIrProgram(encodePreparedIrProgram(result.program)) : result.program;
   return { program, projection: program.runtime[0]! };
 }
-export function constructionFixture(offset = false, decoded = false) {
-  const source = decoded ? constructionSource(RECORD_SOURCE, true) : (cached ??= constructionSource());
+export function constructionFixture(offset = false, decoded = false, text = RECORD_SOURCE) {
+  const source =
+    decoded || text !== RECORD_SOURCE ? constructionSource(text, decoded) : (cached ??= constructionSource());
   const literals = [..."zyxwvutsrqpo", "a", "text", "ref", "hello", "inherited"];
   const f = descriptorFixture(offset, source, literals);
   const requirements = deriveNativeObjectConstructionRequirements(f.access);
@@ -56,8 +57,8 @@ export function constructionFixture(offset = false, decoded = false) {
 }
 
 /** Observer ABI is test-only; actual record demand and every production resource are genuine. */
-export function constructionRuntime(offset = false, decoded = false) {
-  const f = constructionFixture(offset, decoded),
+export function constructionRuntime(offset = false, decoded = false, text = RECORD_SOURCE) {
+  const f = constructionFixture(offset, decoded, text),
     { tx } = f;
   const ext: ValType = { kind: "externref" },
     i32: ValType = { kind: "i32" };
