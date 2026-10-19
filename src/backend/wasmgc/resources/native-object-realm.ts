@@ -42,6 +42,7 @@ import {
   type NativeSourceClosureTypes,
 } from "./native-source-closures.js";
 import type { NativeVectorTypeReservations } from "./native-vectors.js";
+import { requireNativeObjectIsAlgorithm, type NativeObjectIsReservations } from "./native-object-is.js";
 
 const ext = { kind: "externref" } as const,
   i32 = { kind: "i32" } as const;
@@ -138,6 +139,7 @@ export interface NativeObjectRealmDependencies {
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly exception: NativeObjectRealmException;
   readonly source?: NativeSourceClosureTypes;
+  readonly objectIs?: NativeObjectIsReservations;
 }
 export interface NativeObjectRealmEntry {
   readonly request: NativePublicBuiltinFunctionRequest;
@@ -175,6 +177,7 @@ const roles = [
   "vectorPlan",
   "exception",
 ] as const;
+const optionalRoles = ["source", "objectIs"] as const;
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly original: NativeObjectRealmDependencies;
@@ -192,9 +195,11 @@ function dependencies(
   realm: NativeRealmRequirements,
   input: NativeObjectRealmDependencies,
 ) {
-  const d = data(input, roles, ["source"]) as unknown as NativeObjectRealmDependencies;
+  const d = data(input, roles, optionalRoles) as unknown as NativeObjectRealmDependencies;
   if (Object.hasOwn(d, "source") && !d.source) fail("present source must be an issued owner");
+  if (Object.hasOwn(d, "objectIs") && !d.objectIs) fail("present Object.is must be an issued owner");
   requireNativePublicBuiltinFunctionRequests(tx, d.requests, realm);
+  if (d.objectIs) requireNativeObjectIsAlgorithm(tx, d.objectIs, d.requests);
   const request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
   requireNativeRealmObjectLayouts(tx, d.layouts);
   requireNativeInvocationSubstrateReservations(tx, d.substrate, {
@@ -293,7 +298,7 @@ export function reserveNativeObjectRealmDeclarations(
   const d = dependencies(tx, realm, input);
   if (populations.has(d.layouts)) fail("realm anchors already have a public population owner");
   const keys = Object.freeze(resourceKeys(d));
-  tx.assertReservationKeysAvailable(keys);
+  tx.assertReservationKeysAvailable(keys.filter((key) => key !== d.objectIs?.algorithm.key));
   populations.add(d.layouts);
   const key = d.requests.key,
     request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
@@ -331,10 +336,13 @@ export function reserveNativeObjectRealmDeclarations(
         row.intrinsic.id === "%Function.prototype%"
           ? d.layouts.anchors.functionPrototype
           : tx.reserveGlobal(prefix + ":singleton", prefix, { kind: "ref_null", typeIdx: type.typeIndex }, true);
-      const algorithm = tx.reserveFunction(prefix + ":algorithm", prefix + ":algorithm", {
-        params: [ext, argv],
-        results: [ext],
-      });
+      const algorithm =
+        row.intrinsic.id === "%Object.is%" && d.objectIs
+          ? d.objectIs.algorithm
+          : tx.reserveFunction(prefix + ":algorithm", prefix + ":algorithm", {
+              params: [ext, argv],
+              results: [ext],
+            });
       const lifted = tx.reserveFunction(prefix + ":lifted", prefix + ":lifted", {
         params: [root, ext, argv],
         results: [ext],
@@ -392,7 +400,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeObjectRealmDeclarat
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied public declarations");
   const d = dependencies(tx, pack.realm, owner.original);
-  for (const role of [...roles, "source"] as const)
+  for (const role of [...roles, ...optionalRoles] as const)
     if (d[role] !== owner.dependencies[role]) fail("changed public dependency identity");
   if (tx.state === "reserving") pack.entries.forEach((row) => tx.assertTypeReservation(row.type));
   else
@@ -412,9 +420,9 @@ export function requireNativeObjectRealmDeclarations(
 ): NativeObjectRealmDeclarations {
   const owner = current(tx, pack);
   if (expectedDependencies !== undefined) {
-    const expected = data(expectedDependencies, roles, ["source"]);
+    const expected = data(expectedDependencies, roles, optionalRoles);
     if (
-      [...roles, "source"].some(
+      [...roles, ...optionalRoles].some(
         (role) => expected[role] !== owner.dependencies[role as keyof NativeObjectRealmDependencies],
       )
     )

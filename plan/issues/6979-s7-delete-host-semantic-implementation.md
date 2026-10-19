@@ -4537,3 +4537,93 @@ Object/Function algorithms/population, authenticated mixed prototype/value
 admission, canonical providers, source/public publication, Linear/WASI record
 construction and architecture/retirement closure remain required. Both issues
 stay in progress; PR6762 stays draft behind its existing prerequisite stack.
+
+### S7-z owned Object.is catalog algorithm (2026-10-19, Codex)
+
+Continue from signed `fa5f5ef74f496df0ac9efc0824b00fc7d6d064e5`.
+Connect the corrected SameValue kernel to the actual Object.is algorithm slot:
+genuine full-catalog requests, actual shared Call argument transport, canonical
+undefined for omitted arguments and an issued Boolean result boxer. Give this
+algorithm its own canonical completion owner so it can execute without dummy
+bodies for the remaining catalog; let full realm declarations borrow that exact
+slot. Keep whole-realm/source/public admission closed until their remaining
+owners are complete. This does not certify raw host primitive entry or foreign
+reference identity that has not passed the native value boundary contract.
+
+Readers/mutators enumerated: realm dependency capture, key preflight, entry
+reservation, currentness, expected-input comparison and declaration inventory
+all live in native-object-realm. Native primitive source association belongs to
+the native-values producer; it already imports the value-plan authenticator.
+Argument layout/currentness and canonical completion belong to the existing
+invocation substrate. No selector/frozen AST or catalog availability relaxation.
+The mixed-object dependency descriptor reader also recognizes the optional
+algorithm owner and delegates its authentication to the realm owner; its
+source/provider admission and completion barriers are not changed.
+
+#### S7-z verified implementation and handoff
+
+The Object.is algorithm now has a canonical resource owner for its actual
+catalog slot (`%Object.is%:algorithm`). It reads the first two arguments from
+the genuine shared Call vector, selects canonical undefined by actual argument
+count (not spare null cells), calls the existing corrected SameValue owner,
+and boxes the Boolean result through the issued native primitive owner.
+The original receiver and excess arguments are ignored, including across real
+argument-vector growth. No extra property engine, host callback or graph copy.
+
+The primitive producer checks the exact prepared program/projection association;
+equal source data, layouts or signatures do not confer authority. Both source
+coordinate fields and dependency roles must be visible own data fields, with
+no getter invocation. The shared argument/string owners, native values,
+SameValue dependencies and Boolean boxer must all be genuine and canonically
+complete before this algorithm is filled. Caller-filled bodies do not certify
+completion, and changed dependencies/body headers are rejected.
+
+Full realm declarations may borrow that **exact same reservation**, authenticated
+against the same catalog issuer, rather than allocate a second slot. The
+mixed-object dependency reader preserves this association too. No other
+algorithm body is fabricated, and whole-realm completion still refuses the
+missing algorithms/population. Catalog availability, source selectors and
+source/public entry admission are unchanged. The completion scope is explicitly
+native-value-ABI only: raw host primitive/reference entry still needs its actual
+boundary carrier/identity owner. This is not general host Object.is support.
+
+Measured at parent `fa5f5ef74f496df0ac9efc0824b00fc7d6d064e5`, Node24.4.1 /
+Vitest3.2.4, two forks with Wasm exception references:
+
+- **56/56 new cases**, **183/183 focused cases** pass. Three actual zero-import
+  instances cover ordinary/displaced indices, decoded source and allocating/
+  interned Boolean carriers. They distinguish omitted/null values, signed zero,
+  NaN, finite/infinite/subnormal numbers, Boolean/Number brands, full-width
+  BigInts, native Symbol/reference identity and equal Strings with distinct
+  carrier identity. The final new-case rerun also proves actual mixed
+  UTF-8/UTF-16 String equality; raw observer brand tests distinguish the two.
+- Same-ledger alternate argument transport, a different genuine decoded program
+  with the same transport/literals, copied opaque owners/equal dependency data,
+  dependency mutation, malformed source/role descriptors, duplicate slots and
+  caller-filled bodies are rejected without new reservations. The real catalog
+  borrows this slot exactly once and still cannot certify the incomplete realm.
+- Existing **779 cases / 38 files** remain **756 passing / 23 failing**; resource
+  **161 cases / three files** remain **147 passing / 14 failing**. Full rows
+  match the retained published-parent reports; no fresh parent checkout this
+  turn, skips, receipt rewrites or expectation changes. No full Test262 credit.
+- All **33** full policy inventories/binaries and **six** native compiled
+  controls remain identical. The three new algorithm witnesses are full
+  resource test modules with observers, not production marginal-cost or
+  public source-entry measurements.
+- Typecheck/lint/format, size/function, coercion/oracle, layering/fallback,
+  flat-directory and issue checks pass. One clean backend resource module is
+  added behind existing roots; no allowance, root or allowed-edge relaxation.
+  Inventory remains valid, architecture incomplete. The same six cycle pairs
+  remain red. Preservation-only checks pass, but strict closure still has the
+  same two nonliteral imports and retirement is not certified; no waiver.
+
+Source/report hashes, exact case names and three binary witnesses:
+`plan/audit/6979-native-object-is-algorithm-20261019.json`.
+
+Next: complete the remaining catalog algorithm owners, genuine lifted calls and
+singleton/property population before publication. Native foreign-value identity
+and dynamic fields, general first-class undefined, canonical mixed property
+providers, source special prototype/method semantics, callable/storage closure,
+Linear/WASI construction and architecture/full retirement acceptance remain
+required. Both issues remain in progress; PR6762 remains draft behind its
+existing prerequisite stack.

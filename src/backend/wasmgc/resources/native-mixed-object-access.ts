@@ -136,7 +136,7 @@ function capture(input: NativeMixedObjectAccessDependencies): NativeMixedObjectA
   record(
     d.realmDependencies,
     ["requests", "closures", "closurePlan", "layouts", "substrate", "vectors", "vectorPlan", "exception"],
-    ["source"],
+    ["source", "objectIs"],
   );
   const own = record(d.stringOwnDependencies, [
     "layouts",

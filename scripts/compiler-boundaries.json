@@ -15593,6 +15593,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-object-is.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/codegen/object-descriptor-data.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

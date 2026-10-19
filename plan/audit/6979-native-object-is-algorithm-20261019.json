@@ -1,0 +1,518 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-z issued native Object.is algorithm, shared catalog slot and native Call/value owners",
+  "parentCommit": "fa5f5ef74f496df0ac9efc0824b00fc7d6d064e5",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false
+  },
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-object-is.ts": "4fb050af4c48db0efb37c6ba5019e56cecedc33d98e44138ee5165f48f075dcb",
+    "src/backend/wasmgc/resources/native-object-realm.ts": "31609397432f10edea9ba8e49df2471d6d97d623121b471165bc6b0cd01de0ce",
+    "src/backend/wasmgc/resources/native-mixed-object-access.ts": "6bb3f090ddb748aab8dacbfb151a27748ba44237f13106753b59e2187f9499e6",
+    "src/backend/wasmgc/resources/native-values.ts": "81a6bd1abe2ca52802b8fbc19c083ebbbc3c72eadbdb281775021a851acb6e51",
+    "scripts/compiler-boundaries.json": "9340d3f98afb0466816f3c842636b23d3801fe6bd9d84978fd285e96d2f8b9f4",
+    "tests/helpers/native-object-is-fixture.ts": "71f036e83127aa271fa2588b6ff57a023c3642d2ef1f5bfe83c654b46a19da5c",
+    "tests/issue-6979-native-object-is-algorithm.test.ts": "6950b2ac04af545a59ec9a13a9ce0bc1e9b01198e2b2b85dcf5ab79db4e24844",
+    "src/backend/wasmgc/resources/native-object-same-value.ts": "79d164bad349daabf1603ba6a9c9824c051a190cac83a5911a9fce5e3fb5a133",
+    "src/runtime/wasmgc/values/native-object-same-value-definition.ts": "98f5a33399a828d8cacdb9a4bcba44cef113255038f597f5de726d3aaf6d4caa",
+    "src/runtime/wasmgc/values/builtin-function-bodies.ts": "9a06c1ef57dc09ee68e89f97776dfe9e6871ac807c4cb5939f375f113d4d85e8",
+    "src/backend/wasmgc/resources/native-invocation-substrate.ts": "21c470636e1637ffddfa118587552c1680522ef4f42db6ffbb2947f721f8c62a"
+  },
+  "scope": {
+    "actualObjectIsCatalogAlgorithm": true,
+    "sharedActualArgumentTransport": true,
+    "omittedArgumentsUseCanonicalUndefined": true,
+    "canonicalSameValueAndBooleanBoxer": true,
+    "exactProgramProjectionAssociation": true,
+    "fullCatalogBorrowsExactAlgorithmReservation": true,
+    "newBackendResourceModules": 1,
+    "newRootsFloorsAllowancesOrAllowedEdges": false,
+    "selectorOrFrozenAstExpansion": false,
+    "newHostImportsOrGraphCopy": false,
+    "rawHostValueAdmission": false,
+    "liftedCallsSingletonPopulationOrWholeRealmCompleted": false,
+    "sourcePublicEntryAdmitted": false
+  },
+  "tests": {
+    "newCases": {
+      "cases": 56,
+      "passed": 56,
+      "failed": 0,
+      "skipped": 0,
+      "names": [
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned compares Boolean, full-width BigInt, native String and actual reference values",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned equates distinct NaN payloads through the actual argument transport",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned executes with zero imports and the actual catalog/transport/Boolean owners",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned ignores receiver and tail values while real argv growth preserves the first two operands",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(-0,0)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(0,-0)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(0,0)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(42,42)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(42,43)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(5e-324,0)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(Infinity,-Infinity)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned matches native numeric Object.is(Infinity,Infinity)",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned rejects a foreign argument vector rather than silently treating it as omitted",
+        "genuine Object.is catalog algorithm, displaced=false, decoded=false, mode=interned uses canonical undefined for omitted arguments, not spare null backing cells",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating compares Boolean, full-width BigInt, native String and actual reference values",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating equates distinct NaN payloads through the actual argument transport",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating executes with zero imports and the actual catalog/transport/Boolean owners",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating ignores receiver and tail values while real argv growth preserves the first two operands",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(-0,0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(0,-0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(0,0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(42,42)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(42,43)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(5e-324,0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(Infinity,-Infinity)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating matches native numeric Object.is(Infinity,Infinity)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating rejects a foreign argument vector rather than silently treating it as omitted",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=false, mode=allocating uses canonical undefined for omitted arguments, not spare null backing cells",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned compares Boolean, full-width BigInt, native String and actual reference values",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned equates distinct NaN payloads through the actual argument transport",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned executes with zero imports and the actual catalog/transport/Boolean owners",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned ignores receiver and tail values while real argv growth preserves the first two operands",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(-0,0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(0,-0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(0,0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(42,42)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(42,43)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(5e-324,0)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(Infinity,-Infinity)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned matches native numeric Object.is(Infinity,Infinity)",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned rejects a foreign argument vector rather than silently treating it as omitted",
+        "genuine Object.is catalog algorithm, displaced=true, decoded=true, mode=interned uses canonical undefined for omitted arguments, not spare null backing cells",
+        "Object.is algorithm custody and realm association canonically fills once and detects post-completion body mutation",
+        "Object.is algorithm custody and realm association does not turn copied opaque dependencies or equal dependency data into authority",
+        "Object.is algorithm custody and realm association rejects a different genuine source program even with the same ledger/transport/literals",
+        "Object.is algorithm custody and realm association rejects accessor dependency fields without evaluating getters",
+        "Object.is algorithm custody and realm association rejects an alternate genuine same-ledger Call transport before allocating an algorithm",
+        "Object.is algorithm custody and realm association rejects copied, foreign and different genuine catalog owners before allocation",
+        "Object.is algorithm custody and realm association rejects duplicate slots and dependency substitution without new reservations",
+        "Object.is algorithm custody and realm association rejects hidden dependency fields without evaluating getters",
+        "Object.is algorithm custody and realm association rejects inherited dependency fields without evaluating getters",
+        "Object.is algorithm custody and realm association requires all canonical dependencies and refuses a caller-filled algorithm",
+        "Object.is algorithm custody and realm association the primitive owner rejects accessor expected-source fields without callbacks",
+        "Object.is algorithm custody and realm association the primitive owner rejects hidden expected-source fields without callbacks",
+        "Object.is algorithm custody and realm association the primitive owner rejects inherited expected-source fields without callbacks",
+        "Object.is algorithm custody and realm association the real full catalog borrows exactly this slot but cannot certify the incomplete realm"
+      ],
+      "finalRerunProvesMixedUtf8Wtf16Carriers": true
+    },
+    "focused": {
+      "cases": 183,
+      "passed": 183,
+      "failed": 0,
+      "skipped": 0,
+      "files": 5,
+      "finalNewCaseRerun": "The five-file report has the same 56 named/status rows as the later final new-case rerun, which also executes the final fixture UTF8/UTF16 brand assertions."
+    },
+    "resources": {
+      "cases": 161,
+      "passed": 147,
+      "failed": 14,
+      "skipped": 0,
+      "comparison": "Retained published-parent S7-y reports, not a fresh parent checkout this turn",
+      "fullRowsEqual": true,
+      "rowsSha256": "64dd393cad01bcb213ce04614a31cc4d8a1d3156eb5e5d4995d293ad397a1c9f",
+      "retainedFailures": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_accessor instructions, locals and all acquisition effects",
+          "fullErrorSha256": "9e8600327b38503a3880f3d0befc0c3bcf5206dcad592225897017e908b0cff6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_value instructions, locals and all acquisition effects",
+          "fullErrorSha256": "9e8600327b38503a3880f3d0befc0c3bcf5206dcad592225897017e908b0cff6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __new_plain_object instructions, locals and all acquisition effects",
+          "fullErrorSha256": "61f584f99ad4ecd1d0b9c34354a34c601de18d6cfc66ccad81ccb84a9a4e1046"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_grow instructions, locals and all acquisition effects",
+          "fullErrorSha256": "61f584f99ad4ecd1d0b9c34354a34c601de18d6cfc66ccad81ccb84a9a4e1046"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_insert instructions, locals and all acquisition effects",
+          "fullErrorSha256": "61f584f99ad4ecd1d0b9c34354a34c601de18d6cfc66ccad81ccb84a9a4e1046"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __object_is instructions, locals and all acquisition effects",
+          "fullErrorSha256": "9e8600327b38503a3880f3d0befc0c3bcf5206dcad592225897017e908b0cff6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-descriptor…'",
+          "fullErrorSha256": "9496d9e1322a9740e462bd6b44df553871683a06938a48bfea9fa193ceb32a6d"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-enumeratio…'",
+          "fullErrorSha256": "9496d9e1322a9740e462bd6b44df553871683a06938a48bfea9fa193ceb32a6d"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime.ts'",
+          "fullErrorSha256": "12b8e91c60d17b6ecfcef780706a90e29efc44a78c4bc27d620132fec2f756f1"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects altered receipts, old-source substitution and unknown paths",
+          "fullErrorSha256": "526377b955a28fc80831b45237decca8729cf74615375dd9306c45bc5902805e"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-descriptor…' after a positive reconstruction",
+          "fullErrorSha256": "c6afa7788560b9fae562385eaf230cf0618eecf53e1d65e1bde44482c20f1c82"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-enumeratio…' after a positive reconstruction",
+          "fullErrorSha256": "c6afa7788560b9fae562385eaf230cf0618eecf53e1d65e1bde44482c20f1c82"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime.ts' after a positive reconstruction",
+          "fullErrorSha256": "3ddb909b1e5c752f06c0228a1307ceec42f1c564fea7a87ac480509bff84abc2"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects missing, duplicated, reordered and semantic span mutations",
+          "fullErrorSha256": "9442bfe6935b3ca95e4a32815676040e3098b137bfdce424660a645a4936fa4f"
+        }
+      ]
+    },
+    "existing": {
+      "cases": 779,
+      "passed": 756,
+      "failed": 23,
+      "skipped": 0,
+      "files": 38,
+      "comparison": "Retained published-parent S7-y report, not a fresh parent checkout this turn",
+      "fullRowsEqual": true,
+      "rowsSha256": "6ce710770c90517cb4effb0cda18fe0b9f01ac55116b80d284d45f475c69a989",
+      "retainedFailures": [
+        {
+          "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+          "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+          "fullErrorSha256": "ddaa5c82b0140303e541822010d566e90dc1a00878f8d9e76556c5509f9ba674"
+        },
+        {
+          "file": "issue-1058-unmatched-closure-host-call.test.ts",
+          "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+          "fullErrorSha256": "d60015ae8cad28e4a40dbf90ec6d60e81473ed28e3fd145023d920f2630998e5"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) nested fn-decl `this` inside a plain strict function is also undefined",
+          "fullErrorSha256": "75d3e51993d5c1ce32f9aeaaabadad4a7cb295c33294d1bc8cb768b9d1871bec"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 1: strict function-expression `typeof this` is 'undefined', not 'object'",
+          "fullErrorSha256": "40ce352d69b58424aabc1b9fe3e49e5be44c97a94a1bc69b97571dc2af9cf67d"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 2: nested fn-decl in a class method sees `this === undefined`",
+          "fullErrorSha256": "cc4788f490d18daeb7dcd1cbd98203d2bbc2c978b3cf421caff08a5e202928c0"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 2: the class method's own `this` is still the instance (not regressed)",
+          "fullErrorSha256": "a6f7054afdafaede67712c9c8ff54603191e5736bb4482f1b33526fb5073c036"
+        },
+        {
+          "file": "issue-2623-p7-finally-bridge.test.ts",
+          "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+          "fullErrorSha256": "9b6c3d30fd4e737eb5b81a5dbd0a7be3b6b3b18181687e11df989f50937cadc1"
+        },
+        {
+          "file": "issue-3518-typed-program-preparation.test.ts",
+          "name": "source-free typed program preparation, standalone WasmGC gates intermediate allocation checks explicitly while retaining nonempty unconditional final checks",
+          "fullErrorSha256": "344f1d419700d3b8cf6ccd770091018b2bae262b74184f0096206a76d33cb8c5"
+        },
+        {
+          "file": "issue-3518-typed-program-preparation.test.ts",
+          "name": "source-free typed program preparation, standalone WasmGC threads explicit false through every verifier, including final validation, with an omitted-option control",
+          "fullErrorSha256": "ae537cecd41d9c183d2a8cb5675350c78f5a47b9e5c621acf3a51e58e74a8b89"
+        },
+        {
+          "file": "issue-3526-callable-boundary-callback.test.ts",
+          "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+          "fullErrorSha256": "ef2fd845089e1c70df54815f04609e483eefc21c1f83bac74efefb7f84cf6883"
+        },
+        {
+          "file": "issue-3526-callable-boundary-callback.test.ts",
+          "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+          "fullErrorSha256": "32695174f4355bf2379f52884e844568d7d34f27f28bc92c018fbd6f06b0ed59"
+        },
+        {
+          "file": "issue-3526-callable-boundary-schema.test.ts",
+          "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits imports the fixed-arity members and the array sibling TOGETHER on gc-host",
+          "fullErrorSha256": "0e568a9a43ef7a579d2e474e43ad2ac06a9c336649a0307e4e5840f127e76a58"
+        },
+        {
+          "file": "issue-3526-callable-boundary-schema.test.ts",
+          "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits matches the maker siblings' emitted import ABI",
+          "fullErrorSha256": "070603e568daebc245b3c21e8abfa3f8946172395e6cc797c724be367c4062f1"
+        },
+        {
+          "file": "issue-4515-wave5.test.ts",
+          "name": "#4515 wave-5 — §13 completion value: the forms that RESET V a break inside an if carries `undefined` out of the loop",
+          "fullErrorSha256": "1c2da0dacd64c48fc09828e2d5dd8e020a5e1b2bd50762ab5c67aadeb63d3ce5"
+        },
+        {
+          "file": "issue-4515-wave5.test.ts",
+          "name": "#4515 wave-5 — §13 completion value: the forms that RESET V a do-while still reports the last value-producing statement that ran",
+          "fullErrorSha256": "539d7124caf3eb699916ca041f5c1ff1b7679ff86ed92658e0d5929612ac719d"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier keeps the closure reachable through the host dispatcher",
+          "fullErrorSha256": "b6c445afd47030873310e6966f9010f17bc6e210ad0ee55e298f232b03a2522c"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier produces a module that validates and calls the closure with its tuple",
+          "fullErrorSha256": "dbce27ca499053572ad7f53bbd0fb2e469272eeba7cb2929157cb2844b8b467f"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier still reads NaN for a tuple's .length (documented residual)",
+          "fullErrorSha256": "bd76b8d89b487464c9e2cdba800b80023d590770f1d66ecad87d17198823fb81"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+          "fullErrorSha256": "bf5f00880a999fdacc4e1ba493635857217682737d98e568f311a9222e6836cb"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+          "fullErrorSha256": "d789cff2be26537f9ff251475c69dfb1e2b30d3d55b2eb0cdf37db6107cba888"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+          "fullErrorSha256": "7337a07e00defdd124ee4c608ee9b34f2bcfcc8425bd2621e34fe194cb096ecb"
+        },
+        {
+          "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+          "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+          "fullErrorSha256": "78dbdc3c26ffa2f3028a2794ba2740d060e5be37b80c2e19e0b8485323a34342"
+        },
+        {
+          "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+          "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+          "fullErrorSha256": "d1d6408590ce068d5b307ac8220d064ebd9689ee2a111c461fecff551271f58c"
+        }
+      ]
+    },
+    "oldExpectationsReceiptsOrSkipsChanged": false
+  },
+  "binaryWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "mode": "interned",
+      "bytes": 18175,
+      "sha256": "b7c77d99c60a13fefcb341a76db8266cb94c91603f8c6cc80c4c078299e4b0fe",
+      "imports": [],
+      "outputs": [1, 0, 1, 0, 1, 0, 1, 0],
+      "algorithmKey": "native-realm:\"ir-source:v1:0000000000000000:entry:entry.ts\":public-builtins:%Object.is%:algorithm",
+      "algorithmIndex": 35,
+      "completionScope": "native-object-is-algorithm",
+      "totalFunctions": 51,
+      "totalTypes": 53,
+      "publicRealmCompleted": false,
+      "sourceEntryAdmitted": false
+    },
+    {
+      "displaced": true,
+      "decoded": false,
+      "mode": "allocating",
+      "bytes": 18635,
+      "sha256": "b715723cb86e2ba51ea812244fc1085d7db3b2606d01953a0fe40dee3bcffd3e",
+      "imports": [],
+      "outputs": [1, 0, 1, 0, 1, 0, 1, 0],
+      "algorithmKey": "native-realm:\"ir-source:v1:0000000000000000:entry:entry.ts\":public-builtins:%Object.is%:algorithm",
+      "algorithmIndex": 37,
+      "completionScope": "native-object-is-algorithm",
+      "totalFunctions": 54,
+      "totalTypes": 58,
+      "publicRealmCompleted": false,
+      "sourceEntryAdmitted": false
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "mode": "interned",
+      "bytes": 18660,
+      "sha256": "07052b0c126832b9d2b7cdea2cb11168ec397e24566f83b9fb33a2e6bb3866a5",
+      "imports": [],
+      "outputs": [1, 0, 1, 0, 1, 0, 1, 0],
+      "algorithmKey": "native-realm:\"ir-source:v1:0000000000000000:entry:entry.ts\":public-builtins:%Object.is%:algorithm",
+      "algorithmIndex": 37,
+      "completionScope": "native-object-is-algorithm",
+      "totalFunctions": 54,
+      "totalTypes": 58,
+      "publicRealmCompleted": false,
+      "sourceEntryAdmitted": false
+    }
+  ],
+  "binaryCostInterpretation": "Full resource test instances include canonical descriptor/primitive resources, full-catalog literal prerequisites and observers; not production marginal cost or a performance claim.",
+  "runnerSource": "import assert from 'node:assert/strict';\nimport {createHash} from 'node:crypto';\nimport {objectIsRuntime} from '../tests/helpers/native-object-is-fixture.ts';\nfor(const [displaced,decoded,mode]of [[false,false,'interned'],[true,false,'allocating'],[true,true,'interned']]as const){\n const r=objectIsRuntime(displaced,decoded,mode),e=r.ex;\n const outputs=[r.test([]),r.test([null]),r.test([e.boxNumber!(42),e.boxNumber!(42)]),r.test([e.boxNumber!(0),e.boxNumber!(-0)]),r.test([e.boxNumber!(NaN),e.boxNumber!(NaN)]),r.test([e.wide64!(),e.zero!()]),r.test([e.key!(),e.textCopy!()]),r.test([e.symbol!(1),e.symbol!(2)])];\n assert.deepEqual(outputs,[1,0,1,0,1,0,1,0]);assert.equal(r.imports.length,0);\n console.log(JSON.stringify({displaced,decoded,mode,bytes:r.bytes.length,sha256:createHash('sha256').update(r.bytes).digest('hex'),imports:r.imports,outputs,algorithmKey:r.f.objectIs.algorithm.key,algorithmIndex:r.f.tx.physicalIndex(r.f.objectIs.algorithm),completionScope:r.f.objectIs.completionScope,totalFunctions:r.f.module.functions.length,totalTypes:r.f.module.types.length,publicRealmCompleted:false,sourceEntryAdmitted:false}));\n}\n",
+  "ownershipEvidence": {
+    "rejectedBeforeReservation": [
+      "Different genuine decoded source with the same ledger, Call transport and literals",
+      "Alternate genuine same-ledger Call transport",
+      "Copied opaque dependencies and equal-looking SameValue dependency data",
+      "Getter/hidden/inherited dependency roles and expected-source fields without getter calls",
+      "Duplicate catalog slot and dependency substitution"
+    ],
+    "completion": "Actual canonical substrate, SameValue and Boolean boxes must be complete. A caller-filled body cannot certify the algorithm; post-completion body mutation fails. Full realm reuses the exact slot once but keeps other algorithms unfilled and refuses whole-realm completion.",
+    "domain": "Native value ABI only. Raw JS primitive/reference boundary normalization and foreign identity remain separate owned obligations; no general host Object.is/source entry credit."
+  },
+  "policy": {
+    "completeInventoriesAndBinaries": 33,
+    "rowsEqual": true,
+    "rowsSha256": "ae48c6d9b52c7e2da12a05ecd41d6fd646226305fd9bb6010143819ec3d2aaf2"
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 148315,
+      "sha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 147483,
+      "sha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    }
+  ],
+  "inventory": {
+    "valid": true,
+    "errors": 0,
+    "architectureComplete": false,
+    "cleanBackendModuleAdded": true,
+    "rootsAndAllowedEdgesUnchanged": true
+  },
+  "gates": {
+    "typecheck": {
+      "logSha256": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+      "status": "passed"
+    },
+    "lint": {
+      "logSha256": "c92eec933e181536db119dfbe633aba59fa0a9fab7fa71434648fc2d7b4b0aec",
+      "status": "passed"
+    },
+    "format": {
+      "logSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "status": "passed"
+    },
+    "loc": {
+      "logSha256": "f40195dc6bfd961291bcb9ec468228fa3c4f22090c1b5d40db92d3de23c054c8",
+      "status": "passed"
+    },
+    "func": {
+      "logSha256": "5589636049e7ac8887d321c0caf265962eca47742e74fb702048f24f3c83e849",
+      "status": "passed"
+    },
+    "coercion": {
+      "logSha256": "f2467c0fff402c0f13810ec9a0954efdae80ec3e5b50fb2d8b3f06ce231d7c4c",
+      "status": "passed"
+    },
+    "oracle": {
+      "logSha256": "031546c532af36cd91146eb9710a7fb4c994c737a2a2a9ae9e60ae36d14212b7",
+      "status": "passed"
+    },
+    "layering": {
+      "logSha256": "cbbdbd4d531f68c7e942601605aa7d692a9f4eea68d5811a2da3339a4c1998df",
+      "status": "passed"
+    },
+    "flat": {
+      "logSha256": "79049ac96f5154b630c1549f619889ba8acd810b409837617b82fe92aa04a719",
+      "status": "passed"
+    },
+    "fallbacks": {
+      "logSha256": "92c2a09dda32ef4ed473117e829e8e39f5a8e646cf2ef34c0506fcffd0398cc5",
+      "status": "passed"
+    },
+    "dead": {
+      "logSha256": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2",
+      "status": "preservation-only passes; strict closure incomplete"
+    },
+    "cycles": {
+      "logSha256": "cadb688331fc03a884cb22cb53287071d62e555207be0298152aef2fa07ce248",
+      "status": "same six-pair failure"
+    }
+  },
+  "architecture": {
+    "cyclesOutput": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[backend->ir]: 115 → 117\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[frontend->ir]: 17 → 19\n  - twoWayDirEdges[frontend->ts-api.ts]: 2 → 5\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n  - twoWayDirEdges[ir->frontend]: 7 → 10\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+    "retirementOutput": "\n> @loopdive/js2@0.71.0 check:dead-exports /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms\n> node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types --require-core-nodes\n\ncore-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)\ncore-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)\nmoved-runtime gate: FAIL (production-rooted evidence incomplete)\n  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412\n  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151\npreservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses\ngraph OPEN; strict modeled closure FAIL\nretirement/deletion NOT CERTIFIED\n",
+    "retirementCertified": false
+  },
+  "remaining": [
+    "Remaining catalog algorithm owners, genuine lifted calls, singleton/property population and complete Object/Function realm",
+    "Native foreign-value identity and dynamic field carriers, general first-class undefined, source special prototype/method semantics",
+    "Canonical mixed property/callable/storage providers and atomic authenticated source/public publication",
+    "Linear/WASI construction and architecture/strict closure/full conformance/retirement acceptance",
+    "Existing prerequisite stack; both Markdown issues remain in progress and PR6762 draft"
+  ]
+}

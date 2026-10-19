@@ -14,8 +14,10 @@ import type {
 } from "../../../wasm/physical/module-reservations.js";
 import {
   assertNativeValueResourcePlan,
+  assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
+import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "../../../ir/program/prepared-contracts.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
   buildAnyValueType,
@@ -230,6 +232,26 @@ export function requireNativeValueReservations(
     else if (tx.physicalIndex(token) !== token.typeIndex) fail("stale primitive layout coordinate");
     same(token.object, expected, "altered primitive layout");
   }
+  return pack;
+}
+
+/** Source association is checked by the value producer, not inferred from equal layouts. */
+export function requireNativeValueReservationsFor(
+  tx: PhysicalModuleReservations,
+  pack: NativeValueReservations,
+  requirements: NativeValueResourcePlan,
+  dependencies: NativeValueDependencies,
+  source: { readonly program: PreparedIrProgram; readonly projection: PreparedIrProgramRuntimeProjection },
+): NativeValueReservations {
+  requireNativeValueReservations(tx, pack, requirements, dependencies);
+  const fields = Object.getOwnPropertyDescriptors(source);
+  for (const role of ["program", "projection"])
+    if (!Object.hasOwn(fields, role) || !Object.hasOwn(fields[role]!, "value") || !fields[role]!.enumerable)
+      fail("source association requires own enumerable program/projection data");
+  const program = fields.program?.value,
+    projection = fields.projection?.value;
+  if (!program || !projection) fail("source association requires program/projection values");
+  assertNativeValueResourcePlanFor(requirements, program, projection, "native-string");
   return pack;
 }
 

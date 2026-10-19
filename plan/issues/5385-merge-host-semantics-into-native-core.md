@@ -1492,3 +1492,28 @@ This fixes the native kernel prerequisite, not public Object.is admission or
 the whole realm. Actual catalog algorithms/population, public provider/carrier
 closure, Linear/WASI construction and architecture/retirement gates remain
 open. Both issues stay in progress and the PR remains draft.
+
+### S7-z: owned native Object.is catalog algorithm
+
+The actual Object.is algorithm slot now composes the existing Call transport,
+corrected SameValue kernel, canonical omitted undefined and an issued Boolean
+boxer. Full realm declarations borrow that exact slot, not a copied signature
+or a second implementation. Program/projection identity, argument/string and
+value owners and canonical completion are checked independently of the
+remaining realm population. No caller-filled body, non-null realm anchor or
+count can promote this to whole-realm/public entry authority.
+
+**56/56 new, 183/183 focused cases** pass, with real zero-import execution across
+displaced/decoded resources and both Boolean boxing modes. Missing/null values,
+NaN/signed zero, native primitive/reference identity, mixed UTF-8/UTF-16 String
+equality and argument-vector growth are covered. The 779-case cohort retains
+**756 pass / 23 fail**, and the 161-case resource cohort **147 pass / 14 fail**,
+with identical full rows against retained published-parent reports. All 33
+policy inventories/binaries and six native compiled controls stay identical.
+
+Evidence: `plan/audit/6979-native-object-is-algorithm-20261019.json`.
+This is native-value-ABI algorithm completion, not raw host value admission,
+lifted-call/singleton publication or complete public Object.is support. The
+remaining catalog, foreign carriers/identity, source/public provider closure,
+Linear/WASI and architecture/retirement requirements stay open. Both issues
+remain in progress and the PR remains draft.
