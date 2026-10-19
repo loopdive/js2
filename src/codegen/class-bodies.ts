@@ -69,6 +69,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
 import type { ClassDynamicMember, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import {
   buildDestructureNullThrow,
   destructureParamArray,
@@ -394,7 +395,7 @@ function externrefParams(count: number): ValType[] {
  *     (defensive). The caller must NOT fall back to the host import (it
  *     would leak `env::__new_<Parent>`); the legacy first-arg-as-instance
  *     fallback applies instead.
- *   - `undefined` — no native arm (gc/host mode, or a parent with no native
+ *   - `undefined` — no native arm (linear backend, or a parent with no native
  *     ctor yet): caller falls back to `ensureLateImport` exactly as before.
  */
 function resolveStandaloneBuiltinSuperCtorIdx(
@@ -402,13 +403,13 @@ function resolveStandaloneBuiltinSuperCtorIdx(
   parentName: string,
   arity: number,
 ): number | null | undefined {
-  const hostFree = ctx.wasi || ctx.standalone;
+  const nativeBackend = wasmGcBackend(ctx);
 
   if (isWasiErrorName(parentName)) {
     emitWasiErrorConstructor(ctx, parentName, arity);
     return ctx.funcMap.get(`__new_${parentName}`) ?? null;
   }
-  if (!hostFree) return undefined;
+  if (!nativeBackend) return undefined;
   if (parentName === "Object") {
     return emitStandaloneObjectConstructor(ctx, arity) ?? null;
   }
@@ -511,7 +512,7 @@ function computeImplicitDerivedCtorPrefix(
 }
 
 /**
- * A standalone Map/Set subclass constructor's first parameter is the parent
+ * A native WasmGC Map/Set subclass constructor's first parameter is the parent
  * iterable boundary. Keep that boundary open as externref even when a user
  * annotation (for example `ReadonlyArray<readonly [K, V]>`) would otherwise
  * register a `vec<tuple>` ABI. The native subclass provider consumes the
@@ -527,7 +528,7 @@ function standaloneCollectionCtorFirstArgType(
 ): ValType {
   const parentName = ctx.classBuiltinParentMap.get(className);
   if (
-    (ctx.standalone || ctx.wasi) &&
+    wasmGcBackend(ctx) &&
     paramIndex === 0 &&
     (parentName === "Map" || parentName === "Set") &&
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
@@ -561,7 +562,7 @@ function compileExternrefArgument(
   ) {
     carrier = carrier.expression;
   }
-  const shouldForceVec = forceArrayLiteralVec && (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(carrier);
+  const shouldForceVec = forceArrayLiteralVec && wasmGcBackend(ctx) && ts.isArrayLiteralExpression(carrier);
   const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
   const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
     ._arrayLiteralForceCollectionVec;
@@ -728,9 +729,9 @@ function emitSetSubclassProto(
  * The standalone `instanceof <UserSubclass>` path (identifiers.ts) reads this
  * field. No host import — pure WasmGC, so it works in `--target wasi`.
  *
- * Only emitted in standalone / WASI mode: in JS-host mode the instance is a real
- * JS Error object (not an `$Error_struct`), `instanceof` routes through the host,
- * and the brand field does not exist on it. Guarded by the caller.
+ * Only emitted by the native WasmGC backend. A caller-owned JS Error admitted
+ * at the value boundary keeps its host identity and never reaches this internal
+ * allocation path.
  */
 function emitSetSubclassUserBrand(
   ctx: CodegenContext,
@@ -738,7 +739,7 @@ function emitSetSubclassUserBrand(
   selfLocal: number,
   subName: string,
 ): void {
-  if (!(ctx.wasi || ctx.standalone)) return;
+  if (!wasmGcBackend(ctx)) return;
   const brand = ctx.classTagMap.get(subName);
   if (brand === undefined) return;
   const structIdx = getOrRegisterErrorStructType(ctx);
@@ -783,7 +784,7 @@ function classDynamicMemberKind(member: ts.ClassElement): ClassDynamicMember["ki
  * key-evaluation and prototype-install lanes can find it. Every caller is a
  * collection or emit loop that previously said `continue` on `undefined`; they
  * keep that behaviour for the shapes this still declines (private names, and
- * every non-standalone lane).
+ * every non-WasmGC lane).
  *
  * Idempotent: the collection and emit passes both call it for the same member.
  */
@@ -799,7 +800,7 @@ export function resolveInstallableClassMemberName(
   // Only an unfoldable COMPUTED key gets a synthetic name. A private name is
   // already mangled by `resolveClassMemberName`; anything else that answers
   // `undefined` is a shape this lane does not model.
-  if (!ctx.standalone || !ts.isComputedPropertyName(member.name)) return undefined;
+  if (!wasmGcBackend(ctx) || !ts.isComputedPropertyName(member.name)) return undefined;
   const kind = classDynamicMemberKind(member);
   if (kind === undefined) return undefined;
   const ordinal = decl.members.indexOf(member);
@@ -1043,8 +1044,7 @@ export function collectClassDeclaration(
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = standaloneCommaHeritage(ctx, decl)?.value ?? clause.types[0]!.expression; // (#6772 S6)
-        if (!ctx.standalone && !ctx.wasi)
-          hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
+        if (!wasmGcBackend(ctx)) hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
         if (ts.isIdentifier(baseExpr)) {
           // (#4291) The local import spelling is not the class identity. Hono's
           // published base is declared as `var Hono = class _Hono {}`, exported
@@ -1076,7 +1076,7 @@ export function collectClassDeclaration(
           // independent ROOT struct wearing a heritage clause it has no compiled
           // relationship to. See the field-collision note on
           // `classDynamicUnresolvedHeritageSet`.
-          if ((ctx.standalone || ctx.wasi) && resolvedParentClassName === undefined) {
+          if (wasmGcBackend(ctx) && resolvedParentClassName === undefined) {
             ctx.classDynamicUnresolvedHeritageSet.add(className);
           }
           // (#2620 → #3972 → #6754) A native-collection subclass (Set/Map/
@@ -1115,7 +1115,7 @@ export function collectClassDeclaration(
           // parentStructTypeIdx undefined so the existing "root struct" path
           // still fires for any user-class collection bookkeeping (struct
           // registration, tag).
-          const isExternClassParent = ctx.externClasses.has(parentClassName) && !(ctx.standalone || ctx.wasi);
+          const isExternClassParent = ctx.externClasses.has(parentClassName) && !wasmGcBackend(ctx);
           if (
             parentStructTypeIdx === undefined &&
             (isHostConstructibleBuiltin(parentClassName) || isExternClassParent)
@@ -1164,7 +1164,7 @@ export function collectClassDeclaration(
             parentFields = ctx.structFields.get(parentClassName) ?? [];
             ctx.classParentMap.set(className, parentClassName);
           }
-        } else if (ctx.standalone || ctx.wasi) {
+        } else if (wasmGcBackend(ctx)) {
           // (#6623, #5383 S36) A property/element-access heritage expression
           // (`class S extends NS.PD {}`, the shape a LINKED provider namespace
           // produces) is resolved at runtime on the host lane
@@ -1374,9 +1374,9 @@ export function collectClassDeclaration(
     // `null` in this field means "never dynamically set" (readers fall back to
     // the compile-time prototype); an EXPLICIT `setPrototypeOf(o, null)` stores
     // the dynamic-proto sentinel instead (see src/codegen/dynamic-proto.ts).
-    // Standalone-only: gc/host models dynamic protos via the host
-    // `_wasmStructProto` WeakMap sidecar and its structs are untouched.
-    if (ctx.standalone && ctx.dynamicProtoClasses.has(className) && !fields.some((f) => f.name === "__proto__")) {
+    // Native WasmGC storage owns this slot. Objects admitted from JavaScript at
+    // the value boundary keep their existing host-backed prototype machinery.
+    if (wasmGcBackend(ctx) && ctx.dynamicProtoClasses.has(className) && !fields.some((f) => f.name === "__proto__")) {
       fields.push({ name: "__proto__", type: { kind: "externref" }, mutable: true });
     }
   }
@@ -1700,11 +1700,11 @@ export function collectClassDeclaration(
         // free-function path in declarations.ts:2499). `methodParams` already
         // includes the leading `this` ref for instance methods; mark
         // `synthesizedThis` so `param_this` is minted. The actual factory emit
-        // is routed below (the generator-method emit block). JS-host mode keeps
-        // the externref Generator object (eager-buffer path) — byte-identical.
-        const noJsHost = ctx.standalone || ctx.wasi;
+        // is routed below (the generator-method emit block). The linear backend
+        // keeps its own externref Generator representation.
+        const nativeBackend = wasmGcBackend(ctx);
         let nativeGen = null;
-        if (noJsHost && !isAsyncMethod && isNativeGeneratorCandidate(ctx, member)) {
+        if (nativeBackend && !isAsyncMethod && isNativeGeneratorCandidate(ctx, member)) {
           nativeGen = registerNativeGenerator(
             ctx,
             member,
@@ -2006,7 +2006,7 @@ export function collectClassDeclaration(
   // index is stable before any body bakes a read of it; the object itself is
   // built lazily at ClassDefinitionEvaluation (`class-static-sidecar.ts`).
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     !ctx.classStaticSidecarGlobals.has(className) &&
     (ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic)
   ) {
@@ -2566,8 +2566,9 @@ function compileClassBodiesInner(
     // host (`__register_class_ctor`). Constructor entry remains the right
     // once-per-class point: it provably precedes the existence of any instance,
     // while the externref-backed lane is materialized by `emitSetSubclassProto`.
-    // Host lane only: standalone has no class-object host registry to answer
-    // to, and the externref-backed lane is covered by `emitSetSubclassProto`.
+    // The non-WasmGC provider owns this legacy class-object registry. Native
+    // WasmGC class identity stays in-module; its explicit JS value boundary is
+    // handled by the export adapter rather than this semantic mirror.
     // Name-keyed class tables can expose a compatibility alias for the same
     // source class expression (for example Hono's two module-local `Node`
     // bindings).  A non-owner body shares the owner's constructor slot and
@@ -2576,7 +2577,7 @@ function compileClassBodiesInner(
     // trampoline before the canonical body fixes the type.  The scoped
     // synthetic identity owns the real singleton for that declaration.
     const classIdentityOwner = ctx.classDeclarationMap.get(className);
-    if (!ctx.standalone && !ctx.wasi && !isExternrefBacked && classIdentityOwner === decl) {
+    if (!wasmGcBackend(ctx) && !isExternrefBacked && classIdentityOwner === decl) {
       if (emitLazyClassObjectGet(ctx, fctx, className)) fctx.body.push({ op: "drop" });
     }
 
@@ -2724,7 +2725,7 @@ function compileClassBodiesInner(
         }
         const collectionParent = ctx.classBuiltinParentMap.get(className);
         const ctorIsCollectionArrayDefault =
-          (ctx.standalone || ctx.wasi) &&
+          wasmGcBackend(ctx) &&
           paramIdx === 0 &&
           (collectionParent === "Map" || collectionParent === "Set") &&
           defaultCarrier !== undefined &&
@@ -3009,12 +3010,11 @@ function compileClassBodiesInner(
     // `instance instanceof Sub` by walking the registered tag chain. The
     // direct user-class parent (or null when the direct parent is a builtin)
     // is registered idempotently on first call.
-    // (#1536c) Skipped under standalone / WASI: `__tag_user_class` is a JS host
-    // import (it would leak `env::__tag_user_class` and fail to instantiate).
-    // Standalone resolves `instance instanceof Sub`/`Parent` natively via the
-    // `$Error_struct` `$tag` discrimination (identifiers.ts) — no host tagging
-    // needed.
-    if (isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
+    // (#1536c) This legacy registration belongs to the non-WasmGC provider.
+    // The native WasmGC backend owns class branding even when its exports cross
+    // a JavaScript value boundary; mirroring that semantic state into the host
+    // would reintroduce the retired `__tag_user_class` host implementation.
+    if (isExternrefBacked && !wasmGcBackend(ctx)) {
       const builtinParent = ctx.classBuiltinParentMap.get(className);
       // Direct user-class parent: classParentMap[className] is set to the
       // immediate parent name; if it equals the builtin parent, the user
@@ -3060,11 +3060,12 @@ function compileClassBodiesInner(
     // chain (`_fnctorInstanceCtor` → `_fnctorProtoLookup`). The test262
     // harness `Iterator` shim assigns `F.prototype` at module init; the
     // Iterator-helper methods the instance inherits live only on that runtime
-    // object. Host lane only — standalone/wasi have no host MOP (the import
-    // would leak). Runs at the tail of the ctor body (the `_init` body for
+    // object. This mirror belongs to the non-WasmGC provider; a native WasmGC
+    // export boundary does not change the in-module MOP. Runs at the tail of
+    // the ctor body (the `_init` body for
     // split classes), so every construction path — `new C()` and `super()`
     // from a subclass — registers (WeakMap set, idempotent).
-    if (!isExternrefBacked && !(ctx.wasi || ctx.standalone)) {
+    if (!isExternrefBacked && !wasmGcBackend(ctx)) {
       const fnctorParent = fnctorAncestorOfClass(ctx, className);
       if (fnctorParent !== undefined) {
         const regIdx = ensureLateImport(
@@ -3329,7 +3330,7 @@ function compileClassBodiesInner(
         // the omitted-argument sentinel instead, which needs this predicate; and
         // an import can only be added HERE, while a body swap can still absorb
         // the funcidx shift, not in the finalize pass that emits the bridge.
-        if (paramType.kind === "externref" || (paramType.kind === "f64" && !ctx.standalone && !ctx.wasi)) {
+        if (paramType.kind === "externref" || (paramType.kind === "f64" && !wasmGcBackend(ctx))) {
           ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
           flushLateImportShifts(ctx, fctx);
         }
@@ -3968,7 +3969,7 @@ export function compileSuperCall(
     // critical ordering that a host-mirror pre/post hook cannot: code before
     // super runs first, the parent initializes `this`, then subsequent
     // constructor statements and derived fields observe that state.
-    if (hasRuntimeParent && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+    if (hasRuntimeParent && !wasmGcBackend(ctx) && !args.some((arg) => ts.isSpreadElement(arg))) {
       const importName = `__call_dynamic_class_parent_${args.length}`;
       const funcIdx = ensureLateImport(
         ctx,
@@ -4068,7 +4069,7 @@ export function compileSuperCall(
     // honours every argument (§23.1.1.1 `Array(...values)`), so forward them
     // all: at the declared arity 1, `super(42, "foo")` built `Array(42)`.
     const forwardArity =
-      (ctx.standalone || ctx.wasi) && builtinParent === "Array"
+      wasmGcBackend(ctx) && builtinParent === "Array"
         ? Math.max(
             getBuiltinConstructorForwardArity(ctx, builtinParent),
             (hasSpread ? flattenStaticallyKnownArgs(args) : args)?.length ?? 0,
@@ -4167,7 +4168,7 @@ export function compileSuperCall(
     // this exact ES5-constructor shape.
     const fnctorParent = fnctorAncestorOfClass(ctx, childClassName);
     const args = callExpr.arguments;
-    if (fnctorParent !== undefined && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+    if (fnctorParent !== undefined && !wasmGcBackend(ctx) && !args.some((arg) => ts.isSpreadElement(arg))) {
       const importName = `__call_dynamic_class_parent_${args.length}`;
       const bridgeIdx = ensureLateImport(
         ctx,
@@ -4200,7 +4201,7 @@ export function compileSuperCall(
     // parent returning an object REBINDS the derived `this`. That needs the
     // ctor body's `this` slot to be re-pointed after `super()` and is filed as
     // a residual (`call-expr-value.js`, `call-bind-this-value.js`).
-    if (fnctorParent !== undefined && (ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+    if (fnctorParent !== undefined && wasmGcBackend(ctx) && !args.some((arg) => ts.isSpreadElement(arg))) {
       const fnctorIdx = ctx.funcMap.get(fnctorParent);
       const fnctorParamTypes = fnctorIdx === undefined ? undefined : getFuncParamTypes(ctx, fnctorIdx);
       if (fnctorIdx !== undefined && fnctorParamTypes !== undefined && args.length <= fnctorParamTypes.length) {

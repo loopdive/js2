@@ -74,6 +74,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { nextModuleGlobalIdx } from "./registry/imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -219,7 +220,7 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
     // whose NewTarget's `prototype` the file sets to a primitive: §10.1.14
     // step 4 re-prototypes the instance to `%Object.prototype%`, which the
     // closed `$K` struct can only carry through this field.
-    if (ctx.standalone && isReflectConstructWithPrimitiveNewTargetProto(node, root)) {
+    if (wasmGcBackend(ctx) && isReflectConstructWithPrimitiveNewTargetProto(node, root)) {
       ctx.usesDynamicProto = true;
       markedRaw.add(((node as ts.CallExpression).arguments[0] as ts.Identifier).text);
     }
@@ -266,7 +267,7 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
     // `__proto__` setter), and `nested-declarations.ts`'s capture-typing
     // consumer of this set is NOT target-gated, so an unconditional mark would
     // move gc/host and wasi bytes.
-    if (ctx.standalone && ts.isObjectLiteralExpression(node)) {
+    if (wasmGcBackend(ctx) && ts.isObjectLiteralExpression(node)) {
       const colonProto = node.properties.find(
         (p) =>
           ts.isPropertyAssignment(p) &&
@@ -300,7 +301,7 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       const sym = resolveFnctorSymbol(ctx.checker, node.left.expression);
       if (sym && ctx.fnctorEscapeGate?.approvedNames.has(sym.name)) {
         markProtoSource(node.right);
-      } else if (sym === undefined && ctx.standalone) {
+      } else if (sym === undefined && wasmGcBackend(ctx)) {
         // (#6968) A DYNAMIC constructor (closure returned from a call,
         // member-held `Class.create()` ctor, …) has no fnctor symbol, so
         // nothing above promotes its prototype object — the literal stayed a
@@ -477,7 +478,7 @@ interface HierarchyClass {
  * appended `$__proto__` field exists AND the object runtime was emitted.
  */
 export function fillDynamicProtoHelpers(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   if (ctx.dynamicProtoClasses.size === 0) return;
   if (ctx.funcMap.has("__struct_proto_set")) return; // idempotence
   const rt = ctx.objectRuntimeTypes;

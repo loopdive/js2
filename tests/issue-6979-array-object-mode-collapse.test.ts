@@ -171,5 +171,60 @@ for (const target of ["standalone", "wasi"] as const) {
       exports.__module_init?.();
       expect(exports.readResult()).toBe(42);
     });
+
+    it("runtime-keyed class members share the native prototype and static sidecars", async () => {
+      const { module } = await compileNative(
+        `
+          var keyCalls = 0;
+          function nextKey(): string {
+            keyCalls = keyCalls + 1;
+            return "answer";
+          }
+          class Example {
+            [nextKey()](): number {
+              return 40;
+            }
+            static [nextKey()](): number {
+              return 2;
+            }
+          }
+          var instance: any = new Example();
+          export function readResult() {
+            return keyCalls === 2 ? instance.answer() + (Example as any).answer() : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("a class instance keeps a dynamically replaced native prototype", async () => {
+      const { module } = await compileNative(
+        `
+          class Example {
+            own: number;
+            constructor() {
+              this.own = 2;
+            }
+          }
+          var proto = { inherited: 40 };
+          var instance: any = new Example();
+          Object.setPrototypeOf(instance, proto);
+          export function readResult() {
+            return Object.getPrototypeOf(instance) === proto && (proto as any).inherited === 40
+              ? instance.inherited + instance.own
+              : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
   });
 }

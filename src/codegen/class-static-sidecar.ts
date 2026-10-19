@@ -76,6 +76,7 @@
 
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -110,7 +111,7 @@ const PRIVATE_NAME_PREFIX = "__priv_";
  * class. Pure predicate — no emission, no context mutation.
  */
 export function classStaticSidecarApplies(ctx: CodegenContext, className: string): boolean {
-  if (!ctx.standalone) return false;
+  if (!wasmGcBackend(ctx)) return false;
   if (ctx.classObjectGlobals?.get(className) === undefined) return false;
   if (ctx.classStaticSidecarGlobals.get(className) === undefined) return false;
   // A class with a static member whose key is known only at runtime — the case

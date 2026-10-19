@@ -74,13 +74,13 @@
  *
  * ## Byte-neutrality
  *
- * Gated on `ctx.standalone || ctx.wasi` AND on the class being externref-backed
- * AND on it declaring at least one installable instance method. The JS-host /
- * `gc` lane never reaches here — it keeps `__set_subclass_proto`, which does
- * the equivalent job through the real prototype — and any standalone module
- * without such a class emits exactly its previous bytes.
+ * Gated on the native WasmGC backend AND on the class being externref-backed
+ * AND on it declaring at least one installable instance method. The linear
+ * provider keeps its own prototype path, and any native module without such a
+ * class emits exactly its previous bytes.
  */
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { wasmGcBackend } from "./context/types.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
 import { emitClassMemberKeyOperand } from "./class-proto-accessors.js";
 import { installableInstanceMethodNames, METHOD_FLAGS } from "./class-proto-object.js";
@@ -172,7 +172,7 @@ function pushSubclassConstructorInstall(
 /**
  * Install `subName`'s declared instance methods as own data properties of the
  * instance held in `selfLocal` (an `externref` local). No-op — emitting
- * nothing at all — unless the standalone/WASI externref-backed shape above
+ * nothing at all — unless the native WasmGC externref-backed shape above
  * applies.
  */
 export function emitStandaloneSubclassMethodInstall(
@@ -181,7 +181,7 @@ export function emitStandaloneSubclassMethodInstall(
   selfLocal: number,
   subName: string,
 ): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
+  if (!wasmGcBackend(ctx)) return;
   if (!ctx.classExternrefBackedSet.has(subName)) return;
   // MEASURED exclusion, not a policy one: `__defineProperty_value` lands in the
   // #3537 vec bag / #3468 closure bag and on a native `$Object`, but NOT in an

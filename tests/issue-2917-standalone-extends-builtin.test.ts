@@ -196,7 +196,7 @@ describe("#2917 regression controls", () => {
     ).toBe(1 + 2 + 70);
   });
 
-  it("gc / JS-host mode keeps the __new_Array host import (byte-inert lane)", async () => {
+  it("gc / JS-boundary mode uses the native Array constructor", async () => {
     const r = await compile(
       `
       class X extends Array {}
@@ -206,7 +206,7 @@ describe("#2917 regression controls", () => {
     );
     expect(r.success).toBe(true);
     const labels = r.imports.map((i) => `${i.module}::${i.name}`);
-    expect(labels).toContain("env::__new_Array");
+    expect(labels).not.toContain("env::__new_Array");
   });
 });
 

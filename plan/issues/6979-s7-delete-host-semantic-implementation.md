@@ -1367,3 +1367,72 @@ uncertified.
 Classify each remaining mode arm as native WasmGC storage/dispatch versus an
 explicit value-boundary or platform-capability decision, and keep the 61-site
 `index.ts` orchestrator for a later coordinated slice.
+
+### S7-c class semantics and prototype handoff (2026-10-19, Codex)
+
+This tenth bounded S7-c checkpoint completes the remaining mode conditions in
+`class-bodies.ts` and the class/prototype dependency closure on
+`codex/6979-s7c-ir-arms`, published through draft PR `#6762`. S7 remains
+`in-progress`; this checkpoint does not claim the full host migration is
+complete.
+
+**Ratchet.** The reviewed reduction is banked in
+`plan/audit/standalone-arms-baseline.json`:
+
+| Measure | Promoted-literal checkpoint | Class/prototype checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,148 | **1,109** |
+| Matching source files | 403 | **400** |
+| `src/codegen` | 779 | **740** |
+| Exact `ctx.standalone` conditions in `class-bodies.ts` | 21 | **0** |
+
+The closure updates `class-proto-object.ts`, `class-static-sidecar.ts`,
+`class-proto-lookup.ts`, `standalone-class-dyn-static.ts`,
+`class-static-descriptor.ts`, `standalone-class-instance-proto.ts`,
+`standalone-class-dyn-member.ts`, `standalone-subclass-method-install.ts` and
+`dynamic-proto.ts`. Remaining raw text in that area is either compatibility
+state whose field name still contains `standalone` or historical comments; it
+is not a surviving semantic-mode condition.
+
+**Classification.** Native builtin-subclass construction, Map/Set iterable
+carriers, Error subclass branding, dynamic heritage, runtime-keyed class
+members, static sidecars, generator methods, dynamic prototype slots and
+native fnctor parent calls are WasmGC backend decisions. The linear backend
+keeps its provider-owned behavior. The retired class-object registry,
+`__tag_user_class`, `__register_fnctor_instance`, dynamic-parent bridge and
+fnctor bridge are now explicitly confined to the non-WasmGC provider rather
+than being selected by the surrounding environment.
+
+This preserves the object-boundary design. Wasm-owned class objects and
+instances use native WasmGC storage and prototype machinery. A value that
+actually crosses into JavaScript can still use the existing identity-cached
+host-backed facade; this checkpoint neither copies it nor installs the host
+object model as an internal semantic mirror. The earlier normalization was
+therefore safe: default `gc` already projected the native semantic regime,
+while `jsValueBoundary` remains the independent decision for marshaling and
+host identity.
+
+**Dynamic-prototype residual.** Prototype storage and linkage are working in
+WASI: `Object.getPrototypeOf(instance) === proto`, and `Object.keys(proto)`
+sees the donor field. A minimal generic inherited named read can nevertheless
+miss that field unless the same donor key is also demanded directly. The
+regression test makes that demand explicit before reading through the
+instance, so it verifies this checkpoint's class/prototype path without
+claiming the demand-sensitive reader bug is fixed. The follow-up belongs in
+the generic named-property reader/metadata cluster; it must not be addressed
+by reviving a JS-host semantic object.
+
+**Validation.** `issue-6979-array-object-mode-collapse.test.ts` passes 19/19
+across standalone and WASI. The wider 19-file class/prototype cohort is 197
+passing, five failing and 19 skipped after updating the obsolete #2917 default
+GC control to require the native Array constructor (no `env::__new_Array`). An
+exact detached A/B at parent `4642efb50c` reproduces all five remaining
+failures with identical values: one #5195 unprovable-heritage failure and four
+#5204 host-class-bridge assertions. TypeScript typecheck and the standalone-arm
+ratchet pass.
+
+**Next handoff.** Keep the donor-read residual explicit, then take another
+bounded reviewed group rather than folding the 61-site `index.ts` orchestrator
+into unrelated changes. Continue to classify storage/semantics with
+`wasmGcBackend`, actual JS crossings with `jsValueBoundary`, platform access
+with `hostFreeEnvironment`, and accelerators by family.
