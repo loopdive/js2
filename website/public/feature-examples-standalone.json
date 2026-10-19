@@ -1334,7 +1334,7 @@
     {
       "name": "Promise.withResolvers",
       "testCategories": ["built-ins/Promise/withResolvers"],
-      "passCount": 4,
+      "passCount": 5,
       "totalCount": 9
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4479,
+      "passCount": 4484,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4479,
+          "pass": 4484,
           "total": 4603
         }
       ]
