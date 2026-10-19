@@ -980,3 +980,13 @@ identity primitive changes the import gate to **457/452**, still unapproved.
 An existing matching macOS signing agent was found, allowing signed checkpoint
 publication without bypassing hooks. This supersedes the earlier signing
 blocker, not the PR's dependency, semantic acceptance or readiness blockers.
+
+The subsequent "S7-g runtime binder retirement handoff" closes a low-level
+runtime bypass: ambient shims no longer permit retired semantic manifests.
+Six missing builtin class names are retired, and unreachable class-specific
+host handlers are deleted. Runtime source is now **10,580 lines**, a **744-line**
+net reduction, with **97/97** focused controls. A fresh **194-case** comparison
+retains **128 passing/41 failing/25 skipped**, with no new failures; six native
+binaries and all 33 import inventories match. The **457/452** gate, 8,000-line
+runtime target and full program acceptance remain open. The scoped proof is
+`plan/audit/6979-runtime-binder-retirement-20261019.json`.

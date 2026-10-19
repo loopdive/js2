@@ -1,0 +1,303 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "parentCommit": "f99bd729cc82285c514eba87996874e334f07799",
+  "scope": "Unconditional low-level runtime manifest validation and retirement of its unreachable class-specific host semantic branches; not full S7 acceptance",
+  "behaviorChange": "ambientCompatibility controls ambient shims only. All env imports now pass the existing classification gate before dependencies or shims are touched. Six missing ECMAScript class names are retired rather than declared capabilities.",
+  "newRetiredClassNames": ["AggregateError", "AsyncDisposableStack", "Boolean", "Function", "Number", "String"],
+  "retirementProof": {
+    "declarations": [
+      {
+        "name": "_structArgIdentityCtors",
+        "refs": [524, 8757],
+        "outside": []
+      },
+      {
+        "name": "_convertIterableForHost",
+        "refs": [2176, 2193, 2215, 2246, 8808],
+        "outside": []
+      },
+      {
+        "name": "_errorPrimitiveToString",
+        "refs": [2759, 2902, 2927],
+        "outside": []
+      },
+      {
+        "name": "_errorMessageToString",
+        "refs": [2796, 8791],
+        "outside": []
+      },
+      {
+        "name": "_ITER_HELPER_NAMES",
+        "refs": [6062],
+        "outside": []
+      },
+      {
+        "name": "_iteratorRecordForHost",
+        "refs": [6085, 6170],
+        "outside": []
+      },
+      {
+        "name": "_setLikeRecordForHost",
+        "refs": [6128, 8935],
+        "outside": []
+      }
+    ],
+    "moduleExports": 30,
+    "directEval": 0,
+    "analysis": "TypeScript symbol-bound private references at the exact parent. Every use lies inside a removed declaration or class-specific branch made unreachable by unconditional manifest validation; no target is exported. No direct eval. General ToPrimitive, value conversion, facades and declared capabilities are retained.",
+    "positiveControl": {
+      "inMemoryOnly": true,
+      "injectedReference": "const __binder_retirement_control = { _errorMessageToString };",
+      "result": "rejected: outside reference at line 11326"
+    }
+  },
+  "validation": {
+    "focused": {
+      "parent": {
+        "files": 7,
+        "total": 95,
+        "pass": 88,
+        "fail": 7,
+        "skip": 0
+      },
+      "guardOnly": {
+        "files": 7,
+        "total": 95,
+        "pass": 95,
+        "fail": 0,
+        "skip": 0
+      },
+      "final": {
+        "files": 7,
+        "total": 97,
+        "pass": 97,
+        "fail": 0,
+        "skip": 0
+      },
+      "notes": "Seven original failures become passes. Final adds two controls: source retirement and whole-manifest preflight. Existing adapter rejection expectation updated from an unhandled-intent failure to the deliberate policy rejection.",
+      "classActionOptionAssertions": 468
+    },
+    "broad": {
+      "parent": {
+        "files": 10,
+        "total": 194,
+        "pass": 128,
+        "fail": 41,
+        "skip": 25
+      },
+      "final": {
+        "files": 10,
+        "total": 194,
+        "pass": 128,
+        "fail": 41,
+        "skip": 25
+      },
+      "files": [
+        {
+          "file": "host-proxy-promise-class-regressions.test.ts",
+          "total": 25,
+          "pass": 0,
+          "fail": 0,
+          "skip": 0
+        },
+        {
+          "file": "issue-3481-cause2-error-message-tostring.test.ts",
+          "total": 37,
+          "pass": 21,
+          "fail": 16,
+          "skip": 0
+        },
+        {
+          "file": "issue-3520-host-class-callable-abi.test.ts",
+          "total": 1,
+          "pass": 0,
+          "fail": 1,
+          "skip": 0
+        },
+        {
+          "file": "issue-4397-native-semantic-js-host.test.ts",
+          "total": 64,
+          "pass": 64,
+          "fail": 0,
+          "skip": 0
+        },
+        {
+          "file": "issue-4401-host-import-policy.test.ts",
+          "total": 9,
+          "pass": 9,
+          "fail": 0,
+          "skip": 0
+        },
+        {
+          "file": "issue-5211-invoke-method-callable-arg.test.ts",
+          "total": 15,
+          "pass": 14,
+          "fail": 1,
+          "skip": 0
+        },
+        {
+          "file": "issue-5239-object-create-class-prototype.test.ts",
+          "total": 2,
+          "pass": 0,
+          "fail": 2,
+          "skip": 0
+        },
+        {
+          "file": "issue-5381-intl-options-bag.test.ts",
+          "total": 21,
+          "pass": 0,
+          "fail": 21,
+          "skip": 0
+        },
+        {
+          "file": "issue-6979-builtin-carrier-materialization.test.ts",
+          "total": 8,
+          "pass": 8,
+          "fail": 0,
+          "skip": 0
+        },
+        {
+          "file": "issue-6979-constructor-value-mode-collapse.test.ts",
+          "total": 12,
+          "pass": 12,
+          "fail": 0,
+          "skip": 0
+        }
+      ],
+      "statusChanges": 0,
+      "newOrMissingKeys": 0,
+      "rawFailureDifferences": 2,
+      "failureNormalization": "Replace only the temporary parent checkout directory and src/runtime.ts line:column stack-frame coordinates on both sides. Zero differences remain across 194 unique keys; all 41 failing rows stay failed. Not a green full suite."
+    },
+    "linear": {
+      "parent": {
+        "files": 2,
+        "total": 6,
+        "pass": 6,
+        "fail": 0,
+        "skip": 0
+      },
+      "final": {
+        "files": 2,
+        "total": 6,
+        "pass": 6,
+        "fail": 0,
+        "skip": 0
+      },
+      "notes": "Two separate Linear runtime/class suites, unchanged six cases."
+    },
+    "native": {
+      "freshParentRun": true,
+      "controls": [
+        {
+          "target": "standalone",
+          "name": "scalar",
+          "bytes": 11413,
+          "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "flat",
+          "bytes": 33185,
+          "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "standalone",
+          "name": "dynamic",
+          "bytes": 146186,
+          "sha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "scalar",
+          "bytes": 22719,
+          "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "flat",
+          "bytes": 52928,
+          "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        },
+        {
+          "target": "wasi",
+          "name": "dynamic",
+          "bytes": 141053,
+          "sha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+          "imports": [],
+          "outputs": [42, 7],
+          "boundaryProbeExported": false
+        }
+      ],
+      "byteAndOutcomeEquality": 6,
+      "notes": "Six fresh parent modules and candidate modules have exact binary hashes, zero imports, answers 42/7 and no JS GC probe export."
+    },
+    "checks": {
+      "typecheck": "project TypeScript7 command PASS",
+      "lint": "whole src/tests/scripts PASS",
+      "format": "changed files PASS",
+      "loc": "PASS, no new grants",
+      "functionBudget": "PASS, no new grants",
+      "coercion": "PASS",
+      "oracle": "PASS",
+      "deadExports": "preservation-only 6/6 full and cut witnesses; strict retirement NOT CERTIFIED at the two known nonliteral imports",
+      "irFallbacks": "PASS through node --import tsx; pnpm wrapper initially failed sandbox IPC before executing the gate"
+    }
+  },
+  "sourceMetrics": {
+    "before": {
+      "runtimeTsLines": 11324,
+      "resolveImportLines": 1959,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "after": {
+      "runtimeTsLines": 10580,
+      "resolveImportLines": 1680,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 895,
+      "explicitCapabilityLines": 1194
+    },
+    "runtimeNetRemoved": 744,
+    "ceilingBanked": false
+  },
+  "hostImports": {
+    "probes": 33,
+    "imports": 457,
+    "unknown": 0,
+    "regimeGap": 0,
+    "comparedInventories": 33,
+    "exactInventoryEquality": true,
+    "ceiling": 452,
+    "gate": "FAIL 457 > 452, unchanged; no ceiling increase requested or assumed"
+  },
+  "sourceHashes": {
+    "src/runtime.ts": "0827e70afa3a7f11637ce09a5a405c9e55f4b8f4d55cfa09a5b177bf50789465",
+    "src/host-import-policy.ts": "1149513629e2088d9e604ca06caf48880935ba614a15bd6ac59349d10307d1a5",
+    "tests/issue-6979-runtime-binder-retirement.test.ts": "c407cad32d458ce38641084f5c80840d980570bc1faa150843399ed911decd05",
+    "tests/issue-4399-adapter-extraction.test.ts": "3e1705616c20af326b434cd4983bce8eb13dce3571a3762282a18d7d078f4a1d"
+  },
+  "limits": [
+    "Runtime is still 2580 lines above the 8000 target.",
+    "Raw ctx.standalone retirement, opaque bound-function slots, constructor/binary review and the prerequisite PR stack remain open.",
+    "No full local Test262 run, npm compatibility acceptance, or program-wide conformance claim.",
+    "PR stays draft; no main merge or full migration completion."
+  ]
+}

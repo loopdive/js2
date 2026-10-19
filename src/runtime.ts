@@ -504,34 +504,6 @@ function _compiledTypedArrayMirror(carrier: any, callbackState?: MarshalExportSo
   }
 }
 
-/**
- * (#5381) Extern-class constructors that consume a struct argument BY IDENTITY
- * — they store it, return it, or hand it back — so the default "marshal every
- * compiled struct through `_wrapForHost`" rule must not apply to them.
- *
- * `Object(x)` returns x itself (§7.1.18 ToObject on an object is the identity),
- * `Array(x)` with one non-numeric argument yields `[x]`, `WeakRef(t)` hands `t`
- * back from `deref()`, and `AggregateError`/`SuppressedError` expose their
- * `errors`/`error`/`suppressed` arguments verbatim. Wrapping any of those would
- * make the program observe a proxy where it stored a value, which is a
- * strictly worse failure than the opaque struct it gets today (the opaque
- * struct at least still compares equal to itself). `Function` is here for the
- * separate reason that its arguments are ToString'd source text.
- *
- * The Error family, iterables, buffer consumers and the ToPrimitive family are
- * excluded by their own flags at the construct site rather than by this set.
- */
-const _structArgIdentityCtors = new Set([
-  "Object",
-  "Function",
-  "Array",
-  "WeakRef",
-  "FinalizationRegistry",
-  "AggregateError",
-  "SuppressedError",
-  "Test262Error",
-]);
-
 const _SC_WRITABLE = 1;
 const _SC_ENUMERABLE = 2;
 const _SC_CONFIGURABLE = 4;
@@ -2162,100 +2134,6 @@ function _materializeIterable(iter: any, callbackState?: MarshalExportSource): a
   return iter;
 }
 
-/**
- * (#1438) Recursively convert a wasm vec / tuple struct to a real JS array
- * suitable for the native `new Map(iterable)`, `new WeakMap(iterable)` etc.
- * constructors. Inner tuples (heterogeneous `[k, v]` structs) are converted
- * to real `[k, v]` arrays. Inner vecs become nested arrays. JS-iterables and
- * primitives pass through unchanged.
- *
- * This is intentionally similar to `__make_iterable`'s `convertToJS` but
- * exported as a top-level helper so the `extern_class` constructor path can
- * use it directly (without going through the host import).
- */
-function _convertIterableForHost(
-  obj: any,
-  exports: Record<string, Function> | undefined,
-  seen?: WeakMap<object, any>,
-): any {
-  if (obj == null || typeof obj !== "object") return obj;
-  // (#4616) A cyclic structure (a vec whose mirror array contains itself —
-  // `a.push(a)` crossing into `new Set(a)`) recursed until "Maximum call
-  // stack size exceeded". Track in-flight conversions and hand the cycle the
-  // same output identity, mirroring `__make_iterable`'s guard.
-  const memo = seen ?? new WeakMap<object, any>();
-  if (memo.has(obj)) return memo.get(obj);
-  if (_nativeIsArray(obj)) {
-    // Pre-existing JS array — still walk for nested wasm structs so e.g.
-    // `[[wasmStructKey, value]]` passed from JS works.
-    const out: any[] = new Array(obj.length);
-    memo.set(obj, out);
-    for (let i = 0; i < obj.length; i++) out[i] = _convertIterableForHost(obj[i], exports, memo);
-    return out;
-  }
-  // Only convert if this is a wasm-opaque struct. Plain JS objects with
-  // Symbol.iterator (Maps, Sets, generators, ...) pass through.
-  if (!_isWasmStruct(obj)) {
-    if (Symbol.iterator in obj) return obj;
-    return obj;
-  }
-  if (!exports) return obj;
-  // Tuple struct (heterogeneous `[k, v]`) — fields are `_0`, `_1`, ...
-  const fieldNames = exports.__struct_field_names as Function | undefined;
-  if (typeof fieldNames === "function") {
-    const names = fieldNames(obj) as string | null;
-    if (typeof names === "string" && names.length > 0) {
-      const parts = names.split(",");
-      const isNumeric = parts.every((p: string) => /^_\d+$/.test(p));
-      if (isNumeric) {
-        const arr: any[] = new Array(parts.length);
-        memo.set(obj, arr);
-        for (let i = 0; i < parts.length; i++) {
-          const getter = exports[`__sget_${parts[i]}`] as Function | undefined;
-          arr[i] = getter ? _convertIterableForHost(getter(obj), exports, memo) : undefined;
-        }
-        return arr;
-      }
-    }
-  }
-  // Vec struct (homogeneous arrays).
-  // (#2836) Gate on the POSITIVE `__is_vec` discriminator — `__vec_len` returns
-  // `0` for ANY non-vec struct, so without this guard a plain object element is
-  // mis-flattened to an empty array, erasing its fields. Mirrors the same fix in
-  // `__make_iterable`'s `convertToJS`.
-  const vecLen = exports.__vec_len as Function | undefined;
-  const vecGet = exports.__vec_get as Function | undefined;
-  const isVec = exports.__is_vec as Function | undefined;
-  if (typeof vecLen === "function" && typeof vecGet === "function" && (typeof isVec !== "function" || isVec(obj))) {
-    try {
-      const len = vecLen(obj) as number;
-      if (typeof len === "number" && len >= 0) {
-        const arr: any[] = new Array(len);
-        memo.set(obj, arr);
-        for (let i = 0; i < len; i++) {
-          // (#6482 r4) A HOLE is not an own property, so it must not
-          // become a present `undefined` element in the host mirror:
-          // `__vec_get` collapses the hole marker and an explicit
-          // `undefined` element to the same value (#4491 T11), and a
-          // dense mirror is what made `Object.keys([1,2,,4,,6])` report
-          // "2" (`Object/keys/15.2.3.14-6-2`). Ask the MINTING module
-          // and leave the slot ABSENT when it says hole; an index it
-          // cannot confirm is still materialized, so a module without
-          // the export behaves exactly as before.
-          if (_vecOverlayOwnIndex(obj, i, exports) === false) continue;
-          arr[i] = _convertIterableForHost(vecGet(obj, i), exports, memo);
-        }
-        return arr;
-      }
-    } catch {
-      // (#3637) NOT "not a vec" — `__vec_len` never throws for a non-vec, it
-      // returns 0 (`__is_vec` on the guard above is what answers that). Only a
-      // genuine element-read trap lands here.
-    }
-  }
-  return obj;
-}
-
 function _getSidecar(obj: object): Record<string | symbol, any> {
   if (!_canBeWeakKey(obj)) return Object.create(null) as Record<string | symbol, any>;
   return getOrCreateWasmStructSidecar(_wasmSidecars, obj);
@@ -2743,210 +2621,6 @@ function _callExoticToPrimitiveSlot(
     }
   }
   return _PRIM_ABSENT;
-}
-
-/**
- * (#3481 cause 2) `ToString` of the primitive a ToPrimitive walk produced.
- *
- * The re-validation family B of this issue is named for: §7.1.17 step 3 makes
- * ToString(Symbol) a TypeError, and `String(sym)` does NOT throw — §22.1.1.1
- * short-circuits it to SymbolDescriptiveString. So a `@@toPrimitive` that
- * returns a Symbol has to be caught HERE; letting it reach `String()` silently
- * produced the message `"Symbol()"`.
- * (Measured: without this, `built-ins/AggregateError/message-tostring-abrupt-symbol.js`
- * regressed from pass to fail.)
- */
-function _errorPrimitiveToString(prim: any): string | undefined {
-  if (typeof prim === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
-  // BOTH walkers report "this struct bottomed out" by returning the literal
-  // "[object Object]" sentinel rather than by throwing (see the slice-1 and
-  // slice-3 records). Accepting it as a real answer is what stopped
-  // `{toString: undefined, valueOf: undefined}` from throwing and regressed
-  // `built-ins/Error/error-message-tostring-toprimitive.js` plus its
-  // NativeErrors twin, both of which assert that TypeError.
-  //
-  // The cost is that a method genuinely RETURNING "[object Object]" is refused
-  // and falls back to the pre-existing throw — the same conservative trade as
-  // the number case below, and again identical to base rather than worse.
-  if (prim === "[object Object]") return undefined;
-  if (typeof prim === "string") return prim;
-  if (typeof prim === "boolean" || typeof prim === "bigint") return String(prim);
-  // A NUMBER is deliberately refused, and this is the one non-obvious rule
-  // here. A native Symbol is represented as a bare i32 id, so a `@@toPrimitive`
-  // that returns `Symbol()` arrives at this boundary as the NUMBER `100` —
-  // measured — and is indistinguishable from a method that genuinely returned
-  // `100`. ToString(Symbol) must throw (§7.1.17 step 3), and the existing
-  // re-checks elsewhere in this file test `typeof prim === "symbol"`, which
-  // cannot see an id either.
-  //
-  // Refusing means the caller falls back to the pre-existing TypeError, i.e.
-  // EXACTLY the base behaviour, for both the symbol case and the rarer
-  // `{toString(){ return 5 }}`. Accepting instead regressed
-  // `built-ins/AggregateError/message-tostring-abrupt-symbol.js` from pass to
-  // fail, because that row asserts the TypeError. Given the two are
-  // indistinguishable and only one has a test, the throw wins — this slice
-  // claims only the shapes it can answer without guessing.
-  return undefined;
-}
-
-/**
- * (#3481 cause 2) §20.5.1.1 step 3 / §20.5.7.1 step 5a / §20.5.10.1 step 6a —
- * `ToString(message)` for the Error family, tolerant of a WasmGC-struct message.
- */
-function _errorMessageToString(
-  message: any,
-  callbackState?: { getExports: () => Record<string, Function> | undefined },
-): string {
-  // (#3481 cause 2) §20.5.1.1 step 3 / §20.5.7.1 step 5a / §20.5.10.1 step 6a
-  // are all `? ToString(message)`. A WasmGC struct message is OPAQUE to V8, so
-  // the plain `String(message)` below raised
-  // "Cannot convert object to primitive value" — an OVER-throw where the spec
-  // asks for ordinary coercion (`{toString(){return "m"}}` → `"m"`, `{}` →
-  // `"[object Object]"`). Reduce such a struct through the #1319
-  // OrdinaryToPrimitive walker first so the user's own `@@toPrimitive` /
-  // `toString` / `valueOf` actually runs — and so an ABRUPT completion from it
-  // propagates unchanged, which is what the `message-tostring-abrupt.js`
-  // family asserts.
-  //
-  // Guarded on `_isWasmStruct`, so a string, number, boolean or genuine host
-  // object reaches `String()` on exactly the path it always did.
-  if (message !== null && typeof message === "object" && _isWasmStruct(message)) {
-    // (#5161) A native-string MESSAGE is a primitive, not an object — decode it
-    // before either walker runs.
-    //
-    // In the `nativeStrings` / `fast` lanes a string literal is a WasmGC
-    // `array i16` carrier, not a host string, so `new Error("m")` handed this
-    // helper a struct that holds a STRING. Both walkers look for coercion
-    // methods, find none on a string carrier, and bottom out — so the whole
-    // construction threw "Cannot convert object to primitive value" on the
-    // plain option-less `new Error("m")`, and every `{cause}` construction
-    // died with it before `__error_install_cause` could run (#5161's filed
-    // symptom was that downstream collateral, measured 2026-08-28).
-    //
-    // This does not touch the walker contract in #3481 cause 2: §7.1.1 step 1
-    // returns a String argument unchanged, so a value the module itself
-    // certifies as a string never reaches ToPrimitive at all. The "found
-    // nothing" sentinels and the refused-NUMBER rule below are unreached on
-    // this path and unmodified. `__str_is_native` is the module's own
-    // discriminator — in the default host lane it is not exported, so
-    // `_nativeStringToHost` misses and that lane keeps byte- and
-    // behaviour-identical behaviour.
-    const nativeMessage = _nativeStringToHost(message, callbackState?.getExports());
-    if (nativeMessage !== _MISS) return String(nativeMessage);
-    // TWO walkers, and the order is load-bearing.
-    //
-    // `_hostToPrimitive` is the only one that implements §7.1.1 step 2 in full
-    // — it dispatches an `@@toPrimitive` METHOD as well as the FIELD shape
-    // slice 1 taught it. `_toPrimitive` still has that blind spot (recorded at
-    // the end of this issue's slice-1 notes), so running it first answers
-    // `{[Symbol.toPrimitive](){throw …}, toString(){throw "toString called"}}`
-    // with the WRONG method.
-    //
-    // But `_hostToPrimitive` is not a superset: it rejects
-    // `{[Symbol.toPrimitive]: undefined, toString(){…}}`, where the explicitly
-    // undefined slot must be SKIPPED (§7.1.1 step 2b), not read as a
-    // non-callable method. So the host walker leads and the module walker is
-    // the fallback, entered ONLY on the host walker's own "no conversion"
-    // verdict.
-    //
-    // A throw from the USER's coercion method is never a verdict: it passes
-    // straight out of here, which is what `message-tostring-abrupt.js` asserts.
-    // A walker that RETURNS has performed the whole of ToPrimitive; its answer
-    // is final. The second walker runs only when the first one THREW its own
-    // "no conversion" verdict, i.e. found no method at all.
-    //
-    // Committing like this is not tidiness, it is correctness. An earlier cut
-    // fell through to `_toPrimitive` whenever the host walker's answer was one
-    // this helper could not stringify — and because the two walkers dispatch
-    // DIFFERENT methods, that ran user code the spec never calls. For
-    // `{[Symbol.toPrimitive](){return Symbol()}, toString(){throw …}}` the
-    // §7.1.1 result is a Symbol and ToString must throw TypeError; instead
-    // `toString` ran and its error escaped, which
-    // `built-ins/AggregateError/message-tostring-abrupt-symbol.js` reported as
-    // "Expected a TypeError but got a undefined".
-    // The flag, rather than a throw, is what separates the two outcomes: a
-    // "cannot stringify this answer" throw would be indistinguishable from the
-    // walker's own verdict in the catch below, and would fall through to the
-    // second walker — the exact bug described above.
-    let hostAnswered = false;
-    try {
-      const prim = _hostToPrimitive(message, "string", callbackState);
-      // The "[object Object]" sentinel is how a walker reports that it found no
-      // coercion method — it is a BOTTOM-OUT, not a ToPrimitive result, so it
-      // must not stop the fallback below. (Measured: treating it as an answer
-      // made `built-ins/AggregateError/message-tostring-abrupt.js` case 2 raise
-      // the ToString TypeError instead of letting the object's own `toString`
-      // throw its `Test262Error`.) A refused REAL answer — a bare number that
-      // may be a symbol id — still sets the flag, because there a method did
-      // run and re-running a different one would violate §7.1.1.
-      //
-      // `null` / `undefined` are excluded for a second, different reason, and
-      // it is the one that decides the target row. They ARE valid ToPrimitive
-      // results (§7.1.1 step 4), but `_hostToPrimitive` also returns `null`
-      // when the `@@toPrimitive` slot merely HOLDS `undefined` — a slot §7.1.1
-      // step 2b says to SKIP, after which OrdinaryToPrimitive must run
-      // `toString`. Measured on
-      // `built-ins/AggregateError/message-tostring-abrupt.js` case 2
-      // (`{[Symbol.toPrimitive]: undefined, toString(){throw new Test262Error()}}`):
-      // the host walker answered `null`, so treating that as a result raised
-      // the ToString TypeError instead of letting `toString` throw.
-      //
-      // Treating a null/undefined host answer as "no answer" hands those shapes
-      // to `_toPrimitive`, which skips the slot correctly. The cost is that a
-      // method GENUINELY returning `null` yields the `toString` result rather
-      // than "null" — an untested shape that THREW on base either way, so no
-      // row can regress on it.
-      hostAnswered = prim !== "[object Object]" && prim !== null && prim !== undefined;
-      // May throw the Symbol TypeError, whose message differs from the verdict
-      // and so propagates rather than being absorbed.
-      const answered = _errorPrimitiveToString(prim);
-      if (answered !== undefined) return answered;
-    } catch (e) {
-      // A throw from the USER's coercion method is never a verdict — it passes
-      // straight out of here, which is what `message-tostring-abrupt.js`
-      // asserts.
-      if (!(e instanceof TypeError && e.message === "Cannot convert object to primitive value")) throw e;
-    }
-    if (hostAnswered) {
-      // ToPrimitive completed; the result is simply one this boundary cannot
-      // safely stringify (see `_errorPrimitiveToString`). Fall back to the
-      // pre-existing TypeError — NOT to another walker, which would re-run
-      // different user methods.
-      throw new TypeError("Cannot convert object to primitive value");
-    }
-    // The host walker found nothing. `_hostToPrimitive` is the only one that
-    // implements §7.1.1 step 2 in full (it dispatches an `@@toPrimitive` METHOD
-    // as well as the FIELD shape slice 1 taught it), but it is not a superset:
-    // it rejects `{[Symbol.toPrimitive]: undefined, toString(){…}}`, where the
-    // explicitly undefined slot must be SKIPPED (§7.1.1 step 2b) rather than
-    // read as a non-callable method. `_toPrimitive` answers exactly that shape,
-    // so it is the fallback — reached only here, where no method has run yet.
-    // `undefined` is its "found nothing" report.
-    const prim = _toPrimitive(message, "string", callbackState);
-    if (prim !== undefined) {
-      const answered = _errorPrimitiveToString(prim);
-      if (answered !== undefined) return answered;
-    }
-    // NEITHER walker found a callable coercion method, so §7.1.1.1 step 6 is a
-    // TypeError and this helper must NOT invent an answer.
-    //
-    // An earlier cut returned "[object Object]" here, reasoning that a real
-    // object inherits `Object.prototype.toString`. Measured against the base
-    // run, that REGRESSED two rows —
-    // `built-ins/Error/error-message-tostring-toprimitive.js` and
-    // `built-ins/NativeErrors/nativeerror-tostring-message-throws-toprimitive.js`
-    // both construct `{toString: undefined, valueOf: undefined}` and assert the
-    // TypeError. That shape is indistinguishable from `{a: 1}` once both
-    // walkers have failed, and only one of the two has a test, so the throw
-    // wins.
-    //
-    // Consequence, stated plainly: `new Error({a: 1})` still throws where the
-    // spec wants "[object Object]". That is UNCHANGED from base, not a new
-    // defect, and it keeps this slice to shapes that genuinely have a coercion
-    // method.
-    throw new TypeError("Cannot convert object to primitive value");
-  }
-  return typeof message === "string" ? message : String(message);
 }
 
 /**
@@ -6031,148 +5705,6 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
   return undefined;
 }
 
-/**
- * (#1627) Build a clean, GetSetRecord-faithful set-like object from a WasmGC
- * struct argument to a Set set-algebra method. The default `_wrapForHost` proxy
- * masks EVERY wasm-struct field value as a callable `closureBridge` (the generic
- * `__call_fn_N` fallback) — so native V8's GetSetRecord wrongly sees a
- * non-callable object (`has = {}`) as callable and a `{valueOf}` size object as
- * a function instead of a coercible object. This adapter reads each of the three
- * GetSetRecord fields RAW and presents it faithfully:
- *   - genuine closure  → the working proxy bridge (callable, generator-aware),
- *   - non-closure wasm struct (`{}`, `{valueOf(){…}}`) → a `_wrapForHost` proxy
- *     OBJECT (typeof "object", non-callable, exposes valueOf/toString),
- *   - primitive / undefined → as-is.
- * Native `Set.prototype[m]` then runs its own spec GetSetRecord on this object,
- * so the callability throws + size ToNumber coercion happen per spec. Scoped to
- * the 7 set-algebra methods only — no change to `_wrapForHost`'s own behaviour.
- */
-/**
- * (#3049) Iterator-record faithfulness shim for the ES2025 Iterator helpers
- * (`Iterator.prototype.map/filter/take/…`), which drive the RECEIVER via the
- * spec iterator record (Call(next, iter) → Get(result, "done"/"value")).
- * Compiled shapes break that: a raw-struct receiver has opaque reads; a
- * `next` whose value is a Wasm closure struct isn't host-callable ("object is
- * not a function" — the this-plain-iterator cluster); Wasm-struct step
- * results have opaque done/value (infinite drive loop). The shim bridges the
- * record methods callable and host-mirrors struct step results. Mirrors the
- * `_setLikeRecordForHost` (#1627) precedent — scoped to the Iterator-helper
- * dispatch sites only; no change to `_wrapForHost` itself.
- */
-const _ITER_HELPER_NAMES = [
-  "map",
-  "filter",
-  "take",
-  "drop",
-  "flatMap",
-  "reduce",
-  "toArray",
-  "forEach",
-  "some",
-  "every",
-  "find",
-  // (#6492 round 4c) Iterator Chunking. These are js2's OWN implementations
-  // (no engine ships them — checked on Node 22.22 and Node 25.9), but they
-  // drive the receiver through the same spec iterator record as every helper
-  // above, so a COMPILED receiver needs the same bridge. Without them a
-  // generator's `.chunks(1)` reports "chunks is not a function" even though the
-  // method is installed on the prototype: 31 of the 78 rows under
-  // `Iterator/prototype/{chunks,windows}/` fail on this list alone, not on the
-  // implementation.
-  "chunks",
-  "windows",
-] as const;
-function _iteratorRecordForHost(
-  v: any,
-  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
-): any {
-  if (v == null || typeof v !== "object") return v;
-  const exports = callbackState?.getExports();
-  const base = _isWasmStruct(v) ? _wrapForHost(v, exports) : v;
-  const wrapStep = (r: any): any =>
-    r != null && typeof r === "object" && _isWasmStruct(r) ? _wrapForHost(r, exports) : r;
-  const shim: any = Object.create(base);
-  // LAZY accessors, resolved only when the helper itself performs the spec
-  // `Get(iterator, "next")` — an EAGER read here fired user getter effects
-  // BEFORE the helper's own argument validation, breaking the
-  // `argument-effect-order.js` family (spec §: IsCallable(mapper) throws
-  // before GetIteratorDirect ever touches `next`). defineProperty (not `=`)
-  // because `base` may carry `next` as a getter-only accessor
-  // (`{ get next() {…} }`), which a proto-chain-walking assignment rejects.
-  const defineLazy = (k: string): void => {
-    Object.defineProperty(shim, k, {
-      get() {
-        let f: any = base[k]; // user getter effects fire exactly at the spec Get
-        if (f != null && typeof f === "object" && _isWasmStruct(f)) {
-          f = _maybeWrapCallableUnknownArity(f, callbackState);
-        }
-        if (typeof f !== "function") return f; // non-callable: let the helper throw per spec
-        const fn = f as Function;
-        return function (this: any, ...args: any[]) {
-          return wrapStep(fn.apply(base, args));
-        };
-      },
-      set(val: any) {
-        Object.defineProperty(shim, k, { value: val, writable: true, enumerable: true, configurable: true });
-      },
-      enumerable: false,
-      configurable: true,
-    });
-  };
-  defineLazy("next");
-  defineLazy("return");
-  defineLazy("throw");
-  return shim;
-}
-
-function _setLikeRecordForHost(
-  arg: any,
-  exports: Record<string, Function> | undefined,
-  state: { getExports: () => Record<string, Function> | undefined } | undefined,
-): any {
-  const proxy = _wrapForHost(arg, exports);
-  const isClosureFn = exports?.__is_closure as ((v: any) => number) | undefined;
-  const fixField = (key: string): any => {
-    const raw = _resolveHostField(arg, key, exports);
-    if (raw != null && typeof raw === "object" && _isWasmStruct(raw)) {
-      let isClosure = false;
-      if (typeof isClosureFn === "function") {
-        try {
-          isClosure = isClosureFn(raw) === 1;
-        } catch {
-          /* discriminator unavailable — fall through to proxy */
-        }
-      }
-      // A non-closure wasm struct must NOT be presented as a function: expose it
-      // as a plain object so GetSetRecord throws on `has`/`keys` (non-callable)
-      // and coerces `size` via its valueOf/toString.
-      if (!isClosure) return _wrapForHost(raw, exports);
-    }
-    // Genuine closure or primitive/undefined: the existing proxy bridge already
-    // handles these correctly (callable closureBridge / raw value).
-    return proxy[key];
-  };
-  const rec: { size: any; has: any; keys: any } = {
-    size: fixField("size"),
-    has: fixField("has"),
-    keys: fixField("keys"),
-  };
-  // (#2761 sub-cause C) Bridge the `keys()` iterator. GetSetRecord drives the
-  // keys() RESULT as a spec iterator record (Call(next,iter) + IteratorClose's
-  // Get(iter,"return")). A compiled `{ next(){…}, return(){…} }` iterator's
-  // methods are opaque wasm-closure struct fields ("string 'next' is not a
-  // function" — the `set-like-iter-return.js` pair), so route the result through
-  // the `_iteratorRecordForHost` shim (bridges next/return/throw callable). Only
-  // the RETURN value is wrapped, so a non-callable `keys` still fails IsCallable.
-  if (typeof rec.keys === "function") {
-    const rawKeys = rec.keys as (this: any, ...a: any[]) => any;
-    rec.keys = function keysIterBridge(this: any, ...a: any[]): any {
-      return _iteratorRecordForHost(rawKeys.apply(this, a), state);
-    };
-  }
-  return rec;
-}
-
 // (#3116) Default attribute flags for a live array element that has never been
 // reconfigured: data property, writable+enumerable+configurable (§10.4.2).
 const _SC_ELEM_DEFAULT = _SC_DEFINED | _SC_WRITABLE | _SC_ENUMERABLE | _SC_CONFIGURABLE;
@@ -6715,9 +6247,8 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   // the host as a real JS array as well: Array.isArray / deep-equality walks
   // (upstream toStrictEqual shims) otherwise see `{_0:…,_1:…}` and fail.
   // Elements are wrapped like any other boundary value. Slot writes through
-  // this array are NOT written back (same snapshot semantics as
-  // _convertIterableForHost's #1438 tuple arm); nested mutations of the
-  // wrapped elements still land on the underlying values.
+  // this array are NOT written back; nested mutations of the wrapped elements
+  // still land on the underlying values.
   if (exports) {
     const tupleNames = _getStructFieldNames(obj, exports);
     if (tupleNames && tupleNames.length > 0 && tupleNames.every((n) => /^_\d+$/.test(n))) {
@@ -8596,175 +8127,15 @@ function resolveImport(
           return (...args: any[]) => {
             throw new Error(`No dependency provided for extern class "${intent.className}"`);
           };
-        // Strip trailing null/undefined args — the compiler pads missing
-        // optional args with ref.null.extern, but constructors like RegExp
-        // reject explicit null (e.g. new RegExp("x", null) throws).
-        // EXCEPT for String/Number/Boolean: new String(undefined) must produce "undefined",
-        // not "" (which new String() with no args produces).
-        const isWrapperCtor =
-          intent.className === "String" || intent.className === "Number" || intent.className === "Boolean";
-        // (#1438) Keyed-collection constructors take an iterable — Map and
-        // WeakMap take `[key, value]` pairs, Set/WeakSet take values. When the
-        // wasm caller passes a vec struct (or tuple struct), native V8 doesn't
-        // know how to iterate it. Materialize the first arg via
-        // _materializeIterable so the engine sees a real JS array. Inner
-        // wasm tuple structs are converted recursively below.
-        const isIterableCtor =
-          intent.className === "Map" ||
-          intent.className === "Set" ||
-          intent.className === "WeakMap" ||
-          intent.className === "WeakSet";
-        // (#1455) DataView / TypedArray constructors expect a real JS
-        // ArrayBuffer, but our compiler emits `new ArrayBuffer(N)` as a
-        // wasm-vec struct. When the first arg is a wasm-vec carrying byte
-        // data, convert it to a real ArrayBuffer using the exported
-        // `__dv_byte_*` accessors before invoking the host constructor.
-        const isBufferConsumer =
-          intent.className === "DataView" ||
-          intent.className === "Int8Array" ||
-          intent.className === "Uint8Array" ||
-          intent.className === "Uint8ClampedArray" ||
-          intent.className === "Int16Array" ||
-          intent.className === "Uint16Array" ||
-          intent.className === "Int32Array" ||
-          intent.className === "Uint32Array" ||
-          intent.className === "Float32Array" ||
-          intent.className === "Float64Array" ||
-          intent.className === "BigInt64Array" ||
-          intent.className === "BigUint64Array";
-        // (#1716) Constructors that run ToPrimitive / ToString on their
-        // arguments (rather than consuming them as iterables / buffers / struct
-        // identities). When a WasmGC struct is passed as such an arg, V8's
-        // native `new Ctor(struct)` invokes ToString/ToPrimitive on the opaque
-        // struct and throws "Cannot convert object to primitive value" — it
-        // can't reach the compiled valueOf / toString / @@toPrimitive. Coerce
-        // these struct args through `_hostToPrimitive` (the #1319 OrdinaryToPrimitive
-        // walker) FIRST so the user methods run. RegExp/Date/String use a "string"/
-        // "default" ToString-shaped coercion; Number uses "number".
-        // NB: `Boolean` is deliberately excluded — `new Boolean(obj)` applies
-        // ToBoolean (every object is truthy), NOT ToPrimitive, so coercing the
-        // struct to a primitive could flip the result. Iterable/buffer consumers
-        // are excluded too — they need the struct identity, not a primitive.
-        const coercesArgsToPrimitive =
-          intent.className === "RegExp" ||
-          intent.className === "Date" ||
-          intent.className === "String" ||
-          intent.className === "Number";
-        const argCoercionHint: "number" | "string" | "default" =
-          intent.className === "Number" ? "number" : intent.className === "Date" ? "default" : "string";
-        // (#3481 cause 2) The Error family belongs to the same #1716 class as
-        // the four above — `new Error(struct)` makes V8 run ToString on an
-        // opaque WasmGC value and throw "Cannot convert object to primitive
-        // value" — but it CANNOT join `coercesArgsToPrimitive`, because that
-        // loop coerces EVERY argument. §20.5.1.1 runs ToString on the message
-        // ONLY; argument 1 is the `options` bag whose `cause` must survive as
-        // an object (reducing it to a primitive would destroy `e.cause`). So
-        // this is a single-INDEX coercion rather than a whole-argument-list one.
-        const errorMessageArgIndex =
-          intent.className === "Error" ||
-          intent.className === "TypeError" ||
-          intent.className === "RangeError" ||
-          intent.className === "SyntaxError" ||
-          intent.className === "URIError" ||
-          intent.className === "EvalError" ||
-          intent.className === "ReferenceError"
-            ? 0
-            : -1;
-        // (#2637 B1) The Promise constructor consumes its first argument as an
-        // executor callback (`new Promise((resolve, reject) => …)`). For a
-        // `class Sub extends Promise { constructor(a) { super(a); … } }`, the
-        // user constructor body forwards the executor to this `__new_Promise`
-        // host import as a BOXED wasm closure (an opaque struct, not a raw JS
-        // function). V8's `Promise` ctor then throws "Promise resolver
-        // [object Object] is not a function". Unwrap the executor to a
-        // host-callable here, mirroring the `Promise_new` host shim
-        // (`new Promise(_maybeWrapCallable(executor, 2, callbackState))`).
-        // `_maybeWrapCallable` is a no-op for a value already a raw function
-        // (edge case a) and for null/undefined, so genuine `new Promise(fn)` and
-        // the no-arg `super()` form are unaffected; only the `Promise` parent is
-        // touched (edge case b: `extends Array/Map/...` unchanged); the
-        // host-only construction path leaves standalone untouched (edge case c,
-        // #1941).
-        const isPromiseExecutorCtor = intent.className === "Promise";
-        // Web constructor option dictionaries may arrive behind an externref
-        // after an intermediate untyped helper erased their concrete struct
-        // type (`createResponseInstance(body, init)` in Hono). V8 cannot read
-        // fields from the opaque WasmGC struct, so expose the existing live
-        // data-struct proxy before Request/Response consume the dictionary.
-        // Statically visible bags are materialized by codegen; this runtime
-        // arm is the erased-value counterpart and runs after exports are live.
-        //
-        // (#5378) `Intl.DateTimeFormat(locales, options)` is the SAME shape and
-        // was missing from this list, which is what made every linked-Temporal
-        // `ZonedDateTime` field read throw `RangeError: infinity is out of
-        // range`. The chain, measured through the runner (probe ladder in the
-        // issue): `ZonedDateTime.prototype.year` → `GetISODateTimeFor` →
-        // `GetOffsetNanosecondsFor("UTC", ns)` → `GetNamedTimeZoneOffsetNanoseconds`,
-        // whose ONLY source of wall-clock parts is
-        //   `new Intl.DateTimeFormat("en-us", {timeZone, hour12:false, era:"short",
-        //      year/month/day/hour/minute/second:"numeric"}).format(date)`
-        // split into 7 `\w+` runs. The options struct reached V8 opaque, so the
-        // host constructor read NO properties from it and fell back to the
-        // en-US default (year/month/day only): the format string came back
-        // "1/1/2024" instead of "1/1/2024 AD, 12:34:00". The polyfill's parse
-        // then yields non-finite wall-clock fields, `offsetNanoseconds` reads
-        // `NaN`, and `BalanceISODate` rejects the NaN with that RangeError —
-        // several frames above the actual defect, which is why the throw site
-        // looked like a calendar bug. `epochMilliseconds` never touches the
-        // formatter, which is exactly why it stayed correct.
-        //
-        // (#5381) …and it stayed a per-class list for exactly one issue. The
-        // three names above were not three bugs: `Request`, `Response` and
-        // `DateTimeFormat` are three instances of ONE shape — a host
-        // constructor that READS PROPERTIES off an argument. Every other
-        // constructor in that shape lost its bag the same way and had to wait
-        // for someone to notice and add a fourth name (measured on this branch
-        // before the change: `new Intl.NumberFormat("en-US",{minimumFractionDigits:3})
-        // .format(1.5)` → "1.5", node "1.500"; `new Intl.ListFormat("en",
-        // {type:"disjunction"}).format(["a","b"])` → "a and b", node "a or b").
-        //
-        // So the rule is inverted: a compiled struct argument is marshalled
-        // through `_wrapForHost` by DEFAULT, and the exceptions are the
-        // constructors that consume an argument by a protocol OTHER than
-        // "read its properties" — every one of which already has its own arm
-        // a few lines above:
-        //   * `isWrapperCtor`        — String/Number/Boolean, arity-sensitive;
-        //   * `isIterableCtor`       — Map/Set/WeakMap/WeakSet, want the
-        //                              iteration protocol (`_convertIterableForHost`);
-        //   * `isBufferConsumer`     — DataView/TypedArrays, want real bytes;
-        //   * `coercesArgsToPrimitive` — RegExp/Date/String/Number, run
-        //                              ToPrimitive on the struct (#1716);
-        //   * the Error family       — arg 0 is ToString'd (#3481) and arg 1
-        //                              carries `cause`, whose OBJECT IDENTITY
-        //                              §20.5.8.1 preserves verbatim; a proxy
-        //                              there would break `e.cause === obj`;
-        //   * `isPromiseExecutorCtor` — arg 0 is a callable, not a bag;
-        //   * `_structArgIdentityCtors` — Object/Function/Array/WeakRef/…,
-        //                              which store or return the argument
-        //                              itself, so a proxy changes what the
-        //                              program observes.
-        // Anything else — every registered extern class, including ones nobody
-        // has written yet — gets the marshalling for free. Primitives and
-        // host externrefs are untouched: the guard is `_isWasmStruct`, and a
-        // host object never satisfies it.
-        const marshalsStructArgsForHost = !(
-          isWrapperCtor ||
-          isIterableCtor ||
-          isBufferConsumer ||
-          coercesArgsToPrimitive ||
-          isPromiseExecutorCtor ||
-          errorMessageArgIndex >= 0 ||
-          _structArgIdentityCtors.has(intent.className)
-        );
+        // Only selected accelerators coerce arguments; other extern classes
+        // are declared capabilities whose compiled data crosses as live facades.
+        const coercesArgsToPrimitive = intent.className === "RegExp" || intent.className === "Date";
+        const argCoercionHint = intent.className === "Date" ? "default" : "string";
+        const marshalsStructArgsForHost = !coercesArgsToPrimitive && intent.className !== "Test262Error";
         return (...args: any[]) => {
-          if (isPromiseExecutorCtor && args.length > 0) {
-            args[0] = _maybeWrapCallable(args[0], 2, callbackState);
-          }
-          if (!isWrapperCtor) {
-            let len = args.length;
-            while (len > 0 && args[len - 1] == null) len--;
-            args = args.slice(0, len);
-          }
+          let len = args.length;
+          while (len > 0 && args[len - 1] == null) len--;
+          args = args.slice(0, len);
           if (marshalsStructArgsForHost) {
             let hostExports: Record<string, Function> | undefined;
             for (let i = 0; i < args.length; i++) {
@@ -8776,20 +8147,6 @@ function resolveImport(
               args[i] = _wrapForHost(a, hostExports);
             }
           }
-          if (
-            errorMessageArgIndex >= 0 &&
-            args.length > errorMessageArgIndex &&
-            args[errorMessageArgIndex] != null &&
-            typeof args[errorMessageArgIndex] === "object" &&
-            _isWasmStruct(args[errorMessageArgIndex])
-          ) {
-            // Shared with the AggregateError / SuppressedError message steps —
-            // one ToString spelling for all three, so the three constructors
-            // cannot drift. An abrupt completion from the user's coercion
-            // method propagates from here unchanged, which is what
-            // `message-tostring-abrupt.js` asserts.
-            args[errorMessageArgIndex] = _errorMessageToString(args[errorMessageArgIndex], callbackState);
-          }
           if (coercesArgsToPrimitive && args.length > 0) {
             for (let i = 0; i < args.length; i++) {
               const a = args[i];
@@ -8797,25 +8154,6 @@ function resolveImport(
                 // Throws TypeError per §7.1.1 step 6 if no chain yields a
                 // primitive — the spec-correct outcome here too.
                 args[i] = _hostToPrimitive(a, argCoercionHint, callbackState);
-              }
-            }
-          }
-          if (isIterableCtor && args.length > 0 && args[0] != null) {
-            const exports = callbackState?.getExports();
-            // Convert outer wasm vec (or tuple struct) into a JS array of
-            // converted entries. For Map/WeakMap each entry must itself be
-            // an iterable (tuple → [k, v] array).
-            args[0] = _convertIterableForHost(args[0], exports);
-          } else if (isBufferConsumer && args.length > 0 && _isWasmStruct(args[0])) {
-            const exports = callbackState?.getExports();
-            const dvLen = exports?.__dv_byte_len as ((v: any) => number) | undefined;
-            const dvGet = exports?.__dv_byte_get as ((v: any, i: number) => number) | undefined;
-            if (typeof dvLen === "function" && typeof dvGet === "function") {
-              const bufLen = dvLen(args[0]);
-              if (bufLen >= 0) {
-                const bytes = new Uint8Array(bufLen);
-                for (let i = 0; i < bufLen; i++) bytes[i] = dvGet(args[0], i) & 0xff;
-                args[0] = bytes.buffer;
               }
             }
           }
@@ -8902,92 +8240,6 @@ function resolveImport(
         };
       }
       const m = intent.member!;
-      // (#1352) Set's new methods (union, intersection, difference,
-      // symmetricDifference, isSubsetOf, isSupersetOf, isDisjointFrom) accept
-      // ANY set-like argument (object with `size` + `has(v)` + `keys()`),
-      // not just Set instances. When the argument is a wasm struct, native
-      // V8 Set.prototype.union and friends call `Get(arg, "size")` etc. and
-      // see undefined because wasmGC structs are opaque to JS — that's the
-      // ~101 test262 fails in built-ins/Set/prototype/*. Bridge by wrapping
-      // wasm-struct args in `_wrapForHost`, which exposes sidecar fields as
-      // proxy properties so the native GetSetRecord works against any
-      // set-like shape (per ES2025 §24.2.5.x).
-      if (
-        intent.className === "Set" &&
-        (m === "union" ||
-          m === "intersection" ||
-          m === "difference" ||
-          m === "symmetricDifference" ||
-          m === "isSubsetOf" ||
-          m === "isSupersetOf" ||
-          m === "isDisjointFrom")
-      ) {
-        return (self: any, ...args: any[]) => {
-          if (self == null) return undefined;
-          const exports = callbackState?.getExports();
-          // (#1627) A wasm-struct set-like argument is presented through a
-          // GetSetRecord-faithful adapter rather than the raw `_wrapForHost`
-          // proxy: the proxy masks every struct field as a callable, defeating
-          // native GetSetRecord's `has`/`keys` IsCallable throws and `size`
-          // ToNumber coercion. The adapter exposes only size/has/keys, with
-          // non-closure objects kept non-callable so native validation fires.
-          const wrappedArgs = args.map((a) =>
-            _isWasmStruct(a) ? _setLikeRecordForHost(a, exports, callbackState) : a,
-          );
-          const fn = self[m] ?? _sidecarGet(self, m);
-          if (typeof fn === "function") return fn.call(self, ...wrappedArgs);
-          return undefined;
-        };
-      }
-      // Keyed collections can retain compiled function values as ordinary
-      // data. A raw Wasm closure is an opaque object to V8, while the generic
-      // extern-class argument path exposes it as a non-callable Proxy. Store
-      // the identity-cached callable bridge instead, and apply the same
-      // normalization to later key lookups so Map/Set identity remains stable.
-      // Results are unwrapped: `get` must hand back the raw struct (#1058).
-      const keyedCollectionMethod =
-        (intent.className === "Map" || intent.className === "WeakMap") &&
-        (m === "set" || m === "get" || m === "has" || m === "delete")
-          ? "map"
-          : (intent.className === "Set" || intent.className === "WeakSet") &&
-              (m === "add" || m === "has" || m === "delete")
-            ? "set"
-            : undefined;
-      if (keyedCollectionMethod !== undefined) {
-        return (self: any, ...args: any[]) => {
-          if (self == null) return undefined;
-          const exports = callbackState?.getExports();
-          const wrappedArgs = args.map((arg) => {
-            if (!_isWasmStruct(arg)) return arg;
-            const callable = _maybeWrapCallableUnknownArity(arg, callbackState);
-            return callable !== arg ? callable : _wrapForHost(arg, exports);
-          });
-          const fn = self[m] ?? _sidecarGet(self, m);
-          if (typeof fn === "function") return _unwrapForHost(fn.call(self, ...wrappedArgs), callbackState);
-          return undefined;
-        };
-      }
-      // (#1438) Map.prototype.forEach / Set.prototype.forEach take a
-      // callback and an optional thisArg. The callback can be a wasm
-      // closure struct (no `[[Call]]`); wrap it as a JS Function so the
-      // native engine invokes it as `cb(value, key, map)` (3 args for
-      // Map, `cb(value, value, set)` for Set). Without this, native V8
-      // throws "object is not a function".
-      if ((intent.className === "Map" || intent.className === "Set") && m === "forEach") {
-        return (self: any, ...args: any[]) => {
-          if (self == null) return undefined;
-          const exports = callbackState?.getExports();
-          let cb = args[0];
-          if (cb != null && _isWasmStruct(cb)) {
-            const wrapped = _wrapWasmClosure(cb, 3, callbackState);
-            if (wrapped) cb = wrapped;
-          }
-          const thisArg = args.length > 1 ? args[1] : undefined;
-          const fn = self[m] ?? _sidecarGet(self, m);
-          if (typeof fn === "function") return fn.call(self, cb, thisArg);
-          return undefined;
-        };
-      }
       // (#1794) node:events EventEmitter listener-registering methods — the
       // listener argument may be a WasmGC closure struct (no [[Call]]); Node
       // validates `typeof listener === "function"` and throws
@@ -10609,6 +9861,7 @@ export interface BuildImportsOptions extends CompiledCapabilityAuthorityOptions 
    * Install compatibility-only ambient Iterator/RegExp shims. Defaults to
    * true for the historical low-level API; {@link buildCompiledImports}
    * derives false for native-first modules from their frozen target profile.
+   * This controls ambient shims only; retired semantic imports are always rejected.
    */
   ambientCompatibility?: boolean;
   hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[]; // (#6978) admitted by the binder
@@ -10661,6 +9914,18 @@ export function buildImports(
   startImportCounting?: () => void;
   takeImportCounts?: () => Record<string, number>;
 } {
+  // Ambient compatibility installs realm shims, never a second semantic provider.
+  // Reject the complete manifest before touching dependencies or installing shims.
+  for (const imp of manifest) {
+    if (imp.module !== "env") continue;
+    const policy = classifyHostImport(imp, undefined, options?.hostAccelerators);
+    if (policy.classification === "unknown") {
+      throw new Error(
+        `Native-first adapter cannot bind ${imp.module}::${imp.name}: ${policy.reason} ` +
+          `(the host-semantic implementation was removed, #${policy.ownerIssue}).`,
+      );
+    }
+  }
   // (#1933) Per-instance state for stateful imports. Created FIRST so the
   // RegExp-accessor install below (and every `resolveImport` call) can thread
   // it. Everything here was previously module-level and bled across / retained
@@ -10725,15 +9990,6 @@ export function buildImports(
 
   for (const imp of manifest) {
     if (imp.module !== "env") continue;
-    if (options?.ambientCompatibility === false) {
-      const policy = classifyHostImport(imp, undefined, options?.hostAccelerators);
-      if (policy.classification === "unknown") {
-        throw new Error(
-          `Native-first adapter cannot bind ${imp.module}::${imp.name}: ${policy.reason} ` +
-            `(the host-semantic implementation was removed, #${policy.ownerIssue}).`,
-        );
-      }
-    }
     const importIndex = hostImportCallState.registerImport(imp.name);
     let fn: Function;
 

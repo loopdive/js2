@@ -130,10 +130,9 @@ describe("#4399 extracted JavaScript adapters", () => {
     expect(() => buildImports(manifest, undefined, [], { ambientCompatibility: false })).toThrow(
       /Native-first adapter cannot bind env::__host_compare: host language operation .*#6979/,
     );
-    // The compatibility provider is deleted with the host-semantic lane, so the
-    // ambient adapter cannot bind it either.
+    // Ambient shims cannot bypass the same retired-import policy.
     expect(() => buildImports(manifest, undefined, [], { ambientCompatibility: true })).toThrow(
-      /Unhandled ImportIntent type: host_compare/,
+      /Native-first adapter cannot bind env::__host_compare: host language operation .*#6979/,
     );
   });
 });

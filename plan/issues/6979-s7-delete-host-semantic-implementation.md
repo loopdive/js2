@@ -2713,3 +2713,77 @@ the other recorded broader failures. Finish full S7 runtime retirement and
 compatibility/accelerator/conformance acceptance. Keep the PR draft and this
 issue in progress; do not reintroduce a host instanceof semantic fallback,
 copy boundary objects, waive a gate, or declare the full migration complete.
+
+### S7-g runtime binder retirement handoff (2026-10-19, Codex)
+
+Current base: signed checkpoint `f99bd729cc82285c514eba87996874e334f07799`.
+Read-only inspection found that low-level `buildImports()` enforced the
+retired-import policy only with `ambientCompatibility: false`. The default
+and explicit-true paths could still bind retired ECMAScript extern classes
+through injected dependencies. This is a second semantic provider, not the
+documented ambient Iterator/RegExp shim option.
+
+Plan: measure that bypass with negative controls on all three option forms;
+make the existing import-policy rejection unconditional; delete only the
+class-specific branches that the policy makes unreachable. Keep selected
+RegExp/Date/Intl accelerators, SharedArrayBuffer's named gap, test-harness
+errors, declared external classes and JS-owned object/callback adapters.
+Validate removal with symbol-reference evidence, parent/candidate runtime
+tests, unchanged native binaries/import inventories and the existing ratchets.
+Do not raise any ceiling or treat this as full S7 completion.
+
+**Implemented.** Every env manifest entry is now classified before any
+dependency resolution or ambient-shim installation. `ambientCompatibility`
+does not bypass semantic retirement. AggregateError, AsyncDisposableStack,
+Boolean, Function, Number and String were missing from the shared retired-
+class set and are now classified consistently. This deliberately breaks
+hand-built manifests attempting to restore retired host semantics; it does
+not copy JS objects or remove declared external API capabilities.
+
+The unreachable Map/Set/WeakMap/WeakSet constructor and method adapters,
+wrapper/Promise/buffer/Error constructor special cases and seven private
+support declarations are deleted. General ToPrimitive, boundary iterable
+materialization, live facades, admission and selected accelerator paths remain.
+TypeScript binding analysis on the exact parent finds **7 declarations / 17
+references**, all inside the removed region, **30 exports**, no target export
+and **zero direct eval**. An in-memory shorthand reference to the Error helper
+at line 11,326 makes the same detector refuse the deletion. This is a scoped
+private-reference proof after the policy guard, not global runtime closure.
+
+**Measured.**
+
+- Focused seven-file population: **88 passing/7 failing of 95** before;
+  guard-only **95/95**; final **97/97**, including two added source-retirement
+  and whole-manifest controls. The class rejection loop covers **39 classes ×
+  4 actions × 3 option forms = 468 assertions**. The old ambient adapter test
+  now expects the deliberate policy rejection rather than an unhandled intent.
+- Fresh detached-parent comparison: **10 files / 194 unique cases** retain
+  **128 passing/41 failing/25 skipped**, with no status changes. Two failure
+  stacks differ only in the shifted runtime line coordinates; after replacing
+  just those coordinates and the parent directory on both sides, every error
+  matches. This is not a green suite. The separate Linear runtime/class
+  population remains **6/6** in two files on both sides.
+- Six fresh standalone/WASI controls retain byte-exact modules, zero imports,
+  answers **42/7** and no JS-boundary type-probe export. All **33** detailed
+  import inventories match, **457 imports/zero unknown/zero regime-gap**.
+- Runtime source: **11,324 → 10,580 lines (744 net removed)**;
+  `resolveImport`: **1,959 → 1,680**, still seven cases. Owned adapters stay
+  **895**, explicit capabilities **1,194**. No ceiling is raised or banked.
+- Project TypeScript7 typecheck, whole lint, formatting, LOC/function,
+  coercion, oracle and IR-fallback gates pass. The generic `tsc --noEmit`
+  command used initially is not this repository's typecheck and reports
+  missing Node types; the canonical `pnpm run typecheck` passes. The pnpm
+  IR-gate wrapper initially hit sandbox IPC restrictions; the same script
+  passes through `node --import tsx`. Dead-export preservation still has
+  **6/6 full and cut witnesses**; the two nonliteral imports leave strict
+  retirement **not certified**.
+
+Scoped evidence: `plan/audit/6979-runtime-binder-retirement-20261019.json`;
+raw comparisons and positive control: `.tmp/s7g-*`. The temporary parent
+checkout is only a control, not an implementation branch.
+
+**Remaining.** Runtime is still **2,580 lines** above the program's target.
+The real import gate still fails **457 > 452**. Preserve the prerequisite
+stack, opaque bound-function investigation, constructor/binary review, raw
+mode-field deletion and full compatibility/accelerator/conformance acceptance
+as open work. Keep the PR draft; do not merge or mark the migration complete.
