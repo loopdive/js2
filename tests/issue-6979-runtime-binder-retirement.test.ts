@@ -242,4 +242,16 @@ describe("#6979 runtime binder has no compatibility semantic provider", () => {
       expect(exp.run(7)).toBe(7);
     });
   }
+
+  it("does not substitute a global builtin for a missing declared namespace", () => {
+    for (const className of ["Date", "RegExp", "SharedArrayBuffer"]) {
+      const imports = buildImports(
+        [descriptor("missing_new", { type: "extern_class", className, action: "new", namespacePath: ["missingApi"] })],
+        undefined,
+        [],
+        { ambientCompatibility: false },
+      );
+      expect(() => imports.env.missing_new()).toThrow(`No dependency provided for extern class "${className}"`);
+    }
+  });
 });

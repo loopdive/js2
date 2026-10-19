@@ -8123,7 +8123,8 @@ function resolveImport(
         if (!Ctor && intent.namespacePath && intent.namespacePath.length > 0) {
           Ctor = _resolveNamespacedClass(intent.namespacePath, intent.className, deps);
         }
-        Ctor ??= builtinCtors[intent.className];
+        if (!intent.namespacePath?.length || intent.namespacePath[0] === "Intl")
+          Ctor ??= builtinCtors[intent.className];
         if (!Ctor)
           return (...args: any[]) => {
             throw new Error(`No dependency provided for extern class "${intent.className}"`);

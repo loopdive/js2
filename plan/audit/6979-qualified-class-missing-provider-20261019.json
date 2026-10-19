@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-19",
+  "parentCommit": "9cfcfa65f50109ba9088d9d07728b2bad7b28397",
+  "scope": "Fail closed when an arbitrary qualified external constructor namespace has no provider; not whole migration acceptance",
+  "change": "Builtin fallback is available only to an unqualified import or the recognized Intl namespace. Missing arbitrary namespaces cannot silently select global Date/RegExp/SharedArrayBuffer. Existing flat dependency overrides are retained.",
+  "negativeControl": {
+    "parent": {
+      "passing": 0,
+      "failing": 1,
+      "filtered": 15,
+      "error": "AssertionError: expected [Function] to throw an error"
+    },
+    "candidate": "The three-name missing-provider test passes in the 101-case final population."
+  },
+  "validation": {
+    "focused": {
+      "files": 7,
+      "total": 101,
+      "pass": 101,
+      "fail": 0,
+      "skip": 0
+    },
+    "broad": {
+      "files": 10,
+      "total": 194,
+      "pass": 128,
+      "fail": 41,
+      "skip": 25,
+      "uniqueKeys": 194,
+      "statusOrNormalizedErrorChanges": 0,
+      "baseline": "f99bd729cc82285c514eba87996874e334f07799",
+      "normalization": "Only parent checkout directory and src/runtime.ts line:column stack coordinates replaced on both sides.",
+      "notes": "128 passing/41 failing/25 skipped, not a green full suite."
+    },
+    "native": {
+      "modules": 6,
+      "exactBytesAndOutcomes": true,
+      "zeroImports": true,
+      "outputs": [42, 7],
+      "comparison": "Fresh f99 parent controls vs final provider guard"
+    },
+    "hostImports": {
+      "probes": 33,
+      "imports": 457,
+      "unknown": 0,
+      "regimeGap": 0,
+      "exactInventoriesMatch": true,
+      "ceiling": 452,
+      "gate": "Unchanged FAIL 457 > 452; observational copy still executes the unmodified throwing guard"
+    },
+    "checks": {
+      "typecheck": "PASS project TypeScript7",
+      "lint": "PASS whole src/tests/scripts",
+      "format": "PASS",
+      "loc": "PASS",
+      "functionBudget": "PASS, no new grants",
+      "coercion": "PASS",
+      "oracle": "PASS",
+      "deadExports": "preservation-only PASS 6/6 full and cut; strict closure NOT CERTIFIED at known nonliteral imports"
+    }
+  },
+  "sourceMetrics": {
+    "runtimeTsLines": 10582,
+    "resolveImportLines": 1682,
+    "resolveImportCases": 7,
+    "ownedAdapterLines": 895,
+    "explicitCapabilityLines": 1194,
+    "netRuntimeReductionFromF99": 742,
+    "runtimeTargetGap": 2582,
+    "budgetBanked": false
+  },
+  "sourceHashes": {
+    "src/runtime.ts": "bb3eee4a764c137beb97cc5d83a0e7f124f82bb8c3682f8abd09ed1ef6b95a1b",
+    "tests/issue-6979-runtime-binder-retirement.test.ts": "83d165b0f5a03370bea8a1253c528c8a31147e77461ff0a74a637063a5f5ba44"
+  },
+  "limits": [
+    "Compiled api.Function and api.Date remain two failures in the four-shape qualified constructor probe; Number/Map work.",
+    "The prerequisite stack, 457/452 ceiling decision, raw mode-field removal, runtime target and full compatibility/accelerator/conformance acceptance remain open.",
+    "The earlier qualified policy/registry hashes are recorded in the preceding 9cfcfa65f5 audit; this guard changes only runtime binding and its test."
+  ]
+}

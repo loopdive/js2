@@ -2835,3 +2835,21 @@ gap is **2,581**. The 457/452 gate is unchanged. See
 hashes and proof limits. The earlier
 binder deletion audit remains the historical `92efacb428` snapshot, not a
 source-hash claim about this follow-up.
+
+The missing-provider negative control then exposed a remaining binder escape:
+`api.Date`/`api.RegExp` with no `api` provider still fell back to the global
+builtin. The new three-name test fails on `9cfcfa65f5` before the repair
+(zero passing/one failing/15 filtered). Restrict builtin fallback to unqualified
+imports and the explicitly supported Intl namespace; an unresolved arbitrary
+API namespace now throws the existing missing-dependency error on invocation.
+Keep flat dependency overrides and selected Intl constructor binding intact.
+
+Final focused validation passes **101/101** across seven files, including the
+new missing-provider test. Six native binary rows and all 33 import inventories
+still match. Runtime source is **10,582** lines, `resolveImport` **1,682**;
+net reduction against `f99bd729cc` is **742** lines. No ceiling is banked or
+raised; the 457/452 import gate and 2,582-line runtime target gap remain.
+The preceding qualified-capability audit describes the `9cfcfa65f5` snapshot;
+`plan/audit/6979-qualified-class-missing-provider-20261019.json` records this
+final guard and current source hashes.
+Keep the compiled Function/Date lowerer failures and full S7 acceptance open.

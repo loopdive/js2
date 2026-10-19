@@ -999,3 +999,9 @@ lines after namespace-first constructor resolution. Compiled `api.Function`
 and `api.Date` are still failing lowerer probes (Number/Map work), explicitly
 recorded with a repro in the S7 handoff. Do not infer full host interop or
 program acceptance from the low-level binder controls.
+
+A further missing-provider control prevents a missing arbitrary namespace
+from silently selecting global Date/RegExp/SharedArrayBuffer instead. Final
+focused controls pass **101/101**, with runtime source **10,582** lines
+(**742 net removed** since `f99bd729cc`). The 457/452 gate and full acceptance
+remain open; selected Intl binding and declared capability identity are kept.
