@@ -1,10 +1,11 @@
 {
   "id": "7090",
   "assignee": "ttraenkler/opus-7090-withresolvers",
-  "requested_by": "ttraenkler/opus-7090-withresolvers",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7090-regime-promise-withresolvers",
   "claimed_at": "2026-10-19T11:33:24Z",
-  "updated_at": "2026-10-19T11:33:24Z",
-  "write_id": "62133-eukzq8du"
+  "updated_at": "2026-10-19T18:35:56Z",
+  "write_id": "69900-ehuh0w0h",
+  "released_at": "2026-10-19T18:35:56Z"
 }
