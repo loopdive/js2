@@ -19,11 +19,10 @@ import { demandStringWrapperDynamicLength, stringWrapperLengthArm } from "../str
  * String(...)` object — `length` and an in-range canonical integer index —
  * with the same helpers, and falls through for every other key (a
  * `String.prototype` member read through a dynamic receiver stays on its
- * existing path). Standalone-only machinery (`ctx.standalone`): the host lane's
- * `__extern_get` is an import.
+ * existing path). This is part of the native `__extern_get` object MOP.
  */
 export function unshiftExternGetNativeStringReceiverArm(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   if (!fn) return;
   demandStringWrapperDynamicLength(ctx);

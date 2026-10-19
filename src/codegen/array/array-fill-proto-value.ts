@@ -5,8 +5,8 @@ import { allocLocal } from "../context/locals.js";
 import { coerceType } from "../shared.js";
 
 /** The packed argument ABI preserves the optional start/end positions. */
-export function isArrayFillVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return member === "fill" && (ctx.standalone || ctx.wasi);
+export function isArrayFillVariadicMember(member: string): boolean {
+  return member === "fill";
 }
 
 /** Generic first-class Array.prototype.fill; no receiver replacement or copy. */
@@ -21,7 +21,7 @@ export function emitArrayFillProtoMemberBody(
   },
 ): ValType | undefined {
   const { clampRelative, requireObjectCoercible, resolveSliceDeps } = services;
-  if (!isArrayFillVariadicMember(ctx, member)) return undefined;
+  if (!isArrayFillVariadicMember(member)) return undefined;
   const deps = resolveSliceDeps(ctx);
   if (!deps) throw new Error("Array.prototype.fill lacks its native object helpers");
   const strictSet = ctx.funcMap.get("__extern_set_strict");

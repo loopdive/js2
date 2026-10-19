@@ -27,13 +27,12 @@ export type SymbolWrapperArmBuilder = (valueLocal: number, entryLocal: number, t
  * wrapper (#6651 H5) — the injected arm answers that case first.
  *
  * Unshifted LAST, so it precedes every other prologue arm. Non-object keys pay
- * one `ref.test`. Standalone-only: the host lane's `__extern_get` is an import.
+ * one `ref.test`.
  */
 export function unshiftExternGetObjectKeyCoercionArm(
   ctx: CodegenContext,
   symbolWrapperArm: SymbolWrapperArmBuilder,
 ): void {
-  if (!ctx.standalone) return;
   const types = ctx.objectRuntimeTypes;
   const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
   if (!types || toPropertyKeyIdx === undefined) return;

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6651 V1) Trapless Proxy forwarding over a Proxy / native-carrier target,
- * standalone.
+ * (#6651 V1) Trapless Proxy forwarding over a Proxy / native-carrier target.
  *
  * The §10.5 dispatches in `object-runtime-proxy.ts` forward a trap-absent
  * operation to the generic runtime entry on `[[ProxyTarget]]`, and those entries
@@ -35,9 +34,9 @@ export interface ProxyForwardDeps {
   findBody: (name: string) => Instr[] | undefined;
 }
 
-/** Install every V1 forward arm. No-op outside standalone or without `Proxy`. */
+/** Install every V1 forward arm. No-op without `Proxy`. */
 export function installProxyForwardArms(ctx: CodegenContext, deps: ProxyForwardDeps): void {
-  if (!ctx.standalone || ctx.proxyDirty !== true) return;
+  if (ctx.proxyDirty !== true) return;
   installDispatchKeyCanonicalization(ctx, deps);
   installHasOwnArm(ctx, deps);
   installPropertyIsEnumerableArm(ctx, deps);

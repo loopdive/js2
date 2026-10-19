@@ -48,15 +48,14 @@ const f64 = (value: number): Instr => ({ op: "f64.const", value });
 
 /**
  * Emit the pop / shift / toString closure body. Returns `undefined`, emitting
- * nothing, for any other member, off the native regime, or when the substrate
- * is unavailable — the caller keeps its refusal.
+ * nothing, for any other member or when the substrate is unavailable — the
+ * caller keeps its refusal.
  */
 export function emitArrayGenericValueMemberBody(
   ctx: CodegenContext,
   fctx: FunctionContext,
   member: string,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (member === "toString") return emitArrayToStringBody(ctx, fctx);
   return emitArrayLikePopShiftBody(ctx, fctx, member);
 }

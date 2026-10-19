@@ -269,9 +269,8 @@ export function taDynViewOwnLengthArm(
   ];
 }
 
-/** Finalize fill: front arms for closures and String wrappers (standalone only). */
+/** Finalize fill: front arms for closures and String wrappers. */
 export function fillArrayLikeExoticArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   fillClosureArms(ctx);
   fillStringWrapperArms(ctx);
 }

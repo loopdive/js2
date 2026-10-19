@@ -228,11 +228,11 @@ function buildUnshiftBody(ctx: CodegenContext, deps: MoveDeps): Instr[] {
 
 /**
  * Reserve (or fetch) `__arrprod_shift` / `__arrprod_unshift(recv: externref,
- * args: externref) -> externref`. `undefined` outside standalone or when the
- * substrate is unavailable — the dispatcher then keeps its previous behaviour.
+ * args: externref) -> externref`. `undefined` when the substrate is unavailable
+ * — the dispatcher then keeps its previous behaviour.
  */
 export function ensureNativeArrayShift(ctx: CodegenContext, methodName: string): number | undefined {
-  if (!ctx.standalone || !NATIVE_SHIFT_METHODS.has(methodName)) return undefined;
+  if (!NATIVE_SHIFT_METHODS.has(methodName)) return undefined;
   const name = `__arrprod_${methodName}`;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;

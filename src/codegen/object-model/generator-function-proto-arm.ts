@@ -89,9 +89,9 @@ function globalByName(ctx: CodegenContext, name: string): number | undefined {
   return at < 0 ? undefined : ctx.numImportGlobals + at;
 }
 
-/** Reserve `__genfn_proto_of` with a `null` body. Idempotent; standalone only. */
+/** Reserve `__genfn_proto_of` with a `null` body. Idempotent. */
 export function reserveGeneratorFunctionProtoOf(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.funcMap.has(GENFN_PROTO_OF)) return;
+  if (ctx.funcMap.has(GENFN_PROTO_OF)) return;
   const externref: ValType = { kind: "externref" };
   const funcIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, funcIdx, {
@@ -109,7 +109,6 @@ export function reserveGeneratorFunctionProtoOf(ctx: CodegenContext): void {
  * A9 product. Leaves it on the stack. A non-`eq` value is not recorded.
  */
 export function emitRegisterDynamicGeneratorFunction(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!ctx.standalone) return;
   let nodeTypeIdx = listNodeTypes.get(ctx);
   if (nodeTypeIdx === undefined) {
     nodeTypeIdx = ctx.mod.types.length;

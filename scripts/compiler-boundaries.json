@@ -14756,6 +14756,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ambient-function-value-thunk.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate TypeScript value-read analysis from explicit JavaScript boundary import registration."
+    },
+    {
       "path": "src/codegen/error-subclass-proto-chain.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -2687,11 +2687,11 @@ function makeGlue(
       // (#6709) reduce/reduceRight need the argument COUNT (initialValue presence).
       (name === "Array" && isArrayReduceVariadicMember(ctx, member)) ||
       (name === "Array" && isArraySpliceVariadicMember(ctx, member)) || // (#6701)
-      (name === "Array" && isArrayFillVariadicMember(ctx, member)) ||
+      (name === "Array" && isArrayFillVariadicMember(member)) ||
       (name === "Array" &&
-        (isArraySearchVariadicMember(ctx, member) ||
-          isArrayCopyMethodVariadicMember(ctx, member) ||
-          isArraySortVariadicMember(ctx, member))) || // (#6912)
+        (isArraySearchVariadicMember(member) ||
+          isArrayCopyMethodVariadicMember(member) ||
+          isArraySortVariadicMember(member))) || // (#6912)
       (name === "Array" &&
       (member === "join" ||
         member === "push" ||

@@ -6816,7 +6816,7 @@ function setupArrayLoop(
     const externTmp = allocLocal(fctx, `__arr_${tag}_extern_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.set", index: externTmp });
     const fresh = buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType });
-    fctx.body.push(...vecReceiverIdentityArm(ctx, externTmp, vecTypeIdx, tag, fresh));
+    fctx.body.push(...vecReceiverIdentityArm(externTmp, vecTypeIdx, tag, fresh));
     recvExternTmp = externTmp;
   }
 

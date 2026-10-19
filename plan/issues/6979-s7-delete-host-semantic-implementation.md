@@ -935,3 +935,71 @@ declarations subsystem rather than growing the ambient collector god-file.
 the much larger expression directory (362). Preserve the same rule: native
 WasmGC owns language semantics and storage; JS machinery owns only explicit
 interop values, capabilities and named accelerators.
+
+### S7-c array/object-model handoff (2026-10-19, Codex)
+
+This fifth bounded S7-c checkpoint finishes the planned
+`src/codegen/array/` + `src/codegen/object-model/` group on
+`codex/6979-s7c-ir-arms`. S7 remains `in-progress`; the PR remains stacked and
+draft until its prerequisites land.
+
+**Ratchet.** The reviewed reductions are banked:
+
+| Measure | Leaf/callable checkpoint | Array/object checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,425 | **1,374** |
+| Matching source files | 446 | **416** |
+| `src/codegen/array/` | 22 | **0** |
+| `src/codegen/object-model/` | 29 | **0** |
+
+**Classification.** All 51 sites selected native WasmGC language semantics or
+native carrier storage rather than an environment capability or JavaScript
+value boundary. Array holes and receiver identity, generic Array method bodies,
+array-like exotic arms, proxy/object MOP dispatch, primitive-wrapper reads,
+own-key ordering, descriptor rejection, generator-function prototypes and
+native prototype links now use the same native machinery in every WasmGC
+environment. Constant-index `in` uses the existing native
+`__extern_has_idx`; dynamic keys continue through the shared native object MOP.
+
+This does not replace the boundary representation or copy objects. Existing
+JS-host-backed objects remain the representation when an object actually
+crosses the JavaScript boundary, preserving identity and host interop. The
+change removes the environment bit from internal semantic/storage decisions;
+it does not add a WASI dependency on JS machinery. Import normalization from
+the earlier checkpoint remains routing/classification only and is unaffected.
+
+**Focused evidence.** The new
+`issue-6979-array-object-mode-collapse.test.ts` passes 3/3: a WASI structural
+probe verifies the object carrier bag slot, and standalone plus WASI both
+translate native descriptor rejection to `Reflect.defineProperty(...) ===
+false`. `issue-4397-native-semantic-js-host.test.ts` remains 64/64, covering
+the JavaScript interop boundary after the internal mode collapse.
+
+The focused existing array cohort measured 88 passing and four failing
+assertions. The focused object cohort measured 86 passing, 14 failing and six
+skipped assertions. An exact detached A/B at pre-checkpoint commit
+`f8b4ce5e73` reproduced all 18 failures row-for-row, including the same error
+shapes, so the candidate has zero slice-specific regressions across 174 passing
+assertions.
+
+**Architecture validation.** TypeScript 7 typecheck, Biome lint, Prettier,
+standalone-arm ratchet, host-import policy, IR fallback, import-cycle,
+flat-directory, LOC, function, coercion, oracle and verdict-oracle gates pass.
+Host-import policy remains 33 probes / 452 imports / zero `regime-gap` or
+`unknown` imports, with runtime metrics at 12,066 lines, 1,959
+`resolveImport` lines / 7 cases, 897 owned-adapter lines and 1,194 explicit
+capability lines. Equivalence remains 20 failing, 2,008 passing and 22 known
+failures; two baseline failures pass and there are no new regressions.
+Compiler-boundary inventory is
+`inventory-valid-architecture-incomplete` with `errors: []`; this checkpoint
+also records the prior ambient-function boundary helper in that inventory.
+Dead-export preservation remains 6/6 full and 6/6 cut witnesses while the two
+known nonliteral dynamic imports keep strict closure open and retirement
+uncertified.
+
+**Next handoff.** Continue with the coherent top-level array follow-up:
+`array-methods.ts` (18), `array-prototype-borrow.ts` (9),
+`array-object-proto.ts` (6), `array-nonindex-key.ts` (4),
+`array-flat-native.ts` (3) and `array-slice-native.ts` (3), for 43 raw hits.
+Keep JS-backed object machinery at the explicit interop boundary only; collapse
+semantic and carrier choices onto the native WasmGC implementation.

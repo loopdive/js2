@@ -62,8 +62,8 @@ function loop(exit: Instr[], body: Instr[]): Instr {
 }
 
 /** sort / toSorted take the packed variadic ABI so an omitted comparator is distinguishable from `null`. */
-export function isArraySortVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return (member === "sort" || member === "toSorted") && (ctx.standalone || ctx.wasi);
+export function isArraySortVariadicMember(member: string): boolean {
+  return member === "sort" || member === "toSorted";
 }
 
 const NAMES = [
@@ -82,8 +82,8 @@ const NAMES = [
 
 /**
  * Emit the sort / toSorted closure body. Returns `undefined`, emitting
- * nothing, for any other member, off the native regime, or when a dependency
- * is unavailable — the caller keeps its refusal.
+ * nothing, for any other member or when a dependency is unavailable — the
+ * caller keeps its refusal.
  */
 export function emitArraySortMemberBody(
   ctx: CodegenContext,
@@ -91,7 +91,6 @@ export function emitArraySortMemberBody(
   member: string,
 ): ValType | undefined {
   if (member !== "sort" && member !== "toSorted") return undefined;
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (fctx.params.length < 3 || ctx.anyStrTypeIdx < 0) return undefined;
   const isCopy = member === "toSorted";
 

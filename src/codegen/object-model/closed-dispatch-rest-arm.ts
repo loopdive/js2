@@ -15,8 +15,7 @@
  * rest index take their arguments as before, and arguments `restIndex …
  * arity-1` are coerced to the rest element type and packed into a fresh vec.
  *
- * Standalone / WASI only. The JS-host lane keeps its previous arms byte for
- * byte (see `restDispatchInfo`).
+ * The native WasmGC dispatcher owns the rest packing ABI in every environment.
  */
 import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, RestParamInfo } from "../context/types.js";
@@ -24,15 +23,14 @@ import type { ValType } from "../../ir/types.js";
 
 /**
  * The rest ABI of `<Struct>_<method>` when the fixed-arity dispatcher must pack
- * it, else `null` (no rest parameter, a host lane, or a signature whose last
- * formal is not the registered rest vec — those keep the previous arm).
+ * it, else `null` (no rest parameter, or a signature whose last formal is not
+ * the registered rest vec — those keep the previous arm).
  */
 export function restDispatchInfo(
   ctx: CodegenContext,
   fullName: string,
   paramTypes: readonly ValType[],
 ): RestParamInfo | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
   const rest = ctx.funcRestParams.get(fullName);
   if (!rest || rest.restIndex !== paramTypes.length - 1) return null;
   const slot = paramTypes[rest.restIndex];

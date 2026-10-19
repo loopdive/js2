@@ -4,9 +4,7 @@
   "directories": {
     "src": 6,
     "src/codegen": 1004,
-    "src/codegen/array": 22,
     "src/codegen/expressions": 362,
-    "src/codegen/object-model": 29,
     "src/runtime/contracts": 2
   }
 }

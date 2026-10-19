@@ -65,12 +65,10 @@ type RegisterNative = (
 ) => number;
 
 /**
- * `__fnctor_struct_proto_ok` when fnctor-struct links are live: a native target
- * (the gc lane constructs through the host and stays byte-identical) whose
- * module reserved the #6944 struct-link helpers. `undefined` otherwise.
+ * `__fnctor_struct_proto_ok` when fnctor-struct links are live and the module
+ * reserved the #6944 struct-link helpers. `undefined` otherwise.
  */
 export function structProtoLinkOk(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   return ctx.funcMap.get("__fnctor_struct_proto_ok");
 }
 

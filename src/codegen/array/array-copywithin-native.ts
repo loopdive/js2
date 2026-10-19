@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#6651 H6) §23.1.3.4 `Array.prototype.copyWithin` on the standalone
- * array-like substrate — `__arrprod_copyWithin(recv, argsVec) -> recv`.
+ * (#6651 H6) §23.1.3.4 `Array.prototype.copyWithin` on the native array-like
+ * substrate — `__arrprod_copyWithin(recv, argsVec) -> recv`.
  *
  * `copyWithin` had no generic body in `--target standalone`: over any receiver
  * that is not a compiled vec, `Array.prototype.copyWithin.call(o, …)` threw
@@ -53,9 +53,8 @@ const get = (i: number): Instr => ({ op: "local.get", index: i });
 const set = (i: number): Instr => ({ op: "local.set", index: i });
 const f64 = (value: number): Instr => ({ op: "f64.const", value });
 
-/** Reserve (or fetch) the helper. `undefined` outside standalone or without the substrate. */
+/** Reserve (or fetch) the helper. `undefined` when the substrate is unavailable. */
 export function ensureNativeArrayCopyWithin(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(HELPER);
   if (existing !== undefined) return existing;
   const deps = resolveSliceDeps(ctx);
