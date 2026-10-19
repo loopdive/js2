@@ -21,33 +21,32 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 
-/** UTF-8-ish codepoint sequence of an ASCII string, as the i16-array literal the ctor emits. */
-function asciiCodes(s: string): number[] {
-  return [...s].map((c) => c.charCodeAt(0));
-}
+/** Every WASI preview1 function as a no-op returning errno 0. */
+const WASI_STUB = { wasi_snapshot_preview1: new Proxy({}, { get: () => () => 0 }) } as WebAssembly.Imports;
 
 describe("#1536 Phase 2 — native Error `$name` materialization (standalone)", () => {
+  // The name used to be inlined in each `__new_<Error>` body as an
+  // `array.new_fixed` of its code units, and the first and third pins grepped
+  // the WAT for those `i32.const`s. The ctor now reads the name from a shared
+  // string global (`global.get`), so a WAT grep cannot see it any more. Pin the
+  // PROPERTY instead: the caught error's `.name` is the class name, which a
+  // `ref.null.extern` placeholder cannot satisfy.
+  //
+  // `--target wasi` modules import `wasi_snapshot_preview1` (the platform
+  // surface, e.g. fd_write for uncaught-exception output), so they are
+  // instantiated with a no-op WASI stub; the "no host import" claim is about
+  // the `env` module and stays asserted.
   it("`new TypeError(...)` constructor materializes the name string (not ref.null.extern)", async () => {
     const src = `
       export function test(): number {
-        try { throw new TypeError("boom"); } catch (e) { return 1; }
+        try { throw new TypeError("boom"); } catch (e) { return (e as any).name === "TypeError" ? 1 : 0; }
       }
     `;
     const r = await compile(src, { target: "wasi" });
     expect(r.success).toBe(true);
-    // The __new_TypeError body must push the "TypeError" code units (an
-    // array.new_fixed of its char codes) — i.e. the $name field is no longer
-    // the Phase-1 `ref.null.extern` placeholder.
-    const wat = r.wat ?? "";
-    const ctorStart = wat.indexOf("(func $__new_TypeError");
-    expect(ctorStart).toBeGreaterThanOrEqual(0);
-    const ctorBody = wat.slice(ctorStart, ctorStart + 600);
-    for (const code of asciiCodes("TypeError")) {
-      expect(ctorBody).toContain(`i32.const ${code}`);
-    }
-    // And there must be at least one struct.new for the materialized
-    // NativeString (the name) in addition to the $Error_struct.new.
-    expect((ctorBody.match(/struct\.new/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(r.wat ?? "").toContain("(func $__new_TypeError");
+    const { instance } = await WebAssembly.instantiate(r.binary, WASI_STUB);
+    expect((instance.exports.test as () => number)()).toBe(1);
   });
 
   it("construct + throw + catch of a native Error instantiates and runs (no host import)", async () => {
@@ -60,7 +59,7 @@ describe("#1536 Phase 2 — native Error `$name` materialization (standalone)", 
     expect(r.success).toBe(true);
     const envImports = r.imports.filter((i) => i.module === "env").map((i) => i.name);
     expect(envImports).not.toContain("__new_RangeError");
-    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    const { instance } = await WebAssembly.instantiate(r.binary, WASI_STUB);
     const test = instance.exports.test as () => number;
     expect(test()).toBe(42);
   });
@@ -71,19 +70,14 @@ describe("#1536 Phase 2 — native Error `$name` materialization (standalone)", 
     for (const n of names) {
       const src = `
         export function test(): number {
-          try { throw new ${n}("x"); } catch (e) { return 1; }
+          try { throw new ${n}("x"); } catch (e) { return (e as any).name === "${n}" ? 1 : 0; }
         }
       `;
       const r = await compile(src, { target: "wasi" });
       expect(r.success, `${n} compiles`).toBe(true);
-      const { instance } = await WebAssembly.instantiate(r.binary, {});
-      expect((instance.exports.test as () => number)(), `${n} runs`).toBe(1);
-      const wat = r.wat ?? "";
-      const s = wat.indexOf(`(func $__new_${n}`);
-      expect(s, `${n} ctor present`).toBeGreaterThanOrEqual(0);
-      const body = wat.slice(s, s + 700);
-      // First char code of the name appears as an i32.const in the ctor body.
-      expect(body, `${n} name materialized`).toContain(`i32.const ${n.charCodeAt(0)}`);
+      expect(r.wat ?? "", `${n} ctor present`).toContain(`(func $__new_${n}`);
+      const { instance } = await WebAssembly.instantiate(r.binary, WASI_STUB);
+      expect((instance.exports.test as () => number)(), `${n} name materialized`).toBe(1);
     }
   });
 

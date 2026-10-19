@@ -24,7 +24,10 @@ import { buildImports } from "./helpers.js";
 
 /** Compile + instantiate, capturing console output, with or without optimize. */
 async function runProgram(source: string, optimize: boolean): Promise<{ output: string[]; validated: boolean }> {
-  const result = await compile(source, optimize ? { optimize: true } : {});
+  // (#6708) This is a wasm-opt differential over a hand-stubbed console; it pins
+  // the host-assisted profile, whose console imports take JS strings directly.
+  const profile = { semanticProviders: "host-assisted" } as const;
+  const result = await compile(source, optimize ? { ...profile, optimize: true } : profile);
   expect(result.success, `compile failed: ${result.errors.map((e) => e.message).join("; ")}`).toBe(true);
 
   // Property 1: optimized output must always validate. (Unoptimized output is

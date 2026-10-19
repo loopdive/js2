@@ -389,6 +389,10 @@ const BUCKETS = {
     "unintended",
     "`class.call` on a base-typed receiver lowers through a `__tag` virtual-dispatch intent instead of a static call to the declared class's member (#7000 step a; legacy has it, #1299)",
   ],
+  "closure-signature-mismatch": [
+    "unintended",
+    "A function-typed parameter a caller may fill with a function of another Wasm signature: IR `closure.call` casts to the annotation's exact func type. Retires with an arity-adapting IR closure call or adapter thunks at the call site (#7003 step 2; legacy uses a `ref.test` arity cascade)",
+  ],
   "string-builder-candidate": [
     "deferred",
     "Kill-switch only (`JS2WASM_IR_STRING_BUILDER=0`): builder loops are IR-claimed by default via the owned-append fast path (#3740/#3744)",
@@ -467,6 +471,17 @@ MODULE whose module-init unit is not claimable (gated must-not-increase by
 per-file deletable (gate G3 in \`plan/log/3090-phase0-legacy-delete-list.md\`).
 The current corpus floor is **0** (#3517): Calendar's nine-statement initializer
 and Algorithms' top-level generic Map initializer are both IR-owned.`;
+
+// (#7002) The bucket counts are a playground-corpus measurement; say so under
+// the table and point at the wide-corpus ledger.
+const BUCKETS_CORPUS_NOTE = `**Which corpus these counts describe (#7002).** \`scripts/ir-fallback-baseline.json\`
+and \`check:ir-only\` measure the playground corpus only
+(\`website/playground/examples/\`, five entries for \`check:ir-only\`), so a
+bucket at **0** here says nothing about test262-scale code. The wide number is
+the IR claim ledger — \`npx tsx scripts/ir-claim-ledger.mts --stride 40\`
+(playground + every 40th test262 file, \`trackIrOutcomes\` on), committed as
+[\`benchmarks/results/ir-claim-ledger-standalone.json\`](../../benchmarks/results/ir-claim-ledger-standalone.json)
+and refreshed nightly by the advisory \`IR claim ledger\` workflow.`;
 
 // --- post-claim codes (#3341 Slice C; cross-checked against src/codegen/index.ts)
 //
@@ -613,6 +628,7 @@ function build() {
   }
   const bucketRows = Object.entries(BUCKETS).map(([reason, [cat, promotes]]) => [`\`${reason}\``, cat, promotes]);
   parts.push(BUCKETS_INTRO + "\n\n" + renderTable(["Bucket reason", "Category", "What promotes a row"], bucketRows));
+  parts.push(BUCKETS_CORPUS_NOTE);
   crossCheckPostClaim();
   const postClaimRows = Object.entries(POSTCLAIM)
     .sort(([a], [b]) => a.localeCompare(b))

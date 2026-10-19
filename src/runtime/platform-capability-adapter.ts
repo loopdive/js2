@@ -205,14 +205,11 @@ export function resolvePlatformCapabilityImport(
     case "node_builtin_fn": {
       const moduleName = intent.moduleName;
       const functionName = intent.name;
+      const adapt = (raw: (...args: any[]) => any): Function =>
+        makeNodeBuiltinFunctionAdapter(moduleName, functionName, raw, context);
       const dependency = deps?.[moduleName] as Record<string, unknown> | undefined;
       if (dependency && typeof dependency[functionName] === "function") {
-        return makeNodeBuiltinFunctionAdapter(
-          moduleName,
-          functionName,
-          (dependency[functionName] as Function).bind(dependency),
-          context,
-        );
+        return adapt((dependency[functionName] as Function).bind(dependency));
       }
       const requireNode = context.getNodeRequire();
       if (requireNode) {
@@ -220,7 +217,7 @@ export function resolvePlatformCapabilityImport(
           const module = requireNode(moduleName);
           const raw = module?.[functionName];
           if (typeof raw === "function") {
-            return makeNodeBuiltinFunctionAdapter(moduleName, functionName, raw.bind(module), context);
+            return adapt(raw.bind(module));
           }
         } catch {
           // Continue to browser/fallback providers.
@@ -229,15 +226,10 @@ export function resolvePlatformCapabilityImport(
       const crypto = (globalThis as any)?.crypto;
       if (moduleName === "crypto" && crypto) {
         if (functionName === "randomUUID" && typeof crypto.randomUUID === "function") {
-          return makeNodeBuiltinFunctionAdapter("crypto", "randomUUID", () => crypto.randomUUID(), context);
+          return adapt(() => crypto.randomUUID());
         }
         if (functionName === "randomBytes" && typeof crypto.getRandomValues === "function") {
-          return makeNodeBuiltinFunctionAdapter(
-            "crypto",
-            "randomBytes",
-            (length: number) => crypto.getRandomValues(new Uint8Array(length)),
-            context,
-          );
+          return adapt((length: number) => crypto.getRandomValues(new Uint8Array(length)));
         }
       }
       return makeNodeBuiltinFunctionFallback(moduleName, functionName);

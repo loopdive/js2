@@ -190,6 +190,7 @@ import {
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
 import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import { bindingHoldsStandaloneClassProto } from "./class-proto-object.js"; // (#7053)
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
@@ -500,6 +501,7 @@ import { inlineMemberSetCallSites } from "./member-set-inline-ic.js"; // (#4157)
 import { inlineCallDispatchSites } from "./call-dispatch-ic.js"; // (#4157) __call_m_* devirtualization
 import { inlineFlatStrCallSites } from "./flat-str-ic.js"; // (#4157) __str_flatten/__str_equals call-site fast paths
 import { brandCollidingShapeTypes, linkBrandRoleOf } from "./shape-brand.js";
+import { appendAnonExpandoBagSlots } from "./object-model/anon-expando-bag-slot.js"; // (#7020)
 import {
   addImport,
   addStringConstantGlobal,
@@ -2759,7 +2761,7 @@ function recordObservedIrOutcomes(
     existingOutcomes: ctx.irOutcomes,
   });
   if (nonExecutable) ctx.irOutcomes.push(nonExecutable);
-  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic);
+  for (const diagnostic of reconciled.diagnostics) reportErrorNoNode(ctx, diagnostic, "warning"); // #7002 never fatal
 }
 
 const IR_IMPLICIT_PARAM_PROJECTION_BINARY_OPS = new Set<ts.SyntaxKind>([
@@ -5225,6 +5227,7 @@ function resolveAndRecordShapeStamping(ctx: CodegenContext): void {
 }
 
 function resolveAndRecordShapeBranding(ctx: CodegenContext): void {
+  appendAnonExpandoBagSlots(ctx); // (#7020) after all emission, before branding sees the layouts
   const affected = brandCollidingShapeTypes(ctx.mod, ctx.noBrandShapeTypes, linkBrandRoleOf(ctx));
   ctx.programAbiSession?.recordShapeBranding(affected);
 }
@@ -14305,6 +14308,7 @@ function hoistVarDecl(
       realmStructuralCarrier ||
       forInTargetForcesExternref ||
       transferredArrayLikeResult ||
+      bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
       (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
@@ -14476,8 +14480,17 @@ export function hoistLetConstWithTdz(
   for (const stmt of stmts) {
     if (ts.isVariableStatement(stmt)) walkStmtForLetConst(ctx, fctx, stmt);
   }
+  // (#6994) A nested block's `let f` must not claim the function-level slot of
+  // a same-named function/class DECLARATION of this body: that binding is not
+  // in `localMap` yet (hoistFunctionDeclarations runs later), so the claim would
+  // hand the declaration the block's slot and type. The block gets its own slot
+  // at block entry (`preallocateBlockScopedSlots`) like any genuine shadow.
+  const reserved = new Set<string>();
   for (const stmt of stmts) {
-    walkStmtForLetConst(ctx, fctx, stmt);
+    if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name) reserved.add(stmt.name.text);
+  }
+  for (const stmt of stmts) {
+    walkStmtForLetConst(ctx, fctx, stmt, reserved);
   }
 }
 
@@ -14912,7 +14925,12 @@ function bindingHasForeignReassignment(
   return foreign;
 }
 
-function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement): void {
+function walkStmtForLetConst(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.Statement,
+  reserved?: ReadonlySet<string>,
+): void {
   if (ts.isVariableStatement(stmt)) {
     const list = stmt.declarationList;
     // Hoist `let`/`const`/`using` (not var — var is already hoisted).
@@ -14946,7 +14964,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
       }
       if (ts.isIdentifier(decl.name)) {
         const name = decl.name.text;
-        if (fctx.localMap.has(name)) continue;
+        if (fctx.localMap.has(name) || reserved?.has(name)) continue;
         // #2641: do NOT skip names that collide with a module global. A
         // function-body let/const that shadows a same-named module variable
         // MUST get its own Wasm local (proper lexical shadowing). Previously
@@ -15054,6 +15072,7 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           initForcesExternref ||
           realmStructuralCarrier ||
           (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
+          bindingHoldsStandaloneClassProto(ctx, decl) || // (#7053)
           (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
@@ -15163,12 +15182,12 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
   }
   // Recurse into block-like structures (but NOT into nested functions)
   if (ts.isBlock(stmt)) {
-    for (const s of stmt.statements) walkStmtForLetConst(ctx, fctx, s);
+    for (const s of stmt.statements) walkStmtForLetConst(ctx, fctx, s, reserved);
     return;
   }
   if (ts.isIfStatement(stmt)) {
-    walkStmtForLetConst(ctx, fctx, stmt.thenStatement);
-    if (stmt.elseStatement) walkStmtForLetConst(ctx, fctx, stmt.elseStatement);
+    walkStmtForLetConst(ctx, fctx, stmt.thenStatement, reserved);
+    if (stmt.elseStatement) walkStmtForLetConst(ctx, fctx, stmt.elseStatement, reserved);
     return;
   }
   if (ts.isForStatement(stmt)) {
@@ -15177,22 +15196,22 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
     // for integer loop counters). Pre-allocating here would create duplicate
     // locals: one f64 from the pre-pass, one i32 from codegen — see #954.
     // The loop body may still declare let/const variables, so recurse into it.
-    walkStmtForLetConst(ctx, fctx, stmt.statement);
+    walkStmtForLetConst(ctx, fctx, stmt.statement, reserved);
     return;
   }
   if (ts.isTryStatement(stmt)) {
-    for (const s of stmt.tryBlock.statements) walkStmtForLetConst(ctx, fctx, s);
+    for (const s of stmt.tryBlock.statements) walkStmtForLetConst(ctx, fctx, s, reserved);
     if (stmt.catchClause) {
-      for (const s of stmt.catchClause.block.statements) walkStmtForLetConst(ctx, fctx, s);
+      for (const s of stmt.catchClause.block.statements) walkStmtForLetConst(ctx, fctx, s, reserved);
     }
     if (stmt.finallyBlock) {
-      for (const s of stmt.finallyBlock.statements) walkStmtForLetConst(ctx, fctx, s);
+      for (const s of stmt.finallyBlock.statements) walkStmtForLetConst(ctx, fctx, s, reserved);
     }
     return;
   }
   if (ts.isSwitchStatement(stmt)) {
     for (const clause of stmt.caseBlock.clauses) {
-      for (const s of clause.statements) walkStmtForLetConst(ctx, fctx, s);
+      for (const s of clause.statements) walkStmtForLetConst(ctx, fctx, s, reserved);
     }
   }
 }

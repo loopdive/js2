@@ -27,9 +27,7 @@ async function run(source: string): Promise<unknown> {
   }
   const imports = buildImports(result.imports, undefined, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { setExports?: (e: Record<string, (...a: unknown[]) => unknown>) => void }).setExports?.(
-    instance.exports as Record<string, (...a: unknown[]) => unknown>,
-  );
+  (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
   return (instance.exports as Record<string, (...a: unknown[]) => unknown>).test();
 }
 

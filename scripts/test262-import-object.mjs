@@ -329,7 +329,12 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
   // (#5385) native-first in the JS environment compiles with the same native
   // semantic regime as standalone, so it carries the same conditional
   // `js2wasm:runtime-eval` namespace — inspect the import list for it too.
-  if (options.target !== "standalone" && options.semanticProviders !== "native-first") {
+  // (#6708) native-first is the default policy since S6; only the explicit
+  // `host-assisted` control lane (and non-JS, non-standalone targets) keep the
+  // binary-form instantiate.
+  const jsHostRegime =
+    (options.target === undefined || options.target === "gc") && options.semanticProviders !== "host-assisted";
+  if (options.target !== "standalone" && !jsHostRegime) {
     const { instance } = await WebAssembly.instantiate(binary, importObj);
     return instance;
   }

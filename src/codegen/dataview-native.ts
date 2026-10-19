@@ -563,12 +563,6 @@ export function emitArrayBufferSlice(
   const vecTypeIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" }); // (#2835) packed byte buffer
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
   if (arrTypeIdx < 0) return null;
-  const detachedThrow = buildThrowJsErrorInstrs(
-    ctx,
-    "TypeError",
-    "TypeError: ArrayBuffer.prototype.slice called on a detached buffer",
-  );
-
   // Recover the source vec struct from the receiver (externref → struct).
   const srcVecLocal = allocLocal(fctx, `__abs_src_${fctx.locals.length}`, {
     kind: "ref",
@@ -606,6 +600,14 @@ export function emitArrayBufferSlice(
   fctx.body.push({ op: "local.set", index: srcLenLocal });
   // §25.1.5.3 step 4 — validate detachment before coercing begin/end. The
   // native detached state is the shared buffer vec's negative length marker.
+  // (#7014) Built here, flushed: a list built before the receiver compiled
+  // missed its late-import shift (#3061 invalid Wasm since 514b55dfa2).
+  const detachedThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "TypeError: ArrayBuffer.prototype.slice called on a detached buffer",
+    { flush: fctx },
+  );
   emitArrayBufferDetachedCheck(fctx, srcVecLocal, vecTypeIdx, detachedThrow);
   const srcArrLocal = allocLocal(fctx, `__abs_srcarr_${fctx.locals.length}`, {
     kind: "ref",

@@ -35,7 +35,8 @@ async function run(src: string): Promise<{ exports: Record<string, any> }> {
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool) as any;
   const { instance } = await WebAssembly.instantiate(r.binary, imports);
-  if (typeof imports.setExports === "function") imports.setExports(instance.exports);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (typeof imports.setInstance === "function") imports.setInstance(instance);
   return { exports: instance.exports as Record<string, any> };
 }
 

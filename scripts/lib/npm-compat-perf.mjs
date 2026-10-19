@@ -359,6 +359,8 @@ export function npmPerfRows(packages) {
     for (const [key, label] of [
       ["jsHost", "JS host · runtime dynamic"],
       ["jsHostNative", "JS host native-first · runtime dynamic"],
+      // (#6708) Present only for an explicit `--lane js-host-assisted` control run.
+      ["jsHostAssisted", "JS host host-assisted (control) · runtime dynamic"],
       ["standalone", "standalone · compile-time static"],
       ["standaloneDynamic", "standalone · runtime dynamic"],
     ]) {

@@ -17,7 +17,7 @@ describe("#3979 callable values in heterogeneous containers", () => {
     );
   });
 
-  it.fails("calls a function element in a nested value/callback tuple", async () => {
+  it("calls a function element in a nested value/callback tuple", async () => {
     await assertEquivalent(
       `export function test(): number {
          const pairs = [[1, () => 7]];

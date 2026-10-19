@@ -28,9 +28,11 @@ import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 import { describe, expect, it } from "vitest";
 
+const HOST_COMPILE_OPTIONS = { fileName: "t.ts", semanticProviders: "host-assisted" as const };
+
 /** Compile in host mode, instantiate, and return the exported `test()` value. */
 async function runTest(src: string): Promise<unknown> {
-  const r = await compile(src, { fileName: "t.ts" });
+  const r = await compile(src, HOST_COMPILE_OPTIONS);
   expect(r.success, r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   const imports = buildImports(r.imports, {}, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
@@ -43,7 +45,7 @@ async function runTest(src: string): Promise<unknown> {
 
 /** The `(param …)` signature string of `func`, or `""` if it uses a shared type. */
 async function paramSig(src: string, func: string): Promise<string> {
-  const r = await compile(src, { fileName: "t.ts", emitWat: true });
+  const r = await compile(src, { ...HOST_COMPILE_OPTIONS, emitWat: true });
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const wat = r.wat ?? "";
   const m = wat.match(new RegExp(`\\(func \\$${func} \\(param ([^)]*)\\)`));
@@ -117,7 +119,11 @@ describe("#3471 — numeric-kernel param inference is NOT regressed", () => {
         return result == "0" && 1 / value == -Infinity ? "-0" : result;
       }
     `;
-    const r = await compile(src, { fileName: "lodash-base-to-string.js", allowJs: true });
+    const r = await compile(src, {
+      fileName: "lodash-base-to-string.js",
+      allowJs: true,
+      semanticProviders: "host-assisted",
+    });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.wat ?? "").not.toMatch(/\(func \$baseToString \(param f64\)/);
     const imports = buildImports(r.imports, {}, r.stringPool);

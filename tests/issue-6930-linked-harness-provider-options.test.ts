@@ -28,11 +28,14 @@ describe("#6930 linked-harness provider options carry the semantic-provider poli
     expect(harnessProviderCompileOptions(undefined, "auto")).toEqual(options);
   });
 
-  it("native-first options carry semanticProviders, like the body", () => {
-    expect(harnessProviderCompileOptions(undefined, "native-first").semanticProviders).toBe("native-first");
-    expect(harnessProviderCompileOptions("standalone", "native-first")).toMatchObject({
+  // (#6708 S6) native-first is the default lane: it spells nothing, like the
+  // body; only the host-assisted control lane carries the policy.
+  it("host-assisted options carry semanticProviders, like the body; native-first is the default", () => {
+    expect(harnessProviderCompileOptions(undefined, "native-first")).toEqual(harnessProviderCompileOptions(undefined));
+    expect(harnessProviderCompileOptions(undefined, "host-assisted").semanticProviders).toBe("host-assisted");
+    expect(harnessProviderCompileOptions("standalone", "host-assisted")).toMatchObject({
       target: "standalone",
-      semanticProviders: "native-first",
+      semanticProviders: "host-assisted",
     });
   });
 
@@ -49,20 +52,29 @@ describe("#6930 linked-harness provider options carry the semantic-provider poli
       harnessPrefix: PREFIX,
       compileOptions: harnessProviderCompileOptions(undefined, "native-first"),
     });
+    const hostAssisted = harnessProviderCacheKey({
+      harnessPrefix: PREFIX,
+      compileOptions: harnessProviderCompileOptions(undefined, "host-assisted"),
+    });
     expect(auto).toBe(host);
-    expect(native).not.toBe(host);
+    expect(native).toBe(host);
+    expect(hostAssisted).not.toBe(host);
   });
 
   it("the worker memo key separates policy and the regime kill switch", () => {
     const env = {};
-    const host = harnessProviderMemoKey(PREFIX, undefined, "auto", env);
-    const native = harnessProviderMemoKey(PREFIX, undefined, "native-first", env);
-    const regimeOff = harnessProviderMemoKey(PREFIX, undefined, "native-first", { JS2WASM_NATIVE_REGIME_JS: "0" });
-    expect(new Set([host, native, regimeOff]).size).toBe(3);
-    // The kill switch only matters for native-first.
-    expect(harnessProviderMemoKey(PREFIX, undefined, "auto", { JS2WASM_NATIVE_REGIME_JS: "0" })).toBe(host);
-    expect(harnessProviderRegimeTag("auto", { JS2WASM_NATIVE_REGIME_JS: "0" })).toBe("");
-    expect(harnessProviderRegimeTag("native-first", {})).toBe("");
+    const regime = harnessProviderMemoKey(PREFIX, undefined, "auto", env);
+    const hostAssisted = harnessProviderMemoKey(PREFIX, undefined, "host-assisted", env);
+    const regimeOff = harnessProviderMemoKey(PREFIX, undefined, "auto", { JS2WASM_NATIVE_REGIME_JS: "0" });
+    expect(new Set([regime, hostAssisted, regimeOff]).size).toBe(3);
+    expect(harnessProviderMemoKey(PREFIX, undefined, "native-first", env)).toBe(regime);
+    // (#6708) The kill switch only matters for the default (native-first) lane.
+    expect(harnessProviderMemoKey(PREFIX, undefined, "host-assisted", { JS2WASM_NATIVE_REGIME_JS: "0" })).toBe(
+      hostAssisted,
+    );
+    expect(harnessProviderRegimeTag("host-assisted", { JS2WASM_NATIVE_REGIME_JS: "0" })).toBe("");
+    expect(harnessProviderRegimeTag("auto", {})).toBe("");
+    expect(harnessProviderRegimeTag("auto", { JS2WASM_NATIVE_REGIME_JS: "0" })).not.toBe("");
     expect(harnessProviderRegimeTag("native-first", { JS2WASM_NATIVE_REGIME_JS: "0" })).not.toBe("");
   });
 
@@ -83,7 +95,7 @@ describe("#6930 linked-harness provider options carry the semantic-provider poli
 });
 
 describe("#6930 a native-first provider exports the regime ABI the body imports", () => {
-  it("exports the #6723 D4 Error-family carrier cells only under native-first", async () => {
+  it("exports the #6723 D4 Error-family carrier cells only under native-first (the default)", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "js2wasm-6930-"));
     try {
       const exportsOf = async (semanticProviders: string) => {
@@ -95,8 +107,8 @@ describe("#6930 a native-first provider exports the regime ABI the body imports"
         return WebAssembly.Module.exports(new WebAssembly.Module(provider.artifact.binary)).map((e) => e.name);
       };
       const CELL = "__js2wasm_link_error_ctor_Error";
-      expect(await exportsOf("auto")).not.toContain(CELL);
-      expect(await exportsOf("native-first")).toContain(CELL);
+      expect(await exportsOf("host-assisted")).not.toContain(CELL);
+      expect(await exportsOf("auto")).toContain(CELL);
     } finally {
       rmSync(cacheDir, { recursive: true, force: true });
     }

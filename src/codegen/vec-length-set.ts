@@ -58,6 +58,7 @@ import { NON_ARRAY_BYTE_VEC_ELEM_KINDS } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
 import { buildVecLengthHoleFill } from "./vec-length-hole-fill.js";
+import { ensureHoleType } from "./array-holes.js"; // (#7052)
 import { arraySetLengthDynamicParts } from "./array/array-set-length-coercion.js"; // (#6771 S10a)
 
 /** `key == "length"` over an externref key (param `keyParam`); i32 on stack. */
@@ -268,6 +269,8 @@ export function fillVecLengthDynamicArms(ctx: CodegenContext): void {
       );
     }
 
+    // (#7052) Multi-source runs `emitVecAccessExports` (which mints `$__hole`) AFTER this fill.
+    if (ctx.usesArrayHoles && ctx.holeGlobalIdx === undefined) ensureHoleType(ctx);
     const fillArms = buildVecLengthHoleFill(
       ctx,
       (name, type) => {

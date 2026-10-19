@@ -22,7 +22,7 @@ import {
   asyncFnNeedsCps,
   staticPromiseResolveSettledExpr,
 } from "./async-cps.js";
-import { asyncGenConsumerNeedsDrive } from "./async-frame.js";
+import { asyncFnNeedsDrive, asyncGenConsumerNeedsDrive } from "./async-frame.js";
 import { emitAsyncValueSinkUnwrap, emitStandaloneAwaitUnwrap } from "./async-value-sink-unwrap.js";
 import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -492,7 +492,14 @@ function calleeIsDriveLowered(ctx: CodegenContext, expr: ts.CallExpression): boo
   if (!isAsyncDecl) return false;
   // Carrier lane (wasi): a genuinely-suspending async fn is frame-driven and
   // already returns a real `$Promise`.
-  if (isStandalonePromiseActive(ctx)) return asyncFnNeedsCps(decl, analyzeAsyncBody(ctx, decl));
+  // (#6995) AND the activation predicate itself: `asyncFnNeedsCps` alone also
+  // admits bodies the drive gate declines (e.g. an await over a provably
+  // non-thenable struct), whose compiled result is the raw `T` — skipping the
+  // wrap then `ref.cast`-trapped (`illegal cast`) at the consumer.
+  if (isStandalonePromiseActive(ctx)) {
+    const plan = analyzeAsyncBody(ctx, decl);
+    return asyncFnNeedsCps(decl, plan) && asyncFnNeedsDrive(ctx, decl, plan);
+  }
   // (#3132) `--target standalone` with the native-`$Promise` CARRIER still OFF
   // (#2980): the async-gen-CONSUMER drive lane (`for await (x of asyncGen)`) is
   // carrier-independent — every suspension awaits a promise MINTED by the
@@ -1624,7 +1631,7 @@ function compileExpressionInner(
     if (isStandalonePromiseActive(ctx)) {
       const operandType = compileExpressionInner(ctx, fctx, expr.expression);
       if (operandType !== null && operandType !== VOID_RESULT && operandType.kind === "externref") {
-        emitStandaloneAwaitUnwrap(ctx, fctx);
+        emitStandaloneAwaitUnwrap(ctx, fctx, /*throwOnRejected*/ true); // (#6995) rejected → throw
         return { kind: "externref" };
       }
       return operandType;

@@ -198,9 +198,58 @@ export function isStandaloneClassProtoObjectExpression(ctx: CodegenContext, expr
   while (ts.isParenthesizedExpression(bare) || ts.isAsExpression(bare) || ts.isNonNullExpression(bare)) {
     bare = bare.expression;
   }
+  // (#7053) …or a binding that holds one (`const prototype = this.prototype;
+  // buildAccessors(prototype, h)`): its slot is `externref` by
+  // `bindingHoldsStandaloneClassProto`, so the parameter must not narrow either.
+  if (ts.isIdentifier(bare)) {
+    const decl = ctx.oracle.variableDeclarationOf(bare);
+    const init = decl?.type === undefined ? decl?.initializer : undefined;
+    return init !== undefined && !ts.isIdentifier(init) && isStandaloneClassProtoObjectExpression(ctx, init);
+  }
   if (!ts.isPropertyAccessExpression(bare) || bare.name.text !== "prototype") return false;
-  const className = classIdentityFromExpression(ctx, bare.expression);
+  const className = classIdentityFromExpression(ctx, bare.expression) ?? staticThisClassName(ctx, bare.expression);
   return className !== undefined && standaloneClassProtoObjectApplies(ctx, className);
+}
+
+/**
+ * (#7053) The BINDING twin of the call-site rule above: an unannotated
+ * `const p = C.prototype` (or `this.prototype` in a static element) must get
+ * an `externref` slot, never the checker's instance-struct `$C` slot — the
+ * guard-cast would store null. Every slot-typer (statement cascade, let/const
+ * and var pre-hoisters, module globals) asks this one predicate so they agree.
+ */
+export function bindingHoldsStandaloneClassProto(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  return (
+    decl.initializer !== undefined &&
+    decl.type === undefined &&
+    isStandaloneClassProtoObjectExpression(ctx, decl.initializer)
+  );
+}
+
+/**
+ * (#7053) `this` in a STATIC element is the class object, so `this.prototype`
+ * is the same prototype `$Object` as `C.prototype` (or a subclass's — a false
+ * match only keeps a slot on `externref`). axios' `static accessor(header) {
+ * const prototype = this.prototype; … }` typed that local `$AxiosHeaders`, the
+ * guard-cast nulled it, and the first `Object.defineProperty(prototype, …)`
+ * threw during module init. Arrow functions inherit `this`; any other function
+ * boundary ends the walk.
+ */
+function staticThisClassName(ctx: CodegenContext, expression: ts.Expression): string | undefined {
+  if (expression.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+  let node: ts.Node = expression.parent;
+  while (ts.isArrowFunction(node) || !(ts.isFunctionLike(node) || ts.isClassStaticBlockDeclaration(node))) {
+    if (ts.isSourceFile(node) || ts.isClassLike(node)) return undefined;
+    node = node.parent;
+  }
+  const isStatic =
+    ts.isClassStaticBlockDeclaration(node) ||
+    ((ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
+      (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Static) !== 0);
+  const owner = node.parent;
+  if (!isStatic || !ts.isClassLike(owner) || owner.name === undefined) return undefined;
+  const className = ctx.classExprNameMap.get(owner.name.text) ?? owner.name.text;
+  return ctx.classSet.has(className) ? className : undefined;
 }
 
 /**
