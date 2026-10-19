@@ -5,6 +5,9 @@ import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import { buildClosureUndefinedTest } from "../../../runtime/wasmgc/values/closure-receiver-bodies.js";
+import { buildTypeofNumberBody } from "../../../runtime/wasmgc/values/number-bodies.js";
+import { buildTypeofBooleanBody } from "../../../runtime/wasmgc/values/boolean-bodies.js";
+import { buildTypeofBigIntBody } from "../../../runtime/wasmgc/values/bigint-primitive-bodies.js";
 import {
   requireNativeValueReservations,
   requireCompletedNativeValues,
@@ -305,6 +308,14 @@ function requireCompletedDependencies(
   requireCompletedNativeBigInt(tx, d.bigints, d.bigintPlan);
   requireCompletedNativeStringLiterals(tx, d.strings);
   requireCompletedNativeSymbolCarrier(tx, d.symbols, d.strings);
+  // This classifier is a load-bearing primitive/object distinction. A receipt
+  // for a substituted predicate must not certify the downstream algorithms.
+  for (const [token, body] of [
+    [d.values.functions.isNumber, buildTypeofNumberBody(d.values.types.boxedNumber.typeIndex)],
+    [d.booleans.isBoolean, buildTypeofBooleanBody(d.values.types.boxedBoolean.typeIndex)],
+    [d.bigints.isBigInt, buildTypeofBigIntBody(d.bigints.type.typeIndex)],
+  ] as const)
+    tx.assertCanonicalFunctionDefinition(token, { locals: [], body });
 }
 
 /** Authenticate every existing carrier and the whole declaration before allocating. */

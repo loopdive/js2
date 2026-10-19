@@ -1,0 +1,261 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ae genuine Object extensibility algorithms and guarded Call entries",
+  "parentCommit": "cde92c0be290e16821d70a0e26eeccec32bae6fb",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-object-extensibility.ts": "45bd0bcfa8f81006fede0b9365267c72db12eccc93436db7a7b15efdd5a4d77f",
+    "src/backend/wasmgc/resources/native-number-primitive-classifier.ts": "da4f8c7640c9eb664fed13f1faf7006c0b7ce641a161f82ca0a7c5c8af4e1a79",
+    "src/runtime/wasmgc/values/native-object-extensibility-bodies.ts": "f411c85c1f5da60a31944e306299187019648082765f76443c4d28d007cf3be8",
+    "src/wasm/physical/module-reservations.ts": "56c98e0aa018a52f751f4ba483347a08ad841884ab730c61a8bec5405ce6f48b",
+    "tests/helpers/native-mixed-object-access.ts": "8abf9989bf38de30e24f6526307621db58f3bf4dd2357b3bcab04b7043d2b986",
+    "tests/helpers/native-object-extensibility.ts": "99fb27aa89a3856bf7e7e8791777128e17312557775ef2be8928ec058dcb4a31",
+    "tests/issue-6979-native-object-extensibility.test.ts": "c81cf587aff1e9c85be2f87ab3c8109430fdddaa6fcec147408ef202f88a2543",
+    "scripts/compiler-boundaries.json": "8479b7aacf1c0c61527945ddd24d5d5a87ad645798c2815ae0d444092fdffd43"
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "requestedCliWorkers": { "minimum": 2, "maximum": 2 },
+    "poolForkLimit": "Base config derives maxForks from available RAM, overriding top-level maxWorkers; actual concurrent count was not sampled during execution",
+    "testTimeoutMs": 35000,
+    "flags": ["--experimental-wasm-exnref"],
+    "timingOrConcurrencyABClaimed": false
+  },
+  "scope": {
+    "completionScope": "native-object-extensibility-calls",
+    "actualEntries": ["%Object.isExtensible%", "%Object.preventExtensions%"],
+    "actualReservedAlgorithmAndLiftedSlotsFilled": true,
+    "sharedGenuineMixedAndPrimitiveOwners": true,
+    "primitiveClassifierExecutedPredicatesIndependentlyRederived": ["Number including i31", "Boolean", "BigInt"],
+    "canonicalUndefinedIdentityGuardPreserved": true,
+    "canonicalGlobalInitializerComparisonPreservesExactScalarBits": true,
+    "newComparisonMethodIssuesSemanticAuthority": false,
+    "callerSelectedHandlesBodiesOrSubsetsAccepted": false,
+    "failedPartialFillCanYieldCompletionOrRetry": false,
+    "languageObjectsOrBagsCopied": false,
+    "newHostImportOrSourceSelector": false,
+    "wholeRealmOrSourcePublicEntryCompleted": false
+  },
+  "specification": [
+    "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-object.isextensible",
+    "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-object.preventextensions"
+  ],
+  "tests": {
+    "finalFocused": {
+      "status": "terminal",
+      "path": ".tmp/s7ae-focused-final.json",
+      "runnerExit": 1,
+      "cases": 674,
+      "passed": 673,
+      "failed": 1,
+      "skipped": 0,
+      "files": 11,
+      "runnerErrorsReported": 0,
+      "newCases": { "cases": 63, "passed": 63, "runtime": 40, "ownerControls": 15, "physicalGlobalComparisons": 8 },
+      "existingPrimitiveClassifier": { "cases": 185, "passed": 185 },
+      "priorFocused": {
+        "cases": 426,
+        "passed": 425,
+        "failed": 1,
+        "fullRowsAndErrorsEqual": true,
+        "comparison": "Retained signed-parent S7-ad report, not a fresh parent run this turn; no normalization or truncation",
+        "path": ".tmp/s7ae-existing-focused-rows.json"
+      }
+    },
+    "currentSourceNormalRuntimeDiagnostic": {
+      "cases": 63,
+      "passed": 10,
+      "skippedByExplicitNameFilter": 53,
+      "failed": 0,
+      "runnerExit": 0,
+      "path": ".tmp/s7ae-runtime-shared-primitive.json"
+    },
+    "i31ConversionObservedOnNode": {
+      "type": "number",
+      "sameAsRaw7": true,
+      "existingPrimitivePredicateForRaw7": 1,
+      "grantsHostObjectAdmission": false
+    },
+    "developmentRuns": [
+      {
+        "path": ".tmp/s7ae-focused.json",
+        "cases": 40,
+        "passed": 8,
+        "skippedAfterHookFailures": 32,
+        "success": false,
+        "limitation": "JSON-only reporter did not preserve hook messages. A malformed source-control bag operand was corrected by inspection; no full runtime pass is claimed."
+      },
+      {
+        "path": ".tmp/s7ae-runtime-diagnostic.json",
+        "passed": 8,
+        "failed": 1,
+        "skippedByFilter": 37,
+        "finding": "Actual Number primitive execution omitted i31; corrected by using the existing native predicate."
+      },
+      {
+        "path": ".tmp/s7ae-runtime-diagnostic-2.json",
+        "passed": 8,
+        "failed": 1,
+        "skippedByFilter": 39,
+        "finding": "Named positiveZero case confirmed the omitted i31 path."
+      },
+      {
+        "path": ".tmp/s7ae-native-final.json",
+        "cases": 48,
+        "passed": 44,
+        "failed": 4,
+        "finding": "Intermediate source: the newly authored refusal test incorrectly expected raw small integers to be distinguishable from native i31 after JS/Wasm conversion. The current explicit positive control observes the conversion and retains unknown host-object refusal. This is not the final-source report despite its historical filename."
+      }
+    ],
+    "receiptsExpectationsOrSkipsInExistingTestsChanged": false,
+    "fullTest262Rerun": false,
+    "historicalCustodySuitesRerun": false
+  },
+  "componentInterpretation": {
+    "usesActualProducerSlots": true,
+    "allReachableFunctionsMustHaveSuccessfulRealFills": true,
+    "testOnlySnapshotUsesExistingReachabilitySweep": true,
+    "realLedgerSealedOrMissingProductionObligationsFilled": false,
+    "wholeRealmCompleted": false,
+    "moduleSizeIsMarginalProductionCost": false,
+    "initializersAreProductionPopulation": false,
+    "falsePreventionControl": "Named derivative of the actual prevention definition substitutes the genuine IsExtensible result to exercise its false/TypeError branch; never filled into or certified as a catalog algorithm"
+  },
+  "componentWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "interned",
+      "bytes": 37314,
+      "sha256": "1df92eecd08dab8536cdfb1def5a782f1300ab27103ec4a1f7427100f1ae4588",
+      "imports": [],
+      "reachableFunctions": 63,
+      "deadSnapshotBodies": 113
+    },
+    {
+      "displaced": true,
+      "decoded": false,
+      "booleans": "interned",
+      "bytes": 37100,
+      "sha256": "bec619096637fc42f78524450c3b2ce1a31aab060fd23cf48e4a8d0e00fe4d46",
+      "imports": [],
+      "reachableFunctions": 64,
+      "deadSnapshotBodies": 114
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "booleans": "interned",
+      "bytes": 37100,
+      "sha256": "bec619096637fc42f78524450c3b2ce1a31aab060fd23cf48e4a8d0e00fe4d46",
+      "imports": [],
+      "reachableFunctions": 64,
+      "deadSnapshotBodies": 114
+    },
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "allocating",
+      "bytes": 37287,
+      "sha256": "f697c9c4b7a758a489cee5ed75bad6a700f20c8a3059b6e3561a4c3022fdeba6",
+      "imports": [],
+      "reachableFunctions": 63,
+      "deadSnapshotBodies": 113
+    }
+  ],
+  "compilerControls": {
+    "status": "passed",
+    "completeInventories": 33,
+    "binaryWitnesses": 33,
+    "nativeFirstImports": 437,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "nativeCompiledControls": 6,
+    "nativeTargets": ["standalone", "wasi"],
+    "nativeOutputs": [42, 7],
+    "byteIdenticalToRetainedPublishedParentReports": true
+  },
+  "graph": {
+    "modules": 1980,
+    "parentModules": 1978,
+    "valueEdges": 10846,
+    "parentValueEdges": 10830,
+    "largestSccSize": 712,
+    "sccCountOver1": 4,
+    "allTwoWayDirectionMetricsEqualPublishedParent": true,
+    "growingDirectionCountsAgainstMain": 4,
+    "baselineWaiverRootsFloorsOrAllowedEdgesChanged": false
+  },
+  "inventory": {
+    "valid": true,
+    "errors": 0,
+    "architectureComplete": false,
+    "policyHash": "8479b7aacf1c0c61527945ddd24d5d5a87ad645798c2815ae0d444092fdffd43",
+    "policyChange": "Only the two new modules classified in the existing backend-wasmgc and native-runtime layers",
+    "existingClassificationsUnchanged": true
+  },
+  "gates": {
+    "typecheckLintFormat": "passed",
+    "checkpointLocFunction": { "passed": true, "sourceFiles": 4, "netSourceLines": 412, "newAllowance": false },
+    "wholePrLocFunction": {
+      "passed": true,
+      "sourceFiles": 378,
+      "netSourceLines": -16945,
+      "existingTwoFunctionGrantsUnchanged": true
+    },
+    "coercionOracle": "passed",
+    "layeringFlatDirectory": "passed",
+    "fallback": "passed after sandbox denied the TS runner IPC socket; same standard gate succeeded outside sandbox",
+    "issues": "passed",
+    "preservationOnly": { "full": "6/6 passed", "cut": "6/6 passed" },
+    "strictClosure": "open: two unconstrained dynamic imports, no behavior narrowing or exemption",
+    "retirementCertified": false
+  },
+  "artifacts": {
+    "focused": {
+      "path": ".tmp/s7ae-focused-final.json",
+      "sha256": "f1780d151d07f715f31ad14a78d66b906b5c1e8b26fe01341e25b61b0185b157"
+    },
+    "priorFocusedRows": {
+      "path": ".tmp/s7ae-existing-focused-rows.json",
+      "sha256": "eb4ff9d4323ac776f1671e902d163db079d973c51da102e7b307b944d21b9304"
+    },
+    "policyBinaries": {
+      "path": ".tmp/s7ae-policy-final.log",
+      "sha256": "17f87021b75df26b865737c49331d7749a160bb621e955115d1786ef16f253dd"
+    },
+    "nativeBinaries": {
+      "path": ".tmp/s7ae-native-controls.log",
+      "sha256": "3b2b598b433a5802cd71989c1bb4f1f31b21af605afe596685e74c7f120f7895"
+    },
+    "cycles": {
+      "path": ".tmp/s7ae-cycles.json",
+      "sha256": "1c54a7677d147de585289b501c11de90522fb3ad519a0858f805396e8fd11675"
+    },
+    "inventory": {
+      "path": ".tmp/s7ae-inventory.json",
+      "sha256": "920fd1dc8f77370074590ffa11c67565a874832d35bd09411604cb33c7cb4066"
+    },
+    "quality": {
+      "path": ".tmp/s7ae-quality.log",
+      "sha256": "38793fc94385e122c2f0e9d5ca9306a054123f02a02ddc07d464497b2e750ee4"
+    },
+    "budgets": {
+      "path": ".tmp/s7ae-budgets.log",
+      "sha256": "d320193cd6ad5b4b76a833ab2bd5cd2ce827903c8126bcc276547ea9640aa908"
+    },
+    "ratchets": {
+      "path": ".tmp/s7ae-ratchets.log",
+      "sha256": "17688b01dfb7e5dc2fabc8c7a0c1ed98a47a7713baf76e6831a89a72d6a2c081"
+    }
+  },
+  "remaining": [
+    "All other catalog algorithms, constructors, complete singleton/property population and mixed Get/Call",
+    "Atomic authenticated source/public publication, ToObject/default prototypes and first-class undefined",
+    "Foreign/dynamic identity and live boundary adapter composition; no recursive graph copying",
+    "Linear/WASI construction and publication",
+    "Four growing direction counts, historical custody/physical receipt and strict retirement/conformance acceptance",
+    "Both Markdown issues remain in progress; PR6762 remains draft behind the prerequisite stack and merge conflicts"
+  ]
+}

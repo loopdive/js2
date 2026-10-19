@@ -5005,3 +5005,137 @@ architecture/custody/retirement/conformance gates remain open. Do not promote
 this private-entry completion scope to public semantic admission. Both Markdown
 issues remain in progress and PR6762 remains draft behind its prerequisite
 stack and merge conflicts.
+
+### S7-ae native Object extensibility catalog algorithms (2026-10-20, Codex)
+
+Continue from signed `cde92c0be290e16821d70a0e26eeccec32bae6fb`.
+Implement the actual reserved Object.isExtensible/preventExtensions algorithms
+downstream of genuine realm declarations and mixed structural completion. This
+ordering must not introduce a realm-to-mixed dependency cycle or accept raw
+function handles, callbacks or caller-selected entry subsets.
+
+Implement native primitive semantics too: IsExtensible returns false without
+boxing objects; PreventExtensions returns the identical primitive reference.
+Use the canonical undefined identity, native null and authenticated Number,
+Boolean, String, Symbol and BigInt carrier owners, not "unsupported means
+primitive". Unknown foreign values and unready source/bag/realm authority must
+refuse loudly, not become false/success. A real internal false for prevention
+throws through the genuine public TypeError/tag owner. Public/source admission,
+whole-realm population and host boundary adapters stay pending.
+
+Readers of reserved algorithm slots: realm inventory and eventual lifted/public
+composition. Current writers: only canonical per-algorithm producers; these two
+slots have no producer yet. Mixed structural functions remain in their existing
+owner; no body or state is moved. Canonical primitive storage is read only.
+Audit executed dependencies independently of fill counters before issuing
+scoped completion; compare both new algorithm definitions after fills. Verify
+actual emitted calls, live identity/flags/descriptors, every native primitive
+family, missing arguments and foreign/unready refusal without host imports.
+
+Use the physical allocator's strict bit-preserving canonical comparison for
+global initializers too, rather than introducing a new backend-to-IR comparison
+edge. This is comparison only, not a semantic authority issuer. Existing
+initializer writers remain unchanged; readers are the new downstream algorithm
+owner and its negative tests. Classify the two new implementation modules in
+their existing backend/native-runtime layers without changing entries, roots,
+floors, allowed edges or waivers.
+
+Reuse the existing native primitive-classification owner (including i31,
+String, Symbol and wide BigInt), rather than duplicating its dispatch inside
+each Object algorithm. Preserve the stricter canonical-undefined entry guard.
+Its current completion readers are its own tests and this new downstream
+consumer; writers remain the genuine Number/Boolean/BigInt predicate owners
+and the classifier fill. Re-derive those three executed predicate bodies in
+classifier completion before making its answer load-bearing for object vs
+primitive behavior. This is not IsCallable, ToObject or foreign-object entry.
+
+#### S7-ae implemented boundary and component evidence
+
+The downstream producer borrows exactly the two existing algorithm/lifted entry
+pairs from genuine realm declarations, consuming the genuine mixed structural
+and primitive classifier owners. It does not reserve replacements or accept
+caller-chosen handles, bodies or subsets. The realm does not import this new
+producer or the mixed owner back. Partial-fill failure is terminal for this
+owner; fill counters alone never certify its algorithms or guarded entries.
+
+Native primitives follow the standard [Object.isExtensible](https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-object.isextensible)
+and [Object.preventExtensions](https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-object.preventextensions)
+rules without ToObject/coercion. Genuine mixed objects use their actual own
+bags and existing nonExtensible flag. Unknown/unready object authority traps
+instead of becoming false or success; internal prevention false throws through
+the actual native TypeError/public tag. Canonical undefined identity remains
+strict. These are private native-value-ABI entries, not admission for all
+objects, arrays, proxies, arbitrary host objects or public source calls.
+
+Independent canonical definition/initializer comparisons cover the executed
+Number/Boolean/BigInt predicates, Boolean result producer/singletons, undefined,
+TypeError constructor and message/name literals. The global comparison retains
+signed-zero/NaN payload bits and cannot mistake a completed function for a
+global even when malformed expected fields would both be undefined. Neither
+comparison API issues semantic ownership.
+
+Component execution uses the actual production owner's slots, not a parallel
+algorithm implementation. Every reachable function must have a real successful
+fill. Only a cloned component snapshot is passed to the existing unreachable-
+function sweep; dead catalog obligations stay unfilled in the real unsealed
+ledger. Named test initializers, source-refusal controls and a derivative false-
+prevention branch observer are not production population or completion grants.
+Reported sizes include all retained catalog declarations and test observers;
+they are not marginal production costs or before/after improvements.
+
+Development execution exposed an omitted i31 Number arm; the final producer
+reuses the existing primitive classifier instead of a new dispatch table. A
+newly authored refusal assertion also incorrectly expected raw small integers
+to be distinguishable from native i31 values. The explicit Node24.4.1 control
+observes `typeof === "number"`, `Object.is(boxNumber(7), 7) === true` and the
+existing predicate returning 1 for 7. Accepting that native Number representation
+is not host-object admission. Boxed host objects and unknown/unready carriers
+retain refusal controls; no existing receipt, expectation or skip is relaxed.
+The failed development reports are retained, not presented as green runs.
+
+Final focused result: **673 pass / 1 fail of 674**, 11 files, no skips or
+reported runner errors. All **63 new cases** pass (40 component runtime cases,
+15 owner controls, eight physical global comparisons), as do all **185 existing
+primitive-classifier cases**. Every complete row/error in the prior **426-case**
+focused cohort matches the retained signed-parent S7-ad report exactly, without
+normalization or truncation. This is a retained-report comparison, not a fresh
+parent execution this turn. The sole failure remains the existing physical
+record receipt; no receipt is repinned and no full green-suite claim is made.
+
+All **33** complete compiler policy inventories/binaries and **six** native
+standalone/WASI compiled controls match retained S7-ad reports byte-for-byte.
+The final native modules execute with zero imports. Full Test262, the wider
+161/779 cohorts and historical custody suites were not rerun this turn; their
+previous failures and remaining proof obligations are not certified away.
+
+Typecheck/lint/format, checkpoint/whole-PR size/function, coercion/oracle,
+layering/flat-directory, fallback and issue checks pass. The standard fallback
+check initially hit a sandbox-denied runner IPC socket; the same check passed
+outside the sandbox. Checkpoint: **four source files, net +412 LOC**. Whole PR:
+**378 source files, net -16945 LOC** against the mainline merge-base, existing
+two function grants unchanged and no new allowance. Preservation-only **6/6
+full + 6/6 cut** does not close the two unconstrained dynamic-import paths.
+
+Inventory is valid with **1980 modules**, zero errors and architecture still
+incomplete. Policy changes only classify the two new modules in existing
+layers; all previous classifications remain unchanged. Value edges increase
+**10830→10846**, while largest SCC **712**, four nontrivial SCCs and every
+two-way direction metric remain unchanged. The same four growing directions
+against main stay red. No new root, floor, allowed edge or waiver.
+
+Harness correction: commands request two CLI workers, but the base config's
+RAM-derived pool `maxForks` overrides top-level `maxWorkers` in Vitest3.2.4.
+Actual concurrency was not sampled during the run. No timing/concurrency A/B
+claim is made; the original 35-second case timeout and normal error reporting
+remain unchanged. Do not read earlier "two forks" descriptions as measurements
+of live worker counts.
+
+Evidence: `plan/audit/6979-native-object-extensibility-20261020.json`.
+Next: compose the remaining catalog from genuine owners, including
+Object.setPrototypeOf's ordered nullish/prototype checks and mixed mutation;
+build genuine ToObject/default-prototype owners for the methods that require
+them, rather than attaching arbitrary prototype handles. Complete mixed
+Get/Call, constructors and population before atomic public/source publication.
+Foreign/dynamic identity with live boundary references, first-class undefined,
+Linear/WASI and architecture/custody/retirement/conformance acceptance remain
+required. Both issues stay in progress; the PR stays draft, not merge-ready.

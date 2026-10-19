@@ -1647,3 +1647,46 @@ foreign identity, source/public entry and Linear/WASI remain required. Both
 issues stay in progress; the PR stays draft.
 
 Evidence: `plan/audit/6979-owned-catalog-lifted-calls-20261020.json`.
+
+### S7-ae: native Object extensibility catalog composition
+
+Continue from `cde92c0be290e16821d70a0e26eeccec32bae6fb`. Compose the actual
+Object.isExtensible/preventExtensions algorithm and guarded Call slots downstream
+of the genuine realm/mixed structural owners. Include the native primitive
+rules, not an object-only shortcut; unknown/unready values must not become
+false/success. No JS-owned boundary value or object graph is copied.
+
+The actual reserved algorithm/guarded Call slots are filled by their genuine
+downstream owner, with no raw-handle/body binder. Initial runtime execution
+caught the omitted native i31 Number representation; the final algorithms
+consume the existing primitive-classification owner, whose executed Number,
+Boolean and BigInt predicates are now independently audited. Canonical undefined
+identity and exact global initializer bits remain strict. No public/source
+admission, complete catalog population or retirement completion follows.
+
+Final focused verification is **673 pass / 1 fail of 674**, no skips or reported
+runner errors. All **63 new cases** and **185 existing classifier cases** pass.
+Four zero-import component witnesses execute actual producer slots; the
+unimplemented catalog remains unfilled in the real unsealed ledger. Every
+complete row/error of the prior **426-case** cohort matches retained S7-ad
+results exactly without normalization. Only the existing physical receipt fails;
+this comparison is not a fresh parent run. No existing expectation is relaxed.
+
+All 33 policy inventories/binaries and six native compiled controls match the
+published parent. Quality and budget gates pass; inventory valid with two new
+classified modules, no root/floor/allowed-edge changes. The same four growing
+directions, largest SCC712 and strict dynamic-import gaps remain open. Broader
+161/779 cohorts, full Test262 and historical custody were not rerun here.
+
+Harness note: the CLI requests two workers, while the base configuration derives
+the effective pool limit from available RAM. Actual concurrency was not sampled;
+no timing/concurrency A/B inference is made. The case timeout is unchanged.
+The explicit Node control shows native i31 7 and raw JS 7 are the same number;
+this is native primitive representation, not host-object authority or copying.
+
+Evidence: `plan/audit/6979-native-object-extensibility-20261020.json`.
+Remaining catalog/constructors, genuine ToObject/default prototypes, complete
+population and mixed Get/Call, atomic source/public publication, foreign/live
+boundary identity, first-class undefined, Linear/WASI and the architecture/
+custody/retirement/conformance gates remain required. Both issues stay in
+progress; the PR stays draft.

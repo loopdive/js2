@@ -894,6 +894,14 @@ export class PhysicalModuleReservations {
     if (!localsMatch || !bodyMatch) this.#fail(`noncanonical function definition ${token.key}`);
   }
 
+  /** Exact initializer comparison, independent of the allocator's accepted fill receipt. */
+  assertCanonicalGlobalInitializer(token: GlobalReservation, expected: Instr[]): void {
+    this.assertCompletedReservation(token);
+    if (token.kind !== "global") this.#fail("canonical initializer requires a defined global");
+    if (this.#snapshot(token.object.init) !== this.#snapshot(expected))
+      this.#fail(`noncanonical global initializer ${token.key}`);
+  }
+
   fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
     this.#require("filling");
     this.#owned(token);

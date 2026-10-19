@@ -15603,6 +15603,16 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-object-extensibility.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/native-object-extensibility-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/codegen/object-descriptor-data.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

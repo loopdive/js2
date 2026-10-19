@@ -201,8 +201,8 @@ export function mixedFoundation(displaced = false, decoded = false) {
     stringCreate,
   };
 }
-export function mixedOwnerFixture(displaced = false) {
-  const r = mixedFoundation(displaced),
+export function mixedOwnerFixture(displaced = false, decoded = false) {
+  const r = mixedFoundation(displaced, decoded),
     realm = publicRealmDeclarations(r.f, r.c);
   const dependencies = {
     realm: realm.declarations,
