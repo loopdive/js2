@@ -1517,3 +1517,28 @@ lifted-call/singleton publication or complete public Object.is support. The
 remaining catalog, foreign carriers/identity, source/public provider closure,
 Linear/WASI and architecture/retirement requirements stay open. Both issues
 remain in progress and the PR remains draft.
+
+### S7-aa: canonical base catalog callable algorithms
+
+The actual full-catalog Function.prototype and ThrowTypeError algorithm slots
+now use canonical native undefined, TypeError and public exception owners.
+Full realm declarations borrow these exact reservations, without duplicate
+implementations or fabricated bodies for the remaining catalog. Completion
+checks source/value, argument/string and exception identities; it does not
+grant singleton population, lifted-call or source/public-entry authority.
+
+The final focused run passes **159/159** cases, including **16/16** new cases.
+Three actual zero-import instances verify canonical undefined and shared-tag
+TypeError payloads at ordinary/displaced/decoded resources. Four emitted
+definitions are identical to the exact signed parent's pure algorithms.
+Existing callable tests pass **36/36**; the three object-resource suites retain
+**147 pass / 14 fail of 161**, matching full retained-parent rows. All **33**
+policy inventories/binaries and **six** native compiled controls stay identical.
+No new host import, graph copying, module, root, allowance or selector path.
+
+The remaining catalog algorithms/population, foreign value identity, canonical
+mixed providers, source/public publication, Linear/WASI and architecture/full
+retirement acceptance remain open. Both issues stay in progress; the PR stays
+draft. The 779-case compatibility cohort and full Test262 were not rerun here.
+
+Evidence: `plan/audit/6979-native-realm-base-algorithms-20261019.json`.

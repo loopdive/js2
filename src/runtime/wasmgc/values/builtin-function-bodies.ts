@@ -55,10 +55,13 @@ export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
 const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
-export function builtinUndefined(d: BuiltinFunctionBodyOperands): Instr[] {
+export function builtinUndefined(d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal">): Instr[] {
   return [global(d.undefinedGlobal), { op: "extern.convert_any" }];
 }
-export function builtinFailure(d: BuiltinFunctionBodyOperands, ordinal = 0): Instr[] {
+export function builtinFailure(
+  d: Pick<BuiltinFunctionBodyOperands, "errors" | "typeError" | "exceptionTag">,
+  ordinal = 0,
+): Instr[] {
   return [...structuredClone(d.errors[ordinal]!), call(d.typeError), { op: "throw", tagIdx: d.exceptionTag }];
 }
 export function builtinRoot(d: BuiltinFunctionBodyOperands, local = 0): Instr[] {
@@ -226,10 +229,27 @@ export function buildBuiltinFunctionLiftedDefinition(
   };
 }
 export function buildBuiltinFunctionAlgorithmDefinition(
-  d: BuiltinFunctionBodyOperands,
+  d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal" | "errors" | "typeError" | "exceptionTag">,
   behavior: BuiltinFunctionEntryOperands["behavior"],
 ): BuiltinFunctionDefinition {
-  return { locals: [], body: behavior === "function-prototype" ? builtinUndefined(d) : builtinFailure(d, 2) };
+  return behavior === "function-prototype"
+    ? { locals: [], body: builtinUndefined(d) }
+    : buildBuiltinFunctionThrowTypeErrorDefinition({
+        message: d.errors[2]!,
+        typeError: d.typeError,
+        exceptionTag: d.exceptionTag,
+      });
+}
+/** Shared complete restricted-property algorithm; unrelated realm slots are not operands. */
+export function buildBuiltinFunctionThrowTypeErrorDefinition(d: {
+  readonly message: readonly Instr[];
+  readonly typeError: FuncHandle;
+  readonly exceptionTag: number;
+}): BuiltinFunctionDefinition {
+  return {
+    locals: [],
+    body: [...structuredClone(d.message), call(d.typeError), { op: "throw", tagIdx: d.exceptionTag }],
+  };
 }
 export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
   return {

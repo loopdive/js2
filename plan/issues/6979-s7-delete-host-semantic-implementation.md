@@ -4627,3 +4627,74 @@ providers, source special prototype/method semantics, callable/storage closure,
 Linear/WASI construction and architecture/full retirement acceptance remain
 required. Both issues remain in progress; PR6762 remains draft behind its
 existing prerequisite stack.
+
+### S7-aa base catalog callable algorithms (2026-10-19, Codex)
+
+Continue from signed `ab3e6a543e4b22b84dc8aedd991f95353bee9b2f`.
+Implement the actual `%Function.prototype%` and `%ThrowTypeError%` algorithm
+slots against the full catalog issuer, canonical native undefined/TypeError
+owners and exact public exception owner. Reuse the existing pure algorithm
+definitions, without creating a parallel realm or implementing dummy bodies
+for other slots. Full declarations should borrow these exact reservations;
+whole-realm completion and source/public admission remain closed.
+
+Readers/mutators: native-object-realm owns dependency capture/currentness,
+resource-key preflight, algorithm reservation, inventory and declaration
+completion. Native-mixed-object-access also reads realm dependency descriptors
+and must recognize/authenticate the new optional owner. The existing builtin
+algorithm definition reads only undefined, error literals, the TypeError
+constructor and exception tag; narrow its operand type, not its emitted body.
+
+#### S7-aa implementation and handoff
+
+The full catalog's `%Function.prototype%` and `%ThrowTypeError%` algorithm
+reservations now have a canonical owner in native-object-realm. The former
+returns the genuine native undefined singleton; the latter creates the issued
+native TypeError and throws through the exact public exception tag. Neither
+inspects the receiver or argument contents. Both use the actual shared Call
+vector signature. Canonical completion authenticates the exact source-bound
+value owner, argument/string owners, TypeError producer and public exception
+issuer; caller-filled slots and altered dependencies or bodies do not certify
+completion. No unrelated operand placeholders or second algorithm engine.
+
+Full declarations borrow those exact slots once, alongside the existing
+Object.is owner. The mixed-object dependency reader recognizes the optional
+base owner and still delegates authentication to the realm producer. Other
+catalog algorithms are not fabricated, and whole-realm completion still fails.
+Singleton/property population, lifted entry functions and source/public
+publication are not implemented by these two algorithm bodies.
+
+The existing pure restricted-property algorithm is factored into a shared
+definition with only its real operands. A fresh comparison against the exact
+signed parent source proves **four identical emitted definitions**, covering
+both algorithms at ordinary and displaced indices. No legacy behavior change.
+
+The final five-file run passes **159/159** focused cases, including **16/16**
+new execution/ownership cases. Current execution also verifies **36/36**
+existing native callable cases. The
+three object-resource suites retain **147 passing / 14 failing of 161**, with
+identical full rows against the retained published-parent S7-z report; this is
+not a new parent checkout. All **33** policy inventories/binaries and **six**
+native compiled standalone/WASI controls remain identical. The three actual
+zero-import algorithm test modules measure **17979 / 18448 / 18448 bytes** and
+return canonical undefined plus the actual shared-tag TypeError with native
+name/message. These include prior Object.is and test observers, not marginal
+production costs or source/public-entry measurements.
+
+Typecheck, lint, formatting, size/function, coercion/oracle, layering/fallback,
+flat-directory and inventory checks pass without an allowance, root, module
+or allowed-edge change. The same six cycle pairs remain red. Preservation-only
+checks pass; strict closure retains the same two nonliteral imports, so
+retirement remains uncertified. No existing test expectation, receipt or skip
+was changed. The 779-case compatibility cohort and full Test262 were not rerun
+for this checkpoint; no fresh compatibility/conformance claim is made for them.
+
+Exact source/report hashes, case names, four paired definitions and three
+binary witnesses: `plan/audit/6979-native-realm-base-algorithms-20261019.json`.
+
+Next: the remaining actual catalog algorithm owners, genuine lifted entry
+functions and singleton/property population. Foreign/dynamic value identity,
+general first-class undefined, canonical mixed property/callable/storage
+providers, source special prototype/method semantics, atomic source/public
+publication, Linear/WASI construction and architecture/full retirement
+acceptance remain open. Both issues remain in progress and PR6762 stays draft.

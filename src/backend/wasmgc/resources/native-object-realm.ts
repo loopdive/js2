@@ -43,6 +43,26 @@ import {
 } from "./native-source-closures.js";
 import type { NativeVectorTypeReservations } from "./native-vectors.js";
 import { requireNativeObjectIsAlgorithm, type NativeObjectIsReservations } from "./native-object-is.js";
+import {
+  builtinUndefined,
+  buildBuiltinFunctionThrowTypeErrorDefinition,
+} from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
+import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
+import {
+  requireNativeValueReservationsFor,
+  requireCompletedNativeValues,
+  type NativeValueReservations,
+  type NativeValueDependencies,
+} from "./native-values.js";
+import {
+  requireNativeErrorReservations,
+  requireCompletedNativeErrors,
+  type NativeErrorReservations,
+  type NativeErrorRequirements,
+  type NativeErrorDependencies,
+} from "./native-errors.js";
+import { requireCompletedNativeInvocationSubstrate } from "./native-invocation-substrate.js";
+import { requireNativeStringLiteral } from "./native-string-literals.js";
 
 const ext = { kind: "externref" } as const,
   i32 = { kind: "i32" } as const;
@@ -140,6 +160,7 @@ export interface NativeObjectRealmDependencies {
   readonly exception: NativeObjectRealmException;
   readonly source?: NativeSourceClosureTypes;
   readonly objectIs?: NativeObjectIsReservations;
+  readonly baseAlgorithms?: NativeRealmBaseAlgorithms;
 }
 export interface NativeObjectRealmEntry {
   readonly request: NativePublicBuiltinFunctionRequest;
@@ -177,7 +198,7 @@ const roles = [
   "vectorPlan",
   "exception",
 ] as const;
-const optionalRoles = ["source", "objectIs"] as const;
+const optionalRoles = ["source", "objectIs", "baseAlgorithms"] as const;
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly original: NativeObjectRealmDependencies;
@@ -198,6 +219,7 @@ function dependencies(
   const d = data(input, roles, optionalRoles) as unknown as NativeObjectRealmDependencies;
   if (Object.hasOwn(d, "source") && !d.source) fail("present source must be an issued owner");
   if (Object.hasOwn(d, "objectIs") && !d.objectIs) fail("present Object.is must be an issued owner");
+  if (Object.hasOwn(d, "baseAlgorithms") && !d.baseAlgorithms) fail("present base algorithms must be an issued owner");
   requireNativePublicBuiltinFunctionRequests(tx, d.requests, realm);
   if (d.objectIs) requireNativeObjectIsAlgorithm(tx, d.objectIs, d.requests);
   const request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
@@ -210,6 +232,7 @@ function dependencies(
   if (d.substrate.arguments !== request.arguments || d.substrate.argumentPlan !== request.argumentPlan)
     fail("different shared argument owner");
   requireNativeObjectRealmException(tx, d.exception, realm);
+  if (d.baseAlgorithms) requireNativeRealmBaseAlgorithms(tx, d.baseAlgorithms, d.requests, d.exception, d.substrate);
   nativeClosureReservationInventory(tx, d.closures, d.closurePlan);
   const source = realm.source;
   const needsSource =
@@ -298,7 +321,8 @@ export function reserveNativeObjectRealmDeclarations(
   const d = dependencies(tx, realm, input);
   if (populations.has(d.layouts)) fail("realm anchors already have a public population owner");
   const keys = Object.freeze(resourceKeys(d));
-  tx.assertReservationKeysAvailable(keys.filter((key) => key !== d.objectIs?.algorithm.key));
+  const borrowed = [d.objectIs?.algorithm, ...(d.baseAlgorithms ? Object.values(d.baseAlgorithms.algorithms) : [])];
+  tx.assertReservationKeysAvailable(keys.filter((key) => !borrowed.some((token) => token?.key === key)));
   populations.add(d.layouts);
   const key = d.requests.key,
     request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
@@ -336,13 +360,16 @@ export function reserveNativeObjectRealmDeclarations(
         row.intrinsic.id === "%Function.prototype%"
           ? d.layouts.anchors.functionPrototype
           : tx.reserveGlobal(prefix + ":singleton", prefix, { kind: "ref_null", typeIdx: type.typeIndex }, true);
+      const base = d.baseAlgorithms?.algorithms;
       const algorithm =
         row.intrinsic.id === "%Object.is%" && d.objectIs
           ? d.objectIs.algorithm
-          : tx.reserveFunction(prefix + ":algorithm", prefix + ":algorithm", {
-              params: [ext, argv],
-              results: [ext],
-            });
+          : base && (row.intrinsic.id === "%Function.prototype%" || row.intrinsic.id === "%ThrowTypeError%")
+            ? base[row.intrinsic.id]
+            : tx.reserveFunction(prefix + ":algorithm", prefix + ":algorithm", {
+                params: [ext, argv],
+                results: [ext],
+              });
       const lifted = tx.reserveFunction(prefix + ":lifted", prefix + ":lifted", {
         params: [root, ext, argv],
         results: [ext],
@@ -481,4 +508,192 @@ export function nativeObjectRealmDeclarationInventory(
     functions: owner.functions,
     completionScope: pack.completionScope,
   });
+}
+
+export interface NativeRealmBaseAlgorithmDependencies {
+  readonly requests: NativePublicBuiltinFunctionRequests;
+  readonly substrate: NativeInvocationSubstrateReservations;
+  readonly exception: NativeObjectRealmException;
+  readonly values: NativeValueReservations;
+  readonly valuePlan: NativeValueResourcePlan;
+  readonly valueDependencies: NativeValueDependencies;
+  readonly errors: NativeErrorReservations;
+  readonly errorRequirements: NativeErrorRequirements;
+  readonly errorDependencies: NativeErrorDependencies;
+}
+const baseRoles = [
+  "requests",
+  "substrate",
+  "exception",
+  "values",
+  "valuePlan",
+  "valueDependencies",
+  "errors",
+  "errorRequirements",
+  "errorDependencies",
+] as const;
+const baseIds = ["%Function.prototype%", "%ThrowTypeError%"] as const;
+export interface NativeRealmBaseAlgorithms {
+  readonly requests: NativePublicBuiltinFunctionRequests;
+  readonly exception: NativeObjectRealmException;
+  readonly algorithms: Readonly<Record<(typeof baseIds)[number], FunctionReservation>>;
+  readonly completionScope: "base-catalog-algorithms-only";
+}
+interface BaseOwner {
+  readonly tx: PhysicalModuleReservations;
+  readonly original: NativeRealmBaseAlgorithmDependencies;
+  readonly dependencies: NativeRealmBaseAlgorithmDependencies;
+  readonly headers: readonly { readonly token: FunctionReservation; readonly name: string; readonly type: number }[];
+  filled: boolean;
+}
+const baseOwners = new WeakMap<NativeRealmBaseAlgorithms, BaseOwner>();
+function baseDependencies(tx: PhysicalModuleReservations, original: NativeRealmBaseAlgorithmDependencies) {
+  const d = data(original, baseRoles) as unknown as NativeRealmBaseAlgorithmDependencies;
+  const value = data(d.valueDependencies, ["strings"]);
+  data(value.strings, ["kind", "stringPack", "scanner"]);
+  data(d.errorDependencies, ["strings", "typeErrorTag"]);
+  data(d.errorRequirements, ["key"]);
+  requireNativePublicBuiltinFunctionRequests(tx, d.requests);
+  const request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
+  requireNativeInvocationSubstrateReservations(tx, d.substrate);
+  requireNativeObjectRealmException(tx, d.exception, d.requests.realm);
+  requireNativeValueReservationsFor(tx, d.values, d.valuePlan, d.valueDependencies, d.requests.realm);
+  requireNativeErrorReservations(tx, d.errors, d.errorRequirements, d.errorDependencies);
+  if (
+    request.arguments !== d.substrate.arguments ||
+    request.argumentPlan !== d.substrate.argumentPlan ||
+    d.valueDependencies.strings.kind !== "native-string" ||
+    d.valueDependencies.strings.stringPack !== request.strings ||
+    d.errorDependencies.strings !== request.strings
+  )
+    fail("different base algorithm argument/string owners");
+  for (const [index, id] of baseIds.entries()) {
+    const row = d.requests.intrinsics.find((row) => row.intrinsic.id === id)?.intrinsic;
+    if (
+      !row ||
+      row.constructible ||
+      row.callable.length !== 0 ||
+      row.callable.implementation !== (index === 0 ? "function-prototype" : "throw-type-error")
+    )
+      fail("missing actual base catalog algorithm request");
+  }
+  return d;
+}
+function currentBase(tx: PhysicalModuleReservations, pack: NativeRealmBaseAlgorithms): BaseOwner {
+  const owner = baseOwners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign or copied base algorithm owner");
+  const d = baseDependencies(tx, owner.original);
+  if (baseRoles.some((role) => d[role] !== owner.dependencies[role]))
+    fail("changed base algorithm dependency identity");
+  if (
+    pack.requests !== d.requests ||
+    pack.exception !== d.exception ||
+    pack.completionScope !== "base-catalog-algorithms-only"
+  )
+    fail("changed base algorithm scope/owner");
+  for (const [index, id] of baseIds.entries()) {
+    const h = owner.headers[index]!,
+      token = pack.algorithms[id];
+    if (
+      token !== h.token ||
+      token.key !== d.requests.key + ":" + id + ":algorithm" ||
+      token.object.name !== h.name ||
+      token.object.typeIdx !== h.type
+    )
+      fail("changed base algorithm header");
+    if (tx.state !== "reserving") tx.physicalIndex(token);
+  }
+  return owner;
+}
+/** Actual shared catalog slots. Neither singleton publication nor whole-realm completion is implied. */
+export function reserveNativeRealmBaseAlgorithms(
+  tx: PhysicalModuleReservations,
+  original: NativeRealmBaseAlgorithmDependencies,
+): NativeRealmBaseAlgorithms {
+  if (tx.state !== "reserving") fail("base algorithms require reservation phase");
+  const d = Object.freeze(baseDependencies(tx, original));
+  const keys = baseIds.map((id) => d.requests.key + ":" + id + ":algorithm");
+  tx.assertReservationKeysAvailable(keys);
+  const algorithms = Object.freeze(
+    Object.fromEntries(
+      baseIds.map((id, index) => [
+        id,
+        tx.reserveFunction(keys[index]!, keys[index]!, {
+          params: [ext, { kind: "ref", typeIdx: d.substrate.arguments.carrier.typeIndex }],
+          results: [ext],
+        }),
+      ]),
+    ),
+  ) as NativeRealmBaseAlgorithms["algorithms"];
+  const pack = Object.freeze({
+    requests: d.requests,
+    exception: d.exception,
+    algorithms,
+    completionScope: "base-catalog-algorithms-only" as const,
+  });
+  baseOwners.set(pack, {
+    tx,
+    original,
+    dependencies: d,
+    filled: false,
+    headers: baseIds.map((id) => ({
+      token: algorithms[id],
+      name: algorithms[id].object.name,
+      type: algorithms[id].object.typeIdx,
+    })),
+  });
+  return pack;
+}
+export function requireNativeRealmBaseAlgorithms(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmBaseAlgorithms,
+  requests: NativePublicBuiltinFunctionRequests,
+  exception: NativeObjectRealmException,
+  substrate: NativeInvocationSubstrateReservations,
+): NativeRealmBaseAlgorithms {
+  const owner = currentBase(tx, pack);
+  if (pack.requests !== requests || pack.exception !== exception || owner.dependencies.substrate !== substrate)
+    fail("different base algorithm catalog/exception/transport owner");
+  return pack;
+}
+function completedBaseDependencies(tx: PhysicalModuleReservations, d: NativeRealmBaseAlgorithmDependencies) {
+  requireCompletedNativeInvocationSubstrate(tx, d.substrate);
+  requireCompletedNativeValues(tx, d.values, d.valuePlan, d.valueDependencies);
+  requireCompletedNativeErrors(tx, d.errors, d.errorRequirements, d.errorDependencies);
+}
+export function fillNativeRealmBaseAlgorithms(tx: PhysicalModuleReservations, pack: NativeRealmBaseAlgorithms): void {
+  const owner = currentBase(tx, pack),
+    d = owner.dependencies;
+  if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate base algorithm fill");
+  completedBaseDependencies(tx, d);
+  const message = requireNativeStringLiteral(
+    tx,
+    d.errorDependencies.strings,
+    "TypeError: restricted function property",
+  );
+  const literal =
+    message.kind === "global"
+      ? { op: "global.get" as const, index: tx.physicalIndex(message.global) }
+      : { op: "call" as const, funcIdx: message.function.handle };
+  const throwing = buildBuiltinFunctionThrowTypeErrorDefinition({
+    message: [literal, { op: "extern.convert_any" }],
+    typeError: d.errors.newTypeError.handle,
+    exceptionTag: tx.physicalIndex(d.exception.tag),
+  });
+  tx.fillFunction(pack.algorithms["%Function.prototype%"], {
+    locals: [],
+    body: builtinUndefined({ undefinedGlobal: tx.physicalIndex(d.values.globals.undefined) }),
+  });
+  tx.fillFunction(pack.algorithms["%ThrowTypeError%"], throwing);
+  owner.filled = true;
+}
+export function requireCompletedNativeRealmBaseAlgorithms(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmBaseAlgorithms,
+): NativeRealmBaseAlgorithms {
+  const owner = currentBase(tx, pack);
+  if (!owner.filled) fail("missing canonical base algorithm fill");
+  completedBaseDependencies(tx, owner.dependencies);
+  for (const id of baseIds) tx.assertCompletedReservation(pack.algorithms[id]);
+  return pack;
 }

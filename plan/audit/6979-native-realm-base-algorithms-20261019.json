@@ -1,0 +1,419 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-aa canonical full-catalog Function.prototype and ThrowTypeError algorithms",
+  "parentCommit": "ab3e6a543e4b22b84dc8aedd991f95353bee9b2f",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false
+  },
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-object-realm.ts": "d9f9cba3ca3a34e668c2ca8493305294d993a89f4b4d27973a91108b1eb96cfa",
+    "src/backend/wasmgc/resources/native-mixed-object-access.ts": "5b1fa533e23fb6a084781365ae40715525b3d296bc2ae2fe2d1a8fa24441499a",
+    "src/runtime/wasmgc/values/builtin-function-bodies.ts": "5bf45cda1ac2bc59a8422a5c4c183a20e2e7d9136b02dbbbce350d18544cee1a",
+    "tests/issue-6979-native-realm-base-algorithms.test.ts": "5eb742fa6cd2ed488fc4f29f3234977f9d0c4da71095830168d8744da0becad6",
+    "src/backend/wasmgc/resources/native-builtin-function-requests.ts": "ece7be10320cf5c034b59c553995b3ce72a40ad037878d315e7b8369aa121263",
+    "src/backend/wasmgc/resources/native-values.ts": "81a6bd1abe2ca52802b8fbc19c083ebbbc3c72eadbdb281775021a851acb6e51",
+    "src/backend/wasmgc/resources/native-errors.ts": "7f42c475417eba2f3dfdb94f6926ea0ac4fb11fa9b0c4030ab418608b3706e86",
+    "src/backend/wasmgc/resources/native-invocation-substrate.ts": "21c470636e1637ffddfa118587552c1680522ef4f42db6ffbb2947f721f8c62a",
+    "tests/helpers/native-object-is-fixture.ts": "71f036e83127aa271fa2588b6ff57a023c3642d2ef1f5bfe83c654b46a19da5c"
+  },
+  "scope": {
+    "actualCatalogSlots": ["%Function.prototype%", "%ThrowTypeError%"],
+    "canonicalUndefinedAndTypeErrorOwners": true,
+    "exactProgramProjectionArgumentStringAndPublicExceptionOwners": true,
+    "fullCatalogBorrowsExactReservations": true,
+    "otherAlgorithmBodiesFabricated": false,
+    "newHostImportsGraphCopySemanticEngineOrModules": false,
+    "rootsFloorsAllowancesAllowedEdgesOrSelectorsRelaxed": false,
+    "wholeRealmSingletonPopulationLiftedCallsOrPublicSourceEntryComplete": false,
+    "linearWasiAlgorithmImplementation": false
+  },
+  "tests": {
+    "newCases": {
+      "cases": 16,
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0,
+      "names": [
+        "canonical base catalog algorithms executes the actual undefined and TypeError owners without imports (offset=false, replay=false)",
+        "canonical base catalog algorithms executes the actual undefined and TypeError owners without imports (offset=true, replay=false)",
+        "canonical base catalog algorithms executes the actual undefined and TypeError owners without imports (offset=true, replay=true)",
+        "canonical base catalog algorithms rejects a substituted errors before reserving slots",
+        "canonical base catalog algorithms rejects a substituted exception before reserving slots",
+        "canonical base catalog algorithms rejects a substituted requests before reserving slots",
+        "canonical base catalog algorithms rejects a substituted substrate before reserving slots",
+        "canonical base catalog algorithms rejects a substituted values before reserving slots",
+        "canonical base catalog algorithms rejects accessor dependencies without invoking getters",
+        "canonical base catalog algorithms rejects caller-filled bodies and post-canonical body/header mutation",
+        "canonical base catalog algorithms rejects copied owners and foreign expected catalog/exception/transport",
+        "canonical base catalog algorithms rejects duplicate slots before any allocation and detects dependency replacement",
+        "canonical base catalog algorithms rejects hidden dependencies without invoking getters",
+        "canonical base catalog algorithms rejects inherited dependencies without invoking getters",
+        "canonical base catalog algorithms requires canonical dependency completion, not just allocated signatures",
+        "canonical base catalog algorithms shares both exact catalog slots without completing the remaining realm"
+      ]
+    },
+    "focused": {
+      "cases": 159,
+      "passed": 159,
+      "failed": 0,
+      "skipped": 0,
+      "files": 5
+    },
+    "existingCallableKernel": {
+      "cases": 36,
+      "passed": 36,
+      "failed": 0,
+      "skipped": 0,
+      "parentComparison": "Current execution, not a new parent test run; shared algorithm definitions separately compared with exact signed parent source"
+    },
+    "resources": {
+      "cases": 161,
+      "passed": 147,
+      "failed": 14,
+      "skipped": 0,
+      "fullRowsEqual": true,
+      "comparison": "Retained published-parent S7-z report, not a fresh parent checkout this turn",
+      "rowsSha256": "64dd393cad01bcb213ce04614a31cc4d8a1d3156eb5e5d4995d293ad397a1c9f",
+      "retainedFailures": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_accessor instructions, locals and all acquisition effects",
+          "fullErrorSha256": "9e8600327b38503a3880f3d0befc0c3bcf5206dcad592225897017e908b0cff6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_value instructions, locals and all acquisition effects",
+          "fullErrorSha256": "9e8600327b38503a3880f3d0befc0c3bcf5206dcad592225897017e908b0cff6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __new_plain_object instructions, locals and all acquisition effects",
+          "fullErrorSha256": "61f584f99ad4ecd1d0b9c34354a34c601de18d6cfc66ccad81ccb84a9a4e1046"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_grow instructions, locals and all acquisition effects",
+          "fullErrorSha256": "61f584f99ad4ecd1d0b9c34354a34c601de18d6cfc66ccad81ccb84a9a4e1046"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_insert instructions, locals and all acquisition effects",
+          "fullErrorSha256": "61f584f99ad4ecd1d0b9c34354a34c601de18d6cfc66ccad81ccb84a9a4e1046"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __object_is instructions, locals and all acquisition effects",
+          "fullErrorSha256": "9e8600327b38503a3880f3d0befc0c3bcf5206dcad592225897017e908b0cff6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-descriptor…'",
+          "fullErrorSha256": "9496d9e1322a9740e462bd6b44df553871683a06938a48bfea9fa193ceb32a6d"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-enumeratio…'",
+          "fullErrorSha256": "9496d9e1322a9740e462bd6b44df553871683a06938a48bfea9fa193ceb32a6d"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime.ts'",
+          "fullErrorSha256": "12b8e91c60d17b6ecfcef780706a90e29efc44a78c4bc27d620132fec2f756f1"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects altered receipts, old-source substitution and unknown paths",
+          "fullErrorSha256": "526377b955a28fc80831b45237decca8729cf74615375dd9306c45bc5902805e"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-descriptor…' after a positive reconstruction",
+          "fullErrorSha256": "c6afa7788560b9fae562385eaf230cf0618eecf53e1d65e1bde44482c20f1c82"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-enumeratio…' after a positive reconstruction",
+          "fullErrorSha256": "c6afa7788560b9fae562385eaf230cf0618eecf53e1d65e1bde44482c20f1c82"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime.ts' after a positive reconstruction",
+          "fullErrorSha256": "3ddb909b1e5c752f06c0228a1307ceec42f1c564fea7a87ac480509bff84abc2"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects missing, duplicated, reordered and semantic span mutations",
+          "fullErrorSha256": "9442bfe6935b3ca95e4a32815676040e3098b137bfdce424660a645a4936fa4f"
+        }
+      ]
+    },
+    "oldExpectationsReceiptsOrSkipsChanged": false,
+    "existing779CaseCohortRerun": false
+  },
+  "binaryWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "bytes": 17979,
+      "sha256": "55e168eb61e673fb5f0506e873f095f2587618450322d3a95b45d6cd3d62e890",
+      "imports": [],
+      "outputs": [true, -11, true, true],
+      "completionScope": "base-catalog-algorithms-only",
+      "wholeRealmCompleted": false,
+      "sourceEntryAdmitted": false
+    },
+    {
+      "displaced": true,
+      "decoded": false,
+      "bytes": 18448,
+      "sha256": "ddebed8b8e004cdb0e6b20159e59ea9ad9dfb98cbaaba4b94d82e59a45eb42d0",
+      "imports": [],
+      "outputs": [true, -11, true, true],
+      "completionScope": "base-catalog-algorithms-only",
+      "wholeRealmCompleted": false,
+      "sourceEntryAdmitted": false
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "bytes": 18448,
+      "sha256": "ddebed8b8e004cdb0e6b20159e59ea9ad9dfb98cbaaba4b94d82e59a45eb42d0",
+      "imports": [],
+      "outputs": [true, -11, true, true],
+      "completionScope": "base-catalog-algorithms-only",
+      "wholeRealmCompleted": false,
+      "sourceEntryAdmitted": false
+    }
+  ],
+  "binaryCostInterpretation": "Full resource test modules include canonical descriptor/primitive resources, full-catalog literal prerequisites, the preceding Object.is algorithm and test observers. Not production marginal costs or a size improvement comparison.",
+  "sharedDefinitionControls": [
+    {
+      "parent": "ab3e6a543e4b22b84dc8aedd991f95353bee9b2f",
+      "displaced": false,
+      "behavior": "function-prototype",
+      "definitionsEqual": true,
+      "definition": {
+        "locals": [],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 72
+          },
+          {
+            "op": "extern.convert_any"
+          }
+        ]
+      },
+      "parentSourceSha256": "9a06c1ef57dc09ee68e89f97776dfe9e6871ac807c4cb5939f375f113d4d85e8"
+    },
+    {
+      "parent": "ab3e6a543e4b22b84dc8aedd991f95353bee9b2f",
+      "displaced": false,
+      "behavior": "throw-type-error",
+      "definitionsEqual": true,
+      "definition": {
+        "locals": [],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 22
+          },
+          {
+            "op": "extern.convert_any"
+          },
+          {
+            "op": "call",
+            "funcIdx": 2097177
+          },
+          {
+            "op": "throw",
+            "tagIdx": 1
+          }
+        ]
+      },
+      "parentSourceSha256": "9a06c1ef57dc09ee68e89f97776dfe9e6871ac807c4cb5939f375f113d4d85e8"
+    },
+    {
+      "parent": "ab3e6a543e4b22b84dc8aedd991f95353bee9b2f",
+      "displaced": true,
+      "behavior": "function-prototype",
+      "definitionsEqual": true,
+      "definition": {
+        "locals": [],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 73
+          },
+          {
+            "op": "extern.convert_any"
+          }
+        ]
+      },
+      "parentSourceSha256": "9a06c1ef57dc09ee68e89f97776dfe9e6871ac807c4cb5939f375f113d4d85e8"
+    },
+    {
+      "parent": "ab3e6a543e4b22b84dc8aedd991f95353bee9b2f",
+      "displaced": true,
+      "behavior": "throw-type-error",
+      "definitionsEqual": true,
+      "definition": {
+        "locals": [],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 23
+          },
+          {
+            "op": "extern.convert_any"
+          },
+          {
+            "op": "call",
+            "funcIdx": 2097179
+          },
+          {
+            "op": "throw",
+            "tagIdx": 1
+          }
+        ]
+      },
+      "parentSourceSha256": "9a06c1ef57dc09ee68e89f97776dfe9e6871ac807c4cb5939f375f113d4d85e8"
+    }
+  ],
+  "sharedDefinitionRunner": "import { execFileSync } from 'node:child_process';\nimport { createHash } from 'node:crypto';\nimport assert from 'node:assert/strict';\nimport { transpileModule, ModuleKind } from 'typescript';\nimport { buildBuiltinFunctionAlgorithmDefinition } from '../src/runtime/wasmgc/values/builtin-function-bodies.ts';\nimport { objectIsFixture, fillObjectIsDependencies } from '../tests/helpers/native-object-is-fixture.ts';\nimport { reserveNativeObjectRealmException } from '../src/backend/wasmgc/resources/native-object-realm.ts';\nimport { requireNativeStringLiteral } from '../src/backend/wasmgc/resources/native-string-literals.ts';\nimport { NATIVE_BUILTIN_FUNCTION_LITERALS } from '../src/backend/wasmgc/resources/native-builtin-function-requests.ts';\nconst parent='ab3e6a543e4b22b84dc8aedd991f95353bee9b2f';\nconst donor=execFileSync('git',['show',parent+':src/runtime/wasmgc/values/builtin-function-bodies.ts'],{encoding:'utf8'});\nconst source=donor.replace(/from \"\\.\\/(.+)\\.js\"/g,(_,p)=>'from '+JSON.stringify(new URL('../src/runtime/wasmgc/values/'+p+'.ts',import.meta.url).href));\nconst js=transpileModule(source,{compilerOptions:{module:ModuleKind.ESNext}}).outputText;\nconst old=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));\nfor(const displaced of [false,true]){\n  const f=objectIsFixture(displaced),exception=reserveNativeObjectRealmException(f.tx,f.realm,{required:true,shared:false});\n  fillObjectIsDependencies(f);\n  const errors=NATIVE_BUILTIN_FUNCTION_LITERALS.slice(3).map(text=>{\n    const v=requireNativeStringLiteral(f.tx,f.strings,text);\n    return [v.kind==='global'?{op:'global.get',index:f.tx.physicalIndex(v.global)}:{op:'call',funcIdx:v.function.handle},{op:'extern.convert_any'}];\n  });\n  const d={undefinedGlobal:f.tx.physicalIndex(f.values.globals.undefined),errors,typeError:f.errors.newTypeError.handle,exceptionTag:f.tx.physicalIndex(exception.tag)};\n  for(const behavior of ['function-prototype','throw-type-error'] as const){\n    const before=old.buildBuiltinFunctionAlgorithmDefinition(d,behavior),after=buildBuiltinFunctionAlgorithmDefinition(d as any,behavior);\n    assert.deepEqual(after,before);\n    console.log(JSON.stringify({parent,displaced,behavior,definitionsEqual:true,definition:after,parentSourceSha256:createHash('sha256').update(donor).digest('hex')}));\n  }\n}\n",
+  "binaryRunner": "// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.\nimport { objectIsFixture, fillObjectIsDependencies } from \"../tests/helpers/native-object-is-fixture.js\";\nimport { fillNativeObjectIsAlgorithm } from \"../src/backend/wasmgc/resources/native-object-is.js\";\nimport {\n  reserveNativeObjectRealmException,\n  reserveNativeRealmBaseAlgorithms,\n  requireNativeRealmBaseAlgorithms,\n  fillNativeRealmBaseAlgorithms,\n  requireCompletedNativeRealmBaseAlgorithms,\n  reserveNativeObjectRealmDeclarations,\n  fillNativeObjectRealmDeclarations,\n  requireCompletedNativeObjectRealm,\n  nativeObjectRealmDeclarationInventory,\n} from \"../src/backend/wasmgc/resources/native-object-realm.js\";\nimport {\n  declareNativeRealmObjectLayouts,\n  reserveNativeRealmObjectLayouts,\n  fillNativeRealmObjectLayouts,\n} from \"../src/backend/wasmgc/resources/native-realm-object-layouts.js\";\nimport { fillDescriptorDependencies } from \"../tests/helpers/native-descriptor-fixture.js\";\nimport { fillNativeObjectDescriptorResources } from \"../src/backend/wasmgc/resources/native-object-descriptors.js\";\nimport { fillNativeInvocationSubstrateResources } from \"../src/backend/wasmgc/resources/native-invocation-substrate.js\";\nimport { fillNativeBooleanBoxResources } from \"../src/backend/wasmgc/resources/native-booleans.js\";\nimport { beginNativeSourceClosureEmission } from \"../src/ir/program-native-invocation.js\";\nimport {\n  nativeStringLiteralReservationInventory,\n  requireNativeStringLiteral,\n} from \"../src/backend/wasmgc/resources/native-string-literals.js\";\nimport { emitBinary } from \"../src/emit/binary.js\";\nimport type { ValType, Instr } from \"../src/wasm/model/instructions.js\";\n\nfunction fixture(displaced = false, decoded = false) {\n  const f = objectIsFixture(displaced, decoded);\n  const exception = reserveNativeObjectRealmException(f.tx, f.realm, { required: true, shared: false });\n  const dependencies = {\n    requests: f.requests,\n    substrate: f.substrate,\n    exception,\n    values: f.values,\n    valuePlan: f.valuePlan,\n    valueDependencies: f.valueDependencies,\n    errors: f.errors,\n    errorRequirements: f.errorRequirements,\n    errorDependencies: f.errorDependencies,\n  };\n  const base = reserveNativeRealmBaseAlgorithms(f.tx, dependencies);\n  return { ...f, publicException: exception, baseDependencies: dependencies, base };\n}\nconst population = (f: ReturnType<typeof fixture>) => [\n  f.module.types.length,\n  f.module.functions.length,\n  f.module.globals.length,\n];\nfunction runtime(displaced = false, decoded = false) {\n  const f = fixture(displaced, decoded),\n    { tx } = f;\n  const ext: ValType = { kind: \"externref\" };\n  const observer = (name: string, params: ValType[], results: ValType[]) =>\n    tx.reserveFunction(\"base:observer:\" + name, name, { params, results });\n  const undefinedValue = observer(\"undefinedValue\", [], [ext]);\n  const errorTag = observer(\"errorTag\", [ext], [{ kind: \"i32\" }]);\n  const errorName = observer(\"errorName\", [ext], [ext]);\n  const errorMessage = observer(\"errorMessage\", [ext], [ext]);\n  const message = observer(\"message\", [], [ext]);\n  const name = observer(\"name\", [], [ext]);\n  fillObjectIsDependencies(f);\n  fillNativeObjectIsAlgorithm(tx, f.objectIs);\n  fillNativeRealmBaseAlgorithms(tx, f.base);\n  requireCompletedNativeRealmBaseAlgorithms(tx, f.base);\n  tx.fillFunction(undefinedValue, { locals: [], body: builtinUndefined() });\n  function builtinUndefined(): Instr[] {\n    return [{ op: \"global.get\", index: tx.physicalIndex(f.values.globals.undefined) }, { op: \"extern.convert_any\" }];\n  }\n  for (const [token, field] of [\n    [errorTag, 0],\n    [errorMessage, 1],\n    [errorName, 2],\n  ] as const)\n    tx.fillFunction(token, {\n      locals: [],\n      body: [\n        { op: \"local.get\", index: 0 },\n        { op: \"any.convert_extern\" },\n        { op: \"ref.cast\", typeIdx: f.errors.type.typeIndex },\n        { op: \"struct.get\", typeIdx: f.errors.type.typeIndex, fieldIdx: field },\n      ],\n    });\n  for (const [token, text] of [\n    [message, \"TypeError: restricted function property\"],\n    [name, \"TypeError\"],\n  ] as const) {\n    const value = requireNativeStringLiteral(tx, f.strings, text);\n    tx.fillFunction(token, {\n      locals: [],\n      body: [\n        value.kind === \"global\"\n          ? { op: \"global.get\", index: tx.physicalIndex(value.global) }\n          : { op: \"call\", funcIdx: value.function.handle },\n        { op: \"extern.convert_any\" },\n      ],\n    });\n  }\n  for (const [key, token] of Object.entries({\n    functionPrototype: f.base.algorithms[\"%Function.prototype%\"],\n    throwTypeError: f.base.algorithms[\"%ThrowTypeError%\"],\n    newVector: f.substrate.arguments.newVector,\n    push: f.substrate.arguments.push,\n    undefinedValue,\n    errorTag,\n    errorMessage,\n    errorName,\n    message,\n    name,\n    exception: f.publicException.tag,\n  }))\n    tx.defineExport(\"base:export:\" + key, key, token);\n  tx.seal();\n  const bytes = emitBinary(f.module),\n    module = new WebAssembly.Module(bytes as BufferSource);\n  const imports = WebAssembly.Module.imports(module);\n  if (imports.length) throw Error(\"base algorithms require host providers\");\n  const ex = new WebAssembly.Instance(module).exports as Record<string, any>;\n  const vector = (values: readonly unknown[]) => {\n    const v = ex.newVector();\n    values.forEach((value) => ex.push(v, value));\n    return v;\n  };\n  return { f, ex, imports, bytes, vector };\n}\n\nimport { createHash } from \"node:crypto\";\nfor(const [displaced,decoded] of [[false,false],[true,false],[true,true]]) {\n const r=runtime(displaced,decoded),v=r.vector([]);\n let caught;try{r.ex.throwTypeError(null,v)}catch(e){caught=e}\n if(!(caught instanceof WebAssembly.Exception)||!caught.is(r.ex.exception))throw Error(\"missing exact exception\");\n const value=caught.getArg(r.ex.exception,0),outputs=[r.ex.functionPrototype(null,v)===r.ex.undefinedValue(),r.ex.errorTag(value),r.ex.errorName(value)===r.ex.name(),r.ex.errorMessage(value)===r.ex.message()];\n if(JSON.stringify(outputs)!==JSON.stringify([true,-11,true,true]))throw Error(\"wrong outputs\");\n console.log(JSON.stringify({displaced,decoded,bytes:r.bytes.length,sha256:createHash(\"sha256\").update(r.bytes).digest(\"hex\"),imports:r.imports,outputs,completionScope:r.f.base.completionScope,wholeRealmCompleted:false,sourceEntryAdmitted:false}));\n}\n\n",
+  "policy": {
+    "completeInventoriesAndBinaries": 33,
+    "rowsEqual": true,
+    "rowsSha256": "ae48c6d9b52c7e2da12a05ecd41d6fd646226305fd9bb6010143819ec3d2aaf2"
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 148315,
+      "sha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 147483,
+      "sha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    }
+  ],
+  "inventory": {
+    "valid": true,
+    "errors": 0,
+    "architectureComplete": false,
+    "newModulesRootsAndAllowedEdges": false
+  },
+  "gates": {
+    "typecheck": {
+      "logSha256": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+      "status": "passed"
+    },
+    "lint": {
+      "logSha256": "fec553eafdc973e9fe61210fdb88e0b5813d253ca2b576b7f7f6856c0914e66e",
+      "status": "passed"
+    },
+    "format": {
+      "logSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "status": "passed"
+    },
+    "loc": {
+      "logSha256": "3729511be8a5fbe373c4ed4f7ebe19fb2d681f604b3ad961ddbabb894a16b336",
+      "status": "passed"
+    },
+    "func": {
+      "logSha256": "1f0636bae0d72c978a2b9eb7daa0aa6b816838680dee73bbec9b06a843bbfe3c",
+      "status": "passed"
+    },
+    "coercion": {
+      "logSha256": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+      "status": "passed"
+    },
+    "oracle": {
+      "logSha256": "031546c532af36cd91146eb9710a7fb4c994c737a2a2a9ae9e60ae36d14212b7",
+      "status": "passed"
+    },
+    "layering": {
+      "logSha256": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9",
+      "status": "passed"
+    },
+    "flat": {
+      "logSha256": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f",
+      "status": "passed"
+    },
+    "fallbacks": {
+      "logSha256": "92c2a09dda32ef4ed473117e829e8e39f5a8e646cf2ef34c0506fcffd0398cc5",
+      "status": "passed"
+    },
+    "dead": {
+      "logSha256": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2",
+      "status": "preservation-only passes; strict closure incomplete"
+    },
+    "cycles": {
+      "logSha256": "cadb688331fc03a884cb22cb53287071d62e555207be0298152aef2fa07ce248",
+      "status": "same six-pair failure"
+    }
+  },
+  "architecture": {
+    "cyclesOutput": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[backend->ir]: 115 → 117\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[frontend->ir]: 17 → 19\n  - twoWayDirEdges[frontend->ts-api.ts]: 2 → 5\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n  - twoWayDirEdges[ir->frontend]: 7 → 10\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+    "retirementOutput": "\n> @loopdive/js2@0.71.0 check:dead-exports /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms\n> node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types --require-core-nodes\n\ncore-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)\ncore-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)\nmoved-runtime gate: FAIL (production-rooted evidence incomplete)\n  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412\n  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151\npreservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses\ngraph OPEN; strict modeled closure FAIL\nretirement/deletion NOT CERTIFIED\n",
+    "retirementCertified": false
+  },
+  "remaining": [
+    "Remaining actual Object/Function catalog algorithms, genuine lifted calls and singleton/property population",
+    "Foreign/dynamic value identity, first-class undefined and canonical mixed property/callable/storage providers",
+    "Special source prototype/method semantics and atomic authenticated source/public publication",
+    "Linear/WASI construction, architecture/strict closure/full conformance and retirement acceptance",
+    "Existing prerequisite stack; both Markdown issues remain in progress and PR6762 draft"
+  ]
+}
