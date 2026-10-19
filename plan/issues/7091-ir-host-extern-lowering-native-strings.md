@@ -224,3 +224,15 @@ sha256 digests.
   upstream main under the native default; this change makes several of them
   pass and moves the two `__make_callback` cases to an explicit
   `host-assisted` profile (the maker import is the host lane's crossing).
+- `tests/issue-3214-void-host-callback.test.ts` is fully green on the default
+  profile (fix-on-touch, #3008). The rows asserting the B2 host-bridge shape
+  (`i32.const -2` + `__make_callback`, the generic `__call_fn_*` bridges,
+  listener return `undefined`, cross-overlay closure subtype naming) pin
+  `semanticProviders: "host-assisted"` through one shared constant; S7 (#6979)
+  retires the pin. "rejects non-void" was a real post-claim build demote in
+  both lanes (bare closure reaching the extern arg coercion): the selector now
+  declines an uncertified function argument to `addEventListener`
+  (`call-resolution-unsupported` / `expr-host-callback-uncertified`).
+- Finding, not fixed here: on the regime a marshalled void listener returns
+  a null-prototype object instead of `undefined` (legacy and IR alike, via
+  `_wrapWasmClosureUnknownArity`). Runtime-marshal gap for #6708 follow-ups.

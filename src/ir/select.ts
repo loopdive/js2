@@ -10179,6 +10179,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         }
         return true;
       }
+      // (#7091) An uncertified function argument to the host listener surface
+      // reaches the extern arg coercion as a bare closure and demotes at build;
+      // decline it here, where the certified B2 shape is decided.
+      if (
+        currentSelectionOptions?.hostVoidCallbacks &&
+        expr.expression.name.text === "addEventListener" &&
+        expr.arguments.some((arg) => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))
+      ) {
+        return capabilityNo("call-resolution-unsupported", "expr-host-callback-uncertified", expr);
+      }
       for (const arg of expr.arguments) {
         // Slice 8a (#1169g): spread args restricted to method calls is
         // out of scope — methods on classes have known signatures and
