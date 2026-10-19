@@ -35,7 +35,7 @@ func-budget-allow:
   - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
   - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
 import-cycles-allow:
-  - largestSccSize: 719 # 2026-10-19 (#7011): atomics/atomics-native.ts, buffers/shared-array-buffer.ts and buffers/shared-array-buffer-mop.ts join the codegen SCC — they are called from array-object-proto.ts / call-builtin-static.ts / ta-dyn-mop.ts and use shared.js coerceType/ensureLateImport, like the other native providers
+  - largestSccSize: 720 # 2026-10-19 (#7011; 720 re-measured on the merge preview after #7090 landed, 717 → 720): atomics/atomics-native.ts, buffers/shared-array-buffer.ts and buffers/shared-array-buffer-mop.ts join the codegen SCC — they are called from array-object-proto.ts / call-builtin-static.ts / ta-dyn-mop.ts and use shared.js coerceType/ensureLateImport, like the other native providers
 ---
 
 # #7011 — `SharedArrayBuffer` construction on the native regime
