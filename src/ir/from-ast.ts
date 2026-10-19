@@ -386,7 +386,9 @@ function resolveIrVecType(
   const valueType = asVal(type);
   if (!valueType) return null;
   const lowering = cx.resolver?.resolveVec?.(valueType);
-  return lowering ? { lowering, elementType: irVal(lowering.elementValType), valueType } : null;
+  if (!lowering) return null;
+  requireSelectedVecBackend(lowering, cx);
+  return { lowering, elementType: irVal(lowering.elementValType), valueType };
 }
 
 /** Materialize a logical IR type into mutable backend-local storage. */
