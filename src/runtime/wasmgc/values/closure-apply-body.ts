@@ -23,6 +23,7 @@ export interface ClosureApplyCarrier {
   readonly lengthLocal: number;
 }
 export interface ClosureApplyArgumentRead {
+  readonly actualCountLocal: number;
   readonly genericIndex?: FuncHandle;
   readonly fallbackUndefined: readonly Instr[];
   readonly object?: { readonly carrier: ClosureApplyCarrier; readonly undefinedValue: readonly Instr[] };
@@ -69,9 +70,19 @@ export function buildClosureApplyArgument(index: number, read: ClosureApplyArgum
     read.genericIndex === undefined
       ? structuredClone([...read.fallbackUndefined])
       : [
-          { op: "local.get", index: 2 },
-          { op: "f64.const", value: index },
-          { op: "call", funcIdx: read.genericIndex },
+          { op: "i32.const", value: index },
+          { op: "local.get", index: read.actualCountLocal },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 2 },
+              { op: "f64.const", value: index },
+              { op: "call", funcIdx: read.genericIndex },
+            ],
+            else: structuredClone([...read.nullishUndefined]),
+          },
         ];
   if (read.object) fallback = fastArgument(index, read.object.carrier, fallback, read.object.undefinedValue);
   if (read.direct) fallback = fastArgument(index, read.direct.carrier, fallback, read.direct.undefinedValue);

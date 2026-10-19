@@ -1205,3 +1205,30 @@ source retirement, strict modeled closure/cycles and full program acceptance
 remain open. Keep this issue in progress and PR6762 draft on the prerequisite
 stack. Detailed source/gate hashes, transitions, costs and negative-control
 source: `plan/audit/6979-complete-callable-argv-20261019.json`.
+
+### 2026-10-19 — shared native argument-tail repair
+
+The S7 issue's "S7-p shared native argument-tail repair" fixes typed numeric
+rest truncation, above-cap extras and padded argc through the existing native
+calling contract. Preserve the actual count across reentrant getters, avoid
+out-of-range Get when padding, and use existing typed-vector element conversion
+on the full canonical extras list. The temporary JS wide-over-application
+refusal is removed after native nine/fourteen-formal execution controls pass.
+No frozen AST semantic body, driver/selector, new host import or IR-coverage
+claim; no baseline/ceiling/allowance changes.
+
+New controls pass **107/107** across standalone/WASI/JS boundary. The **638-case /
+30-file** comparison improves **569/69 → 623/15**, zero skipped or status
+regressions. All 15 retained normalized full errors match. Import policy remains
+**437/452** with all 33 inventories identical. Nine policy binaries match,
+twelve shrink 95 bytes and twelve grow 377–4202; two native dynamic controls grow
+1499/1486 bytes, with all six still import-free. Runtime drops 5 lines to 10230.
+
+Fresh boolean/string rest probes also improve, but BigInt/native Number still
+overflows and typed JS-object rest elements still fail (property error → illegal
+cast), not live identity/mutation preservation. These, strict receiver and
+callable semantics, typed-array/aggregate interop, tuple-rest compile failures,
+source/raw-mode retirement, strict closure/cycles and full acceptance remain
+open. Both migration issues stay in progress and PR6762 draft on its prerequisite
+stack. Detailed evidence and next steps:
+`plan/audit/6979-native-argument-tails-20261019.json`.

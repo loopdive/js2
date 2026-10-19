@@ -1,0 +1,1012 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-p shared native argument-tail repair; migration incomplete",
+  "parentCommit": "6d189dfe2541da8676ffaa269b9382e91fde1bee",
+  "candidate": "working tree identified by sourceHashes; publication commit follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "lanes": ["native standalone", "native WASI", "WasmGC native-first plus live JS boundary"],
+    "test262HarnessPin": "b363f29d3c43c626dc852744ad64a0b48a003693",
+    "fullConformanceRun": false
+  },
+  "scope": {
+    "frozenAstSemanticBodyChanges": false,
+    "driverOrAstSelectorChanges": false,
+    "hostImportImplementationsAdded": false,
+    "irBodyCoverageClaimed": false,
+    "gateDetectorOrProbePopulationChanges": false,
+    "baselineCeilingAllowanceChanges": false
+  },
+  "sourceHashes": {
+    "src/codegen/closure-exports.ts": "81ad4a6c82c15869c597259588ee24df10e355b47e14dde056052a946c143ca7",
+    "src/codegen/closures/apply-extras-tail.ts": "d45c24c318085f3f6fb005820523ed1ca398825453d6fb904f880af727feebbf",
+    "src/codegen/closures/closure-dispatch-rest.ts": "bfcc831ab79033ef83eb4830619fc4095c90964a5ee02d6e6fa7f5a97f338cf3",
+    "src/codegen/object-runtime.ts": "4375cd4aa71f3089870996f77d2e1fdc2f87e591cfad5aa302ff2391b59df7c5",
+    "src/runtime.ts": "06758a4e774c9e88ef3ac92da90f9e90145bb717aa2a1f87bfa15ad1d663a6a5",
+    "src/runtime/wasmgc/values/closure-apply-body.ts": "c7822279a3557e15adbc36b692b6d6a7b8369d36bfb5d509a921ccca4b1fe3b6",
+    "src/runtime/wasmgc/values/closure-invocation-bodies.ts": "9076ff958f86b9388c1861e0dfcfecf6156541b16d7f581a662cbff98494c81a",
+    "tests/issue-6979-complete-callable-argv.test.ts": "8f07a8840c3280f1145383cc31bcef6ca9107d6508f4253ce4ad289ca03b5ce6",
+    "tests/issue-6979-native-apply-argument-tails.test.ts": "003bb8134a058ce778612181144e72769ba1d7e706a47ed2998fae53e25b97a4",
+    "scripts/check-host-import-policy.ts": "06fddcabf5a0994e4896df5627f243b71359d7d2c35e6f085fa65398f492e6c1",
+    "scripts/check-import-cycles.mjs": "bf560d65767445f356ab5e9848734bcb1860864279880b8ddef2eaef15192d97",
+    "scripts/check-func-budget.mjs": "28b19990ad4e55205a36cdcdb56bfd936d13fdae9dd1fc7a986389ce67ef57b7",
+    "scripts/check-loc-budget.mjs": "3657c0d30186bd852f2927c51a83235794ea77fc4c9e99799e39c614eef8386b",
+    "scripts/audit-legacy-reachability.mjs": "845eccef70e069401e2c90dc7ba7fe960c4adfbb830d23812832f3ea45b955af"
+  },
+  "mechanism": {
+    "actualCount": "Saved before widening and reseeded after argument getters and tail slicing, immediately before dispatcher entry",
+    "missingArguments": "Generic array-like reads use actual-count bounds; dispatcher padding never performs out-of-range Get",
+    "tail": "All potentially truncating native dispatcher widths, including above8, consume tail before user code; a slice is stored only after all getters succeed",
+    "extras": "supplied extras length is bounded by actual argc before clamping argc to fixed formals",
+    "rest": "Use complete canonical extras and existing native per-vector element materializers, reserved before import-sensitive indices are captured",
+    "runtime": "Remove the temporary wide-fixed over-application refusal only after native execution tests pass",
+    "sharedState": "tailState has one arity-registration writer and withApplyTail reader; tail global written after slice, consumed/cleared in dispatcher prologue; no new CodegenContext field or program-order metadata"
+  },
+  "tests": {
+    "parent": {
+      "files": 30,
+      "cases": 638,
+      "passed": 569,
+      "failed": 69,
+      "skipped": 0
+    },
+    "candidate": {
+      "files": 30,
+      "cases": 638,
+      "passed": 623,
+      "failed": 15,
+      "skipped": 0
+    },
+    "newMatrix": {
+      "cases": 107,
+      "source": "tests/issue-6979-native-apply-argument-tails.test.ts",
+      "candidatePassed": 107
+    },
+    "transitions": [
+      {
+        "file": "issue-6979-complete-callable-argv.test.ts",
+        "name": "native complete-argv callable boundary allows wide fixed over-application after native extras preservation",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 0 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 1 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 4 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 5 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 6 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 8 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains all 9 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 9 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains all 14 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains all 32 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for nine, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains actual argc and far extras for fourteen, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains a numeric rest tail after a prefix, 9 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains a numeric rest tail after a prefix, 14 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) retains a numeric rest tail after a prefix, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (standalone) crosses missing dispatcher widths in an isolated typed-rest-only module",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 0 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 1 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 4 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 5 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 6 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 8 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains all 9 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 9 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains all 14 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains all 32 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for nine, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains actual argc and far extras for fourteen, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains a numeric rest tail after a prefix, 9 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains a numeric rest tail after a prefix, 14 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) retains a numeric rest tail after a prefix, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (wasi) crosses missing dispatcher widths in an isolated typed-rest-only module",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 0 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 1 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 4 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 5 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 6 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 8 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains all 9 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 9 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains all 14 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains all 32 numeric rest elements",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for nine, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains actual argc and far extras for fourteen, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains a numeric rest tail after a prefix, 9 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains a numeric rest tail after a prefix, 14 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) retains a numeric rest tail after a prefix, 32 inputs",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) crosses missing dispatcher widths in an isolated typed-rest-only module",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) calls a returned typed rest function with all 32 values",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) calls a returned wide function with far extras instead of refusing",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) seeds argc after reentrant getters, reads exactly 9 entries",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) seeds argc after reentrant getters, reads exactly 32 entries",
+        "parent": "failed",
+        "candidate": "passed"
+      },
+      {
+        "file": "issue-6979-native-apply-argument-tails.test.ts",
+        "name": "native apply argument tails (gc) does not leak a partial tail after a getter throws",
+        "parent": "failed",
+        "candidate": "passed"
+      }
+    ],
+    "retainedFailures": [
+      {
+        "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+        "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+        "parentFirstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected {} to be 15 // Object.is equality",
+        "parentErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f",
+        "candidateErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-1058-unmatched-closure-host-call.test.ts",
+        "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+        "parentFirstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "candidateFirstLine": "TypeError: Cannot access property on null or undefined at 6:28",
+        "parentErrorSha256": "79021a3c754710ea056eb18fb1e3df4b21b3530a0f1a91cb21235ec3145d12fb",
+        "candidateErrorSha256": "79021a3c754710ea056eb18fb1e3df4b21b3530a0f1a91cb21235ec3145d12fb",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-2623-p7-finally-bridge.test.ts",
+        "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+        "parentFirstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected {} to be 41 // Object.is equality",
+        "parentErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797",
+        "candidateErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+        "parentFirstLine": "AssertionError: expected [] to include 'install'",
+        "candidateFirstLine": "AssertionError: expected [] to include 'install'",
+        "parentErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140",
+        "candidateErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-callback.test.ts",
+        "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+        "parentFirstLine": "AssertionError: expected function to throw an error, but it didn't",
+        "candidateFirstLine": "AssertionError: expected function to throw an error, but it didn't",
+        "parentErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90",
+        "candidateErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-schema.test.ts",
+        "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits imports the fixed-arity members and the array sibling TOGETHER on gc-host",
+        "parentFirstLine": "AssertionError: expected [ 'env.__boundary_object_get', …(15) ] to include 'env.__call_function'",
+        "candidateFirstLine": "AssertionError: expected [ 'env.__boundary_object_get', …(15) ] to include 'env.__call_function'",
+        "parentErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4",
+        "candidateErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-3526-callable-boundary-schema.test.ts",
+        "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits matches the maker siblings' emitted import ABI",
+        "parentFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(15) ] to include 'env.__make_getter_callback'",
+        "candidateFirstLine": "AssertionError: expected [ 'env.__str_from_mem', …(15) ] to include 'env.__make_getter_callback'",
+        "parentErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3",
+        "candidateErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-5329-tuple-rest-carrier.test.ts",
+        "name": "#5329 tuple-typed rest parameter carrier produces a module that validates and calls the closure with its tuple",
+        "parentFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "parentErrorSha256": "3478b5d3bdf1941e82e4dba7a446c4eeebe6d8373944f13127a7343f7be3ce5f",
+        "candidateErrorSha256": "3478b5d3bdf1941e82e4dba7a446c4eeebe6d8373944f13127a7343f7be3ce5f",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-5329-tuple-rest-carrier.test.ts",
+        "name": "#5329 tuple-typed rest parameter carrier keeps the closure reachable through the host dispatcher",
+        "parentFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "parentErrorSha256": "970afa0525aa13702b2995baa8d4593b4ec2033141f455cc557c18b3cb163976",
+        "candidateErrorSha256": "970afa0525aa13702b2995baa8d4593b4ec2033141f455cc557c18b3cb163976",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-5329-tuple-rest-carrier.test.ts",
+        "name": "#5329 tuple-typed rest parameter carrier still reads NaN for a tuple's .length (documented residual)",
+        "parentFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected false to be true // Object.is equality",
+        "parentErrorSha256": "b5a0774872ed33a7d8b766429a3dcfdd77de5e62df1486a84ba5341ba89dfb56",
+        "candidateErrorSha256": "b5a0774872ed33a7d8b766429a3dcfdd77de5e62df1486a84ba5341ba89dfb56",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6",
+        "candidateErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699",
+        "candidateErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6426-linked-object-rest-source.test.ts",
+        "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+        "parentFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "candidateFirstLine": "AssertionError: expected { restObj: {}, restFn: {}, …(10) } to deeply equal { restObj: 'R', …(11) }",
+        "parentErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b",
+        "candidateErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+        "parentFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1",
+        "candidateErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1",
+        "normalizedFullErrorEqual": true
+      },
+      {
+        "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+        "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+        "parentFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "candidateFirstLine": "AssertionError: expected 'fail: JS2WASM_EVAL_ENGINE=quickjs but…' to be 'pass' // Object.is equality",
+        "parentErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a",
+        "candidateErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a",
+        "normalizedFullErrorEqual": true
+      }
+    ],
+    "normativeExpectationChange": "The previous temporary-refusal test now expects the nine-formal sum to return9 for32 ones; identical final test source is used on both trees. No other existing test expectation changes.",
+    "shapeNotes": [
+      "54 changed rows are test assertions, not54 independent defects.",
+      "Three additional inherited tuple-rest tests fail compile-success assertions on both trees; this slice does not certify tuple rest.",
+      "Pinned harness data is present for linked tests but QuickJS execution remains unavailable.",
+      "The initial fixture had102 cases:54/102 passed before repair; after first repair101/102 passed, with only the boundary refusal left. A later wrong expected sum45 for32 ones was corrected to9, not treated as a compiler defect."
+    ]
+  },
+  "policy": {
+    "parent": {
+      "probes": 33,
+      "imports": 437,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "candidate": {
+      "probes": 33,
+      "imports": 437,
+      "regimeGapImports": 0,
+      "unknownImports": 0
+    },
+    "ceiling": 452,
+    "all33InventoriesIdentical": true,
+    "rows": [
+      {
+        "name": "core",
+        "parentBytes": 600954,
+        "candidateBytes": 605076,
+        "deltaBytes": 4122,
+        "parentSha256": "24a2d04a6b836f42baa734112d3e8f551088f30fb1010c7b6d7fcea888be6048",
+        "candidateSha256": "42af8cc9ad775aeb44f1aac9f38e41327f2f4f45ebd3803ba938427948195164",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "regexp",
+        "parentBytes": 116815,
+        "candidateBytes": 116720,
+        "deltaBytes": -95,
+        "parentSha256": "14504e4ac373853082a4af7f22cf0ad887199c71427a3b5759b48341ef0dded2",
+        "candidateSha256": "a83198e379551961c9791cb7cc97327747653f262c9532097a9619c0760e51e4",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "collections",
+        "parentBytes": 104809,
+        "candidateBytes": 104714,
+        "deltaBytes": -95,
+        "parentSha256": "ff62f6152adfe86014ce02cf3ef6b5b23ea656c2d47b3fc309b300e1c45f4bff",
+        "candidateSha256": "eed92b8999c06d82fa223de0d42e110f3331e6e529073cd72b93a380044568be",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "promise",
+        "parentBytes": 123503,
+        "candidateBytes": 124109,
+        "deltaBytes": 606,
+        "parentSha256": "69adfb3c4a1d9a8634d0f081b8d0bfe2050aee04f10feb47c46041bbba45f97f",
+        "candidateSha256": "ea26eed891845a9432e24a74d532205edcccfc87ac6bacef7d3e89db1473b677",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "date",
+        "parentBytes": 118714,
+        "candidateBytes": 119336,
+        "deltaBytes": 622,
+        "parentSha256": "5b89a8bc195dbdadb77b150f75808c844e9209a466f9f43d7fc6c6486fd37602",
+        "candidateSha256": "1debd94dc276e19b958c4af427029253e4a81d7f29d786888fb174d48bddaf08",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "dataView",
+        "parentBytes": 114749,
+        "candidateBytes": 114654,
+        "deltaBytes": -95,
+        "parentSha256": "6cdbd46126ab2e1c29da2d6c1d28677b0e3897cb30088bb37602b51742484fc8",
+        "candidateSha256": "d5664a0f958c14d30d877834fe64e649412f83bdb49908074ace88fe6a0dd9f3",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "bigint",
+        "parentBytes": 39336,
+        "candidateBytes": 39336,
+        "deltaBytes": 0,
+        "parentSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "candidateSha256": "edeb373282164d5ed47fa4b3bea8d33bde5febac06f56d2c0ac7f51f836d0924",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "bigintFormatting",
+        "parentBytes": 38560,
+        "candidateBytes": 38560,
+        "deltaBytes": 0,
+        "parentSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "candidateSha256": "75ad72c79b2b7752b81783f0a7ba4cd2992f0d01107eb895c116e691f0779f3c",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "number",
+        "parentBytes": 30248,
+        "candidateBytes": 30248,
+        "deltaBytes": 0,
+        "parentSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "candidateSha256": "0be91bad70917fbd26fd52e13998b72c6ab439a6b3f45f9ec07500688c8489ea",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "textGlobals",
+        "parentBytes": 47103,
+        "candidateBytes": 47103,
+        "deltaBytes": 0,
+        "parentSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "candidateSha256": "2530a367e0209f7d6ec144fe061f98d5d62a7eabe1f90fd4c094d7071e02d289",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "object",
+        "parentBytes": 122166,
+        "candidateBytes": 122071,
+        "deltaBytes": -95,
+        "parentSha256": "b1d82635ab9910b0e942cf40adb97872f2cfa98499be0c030416bf432425c428",
+        "candidateSha256": "042d3480a15385013233cb5967422aa819927d04eedee374575619df9b33e302",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "objectRest",
+        "parentBytes": 107055,
+        "candidateBytes": 106960,
+        "deltaBytes": -95,
+        "parentSha256": "f8b409dcd7703bce630637add8ffc20cfb174e7ef60da38deb4ec13b4ddce4da",
+        "candidateSha256": "661fa21fd9f10c468a101526329e9bd917980479e24e774cdf900f8bd4b54aca",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "functionBind",
+        "parentBytes": 115109,
+        "candidateBytes": 115486,
+        "deltaBytes": 377,
+        "parentSha256": "9ef2f08fe1ef145d8736bed24d54edfa6a23f48074ce7f56e382603cc143fe23",
+        "candidateSha256": "19306245ab8c076ae26b875b23f8d5fc05ba793f3e8dfc55ee5dcc6e8168482e",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "proxy",
+        "parentBytes": 719048,
+        "candidateBytes": 722941,
+        "deltaBytes": 3893,
+        "parentSha256": "492fcee5e9ccdc0c54a071c3b9024be6de10f4c8218ba09c1ac1d274bb9566c6",
+        "candidateSha256": "319405d67cb8c11d04c845c1c2a0af17011b6f5310886cb9edf2c66b558436c9",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "typedArrays",
+        "parentBytes": 41676,
+        "candidateBytes": 41676,
+        "deltaBytes": 0,
+        "parentSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "candidateSha256": "21112acaf27694cd5209c7d236884c999a93a2f547903c1622072275a5d58fc1",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "objectDescriptors",
+        "parentBytes": 109568,
+        "candidateBytes": 109473,
+        "deltaBytes": -95,
+        "parentSha256": "462481c5c9b0949823d389176892504f999d37084db56f90250208e0afe3fa94",
+        "candidateSha256": "dbe971f41a5fe2459e068e5e7efc72a3b163570a8c74c4a95343cfeb75ebb828",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "objectPrototype",
+        "parentBytes": 252783,
+        "candidateBytes": 254765,
+        "deltaBytes": 1982,
+        "parentSha256": "018a8f49ecabf6dc202c66421e50da8f8485efdcd3a4a91b3757a503bf82d1e2",
+        "candidateSha256": "af6f9d9e691c9216f86f0ba7d40cf75b8ba550edab781c5e6c1361331b2677e0",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "functionCall",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "deltaBytes": 0,
+        "parentSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "candidateSha256": "0bc349cc91ae2d38dd00cb14056975582873a9f4d572feb8c54cdbed93a052ed",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "functionApply",
+        "parentBytes": 12057,
+        "candidateBytes": 12057,
+        "deltaBytes": 0,
+        "parentSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "candidateSha256": "1bcb77769ae53b4cdafa667f040f74c322ce5a23178a6f4fda126a1853febd85",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "errors",
+        "parentBytes": 103157,
+        "candidateBytes": 103062,
+        "deltaBytes": -95,
+        "parentSha256": "71b3942888811d699008e91e920a61bd202700c8137e979bf11ecf357a9df24d",
+        "candidateSha256": "cf2ef11b454e4b1fa0c1758b671a17d1e5d50727a15ec46f180474587b7edff6",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "generators",
+        "parentBytes": 129718,
+        "candidateBytes": 131500,
+        "deltaBytes": 1782,
+        "parentSha256": "b4bd28b3b1222a40e1b0c63e9fa2725541cdda6447c095c6ed4612fa2fabaf6f",
+        "candidateSha256": "de2283ebfb02938fb53048937ddd8d5e03426a7b86bd8e3945f638083e633872",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "iterators",
+        "parentBytes": 40985,
+        "candidateBytes": 40985,
+        "deltaBytes": 0,
+        "parentSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "candidateSha256": "a7ea06a06a0ba23278ac6b999397acc551cd2e8b6f75046c20b456538c962568",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "promiseCombinators",
+        "parentBytes": 128973,
+        "candidateBytes": 129419,
+        "deltaBytes": 446,
+        "parentSha256": "f1d018758a92ffb0dc63cd26855f5d8ec29091c215dc1f0c62545db035409b55",
+        "candidateSha256": "653c9dab107c7f7e3ba869048fcb02c3c82635c3e24e0e54cf28931f4348381e",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "promiseAnyRace",
+        "parentBytes": 124538,
+        "candidateBytes": 124984,
+        "deltaBytes": 446,
+        "parentSha256": "e35b2af6a7687475b70b73d41dea9b9e697a5ca514522ed73aa32a49ddba13dc",
+        "candidateSha256": "7e2cc38bdb078e8e492f8150f1ce85e8e0a0e1827cbb12a9223013df4e169d56",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "regexpDynamic",
+        "parentBytes": 151481,
+        "candidateBytes": 151386,
+        "deltaBytes": -95,
+        "parentSha256": "4cf6cc267a18c826397687c5c86c70062fd365ecd9572fcb5de4397413a8e36c",
+        "candidateSha256": "f4153cbf5160d97b4ed2b12cb15665317bdcf420d7d0eb01807276dba8ffd305",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "mapIteration",
+        "parentBytes": 42951,
+        "candidateBytes": 42951,
+        "deltaBytes": 0,
+        "parentSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "candidateSha256": "6daa2c1fd9f1c5e9ce82e38313b26d5aed3ecc2b0504d6f71f57cfb8c0c4a5ae",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "setIteration",
+        "parentBytes": 111433,
+        "candidateBytes": 111879,
+        "deltaBytes": 446,
+        "parentSha256": "e84561b141fd3380745d5102ef0d7c59d359620d9162f13ba252749c4c066ee9",
+        "candidateSha256": "fbbe04efc78f221fd254f291a803e9531cfd8f67a1122acd9ef0a821992dec53",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "reflect",
+        "parentBytes": 115516,
+        "candidateBytes": 115421,
+        "deltaBytes": -95,
+        "parentSha256": "aa47d6cadff30b807114fd60a617271e6f4317f14cdc14a4927508702493c3df",
+        "candidateSha256": "b59ae4cfdad1cd8016e142ff8c65256b4a1364d60eba8ad506180057f1a6a8e0",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "dynamicOps",
+        "parentBytes": 104740,
+        "candidateBytes": 104645,
+        "deltaBytes": -95,
+        "parentSha256": "3f99a1b2323b5f64a46d682be8cc7b6934e3188c8426802802c79b38bde7e33c",
+        "candidateSha256": "b9d65e10d550f5e1be8a515f53b789d8c104293c74cd8c0bbc76f781980fecab",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "destructuring",
+        "parentBytes": 109767,
+        "candidateBytes": 109672,
+        "deltaBytes": -95,
+        "parentSha256": "b29fe80ba15ce4b6ef24ae52f010d1f8ab432c212b14a78b00ac961e7200a323",
+        "candidateSha256": "42cc3c2bf72dfab628dce45217fb9b854bfd7d232cd787733ec29b55cd655253",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "proxyMop",
+        "parentBytes": 594545,
+        "candidateBytes": 598747,
+        "deltaBytes": 4202,
+        "parentSha256": "4031f7d590819f5e71f8feb36852663bc0c07a4d626d83696ddd5ed470c4bc19",
+        "candidateSha256": "215bacf442b43b0278dbb475a3ca712fae481025a0df0fc24676cbc06c021d6c",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "proxyRevocable",
+        "parentBytes": 594532,
+        "candidateBytes": 598574,
+        "deltaBytes": 4042,
+        "parentSha256": "17fa847f0043da7b29b01f0d0c7f2768b1a29fe79fb43b30112eb58f663a5bb3",
+        "candidateSha256": "e43177016f5862e5dbaac4fd2503957fa2b8c45e3fec1718e13b4e7915183d0a",
+        "inventoryIdentical": true
+      },
+      {
+        "name": "stringProtocols",
+        "parentBytes": 121712,
+        "candidateBytes": 121617,
+        "deltaBytes": -95,
+        "parentSha256": "dbe376c780b1a58c1aaa71de2ddf8f908d6467b71cceecf907b71c95af91504a",
+        "candidateSha256": "fd17e9a5c2eb0777d29a0d5ff663e80ca08b8401525a05f99d811a2fb5eef45b",
+        "inventoryIdentical": true
+      }
+    ],
+    "migrationMetrics": {
+      "runtimeTsLines": 10230,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 896,
+      "explicitCapabilityLines": 1194
+    }
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 11413,
+      "parentSha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "deltaBytes": 0,
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 33185,
+      "parentSha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "deltaBytes": 0,
+      "byteIdentical": true
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 148315,
+      "sha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 146816,
+      "parentSha256": "22686ce8db34ef5e2fe6053952683e075f4df0f98cd317d144345826ebf51490",
+      "deltaBytes": 1499,
+      "byteIdentical": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 22719,
+      "parentSha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "deltaBytes": 0,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 52928,
+      "parentSha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "deltaBytes": 0,
+      "byteIdentical": true
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 147483,
+      "sha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false,
+      "parentBytes": 145997,
+      "parentSha256": "2b905598dcb10b5343da74c9107a2e801eaa57e98b06ae3277176ab67ec6a3f2",
+      "deltaBytes": 1486,
+      "byteIdentical": false
+    }
+  ],
+  "typedRestBoundaryProbes": {
+    "source": "import {compile} from '../src/index.ts';\nimport {buildCompiledImports,wrapCompiledExports} from '../src/runtime.ts';\nconst cases={\n boolean:{source:'export function get():any{return function(...v:boolean[]):number{return v.length*1000+(v[v.length-1]?1:0);};}',args:Array(32).fill(true),expected:32001},\n string:{source:'export function get():any{return function(...v:string[]):number{return v.length*1000+v[v.length-1].length;};}',args:Array(32).fill('abc'),expected:32003},\n bigint:{source:'export function get():any{return function(...v:bigint[]):number{return v.length*1000+Number(v[v.length-1]);};}',args:Array(32).fill(42n),expected:32042},\n object:{source:'export function get():any{return function(...v:{n:number}[]):number{v[31].n=42;return v.length;};}',args:Array.from({length:32},()=>({n:1})),expected:32},\n};\nfor(const[name,p]of Object.entries(cases)){try{const r=await compile(p.source,{skipSemanticDiagnostics:true});if(!r.success)throw Error(JSON.stringify(r.errors));const imports=buildCompiledImports(r);const{instance}=await WebAssembly.instantiate(r.binary,imports);imports.setInstance?.(instance);const ex=wrapCompiledExports(r,instance)as any;console.log(JSON.stringify({name,expected:p.expected,actual:ex.get()(...p.args),last:p.args[31]}));}catch(e:any){console.log(JSON.stringify({name,expected:p.expected,error:e?.message??String(e)}));}}\n",
+    "parent": [
+      {
+        "name": "boolean",
+        "expected": 32001,
+        "actual": 5001,
+        "last": true
+      },
+      {
+        "name": "string",
+        "expected": 32003,
+        "actual": 5000,
+        "last": "abc"
+      },
+      {
+        "name": "bigint",
+        "expected": 32042,
+        "error": "Maximum call stack size exceeded"
+      },
+      {
+        "name": "object",
+        "expected": 32,
+        "error": "Cannot access property on null or undefined at 1:69"
+      }
+    ],
+    "candidate": [
+      {
+        "name": "boolean",
+        "expected": 32001,
+        "actual": 32001,
+        "last": true
+      },
+      {
+        "name": "string",
+        "expected": 32003,
+        "actual": 32003,
+        "last": "abc"
+      },
+      {
+        "name": "bigint",
+        "expected": 32042,
+        "error": "Maximum call stack size exceeded"
+      },
+      {
+        "name": "object",
+        "expected": 32,
+        "error": "illegal cast"
+      }
+    ],
+    "interpretation": "Boolean and string rest probes improve. BigInt retains stack overflow; typed JS object elements remain unsupported, changing from a missing-property error to an illegal cast. Neither is a passing identity/mutation test."
+  },
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "functionAndLocBudgets": "PASS after shared-helper extraction and stale-comment correction; no new allowance",
+    "irLayering": "PASS87/90 import lines",
+    "flatDirectory": "PASS833",
+    "compilerInventory": "PASS; context-dependent legacy modules remain migration debt",
+    "irFallback": "PASS",
+    "deadExports": "core-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)\ncore-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)\nmoved-runtime gate: FAIL (production-rooted evidence incomplete)\n  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412\n  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151\npreservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses\ngraph OPEN; strict modeled closure FAIL\nretirement/deletion NOT CERTIFIED\n",
+    "cyclesParent": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+    "cyclesCandidate": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n"
+  },
+  "remaining": [
+    "Typed JS object elements/array formals must retain live identities and mutation semantics, not cast or copy to native aggregates",
+    "BigInt rest/native Number conversion stack overflow requires attribution and repair",
+    "Null receiver normalization, callback construct rejection, tuple-rest compile failures, init-window and opaque bound callable support",
+    "JS facade metadata, source/raw-mode/runtime retirement, strict modeled closure and inherited cycles",
+    "Full equivalence/conformance/npm compatibility/accelerators/cost acceptance and prerequisite stack resolution"
+  ]
+}

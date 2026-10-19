@@ -59,8 +59,8 @@ describe("native complete-argv callable boundary", () => {
   it("calls an above-cap nine-parameter function", () => {
     expect(module.ex.nine()(1, 2, 3, 4, 5, 6, 7, 8, 9)).toBe(45);
   });
-  it("refuses wide fixed over-application until native extras are preserved", () => {
-    expect(() => module.ex.nine()(...Array(32).fill(1))).toThrow(TypeError);
+  it("allows wide fixed over-application after native extras preservation", () => {
+    expect(module.ex.nine()(...Array(32).fill(1))).toBe(9);
   });
   for (const count of [0, 1, 4, 5, 8, 9, 32]) {
     it(`preserves ${count} ordinary rest arguments and the receiver`, () => {

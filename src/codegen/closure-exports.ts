@@ -63,6 +63,8 @@ import {
   classifyClosureDispatchRest,
   closureDispatchSelfTypeIdx,
   materializeClosureDispatchRest,
+  prepareClosureDispatchRestMaterializers,
+  completeClosureDispatchRest,
   type ClosureDispatchRestCarrier,
 } from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
@@ -1209,13 +1211,9 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     if (info.nativeProtoVariadic === true) continue;
     const hostArity = closureHostArity(info);
     if (hostArity > arity) continue;
-    // (#6655) An above-cap dispatcher carries ONLY the above-cap closures. It
-    // is reached solely from `__apply_closure`'s `8 < n <= top` arm, where a
-    // callee of ordinary arity cannot be selected — and a full ladder at
-    // arity 14 duplicates every arm `__call_fn_method_8` already has, at 14
-    // argument slots each, which is pure compile time on the corpus's largest
-    // modules. `minHostArity` is 0 (and therefore inert) for every ordinary
-    // dispatcher.
+    // Above-cap dispatchers carry only above-cap signatures. Ordinary callees
+    // use their own top; both groups preserve the native argument tail.
+    // minHostArity is zero for every ordinary dispatcher.
     if (hostArity < minHostArity) continue;
     const typeDef = mod.types[typeIdx];
     if (!typeDef || typeDef.kind !== "struct") continue;
@@ -1282,6 +1280,7 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
     flushLateImportShifts(ctx, null);
   }
 
+  prepareClosureDispatchRestMaterializers(ctx, entries, arity);
   addUnionImports(ctx);
   const boxNumberIdx = ctx.funcMap.get("__box_number");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
@@ -1384,9 +1383,9 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number,
         extrasArrTypeIdx,
         (argumentIndex, elemType) => buildArgConversion(argumentIndex + 2, argumentIndex, elemType),
       );
-      const r = entry.rest;
-      const tailVec = r.kind === "externref" ? extrasVecTypeIdx : r.kind === "vec" ? r.vecTypeIdx : undefined;
-      argInstrs.push(...(applyTail ? applyTail.appendRest(restInstrs, tailVec) : restInstrs));
+      argInstrs.push(
+        ...completeClosureDispatchRest(ctx, entry.rest, restInstrs, extrasVecTypeIdx, extrasArgvGlobalIdx, applyTail),
+      );
     }
 
     // (#2745) #820l argc/extras plumbing (clamped-to-formals convention; see

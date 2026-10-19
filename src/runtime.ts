@@ -1430,11 +1430,6 @@ function _invokeNativeClosureApply(
   // Match the legacy positional routes: a linked miss must unwind to its
   // owner retry rather than recursively re-entering the same apply boundary.
   if (linkedClosureDispatch.isRepeat(closure, exports, "apply", receiver)) return undefined;
-  const arity = exports.__closure_arity?.(closure);
-  // The native fixed-signature path above four formals does not yet preserve
-  // its extras tail. Refuse over-application rather than lose arguments data.
-  if (arity > 4 && args.length > arity && exports.__closure_has_rest?.(closure) !== 1)
-    throw new TypeError("Wide fixed callable over-application is not yet supported");
   return apply(
     closure,
     _nativeArgumentFromHost(receiver, exports),

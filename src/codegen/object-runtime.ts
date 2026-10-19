@@ -68,7 +68,7 @@ import { buildObjectGetBody } from "../runtime/wasmgc/values/object-get-bodies.j
  */
 import { buildVariadicBuiltinApplyArm } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { buildRestOnlyApply } from "./closures/rest-only-apply.js";
-import { withApplyTail } from "./closures/apply-extras-tail.js";
+import { buildNativeApplyDispatcherArm } from "./closures/apply-extras-tail.js";
 import { registerBoundaryOwnKeyFilters } from "./object-model/boundary-own-key-filters.js";
 import {
   buildObjectPropertyKeyPrefix,
@@ -292,7 +292,6 @@ import { buildLazyNativeProtoGetInstrs, flushPendingNativeProtoSeeders, getBuilt
 import { applyUndefinedInstrs } from "./apply-closure-args.js";
 import {
   buildClosureApplyArgument,
-  buildClosureApplyCallArm,
   buildClosureApplyLength,
   buildClosureApplyProxyGuard,
 } from "../runtime/wasmgc/values/closure-apply-body.js";
@@ -6521,6 +6520,8 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const widen = buildApplyClosureArityWidening(ctx, locals, 0, 3, 3);
   const resultLocal = 3 + locals.length;
   locals.push({ name: "result", type: { kind: "externref" } });
+  const actualArgcLocal = 3 + locals.length;
+  locals.push({ name: "__apply_actual_argc", type: { kind: "i32" } });
 
   const variadicNativeApply = reserveVariadicNativeApplyState(ctx, locals);
   const variadicBuiltinArm = buildVariadicBuiltinApplyArm(ctx, locals, 3, argcGlobalIdx);
@@ -6596,6 +6597,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
         }
       : undefined;
     return buildClosureApplyArgument(k, {
+      actualCountLocal: actualArgcLocal,
       genericIndex: hasGenericArgsReader ? externGetIdxArr : undefined,
       fallbackUndefined,
       object,
@@ -6604,18 +6606,8 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     });
   };
 
-  const buildArm = (n: number): Instr[] => {
-    const idx = callMethod(n);
-    if (idx === undefined) {
-      // No closure of this arity was emitted ⇒ no dispatcher. A live call of
-      // this arity is impossible (the program has no arity-n closure), but keep
-      // a valid body: return the undefined sentinel.
-      return linkedFallback();
-    }
-    const argumentsBody: Instr[][] = [];
-    for (let k = 0; k < n; k++) argumentsBody.push(ARG_OF(k));
-    return buildClosureApplyCallArm(idx, argumentsBody);
-  };
+  const buildArm = (n: number): Instr[] =>
+    buildNativeApplyDispatcherArm(ctx, n, ARG_OF, linkedFallback, actualArgcLocal, argcGlobalIdx);
 
   // if n==0 .. n==APPLY_CLOSURE_MAX_ARITY else undefined. Nest as if/else chain.
   let dispatch: Instr[] = armUnsupported;
@@ -6654,7 +6646,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: withApplyTail(ctx, buildArm(ordinaryTop), ordinaryTop, 2, 3), // (#6959 review) args past top
+        then: buildArm(ordinaryTop),
         else: aboveCap ?? armUnsupported,
       },
     ];
@@ -6662,12 +6654,13 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   if (aboveCap !== undefined) {
     dispatch = [
       { op: "local.get", index: 3 },
-      { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
+      { op: "i32.const", value: ordinaryTop >= 0 ? ordinaryTop : APPLY_CLOSURE_MAX_ARITY },
       { op: "i32.gt_s" },
       { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: aboveCap, else: dispatch },
     ];
   }
   for (let n = APPLY_CLOSURE_MAX_ARITY; n >= 0; n--) {
+    if (callMethod(n) === undefined) continue;
     dispatch = [
       { op: "local.get", index: 3 },
       { op: "i32.const", value: n },
@@ -6710,6 +6703,7 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const body: Instr[] = [
     ...computeN,
     { op: "local.tee", index: 3 },
+    { op: "local.tee", index: actualArgcLocal },
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...variadicBuiltinArm, // (#6701) Math.max/min, String.fromCharCode values

@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#6959 review) The over-application TAIL carrier between `__apply_closure`
- * and the ordinary `__call_fn_method_<N>` dispatchers (standalone/wasi only).
+ * and `__call_fn_method_<N>` dispatchers on the shared WasmGC core.
  *
  * ## The gap this closes
  *
- * `__apply_closure` routes `n > 8` actual arguments into an ORDINARY closure
- * (declared arity <= 8) through the highest ordinary dispatcher,
- * `__call_fn_method_<top>` with `top <= 8`. That dispatcher's signature holds
+ * `__apply_closure` routes actual arguments through a finite dispatcher,
+ * including one above eight when the module has wide formal signatures.
+ * That dispatcher's signature holds
  * exactly `top` argument slots, and its #820l setup rebuilds `__extras_argv`
  * from those slots alone — so every actual argument past `top` was dropped:
  *
@@ -23,16 +23,16 @@
  * dispatcher consumes the global in its FIRST instructions (read into a local,
  * reset to null), before any arm can run user code or decline, so a tail can
  * never leak into a later, unrelated dispatcher call. Each ordinary entry then
- * appends the tail to the extras it built (`arguments`), and a rest entry with
- * an externref element appends it to the rest vec. `__argc` already carries
- * the exact count `n` (seeded by the bridge), and the dispatcher clamps it to
+ * appends the tail to the extras it built (`arguments`). A rest entry reuses
+ * that complete list, through the existing element materializer for typed
+ * vectors. `__argc` carries the exact count (seeded AFTER all argument getters),
+ * and the dispatcher clamps it to
  * the callee's formals, so `arguments.length` is `formals + (top - formals) +
  * (n - top) = n`.
  *
- * Only dispatchers that can be the bridge's ordinary top carry the tail
- * (`5 <= N <= 8`: 0..5 are always minted together, so the top is never below
- * 5), and only when the bridge is reserved — every other module, and the
- * gc/host lane, stays byte-identical. Indices are re-resolved by NAME at every
+ * Only dispatchers that can truncate the bridge carry a tail (`N >= 5`:
+ * 0..5 are minted together), and only when the bridge is reserved.
+ * Indices are re-resolved by NAME at every
  * emission: a cached global index goes stale when a late string-constant
  * import shifts the module-global range (see `fixupModuleGlobalIndices`).
  */
@@ -40,6 +40,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { addFuncType, getArrTypeIdxFromVec } from "../registry/types.js";
+import { buildClosureApplyCallArm } from "../../runtime/wasmgc/values/closure-apply-body.js";
 
 const TAIL_GLOBAL = "__apply_extras_tail";
 const VEC_CONCAT = "__apply_vec_concat";
@@ -119,7 +120,7 @@ function ensureVecConcat(ctx: CodegenContext, vecTypeIdx: number): void {
 /**
  * Dispatcher side: called once per `__call_fn_method_<arity>` emission.
  * Returns `undefined` (nothing changes) unless this dispatcher may be the
- * bridge's ordinary top. `tailLocal` must be a fresh local the caller appends
+ * bridge's finite-width entry. `tailLocal` must be a fresh local the caller appends
  * with {@link ApplyTailDispatch.local}.
  */
 export interface ApplyTailDispatch {
@@ -128,8 +129,13 @@ export interface ApplyTailDispatch {
   prologue(): Instr[];
   /** After the #820l setup: `__extras_argv ++= tail`. */
   appendExtras(extrasGlobalIdx: number): Instr[];
-  /** Append the tail to a materialized externref-element rest vec, or leave it. */
-  appendRest(restInstrs: Instr[], restVecTypeIdx: number | undefined): Instr[];
+  /** Reuse the complete canonical extras list as the rest formal, converting its element representation. */
+  materializeRest(
+    restInstrs: Instr[],
+    restVecTypeIdx: number | undefined,
+    extrasGlobalIdx: number,
+    materializer?: number,
+  ): Instr[];
 }
 
 export function applyTailDispatch(
@@ -139,7 +145,7 @@ export function applyTailDispatch(
   tailLocal: number,
   vecTypeIdx: number,
 ): ApplyTailDispatch | undefined {
-  if (ctx.applyClosureReserved !== true || minHostArity !== 0 || arity < 5 || arity > 8) return undefined;
+  if (ctx.applyClosureReserved !== true || arity < 5 || arity < minHostArity) return undefined;
   if (ctx.targetProfile.backend !== "wasmgc") return undefined;
   if (tailGlobalIdx(ctx) === undefined) {
     ctx.mod.globals.push({
@@ -177,17 +183,28 @@ export function applyTailDispatch(
         ],
       },
     ],
-    appendRest: (restInstrs, restVecTypeIdx) => {
-      if (restVecTypeIdx !== vecTypeIdx) return restInstrs;
-      const last = restInstrs[restInstrs.length - 1];
-      const boxed = last?.op === "extern.convert_any";
-      const vecInstrs = boxed ? restInstrs.slice(0, -1) : restInstrs;
+    materializeRest: (restInstrs, restVecTypeIdx, extrasGlobalIdx, materializer) => {
+      if (restVecTypeIdx === undefined) return restInstrs;
+      if (restVecTypeIdx !== vecTypeIdx && materializer === undefined)
+        throw Error("Native apply rest vector has no element materializer");
+      const boxed = restInstrs[restInstrs.length - 1]?.op === "extern.convert_any";
+      const resultType: ValType = boxed ? { kind: "externref" } : { kind: "ref_null", typeIdx: restVecTypeIdx };
       return [
-        ...vecInstrs,
-        { op: "local.get", index: tailLocal },
-        concat(),
-        { op: "ref.as_non_null" },
-        ...(boxed ? ([{ op: "extern.convert_any" }] satisfies Instr[]) : []),
+        { op: "global.get", index: extrasGlobalIdx },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: resultType },
+          then: restInstrs,
+          else: [
+            { op: "global.get", index: extrasGlobalIdx },
+            ...(restVecTypeIdx === vecTypeIdx
+              ? []
+              : ([{ op: "extern.convert_any" }, { op: "call", funcIdx: materializer! }] satisfies Instr[])),
+            { op: "ref.as_non_null" },
+            ...(boxed ? ([{ op: "extern.convert_any" }] satisfies Instr[]) : []),
+          ],
+        },
       ];
     },
   };
@@ -265,10 +282,11 @@ function ensureArgsSlice(ctx: CodegenContext, vecTypeIdx: number, getIdx: number
 
 /**
  * Bridge side: splice the tail store immediately BEFORE the final
- * `call __call_fn_method_<dispatcherArity>` of `__apply_closure`'s n > 8
- * ordinary arm (its operands are already on the stack). Returns `arm`
- * unchanged when that dispatcher was emitted without tail support or no
- * generic reader exists.
+ * `call __call_fn_method_<dispatcherArity>` (operands are already on the stack).
+ * Read a tail only when the actual count exceeds its width. Seed argc after
+ * the slice, so a reentrant getter cannot replace this invocation's count.
+ * Even entries without a tail need that final count seed. Missing required
+ * carrier machinery is a compiler error, not silent argument loss.
  */
 export function withApplyTail(
   ctx: CodegenContext,
@@ -276,20 +294,52 @@ export function withApplyTail(
   dispatcherArity: number,
   argsLocal: number,
   countLocal: number,
+  argcGlobalIdx: number,
 ): Instr[] {
   const state = tailState.get(ctx);
-  if (state?.arities.has(dispatcherArity) !== true || arm[arm.length - 1]?.op !== "call") return arm;
+  if (arm[arm.length - 1]?.op !== "call") throw Error("Native apply arm has no terminal dispatcher call");
+  const seed: Instr[] = [
+    { op: "local.get", index: countLocal },
+    { op: "global.set", index: argcGlobalIdx },
+  ];
+  if (state?.arities.has(dispatcherArity) !== true) return [...arm.slice(0, -1), ...seed, arm[arm.length - 1]!];
   const getIdx = ctx.funcMap.get("__extern_get_idx");
   const globalIdx = tailGlobalIdx(ctx);
-  if (getIdx === undefined || globalIdx === undefined) return arm;
+  if (getIdx === undefined || globalIdx === undefined) throw Error("Native apply tail is missing its carrier reader");
   const sliceIdx = ensureArgsSlice(ctx, state.vecTypeIdx, getIdx);
   return [
     ...arm.slice(0, -1),
-    { op: "local.get", index: argsLocal },
-    { op: "i32.const", value: dispatcherArity },
     { op: "local.get", index: countLocal },
-    { op: "call", funcIdx: sliceIdx },
+    { op: "i32.const", value: dispatcherArity },
+    { op: "i32.gt_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "ref_null", typeIdx: state.vecTypeIdx } },
+      then: [
+        { op: "local.get", index: argsLocal },
+        { op: "i32.const", value: dispatcherArity },
+        { op: "local.get", index: countLocal },
+        { op: "call", funcIdx: sliceIdx },
+      ],
+      else: [{ op: "ref.null", typeIdx: state.vecTypeIdx }],
+    },
     { op: "global.set", index: globalIdx },
+    ...seed,
     arm[arm.length - 1]!,
   ];
+}
+
+/** One finite dispatcher entry, including exact-count ownership after argument evaluation. */
+export function buildNativeApplyDispatcherArm(
+  ctx: CodegenContext,
+  arity: number,
+  argument: (index: number) => Instr[],
+  fallback: () => Instr[],
+  actualCountLocal: number,
+  argcGlobalIdx: number,
+): Instr[] {
+  const method = ctx.funcMap.get(`__call_fn_method_${arity}`);
+  if (method === undefined) return fallback();
+  const args = Array.from({ length: arity }, (_, i) => argument(i));
+  return withApplyTail(ctx, buildClosureApplyCallArm(method, args), arity, 2, actualCountLocal, argcGlobalIdx);
 }

@@ -3625,3 +3625,92 @@ capabilities **1,194**. Raw-mode/source retirement remains open.
 Keep both migration issues in progress and PR6762 draft, stacked on PR6701
 and recovered S7-b. Signed publication with Markdown handoffs is the requested
 landing here; no independent merge or complete-migration claim.
+
+### S7-p shared native argument-tail repair (2026-10-19, Codex)
+
+Continue from signed `6d189dfe2541da8676ffaa269b9382e91fde1bee`.
+Repair the existing native apply-tail contract for typed rest vectors and
+above-cap fixed signatures, not another boundary dispatcher. Enumerate its
+producer/consumer lifecycle before changing tail admission; preserve consume-
+before-user-code behavior, native element conversions, actual argc, under-
+application and nested/reentrant calls. Remove the temporary JS refusal only
+after direct native and boundary execution prove full far-extras preservation.
+Keep array-like getter order, native import/cost controls and old ABI behavior
+visible; no frozen AST body/selector expansion or migration-completion claim.
+
+**Repair:** the native tail now covers every potentially truncating dispatcher
+width, including the above-eight-formal entry. Missing intermediate arities
+no longer shadow the ordinary top with an undefined fallback. Save actual argc
+before widening, use it to bound generic argument reads, and seed it after all
+argument getters/tail slicing immediately before entry. Reentrant getters cannot
+replace the count, and padding never performs out-of-range Get.
+
+The shared native method-state builder gives extras their actual supplied
+length before clamping argc to formals; an above-cap dispatcher may have more
+storage slots than the callee received. Rest formals reuse that complete
+canonical extras list, through the existing native per-vector element
+materializer when a typed representation is required. Reserve materializers
+before capturing import-sensitive indices. No second element decoder or JS
+graph-copy path. The tail is stored only after successful slicing and consumed
+and cleared before user code. Missing required carrier machinery is an explicit
+compiler error, not silent loss. No new CodegenContext field or program-order
+metadata; the existing per-compilation arity-registration lifecycle is retained.
+
+Remove S7-o's temporary JS refusal for wide fixed over-application after native
+execution proves argc/far extras for nine/fourteen-formal functions, with
+under- and over-application. Its existing test now expects sum9 for 32 ones,
+not TypeError; both A/B trees use the same final test. That is the only changed
+old expectation. Shared native calling contracts/runtime bodies changed, not
+frozen AST semantic bodies, drivers or AST selectors; no new IR coverage claim.
+
+Measured against exact signed `6d189dfe2541da8676ffaa269b9382e91fde1bee`,
+Node 24.4.1 / Vitest 3.2.4 fork harness, `--experimental-wasm-exnref`:
+
+- New matrix **107/107**, with standalone and WASI executed against **empty
+  import objects**, and JS-boundary calls. Counts0/1/4/5/6/8/9/14/32,
+  numeric/prefixed rest, above-cap padding/extras, isolated dispatcher gaps,
+  reentrant Proxy argument getters and exact thrown tokens are exercised.
+  Combined **638 cases / 30 files: 569 passing / 69 failing → 623 passing /
+  15 failing**, zero skipped, no status regressions. The 54 transitions are
+  assertions, not independent defect counts. All 15 retained full errors match
+  after tree/runtime-stack-line normalization. Three are additional tuple-rest
+  compile-success failures on both trees; tuple rest is not certified. Two
+  linked controls still stop at unavailable QuickJS execution.
+- **33/33 full import inventories identical**, unchanged detector passes
+  **437/452**, zero unknown/gap entries. Nine policy binaries match; twelve
+  shrink 95 bytes each and twelve grow, by 377–4202 bytes. Four of six native
+  binaries match; standalone/WASI dynamic controls grow **1499/1486 bytes**.
+  All six remain import-free, return 42/7 and export no JS boundary probe.
+  No overall footprint or performance win claimed.
+- TypeScript7 typecheck, lint/format, LOC/function budgets, coercion/oracle,
+  IR layering/fallback, flat/inventory checks pass. No new allowance, baseline,
+  ceiling, detector or probe-population change. Shared-helper extraction and
+  correction of a stale dispatcher comment keep the god-function budgets in
+  bounds; flat codegen stays 833. Preservation-only dead exports retain six
+  full/six cut witnesses, while strict closure still fails at the two recorded
+  nonliteral dynamic imports. Both cycle gates retain the reported
+  codegen→ir 298→301 and ir→codegen 74→75 failures, without waiver.
+
+Runtime **10,235 → 10,230 lines** (−5), still 2230 above target;
+resolveImport **1371/seven cases**, owned adapters 896, capabilities 1194.
+Source/gate hashes, row transitions, retained errors, binary costs and exact
+typed-boundary probe source/results:
+`plan/audit/6979-native-argument-tails-20261019.json`.
+
+**Next owner:** do not generalize numeric-rest success to full typed interop.
+Fresh 32-input JS-boundary probes show boolean rest **5001→32001** and string
+rest **5000→32003** (now expected). BigInt rest plus native Number conversion
+still overflows the stack on both trees. A typed `{n:number}[]` rest formal
+still cannot retain/use JS-owned object elements: the parent fails a property
+access, the candidate an illegal cast. This is not a passing identity/mutation
+test. Repair the live foreign-object representation/operations, not a copied
+object graph or a widened frozen AST emitter. Attribute the BigInt mechanism
+separately before choosing a fix.
+
+Null receiver normalization, callback construct rejection, tuple-rest compile
+failures, init-window/opaque bound callables, JS facade metadata, typed-array
+identity/mutations/aggregate returns, prior primitive Object.assign/Math gaps,
+raw-mode/runtime/source retirement, strict closure/cycles, prerequisite stack
+and full equivalence/conformance/npm compatibility/accelerator/cost acceptance
+remain open. The wider native tail is fixed; the migration is not complete.
+Keep both migration issues in progress and PR6762 draft.
