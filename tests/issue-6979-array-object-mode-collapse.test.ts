@@ -42,6 +42,47 @@ describe("#6979 S7-c array/object mode collapse — WASI structure", () => {
 
 for (const target of ["standalone", "wasi"] as const) {
   describe(`#6979 S7-c array/object mode collapse — ${target} runtime`, () => {
+    it("formats a Number wrapper through the native numeric receiver", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new Number(3.125);
+          export function readResult(): number { return boxed.toFixed(2) === "3.13" ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("invokes a native Boolean prototype method reflectively", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new Boolean(true);
+          export function readResult(): number { return Boolean.prototype.valueOf.call(boxed) === true ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("preserves an omitted end argument in a borrowed native slice", async () => {
+      const { module } = await compileNative(
+        `
+          export function readResult(): number { return Array.prototype.slice.call([1, 2, 3], 1).length; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(2);
+    });
+
     it("calls a typed String wrapper method through its native primitive value", async () => {
       const { module } = await compileNative(
         `

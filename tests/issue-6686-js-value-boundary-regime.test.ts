@@ -19,6 +19,23 @@ async function instantiateRegime(source: string) {
 }
 
 describe("#6686 JS value boundary under the native regime", () => {
+  it("reflectively calls a JS-owned function with its original receiver and argument list", async () => {
+    const { exports } = await instantiateRegime(`
+      export function callIt(fn: any, receiver: any): any { return fn.call(receiver, 3, 4); }
+      export function applyIt(fn: any, receiver: any, args: any): any { return fn.apply(receiver, args); }
+    `);
+    const receiver = { base: 7 };
+    let calls = 0;
+    function fn(this: typeof receiver, left: number, right: number) {
+      expect(this).toBe(receiver);
+      calls++;
+      return this.base + left + right;
+    }
+    expect(exports.callIt(fn, receiver)).toBe(14);
+    expect(exports.applyIt(fn, receiver, [5, 6])).toBe(18);
+    expect(calls).toBe(2);
+  });
+
   it("marshals string params and results as JS primitives", async () => {
     const { exports } = await instantiateRegime(`
       export function value(): string { return "  alpha-beta  ".trim().toUpperCase().slice(0, 5); }

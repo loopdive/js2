@@ -298,7 +298,7 @@ function compileCtorArgument(
   const shouldForceVec =
     forceArrayLiteralVec &&
     (expected?.kind === "externref" || expected?.kind === "ref" || expected?.kind === "ref_null") &&
-    (ctx.standalone || ctx.wasi) &&
+    wasmGcBackend(ctx) &&
     ts.isArrayLiteralExpression(carrier);
   const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
   const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
@@ -1496,7 +1496,7 @@ function emitSuperExtendsNullThrow(
   expr: ts.Node,
   accessType: ts.Type,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (!enclosingClassExtendsNull(expr)) return undefined;
   emitThrowTypeError(ctx, fctx, "Cannot read properties of null (super base)");
   const wasmType = resolveWasmType(ctx, accessType);
@@ -1647,7 +1647,7 @@ function compileStandaloneClassSuperPropertyRead(
   currentClassName: string,
   parentClassName: string | undefined,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (parentClassName === undefined) return undefined;
   if (!standaloneClassProtoObjectApplies(ctx, currentClassName)) return undefined;
   // (#5350 step 1, corrected in step 4) The PARENT must own a `$Object`
@@ -1959,7 +1959,7 @@ export function compileSuperElementAccess(
     // (#5350 step 2) Standalone: the VALUE is a runtime read, not a default.
     // GetSuperBase runs first, then ToPropertyKey on the evaluated key, then
     // the receiver-aware [[Get]] — see compileStandaloneSuperPropertyRead.
-    if (argExpr && ctx.standalone) {
+    if (argExpr && wasmGcBackend(ctx)) {
       const dynamicKey: SuperReadKey = {
         kind: "dynamic",
         emit: () => {

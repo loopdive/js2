@@ -80,7 +80,7 @@
  * `number_toString` or `number_toString_radix` from the flag it computed.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -108,7 +108,7 @@ export function emitWrapperProtoToStringBody(
   fctx: FunctionContext,
   brandName: WrapperBrandName,
 ): ValType | null {
-  if (!ctx.standalone) return null;
+  if (!wasmGcBackend(ctx)) return null;
   // Ask before emitting anything at all — see the note in
   // `emitNumberProtoToStringBody`. Cheap here, load-bearing there.
   if (!canEmitWrapperThisValueBody(ctx, brandName)) return null;

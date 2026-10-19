@@ -16,7 +16,7 @@
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { numberIsPredicateOps } from "./number-is-predicate-ops.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { emitStandaloneDateNowValue } from "./standalone-clock-capability.js";
 import { addUnionImports, TYPED_ARRAY_NAMES, typedArrayPackedSignedness } from "./index.js";
 import {
@@ -809,7 +809,7 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (!wasmGcBackend(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const inner = skipTransparentExpressions(expr.expression);
   if (!ts.isPropertyAccessExpression(inner)) return undefined;
   if (inner.name.text !== "prototype") return undefined;

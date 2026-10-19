@@ -1776,3 +1776,81 @@ Continue with the 42 raw references in `calls.ts` and the remaining namespace
 and constructor groups. Keep the full S7 acceptance checklist open: these
 bounded native-runtime improvements do not establish program-wide conformance
 or certify deletion of the remaining host provider code.
+
+### S7-c call orchestration handoff (2026-10-19, Codex)
+
+**Checkpoint, not S7 completion.** The sixteenth S7-c checkpoint is published
+in [PR 6762](https://github.com/loopdive/js2/pull/6762), on branch
+`codex/6979-s7c-ir-arms`. It remains stacked on the open policy-removal
+[PR 6701](https://github.com/loopdive/js2/pull/6701) and recovered S7-b commit
+`9423a71e82`; do not merge it independently or mark the full acceptance
+checklist complete. Continue in the existing worktree
+`worktrees/codex-6979-s7c-ir-arms` rather than the dirty shared checkout.
+
+**Inventory and ownership.** Thirteen source modules remove **62** raw
+references: **913 → 851**, **377 → 367** matching files, `src/codegen`
+**679 → 668**, and expressions **226 → 175**. `calls.ts` falls from 42
+references to zero. Eleven indirect `noJsHost` conditions in that dispatcher
+and `calls-guards.ts` are also classified. This is existing migration custody
+and shared runtime/ABI maintenance, not authorization for unrelated new
+direct-AST features under the IR-only development freeze.
+
+Native reflective calls, numeric wrappers, omitted Array.slice arguments,
+dynamic invocation, Promise miss arms, runtime-eval callable carriers,
+compiled-graph dynamic import, and constructor-context values follow
+`wasmGcBackend`. Existing helper-demand, callable-carrier, and host-Promise
+producer checks remain load-bearing: changing the backend predicate does not
+prove a provider is available. The compiled-graph import route retains its
+WASI exclusion: an additional missing-import probe runs the rejection handler
+in standalone but leaves it unrun in WASI when that exclusion is removed.
+Keep the historical WASI route until Promise settlement is independently
+verified; this checkpoint does not claim WASI dynamic import support.
+Actual declared JS-owned `.call`/`.apply`
+fallback follows `jsValueBoundary`, preserving the original function and
+receiver rather than copying them. In contrast, the old foreign-provider
+argument-list selection and host undefined-padding preparation remain
+restricted to the non-WasmGC provider; they are not value adapters.
+
+**Reader/caller ABI closure.** Migrating the reflective Boolean caller alone
+leaves WASI trapping with an illegal cast. The native builtin prototype-member
+value reader and wrapper/Function prototype closure bodies must move with it.
+With the complete candidate, restoring only the old value-reader gate makes
+the standalone reflective Boolean probe pass and the WASI twin trap again.
+That single-gate control identifies a carrier mismatch, not an absence of
+native Boolean support.
+
+**Measured execution.** The focused run is **56/56**: 49 native S7 tests across
+standalone/WASI, plus seven JavaScript-boundary tests. New native probes cover
+Number-wrapper formatting, reflective Boolean valueOf, and borrowed Array.slice
+with an omitted end. Native probes instantiate with an empty import object.
+The boundary probe calls and applies an actual JS function, checks exact `this`
+identity and returned values, and verifies exactly two invocations.
+
+The exact 18-file comparison uses the same **259 rows** and seven added tests
+on published parent `900aa30de1f90cc146c30c39f34bea66b53717fb` and this
+candidate: **241 passing / 14 failing / four skipped → 243 passing / 12 failing /
+four skipped**. Only the two WASI Number-formatting and Boolean-reflection rows
+change status. All 12 residual failure messages match exactly. The residuals
+are one JSON replacer defect, three retired-host-import expectations, three
+legacy WAT exception-shape expectations, and five Redux integration cases.
+These are default-path scoped Vitest measurements, not explicitly selected IR
+Test262 results or proof of program-wide equivalence. Ignored local reports
+are `.tmp/s7c-calls-parent.json` and `.tmp/s7c-calls-candidate.json`.
+
+**Validation.** TypeScript typecheck, Biome, Prettier, LOC/function, coercion,
+oracle, and standalone-arm gates pass. Host-import policy remains **33 probes /
+452 imports / zero regime-gap or unknown imports**, with RegExp/Date/Intl
+accelerator controls. IR fallback has no unintended/post-claim/module-level
+growth. Dead-export preservation passes 6/6 full and cut witnesses, but strict
+retirement remains uncertified because `getBinaryenModule` and
+`resolvePlatformCapabilityImport` contain unresolved nonliteral dynamic imports.
+
+**Next work and boundaries.** Review the remaining constructor, namespace, and
+builtin value-reader groups as dependency closures. `new-super.ts` still has
+14 raw references and indirect aliases; `builtin-value-read.ts` is only
+partially migrated. `expressions.ts` retains the existing
+`standaloneNativeFinallyNodes` metadata spelling, not a mode decision.
+`promise-finally-invoke.ts` retains its helper availability exclusions for a
+later review. Keep S7 runtime retirement, compatibility, accelerator, and
+conformance acceptance open. Do not infer that 851 lexical hits are 851 semantic
+branches, or that these bounded improvements certify deletion of host code.

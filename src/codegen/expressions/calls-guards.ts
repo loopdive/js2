@@ -7,7 +7,7 @@
 // only change is threading ctx/fctx/expr as parameters instead of closing over
 // the compileCallExpression scope.
 import { ts } from "../../ts-api.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import { ensureSymbolNativeProtoGlue } from "../array-object-proto.js"; // (#6775 S5)
 import { buildLazyNativeProtoGetInstrs } from "../native-proto.js"; // (#6775 S5)
 import { compileExpression } from "../shared.js";
@@ -16,7 +16,6 @@ import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { isBigIntType, isBooleanType, isNumberType, isStringType, isSymbolType } from "../../checker/type-mapper.js";
-import { noJsHost } from "../js-errors.js";
 import { coerceType, pushDefaultValue } from "../type-coercion.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpIdentifier } from "../regexp-standalone.js";
 import { tryCompileBuiltinCtorAliasInvoke } from "../builtin-ctor-value-invoke.js"; // (#6713)
@@ -93,7 +92,7 @@ export function runtimeEvalMayReplaceCallee(
   fctx: FunctionContext,
   callee: ts.Expression,
 ): boolean {
-  if (!ctx.standalone || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
+  if (!wasmGcBackend(ctx) || ctx.runtimeEvalGlobalFunctionBindings !== true || !ts.isIdentifier(callee)) return false;
   const name = callee.text;
   if (fctx.localMap.has(name)) return false;
   return (ctx.globalObjectVarBindings?.has(name) ?? false) || (ctx.globalLexicalBindings?.has(name) ?? false);
@@ -702,7 +701,7 @@ export function emitObjectCoercion(
   // already an object before the primitive wrapper arms and cross the raw
   // carrier directly, preserving identity (and the object's live methods).
   // Unknown/`any` values deliberately keep the existing fallback below.
-  if (noJsHost(ctx)) {
+  if (wasmGcBackend(ctx)) {
     const argFact = ctx.oracle.typeFactOf(args[0]!);
     if (isObjectLikeFact(argFact)) {
       const argResult = compileExpression(ctx, fctx, args[0]!);
@@ -789,14 +788,14 @@ export function emitObjectCoercion(
     // Until #6651 the host-free lane had no arm at all and fell through to the
     // identity tail below, so `Object(Symbol())` evaluated to the symbol
     // itself and `typeof Object(Symbol())` read "symbol" (typeof/symbol.js).
-    const symCarrier: ValType = noJsHost(ctx) ? { kind: "externref" } : { kind: "i32" };
+    const symCarrier: ValType = wasmGcBackend(ctx) ? { kind: "externref" } : { kind: "i32" };
     compileExpression(ctx, fctx, args[0]!, symCarrier);
     const newSymIdx = ensureLateImport(ctx, "__new_Symbol", [symCarrier], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalSymIdx = ctx.funcMap.get("__new_Symbol") ?? newSymIdx;
     if (finalSymIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: finalSymIdx });
-      if (noJsHost(ctx)) linkSymbolWrapperPrototype(ctx, fctx);
+      if (wasmGcBackend(ctx)) linkSymbolWrapperPrototype(ctx, fctx);
       return { kind: "externref" };
     }
   }
@@ -807,7 +806,7 @@ export function emitObjectCoercion(
   // type is `any` (jest-get-type's isPrimitive). Standalone / no-JS-host keeps
   // the historical identity fallback — a native ToObject is separate work.
   compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-  if (!noJsHost(ctx)) {
+  if (!wasmGcBackend(ctx)) {
     const toObjIdx = ensureLateImport(ctx, "__to_object", [{ kind: "externref" }], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, fctx);
     const finalToObjIdx = ctx.funcMap.get("__to_object") ?? toObjIdx;

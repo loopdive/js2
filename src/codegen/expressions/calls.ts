@@ -174,7 +174,7 @@ export function emitBareCallReceiverReset(
     resultType === null ? undefined : allocLocal(fctx, `__bare_result_${fctx.locals.length}`, resultType);
   const restoreOnException = (fctx.tryCatchDepth ?? 0) > 0;
   const exceptionLocal =
-    restoreOnException && (ctx.standalone || ctx.wasi)
+    restoreOnException && wasmGcBackend(ctx)
       ? allocLocal(fctx, `__bare_exception_${fctx.locals.length}`, { kind: "externref" })
       : undefined;
 
@@ -245,7 +245,7 @@ function emitDynamicCallDispatch(
   return isBareCall ? emitBareCallReceiverReset(ctx, fctx, dispatch, { kind: "externref" }) : dispatch;
 }
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
-import { jsValueBoundary } from "../context/types.js";
+import { jsValueBoundary, wasmGcBackend } from "../context/types.js";
 import {
   addFuncType,
   addImport,
@@ -486,7 +486,6 @@ import {
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
   maybeStampCompiledFunctionArgName,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import {
@@ -765,7 +764,7 @@ export function compileObjectAssignArg(ctx: CodegenContext, fctx: FunctionContex
  */
 export function compileProtoArg(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     // (#6770 S4) an EMPTY `{}` too: compiled as anything but a `$Object` the
     // writers coerce it to null, the encoding of the `%Object.prototype%`
     // terminal, so `Reflect.setPrototypeOf(nonExtensible, {})` read as a
@@ -942,12 +941,11 @@ export function coerceNumberMethodArgToF64(ctx: CodegenContext, fctx: FunctionCo
  * (`TypeFlags.Object` whose symbol is `Number`), so `new Number(3.14).toFixed(2)`
  * never entered the numeric lowering and fell through to a generic/host path that
  * trapped in standalone ("null pointer" / wrong value). Mirror of the #1878
- * String-wrapper fix. Gated on `ctx.standalone` for the wrapper case — the native
- * `__to_primitive` recovery (see `emitNumberMethodReceiverF64`) is standalone-only;
- * WASI/host keep the existing object machinery.
+ * String-wrapper fix. WasmGC wrappers recover their native primitive with
+ * `__to_primitive` (see `emitNumberMethodReceiverF64`) in every environment.
  */
 export function isNumberMethodReceiver(ctx: CodegenContext, receiverType: ts.Type): boolean {
-  return isNumberType(receiverType) || (ctx.standalone && isNumberWrapperType(receiverType));
+  return isNumberType(receiverType) || (wasmGcBackend(ctx) && isNumberWrapperType(receiverType));
 }
 
 /**
@@ -1113,7 +1111,7 @@ export function emitNumberMethodReceiverF64(
     fctx.body.push({ op: "f64.const", value: 0 });
     return;
   }
-  if (ctx.standalone && isNumberWrapperType(receiverType)) {
+  if (wasmGcBackend(ctx) && isNumberWrapperType(receiverType)) {
     ensureObjectRuntime(ctx);
     const toPrimIdx = ctx.funcMap.get("__to_primitive");
     if (toPrimIdx !== undefined) {
@@ -1239,7 +1237,7 @@ function tryEmitNativeProtoReflectiveCall(
   receiver: ts.Expression,
   isCall: boolean,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
   // (#6770 S5) `Object.prototype.toLocaleString.call(<primitive>)` — Invoke(O, "toString").
   if (isCall && ts.isPropertyAccessExpression(expr.expression)) {
@@ -1421,7 +1419,7 @@ function tryEmitNativeProtoReflectiveCall(
   }
   // (#6775 S18) `Function.prototype.toString.call(x)` — §20.2.3.5's own body
   // (TypeError for a non-callable `this`, incl. a Proxy over a plain object).
-  else if (brand === undefined && ifaceName === "Function" && member === "toString" && ctx.standalone) {
+  else if (brand === undefined && ifaceName === "Function" && member === "toString" && wasmGcBackend(ctx)) {
     brand = ensureFunctionNativeProtoGlue(ctx);
   }
   if (brand === undefined) return undefined;
@@ -1573,11 +1571,12 @@ export function emitReflectiveNativeProtoClosureCall(
   // defaults to NFC. Keep this padding local to the one native String member;
   // every other reflective ABI retains its existing null/undefined policy.
   const nativeStringNormalize =
-    (ctx.standalone || ctx.wasi) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
+    wasmGcBackend(ctx) && getNativeProtoBuiltinGlue(ctx, brand)?.name === "String" && member === "normalize";
   // (#6701) `Array.prototype.slice.call(o, k)`: an omitted `end` is
   // `undefined` (⇒ len), not `null` (⇒ 0), so pad it with the canonical
   // undefined — `[].slice.call(arguments, 1)` answered an empty array.
-  const arraySliceEnd = ctx.standalone && member === "slice" && getNativeProtoBuiltinGlue(ctx, brand)?.name === "Array";
+  const arraySliceEnd =
+    wasmGcBackend(ctx) && member === "slice" && getNativeProtoBuiltinGlue(ctx, brand)?.name === "Array";
   for (let i = 0; i < paramTypes.length; i++) {
     const pType = paramTypes[i]!;
     if (nativeProtoVariadic && i === 1) {
@@ -1708,7 +1707,7 @@ function tryEmitGeneratorProtoReflectiveCall(
   innerExpr: ts.Expression,
   isCall: boolean,
 ): ValType | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const recv = unwrapTransparent(innerExpr);
   if (!ts.isPropertyAccessExpression(recv)) return undefined;
   const member = recv.name.text;
@@ -1980,7 +1979,7 @@ function tryEmitNativeProtoDescriptorAccessorCall(
   recv: ts.Expression,
   isCall: boolean,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
 
   const resolved = resolveDescriptorAccessorSource(ctx, recv);
@@ -2151,7 +2150,7 @@ export function tryEmitJsonStringifyPrimitive(
     // exactly when `ctx.nativeStrings`; the `then` arm is `number_toString`,
     // whose externref wraps a native string exactly when the formatter is native
     // — which, since #3912's gate change, is also `ctx.nativeStrings`. The old
-    // `ctx.standalone || ctx.wasi` predicate therefore disagreed with the
+    // semantic-mode predicate therefore disagreed with the
     // literal under `fast` (nativeStrings without either target): the arms had
     // different types and `JSON.stringify(<number>)` emitted an INVALID MODULE
     // — a validation failure, not merely a trap — across the whole gc-native
@@ -2199,7 +2198,7 @@ export function tryEmitJsonStringifyPrimitive(
   // JSON-quoted $NativeString per §25.5.4.3 QuoteJSONString. In JS-host mode
   // we fall through to the JSON_stringify import (it observes replacer/space
   // and toJSON, which the helper does not).
-  if ((ctx.standalone || ctx.wasi) && flags & ts.TypeFlags.StringLike) {
+  if (wasmGcBackend(ctx) && flags & ts.TypeFlags.StringLike) {
     const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (argResult === null) return undefined;
     if (argResult.kind !== "externref") {
@@ -2240,7 +2239,7 @@ export function tryEmitJsonParsePrimitive(
   call: ts.CallExpression,
   arg: ts.Expression,
 ): ValType | undefined {
-  if (!(ctx.standalone || ctx.wasi)) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   // A property/element read on the result — `JSON.parse(s).x` / `JSON.parse(s)[i]`
   // — means the parsed value is consumed as an object/array, which the primitive
   // slice does not produce. Leave those to the #1599 refusal (full Phase 2 codec).
@@ -3942,16 +3941,15 @@ export function tryEmitInlineDynamicCall(
   // (byte-inert otherwise). Standalone/WASI lane; the host lane's callee is a
   // real host constructor whose [[Call]] already throws.
   const wantTaCtorArm =
-    (ctx.standalone === true || ctx.wasi === true) &&
-    (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array"));
-  const wantApplyFallback = ctx.standalone === true || ctx.wasi === true;
+    wasmGcBackend(ctx) && (ctx.taCtorTypeIdx >= 0 || ctx.builtinObjectGlobals.has("ctor:Int8Array"));
+  const wantApplyFallback = wasmGcBackend(ctx);
   // (#6420) The generic host-free dynamic-call path used to fall through to
   // `__apply_closure` for every carrier it did not understand. That is wrong
   // for a class VALUE: it intentionally has `typeof === "function"` and
   // [[Construct]], but no [[Call]]. Register the shared predicate before any
   // funcIdx is captured; the actual check is emitted after every argument has
   // evaluated, matching EvaluateCall's observable order.
-  const wantIsCallableGuard = noJsHost(ctx);
+  const wantIsCallableGuard = wasmGcBackend(ctx);
   if (wantIsCallableGuard) {
     ensureBoundaryCallableKind(ctx); // (#6686) admitted JS functions are callable
     ensureLateImport(ctx, "__is_callable", [{ kind: "externref" }], [{ kind: "i32" }]);
@@ -4142,7 +4140,7 @@ export function tryEmitInlineDynamicCall(
   // func type `(self, (ref null $vec_externref)) -> externref` serves BOTH
   // methods and EVERY call-site arity (the arm packs the saved arg locals into
   // a fresh vec). Modules without such a value read are byte-identical.
-  const variadicArm = ctx.standalone || ctx.wasi ? ctx.variadicBuiltinClosure : undefined;
+  const variadicArm = wasmGcBackend(ctx) ? ctx.variadicBuiltinClosure : undefined;
   if (variadicArm !== undefined) {
     // The variadic closure registers in `closureInfoByTypeIdx` like any other
     // wrapper signature, so the generic candidate scan can pick it up — but its
@@ -4836,7 +4834,7 @@ function standaloneDynamicFunctionCtorArgs(
   ctx: CodegenContext,
   expression: ts.Expression,
 ): readonly ts.Expression[] | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   let value = expression;
   while (
     ts.isParenthesizedExpression(value) ||
@@ -4992,7 +4990,7 @@ export function compileStandalonePromiseThenCallback(
       // `__then_dyn_*` settle-time wrapper invokes it via `__apply_closure`.
       // Dropping it here (the pre-#4394 behaviour) silently treated the handler
       // as absent, leaving e.g. asyncHelpers' `resSettlementP` pending forever.
-      if (opts?.allowDynamic === true && (ctx.standalone === true || ctx.wasi === true) && type !== null) {
+      if (opts?.allowDynamic === true && wasmGcBackend(ctx) && type !== null) {
         if (type.kind !== "externref") {
           coerceType(ctx, fctx, type, { kind: "externref" });
         }
@@ -5126,7 +5124,7 @@ export function tryEmitAsyncGenReturnThrowDispatch(
   argExpr: ts.Expression | undefined,
 ): ValType | null {
   const producers = ctx.asyncGenProducers;
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
+  if (!wasmGcBackend(ctx)) return null;
   if (producers === undefined || producers.size === 0) return null;
   // (#3389 slice 2a — correct-or-legacy) `.return(v)` AWAITS its value under a
   // return completion (§27.6.3.8): a thenable/Promise return value must be
@@ -5253,7 +5251,7 @@ const HOST_PROMISE_PRODUCER_IMPORTS = [
  * never CALLED at runtime).
  */
 export function standaloneThenMissArmCanBeNative(ctx: CodegenContext): boolean {
-  if (ctx.standalone !== true || ctx.wasi === true) return false;
+  if (!wasmGcBackend(ctx)) return false;
   if (ctx.moduleHasHostPromiseSource === true) return false;
   for (const name of HOST_PROMISE_PRODUCER_IMPORTS) {
     if (ctx.funcMap.has(name)) return false;
@@ -5314,8 +5312,8 @@ export function emitStandaloneThenWithNativeFallback(
       // `then` must be invoked and a genuine non-thenable must throw the
       // catchable §27.2.5.4 TypeError — the bare null result swallowed both
       // (asyncHelpers `asyncTest`/`throwsAsync` stalls). All-native pieces, no
-      // host import; wasi keeps its zero-import null contract.
-      if (ctx.standalone === true && ctx.wasi !== true && method === "then") {
+      // host import; WASI can use the same native miss arm.
+      if (wasmGcBackend(ctx) && method === "then") {
         const missArgs: (ts.Expression | undefined)[] = [onFulfilledArg, onRejectedArg];
         while (missArgs.length > 0 && missArgs[missArgs.length - 1] === undefined) missArgs.pop();
         ctx.liveBodies.add(hostArm);
@@ -5651,7 +5649,7 @@ export function compileFromCharCodeFamily(
       // (#5152) §22.1.2.2 step 2a / §22.1.2.1 step 2a apply ToNumber to every
       // argument, and §7.1.4 ToNumber(Symbol) throws a TypeError. Without this
       // a statically Symbol-typed arg silently coerced its internal id.
-      if (noJsHost(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
+      if (wasmGcBackend(ctx) && tryThrowOnBigIntOrSymbolArg(ctx, fctx, expr.arguments[i]!)) {
         parts.push(buf);
         continue;
       }
@@ -5662,7 +5660,7 @@ export function compileFromCharCodeFamily(
       // Scoped to standalone/WASI (`noJsHost`): the throw uses the in-module
       // `__new_RangeError` constructor with no host bridge. The JS-host lane
       // keeps its existing host-delegated behaviour (the slice is standalone).
-      const emitRangeGuard = isFromCodePoint === true && noJsHost(ctx);
+      const emitRangeGuard = isFromCodePoint === true && wasmGcBackend(ctx);
       if (emitRangeGuard) {
         // Normalise to f64, then test `trunc(cp) != cp` (catches fractional AND
         // NaN) OR `cp < 0` OR `cp > 0x10FFFF` (±∞ caught by the range test).
@@ -6030,7 +6028,7 @@ function tryIteratorStaticsIntrinsicCall(
   fctx: FunctionContext,
   expr: ts.CallExpression,
 ): InnerResult | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (!ts.isIdentifier(expr.expression)) return undefined;
   const name = expr.expression.text;
   if (
@@ -6085,7 +6083,7 @@ function tryRuntimeIsProxyIntrinsic(
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (
-    (!ctx.standalone && !ctx.wasi) ||
+    !wasmGcBackend(ctx) ||
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "__runtime_is_proxy" ||
     expr.arguments.length !== 1
@@ -6125,7 +6123,7 @@ function tryRuntimeEvalApplyCallableIntrinsic(
   });
   if (rebound !== undefined) return rebound;
   if (
-    (!ctx.standalone && !ctx.wasi) ||
+    !wasmGcBackend(ctx) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "__runtime_eval_apply_callable" ||
@@ -6522,7 +6520,7 @@ function tryRuntimeEvalInterpretedBoundaryIntrinsic(
   const unwrapsResult = calleeName === "__runtime_eval_unwrap_result";
   const testsAotCallable = calleeName === "__runtime_eval_is_aot_callable";
   if (
-    (!ctx.standalone && !ctx.wasi) ||
+    !wasmGcBackend(ctx) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     (!wraps &&
       !unwraps &&
@@ -6963,7 +6961,7 @@ function compileCallExpression(
       tryStandaloneHostFreeCall(ctx, fctx, expr, immediateFunctionCtor) ??
       tryStandaloneDynamicFunctionCtorValue(ctx, fctx, expr);
     if (r !== undefined) return r;
-    if (ctx.standalone && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
+    if (wasmGcBackend(ctx) && immediateFunctionCtor && ensureRuntimeEvalCallableCarrier(ctx, fctx)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (dyn !== null) return dyn;
     }
@@ -7046,7 +7044,7 @@ function compileCallExpression(
 
   const globalScriptEvalCallee = unwrapTransparent(expr.expression);
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     ts.isIdentifier(globalScriptEvalCallee) &&
     globalScriptEvalCallee.text === "__js2wasm_global_script_eval"
   ) {
@@ -7058,7 +7056,7 @@ function compileCallExpression(
   // native `$Object` method dispatch would try to recover a closure from the
   // harness object. Aliased reads still execute the shim's intrinsic helper.
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     ts.isPropertyAccessExpression(expr.expression) &&
     expr.expression.name.text === "evalScript" &&
     ts.isIdentifier(expr.expression.expression) &&
@@ -7107,7 +7105,7 @@ function compileCallExpression(
             ? emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments)
             : ctx.directEvalMode === "reified-host"
               ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
-              : ctx.standalone && ensureRuntimeEvalCallableCarrier(ctx, fctx)
+              : wasmGcBackend(ctx) && ensureRuntimeEvalCallableCarrier(ctx, fctx)
                 ? emitStandaloneDirectEvalRuntime(ctx, fctx, expr)
                 : undefined
           : emitStandaloneIndirectEvalRuntime(ctx, fctx, expr.arguments);
@@ -7115,7 +7113,7 @@ function compileCallExpression(
       // (#2960) WASI (until its linker grows the provider), or a standalone
       // route that could not materialize its runtime ABI: refuse the
       // unsatisfiable host import with a catchable call-site throw.
-      if (noJsHost(ctx)) {
+      if (wasmGcBackend(ctx)) {
         // (#4195) Wording lives with the provider gate that decides it.
         const refusal = dynamicEvalRefusalMessages(ctx);
         reportError(ctx, expr, refusal.warning, "warning");
@@ -7187,7 +7185,10 @@ function compileCallExpression(
   // #3494 — standalone has no host loader: resolve an evaluated module of the
   // compiled graph to its namespace, reject everything else with a TypeError.
   if (expr.expression.kind === ts.SyntaxKind.ImportKeyword) {
-    if (ctx.standalone) return compileStandaloneDynamicImport(ctx, fctx, expr);
+    // WASI's native import-Promise settlement is not yet complete: a missing
+    // module leaves its rejection handler unrun. Preserve its existing route
+    // until that dependency is implemented and verified independently.
+    if (wasmGcBackend(ctx) && !ctx.wasi) return compileStandaloneDynamicImport(ctx, fctx, expr);
     // Ensure __dynamic_import is registered
     let dynIdx = ctx.funcMap.get("__dynamic_import");
     if (dynIdx === undefined) {
@@ -7345,7 +7346,7 @@ function compileCallExpression(
   // site owns that sequencing, and this arm only replaces a no-op.
   // (#6774 S8) An arrow created AFTER the constructor's own top-level `super()`
   // re-runs the parent on the captured instance, then BindThisValue throws.
-  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor !== true && ctx.standalone) {
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword && fctx.isConstructor !== true && wasmGcBackend(ctx)) {
     const lateArrowSuper = emitLateArrowSuperCall(ctx, fctx, expr);
     if (lateArrowSuper !== undefined) return lateArrowSuper;
   }
@@ -7356,7 +7357,7 @@ function compileCallExpression(
       compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
       emitSuperCallBindThis(ctx, fctx); // (#5350 r3 / #6772 S1b) BindThisValue
       emitSaveParentOverride(ctx, fctx, enclosingClass); // (#6772 S2)
-      return ctx.standalone ? emitSuperCallValue(ctx, fctx, thisLocal) : VOID_RESULT; // (#6774 S22) the bound `this`
+      return wasmGcBackend(ctx) ? emitSuperCallValue(ctx, fctx, thisLocal) : VOID_RESULT; // (#6774 S22) the bound `this`
     }
   }
 
@@ -7441,7 +7442,7 @@ function compileCallExpression(
     // the native constructor FIRST — before any argument is emitted — so a
     // decline leaves this arm byte-identical to what it was.
     let nativeSuppressedIdx: number | undefined;
-    if (noJsHost(ctx)) {
+    if (wasmGcBackend(ctx)) {
       // The native ctor stores `error`/`suppressed` on the `$props` sidecar, so
       // it needs the object runtime's property helpers; ensure them here, above
       // the registry layer that owns the constructor itself. Ensuring a runtime
@@ -7502,7 +7503,7 @@ function compileCallExpression(
     if (
       !ts.isPrivateIdentifier(propAccess.name) &&
       (isIrWithOpenObjectTargetReceiver(ctx, propAccess.expression) ||
-        (ctx.standalone &&
+        (wasmGcBackend(ctx) &&
           ts.isIdentifier(propAccess.expression) &&
           ctx.sloppyImplicitGlobals?.has(propAccess.expression.text) === true &&
           chainRootIsGrowable(ctx, propAccess.expression)))
@@ -7542,7 +7543,7 @@ function compileCallExpression(
           ? resolveStructName(ctx, ctx.checker.getTypeAtLocation(propAccess.expression))
           : undefined;
       if (
-        !noJsHost(ctx) &&
+        !wasmGcBackend(ctx) &&
         propAccess.expression.kind === ts.SyntaxKind.ThisKeyword &&
         // Private members (`this.#m()`) are brand-checked WasmGC elements the host
         // MOP can never see — never route them dynamically (would break static/
@@ -7678,7 +7679,7 @@ function compileCallExpression(
       // TARGET's: the typed lowerings below would cast the proxy to the
       // target's closure (or native-proto glue) shape and trap. The bridge's
       // `$Proxy` guard routes it to `__proxy_apply_dispatch` (§10.5.12).
-      const proxyReceiver = ctx.standalone && tracesToProxyValue(ctx, innerExpr);
+      const proxyReceiver = wasmGcBackend(ctx) && tracesToProxyValue(ctx, innerExpr);
       if (dynamicFunctionCtorArgs !== undefined || proxyReceiver) {
         const applyArgsExpr = !isCall && expr.arguments.length >= 2 ? expr.arguments[1]! : undefined;
         const applyVector = applyArgsExpr === undefined ? undefined : materializedArgumentsVector(fctx, applyArgsExpr);
@@ -8061,11 +8062,7 @@ function compileCallExpression(
         // (they would call with ZERO arguments); on the JS host the reflective
         // host-call tail applies the real list and receiver instead.
         const hostDynamicApply =
-          !isCall &&
-          expr.arguments.length >= 2 &&
-          !ctx.standalone &&
-          !ctx.wasi &&
-          isDynamicApplyArgList(expr.arguments[1]!);
+          !isCall && expr.arguments.length >= 2 && !wasmGcBackend(ctx) && isDynamicApplyArgList(expr.arguments[1]!);
         const registryIsForeign =
           moduleValueOwnsName || hostDynamicApply || mappedFunctionIsForeign(ctx, funcName, valueDeclaration);
         let closureInfo = registryIsForeign ? undefined : ctx.closureMap.get(funcName);
@@ -8422,9 +8419,7 @@ function compileCallExpression(
         // host method boundary. Undeclared identifiers remain on the ordinary
         // ReferenceError path, and standalone/WASI retain their native lanes.
         if (
-          !ctx.standalone &&
-          !ctx.wasi &&
-          !noJsHost(ctx) &&
+          jsValueBoundary(ctx) &&
           closureInfo === undefined &&
           funcIdx === undefined &&
           innerCanBeHostCallable &&
@@ -8492,7 +8487,7 @@ function compileCallExpression(
               // "declined, keep the existing arms below".
               const symbolTagged = emitObjectProtoToStringWithSymbolTag(ctx, fctx, receiverExpr, tag, proof);
               if (symbolTagged !== undefined) return symbolTagged;
-              if (ctx.standalone && proof.unprovenDefault && receiverExpr !== undefined) {
+              if (wasmGcBackend(ctx) && proof.unprovenDefault && receiverExpr !== undefined) {
                 // Flush against the CALLER's fctx before minting: the classifier
                 // adds late imports, and only this body needs its own funcIdx
                 // operands shifted (the minted helper starts from an empty body).
@@ -8531,7 +8526,7 @@ function compileCallExpression(
             // but call the classifier directly: the generic Function#call
             // adapter boxes the native ArrayBuffer/DataView/TA carrier and loses
             // the RTT needed to distinguish it from an ordinary Array/Object.
-            if (ctx.standalone || ctx.wasi) {
+            if (wasmGcBackend(ctx)) {
               const helperReady = ensureObjectProtoToStringRuntimeHelper(ctx);
               if (helperReady !== undefined) {
                 fctx.body.push({ op: "ref.null.extern" }); // unused closure-self slot
@@ -8601,7 +8596,7 @@ function compileCallExpression(
           // by the class-method arm below. Refusing it here was silently
           // rolled back to a default value (0 / ref.null → trap).
           if (
-            ctx.standalone &&
+            wasmGcBackend(ctx) &&
             expr.arguments.length >= 1 &&
             !isBuiltinRegExpPrototype &&
             !isUserClassPrototypeMethod(ctx, objType, methodName)
@@ -9634,12 +9629,12 @@ function compileIIFE(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallEx
   }
   const funcExpr = callee as ts.FunctionExpression | ts.ArrowFunction;
   // (#6774 S4) A lexical `new.target` needs the closure path's snapshot capture.
-  if (ctx.standalone && ts.isArrowFunction(funcExpr) && referencesOwnNewTarget(funcExpr)) return undefined;
+  if (wasmGcBackend(ctx) && ts.isArrowFunction(funcExpr) && referencesOwnNewTarget(funcExpr)) return undefined;
   // (#6774 S8) `(_ => super(…))()` in a derived constructor: the arrow's
   // `super()` IS the constructor's (§13.3.7.1 walks past arrows). An
   // argument-free expression-bodied arrow evaluates its body in this frame.
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     fctx.isConstructor === true &&
     ts.isArrowFunction(funcExpr) &&
     !ts.isBlock(funcExpr.body) &&

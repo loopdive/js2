@@ -22,7 +22,7 @@ import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { allocLocal } from "./context/locals.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
@@ -944,7 +944,7 @@ export function emitRuntimeEvalAotCallableAdapter(ctx: CodegenContext, fctx: Fun
  * module's nominal struct table.
  */
 export function fillRuntimeEvalCallablePropertyGetArm(ctx: CodegenContext): void {
-  if (!ctx.standalone && !ctx.wasi) return;
+  if (!wasmGcBackend(ctx)) return;
   const carrier = ctx.runtimeEvalAotCallableCarrier;
   if (carrier === undefined) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
@@ -1270,7 +1270,7 @@ export function tryRuntimeEvalRebindCarrierIntrinsic(
   compileArg: (arg: ts.Expression) => void,
 ): ValType | undefined {
   if (
-    (!ctx.standalone && !ctx.wasi) ||
+    !wasmGcBackend(ctx) ||
     ctx.runtimeEvalCallableBoundaryEnabled !== true ||
     !ts.isIdentifier(expr.expression) ||
     expr.expression.text !== "__runtime_eval_rebind_carrier" ||

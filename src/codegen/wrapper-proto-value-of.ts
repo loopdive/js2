@@ -69,7 +69,7 @@
  * shape, as `object-proto-tostring.ts`'s inlined refusal.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./object-runtime.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
@@ -138,7 +138,7 @@ function protoDefaultPrimitive(ctx: CodegenContext, brandName: WrapperBrandName)
  * instructions. A body emitter must be all-or-nothing.
  */
 export function canEmitWrapperThisValueBody(ctx: CodegenContext, brandName: WrapperBrandName): boolean {
-  return ctx.standalone === true && ctx.funcMap.get(PRIMITIVE_PREDICATE[brandName]) !== undefined;
+  return wasmGcBackend(ctx) && ctx.funcMap.get(PRIMITIVE_PREDICATE[brandName]) !== undefined;
 }
 
 /**
@@ -190,7 +190,7 @@ export function emitWrapperThisValueBody(
   member: string,
   buildTail: () => Instr[],
 ): ValType | null {
-  if (!ctx.standalone) return null;
+  if (!wasmGcBackend(ctx)) return null;
   const predicateIdx = ctx.funcMap.get(PRIMITIVE_PREDICATE[brandName]);
   if (predicateIdx === undefined) return null;
 

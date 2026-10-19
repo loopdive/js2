@@ -39,7 +39,7 @@ import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js"; // (#3178) async-call rejection payload
 import { allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
 import {
   ensureAnyHelpers,
@@ -228,8 +228,7 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
   // lane is deliberately excluded — the #2903 measurement found the
   // subclass-`finally` tests pass through that host route only WITH the wrap.
   if (
-    ctx.standalone !== true &&
-    ctx.wasi !== true &&
+    !wasmGcBackend(ctx) &&
     ts.isPropertyAccessExpression(expr.expression) &&
     (expr.expression.name.text === "finally" ||
       // `Promise.prototype.finally.call(target, …)` / `.apply(target, …)` —
@@ -501,7 +500,7 @@ function calleeIsDriveLowered(ctx: CodegenContext, expr: ts.CallExpression): boo
   // the for-await-over-async-gen files whose consumer drives natively but whose
   // call site still pulled in the host Promise machinery. Plain awaits / Promise
   // statics stay on the legacy path pending the #2980 carrier widen.
-  if (ctx.standalone === true) return asyncGenConsumerNeedsDrive(ctx, decl, plan);
+  if (wasmGcBackend(ctx)) return asyncGenConsumerNeedsDrive(ctx, decl, plan);
   return false;
 }
 
@@ -1601,7 +1600,7 @@ function compileExpressionInner(
       fctx.body.push({ op: "local.get", index: ordinaryTarget });
       return { kind: "externref" };
     }
-    if (ctx.standalone) return compileNewTargetValue(ctx, fctx); // (#6774 S4) the constructor OBJECT
+    if (wasmGcBackend(ctx)) return compileNewTargetValue(ctx, fctx); // (#6774 S4) the constructor OBJECT
     if (fctx.isConstructor) {
       // (#2023) Read the live new.target class-id (set at the outermost `new`
       // site, preserved through super()). Non-zero inside a construction, so
