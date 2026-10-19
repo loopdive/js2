@@ -275,8 +275,8 @@ describe("genuine mixed structural resource owner", () => {
     const r = mixedOwnerFixture(),
       pack = reserveMixedOwner(r),
       inventory = nativeMixedObjectAccessReservationInventory(r.tx, pack);
-    expect(inventory.functions.length).toBe(7);
-    expect(inventory.structuralFunctions.length).toBe(6);
+    expect(inventory.functions.length).toBe(9);
+    expect(inventory.structuralFunctions.length).toBe(8);
     expect(inventory.pendingGet).toBe(pack.get);
     expect(() => requireCompletedNativeMixedObjectAccess(r.tx, pack)).toThrow(/mixed Call, source lowering/);
     expect(() => requireNativeMixedObjectAccessReservations(r.tx, { ...pack })).toThrow(/copied owner/);
@@ -346,7 +346,7 @@ describe("genuine mixed structural resource owner", () => {
     (r.plan.declarations[0] as { name: string }).name = "changed";
     expect(() => requireNativeMixedObjectAccessReservations(r.tx, pack)).toThrow(/changed declaration/);
   });
-  it("requires canonical dependency completion then completes only six structural bodies", () => {
+  it("requires canonical dependency completion then completes only eight structural bodies", () => {
     const r = mixedOwnerFixture(),
       pack = reserveMixedOwner(r);
     r.tx.freezeReservations();

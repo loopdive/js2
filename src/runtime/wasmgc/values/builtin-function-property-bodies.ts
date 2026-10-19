@@ -6,7 +6,10 @@ import {
   type BuiltinFunctionBodyOperands,
   type BuiltinFunctionDefinition,
 } from "./builtin-function-bodies.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import {
+  ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags,
+  buildOrdinaryObjectExtensibilityBody,
+} from "./ordinary-object-descriptor-common.js";
 
 export interface BuiltinFunctionPropertyOperands extends BuiltinFunctionBodyOperands {
   readonly entryTypeIdx: number;
@@ -188,23 +191,7 @@ export function buildBuiltinFunctionExtensibility(
 ): BuiltinFunctionDefinition {
   return {
     locals: [],
-    body: prevent
-      ? [
-          ...bag(d),
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(flags.nonExtensible),
-          { op: "i32.or" },
-          { op: "struct.set", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(1),
-        ]
-      : [
-          ...bag(d),
-          { op: "struct.get", typeIdx: d.objectTypeIdx, fieldIdx: 4 },
-          n(flags.nonExtensible),
-          { op: "i32.and" },
-          { op: "i32.eqz" },
-        ],
+    body: buildOrdinaryObjectExtensibilityBody(d.objectTypeIdx, bag(d), prevent),
   };
 }
 /** Own data assignment only: 2 needs prototype [[Set]], 3 needs accessor invocation. */

@@ -16,6 +16,8 @@ import {
   buildMixedObjectHas,
   buildMixedObjectGetPrototype,
   buildMixedObjectSetPrototype,
+  buildMixedObjectIsExtensible,
+  buildMixedObjectPreventExtensions,
   type MixedObjectAccessOperands,
   type MixedObjectCarrier,
   type MixedObjectDefinition,
@@ -77,7 +79,16 @@ export interface NativeMixedObjectAccessDependencies {
   readonly valuePlan: NativeValueResourcePlan;
   readonly valueDependencies: NativeValueDependencies;
 }
-const structuralRoles = ["classify", "own", "lookup", "has", "getPrototypeOf", "setPrototypeOf"] as const;
+const structuralRoles = [
+  "classify",
+  "own",
+  "lookup",
+  "has",
+  "getPrototypeOf",
+  "setPrototypeOf",
+  "isExtensible",
+  "preventExtensions",
+] as const;
 const roles = [...structuralRoles, "get"] as const;
 export interface NativeMixedObjectAccessReservations {
   readonly classify: FunctionReservation;
@@ -86,6 +97,9 @@ export interface NativeMixedObjectAccessReservations {
   readonly has: FunctionReservation;
   readonly getPrototypeOf: FunctionReservation;
   readonly setPrototypeOf: FunctionReservation;
+  /** Internal Boolean/status ABI: false=0, true=1, unready=2, unsupported=3. */
+  readonly isExtensible: FunctionReservation;
+  readonly preventExtensions: FunctionReservation;
   /** Pending until the genuine mixed invocation owner joins; no raw-handle binder. */
   readonly get: FunctionReservation;
   readonly completionScope: "mixed-object-access-structure";
@@ -194,6 +208,8 @@ export function declareNativeMixedObjectAccessResources(key: string, entryTypeKe
     has: { params: [ext, ext], results: [i32] },
     getPrototypeOf: { params: [ext], results: [i32, ext] },
     setPrototypeOf: { params: [ext, ext], results: [i32] },
+    isExtensible: { params: [ext], results: [i32] },
+    preventExtensions: { params: [ext], results: [i32] },
     get: { params: [ext, ext, ext], results: [i32, ext] },
   };
   const declarations = roles.map((role) => ({
@@ -350,6 +366,8 @@ const builders = {
   has: buildMixedObjectHas,
   getPrototypeOf: buildMixedObjectGetPrototype,
   setPrototypeOf: buildMixedObjectSetPrototype,
+  isExtensible: buildMixedObjectIsExtensible,
+  preventExtensions: buildMixedObjectPreventExtensions,
 };
 function canonical(
   tx: PhysicalModuleReservations,

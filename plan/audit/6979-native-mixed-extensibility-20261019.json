@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ac native mixed-object extensibility over canonical ordinary flags",
+  "parentCommit": "27a4332cf8dbfece4e02c7b6f43c6d71b4096881",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false
+  },
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-mixed-object-access.ts": "479c3f93bf7f9c9b664d9edd532b811681324f815300275b144865118571a1ef",
+    "src/runtime/wasmgc/values/mixed-object-access-bodies.ts": "6a86141997ecadadf87ee0314c387ebe7c52aea079f30edfab26d681b13771f6",
+    "src/runtime/wasmgc/values/builtin-function-property-bodies.ts": "b708adda44118a77472c6b0267376ddc46c3f6bf52c4357c5220d7c874a6c212",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts": "df3bb6f396cc18a8a8ab086bc5074138ad5e5d23a0e3085b048a827a482e35fe",
+    "tests/helpers/native-mixed-object-access.ts": "44f18c51a6f6d98469a2ac077eba6dbf11b5b448d249a6d2c53f3a3b6bd9f583",
+    "tests/issue-3518-native-mixed-object-access.test.ts": "6dde247d0ba0c2db6bde7393d658f4358dec14045d9c7596906f88822f790255",
+    "tests/issue-3518-native-builtin-functions.test.ts": "ad7e1cdaafd02bef88a18427867d4b143a8350e302fab3cfd8f34920e1ae9c56",
+    "tests/issue-6979-native-mixed-extensibility.test.ts": "f821bff57c6536d6c0edcf1d41e2c2281c814f5a335edaf6b73fe56b9e2b3076"
+  },
+  "scope": {
+    "canonicalMixedStructuralRoles": 8,
+    "totalReservedRolesIncludingPendingGet": 9,
+    "completionScope": "mixed-object-access-structure",
+    "newRoles": ["isExtensible", "preventExtensions"],
+    "booleanStatusAbi": { "false": 0, "true": 1, "unready": 2, "unsupported": 3 },
+    "sharedOrdinaryExtensibilityKernel": true,
+    "existingCallableInstructionDefinitionsPreserved": true,
+    "instructionTreesIndependentlyCloned": true,
+    "languageObjectsOrBagsCopied": false,
+    "sourceClosuresRemainUnready": true,
+    "foreignRawValuesAdmitted": false,
+    "publicObjectReflectEntryAdmitted": false,
+    "wholeRealmCompleted": false,
+    "newHostImportSelectorOrProvider": false,
+    "newRootFloorAllowanceOrAllowedEdge": false
+  },
+  "tests": {
+    "finalNativeFocused": {
+      "cases": 201,
+      "passed": 201,
+      "failed": 0,
+      "skipped": 0,
+      "files": 6,
+      "runnerExit": 0,
+      "unhandledErrors": 0,
+      "newMixedCases": 42,
+      "actualZeroImportModules": 3,
+      "coordinateControls": ["normal UTF16", "displaced UTF8", "decoded displaced UTF8"],
+      "report": ".tmp/s7ac-focused-final.json"
+    },
+    "initialFocusedRun": {
+      "assertionsPassed": 201,
+      "assertionsFailed": 0,
+      "runnerExit": 1,
+      "unhandledErrors": 1,
+      "error": "[vitest-worker]: Timeout calling onTaskUpdate",
+      "cleanPassClaimed": false,
+      "repair": "Yield after each new native owner audit with setImmediate; do not ignore runner errors"
+    },
+    "callableDefinitionsAndExecution": { "cases": 38, "passed": 38, "failed": 0, "newDefinitionCases": 2 },
+    "resources": {
+      "cases": 199,
+      "passed": 185,
+      "failed": 14,
+      "files": 4,
+      "skipped": 0,
+      "historicalCases": 197,
+      "historicalFullRowsEqual": true,
+      "comparison": "Retained S7-aa report; exclude only the two named new exact-definition cases from candidate",
+      "excludedNewCaseName": "retains the exact existing extensibility definitions with independent instruction nodes",
+      "fullRowsSha256": "af5027ec3233b807a28b60dc4e4952e28704d0d6f0171ac0356ade3f4a03c669",
+      "rowFormat": "jq -S sorted testResults name and complete assertion fullName/status/failureMessages; no error normalization or truncation"
+    },
+    "compatibility": {
+      "cases": 779,
+      "passed": 756,
+      "failed": 23,
+      "files": 38,
+      "skipped": 0,
+      "historicalFullRowsEqual": true,
+      "comparison": "Retained S7-z report, not a fresh exact-parent run",
+      "fullRowsSha256": "3b974485b8387524c0116a3b958c2ec926d74558425581a5d714e55e9591c23f"
+    },
+    "receiptsExpectationsOrSkipsChanged": false,
+    "historicalCustodySuitesRerun": false
+  },
+  "policy": {
+    "completeInventoriesAndBinaries": 33,
+    "nativeCompiledControls": 6,
+    "equalToRetainedS7abReports": true,
+    "nativeFirstImports": 437,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "inventoryValid": true,
+    "inventoryErrors": 0,
+    "architectureComplete": false,
+    "modules": 1978,
+    "classificationsAndPolicyUnchanged": true,
+    "inventoryComparisonExclusions": "Source hashes; prior pre-commit report's tracked/untracked metadata for the now-committed allocation-source-facts leaf"
+  },
+  "graph": {
+    "completeReportByteIdenticalToS7ab": true,
+    "largestSccSize": 712,
+    "sccCountOver1": 4,
+    "valueEdges": 10829,
+    "growingDirectionCountsAgainstMain": 4,
+    "waiverOrBaselineChanged": false
+  },
+  "gates": {
+    "typecheck": "passed",
+    "lint": "passed",
+    "format": "passed",
+    "checkpointLocAndFunction": { "passed": true, "sourceFiles": 4, "netSourceLines": 68, "newAllowance": false },
+    "wholePrLocAndFunction": {
+      "passed": true,
+      "mergeBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+      "sourceFiles": 374,
+      "netSourceLines": -17586,
+      "existingTwoFunctionGrantsUnchanged": true
+    },
+    "coercion": "passed",
+    "oracle": "passed",
+    "layering": "passed",
+    "flatDirectory": "passed",
+    "fallbacks": "passed",
+    "preservationOnly": { "full": "6/6 passed", "cut": "6/6 passed" },
+    "strictClosure": "open: two unconstrained dynamic imports; no exemption or behavior narrowing",
+    "retirementCertified": false
+  },
+  "artifacts": {
+    "focused": {
+      "path": ".tmp/s7ac-focused-final.json",
+      "sha256": "738332ab708c0923dd3cab014cdd146ac1669752c0dbecd10c4e5f992c2dd4ed"
+    },
+    "resources": {
+      "path": ".tmp/s7ac-resources-final.json",
+      "sha256": "7063468675fead447f52c05ab63a98d8fb531643afec7db22132968ce719a093"
+    },
+    "compatibility": {
+      "path": ".tmp/s7ac-existing-final.json",
+      "sha256": "e1297b3aa95e7f99dbe00dfda8baa20107729a7e2596055e0a555b5685223685"
+    },
+    "inventory": {
+      "path": ".tmp/s7ac-inventory.json",
+      "sha256": "c34d4957eca90f67e5d5701bfa5286f0df9cdad30ab717f737746b87c9d5f43d"
+    },
+    "cycles": {
+      "path": ".tmp/s7ac-cycles.json",
+      "sha256": "18a1001c88cd1afd40fc0712b3162af4f6bb316567ac49fcbae2ab37e21ee077"
+    },
+    "policy": {
+      "path": ".tmp/s7ac-policy-final.log",
+      "sha256": "17f87021b75df26b865737c49331d7749a160bb621e955115d1786ef16f253dd"
+    },
+    "nativeControls": {
+      "path": ".tmp/s7ac-native-final.log",
+      "sha256": "3b2b598b433a5802cd71989c1bb4f1f31b21af605afe596685e74c7f120f7895"
+    }
+  },
+  "remaining": [
+    "Actual catalog algorithm composition and genuine realm declaration/fill ordering",
+    "Mixed Get/Call, complete lifted entries and singleton/property population",
+    "Atomic authenticated source/public publication, foreign/dynamic identity and general first-class undefined",
+    "Linear/WASI construction and architecture/strict retirement/conformance acceptance",
+    "Both Markdown issues in progress; PR6762 draft, prerequisite stack and merge conflicts unresolved"
+  ]
+}

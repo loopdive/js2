@@ -1569,3 +1569,39 @@ identity, source/public publication, mixed providers and Linear/WASI work also
 stay open. Both issues stay in progress and the PR stays draft.
 
 Evidence: `plan/audit/6979-frontend-dependency-cuts-20261019.json`.
+
+### S7-ac: native mixed-object extensibility
+
+The genuine mixed structural owner now reserves, fills and audits native
+IsExtensible/PreventExtensions internals. They authenticate the existing
+carrier/realm and own bag before reading or changing its canonical storage
+flags. PreventExtensions preserves every other flag and property; insertion,
+descriptor and prototype operations observe the same nonExtensible bit.
+Source/realm/missing-bag readiness and unsupported foreign values remain
+distinct from Boolean results. No public Object/Reflect admission follows,
+and JS-owned boundary values/callables remain live references without copying.
+
+Actual catalog algorithm composition must use genuine argument/value/error/
+Boolean and mixed owners with reviewed realm declaration/fill ordering, not
+raw function handles or caller-filled bodies. Mixed Get/Call, full intrinsic
+population, source/public entry, foreign identity, Linear/WASI construction
+and architecture/retirement acceptance remain open. Both issues remain in
+progress; the PR remains draft.
+
+Final verification passes **201/201 native-focused** and **38/38 callable**
+cases, including **44 new** cases and three real zero-import mixed modules at
+normal/displaced/decoded coordinates. The existing callable definitions are
+unchanged; both routes use one ordinary-storage flag kernel, with independent
+instruction trees. The 779-case cohort retains **756 pass / 23 fail** and the
+object-resource cohort **147 pass / 14 fail of 161**, with complete historical
+rows/errors equal to retained reports. All **33** policy inventories/binaries
+and **six** native compiled controls remain identical. No receipt, expectation,
+skip, root, floor or waiver changes. The final native run exits zero with no
+runner errors; the initial worker-reporting timeout is retained in the audit.
+
+Typecheck/lint/format and size/function, coercion/oracle, layering/fallback and
+flat-directory gates pass. The complete cycle report remains unchanged,
+including the four growing direction counts. Strict retirement closure and
+historical custody/conformance obligations remain open, not certified by
+preservation-only checks. Evidence:
+`plan/audit/6979-native-mixed-extensibility-20261019.json`.

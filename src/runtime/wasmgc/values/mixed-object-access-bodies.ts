@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
-import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
+import {
+  ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags,
+  buildOrdinaryObjectExtensibilityBody,
+} from "./ordinary-object-descriptor-common.js";
 
 /** Internal results, not a scalar JavaScript Get/Has ABI. */
 export const MIXED_ACCESS_STATUS = Object.freeze({ absent: 0, present: 1, unready: 2, unsupported: 3 });
@@ -510,6 +513,41 @@ export function buildMixedObjectSetPrototype(input: MixedObjectAccessOperands): 
       { op: "unreachable" },
     ],
   };
+}
+
+/** No prototype traversal or population claim: operate on the authenticated object's own storage. */
+function buildMixedObjectExtensibility(input: MixedObjectAccessOperands, prevent: boolean): MixedObjectDefinition {
+  const d = operands(input);
+  return {
+    locals: [
+      { name: "family", type: i32 },
+      { name: "bag", type: ext },
+    ],
+    body: [
+      get(0),
+      call(d.classify),
+      { op: "local.tee", index: 1 },
+      n(0),
+      { op: "i32.le_s" },
+      { op: "if", blockType: empty, then: ret(...gap(1)) },
+      ...d.carriers.flatMap((c, ordinal) => carrierArm(1, ordinal, [...ownBag(d, c), set(2)])),
+      ...when([get(2), { op: "ref.is_null" }], ret(n(2))),
+      ...when(
+        [get(2), { op: "any.convert_extern" }, { op: "ref.test", typeIdx: d.objectTypeIdx }, { op: "i32.eqz" }],
+        ret(n(3)),
+      ),
+      ...buildOrdinaryObjectExtensibilityBody(d.objectTypeIdx, cast(2, d.objectTypeIdx), prevent),
+    ],
+  };
+}
+
+/** Internal Boolean/status result; unsupported primitives are not the public Object.isExtensible rule. */
+export function buildMixedObjectIsExtensible(input: MixedObjectAccessOperands): MixedObjectDefinition {
+  return buildMixedObjectExtensibility(input, false);
+}
+/** Preserve every unrelated storage flag and property; repeated prevention succeeds. */
+export function buildMixedObjectPreventExtensions(input: MixedObjectAccessOperands): MixedObjectDefinition {
+  return buildMixedObjectExtensibility(input, true);
 }
 
 export interface MixedObjectGetOperands {

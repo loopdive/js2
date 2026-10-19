@@ -74,6 +74,38 @@ function typeError(run: () => unknown, tag: WebAssembly.Tag): WebAssembly.Except
   return caught as WebAssembly.Exception;
 }
 describe.each([false, true])("native builtin function objects; displaced=%s", (offset) => {
+  it("retains the exact existing extensibility definitions with independent instruction nodes", () => {
+    const { fixture: f } = builtinFunctionRuntime(offset),
+      kernel = f.kernel!,
+      objectTypeIdx = f.lookupDependencies.layouts.object.typeIndex;
+    const bag = () => [
+      { op: "local.get" as const, index: 0 },
+      { op: "call" as const, funcIdx: kernel.functions.bag.handle },
+      { op: "any.convert_extern" as const },
+      { op: "ref.cast" as const, typeIdx: objectTypeIdx },
+    ];
+    expect(kernel.functions.isExtensible.object.locals).toEqual([]);
+    expect(kernel.functions.isExtensible.object.body).toEqual([
+      ...bag(),
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.and" },
+      { op: "i32.eqz" },
+    ]);
+    expect(kernel.functions.preventExtensions.object.locals).toEqual([]);
+    expect(kernel.functions.preventExtensions.object.body).toEqual([
+      ...bag(),
+      ...bag(),
+      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: 1 },
+      { op: "i32.or" },
+      { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+      { op: "i32.const", value: 1 },
+    ]);
+    expect(kernel.functions.preventExtensions.object.body[0]).not.toBe(
+      kernel.functions.preventExtensions.object.body[4],
+    );
+  });
   it("executes the real callable prototype with one authentic common root and no imports", () => {
     const { runtime: r, fixture: f, compiled, keyTexts } = builtinFunctionRuntime(offset),
       kernel = f.kernel!;

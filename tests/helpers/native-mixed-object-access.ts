@@ -82,6 +82,8 @@ import {
   buildMixedObjectHas,
   buildMixedObjectGetPrototype,
   buildMixedObjectSetPrototype,
+  buildMixedObjectIsExtensible,
+  buildMixedObjectPreventExtensions,
   buildMixedObjectGet,
   type MixedObjectAccessOperands,
 } from "../../src/runtime/wasmgc/values/mixed-object-access-bodies.js";
@@ -94,8 +96,8 @@ import {
 } from "../../src/ir/program-native-invocation.js";
 import type { IrLowerResolver } from "../../src/ir/backend/lower-contracts.js";
 
-export function mixedFoundation(displaced = false) {
-  const f = publicRealmFoundation(displaced),
+export function mixedFoundation(displaced = false, decoded = false) {
+  const f = publicRealmFoundation(displaced, decoded),
     { tx } = f,
     c = publicRealmClosures(f);
   const flatten = reserveNativeStringFlattenResources(tx, "mixed:flatten", f.strings);
@@ -270,17 +272,24 @@ const global = (index: number): Instr => ({ op: "global.get", index });
 const empty = { kind: "empty" } as const;
 
 /** Emitted component controls. No public population, standard algorithm stub or host semantic import is installed. */
-export function mixedRuntime(displaced = false) {
-  const r = mixedFoundation(displaced),
+export function mixedRuntime(displaced = false, decoded = false) {
+  const r = mixedFoundation(displaced, decoded),
     { f, c, tx } = r;
   const source = publicRealmSourceSlots(f, c);
   const recipe = declareNativeMixedObjectAccessResources("control:access", f.objects.propEntry.key);
   const records = executeNativeResourceRecipe(tx, recipe, new Map([[f.objects.propEntry.key, f.objects.propEntry]]));
   const tokens = Object.fromEntries(
-    ["classify", "own", "lookup", "has", "getPrototypeOf", "setPrototypeOf", "get"].map((role) => [
-      role,
-      requireNativeDeclaredReservation(records, "control:access:" + role, "function"),
-    ]),
+    [
+      "classify",
+      "own",
+      "lookup",
+      "has",
+      "getPrototypeOf",
+      "setPrototypeOf",
+      "isExtensible",
+      "preventExtensions",
+      "get",
+    ].map((role) => [role, requireNativeDeclaredReservation(records, "control:access:" + role, "function")]),
   ) as Record<string, FunctionReservation>;
   const objectPrototype = tx.reserveGlobal(
     "control:object-prototype",
@@ -324,6 +333,9 @@ export function mixedRuntime(displaced = false) {
     foreign: { params: [ext], results: [ext] },
     put: { params: [ext, ext, ext, i32, ext], results: [] },
     flags: { params: [ext, i32], results: [] },
+    readFlags: { params: [ext], results: [i32] },
+    insertOnly: { params: [ext, ext, ext], results: [] },
+    setBag: { params: [ext, ext], results: [] },
     corruptParent: { params: [ext, ext], results: [] },
     fakePrefix: { params: [ext, ext], results: [] },
     nativeClone: { params: [i32, i32, ext], results: [ext] },
@@ -425,6 +437,8 @@ export function mixedRuntime(displaced = false) {
     has: buildMixedObjectHas,
     getPrototypeOf: buildMixedObjectGetPrototype,
     setPrototypeOf: buildMixedObjectSetPrototype,
+    isExtensible: buildMixedObjectIsExtensible,
+    preventExtensions: buildMixedObjectPreventExtensions,
   };
   for (const [role, builder] of Object.entries(definitions)) tx.fillFunction(tokens[role]!, builder(operands));
   tx.fillFunction(
@@ -592,6 +606,22 @@ export function mixedRuntime(displaced = false) {
     locals: [],
     body: [...bag(0), get(1), { op: "struct.set", typeIdx: f.objects.object.typeIndex, fieldIdx: 4 }],
   });
+  tx.fillFunction(controls.readFlags!, {
+    locals: [],
+    body: [...bag(0), { op: "struct.get", typeIdx: f.objects.object.typeIndex, fieldIdx: 4 }],
+  });
+  tx.fillFunction(controls.insertOnly!, {
+    locals: [],
+    body: [...bag(0), get(1), get(2), { op: "any.convert_extern" }, n(7), n(0), call(r.storage.insert)],
+  });
+  tx.fillFunction(controls.setBag!, {
+    locals: [],
+    body: [
+      ...as(0, c.closures.root.typeIndex),
+      get(1),
+      { op: "struct.set", typeIdx: c.closures.root.typeIndex, fieldIdx: 2 },
+    ],
+  });
   tx.fillFunction(controls.corruptParent!, {
     locals: [],
     body: [
@@ -734,6 +764,8 @@ export function mixedRuntime(displaced = false) {
     stringCreate: r.stringCreate.create,
     newNumber: r.wrappers.allocation.Number,
     newBoolean: r.wrappers.allocation.Boolean,
+    newSymbol: r.wrappers.allocation.Symbol,
+    newBigInt: r.wrappers.allocation.BigInt,
     symbol: r.symbols.functions.box,
     unbox: r.values.functions.unboxNumber,
     ...Object.fromEntries(source.factories.map((row) => [row.name, row.slot])),

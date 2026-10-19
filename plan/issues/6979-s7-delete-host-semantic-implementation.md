@@ -4783,3 +4783,109 @@ catalog algorithms/population, authenticated source/public publication,
 foreign/dynamic carriers, canonical mixed providers, general first-class
 undefined and Linear/WASI construction remain open. Both issues remain in
 progress and PR6762 stays draft behind its prerequisite stack.
+
+### S7-ac native mixed-object extensibility (2026-10-19, Codex)
+
+Continue from signed `27a4332cf8dbfece4e02c7b6f43c6d71b4096881`. Add the
+missing mixed-object IsExtensible/PreventExtensions internal operations to the
+existing canonical structural owner, not another storage or host engine.
+They use the existing classifier and actual own bag, preserving unready (2)
+and unsupported (3) separately from false/true (0/1). Source closures remain
+unready until genuine source authority exists; no public Object/Reflect or
+whole-realm admission follows from a structural operation.
+
+Shared-state review: ordinary storage creation initializes object flags;
+insert and both data/accessor descriptor algorithms consult nonExtensible;
+mixed SetPrototypeOf consults the same flag. The existing object read path
+also consults nullPrototype in that field. Wrapper/realm record initialization
+preserves the ordinary prefix. PreventExtensions must OR only nonExtensible,
+not replace flags, walk parents, invoke getters, copy bags or seal properties.
+The mixed owner is read by its inventory/completion APIs and component tests;
+there is no public source consumer yet. Add two canonical roles, keep Get and
+full completion pending, and cover new roles in identity/plan/body audits.
+
+Verification planned: real zero-import Wasm execution at normal and displaced
+coordinates, all admitted object/wrapper families, native bag authentication,
+source/foreign/uninitialized gaps, insertion/prototype enforcement, existing
+property updates, flag preservation and idempotence; scoped owner negative
+controls and existing mixed/resource suites. No receipt or gate relaxation.
+
+The implementation adds `isExtensible` and `preventExtensions` to the genuine
+mixed structural reservation/fill/completion audit. Both use the exact existing
+classifier before inspecting storage. Native callable bags must be non-null
+ordinary storage; missing bags remain unready, foreign bags unsupported. Source
+closures retain their existing unready result. PreventExtensions changes only
+the ordinary nonExtensible bit, so the already-owned insertion, descriptor and
+prototype algorithms observe the same state. No new host import, public entry,
+copying, realm population claim, callback binder or separate property engine.
+
+Further state inventory found the existing callable-only extensibility
+builder. Its exact read/OR kernel now has one shared ordinary-storage helper
+in the existing descriptor/flags common module; both callable-only and mixed
+builders delegate to it. Emission instructions are cloned independently (not
+language objects or bags) to avoid multiply remapped instruction identities.
+Exact callable definitions at normal/displaced indices guard its frozen
+instruction shape. Existing builtin delete/write, ordinary lookup and legacy
+codegen integrity/prototype helpers also read this flags word; they are not
+rewired or retired here. No compile-time nonExtensibleVars state is changed.
+
+Next integration obligation: these are internal Boolean/status results, not
+public Object/Reflect behavior on primitive inputs. The actual catalog
+algorithms must compose genuine argument/value/error/Boolean owners and this
+mixed owner. Resolve declaration/fill ordering with the genuine realm owner;
+do not accept arbitrary function handles, caller-filled bodies or completion
+counters as authority. Mixed Get/Call, full population, source/public entry,
+foreign identity, Linear/WASI construction and retirement requirements remain
+open. Existing JS-owned boundary values/callables stay live identity-backed
+references; this change does not replace or copy their boundary machinery.
+
+#### S7-ac verification and handoff
+
+The final native-focused run passes **201/201** cases across six files,
+including **42/42 new** mixed cases and three real zero-import modules at
+normal/displaced/decoded coordinates (UTF16/UTF8). All eight admitted families,
+unchanged property descriptors, insertion/prototype enforcement, independent
+flags, idempotence and unsupported/unready refusal execute. New plan/body/data
+negative controls retain scoped owner authentication. An initial 201-assertion
+run exited nonzero with a worker reporting timeout; the new audit tests now
+yield between cases. The final run exits zero without ignoring errors.
+
+The callable suite passes **38/38**, including **two new** normal/displaced
+definition controls. Its existing emitted extensibility locals/instructions
+are exactly the original sequence, and repeated bag operands have independent
+instruction objects. The three object-resource suites retain **147 pass /
+14 fail of 161**. Across these four files, **185 pass / 14 fail of 199**;
+removing only the two named new cases for the historical comparison leaves
+all **197** original full result/error rows identical to the retained S7-aa
+report. No expectation, receipt or skip was changed.
+
+All **33** complete policy inventories/binaries and **six** native compiled
+controls match the retained S7-ab reports exactly. No new host import or
+selector path. Typecheck/lint/format, size/function (**+68 source LOC** across
+four source files, no allowance), coercion/oracle, layering/fallback and flat
+directory checks pass. Whole-PR size/function gates pass: **374 source files,
+net -17586 LOC** against mainline merge-base; the two existing function grants
+are unchanged. Inventory stays valid, architecture incomplete, with the same
+1978 modules and existing classifications. Comparison excludes source hashes
+and the prior pre-commit report's tracking metadata for the now-committed
+allocation-facts leaf, not policy/classification differences.
+
+The complete cycle report is byte-identical to S7-ab: largest SCC **712**, four
+nontrivial SCCs, **10829** value edges and the same four growing direction
+counts against main. No waiver/root/floor/allowed-edge change. Preservation-only
+checks pass **6/6 full + 6/6 cut**, but the two unconstrained dynamic imports
+still keep strict retirement closure open. Their arbitrary-specifier behavior
+and non-exempting receipts are intentionally preserved. Full Test262 and the
+historical custody suites were not rerun here; the earlier guard failures and
+deeper retirement obligations remain unverified, not repaired by this change.
+
+The **779-case** compatibility cohort was rerun on the final source and retains
+**756 pass / 23 fail**, with identical complete rows/errors against the retained
+S7-z report. This is a retained-report comparison, not a fresh exact-parent
+control. All **44 new cases** (42 mixed, two definition controls) pass. Evidence:
+`plan/audit/6979-native-mixed-extensibility-20261019.json`.
+
+Continue from the signed checkpoint containing these source hashes. Implement
+the actual catalog/publication dependencies described above; do not promote
+structural completion to public semantic support or merge past the remaining
+gates. Both Markdown issues stay in progress and PR6762 stays draft.

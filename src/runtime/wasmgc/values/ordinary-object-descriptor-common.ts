@@ -30,6 +30,31 @@ export interface OrdinaryDescriptorFlags {
   readonly frozen: number;
   readonly noneHeap: TypeHandle;
 }
+
+/** Already-authenticated ordinary storage operand. Clone instructions, never share mutable emit nodes. */
+export function buildOrdinaryObjectExtensibilityBody(
+  objectTypeIdx: TypeHandle,
+  object: readonly Instr[],
+  prevent: boolean,
+): Instr[] {
+  return prevent
+    ? [
+        ...structuredClone(object),
+        ...structuredClone(object),
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+        { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nonExtensible },
+        { op: "i32.or" },
+        { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+        { op: "i32.const", value: 1 },
+      ]
+    : [
+        ...structuredClone(object),
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+        { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nonExtensible },
+        { op: "i32.and" },
+        { op: "i32.eqz" },
+      ];
+}
 export interface OrdinaryDescriptorErrors {
   readonly constructorIdx: FuncHandle;
   readonly tagIdx: number;
