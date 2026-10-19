@@ -38,6 +38,8 @@ import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { makeIrQualifiedExternConstructorResolver } from "./qualified-extern-constructor.js";
+import { makeIrExternClassInfoResolver } from "./extern-class-resolver.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -127,7 +129,6 @@ import {
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
-import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
 import {
   ensureNativeStringHelpers,
@@ -163,6 +164,7 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
+  getOrRegisterHoleyArrayType,
 } from "../codegen/registry/types.js";
 import type { CodegenContext, FunctionContext } from "../codegen/context/types.js";
 import { hasHostAccelerator, hostFreeEnvironment, jsValueBoundary } from "../target-profile.js";
@@ -7071,32 +7073,7 @@ function makeFromAstResolver(
     // method signature (the legacy stores the receiver `externref` as
     // the first param so the host import takes a flat
     // `(receiver, args...)` shape).
-    getExternClassInfo(className: string) {
-      const info = ctx.externClasses.get(className);
-      if (!info) {
-        if (className !== "Date" || !hasHostAccelerator(ctx.targetProfile, "date")) return undefined;
-        const externref = { kind: "externref" } as const;
-        const f64 = { kind: "f64" } as const;
-        return {
-          className: "Date",
-          importPrefix: "Date",
-          constructorParams: [],
-          methods: new Map([
-            ["getDate", { params: [externref], results: [f64] }],
-            ["getMonth", { params: [externref], results: [f64] }],
-            ["getFullYear", { params: [externref], results: [f64] }],
-          ]),
-          properties: new Map(),
-        };
-      }
-      return {
-        className: info.className,
-        importPrefix: info.importPrefix,
-        constructorParams: info.constructorParams,
-        methods: info.methods,
-        properties: info.properties,
-      };
-    },
+    getExternClassInfo: makeIrExternClassInfoResolver(ctx),
     // (#2856) Host-global identifier → the `global_<name>` handle import the
     // legacy `collectDeclaredGlobals` pass registered. Nothing to resolve in
     // host-free modes: that pass skips registration under
@@ -7233,6 +7210,7 @@ function makeFromAstResolver(
     isAmbientBinding(node: ts.Identifier): boolean {
       return moduleBindingResolver?.isAmbientBinding(node) === true;
     },
+    resolveQualifiedExternConstructor: makeIrQualifiedExternConstructorResolver(ctx.checker),
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan

@@ -1,0 +1,606 @@
+{
+  "schema": "6979-qualified-extern-ir-checkpoint-v1",
+  "date": "2026-10-19",
+  "issue": "6979 — S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators",
+  "pullRequest": "https://github.com/loopdive/js2/pull/6762",
+  "parentRevision": "d86d645ba9e4d8aeb945e39f109938a4facf51e4",
+  "candidate": "Containing commit; implementation content pinned by sourceSha256 below.",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4, fork pool, VITEST_MAX_FORKS=2, --experimental-wasm-exnref",
+    "lane": "Native-first JS WasmGC for qualified constructor controls; existing suites explicitly select their own targets.",
+    "testConfig": ".tmp/s7g-vitest.config.ts merges repository Vitest config with the V8 exception-reference fork flag only.",
+    "parentProductionTrackedDiff": "",
+    "parentTestSupport": [
+      "tests/issue-6979-qualified-extern-ir.test.ts",
+      "tests/issue-6979-identity-box-support.test.ts",
+      "src/ir/qualified-extern-constructor.ts",
+      "src/codegen/extern-class-metadata.ts"
+    ],
+    "parentSupportLimit": "Two new helper files are imported only by the copied tests, never the parent compiler. Parent tracked production sources are unchanged. Helper-unit passes do not prove parent production integration."
+  },
+  "boundaries": {
+    "files": 10,
+    "total": 125,
+    "passing": 125,
+    "failing": 0,
+    "skipped": 0
+  },
+  "focused": {
+    "parent": {
+      "files": 3,
+      "total": 24,
+      "passing": 17,
+      "failing": 7,
+      "skipped": 0
+    },
+    "candidate": {
+      "files": 3,
+      "total": 24,
+      "passing": 24,
+      "failing": 0,
+      "skipped": 0
+    },
+    "uniqueParentKeys": 24,
+    "uniqueCandidateKeys": 24,
+    "normalization": "Only parent worktree directory replaced, symmetrically; raw error texts otherwise unchanged.",
+    "changes": [
+      {
+        "test": "tests/issue-6979-identity-box-support.test.ts :: #6979 explicit empty boxing support accepts only the exact instruction, operand type object and externref carrier",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected false to be true // Object.is equality",
+        "afterError": null
+      },
+      {
+        "test": "tests/issue-6979-qualified-extern-ir.test.ts :: #6979 declared namespace constructors use prepared IR keeps api.Number separate from the intrinsic, without an AST body",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected { …(20) } to match object { kind: 'emitted', …(3) }",
+        "afterError": null
+      },
+      {
+        "test": "tests/issue-6979-qualified-extern-ir.test.ts :: #6979 declared namespace constructors use prepared IR keeps api.Function separate from the intrinsic, without an AST body",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected { …(20) } to match object { kind: 'emitted', …(3) }",
+        "afterError": null
+      },
+      {
+        "test": "tests/issue-6979-qualified-extern-ir.test.ts :: #6979 declared namespace constructors use prepared IR keeps api.Date separate from the intrinsic, without an AST body",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected { …(20) } to match object { kind: 'emitted', …(3) }",
+        "afterError": null
+      },
+      {
+        "test": "tests/issue-6979-qualified-extern-ir.test.ts :: #6979 declared namespace constructors use prepared IR keeps api.Map separate from the intrinsic, without an AST body",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected { …(20) } to match object { kind: 'emitted', …(3) }",
+        "afterError": null
+      },
+      {
+        "test": "tests/issue-6979-qualified-extern-ir.test.ts :: #6979 declared namespace constructors use prepared IR keeps distinct providers for namespaces with identical class leaf names",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected { …(20) } to match object { kind: 'emitted', …(3) }",
+        "afterError": null
+      },
+      {
+        "test": "tests/issue-6979-qualified-extern-ir.test.ts :: #6979 declared namespace constructors use prepared IR retains constructor result identity and original thrown values at the boundary",
+        "before": "failed",
+        "after": "passed",
+        "beforeError": "AssertionError: expected { …(20) } to match object { kind: 'emitted', …(3) }",
+        "afterError": null
+      }
+    ],
+    "remainingFailures": []
+  },
+  "broad": {
+    "parent": {
+      "files": 10,
+      "total": 194,
+      "passing": 128,
+      "failing": 41,
+      "skipped": 25
+    },
+    "candidate": {
+      "files": 10,
+      "total": 194,
+      "passing": 128,
+      "failing": 41,
+      "skipped": 25
+    },
+    "uniqueParentKeys": 194,
+    "uniqueCandidateKeys": 194,
+    "normalization": "Only parent worktree directory replaced, symmetrically; raw error texts otherwise unchanged.",
+    "changes": [],
+    "remainingFailures": [
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — object message is stringified, not rejected an object with NO coercion method keeps its pre-existing throw",
+        "firstErrorLine": "Error: promise resolved \"'[object Object]'\" instead of rejecting",
+        "normalizedErrorSha256": "6192024f5664f4bf845a62a0b1be9fe1c5a50e63dbf80a5d402b34c70dcdd8f9"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — object message is stringified, not rejected a @@toPrimitive returning a SYMBOL throws rather than yielding a message",
+        "firstErrorLine": "Error: promise resolved \"'[object Object]'\" instead of rejecting",
+        "normalizedErrorSha256": "1fb66f1c9166200154273b6bb00ba7a1b9c9d69b8857a2bed42642e0057aab3d"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — object message is stringified, not rejected once @@toPrimitive has answered, toString/valueOf must NOT run",
+        "firstErrorLine": "AssertionError: expected [Function] to throw error including 'Cannot convert object to primitive va…' but got 'toString ran'",
+        "normalizedErrorSha256": "e1d22fcd60a69cb7e9bbcd7209faf7c27749382933b6569e88f3800242f51628"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — object message is stringified, not rejected an @@toPrimitive PROPERTY wins over nothing else",
+        "firstErrorLine": "AssertionError: expected '[object Object]' to be 'tp' // Object.is equality",
+        "normalizedErrorSha256": "eb246e452a7cc09c1e054c1d8c9bd4be6438345a8f91a814b137b61645c8685c"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — object message is stringified, not rejected an @@toPrimitive METHOD beats toString (§7.1.1 step 2)",
+        "firstErrorLine": "AssertionError: expected 'no' to be 'tp' // Object.is equality",
+        "normalizedErrorSha256": "a3e8ac57f265162096273c51af032da40323e2ee383c3eec8d8df1cb0fdc20b8"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — object message is stringified, not rejected AggregateError stringifies an object message",
+        "firstErrorLine": "AssertionError: expected '' to be 'ag' // Object.is equality",
+        "normalizedErrorSha256": "bd01ee9a78bde030e442be69819be982e795b127c16823b25dd2d0394db894fd"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — abrupt completions propagate (the test262 assertion) case1 — an @@toPrimitive method's throw wins over toString/valueOf",
+        "firstErrorLine": "AssertionError: expected 'NO-THROW' to be 'T262' // Object.is equality",
+        "normalizedErrorSha256": "8840779a5f6fb2d3fee743bbe002b76cce6ce26af7da5eccd5bf2bbbba2b1fd3"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — abrupt completions propagate (the test262 assertion) case2 — with @@toPrimitive undefined, toString's throw wins over valueOf",
+        "firstErrorLine": "AssertionError: expected 'NO-THROW' to be 'T262' // Object.is equality",
+        "normalizedErrorSha256": "ccf4d885400a4f54e8ca6d2092787fa6df12786ae3302128b85306e5f0ab820a"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — abrupt completions propagate (the test262 assertion) case3 — with both undefined, valueOf's throw escapes",
+        "firstErrorLine": "AssertionError: expected 'NO-THROW' to be 'T262' // Object.is equality",
+        "normalizedErrorSha256": "bc06fdbd2aaff4c03991dfc31b65fbb15a478b584e34ad86c0b2998fc030b649"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — abrupt completions propagate (the test262 assertion) the same propagation holds for the plain Error constructor",
+        "firstErrorLine": "AssertionError: expected 'OTHER:x' to be 'T262' // Object.is equality",
+        "normalizedErrorSha256": "c411d5a8867c057a4ec78e5363143ad44b4944f795456ee8ed64ed0007931acb"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — regression guards: shapes that must NOT change an array message still joins rather than becoming [object Object]",
+        "firstErrorLine": "AssertionError: expected '[object Object]' to be '1,2' // Object.is equality",
+        "normalizedErrorSha256": "336e13eac1f7a8dbb6f2efe60752d548012e0810052cc0e1ef81e160a3a82f8f"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — regression guards: shapes that must NOT change AggregateError's ERRORS argument is NOT coerced to a primitive",
+        "firstErrorLine": "AssertionError: expected +0 to be 2 // Object.is equality",
+        "normalizedErrorSha256": "c78161b012553eadee2458f1f7cd1f427d51012d4f81b4a17439e292f36a9978"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — regression guards: shapes that must NOT change the OPTIONS argument is NOT coerced — its toString never runs",
+        "firstErrorLine": "AssertionError: expected '' to be 'm' // Object.is equality",
+        "normalizedErrorSha256": "b263be22573c38659af2059fba74c3684ac9577d2885ad8b25d5d8c9bd784781"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — regression guards: shapes that must NOT change a string message on AggregateError is untouched",
+        "firstErrorLine": "AssertionError: expected '' to be 'ag' // Object.is equality",
+        "normalizedErrorSha256": "56fe373fd5c92ba6be1ffd9c31b0c0c9e4f3be384fcb423e100f786f9ed7ea34"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — known residuals, pinned deliberately an object message at MODULE scope keeps its pre-existing throw",
+        "firstErrorLine": "Error: promise resolved \"{ f: [Function invoke], …(92) }\" instead of rejecting",
+        "normalizedErrorSha256": "1da98fb584fa75824bd95d603d4ada0165156678d5fac5435277f20fed5f9df1"
+      },
+      {
+        "test": "tests/issue-3481-cause2-error-message-tostring.test.ts :: #3481 cause 2 — known residuals, pinned deliberately a valueOf-only object keeps its pre-existing throw",
+        "firstErrorLine": "Error: promise resolved \"'[object Object]'\" instead of rejecting",
+        "normalizedErrorSha256": "5ddfe1bf4852dc2b1a75b6b9d1f424ca64b04c662ff940cbf16cd282532f35a7"
+      },
+      {
+        "test": "tests/issue-3520-host-class-callable-abi.test.ts :: #3520 retained host-class callable Program ABI ownership owns externref class units and the Promise on-host constructor by exact structural identity",
+        "firstErrorLine": "Error: missing callable ABI entry ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Ahost-class-callable-collision.ts%3Aroot%3Adeclaration%3A0000000000000001:promise-subclass-onhost-constructor:0000000000000000",
+        "normalizedErrorSha256": "953a5c84805f6ea85cc328c811afefd8217ec9dc17d3ea4f6fcd0b7adf593360"
+      },
+      {
+        "test": "tests/issue-5211-invoke-method-callable-arg.test.ts :: #5211 — DOM-lane control: extern_class crossings with non-struct arguments createElement / setAttribute / appendChild record the same values as before",
+        "firstErrorLine": "AssertionError: expected +0 to be 3 // Object.is equality",
+        "normalizedErrorSha256": "0129ce115e9bd411db3b35887bbf4a6bde01ab06520041a03405595a42da6a7c"
+      },
+      {
+        "test": "tests/issue-5239-object-create-class-prototype.test.ts :: #5239 — Object.create on a compiled class prototype reached as a value the single-module lane dispatches every member",
+        "firstErrorLine": "AssertionError: expected { dynTypeofMethod: {}, …(9) } to deeply equal { dynTypeofMethod: 'function', …(9) }",
+        "normalizedErrorSha256": "54c73c09c89e2e4d48b16af141cf0ded1d4fbd4ca3c9d4094e1ae801852b3dc6"
+      },
+      {
+        "test": "tests/issue-5239-object-create-class-prototype.test.ts :: #5239 — Object.create on a compiled class prototype reached as a value a separately linked provider answers identically",
+        "firstErrorLine": "AssertionError: expected { dynTypeofMethod: {}, …(9) } to deeply equal { dynTypeofMethod: 'function', …(9) }",
+        "normalizedErrorSha256": "18b4fbeaea35852ad9f6e8abd1b11200059870b5b382331ad37e1f651f617e0c"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.NumberFormat honours minimumFractionDigits",
+        "firstErrorLine": "AssertionError: Intl.NumberFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).",
+        "normalizedErrorSha256": "4ed3ee057467428033e93c41259162d5f91256980d3d3060b0be6a3a07cd757b"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.NumberFormat honours a bag held in a local, not just an inline literal",
+        "firstErrorLine": "AssertionError: Intl.NumberFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).",
+        "normalizedErrorSha256": "8380c1f5f57fb069b6b329833db33276beddfcdb4d5bd22311c019045eea46d4"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.ListFormat honours type: disjunction",
+        "firstErrorLine": "AssertionError: expected {} to be 'a or b' // Object.is equality",
+        "normalizedErrorSha256": "8c54c3ea2419b85ad2fc6d246a38f0ca50745edc4fcf328365b032edfaa929fb"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.PluralRules honours type: ordinal (dynamic spelling)",
+        "firstErrorLine": "AssertionError: Intl has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "250418d02a2559f1bff696186f935e2b7c6b70538c3b80f8a36a1b3d43252da0"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.RelativeTimeFormat honours numeric: auto (dynamic spelling)",
+        "firstErrorLine": "AssertionError: Intl has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "0e0dd75b03e97af360a86b221e17431eddcc8e246ed2bf87603647f43275b1db"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.DateTimeFormat keeps its #5378 bag (the arm this generalises)",
+        "firstErrorLine": "AssertionError: Intl.DateTimeFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "710b4b87a0406a17c62e8c6a3e6a8dd73f82723b200ca42aed0640e6711b8d79"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.DateTimeFormat called WITHOUT new constructs (§15.1.2)",
+        "firstErrorLine": "AssertionError: Intl.DateTimeFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "d911c347b61a15fb49b88bd64782a8523b99a940535194186d957dc73680e484"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Intl.NumberFormat called WITHOUT new still honours its bag",
+        "firstErrorLine": "AssertionError: Intl.NumberFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "a0a2fc0f64391f49dd95ee0e4698f9f4a7d2a46372541a06c15e5be403ebe835"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Reflect.construct(Intl.DateTimeFormat, [locale]) constructs",
+        "firstErrorLine": "AssertionError: Intl.DateTimeFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "d5ccb838be9990853637f72d4a3d774706c84b9b21cfd20e455b030f80881621"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Reflect.construct passes a bag through when one IS supplied",
+        "firstErrorLine": "AssertionError: Intl.NumberFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "27a7b521e66aa26d30e5cf22ec7935038a3e17aefae9f1ccea59f92cccc89d27"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) Reflect.construct still gives a one-element list exactly one argument",
+        "firstErrorLine": "AssertionError: expected {} to be '1|en-US' // Object.is equality",
+        "normalizedErrorSha256": "2bfcf9f4c98bfb810b1df74d36a9ba0c9a180a5daaab3df27a26fefdcab9f3e8"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) CONTROL — the Request init dictionary is unchanged",
+        "firstErrorLine": "TypeError: Cannot convert object to primitive value",
+        "normalizedErrorSha256": "11f4532dbb2b1b0bd9d0e2456e5b0f0d0ac124c9d17bb8043e386b5454dfce74"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) CONTROL — Error `cause` keeps OBJECT IDENTITY, not a mirror",
+        "firstErrorLine": "AssertionError: expected {} to be 'true' // Object.is equality",
+        "normalizedErrorSha256": "143e836729c4267c97070ad29fcd0f1906d3d8755c0e9a1da295f4ac65a4642e"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag consumer-only (single module) CONTROL — Map still consumes its iterable, not a property mirror",
+        "firstErrorLine": "AssertionError: expected {} to be '2|2' // Object.is equality",
+        "normalizedErrorSha256": "8c543bc1f2a3a5bfea5f66e289b207ca8189cc428a025e832b1d681ee1cea777"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) Intl.NumberFormat honours a cross-module bag",
+        "firstErrorLine": "AssertionError: Intl.NumberFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).",
+        "normalizedErrorSha256": "b4e02bddb0b0d765b3d5581941fc1ee41d18509059b05c37ab63d37f995aae92"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) Intl.ListFormat honours a cross-module bag",
+        "firstErrorLine": "AssertionError: expected {} to be 'a or b' // Object.is equality",
+        "normalizedErrorSha256": "0cdb210d93df8186f039a4c312a208557cc8b1ad00d1f17787df0fcac32737c8"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) Intl.PluralRules honours a cross-module bag",
+        "firstErrorLine": "AssertionError: Intl has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "38f78869a81caf85fabab0aa06b5a64a32fcefd269b957de55afed78d7dbcb9d"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) Intl.RelativeTimeFormat honours a cross-module bag",
+        "firstErrorLine": "AssertionError: Intl has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "56f2b3d723635fc53aeddfec13eb84d9c5ac815486825a0969632a5782bf699f"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) Intl.DateTimeFormat honours a cross-module bag",
+        "firstErrorLine": "AssertionError: Intl.DateTimeFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "94f7f1006154dbfa217a6d27960cdf5f8a3fd0a1e6abaee23eb1ddd1908fe31e"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) Intl.DateTimeFormat without `new` honours a cross-module bag",
+        "firstErrorLine": "AssertionError: Intl.DateTimeFormat has no native implementation on the native semantic regime: compile with --host-accelerator intl (hostAccelerators: [\"intl\"]) to use the JavaScript host's Intl (#6986).: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "7a50a7e76a319919e592966d4383102e71e488064f6fe9e285557aaaa9ac0a52"
+      },
+      {
+        "test": "tests/issue-5381-intl-options-bag.test.ts :: #5381 — extern-class constructors marshal their options bag through a linked provider (bag minted in another module) CONTROL — the Request init dictionary is unchanged across the link",
+        "firstErrorLine": "TypeError: Cannot convert object to primitive value",
+        "normalizedErrorSha256": "11f4532dbb2b1b0bd9d0e2456e5b0f0d0ac124c9d17bb8043e386b5454dfce74"
+      }
+    ]
+  },
+  "prepared": {
+    "parent": {
+      "files": 8,
+      "total": 145,
+      "passing": 129,
+      "failing": 16,
+      "skipped": 0
+    },
+    "candidate": {
+      "files": 8,
+      "total": 145,
+      "passing": 129,
+      "failing": 16,
+      "skipped": 0
+    },
+    "uniqueParentKeys": 145,
+    "uniqueCandidateKeys": 145,
+    "normalization": "Only parent worktree directory replaced, symmetrically; raw error texts otherwise unchanged.",
+    "changes": [],
+    "remainingFailures": [
+      {
+        "test": "tests/issue-3521-fast-mixed-signature-admission.test.ts :: #3521 R2-F1 fast-lane mixed string/scalar signature admission prepares anyTrue in fast before direct emission",
+        "firstErrorLine": "AssertionError: Internal error compiling function 'anyTrue': injected direct function-body poison: anyTrue",
+        "normalizedErrorSha256": "277450e2b287c096033580489f15ef8cbb4e79387fbccb1816816574bb405e9e"
+      },
+      {
+        "test": "tests/issue-3521-fast-mixed-signature-admission.test.ts :: #3521 R2-F1 fast-lane mixed string/scalar signature admission preserves vector behaviour through the prepared route",
+        "firstErrorLine": "AssertionError: Internal error compiling function 'anyTrue': injected direct function-body poison: anyTrue",
+        "normalizedErrorSha256": "7bf391b5cee9ceb58142ac3d2b9e9b4a93f943447918dad441c41ca37d82b943"
+      },
+      {
+        "test": "tests/issue-3521-fast-mixed-signature-admission.test.ts :: #3521 R2-F1 fast-lane mixed string/scalar signature admission emits anyTrue byte-identically to its non-fast twin",
+        "firstErrorLine": "AssertionError: IR path failed for anyTrue: function typeIdx parity mismatch: IR=52, legacy=46 — keeping legacy body [IR-FALLBACK]",
+        "normalizedErrorSha256": "a7967849ab05ea86aff019da4966f266395b0cd4fe90622d148324f6159565ad"
+      },
+      {
+        "test": "tests/issue-3521-prepared-free-function-routing.test.ts :: #3521 prepare-before-emit free-function routing keeps direct receipt lookup source-local across a multi-source graph",
+        "firstErrorLine": "AssertionError: expected 576 to be less than or equal to 24",
+        "normalizedErrorSha256": "d73bb2d1099f2b61979a40b4292edb8fa5799853751e52f710ef300c192868db"
+      },
+      {
+        "test": "tests/issue-3521-prepared-free-function-routing.test.ts :: #3521 prepare-before-emit free-function routing keeps an implicit-any component with an allocated ABI mismatch on the post-direct overlay",
+        "firstErrorLine": "AssertionError: expected [ 'sameValue', 'compare', 'run' ] to not include 'sameValue'",
+        "normalizedErrorSha256": "88e517356e1e5a7b1cae9b450a58ce9bf6008f3997bc13da904d7ad4cafce314"
+      },
+      {
+        "test": "tests/issue-3521-prepared-free-function-routing.test.ts :: #3521 prepare-before-emit free-function routing preserves singleton identity while the function-value target is prepared in gc",
+        "firstErrorLine": "AssertionError: expected -57 to be +0 // Object.is equality",
+        "normalizedErrorSha256": "1f2f5f9ae64514cb14cd5b0dc24cb50f3543c532eaed06d5ffea7c5eb491555a"
+      },
+      {
+        "test": "tests/issue-3521-prepared-free-function-routing.test.ts :: #3521 prepare-before-emit free-function routing preserves singleton identity while the function-value target is prepared in standalone",
+        "firstErrorLine": "AssertionError: expected -19 to be 119 // Object.is equality",
+        "normalizedErrorSha256": "186abb0a2caf11aabfbca760e7a928d440d985613afe7075901adb8ea2dc32f8"
+      },
+      {
+        "test": "tests/issue-3521-prepared-free-function-routing.test.ts :: #3521 prepare-before-emit free-function routing keeps function-value targets direct beside a current-function caller read",
+        "firstErrorLine": "AssertionError: expected { …(20) } to match object { legacyBodyEmitted: false, …(2) }",
+        "normalizedErrorSha256": "63f0c77e3e49c7474b928a53e9874549cbd021f9c3a271e5ce69e9793fa550cc"
+      },
+      {
+        "test": "tests/issue-3521-prepared-free-function-routing.test.ts :: #3521 prepare-before-emit free-function routing keeps prepared bodies valid when a later direct owner adds a host import",
+        "firstErrorLine": "AssertionError: expected false to be true // Object.is equality",
+        "normalizedErrorSha256": "450a1ea622b4bcd0390bd6173d852c7fcb0f83248f1518a7a49f7f3bbb8a22a3"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-shapes.test.ts :: #3521 R2 withdrawal telemetry — (b) one shape per reachable reason names the three signature/async admission refusals beside a prepared control row",
+        "firstErrorLine": "AssertionError: expected { prepareAttempts: 1, …(4) } to deeply equal { prepareAttempts: 1, …(4) }",
+        "normalizedErrorSha256": "9ea16dd466a3aae7eceb45022e41e2f10c7cf21764b0a76be2058fe2f16f6f4a"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-shapes.test.ts :: #3521 R2 withdrawal telemetry — (b) one shape per reachable reason admission:fast-signature-unproven",
+        "firstErrorLine": "AssertionError: expected { prepareAttempts: 1, …(4) } to deeply equal { prepareAttempts: 1, …(4) }",
+        "normalizedErrorSha256": "a8bd5d96f1849287e71cffb8863dbf24ee1aca6f2dc322fa2e26af59f6547822"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-shapes.test.ts :: #3521 R2 withdrawal telemetry — (b) one shape per reachable reason (#5282) a fast-lane refusal names its own predicate, not the fast arm",
+        "firstErrorLine": "AssertionError: expected { prepareAttempts: 1, …(4) } to deeply equal { prepareAttempts: 1, …(4) }",
+        "normalizedErrorSha256": "f67a97b09d44b65ba8b6e42f598010a024edcc8a37186ed4d7280b3ab331af6d"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-shapes.test.ts :: #3521 R2 withdrawal telemetry — (b) one shape per reachable reason fixed-point:storage-terminal-unprepared",
+        "firstErrorLine": "AssertionError: expected { prepareAttempts: 1, …(4) } to deeply equal { prepareAttempts: 1, …(4) }",
+        "normalizedErrorSha256": "3ecd5effc90b38ccc824857d5723891eb1db8f7c6db1dd19cb6d2a1026b5e4e3"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-shapes.test.ts :: #3521 R2 withdrawal telemetry — (b) one shape per reachable reason fixed-point:callee-outside-component",
+        "firstErrorLine": "AssertionError: expected { prepareAttempts: 1, …(4) } to deeply equal { prepareAttempts: 1, …(4) }",
+        "normalizedErrorSha256": "031f8b36c0c39a63e832f4361ab081c73bdd675ae5ed6ba4b819c9cedff92ae5"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-shapes.test.ts :: #3521 R2 withdrawal telemetry — (b) one shape per reachable reason not-attempted:late-feature-preparation",
+        "firstErrorLine": "AssertionError: expected { prepareAttempts: 1, …(4) } to deeply equal { prepareAttempts: 1, …(4) }",
+        "normalizedErrorSha256": "6d956075cdd2b971331d5d2513fcb30f171102452a9e6e6ced3a59cf66bc8f9f"
+      },
+      {
+        "test": "tests/issue-3521-r2-withdrawal-telemetry.test.ts :: #3521 R2 withdrawal telemetry — (a) contract is a closed 20-member vocabulary minted exactly once per reason",
+        "firstErrorLine": "AssertionError: reason fast-signature-unproven is minted 2 times: expected 2 to be 1 // Object.is equality",
+        "normalizedErrorSha256": "77ebab83604000bb2963123ee993f0dde567e361092c8061698d8100469a25d5"
+      }
+    ]
+  },
+  "runtimeProbe": {
+    "parent": "Clean d86 production probe: Number/Map return 42 and 7; Function/Date compile but throw Cannot access property on null or undefined.",
+    "candidate": "All four numeric constructor controls return 42 and 7; exact namespace collision test returns 42/21; returned instance and original thrown token preserve object identity.",
+    "ownership": "For each functional control: directBodyEmissions=0, irBodyEmissions=1, legacyBodyEmitted=false, no legacy body entry.",
+    "attribution": "Seven focused fail-to-pass rows are six prepared-IR ownership assertions and one support-witness assertion, NOT seven runtime bug fixes."
+  },
+  "identitySupport": {
+    "operation": "Canonical externref box emits zero instructions; retains original JS object.",
+    "authority": "Exact final instruction object, exact extern operand IrType object, selected externref carrier; carrier still resolved through program ABI sealing.",
+    "negatives": "Missing or empty callable lists, cloned instruction/type, non-externref carrier are rejected. Strings/general empty lowerings are not admitted.",
+    "unitFixtureLimit": "Dummy IrTypeRef in unit matcher fixture is not ABI evidence; actual sealing is exercised by the compiled constructor tests."
+  },
+  "native": {
+    "rows": [
+      {
+        "target": "standalone",
+        "name": "scalar",
+        "bytes": 11413,
+        "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+        "imports": [],
+        "outputs": [42, 7],
+        "boundaryProbeExported": false
+      },
+      {
+        "target": "standalone",
+        "name": "flat",
+        "bytes": 33185,
+        "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+        "imports": [],
+        "outputs": [42, 7],
+        "boundaryProbeExported": false
+      },
+      {
+        "target": "standalone",
+        "name": "dynamic",
+        "bytes": 146186,
+        "sha256": "a14649794c2bbcaf55a300cffabe34cc49e2a2caa6210a121af4ade43f851ecf",
+        "imports": [],
+        "outputs": [42, 7],
+        "boundaryProbeExported": false
+      },
+      {
+        "target": "wasi",
+        "name": "scalar",
+        "bytes": 22719,
+        "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+        "imports": [],
+        "outputs": [42, 7],
+        "boundaryProbeExported": false
+      },
+      {
+        "target": "wasi",
+        "name": "flat",
+        "bytes": 52928,
+        "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+        "imports": [],
+        "outputs": [42, 7],
+        "boundaryProbeExported": false
+      },
+      {
+        "target": "wasi",
+        "name": "dynamic",
+        "bytes": 141053,
+        "sha256": "a0ce3ef8ebe472044ae2cafccbc0533b04e9f9487adcf64ef60ffd08bdd70b88",
+        "imports": [],
+        "outputs": [42, 7],
+        "boundaryProbeExported": false
+      }
+    ],
+    "byteIdentical": 6,
+    "zeroImports": 6,
+    "distinctInputOutputs": [42, 7]
+  },
+  "imports": {
+    "totals": {
+      "probes": 33,
+      "imports": 457,
+      "unknown": 0,
+      "regimeGap": 0
+    },
+    "identicalDetailedInventories": 33,
+    "perProbeSha256": {
+      "core": "978bc260c6c3946cc00fce4f0f338bd7425dd58d2cdd877166e0b62635ef63a7",
+      "regexp": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "collections": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "promise": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+      "date": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "dataView": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "bigint": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "bigintFormatting": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "number": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "textGlobals": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "object": "11483f0d34aaeb5abf5d1752ea59abef82b4ee9db5d7bb90ea23a3c239b4d559",
+      "objectRest": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "functionBind": "693f94552e9c5cae5a35f88209a53caf844f1df7c6e25ab6e13ae2ff19af86a3",
+      "proxy": "3880ade8aba827352dd07007c7ae489cc7db63b672dbc31d94f581e184e477f2",
+      "typedArrays": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "objectDescriptors": "5bfc0985a85fffdcb6c0e5cdcc203f75d55a6dc6e823283b52e5a963ce1d778a",
+      "objectPrototype": "b3e73453cdf6ad9f7b1e11cfff5eae20c643fdbfd180bd23d98174fa899032bb",
+      "functionCall": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "functionApply": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "errors": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "generators": "804345448dd1449a2ac4cd6cd197e978b65641468d0b4cd7bf7050e4d6d7f21f",
+      "iterators": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "promiseCombinators": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+      "promiseAnyRace": "558162d5a8e56d8a305a5d1fdd988bdf12db489fddbfc3178366cdf1b82cdd7e",
+      "regexpDynamic": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "mapIteration": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "setIteration": "f1355b46d88b222a3cbe40d861b55135261521096cb0257eaf00f3b9df2f18c2",
+      "reflect": "1fb396e359d67f420fb8fd0cc1aced3065ba4a0fef83158cad9aedde5cf84b85",
+      "dynamicOps": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82",
+      "destructuring": "5bfc0985a85fffdcb6c0e5cdcc203f75d55a6dc6e823283b52e5a963ce1d778a",
+      "proxyMop": "b2892de09fb3c2c3f7d42b21213403a10892e3cbc7b9e1efc80610e67ec54426",
+      "proxyRevocable": "7b806933d15686f4369723812df3b01562ea6ff49a573d050ccb87239993d296",
+      "stringProtocols": "f0d27f35edbe5298c994fc9e063bedf18ff78c93ff8c51fe900be7583ad18a82"
+    },
+    "budgetViolations": ["native-first imports 457 > maximum 452"],
+    "hardGate": "FAIL: 457 > 452; unchanged, unapproved, no waiver or baseline update."
+  },
+  "runtimeMetrics": {
+    "runtimeTsLines": 10582,
+    "resolveImportLines": 1682,
+    "resolveImportCases": 7,
+    "ownedAdapterLines": 895,
+    "explicitCapabilityLines": 1194,
+    "runtimeTarget": 8000,
+    "runtimeTargetGap": 2582
+  },
+  "gates": {
+    "typecheck": "PASS",
+    "lint": "PASS",
+    "format": "PASS",
+    "loc": "PASS",
+    "functionBudget": "PASS",
+    "coercion": "PASS",
+    "oracle": "PASS",
+    "irFallbacks": "PASS",
+    "layering": "PASS: 87 import lines / 15 files, baseline 90; unbanked. One duplicate statement consolidated, not a unique edge removed.",
+    "compilerInventory": {
+      "status": "inventory-valid-architecture-incomplete",
+      "errors": [],
+      "architectureComplete": false
+    },
+    "inventoryChange": "Six new modules and four earlier S7 modules classified as unmigrated debt; no activation or architecture-complete claim.",
+    "deadExports": "Preservation command passes 6/6 full and 6/6 cut witnesses; strict closure NOT certified.",
+    "strictClosureBlockers": [
+      "src/optimize.ts#getBinaryenModule nonliteral dynamic import at 412",
+      "src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport nonliteral dynamic import at 151"
+    ]
+  },
+  "proofLimits": [
+    "Single-module compiled integration controls only; shared metadata publisher also used by multi-module driver, but this slice does not independently execute multi-module constructors.",
+    "No frozen direct-AST body emitter changed; no new host semantic provider; no ceiling raised or banked.",
+    "No full Test262/conformance sweep, whole-program IR-only admission certificate, compatibility/accelerator acceptance or full migration completion.",
+    "PR remains draft, stacked on unmerged PR 6701 and recovered S7-b 9423a71e82. Do not merge independently.",
+    "Opaque bound functions, strict closure, source retirement, import/binary cost and all remaining S7 acceptance remain open."
+  ],
+  "sourceSha256": {
+    "src/codegen/extern-declarations.ts": "02f1f65ca01bbf4c393765e394ccf518e520a67f840e2832c831f2a897419cdc",
+    "src/codegen/extern-class-metadata.ts": "a6a15aebcb3db162d6839a8584bc45cf6e26101744e49e70223382d72210743f",
+    "src/codegen/index.ts": "f4c6a15bec0266a2e7a490786b36ea982b06162de7fe84400c2edc6e20094323",
+    "src/codegen/registry/imports.ts": "e5a1c1c5c23a7259fb5842ea5406a0c5f9bfc76796c46e92e96c64c57afe7773",
+    "src/ir/from-ast.ts": "49ea591ac569c0a1d6b38e21e29190ec209d52cb2c63e566fb0ee835d0ea91d8",
+    "src/ir/integration.ts": "edeef7415c688500d2ea74dac7ec0efef51feba1629bf430517fa63c0e5f729f",
+    "src/ir/prepared-dynamic-support.ts": "660a48fa15e9e1bef628854ccda70821eb7fb49d68cb9abae768e1f4cddee54f",
+    "src/ir/prepared-instruction-support.ts": "9b72b972e020b480fdfd3c16c9dd30146d632d363fa358eb2e7ff38fe389b492",
+    "src/ir/select.ts": "ce36fd444a90e207625f4fe83f079095aa25399b2a56205a091b5ec0e265d000",
+    "src/ir/constructor-selection.ts": "85a165b41baecb3ecf5313fd2197662fd637740cddd8730ab80269a0ff3ba279",
+    "src/ir/dynamic-move-call.ts": "8725ab4e58e5045b75b6baf393d5963619cee2fbb37928738de3d2bc018240a7",
+    "src/ir/extern-class-contract.ts": "03148d48df409238afb3121afd5b8561c03f2f95d1039d0262646e6929edb440",
+    "src/ir/extern-class-resolver.ts": "012dc1bea043332ffa349a3551bf18180483c464112659b2d527315041113e7e",
+    "src/ir/qualified-extern-constructor.ts": "ef0213ca2157bf503ea571eca3f18c1a7eb501b28774d83f08af3853cb1f6205",
+    "tests/issue-6979-qualified-extern-ir.test.ts": "dbcff578ad180a918d45d24c09a291ded26249304e6faf85e259bfe140ca8436",
+    "tests/issue-6979-identity-box-support.test.ts": "7eac9d74baa580fe8a4d4359036b91fbc34b2fe6b918ead8a9308ffd7a5ea792",
+    "scripts/compiler-boundaries.json": "c821a6ce5fc39591853d6ef588df667298de8ecc95deec9968b1663c1958b5cd",
+    "src/runtime.ts": "bb3eee4a764c137beb97cc5d83a0e7f124f82bb8c3682f8abd09ed1ef6b95a1b"
+  }
+}

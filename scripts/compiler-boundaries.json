@@ -12225,6 +12225,86 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/codegen/extern-class-metadata.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Separate context-driven registration and prepared physical bindings from backend emission."
+    },
+    {
+      "path": "src/codegen/ir-prepared-signature-contract.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Separate context-driven registration and prepared physical bindings from backend emission."
+    },
+    {
+      "path": "src/codegen/native-foreign-prototype-chain.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Separate context-driven registration and prepared physical bindings from backend emission."
+    },
+    {
+      "path": "src/ir/constructor-selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
+      "path": "src/ir/dynamic-move-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
+      "path": "src/ir/extern-class-contract.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
+      "path": "src/ir/extern-class-resolver.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
+      "path": "src/ir/instanceof-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
+      "path": "src/ir/instanceof-selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
+      "path": "src/ir/qualified-extern-constructor.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "Separate frontend selection and prepared-runtime boundary contracts from pure IR semantics."
+    },
+    {
       "path": "src/ir/from-ast.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

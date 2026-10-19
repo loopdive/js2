@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
 import { isRetiredEcmaScriptExternClass } from "../../host-import-policy.js";
+import {
+  makeIrQualifiedExternConstructorResolver,
+  qualifiedExternClassKey,
+} from "../../ir/qualified-extern-constructor.js";
 import { registerWideBigIntTypes } from "../bigint-wide.js";
 import { buildOpenBigIntType } from "../../runtime/wasmgc/values/bigint-carrier-layouts.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
@@ -1891,6 +1895,7 @@ export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHo
 
 /** Scan user code and register only the extern class imports actually used */
 export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+  const qualifiedConstructor = makeIrQualifiedExternConstructorResolver(ctx.checker);
   const registered = new Set<string>();
   const useNativeEncodingApi = ctx.targetProfile.backend === "wasmgc" || ctx.strictNoHostImports;
   const isNativeEncodingClass = (className: string | undefined): boolean =>
@@ -1992,6 +1997,7 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       const inferredClassName = type.getSymbol()?.name;
       const bareClassName = ts.isIdentifier(node.expression) ? node.expression.text : undefined;
       const className =
+        qualifiedConstructor(node)?.registryKey ??
         inferredClassName ??
         (bareClassName && !userValueNames.has(bareClassName) && ctx.externClasses.has(bareClassName)
           ? bareClassName
@@ -2029,7 +2035,10 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
 
       if (!isAssignTarget) {
         const objType = ctx.checker.getTypeAtLocation(node.expression);
-        const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
+        const className =
+          qualifiedExternClassKey(objType, sourceFile) ??
+          hostMapCarrierClassName(ctx, objType) ??
+          objType.getSymbol()?.name;
         const memberName = node.name.text;
         if (className && !isNativeEncodingClass(className)) {
           const isCall = node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node;
@@ -2065,7 +2074,10 @@ export function collectUsedExternImports(ctx: CodegenContext, sourceFile: ts.Sou
       ts.isPropertyAccessExpression(node.left)
     ) {
       const objType = ctx.checker.getTypeAtLocation(node.left.expression);
-      const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
+      const className =
+        qualifiedExternClassKey(objType, sourceFile) ??
+        hostMapCarrierClassName(ctx, objType) ??
+        objType.getSymbol()?.name;
       const propName = node.left.name.text;
       // #1914 — `re.lastIndex = v` is a native struct.set in standalone; do
       // not pre-register env.RegExp_set_lastIndex.

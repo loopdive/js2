@@ -116,6 +116,8 @@ import type {
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
 import { makeIrAmbientClassCallResolver, makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856/#3214/#3657)
+import { makeIrQualifiedExternConstructorResolver } from "../ir/qualified-extern-constructor.js";
+import { usedExternClassMetadata } from "./extern-class-metadata.js";
 import {
   projectIrBackendTargetProfile,
   supportsIrBackendTargetCapability,
@@ -3266,6 +3268,10 @@ function planIrOverlay(
       // i.e. when native strings are off.
       forInHeadValueIsHostString: !ctx.nativeStrings,
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
+      resolveQualifiedExternConstructor:
+        ctx.targetProfile.environment === "javascript" && !ctx.strictNoHostImports
+          ? makeIrQualifiedExternConstructorResolver(ast.checker)
+          : undefined,
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
       ...(calendarResolvers.hostDateSnapshot ? { hostDateSnapshots: calendarResolvers.hostDateSnapshot } : {}),
@@ -6178,21 +6184,7 @@ export function generateModule(
     ctx.deferredDefaultExpressionExports?.clear();
 
     // Copy metadata for .d.ts / helper generation — only include actually-used extern classes
-    const importNames = mod.imports.map((imp) => imp.name);
-    for (const [key, info] of ctx.externClasses) {
-      const prefix = `${info.importPrefix}_`;
-      const isUsed = importNames.some((n) => n.startsWith(prefix));
-      if (key === info.className && isUsed) {
-        mod.externClasses.push({
-          importPrefix: info.importPrefix,
-          namespacePath: info.namespacePath,
-          className: info.className,
-          constructorParams: info.constructorParams,
-          methods: info.methods,
-          properties: info.properties,
-        });
-      }
-    }
+    mod.externClasses.push(...usedExternClassMetadata(ctx.externClasses, mod.imports));
     mod.stringLiteralValues = ctx.stringLiteralValues;
     mod.asyncFunctions = ctx.asyncFunctions;
     // (#1700/#4399) Surface per-export boundary classifications so wrapExports
@@ -11233,21 +11225,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // Copy metadata for .d.ts / helper generation
     profilePhase("copy-module-metadata", () => {
-      const importNames = mod.imports.map((imp) => imp.name);
-      for (const [key, info] of ctx.externClasses) {
-        const prefix = `${info.importPrefix}_`;
-        const isUsed = importNames.some((n) => n.startsWith(prefix));
-        if (key === info.className && isUsed) {
-          mod.externClasses.push({
-            importPrefix: info.importPrefix,
-            namespacePath: info.namespacePath,
-            className: info.className,
-            constructorParams: info.constructorParams,
-            methods: info.methods,
-            properties: info.properties,
-          });
-        }
-      }
+      mod.externClasses.push(...usedExternClassMetadata(ctx.externClasses, mod.imports));
       mod.stringLiteralValues = ctx.stringLiteralValues;
       mod.asyncFunctions = ctx.asyncFunctions;
       // (#1700/#4399) Surface per-export boundary classifications so wrapExports

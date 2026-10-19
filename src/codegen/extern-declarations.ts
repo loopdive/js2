@@ -987,7 +987,7 @@ function collectExternClass(
   libIndex?: LibDeclIndex,
 ): void {
   const className = decl.name!.text;
-  if (ERROR_TYPES_SKIP.has(className)) return;
+  if (namespacePath.length === 0 && ERROR_TYPES_SKIP.has(className)) return;
   const prefix = [...namespacePath, className].join("_");
 
   const info: ExternClassInfo = {

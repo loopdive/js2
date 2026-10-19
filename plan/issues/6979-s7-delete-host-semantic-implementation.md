@@ -2853,3 +2853,93 @@ The preceding qualified-capability audit describes the `9cfcfa65f5` snapshot;
 `plan/audit/6979-qualified-class-missing-provider-20261019.json` records this
 final guard and current source hashes.
 Keep the compiled Function/Date lowerer failures and full S7 acceptance open.
+
+### S7-h qualified constructor IR handoff (2026-10-19, Codex)
+
+Base: `d86d645ba9e4d8aeb945e39f109938a4facf51e4`. Reproduced the four-shape
+namespace probe: Number/Map pass with outputs 42/7; Function/Date compile but
+fail at execution. IR selection currently rejects every non-Identifier new
+callee, and from-ast has the same restriction. Plan: certify actual same-file
+ambient namespace/class declaration identity through the checker, reject
+shadowed/dynamic callees, and reuse existing extern-new/property IR operations
+and registered import signatures. Recheck namespace metadata in lowering;
+prove prepared IR body ownership rather than accepting an AST/hybrid repair.
+Keep unqualified native builtins and host-free controls unchanged. No new host
+semantic import, AST-body emitter fix or ceiling waiver is authorized here.
+
+Implemented checkpoint for [PR 6762](https://github.com/loopdive/js2/pull/6762),
+still draft and not independently mergeable. The earlier Function/Date lowerer
+gap above is superseded for the exact declared namespace constructor shapes
+below, not for general dynamic constructors or the whole migration.
+
+- Certify same-file ambient namespace/class identity through the checker.
+  Reject parameter shadows, aliases, computed callees, runtime objects and
+  runtime-merged roots. Both selection and lowering consume this certificate;
+  lowering rechecks the actual registered namespace metadata.
+- Use full qualified class keys in shared import registration and IR receiver
+  types. Publish used metadata by import prefix, preserving two namespaces
+  with the same leaf name, deduplicating aliases and rejecting conflicting
+  provider prefixes. An explicit API Date declaration is not the intrinsic.
+  Both single- and multi-module metadata publisher sites use the same helper;
+  the integration execution tests below cover single-module compilation only.
+- A direct qualified constructor returned as `any` uses the canonical empty
+  externref boxing operation: the JS-owned object is unchanged, not copied.
+  Prepared support records the exact instruction, operand type object and
+  selected externref carrier, rather than inventing a helper or accepting an
+  empty callable list as evidence. Normal program ABI sealing still validates
+  the carrier binding. Strings and other unsupported dynamic operations gain
+  no authority from this change.
+- Small metadata/selection/resolver contracts were extracted to stay within
+  existing source/function limits. Consolidating an existing duplicate
+  integration import statement reduces the layering count to 87 lines in
+  15 files; it does not remove a unique dependency edge. Compiler inventory
+  now explicitly classifies six new modules and four earlier S7 modules as
+  unmigrated debt, with no activation or architecture-complete claim.
+
+Measured local validation, Node 24.4.1, Vitest forks with
+`--experimental-wasm-exnref`, native-first JS target unless a test explicitly
+selects another target:
+
+- Ten boundary/support files: **125/125** passing. Three focused files:
+  **24/24**, versus **17 passing/7 failing** on production parent
+  `d86d645ba9e4d8aeb945e39f109938a4facf51e4`.
+  The parent control copied the two new tests and two new inert helper modules
+  imported only by those tests; its tracked production tree was unchanged.
+  This is a production-parent comparison with new test support, not a claim
+  that the entire control directory was unchanged.
+- Seven fail-to-pass rows comprise six prepared-IR ownership assertions and
+  one exact identity-witness unit assertion. They are **not seven runtime bug
+  fixes**. Separately, the clean parent four-shape execution probe passes
+  Number/Map and fails Function/Date; the candidate passes all four with
+  answers 42 and 7. Each candidate body records zero direct emissions, one IR
+  emission and no legacy body entry. The return test additionally checks exact
+  original instance and thrown-token identity.
+- Fresh broad comparison: **194 cases, 128 passing/41 failing/25 skipped** on
+  both sides. Prepared/ABI comparison: **145 cases, 129 passing/16 failing** on
+  both sides. Exact test keys, outcomes and raw errors match after replacing
+  only the parent worktree directory. No runtime-coordinate normalization was
+  needed; runtime source is unchanged in this checkpoint.
+- Fresh six-module standalone/WASI controls are **byte-identical 6/6** to the
+  parent, with zero imports and answers 42/7. All **33** detailed import
+  inventories and their classification totals are identical to the parent.
+  The hard import gate still fails **457 > 452**, unapproved.
+- Typecheck, lint/format, LOC/function, coercion, oracle, IR layering and
+  IR-fallback checks pass. Compiler inventory is valid with zero errors, but
+  architecture remains incomplete. Dead-export preservation passes **6/6 full
+  and 6/6 cut** witnesses; strict closure is still uncertified at the recorded
+  nonliteral imports in optimize and the platform capability adapter.
+
+Evidence and implementation hashes:
+`plan/audit/6979-qualified-extern-ir-20261019.json`. Earlier audits remain
+historical source snapshots. Runtime remains **10,582 lines**,
+`resolveImport` **1,682**, and the runtime target gap **2,582**. No source,
+function or import ceiling is raised or banked.
+
+Next owner: do not extend the frozen direct-AST semantic body emitter. Keep
+the explicit JS ownership boundary and native-first profile orthogonal.
+Resolve the unmerged predecessor PR 6701 and recovered S7-b dependency before
+any merge; retain the 457/452 gate as a blocker. Continue the remaining S7
+source retirement, opaque bound-function internal-slot handling, strict
+closure, compatibility/accelerator/conformance acceptance and binary-cost
+review. Neither these controls nor publication certify whole-program IR-only
+admission, a full Test262 sweep, or migration completion.

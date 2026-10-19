@@ -38,6 +38,7 @@
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
+import type { IrExternClassMeta } from "./extern-class-contract.js";
 import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
@@ -366,25 +367,7 @@ function unsupportedVoidCallExpression(detail: string): never {
   throw new IrUnsupportedError("void-call-expression", "build", detail);
 }
 
-/**
- * Slice 10 (#1169i) — the from-ast view of one extern-class entry. Mirrors
- * `ExternClassInfo` from `src/codegen/context/types.ts` but limits the
- * surface to what the from-ast layer needs to validate `new ExternClass(...)`,
- * `recv.method(...)`, and property access on extern-class receivers.
- *
- * Methods carry the LEGACY-registered signature shape: `params[0]` is the
- * receiver `externref` and `params[1..]` are the user args. The from-ast
- * lowerer slices off the receiver when matching call args against
- * `params.slice(1)`. Slicing here keeps the from-ast logic dispatch-free.
- */
-export interface IrExternClassMeta {
-  readonly className: string;
-  /** Exact legacy/import registry prefix; may differ for namespaces. */
-  readonly importPrefix: string;
-  readonly constructorParams: readonly ValType[];
-  readonly methods: ReadonlyMap<string, { readonly params: readonly ValType[]; readonly results: readonly ValType[] }>;
-  readonly properties: ReadonlyMap<string, { readonly type: ValType; readonly readonly: boolean }>;
-}
+export type { IrExternClassMeta } from "./extern-class-contract.js";
 
 /**
  * Slice 6 part 4 refactor (#1185): a narrowed view of `IrLowerResolver`
@@ -587,6 +570,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * `undefined` if no such class is registered.
    */
   getExternClassInfo?(className: string): IrExternClassMeta | undefined;
+  resolveQualifiedExternConstructor?: import("./qualified-extern-constructor.js").IrQualifiedExternConstructorResolver;
   /**
    * #1375 narrow slice — TS-narrowing fast-path for optional chaining.
    * Returns `true` when the TypeScript type of `expr` is provably non-null
@@ -7992,14 +7976,16 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // — asking first materialized the whole `$Map` runtime on every `new`.
   const nativeMap = tryLowerNativeMapConstruction(expr, cx);
   if (nativeMap !== null) return nativeMap;
-  if (!ts.isIdentifier(expr.expression)) {
+  const qualified = cx.resolver?.resolveQualifiedExternConstructor?.(expr);
+  const identifier = ts.isIdentifier(expr.expression) ? expr.expression : undefined;
+  if (!identifier && !qualified) {
     demoteToLegacy(
       "unknown-class-construction",
       `ir/from-ast: only direct constructor names supported in slice 4 (${cx.funcName})`,
     );
   }
-  const className = expr.expression.text;
-  if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
+  const className = qualified?.registryKey ?? identifier!.text;
+  if (identifier && cx.resolver?.isDirectModuleBinding?.(identifier) === true) {
     demoteToLegacy(
       "unknown-class-construction",
       `ir/from-ast: module binding "${className}" is not a direct constructor (${cx.funcName})`,
@@ -8054,10 +8040,13 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // local shape rather than the ambient extern registry's name-only entry.
   // Aliases and non-class shadows have no matching shape and retain the loud
   // extern-shadow invariant below.
-  const shape = cx.classShapes?.get(className);
+  const shape = qualified ? undefined : cx.classShapes?.get(className);
   const externInfo = cx.resolver?.getExternClassInfo?.(className);
+  if (qualified && (!externInfo || externInfo.namespacePath?.join(".") !== qualified.namespacePath.join("."))) {
+    demoteToLegacy("unknown-class-construction", `ir/from-ast: qualified extern registry mismatch (${cx.funcName})`);
+  }
   if (externInfo && !shape) {
-    if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) {
+    if (identifier && cx.resolver?.isAmbientBinding?.(identifier) === false) {
       demoteToLegacy(
         "unknown-class-construction",
         `ir/from-ast: extern constructor "${className}" is shadowed (${cx.funcName})`,
@@ -8101,7 +8090,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
       const expectedTy = externInfo.constructorParams[i]!;
       args.push(emitDefaultExternArg(cx, expectedTy));
     }
-    return cx.builder.emitExternNew(externInfo.className, args, externInfo.importPrefix);
+    return cx.builder.emitExternNew(qualified ? className : externInfo.className, args, externInfo.importPrefix);
   }
 
   if (!shape) {
@@ -15520,6 +15509,15 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
     return withNodeSourceSite(cx, operand, () => boxConcreteToDynamic(v, t, operand, cx));
   if (t.kind === "string") {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
+  }
+  if (
+    t.kind === "extern" &&
+    ts.isNewExpression(operand) &&
+    cx.resolver?.resolveQualifiedExternConstructor?.(operand) &&
+    cx.resolver.dynamicCarrierIsExternref?.() === true
+  ) {
+    // Canonical externref-to-dynamic boxing is an identity operation, never a copy.
+    return cx.builder.emitBox(v, irDynamic());
   }
   const tv = asVal(t);
   if (!tv) return null;

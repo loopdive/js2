@@ -1005,3 +1005,26 @@ from silently selecting global Date/RegExp/SharedArrayBuffer instead. Final
 focused controls pass **101/101**, with runtime source **10,582** lines
 (**742 net removed** since `f99bd729cc`). The 457/452 gate and full acceptance
 remain open; selected Intl binding and declared capability identity are kept.
+
+### 2026-10-19 — qualified constructor prepared-IR checkpoint
+
+The S7 issue's "S7-h qualified constructor IR handoff" now supersedes the
+specific compiled API Function/Date failures above. Exact ambient namespace
+constructors use prepared IR and full qualified registry keys, preserving
+same-leaf providers and JS-owned result/exception identity without copying.
+No frozen direct-AST semantic body or new host semantic provider was added.
+
+Local boundary/support controls pass **125/125**. The focused parent comparison
+is **17/24 → 24/24**, including six ownership assertions, not six new runtime
+wins. The separate four-shape execution probe improves **2/4 → 4/4**.
+Fresh broad **194-case** and prepared **145-case** comparisons retain exactly
+their existing **41** and **16** failures respectively; six native binaries and
+33 detailed import inventories match the parent. See
+`plan/audit/6979-qualified-extern-ir-20261019.json` for provenance and limits.
+
+Published as another checkpoint in [PR 6762](https://github.com/loopdive/js2/pull/6762),
+not merge-ready: predecessor PR 6701 remains unmerged, the import gate is
+**457/452**, runtime remains **10,582** lines against the 8,000-line target,
+and full compatibility/conformance, strict closure and other S7 acceptance
+remain open. Continue from the detailed S7 handoff; do not mark this parent
+issue complete from the scoped repair or PR publication.

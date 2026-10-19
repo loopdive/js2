@@ -2,6 +2,7 @@
 
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import type { IrFuncRef, IrFunction, IrInstr, IrType, IrTypeRef, IrValueId } from "./nodes.js";
+import type { ValType } from "./types.js";
 
 /** Exact post-pass closure support prepared against allocator-owned objects. */
 export interface PreparedComponentClosureSupportEvidence {
@@ -19,10 +20,12 @@ export interface PreparedClassAccessorWritebackEvidence {
   readonly dynamicCarrierValueType: string;
 }
 
-/** Object-identity keyed callable authority for compiler-owned dynamic instructions. */
+/** Object-identity keyed callable or exact identity-lowering authority. */
 export interface PreparedDynamicInstructionSupportEvidence {
   readonly dynamicCarrierRef: IrTypeRef;
   readonly instructionCallables: ReadonlyMap<IrInstr, readonly IrFuncRef[]>;
+  /** Exact empty lowering; never treat an absent/empty callable list as proof. */
+  readonly identityBoxes?: ReadonlyMap<IrInstr, { readonly operandType: IrType; readonly carrier: ValType }>;
 }
 
 export interface PreparedInstructionSupportSidecars {
@@ -56,7 +59,15 @@ export function preparedInstructionSupport(
   sidecars: PreparedInstructionSupportSidecars,
 ): PreparedInstructionSupport {
   const typeRefs = sidecars.closureSupport?.instructionRefs.get(instr);
-  const callableRefs = sidecars.dynamicInstructionSupport?.get(ownerUnitId)?.instructionCallables.get(instr) ?? [];
+  const dynamicSupport = sidecars.dynamicInstructionSupport?.get(ownerUnitId);
+  const callableRefs = dynamicSupport?.instructionCallables.get(instr) ?? [];
+  const identity = dynamicSupport?.identityBoxes?.get(instr);
+  const identityBox =
+    instr.kind === "box" &&
+    instr.toType.kind === "dynamic" &&
+    identity?.carrier.kind === "externref" &&
+    identity.operandType.kind === "extern" &&
+    identity.operandType === valueTypes.get(instr.value);
   const objectType =
     instr.kind === "object.new"
       ? instr.resultType
@@ -71,6 +82,7 @@ export function preparedInstructionSupport(
         ? (functionTypeRefs?.length ?? 0) > 0
         : (typeRefs?.length ?? 0) > 0 ||
           callableRefs.length > 0 ||
+          identityBox ||
           (objectType?.kind === "object" && (sidecars.closureSupport?.typeRefs.get(objectType)?.length ?? 0) > 0),
   };
 }
