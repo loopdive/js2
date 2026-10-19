@@ -51,7 +51,7 @@ import { linkedClosureDispatch } from "./runtime/linked-closure-dispatch.js";
 import { rawExportsStructDecodeError } from "./runtime/raw-exports-struct-authority.js"; // (#6438)
 import { tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
-import { PACKED_CLOSURE_ARGV } from "./runtime/contracts/closure-call-abi.js";
+import { CLOSURE_APPLY_BRIDGE, PACKED_CLOSURE_ARGV } from "./runtime/contracts/closure-call-abi.js";
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 export { buildStringConstants, buildStringConstants16 };
 export { _installIteratorHelperPolyfills, _resetIteratorRuntimeIntrinsicsForRealmIsolation };
@@ -695,6 +695,7 @@ const _CLOSURE_HOST_BRIDGE_EXPORTS = [
   ["__is_closure", "$cf"],
   ["__closure_has_rest", "$cg"],
   ["__is_ctor_closure", "$ch"],
+  [CLOSURE_APPLY_BRIDGE.name, CLOSURE_APPLY_BRIDGE.alias],
 ] as const;
 
 const _DATA_STRUCT_HOST_BRIDGE_EXPORTS = [
@@ -707,8 +708,8 @@ const _CLOSURE_HOST_BRIDGE_MARKER = ["__\0js2_closure_host_bridge_marker", "$ct"
 const _CLOSURE_HOST_BRIDGE_BINDINGS = ["__\0js2_closure_host_bridge_bindings", "$cu"] as const;
 const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const _CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC_MASK = 0xfff00000;
-const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0003ffff; // (#4661) bit 17 = __is_ctor_closure
-const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x000c0000;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_BITS_MASK = 0x0007ffff;
+const _CLOSURE_HOST_BRIDGE_MANIFEST_RESERVED_MASK = 0x00080000;
 const _DATA_STRUCT_HOST_BRIDGE_MANIFEST = ["__\0js2_data_struct_host_bridge", "$dm"] as const;
 const _DATA_STRUCT_HOST_BRIDGE_MARKER = ["__\0js2_data_struct_host_bridge_marker", "$dt"] as const;
 const _DATA_STRUCT_HOST_BRIDGE_BINDINGS = ["__\0js2_data_struct_host_bridge_bindings", "$du"] as const;
@@ -725,6 +726,9 @@ const _bindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 const _dataBindingFuncrefTableVerdict = new WeakSet<WebAssembly.Table>();
 let _emptyFuncrefTableProbeModule: WebAssembly.Module | undefined;
 let _bindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
+let _applyBindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
+const _closureApplyAuthority = new WeakMap<object, Function>();
+const _closureApplyUnavailable = new WeakSet<object>();
 let _dataBindingFuncrefTableProbeModule: WebAssembly.Module | undefined;
 const _reflectApply = Reflect.apply;
 const _objectHasOwnProperty = Object.prototype.hasOwnProperty;
@@ -785,7 +789,7 @@ function _isImmutableI32Global(value: unknown): value is WebAssembly.Global {
 }
 
 /** Prove a Table's exact funcref limits through Wasm import validation. */
-function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 18): value is WebAssembly.Table {
+function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 18 | 19): value is WebAssembly.Table {
   try {
     if (!(value instanceof WebAssembly.Table) || value.length !== size) return false;
     const verdict =
@@ -800,17 +804,20 @@ function _isExactFuncrefTable(value: unknown, size: 0 | 2 | 18): value is WebAss
         ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 0, 0]
         : size === 2
           ? [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 2, 2]
-          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, 18, 18];
+          : [0, 97, 115, 109, 1, 0, 0, 0, 2, 10, 1, 1, 101, 1, 116, 1, 112, 1, size, size];
     let probe =
       size === 0
         ? _emptyFuncrefTableProbeModule
         : size === 2
           ? _dataBindingFuncrefTableProbeModule
-          : _bindingFuncrefTableProbeModule;
+          : size === 19
+            ? _applyBindingFuncrefTableProbeModule
+            : _bindingFuncrefTableProbeModule;
     if (!probe) {
       probe = new WebAssembly.Module(Uint8Array.from(bytes));
       if (size === 0) _emptyFuncrefTableProbeModule = probe;
       else if (size === 2) _dataBindingFuncrefTableProbeModule = probe;
+      else if (size === 19) _applyBindingFuncrefTableProbeModule = probe;
       else _bindingFuncrefTableProbeModule = probe;
     }
     new WebAssembly.Instance(probe, { e: { t: value } });
@@ -859,9 +866,10 @@ function _closureHostBridgeMetadata(exports: Record<string, any>): ClosureHostBr
   const [bindingsLogicalName, bindingsPhysicalBase] = _CLOSURE_HOST_BRIDGE_BINDINGS;
   if (!_hasOwn(exports, bindingsLogicalName)) return undefined;
   const bindings = _terminalHostBridgeAlias(exports, bindingsPhysicalBase);
-  if (!_isExactFuncrefTable(bindings, 18)) return undefined;
+  const slots = bits & (1 << CLOSURE_APPLY_BRIDGE.bit) ? CLOSURE_APPLY_BRIDGE.slots : CLOSURE_APPLY_BRIDGE.legacySlots;
+  if (!_isExactFuncrefTable(bindings, slots)) return undefined;
   try {
-    for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
+    for (let bit = 0; bit < slots; bit++) {
       const binding = bindings.get(bit);
       if ((bits & (1 << bit)) !== 0 ? typeof binding !== "function" : binding !== null) return undefined;
     }
@@ -982,6 +990,7 @@ function _dataStructHostBridgeMetadata(
  * properties.
  */
 interface HostBridgeAuthorityOptions {
+  mayEstablishClosureApplyAuthority?: boolean;
   expectedDataStructAuthority?: DataStructHostBridgeAuthority;
   expectedDataStructToken?: WebAssembly.Global;
   establishDataStructAuthority?: (authority: DataStructHostBridgeAuthority) => void;
@@ -1000,6 +1009,15 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
   }
 
   const closureMetadata = _closureHostBridgeMetadata(exports);
+  if (closureMetadata && closureMetadata.bits & (1 << CLOSURE_APPLY_BRIDGE.bit)) {
+    const helper = _terminalHostBridgeAlias(exports, CLOSURE_APPLY_BRIDGE.alias);
+    const exact =
+      typeof helper === "function" &&
+      sameExportedFunction(helper, closureMetadata.bindings.get(CLOSURE_APPLY_BRIDGE.bit));
+    if (exact && options.mayEstablishClosureApplyAuthority) _closureApplyAuthority.set(exports, helper);
+    if (!exact || _closureApplyAuthority.get(exports) !== helper) _closureApplyUnavailable.add(exports);
+    else _closureApplyUnavailable.delete(exports);
+  }
   for (let bit = 0; bit < _CLOSURE_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [logicalName, physicalBase] = _CLOSURE_HOST_BRIDGE_EXPORTS[bit]!;
     if (!_hasOwn(exports, logicalName)) continue;
@@ -1009,6 +1027,7 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
       if (typeof helper !== "function" || !sameExportedFunction(helper, closureMetadata.bindings.get(bit)))
         helper = undefined;
     }
+    if (bit === CLOSURE_APPLY_BRIDGE.bit && _closureApplyUnavailable.has(exports)) helper = undefined;
     if (exports[logicalName] === helper) continue;
     overrides.set(logicalName, helper);
   }
@@ -1047,6 +1066,10 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
       writable: false,
     });
   }
+  const applyAuthority = _closureApplyAuthority.get(exports);
+  if (applyAuthority && closureMetadata && !_closureApplyUnavailable.has(exports))
+    _closureApplyAuthority.set(view, applyAuthority);
+  if (_closureApplyUnavailable.has(exports)) _closureApplyUnavailable.add(view);
   options.recordExportView?.(exports, view);
   return view;
 }
@@ -1385,6 +1408,40 @@ function _drainNativePromiseBoundary(
   }
 }
 
+/** Never infer complete-argv ownership from a public spelling or copied record. */
+function _authenticatedClosureApply(exports: Record<string, Function>): Function | undefined {
+  const helper = _closureApplyAuthority.get(exports);
+  return helper === exports[CLOSURE_APPLY_BRIDGE.name] ? helper : undefined;
+}
+
+function _assertLegacyClosureWidth(exports: object, declaredArity: () => number, maxArity: number): void {
+  // Untrusted projections retain the narrow ABI, not a silent wide-call miss.
+  if (_closureApplyUnavailable.has(exports) && declaredArity() > maxArity)
+    throw new TypeError("Compiled callable requires authenticated complete-argv authority");
+}
+
+function _invokeNativeClosureApply(
+  apply: Function,
+  closure: any,
+  receiver: any,
+  args: readonly any[],
+  exports: Record<string, Function>,
+): any {
+  // Match the legacy positional routes: a linked miss must unwind to its
+  // owner retry rather than recursively re-entering the same apply boundary.
+  if (linkedClosureDispatch.isRepeat(closure, exports, "apply", receiver)) return undefined;
+  const arity = exports.__closure_arity?.(closure);
+  // The native fixed-signature path above four formals does not yet preserve
+  // its extras tail. Refuse over-application rather than lose arguments data.
+  if (arity > 4 && args.length > arity && exports.__closure_has_rest?.(closure) !== 1)
+    throw new TypeError("Wide fixed callable over-application is not yet supported");
+  return apply(
+    closure,
+    _nativeArgumentFromHost(receiver, exports),
+    _nativeBoundaryVector(args, exports, _nativeArgumentFromHost),
+  );
+}
+
 function _wrapWasmClosureUnknownArity(
   closure: any,
   callbackState?: { getExports: () => Record<string, Function> | undefined },
@@ -1419,7 +1476,8 @@ function _wrapWasmClosureUnknownArity(
   for (let arity = 0; arity <= 4; arity++) {
     if (typeof exports[`__call_fn_${arity}`] === "function") maxArity = arity;
   }
-  if (maxArity < 0) return null;
+  const nativeApply = _authenticatedClosureApply(exports);
+  if (maxArity < 0 && typeof nativeApply !== "function") return null;
   // (#2664) The highest available `__call_fn_method_N` dispatches EVERY closure
   // of arity ≤ N and passes each closure exactly its OWN declared arity (extra
   // args dropped at the wasm dispatch arm — emitClosureMethodCallExportN in
@@ -1480,6 +1538,10 @@ function _wrapWasmClosureUnknownArity(
       marshalObjectResult && ret != null && typeof ret === "object" && _isWasmStruct(ret)
         ? _wrapForHost(ret, callbackState?.getExports())
         : ret;
+    if (typeof nativeApply === "function") {
+      return marshalNew(_invokeNativeClosureApply(nativeApply, closure, this, args, exports));
+    }
+    _assertLegacyClosureWidth(exports, declaredArity, maxArity);
     // METHOD call (receiver-bound `o.m(...)` → `fn.apply(wrappedObj, …)`): dispatch
     // at an arity ≥ the closure's declared arity so the closure is still matched.
     // Each closure receives exactly its own declared formals at the wasm arm.
@@ -5457,6 +5519,11 @@ function _nativeDynamicFromHost(value: any, exports: Record<string, Function>): 
   return raw;
 }
 
+/** Entry arguments use native null; property-adapter misses still need a box. */
+function _nativeArgumentFromHost(value: any, exports: Record<string, Function>): any {
+  return value === null ? null : _nativeDynamicFromHost(value, exports);
+}
+
 /** Convert one native boundary carrier into its JS-side value/view. */
 function _nativeBoundaryToHost(value: any, exports: Record<string, Function>): any {
   const primitive = _nativePrimitiveToHost(value, exports);
@@ -5464,14 +5531,19 @@ function _nativeBoundaryToHost(value: any, exports: Record<string, Function>): a
 }
 
 /** Materialize host-produced boundary keys into the native dynamic vector. */
-function _nativeBoundaryVector(values: readonly any[], exports: Record<string, Function>): any {
+function _nativeBoundaryVector(
+  values: readonly any[],
+  exports: Record<string, Function>,
+  fromHost = _nativeDynamicFromHost,
+): any {
   const create = exports.__objvec_new as (() => any) | undefined;
   const push = exports.__objvec_push as ((vec: any, value: any) => void) | undefined;
   if (typeof create !== "function" || typeof push !== "function") {
+    if (fromHost !== _nativeDynamicFromHost) throw new TypeError("Compiled callable has no native argv builders");
     return _nativeDynamicFromHost(Array.from(values), exports);
   }
   const vec = create();
-  for (let i = 0; i < values.length; i++) push(vec, _nativeDynamicFromHost(values[i], exports));
+  for (let i = 0; i < values.length; i++) push(vec, fromHost(values[i], exports));
   return vec;
 }
 
@@ -9567,6 +9639,7 @@ export function buildImports(
           ? (authority) => (dataStructHostBridgeAuthority ??= authority)
           : undefined,
         mayEstablishDataStructAuthority: mayEstablishInstanceAuthority,
+        mayEstablishClosureApplyAuthority: mayEstablishInstanceAuthority,
         recordExportView: (rawExports, finalExports) => {
           timerCallbackBridge.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
           domCapabilityRuntime?.recordExportView(rawExports, finalExports, mayEstablishInstanceAuthority);
@@ -9814,6 +9887,7 @@ export function wrapExports(
   const rawExports = brandedExports ?? (instanceOrExports as WebAssembly.Exports);
   const exportsForMarshal = _hostBridgeExportView(rawExports as unknown as Record<string, Function>, {
     mayEstablishDataStructAuthority: brandedExports !== undefined,
+    mayEstablishClosureApplyAuthority: brandedExports !== undefined,
     mayConsumeGlobalDataStructAuthority: true,
   });
   // (#6438) The raw-exports overload may never ESTABLISH data-struct authority,
@@ -9947,7 +10021,7 @@ export function wrapExports(
           // the tag-0 box is only for boundary-object reads, where a raw null
           // return means "not admitted".
           if (sig.params[index] === "dynamic") {
-            return arg === null ? null : _nativeDynamicFromHost(arg, exportsForMarshal);
+            return _nativeArgumentFromHost(arg, exportsForMarshal);
           }
           return arg;
         });

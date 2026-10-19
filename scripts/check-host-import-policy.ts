@@ -310,7 +310,7 @@ const requiredBoundaryAdapters = {
   proxy: ["__boundary_object_callable_kind", "__boundary_object_construct"],
   dataView: ["__boundary_object_call"],
   functionBind: ["__boundary_callback_call_1"],
-  objectRest: ["__boundary_object_keys", "__boundary_object_get"],
+  objectRest: ["__boundary_object_own_keys", "__boundary_object_get_own_property_descriptor", "__boundary_object_get"],
   promise: ["__boundary_promise_resolve", "__boundary_promise_reject"],
 } as const;
 for (const [probe, names] of Object.entries(requiredBoundaryAdapters)) {
@@ -319,6 +319,15 @@ for (const [probe, names] of Object.entries(requiredBoundaryAdapters)) {
     if (entry?.classification !== "value-adapter") {
       throw new Error(`${name} must remain an explicit value adapter, got ${entry?.classification ?? "missing"}`);
     }
+  }
+}
+
+// Enumerable string-key selection is native. The JS-owned object supplies
+// only OwnPropertyKeys and live descriptors; a copied/filtered JS key-list
+// provider is no longer a valid implementation of this measured contract.
+for (const [probe, inventory] of nativeInventories) {
+  if (inventory.some((entry) => entry.name === "__boundary_object_keys")) {
+    throw new Error(`${probe} still imports the retired enumerable-key selector`);
   }
 }
 

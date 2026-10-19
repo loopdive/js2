@@ -520,6 +520,6 @@ describe("#3526 F3-S2 (g) what this slice deliberately does not name", () => {
     for (const absent of ["__call_fn_method_0", "__is_closure", "__closure_has_rest", "__is_ctor_closure"]) {
       expect(named, absent).not.toContain(absent);
     }
-    expect(named).toHaveLength(6);
+    expect(named).toHaveLength(7);
   });
 });

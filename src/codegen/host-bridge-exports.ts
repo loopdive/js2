@@ -31,6 +31,11 @@
 
 import type { WasmModule } from "../ir/types.js";
 import {
+  finalizeApplyClosureHostBridgeExports,
+  isCompilerOwnedApplyClosureHostBridgeExport,
+  isCoreApplyClosureHostBridgePublicName,
+} from "./closures/bridge-export-provenance.js";
+import {
   finalizeCtorClosureHostBridgeExports,
   isCompilerOwnedCtorClosureHostBridgeExport,
   isCoreCtorClosureHostBridgePublicName,
@@ -134,6 +139,7 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
   // noncompiler entries.
   if (!ctx.indexSpaceFrozen) {
     finalizeCtorClosureHostBridgeExports(ctx);
+    finalizeApplyClosureHostBridgeExports(ctx);
     finalizeDateHostBridgeExports(ctx);
   }
   if (ctx.emitHostBridge) return 0;
@@ -146,6 +152,7 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
     // copies and donors never authenticate.
     if (isCompilerOwnedDateHostBridgeExport(ctx, ex)) return false;
     if (isCompilerOwnedCtorClosureHostBridgeExport(ctx, ex)) return false;
+    if (isCompilerOwnedApplyClosureHostBridgeExport(ctx, ex)) return false;
     if (isCompilerOwnedVecHostBridgeExport(ctx, ex)) return false;
     // The three Date names are a shared public namespace. Only the exact
     // recorded descriptor identity authorizes removal; a user descriptor with
@@ -160,6 +167,7 @@ export function stripHostBridgeExports(ctx: CodegenContext): number {
     // is rejected by pre-freeze finalization, not used for removal
     // authorization; a same-spelled user export survives standalone/WASI.
     if (isCoreCtorClosureHostBridgePublicName(ex.name)) return true;
+    if (isCoreApplyClosureHostBridgePublicName(ex.name)) return true;
     // (#5384) The host-free exception readout survives for a module that has a
     // source `throw` — see the doc above. Deliberately checked here rather than
     // by removing the prefix, so `isHostBridgeExportName` keeps naming the full

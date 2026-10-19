@@ -1075,7 +1075,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       [{ kind: "externref" }, { kind: "externref" }],
       [{ kind: "i32" }],
     );
-    ensureLateImport(ctx, "__boundary_object_keys", [{ kind: "externref" }], [{ kind: "externref" }]);
     ensureLateImport(
       ctx,
       "__boundary_object_call",
@@ -1147,7 +1146,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   const boundaryObjectSetIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_set") : undefined;
   const boundaryObjectHasIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_has") : undefined;
   const boundaryObjectDeleteIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_delete") : undefined;
-  const boundaryObjectKeysIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_keys") : undefined;
   const boundaryObjectCallIdx = boundaryObjectInterop ? ctx.funcMap.get("__boundary_object_call") : undefined;
   const boundaryObjectGetPrototypeIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_prototype")
@@ -3694,11 +3692,22 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             objVecArrTypeIdx,
             anyStrTypeIdx,
             symbolTypeIdx,
+            enumerable:
+              boundaryObjectGetOwnPropertyDescriptorIdx === undefined || boundaryObjectGetIdx === undefined
+                ? undefined
+                : {
+                    descriptorIdx: boundaryObjectGetOwnPropertyDescriptorIdx,
+                    admittedIdx: ctx.funcMap.get("__boundary_object_is_admitted")!,
+                    getIdx: boundaryObjectGetIdx,
+                    unboxNumberIdx: ctx.funcMap.get("__unbox_number")!,
+                    key: [...nativeStringLiteralInstrs(ctx, "enumerable"), { op: "extern.convert_any" }],
+                  },
           },
           registerNative,
         );
   const boundaryObjectGetOwnPropertyNamesIdx = boundaryOwnKeyFilters?.names;
   const boundaryObjectGetOwnPropertySymbolsIdx = boundaryOwnKeyFilters?.symbols;
+  const boundaryObjectKeysIdx = boundaryOwnKeyFilters?.enumerable;
 
   // ── __hasOwnProperty / __object_hasOwn (externref obj, externref key) -> i32 ─
   //

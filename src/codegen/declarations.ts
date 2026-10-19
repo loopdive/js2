@@ -137,7 +137,7 @@ import {
   getOrRegisterPromiseType,
 } from "./async-scheduler.js";
 import {
-  ensureNativeDynamicBoundaryTag,
+  ensureNativeDynamicBoundaryBridge,
   prepareStandaloneNativePromiseUndefinedBoundary,
 } from "./native-dynamic-boundary-tag.js";
 import { prepareStandaloneNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
@@ -344,45 +344,6 @@ function taViewGlobalIsRebound(
   };
   ts.forEachChild(sourceFile, visit);
   return rebound;
-}
-
-/**
- * Emit the narrow JS/Wasm adapter for native `any`/`unknown` boundary values.
- *
- * JS primitives are converted to existing native carriers before invoking a
- * user export. Null and undefined need distinct `$AnyValue` carriers because a
- * bare JS externref cannot be classified as undefined by Wasm alone. The tag
- * classifier maps only those two boundary carriers back; all other values stay
- * under their ordinary string/number/boolean/bigint/object adapters.
- */
-function ensureNativeDynamicBoundaryBridge(ctx: CodegenContext): void {
-  ensureNativeStringBoundaryBridge(ctx);
-  addUnionImports(ctx);
-  ensureAnyHelpers(ctx);
-
-  for (const name of [
-    "__box_number",
-    "__box_boolean",
-    "__box_bigint",
-    "__typeof_number",
-    "__unbox_number",
-    "__typeof_boolean",
-    "__unbox_boolean",
-    "__typeof_bigint",
-    "__to_bigint",
-    "__any_box_null",
-    "__any_box_undefined",
-  ]) {
-    const funcIdx = ctx.funcMap.get(name);
-    if (funcIdx === undefined) continue;
-    const func = definedFuncAt(ctx, funcIdx);
-    if (func) func.exported = true;
-    if (!ctx.mod.exports.some((entry) => entry.name === name)) {
-      ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
-    }
-  }
-
-  ensureNativeDynamicBoundaryTag(ctx);
 }
 
 /**

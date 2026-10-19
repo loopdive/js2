@@ -28,7 +28,14 @@ import {
   restoreThisKeepResult,
 } from "./apply-closure-variadic-builtin.js"; // (#6701)
 import { ts } from "../ts-api.js";
-import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
+import { CLOSURE_APPLY_BRIDGE } from "../runtime/contracts/closure-call-abi.js";
+import { ensureNativeDynamicBoundaryBridge } from "./native-dynamic-boundary-tag.js";
+import { recordClosureBridgeExports, type PublishedClosureBridgeExport } from "./closures/bridge-export-provenance.js";
+export {
+  finalizeCtorClosureHostBridgeExports,
+  isCompilerOwnedCtorClosureHostBridgeExport,
+  isCoreCtorClosureHostBridgePublicName,
+} from "./closures/bridge-export-provenance.js";
 import type { FuncTypeDef, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
@@ -49,7 +56,7 @@ import {
   ensureHostArgcGlobal,
 } from "./statements/nested-declarations.js";
 import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "./any-helpers.js";
-import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { buildVecFromExternMaterializer } from "./type-coercion.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import {
@@ -86,15 +93,6 @@ const CLOSURE_HOST_BRIDGE_BINDINGS_PHYSICAL_BASE = "$cu";
 const CLOSURE_HOST_BRIDGE_MANIFEST_MAGIC = 0x5a200000;
 const publishedClosureHostBridgeBits = new WeakMap<CodegenContext, number>();
 const publishedClosureHostBridgeFuncs = new WeakMap<CodegenContext, Map<number, WasmFunction>>();
-interface PublishedCtorClosureHostBridgeExport {
-  readonly entry: WasmExport;
-  readonly name: string;
-  readonly func: WasmFunction;
-}
-const publishedCtorClosureHostBridgeExports = new WeakMap<
-  CodegenContext,
-  readonly PublishedCtorClosureHostBridgeExport[]
->();
 const publishedClosureHostBridgeManifests = new WeakSet<CodegenContext>();
 const publishedStandaloneTimerCallbackManifests = new WeakSet<CodegenContext>();
 
@@ -138,6 +136,8 @@ function closureHostBridgeDefinition(logicalName: string): { physicalBase: strin
   if (logicalName === "__is_closure") return { physicalBase: "$cf", bit: 15 };
   if (logicalName === "__closure_has_rest") return { physicalBase: "$cg", bit: 16 };
   if (logicalName === "__is_ctor_closure") return { physicalBase: "$ch", bit: 17 };
+  if (logicalName === CLOSURE_APPLY_BRIDGE.name)
+    return { physicalBase: CLOSURE_APPLY_BRIDGE.alias, bit: CLOSURE_APPLY_BRIDGE.bit };
   throw new Error(`unknown closure host bridge ${logicalName}`);
 }
 
@@ -169,15 +169,15 @@ function publishClosureHostBridge(ctx: CodegenContext, func: WasmFunction, deriv
   const definition = closureHostBridgeDefinition(func.name);
   const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
   const physicalBase = definition.physicalBase;
-  const publishedCtorExports: PublishedCtorClosureHostBridgeExport[] | undefined =
-    definition.bit === 17 ? [] : undefined;
+  const recordedExports: PublishedClosureBridgeExport[] | undefined =
+    definition.bit === 17 || definition.bit === CLOSURE_APPLY_BRIDGE.bit ? [] : undefined;
   const publishExport = (name: string): void => {
     const entry: WasmExport = {
       name,
       desc: { kind: "func", index: funcIdx },
     };
     ctx.mod.exports.push(entry);
-    publishedCtorExports?.push(Object.freeze({ entry, name, func }));
+    recordedExports?.push(Object.freeze({ entry, name, func }));
   };
   let maxOccupiedSuffix = -1;
   for (const name of occupied) {
@@ -203,96 +203,8 @@ function publishClosureHostBridge(ctx: CodegenContext, func: WasmFunction, deriv
     publishedClosureHostBridgeFuncs.set(ctx, publishedFuncs);
   }
   publishedFuncs.set(definition.bit, func);
-  if (publishedCtorExports) {
-    if (publishedCtorClosureHostBridgeExports.has(ctx)) {
-      throw new Error("constructor-closure host bridge exports were published more than once");
-    }
-    publishedCtorClosureHostBridgeExports.set(ctx, Object.freeze(publishedCtorExports));
-  }
+  if (recordedExports) recordClosureBridgeExports(ctx, definition.bit, recordedExports);
   return funcIdx;
-}
-
-/**
- * Exact public names reserved by the bit-17 constructor-closure classifier.
- *
- * The logical spelling is one exact name. Its compact physical family is the
- * base `$ch` followed only by literal `$` suffixes; near-prefix user exports
- * such as `$ch0` and `$ch_extra` are deliberately outside this namespace.
- */
-export function isCoreCtorClosureHostBridgePublicName(name: string): boolean {
-  return name === "__is_ctor_closure" || (name.startsWith("$ch") && /^\$*$/.test(name.slice("$ch".length)));
-}
-
-/** Resolve a constructor-closure descriptor under its exact handle regime. */
-function resolveCtorClosureHostBridgeExportTarget(ctx: CodegenContext, entry: WasmExport): WasmFunction | undefined {
-  if (entry.desc.kind !== "func") return undefined;
-  if (entry.desc.index < STABLE_FUNC_BASE) {
-    const currentImportCount = ctx.mod.imports.filter((candidate) => candidate.desc.kind === "func").length;
-    const currentPosition = entry.desc.index - currentImportCount;
-    return currentPosition < 0 ? undefined : ctx.mod.functions[currentPosition];
-  }
-  return definedFuncAt(ctx, entry.desc.index);
-}
-
-/**
- * Authenticate a constructor-closure export by context-bound publication
- * identity.
- *
- * The recorded descriptor object is the capability issued by this publishing
- * context. A replacement or copy cannot prove that it belongs to this module;
- * before the freeze boundary, finalization instead rejects any unrecorded
- * exact-namespace descriptor that resolves to a recorded allocator.
- */
-export function isCompilerOwnedCtorClosureHostBridgeExport(ctx: CodegenContext, entry: WasmExport): boolean {
-  const published = publishedCtorClosureHostBridgeExports.get(ctx);
-  if (!published) return false;
-  return published.some((candidate) => candidate.entry === entry);
-}
-
-/**
- * Validate every recorded bit-17 descriptor before the availability manifest
- * is frozen. This is the mutation boundary: replacing, duplicating, renaming,
- * retargeting, changing kind, or removing the allocator cannot be repaired by
- * the later export sink.
- */
-export function finalizeCtorClosureHostBridgeExports(ctx: CodegenContext): void {
-  const published = publishedCtorClosureHostBridgeExports.get(ctx);
-  if (!published) return;
-  for (const { entry, name, func } of published) {
-    if (ctx.mod.exports.indexOf(entry) < 0) {
-      throw new Error(`constructor-closure host bridge export descriptor ${name} disappeared before finalization`);
-    }
-    if (ctx.mod.exports.indexOf(entry) !== ctx.mod.exports.lastIndexOf(entry)) {
-      throw new Error(`constructor-closure host bridge export descriptor ${name} appears more than once in the module`);
-    }
-    if (entry.name !== name) {
-      throw new Error(
-        `constructor-closure host bridge export descriptor ${name} changed its published name to ${entry.name}`,
-      );
-    }
-    if (entry.desc.kind !== "func") {
-      throw new Error(`constructor-closure host bridge export descriptor ${name} changed kind to ${entry.desc.kind}`);
-    }
-    if (!ctx.mod.functions.includes(func)) {
-      throw new Error(`constructor-closure host bridge export descriptor ${name} lost its allocator function`);
-    }
-    if (resolveCtorClosureHostBridgeExportTarget(ctx, entry) !== func) {
-      throw new Error(
-        `constructor-closure host bridge export descriptor ${name} resolves to a different allocator function`,
-      );
-    }
-  }
-  const recordedEntries = new Set(published.map((candidate) => candidate.entry));
-  const recordedFuncs = new Set(published.map((candidate) => candidate.func));
-  for (const entry of ctx.mod.exports) {
-    if (recordedEntries.has(entry) || !isCoreCtorClosureHostBridgePublicName(entry.name)) continue;
-    const target = resolveCtorClosureHostBridgeExportTarget(ctx, entry);
-    if (target !== undefined && recordedFuncs.has(target)) {
-      throw new Error(
-        `unrecorded constructor-closure host bridge export descriptor ${entry.name} resolves to a recorded allocator function`,
-      );
-    }
-  }
 }
 
 /**
@@ -317,7 +229,8 @@ function emitClosureHostBridgeManifest(ctx: CodegenContext): void {
 
   const bindingsTableIdx =
     ctx.mod.imports.filter((entry) => entry.desc.kind === "table").length + ctx.mod.tables.length;
-  ctx.mod.tables.push({ elementType: "funcref", min: 18, max: 18 });
+  const slots = bits & (1 << CLOSURE_APPLY_BRIDGE.bit) ? CLOSURE_APPLY_BRIDGE.slots : CLOSURE_APPLY_BRIDGE.legacySlots;
+  ctx.mod.tables.push({ elementType: "funcref", min: slots, max: slots });
   const markerTableIdx = bindingsTableIdx + 1;
   ctx.mod.tables.push({ elementType: "funcref", min: 0, max: 0 });
   for (const [bit, func] of publishedClosureHostBridgeFuncs.get(ctx) ?? []) {
@@ -384,13 +297,12 @@ function methodClosureHostBridgeOrdinal(arity: number): number | undefined {
 }
 
 /**
- * The closure host-bridge manifest is a FIXED 18-bit physical export family
- * (`closureHostBridgeDefinition`): method dispatchers have slots for arities
+ * The positional closure host-bridge family remains bounded: method
+ * dispatchers have slots for arities
  * 0..8 and no more. An above-cap dispatcher (#6655) has no host caller — it
  * exists solely so the in-module `__apply_closure` ladder has an arm to `call`
- * for a 9+-formal closure — so it is published as an ORDINARY internal
- * function instead of widening the published ABI. Same `funcMap` registration,
- * no export, no manifest bit.
+ * for a 9+-formal closure. It remains internal; the complete-argv boundary
+ * adapter shares native apply instead of adding more positional exports.
  */
 const CLOSURE_METHOD_CALL_PUBLISHED_MAX_ARITY = 8;
 
@@ -410,6 +322,16 @@ function publishInternalClosureMethodDispatcher(ctx: CodegenContext, func: WasmF
  * struct types have no Wasm subtype relation to the 1-field base wrapper).
  */
 export function emitClosureCallExport(ctx: CodegenContext): void {
+  // Demand the shared native ABI before method dispatchers are finalized,
+  // including typed closure-only programs that otherwise need no object MOP.
+  if (
+    ctx.emitHostBridge &&
+    [...ctx.closureInfoByTypeIdx.values()].some((info) => !info.hostOneShotOnly && !info.domCallbackOnly)
+  ) {
+    ensureObjVecBuilders(ctx);
+    if (jsValueBoundary(ctx)) ensureNativeDynamicBoundaryBridge(ctx);
+    reserveApplyClosure(ctx);
+  }
   emitClosureCallExportN(ctx, 0);
 }
 
@@ -2048,6 +1970,32 @@ export function emitClosureArityExport(ctx: CodegenContext): void {
  * conservatively left raw too. Modules without rest or packed callables emit nothing.
  */
 export function emitClosureHasRestExport(ctx: CodegenContext): void {
+  // Publish the existing native apply contract without registering another
+  // semantic implementation or widening the positional dispatcher family.
+  const apply = ctx.funcMap.get("__apply_closure");
+  if (ctx.emitHostBridge && ctx.applyClosureReserved && apply !== undefined && ctx.closureInfoByTypeIdx.size > 0) {
+    const typeIdx = addFuncType(
+      ctx,
+      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    publishClosureHostBridge(
+      ctx,
+      {
+        name: CLOSURE_APPLY_BRIDGE.name,
+        typeIdx,
+        locals: [],
+        body: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "call", funcIdx: apply },
+        ],
+        exported: true,
+      },
+      CLOSURE_APPLY_BRIDGE.ordinal,
+    );
+  }
   const restTypes = [...ctx.closureInfoByTypeIdx]
     .filter(([, info]) => info.hasRestParam === true)
     .map(([typeIdx]) => typeIdx);

@@ -3503,3 +3503,125 @@ resolution and full equivalence/conformance/npm-compat/accelerator/cost
 acceptance. Both migration issues stay in progress and PR6762 stays draft,
 stacked on unmerged PR6701 and recovered S7-b; no independent merge or complete
 migration claim is authorized by this handoff.
+
+### S7-o bounded native callable argv publication and handoff (2026-10-19, Codex)
+
+Continue from signed `0c7c877d2ad659a2d1a3b47f9f18c8ea37280c0c`.
+The ordinary returned rest/five-parameter controls still fail. Investigate
+publishing the existing shared native apply contract through the authenticated
+closure boundary, instead of widening another JS-side arity ladder. Preserve
+receiver, actual argc, complete extras/rest vectors and exact callable ownership;
+prove the wider boundary cannot be redirected through a same-named user export
+or a tampered/donor manifest. Keep native no-import and binary-cost controls,
+legacy module compatibility and the unchanged import ceiling explicit. No
+frozen AST semantic body or selector changes; full migration remains open.
+
+The first complete-argv demand reached **461/452** imports. Keep the complete
+native contract, not the overflow: native enumerable string-key selection now
+shares the existing OwnPropertyKeys/descriptor primitives. The policy probe's
+old requirement for `__boundary_object_keys` was obsolete; replace it with the
+two primitive requirements and a hard absence check across every probe. Do not
+change the 452 baseline or the probe population. Preserve and report both gate
+versions and this intermediate failure. Primitive call arguments also need the
+existing native dynamic boundary bridge even in typed-only programs; move that
+pure helper unchanged out of declarations into the shared boundary module,
+without editing a frozen AST semantic body or adding a second argument decoder.
+
+**Checkpoint for PR6762; not migration acceptance or independent merge.**
+Publish a thin three-externref adapter to the existing native `__apply_closure`,
+not another JS arity ladder. Manifest bit18 authenticates its exact compiler
+alias in a 19-slot funcref table; old modules retain their 18-slot format.
+Runtime authority is established only by a branded instance (or the existing
+instance association), never public spellings, copied export records, a donor
+table entry or descriptor shape alone. Existing cached facades retain their
+genuine owner. Untrusted views can still use the legacy narrow ABI, but a wide
+closure cannot silently miss that dispatcher. The extracted descriptor ledger
+retains the constructor bridge's identity/finalization lifecycle and also
+protects this publication. Same-spelled user exports survive stripping.
+
+Ordinary five/nine-formal calls, `any[]` rest calls through 32 arguments,
+actual argc/defaults/far arguments on the measured small-formal path, decimal
+and NaN inputs, live receivers and exact throw tokens now use native dispatch.
+The argument-list vector is new, but its object entries remain live admitted
+identities; no graph traversal/copy or JS semantic provider is added.
+The native own-key filter now performs enumerable-string selection from live
+OwnPropertyKeys and descriptors, without Get of source values, symbol
+descriptor queries or prototype probes. Legacy runtime key adapters remain
+for previously compiled modules; only current compiler demand is retired.
+
+No frozen AST semantic body, driver or selector edits. The declarations edit
+is a pure move of the existing primitive boundary helper into its shared
+module. The new provenance leaf is explicitly **unmigrated / mixed-needs-split**
+in the compiler inventory. The declarative IR capability row is an ABI
+description, not new IR body coverage.
+
+Validation against exact published parent `0c7c877d2ad659a2d1a3b47f9f18c8ea37280c0c`,
+Node 24.4.1 / Vitest 3.2.4 fork harness with `--experimental-wasm-exnref`:
+
+- New controls **31/31**. Combined scoped population **495 cases / 26 files**,
+  **467 passing / 28 failing → 483 passing / 12 failing**, zero skipped.
+  All 16 changed rows are in the new files, including structural and inventory
+  assertions, not 16 independent semantic fixes. Final rows and retained errors are in
+  `plan/audit/6979-complete-callable-argv-20261019.json`. The new tests are
+  identical on the control tree. Existing manifest/schema/inventory expectations
+  change normatively for bit18/19 slots, the reserved bit19, the extra exported
+  ABI row and native enumerable-key primitives; functional expectations do not.
+  The one-shot callback failure moves past invocation/receiver assertions to
+  missing construct rejection: do not call its full error unchanged or its
+  behavior certified. Two linked controls still lack QuickJS execution despite
+  the pinned Test262 harness being present. No full Test262 sweep.
+- Same **33** policy probes; **433 → 437 imports / unchanged 452 ceiling**,
+  zero unknown/gap entries. There are 26 added primitive-adapter occurrences
+  and 22 removed enumerable-key-selector occurrences. The detector itself is
+  intentionally updated as described above, not represented as unchanged.
+  Nine policy binaries match; 24 grow, including Date **+67,764 bytes** and
+  Set iteration **+65,211 bytes**. The isolated typed-callable fixture grows
+  **22,678 → 107,033 bytes**, imports **3 → 16**. Native apply demand roots
+  substantial existing native runtime; footprint is an open tradeoff, not a win.
+- **Six/six** standalone/WASI binaries are byte-identical to this parent,
+  retain zero imports and answers 42/7, and export no JS boundary probe.
+  Old 18-slot modules instantiated against the new runtime retain their measured
+  outcomes, including their old width/primitive limitations; no retroactive
+  widening claim.
+- TypeScript7 typecheck, lint/format, source/function budgets, coercion/oracle,
+  IR layering/fallback, flat directory and compiler inventory checks pass.
+  No new allowance/baseline/ceiling change. Flat codegen stays **833** files.
+  Function growth initially crossed 300 lines and was split, not waived.
+  Commit uses the sanctioned fast pre-commit (format/lint and budgets stay on);
+  the slow checks were run manually. The changed-root schema file still has
+  the two measured parent failures, recorded rather than re-pinned to green.
+  Preservation-only dead exports retain six full/six cut witnesses, but strict
+  modeled closure still fails on the two nonliteral imports in optimize.ts and
+  platform-capability-adapter.ts. Parent and candidate cycle gates both fail
+  with reported codegen→ir **298→301**, ir→codegen **74→75**; no waiver.
+
+Runtime **10,161 → 10,235 lines** (+74), still **2,235 above target**;
+resolveImport remains **1,371/seven cases**, owned adapters **896**,
+capabilities **1,194**. Raw-mode/source retirement remains open.
+
+**Next owner — bounded publication is not complete callable semantics.**
+
+1. Fix native typed rest-tail concatenation: an isolated `(...a:number[]) =>
+   a.length` still observes **5** after 32 arguments on both trees. `any[]`
+   passing does not prove typed vectors.
+2. Fix wide fixed-formal extras/`arguments` preservation. A nine-formal
+   function with 32 inputs reached a wrong NaN before the publication guard;
+   this checkpoint now explicitly throws `TypeError` for fixed arity above
+   four with extra arguments. Remove that guard only with native-core tests
+   proving actual argc and far extras. Exactly-nine-input calls are covered.
+3. Repair null receiver normalization. The isolated strict receiver probe
+   still returns **-1**, expected 42, on both trees; a separate null argument
+   probe retains 42. A combined null test was removed from the green new matrix
+   and its exact source remains in the audit's negative controls. A concrete
+   nullable-reference investigation aborted beforeAll and is not a pass.
+4. Finish callback construct rejection and certify init-window complete argv,
+   opaque bound callable slots, JS facade name/length, and live typed JS array
+   identity/mutation/aggregate-return handling. Do not substitute graph copies.
+5. Continue the prior primitive Object.assign / patched Math residuals, raw-mode
+   and runtime/source retirement, strict closure/cycles, then full equivalence,
+   conformance, npm compatibility, accelerators and cost acceptance. The earlier
+   six primitive/Math failures are not freshly remeasured by this checkpoint.
+
+Keep both migration issues in progress and PR6762 draft, stacked on PR6701
+and recovered S7-b. Signed publication with Markdown handoffs is the requested
+landing here; no independent merge or complete-migration claim.

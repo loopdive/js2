@@ -9,10 +9,48 @@ interface OwnKeyFilterLayout {
   readonly objVecArrTypeIdx: number;
   readonly anyStrTypeIdx: number;
   readonly symbolTypeIdx: number;
+  readonly enumerable?: {
+    readonly descriptorIdx: number;
+    readonly admittedIdx: number;
+    readonly getIdx: number;
+    readonly unboxNumberIdx: number;
+    readonly key: readonly Instr[];
+  };
 }
 
 /** GetOwnPropertyKeys filtering is native; the boundary supplies only [[OwnPropertyKeys]]. */
-function filteredKeysBody(layout: OwnKeyFilterLayout, keyTypeIdx: number): Instr[] {
+function filteredKeysBody(layout: OwnKeyFilterLayout, keyTypeIdx: number, enumerableOnly = false): Instr[] {
+  const append: Instr[] = [
+    { op: "local.get", index: 3 },
+    { op: "local.get", index: 5 },
+    { op: "call", funcIdx: layout.objVecPushIdx },
+  ];
+  const enumeration = layout.enumerable;
+  const selected: Instr[] =
+    enumerableOnly && enumeration
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 5 },
+          { op: "call", funcIdx: enumeration.descriptorIdx },
+          { op: "local.tee", index: 6 },
+          // A missing descriptor is the native undefined carrier, not an admitted
+          // JS descriptor object. Symbols never reach this branch.
+          { op: "call", funcIdx: enumeration.admittedIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 6 },
+              ...enumeration.key,
+              { op: "call", funcIdx: enumeration.getIdx },
+              { op: "call", funcIdx: enumeration.unboxNumberIdx },
+              { op: "f64.const", value: 0 },
+              { op: "f64.ne" },
+              { op: "if", blockType: { kind: "empty" }, then: append },
+            ],
+          },
+        ]
+      : append;
   return [
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: layout.ownKeysIdx },
@@ -60,11 +98,7 @@ function filteredKeysBody(layout: OwnKeyFilterLayout, keyTypeIdx: number): Instr
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 3 },
-                { op: "local.get", index: 5 },
-                { op: "call", funcIdx: layout.objVecPushIdx },
-              ],
+              then: selected,
             },
             { op: "local.get", index: 4 },
             { op: "i32.const", value: 1 },
@@ -88,10 +122,10 @@ export function registerBoundaryOwnKeyFilters(
     locals: { name: string; type: ValType }[],
     body: Instr[],
   ) => number,
-): { names: number; symbols: number } {
+): { names: number; symbols: number; enumerable?: number } {
   if (layout.anyStrTypeIdx < 0 || layout.symbolTypeIdx < 0)
     throw Error("Boundary own keys require native string and symbol carriers");
-  const register = (name: string, keyTypeIdx: number) =>
+  const register = (name: string, keyTypeIdx: number, enumerableOnly = false) =>
     registerNative(
       name,
       [{ kind: "externref" }],
@@ -102,11 +136,15 @@ export function registerBoundaryOwnKeyFilters(
         { name: "filtered", type: { kind: "externref" } },
         { name: "index", type: { kind: "i32" } },
         { name: "key", type: { kind: "externref" } },
+        ...(enumerableOnly ? [{ name: "descriptor", type: { kind: "externref" } as ValType }] : []),
       ],
-      filteredKeysBody(layout, keyTypeIdx),
+      filteredKeysBody(layout, keyTypeIdx, enumerableOnly),
     );
   return {
     names: register("__boundary_own_string_keys_native", layout.anyStrTypeIdx),
     symbols: register("__boundary_own_symbol_keys_native", layout.symbolTypeIdx),
+    enumerable: layout.enumerable
+      ? register("__boundary_enumerable_string_keys_native", layout.anyStrTypeIdx, true)
+      : undefined,
   };
 }

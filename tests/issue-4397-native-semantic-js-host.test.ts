@@ -340,7 +340,11 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     expect(wasmImports(native.result.binary).some((entry) => entry.name === "__extern_rest_object")).toBe(false);
     expect(native.result.hostImportInventory).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "__boundary_object_keys", classification: "value-adapter" }),
+        expect.objectContaining({ name: "__boundary_object_own_keys", classification: "value-adapter" }),
+        expect.objectContaining({
+          name: "__boundary_object_get_own_property_descriptor",
+          classification: "value-adapter",
+        }),
         expect.objectContaining({ name: "__boundary_object_get", classification: "value-adapter" }),
       ]),
     );
@@ -1376,7 +1380,7 @@ describe("#4397 native semantics in a JavaScript environment", () => {
         expect.objectContaining({ name: "__boundary_object_set", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_has", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_delete", classification: "value-adapter" }),
-        expect.objectContaining({ name: "__boundary_object_keys", classification: "value-adapter" }),
+        expect.objectContaining({ name: "__boundary_object_own_keys", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_call", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_apply", classification: "value-adapter" }),
         expect.objectContaining({ name: "__boundary_object_construct", classification: "value-adapter" }),

@@ -64,6 +64,7 @@ const CLOSURE_BRIDGES = Object.freeze([
   ...REQUIRED_BRIDGES,
   { name: "__closure_has_rest", ordinal: 13 },
   { name: "__is_ctor_closure", ordinal: 14 },
+  { name: "__call_fn_apply", ordinal: 15 },
 ] as const);
 
 const CLOSURE_PHYSICAL_BASES = [
@@ -85,6 +86,7 @@ const CLOSURE_PHYSICAL_BASES = [
   "$cf",
   "$cg",
   "$ch",
+  "$ci",
 ] as const;
 
 const CONSTRUCTIBLE_CLOSURE_SOURCE = `
@@ -974,20 +976,25 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     assertBoxedObject(mutableManifest);
 
     const reservedBitManifest = clone();
-    reservedBitManifest["$cm$"] = new WebAssembly.Global({ value: "i32", mutable: false }, manifestValue | (1 << 18));
+    reservedBitManifest["$cm$"] = new WebAssembly.Global({ value: "i32", mutable: false }, manifestValue | (1 << 19));
     assertBoxedObject(reservedBitManifest);
 
     const f64Manifest = clone();
     f64Manifest["$cm$"] = new WebAssembly.Global({ value: "f64", mutable: false }, manifestValue);
     assertBoxedObject(f64Manifest);
 
-    const externrefBindings = new WebAssembly.Table({ element: "externref", initial: 18, maximum: 18 });
+    const bindingCount = (exports["$cu$"] as WebAssembly.Table).length;
+    const externrefBindings = new WebAssembly.Table({
+      element: "externref",
+      initial: bindingCount,
+      maximum: bindingCount,
+    });
     const externrefForge = clone();
-    const availabilityBits = manifestValue & 0x0003ffff;
-    for (let bit = 0; bit < CLOSURE_PHYSICAL_BASES.length; bit++) {
+    const availabilityBits = manifestValue & 0x0007ffff;
+    for (let bit = 0; bit < bindingCount; bit++) {
       externrefBindings.set(bit, null);
     }
-    for (let bit = 0; bit < CLOSURE_PHYSICAL_BASES.length; bit++) {
+    for (let bit = 0; bit < bindingCount; bit++) {
       if ((availabilityBits & (1 << bit)) === 0) continue;
       const forgedHelper = bit === 15 ? () => 1 : () => undefined;
       externrefBindings.set(bit, forgedHelper);

@@ -1174,3 +1174,34 @@ These, inherited cycle failures, strict closure, opaque bound functions,
 source retirement, the prerequisite stack and full program acceptance stay
 open. Do not mark this parent complete. Evidence:
 `plan/audit/6979-callable-boundary-argv-20261019.json`.
+
+### 2026-10-19 — bounded native callable argv publication
+
+The S7 issue's "S7-o bounded native callable argv publication and handoff"
+publishes the existing native apply contract through an instance-authenticated
+boundary, rather than widening JS dispatch ladders. Ordinary five/nine-formal
+calls and `any[]` rest calls through 32 inputs now pass the scoped controls;
+objects/receivers/throw tokens remain live identities. Native enumerable string
+keys use existing OwnPropertyKeys/descriptor primitives. No new host semantic
+implementation, frozen AST semantic body, selector or IR coverage claim.
+
+The new matrix passes **31/31**. The **495-case / 26-file** comparison improves
+**467/28 → 483/12**, zero skipped. All 16 changed rows are new controls,
+including structural/inventory assertions, not independent defect counts.
+The audit records retained failure shapes, not just aggregate counts. Import
+policy passes **437/452** on 33 probes with zero unknown/gap entries, versus
+parent 433. Its required-adapter assertion changes to the new primitive contract
+and now forbids the retired enumerable-key selector; population and ceiling
+do not change. Nine policy binaries match and 24 grow. The typed-callable fixture
+grows **22,678 → 107,033 bytes**; six native standalone/WASI binaries remain
+byte-identical and import-free. Runtime grows 74 lines to **10,235**. Footprint
+is an open tradeoff, not a claimed improvement.
+
+Typed rest with 32 inputs still observes 5, null receivers still normalize incorrectly, and
+wide fixed over-application explicitly throws until native extras are fixed.
+Callback construct rejection, init-window/opaque callable handling, facade
+metadata, typed JS array identity/mutations, prior primitive/Math residuals,
+source retirement, strict modeled closure/cycles and full program acceptance
+remain open. Keep this issue in progress and PR6762 draft on the prerequisite
+stack. Detailed source/gate hashes, transitions, costs and negative-control
+source: `plan/audit/6979-complete-callable-argv-20261019.json`.

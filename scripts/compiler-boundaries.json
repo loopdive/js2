@@ -12258,6 +12258,14 @@
       "nextBoundary": "Reconcile native builtin argv ABI population with prepared callable contracts before activating the boundary."
     },
     {
+      "path": "src/codegen/closures/bridge-export-provenance.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "6979",
+      "nextBoundary": "Move exact physical export-descriptor publication and allocator provenance into prepared backend resources."
+    },
+    {
       "path": "src/codegen/extern-class-metadata.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
