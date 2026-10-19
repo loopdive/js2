@@ -2,7 +2,7 @@
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
 status: in-progress
-assignee: ttraenkler/opus-6979-s7c
+assignee: ttraenkler/codex
 created: 2026-10-14
 updated: 2026-10-16
 priority: high
@@ -508,3 +508,169 @@ Findings that are not gaps:
   build projects to `standalone` in `projectIrBackendTargetProfile`.
 - The policy tests (`4401`, `4396`, `6978`, `6986`, `5131`, `4577`) are
   re-pinned to the new classes.
+
+### S7-c checkpoint (2026-10-16, opus-6979-s7c)
+
+Branch `issue-6979-s7c-collapse-standalone-arms`, stacked on the S7-b head
+`aac2b4040d` (draft #6705 → #6701 → #6672). This is the first S7-c sub-slice
+set: the ratchet, the WASI verdict, and three directories. S7 stays
+`in-progress`.
+
+**How this was measured.** A corpus of 2,442 programs: equivalence-suite
+sources, playground examples, and a 1-in-40 sample of 16 test262 directories.
+Each was compiled on `gc`, strict gc (`strictNoHostImports`), `wasi` and
+`standalone` (9,768 compiles per scan), in three fixed shards. The compiler
+keeps per-process caches, so two scans are only comparable with the same shard
+layout; every per-commit comparison below uses the same layout, and any
+cross-layout difference was re-checked by compiling in isolation.
+
+**The ratchet.** `scripts/check-standalone-arms.mjs` counts `ctx.standalone`
+(not the `ctx.standalone*` sibling fields) per `src/` directory against
+`scripts/standalone-arms-baseline.json` and fails on growth. The baseline is
+written only by `--update-on-decrease` and `--update`. It runs as
+`check:standalone-arms` in the `quality` job and is banked post-merge next to
+the flat-dir bank in `test262-sharded.yml`. The plan's 1,659/495 figure
+predates S7-a/S7-b; the seed on the S7-b head is 1,538.
+
+| Directory | S7-b head | After S7-c (this PR) |
+| --- | --- | --- |
+| `src/codegen/expressions` | 345 | 0 |
+| `src/codegen/statements` | 36 | 0 |
+| `src/codegen/object-model` | 27 | 0 |
+| `src/codegen` (top level; includes `object-*.ts`, 106 → 0) | 986 | 875 |
+| `src/codegen/declarations` | 39 | 37 |
+| `src/codegen/context` | 6 | 5 |
+| `src` (top level) | 6 | 4 |
+| `analysis` / `array` / `classes` / `closures` / `helpers` / `registry` | 3 / 21 / 16 / 13 / 5 / 9 | unchanged |
+| `src/ir` / `src/runtime/contracts` | 24 / 2 | unchanged |
+| **total** | **1,538** | **1,014** |
+
+**WASI verdict: flipped.** `nativeRegime` is now `backend === "wasmgc"`, so
+`ctx.standalone` is true for every WasmGC build and create-context asserts it.
+S7-a measured 14 new WASI errors from this flip. On the S7-b head, with the
+larger corpus, it is 16. They are not regime gaps:
+
+- 15 are one mis-keyed environment site. The native RegExp engine was
+  selected by `target === "standalone" || environment === "javascript"`, so a
+  WASI regime build had no engine and refused every RegExp that gc and
+  standalone compile. It is now selected by `nativeRegime`.
+- 1 is a regime gap shared with gc and standalone (GAP list below).
+
+Two more environment sites only showed up in behaviour, not compile errors.
+Both were re-keyed in byte-identical commits before the flip:
+
+- The runtime-eval provider: new `runtimeEvalProviderLinkable(ctx)`. A WASI
+  host has no provider, so WASI keeps the #4195 refusal; without this, 13
+  corpus programs gained `js2wasm:runtime-eval` imports.
+- The #3469 in-module stdout sink: new `inModuleStdoutSink(ctx)`, true only
+  for `environment === "none"`. Without it every WASI `console.log` went into
+  the sink instead of `fd_write`, printing nothing (34 WASI test rows red).
+
+Flip measurements (WASI lane):
+
+| Measure | Result |
+| --- | --- |
+| WASI binaries changed | 1,665 of 2,442 |
+| failing → compiling | 40 (the RegExp family, `wrapper-constructors` #3) |
+| compiling → failing | 1 (`Promise.withResolvers`, GAP below) |
+| non-WASI imports gained | 0 |
+| non-WASI imports lost | `env.__make_getter_callback` (40 programs) and `env.__dynamic_import` (8) no longer leak into WASI binaries |
+| the 251 test files that compile for WASI (3,037 tests) | 0 regressions after two re-pins (below); 1 newly passing (`issue-3791` WASI exclusion) |
+| gc / strict / standalone | 0 binary changes |
+
+The two re-pins:
+
+- `issue-4396`: the wasi profiles now carry `nativeRegime: true`.
+- `issue-4035`: the WASI size cap. The REALISTIC program at `-O3` is
+  37,729 B on the old WASI lowering, 69,307 B on the regime, and 68,066 B for
+  `--target standalone`. WASI now carries the standalone runtime, so the cap
+  moves to 72,000.
+
+Not done: the function reachability sweep (`functionSweepEnabled`) still
+excludes WASI. With it forced on (`JS2WASM_FUNC_SWEEP=1`), the 251 WASI test
+files show 0 regressions and 1 more pass (`issue-2921`), and REALISTIC drops
+to 66,041 B. It is a separate optimisation decision.
+
+**Classification.** Every code hit in the three directories was semantic.
+With the regime constant, the fold cannot change a binary. The environment
+and value-boundary questions that matter for WASI were settled at the flip,
+by the three re-keys above. No `!ctx.standalone` arm was the only
+implementation of a construct for the JS environment, because the JS
+environment has run the regime arms since S6. The flip's WASI deltas are the
+only place a host arm could still have been load-bearing.
+
+| Directory | Hits at the flip (code / comment) | Re-keyed before the flip | Deleted with the fold |
+| --- | --- | --- | --- |
+| `expressions/` | 314 / 23 (all code sites semantic) | 8 runtime-eval gates → `runtimeEvalProviderLinkable` | 13 host-only helpers, 9 newly unreferenced exports, 3 empty modules; net −2,860 lines |
+| `statements/` | 36 / 0 (all semantic) | — | host `__box_number` index boxing, `__register_arguments`, the `catch_all` + `__get_caught_exception` branch |
+| `object-model/` + `object-*.ts` | 110 / 22 (all semantic) | — | `object-create-class-instance.ts` (its whole emitter was a host arm), the host descriptor routes in `object-ops.ts` |
+
+Comment mentions are reworded, or deleted together with the statements they
+described.
+
+**GAP list (#5385).**
+
+| Construct | Exposing program | Notes |
+| --- | --- | --- |
+| `Promise.withResolvers()` | test262 `built-ins/Promise/withResolvers/promise.js` | The regime refuses it (`__get_builtin`, #1472 Phase B) on gc, standalone and now WASI. The old WASI lowering "compiled" it to a binary with no `Promise.withResolvers` at all. |
+
+The three S7-b `regime-gap` families (eager generator buffer,
+SharedArrayBuffer, Temporal strings) apply to WASI unchanged.
+
+**Byte identity per commit** (9,768 hashes each, same shard layout):
+
+| Commit | Scope | Result |
+| --- | --- | --- |
+| `36c5505049` | ratchet | no codegen change |
+| `52e2a128c5` | runtime-eval capability re-key | identical by construction: `standalone && !wasi` ≡ `standalone` while `standalone` xor `wasi` |
+| `2ce7ad55d2` | stdout-sink environment re-key | identical by construction: `environment === "none"` ≡ `standalone && environment !== "javascript"` on the pre-flip profiles |
+| `ba5ca0e213` | WASI flip | WASI changes as tabled; gc/strict/standalone 0 differences. 45 sharded differences were re-compiled in isolation and are identical. |
+| `d00ad81c6c` | `expressions/` | 0 differences on all four lanes |
+| `e0627b6376` | `statements/` | 0 differences on all four lanes |
+| `97c1c15873` | `object-model/` + `object-*.ts` | 0 differences on all four lanes |
+
+**Validation.**
+
+Run and green on the final head:
+- `pnpm run typecheck`, Biome on `src/codegen`.
+- `check-loc-budget` and `check-func-budget`, each with a dated grant in
+  this file's frontmatter.
+- `check-coercion-sites`, `check:oracle-ratchet`, `check-import-cycles`,
+  `check-flat-dir-budget`, `check:compiler-boundaries:inventory`,
+  `check:standalone-arms` (all with `LOC_GATE_BASE` = the S7-b head).
+- The `check:dead-exports` audit without `--require-core-nodes`. The
+  core-node child times out at its fixed 120 s under this box's load (≈ 60–300).
+- At the flip commit: the 251 WASI test files, `issue-4396`, `issue-4035`
+  (whose one red row, "honours an explicit off", is red on the base too), and
+  `tests/issue-6979-standalone-arms-ratchet.test.ts`.
+
+Not run: `scripts/equivalence-gate.mjs`, `check:host-import-policy`,
+`check:ir-fallbacks`, and the `issue-4397`/`4401`/`6978`/`6986`/`6686` suites.
+#6980 and #6981 have landed on `upstream/main` since the S7-b head. A
+`merge-tree` dry run shows one conflict,
+`plan/audit/host-import-policy-baseline.json` (S7-b lowered the ceilings;
+#6980 raised the import ceilings). The gate run belongs after that merge.
+
+**Left for later sub-slices.**
+- Directories: `array*`, string ops, closures, async, `index.ts` + `registry/`
+  + `declarations/`, type coercion / binary ops, `src/ir`. Once those are done,
+  remove the field.
+- Now that `ctx.standalone` is constant, the remaining WASI-specific arms are
+  keyed on `ctx.wasi`. Some of them decline because the old WASI lowering was
+  wrong; for example, the #5316 Proxy-invariant gate says WASI answered
+  `Object.isExtensible({})` wrongly. They may now be removable.
+- WASI function sweep, as above.
+
+**Handoff to the codex recovery lane (2026-10-19).** S7 ownership moved to
+`ttraenkler/codex` on branch `codex/6979-s7-recovery`. Adopt this work from
+branch `issue-6979-s7c-collapse-standalone-arms` (pushed to `fork`), head
+the commit that adds this checkpoint (parent `97c1c15873`), stacked on the S7-b head `aac2b4040d`. No PR was opened.
+
+Before landing:
+- merge `upstream/main` (the conflict above);
+- re-run the equivalence gate and the policy and ir-fallback checks;
+- fold any `ctx.standalone` arms the merge brings into the three
+  collapsed directories. The ratchet will flag them.
+
+Scripts used for the scans: `.tmp/hash-corpus.mts` and `.tmp/fold.mjs` in
+worktree `agent-a042bbed7c7fea619`.
