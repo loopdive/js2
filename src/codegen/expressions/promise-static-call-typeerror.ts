@@ -22,7 +22,16 @@ const NON_CONSTRUCTOR_GLOBALS = new Set([
   "encodeURI",
   "encodeURIComponent",
 ]);
-const PROMISE_STATIC_METHODS = new Set(["all", "allSettled", "race", "any", "resolve", "reject", "withResolvers"]);
+const PROMISE_STATIC_METHODS = new Set([
+  "all",
+  "allSettled",
+  "race",
+  "any",
+  "resolve",
+  "reject",
+  "withResolvers",
+  "try",
+]);
 
 function isSideEffectFreeLiteralArg(arg: ts.Expression): boolean {
   return ts.isNumericLiteral(arg) || ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg);
