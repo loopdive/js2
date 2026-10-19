@@ -129,5 +129,47 @@ for (const target of ["standalone", "wasi"] as const) {
       exports.__module_init?.();
       expect(exports.readResult()).toBe(1);
     });
+
+    it("a promoted open literal seeds named fields before linking its prototype", async () => {
+      const { module } = await compileNative(
+        `
+          var proto = { inherited: 41 };
+          var object = { own: 1 };
+          Object.setPrototypeOf(object, proto);
+          export function readResult() {
+            return Object.getPrototypeOf(object) === proto && (proto as any).inherited === 41
+              ? (object as any).inherited + object.own
+              : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("a promoted open literal seeds method shorthand before linking its prototype", async () => {
+      const { module } = await compileNative(
+        `
+          var proto = {
+            inherited() {
+              return 41;
+            },
+          };
+          var object = { own: 1 };
+          Object.setPrototypeOf(object, proto);
+          export function readResult() {
+            return Object.getPrototypeOf(object) === proto ? (object as any).inherited() + object.own : -1;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
   });
 }

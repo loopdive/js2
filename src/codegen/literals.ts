@@ -627,7 +627,12 @@ export function compileObjectLiteralAsExternref(
       addStringConstantGlobal(ctx, keyText);
       fctx.body.push(...stringConstantExternrefInstrs(ctx, keyText));
       fctx.body.push({ op: "local.get", index: valLocal });
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      // The value compile may register a late function and shift every defined
+      // function index above the import prefix. Resolve the setter again after
+      // compiling it, just like the `__proto__` arm above does for
+      // `__object_setPrototypeOf`; otherwise WASI module initialization can
+      // call a stale neighbour and silently leave the first named field absent.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
     }
     // (#3099) Method shorthand (`{ m() {…} }`) — materialize the method as a REAL
     // runtime own property so runtime-keyed consumers (`__extern_get`,
@@ -669,7 +674,10 @@ export function compileObjectLiteralAsExternref(
         const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
         fctx.body.push({ op: "call", funcIdx: wrapCallableIdx });
       }
-      fctx.body.push({ op: "call", funcIdx: setIdx });
+      // Method compilation can register another late function just like a data
+      // property's value compilation. Re-resolve the setter after emitting the
+      // closure so its call cannot retain a pre-shift function index.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx });
     }
   }
 
@@ -2198,13 +2206,10 @@ export function compileObjectLiteral(
   // externref and stays in lockstep with this value representation. Falls through
   // to the normal path if the `$Object` builder is unavailable (null).
   //
-  // STANDALONE-ONLY: the dropped-link gap this fixes is standalone-only (spec §0)
-  // — in gc/host a proto receiver is already served by the host runtime's
-  // `_wasmStructProto` sidecar + host setPrototypeOf, and the gc/host inherited
-  // string-key read path (`__extern_get`) is separate host plumbing outside this
-  // slice's scope. Gate promotion to standalone so gc/host stays byte-for-byte
-  // unchanged (zero host-regression surface).
-  if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(expr)) {
+  // This is a WasmGC carrier decision. The JavaScript boundary keeps its
+  // admitted host-backed objects, while Wasm-owned literals in standalone,
+  // WASI, and the default gc target share the native `$Object` prototype slot.
+  if (wasmGcBackend(ctx) && ctx.dynamicProtoLiteralNodes.has(expr)) {
     const promoted = compileObjectLiteralAsExternref(ctx, fctx, expr);
     if (promoted !== null) return promoted;
   }

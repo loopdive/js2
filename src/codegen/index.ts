@@ -14176,7 +14176,7 @@ function hoistVarDecl(
       // `$Object` (externref, standalone-only) in compileObjectLiteral; the
       // hoisted `var` slot must be externref to match (mirrors the let/const path
       // in statements/variables.ts via ctx.dynamicProtoLiteralNodes).
-      if (ctx.standalone && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) {
+      if (wasmGcBackend(ctx) && ctx.dynamicProtoLiteralNodes.has(decl.initializer)) {
         initForcesExternref = true;
       }
       for (const p of decl.initializer.properties) {
@@ -14994,10 +14994,10 @@ function walkStmtForLetConst(
         // the promoted `$Object` externref is ref.cast to it at runtime (cast
         // fails → the receiver goes null and `o.x`/inherited reads return NaN).
         // Registers the name in externrefAccessorVars so reads route through the
-        // dynamic `__extern_get` path. Standalone-only until the WASI module-
-        // init store can seed named fields on the promoted open carrier.
+        // dynamic `__extern_get` path. The literal builder and module-global
+        // collector make the same WasmGC-backend decision.
         const initIsProtoReceiverLiteral =
-          ctx.standalone &&
+          wasmGcBackend(ctx) &&
           decl.initializer !== undefined &&
           ts.isObjectLiteralExpression(decl.initializer) &&
           ctx.dynamicProtoLiteralNodes.has(decl.initializer);

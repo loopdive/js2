@@ -1313,3 +1313,57 @@ the first named property of a promoted open literal. Then migrate the final
 lockstep and restore the prototype regression above. After that, take
 `class-bodies.ts` (21) as the next bounded group rather than folding it into the
 61-site `index.ts` orchestrator.
+
+### S7-c promoted-literal seeding follow-up (2026-10-19, Codex)
+
+This follow-up closes the measured WASI dependency above and lands the final
+`literals.ts` mode arm. S7 remains `in-progress`; this is another bounded
+checkpoint in the existing draft PR, not completion of the full JS-host
+migration.
+
+**Root cause and fix.** The promoted prototype was linked correctly. Its first
+named field disappeared because `compileObjectLiteralAsExternref` captured the
+`__extern_set` function index before compiling the property value. Value
+compilation can register a late function and shift every defined function
+index, so module initialization called a stale neighbouring function instead
+of the setter. The data-property and method-shorthand stores now re-resolve
+`__extern_set` after emitting their value or closure, matching the existing
+late-index discipline in the adjacent `__proto__` arm. No object is copied and
+no new JS-host path is introduced.
+
+With seeding repaired, dynamic-prototype promotion and its var, let/const and
+module-global storage decisions now use `wasmGcBackend` in `literals.ts`,
+`index.ts` and `declarations.ts`. This keeps Wasm-owned literals on the native
+`$Object` prototype carrier for standalone, WASI and default gc. An object that
+actually crosses the JavaScript value boundary still reuses the admitted
+host-backed object and its identity.
+
+**Ratchet.** The standalone-arm baseline is banked from 1,152 to **1,148** raw
+`ctx.standalone` hits in `src/`, and from 404 to **403** matching source files.
+`literals.ts` drops from one legacy projection to **zero**.
+
+**Runtime evidence.** `issue-6979-array-object-mode-collapse.test.ts` passes
+15/15. Its two new probes cover both named data-property seeding and
+method-shorthand seeding before prototype linkage under standalone and WASI;
+each preserves prototype identity and returns the inherited value plus an own
+field (`42`). The wider eight-file prototype/open-object cohort is 127 passing
+and three failing. An exact detached control at parent
+`691ae6e9b723a409441dc7e19fe4db77cf14fc79` reproduces all three failures
+unchanged. The two non-fixture failures selected from
+`issue-4504-inherited-set.test.ts` also reproduce exactly at that parent; the
+remaining rows in that local file are limited by this worktree's absent
+test262 fixture and are not claimed as passing evidence.
+
+**Architecture validation.** TypeScript 7 typecheck, Biome lint, Prettier,
+standalone-arm, host-import policy (33 probes / 452 imports / zero
+`regime-gap` or `unknown` imports), IR-fallback, import-cycle, flat-directory,
+LOC, function, coercion, oracle and verdict-oracle gates pass. Compiler-boundary
+inventory remains `inventory-valid-architecture-incomplete` with `errors: []`.
+Dead-export preservation remains 6/6 full and 6/6 cut witnesses; the same two
+nonliteral dynamic imports keep strict closure open and retirement
+uncertified.
+
+**Next handoff.** Take `class-bodies.ts` (21) as the next bounded semantic group.
+Classify each remaining mode arm as native WasmGC storage/dispatch versus an
+explicit value-boundary or platform-capability decision, and keep the 61-site
+`index.ts` orchestrator for a later coordinated slice.
