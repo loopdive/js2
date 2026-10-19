@@ -284,6 +284,7 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
+import { tryEmitObjectIdentityEquality } from "./object-identity-equality.js";
 import {
   IR_HOLEY_ARRAY_ELEM_SET,
   IR_HOLEY_ARRAY_NEW,
@@ -15412,6 +15413,8 @@ function tryLowerDynamicEq(
     return withNodeSourceSite(cx, expr, () => tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx));
   const wrapperLooseEq = tryLowerPrimitiveWrapperLooseEquality(expr, op, lhs, rhs, lt, rt, cx);
   if (wrapperLooseEq !== null) return wrapperLooseEq;
+  const objectIdentity = tryEmitObjectIdentityEquality(cx.builder, ts.tokenToString(op), lhs, rhs);
+  if (objectIdentity !== null) return objectIdentity;
   if (lt.kind !== "dynamic" && rt.kind !== "dynamic") return null;
   const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
   const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;

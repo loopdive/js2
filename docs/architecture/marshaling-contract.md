@@ -1,128 +1,119 @@
-# Deep-marshaling contract (wasm ⇄ host boundary)
+# Native values and the live JavaScript boundary
 
-> Status: **architecture spec** (#2100). Defines the single conversion contract
-> every wasm↔host bridge must route through. No implementation has landed yet;
-> this is the target the F4 member issues (#1996, #1969, #1998, #2028, #2015,
-> #2025) implement in phases. Verified against `origin/main` @ `516feec44`.
+Status: architectural contract for the one-native-core migration. This is the
+required end state, **not a claim that every cell is implemented**. The measured
+typed-object ABI gaps and next implementation steps are recorded in
+[S7: delete the host-semantic implementation](../../plan/issues/6979-s7-delete-host-semantic-implementation.md).
 
-## Why this exists
+## Ownership, not execution mode
 
-Wasm↔host value conversion is currently decided **ad hoc per call site**. A
-WasmGC vec crosses opaque through some bridges and deep-converts in others; a
-closure is sometimes wrapped as a host callback and sometimes not; `this`
-routing diverges per bridge; identity/round-trip is undefined. The symptom
-issues are the visible faces of one missing abstraction: **there is no declared
-conversion layer.** This doc declares it.
+Compiled language semantics run in the native core in every environment.
+JavaScript adds boundary adapters, explicit platform capabilities, and named
+opt-in accelerators. A value's owner determines its representation:
 
-The fix is one entry point — `marshal(value, direction, depth, exports)` — with
-a fixed rule per (value-family × direction) cell. Every bridge calls `marshal`
-instead of its bespoke conversion.
-
-## The conversion matrix
-
-Directions: `OUT` = wasm → host, `IN` = host → wasm.
-
-| Value family | `OUT` (wasm → host) | `IN` (host → wasm) | Identity / round-trip |
-|---|---|---|---|
-| **vec ⇄ Array** | deep-convert to a JS Array, **recursively to `depth`**; inner vec refs unwrap (never pass opaque) | recognize a JS Array (or `IsConcatSpreadable`, §23.1.3.1.1) and rebuild the vec | object elements preserve identity (cached by ref); a round-tripped vec keeps its backing store where possible |
-| **closure ⇄ callback** | wrap the closure-struct as host-callable via `__fn_wrap` / `callback_maker` (`runtime.ts:8904`) | a host fn arriving as externref is invoked via `__call_extern_fn(fn, args)` — **never** `ref.cast` to a closure struct (the #2028 trap) | wasm closure wrapped OUT runs the original body when called from host; host fn passed IN dispatches to the host fn when called from wasm |
-| **struct ⇄ object** | `_wrapForHost` Proxy (live-mirror over sidecar + `__sget_*`); registered proto/class objects present method-only keys | `_unwrapForHost` to the raw struct ref before handing to a compiled function | Proxy is a distinct JS object (caveat, `runtime.ts:3863`); identity comparisons MUST `_unwrapForHost`. `_hostProxyCache`/`_hostProxyReverse` keep one stable Proxy per struct |
-| **primitive / boxed** | number→`__box_number`, string→host string, undefined→host undefined | ToNumber / ToString per the coercion plan (#1917) | value types; no identity concern |
-
-## `this`-binding rule
-
-One rule, applied by `marshal` at every method-dispatch bridge. The dispatch
-site already knows whether it resolved a compiled `${Class}_method` funcidx;
-that flag is the single gate.
-
-- **Compiled wasm method** via extern dispatch → pass the **raw struct ref** as
-  `this`, NOT the `_wrapForHost` mirror. (#2015: `calls.ts:7512` +
-  `runtime.ts:~6815` pass the mirror today; the body's `this.<field>` reads the
-  wrong object and traps.)
-- **Genuine host method** on a wrapped wasm struct → pass the mirror (the host
-  method only understands the Proxy surface).
-- **Extracted method** (`const f = a.m; f()`) with no receiver → trampoline
-  emits a **null-`this` prologue throwing a catchable `TypeError` exception
-  tag**, never a `ref.null` deref. (#2025: `closures.ts:3264-3269` traps
-  uncatchably today.)
-
-## Depth policy
-
-- **Enumeration / serialization sinks** (`JSON.stringify`, `Object.keys`,
-  spread) — `OUT` to **full depth** (`depth = ∞`).
-- **Structural splice** (`concat`) — `depth = 1`: recognize a vec arg as
-  `IsConcatSpreadable` and splice one level, do not deep-flatten (#1969).
-- **`flat(n)` / `flatMap`** — `OUT` inner vecs to the declared flatten depth
-  `n` (#1996: `_toJsArray` must recurse, bounded by `n`).
-
-## Identity policy
-
-- `marshal` caches `OUT` conversions of **reference** values: structs in
-  `_hostProxyCache`, vecs in a parallel vec→Array WeakMap, so the same wasm ref
-  marshals to the same JS object within a call (preserves e.g.
-  `arr.flat().includes(sameObjElem)`).
-- `IN` resolves identity via `_hostProxyReverse` / `_unwrapForHost`.
-- Primitives are never cached.
-
-## The single layer
-
-```ts
-// runtime.ts — the one bridge every host import routes through.
-// direction: "OUT" (wasm→host) | "IN" (host→wasm)
-function marshal(value: any, direction: "OUT" | "IN", depth: number, exports): any
-```
-
-- `OUT`: vec→Array (recurse to `depth`), struct→`_wrapForHost`, closure→
-  `__fn_wrap`, primitive→box. Identity-cached for reference values.
-- `IN`: Array→vec (or IsConcatSpreadable splice), object→`_unwrapForHost`,
-  host-fn→leave as externref tagged for `__call_extern_fn`, primitive→coerce.
-
-`HOST_CALLBACK_METHODS` (`closures.ts:1060`) remains the closure-vs-host-callback
-decision **input** (consumed by `isHostCallbackArgument`), feeding `marshal`'s
-closure cell — it is not a parallel conversion path and is not dead code.
-
-## Per-cell matrix (one semantic core, #6708)
-
-Since #6708 there is one native semantic core in every environment: the value
-representation inside the module is the same whether a JS host instantiates it
-or not. What a JS environment adds is the **boundary adapter** below — it runs
-only when a value crosses to or from JS — plus opt-in *accelerators* (#6978:
-`wasm:js-string`, host RegExp/Date/Intl), which swap a provider family for a
-host implementation without changing the representation contract.
-
-| Cell | Semantic representation (every environment) | JS boundary adapter (JS environment only) |
+| Value | Native semantic representation | JavaScript boundary |
 |---|---|---|
-| vec ⇄ Array | WasmGC vec | `marshal` deep-convert |
-| primitive | native value | `marshal` box/coerce |
-| closure ⇄ callback | closure struct + `call_ref` | `__fn_wrap` / `__call_extern_fn` (host-fn IN) |
-| struct ⇄ object | struct fields read directly (the #2101/#2158 struct readers) | `_wrapForHost` Proxy |
+| Native-owned object/array | Native object/struct/vector | Stable live facade; passing it back recovers the same native identity |
+| JS-owned object/array | Admitted foreign reference, retaining its JS identity | The original object, not a copied native graph |
+| Native-owned callable | Native closure and native calling contract | Stable callable facade dispatching to that closure |
+| JS-owned callable | Admitted foreign callable reference | The original callable, with its receiver, actual arguments, result, and thrown value preserved |
+| Primitive | Native primitive/carrier | Explicit value adaptation; null and undefined remain distinct |
 
-Accelerator note: a selected accelerator may route a family (strings, RegExp,
-Date, Intl) through host imports classified `host-accelerator`; the native
-provider stays the fallback, and an accelerator is a compile error outside a
-JS environment. There is no `legacy-semantic` class any more (#6979 S7-b): an
-import outside adapters, capabilities, lifecycle hooks, selected accelerators
-and the three named #5385 `regime-gap` families classifies `unknown` and is a
-compile error on every WasmGC profile.
+A TypeScript annotation describes source semantics; it does **not** prove that
+an incoming JavaScript object has a particular WasmGC struct layout. An opaque
+WasmGC reference or a same-spelled export is likewise not authority to decode,
+cast, or construct a compiler-owned value. Adapters must use the module's
+authenticated instance/ABI contracts.
 
-## Migration order
+## No implicit graph copies
 
-Each phase routes a set of bridges through `marshal` and retires named member
-issues. Phases are independently mergeable; M0 lands first.
+Crossing the boundary must not enumerate a genuine JS-owned object, read all
+its fields, rebuild its prototype, or recursively materialize its children.
+Keep identity, aliases, cycles, inherited properties, accessors, symbols and
+subsequent mutations live. The adapter must not invoke getters before the
+compiled program asks for those properties.
 
-| Phase | Scope | Bridges rewired | Retires |
-|---|---|---|---|
-| **M0** | Land this doc + `marshal` skeleton + identity caches; no rewires | (none) | — |
-| **M1** | vec ⇄ Array cell | `_toJsArray` (recursive, depth-bound), `__array_concat_any` (IsConcatSpreadable), `compileArrayJoin` elemToStr | **#1996, #1969, #1998** |
-| **M2** | `this`-binding + struct ⇄ object cell | `__extern_method_call` (raw struct ref for compiled methods), extraction trampoline (catchable-TypeError null-`this` prologue) | **#2015, #2025** |
-| **M3** | closure ⇄ callback (host-fn IN) | closure call path → `__call_extern_fn` fallback when callee is externref / cast fails | **#2028** (unblocks the host-fn-param family; same trap as #1950, inverse of #1382) |
-| **M4** | Sweep remaining bridges + standalone audit | every `_wrapForHost` / `extern.convert_any` call site routes through `marshal`; document per-cell mode matrix | — (hardening) |
+Allocating an argument-list container, a rest array, or an Object.keys result
+is part of that operation's semantics. It does not authorize copying the
+objects inside that container or replacing an incoming array formal with a
+detached vector. An explicitly requested snapshot/serialization operation is
+different from an interop conversion. Legacy explicit copy APIs may remain
+compatibility facilities; they are not the new boundary model.
 
-## Relationships
+## Native operations over foreign references
 
-- **#1917 (coercion engine)** owns the primitive cell; `marshal` delegates
-  primitives to it, does not duplicate ToNumber/ToString.
-- **#2101 (class object model)** — the struct-mirror cell consumes #2101's
-  `$ClassMeta` / struct readers for the standalone fallback.
-- **#1382 / #1950** — wasm-closure-as-JS-callable (the `OUT` closure cell) and
-  its trap family; M3's `IN` host-fn bridge is the inverse direction.
+The native core decides language behavior. When its receiver is positively
+identified as JS-owned, the boundary supplies that object's primitive
+operations: Get, Set, OwnPropertyKeys, descriptors, prototypes, Call and
+Construct as required. Those operations must retain the original receiver and
+exact thrown value. They must not become a fallback implementation of native
+objects, arrays, coercion, or other compiled language semantics.
+
+For example, a typed read of `input.n` on a JS object performs its live Get at
+the point of use; a typed assignment updates that same object and respects its
+setter or non-writable descriptor. A native-owned record can keep its native
+field fast path when native representation is proven. Both implement the same
+source operation; JavaScript environment selection is not a semantic switch.
+
+## Typed entry ABI obligations
+
+The declared source signature, physical callable signature, and object
+operations in the body must agree. Merely labeling a slot `live-view` does not
+make a native-struct-only entry accept JavaScript objects.
+
+1. Plan a foreign-capable entry through the prepared IR/Program-ABI contract,
+   with actual callable/parameter/result identities and physical carriers.
+2. Keep genuine foreign objects as references. Lower the existing logical
+   object operations through native-or-foreign reference operations; retain
+   direct native field access only where its native-origin proof holds.
+3. Propagate that carrier contract through reachable calls, aliases, returns,
+   rest elements and containers. Do not repair one entry by copying its fields
+   or by quietly sending foreign values to a native-only callee.
+4. Publish the entry and its adapter metadata atomically under the existing
+   ABI ownership checks. A function name, source type, or copied export record
+   is not a physical representation proof.
+5. Preserve genuine IR ownership and report unsupported routes honestly. Do
+   not expand frozen direct-AST emitters or change selectors to claim that the
+   missing boundary semantics have been implemented.
+
+A nominal native wrapper with default-valued fields is not a shortcut: raw
+field reads would observe the defaults, and nominal brand tests could report
+properties of the wrapper instead of the original JS object. Any proposed
+native view representation must account for **all** its field operations,
+identity/erasure paths, generic operations and reachable consumers before it is
+exposed. A passing isolated field helper is insufficient.
+
+## Callable and receiver invariants
+
+- Forward the actual argument count and every argument. Dispatcher padding
+  must not create supplied arguments or read out-of-range array-like slots.
+- Keep null and undefined receivers distinct for strict calls; apply the
+  source language's receiver rules rather than a blanket normalization.
+- Preserve ownership and stable facade identity on return, nested calls,
+  reentrancy, callbacks, and module-init calls.
+- Preserve Call versus Construct, callable metadata, and exact exceptions.
+
+These are requirements, not certifications of the current implementation.
+
+## Verification and known gaps
+
+Acceptance requires source-to-Wasm execution against native and JS-owned
+controls, actual IR body/ABI evidence, and identity/mutation assertions. Check
+Proxy trap order and absence of eager traversal, inherited getters/setters,
+read-only properties, thrown tokens, same-object aliases, cross-shape aliases,
+returned/nested references, array formals and rest elements. A native-only
+control must still run without JavaScript semantic imports.
+
+The S7-q investigation at `519578344261746f63ad25d8d6914dcee980b033`
+shows that simple typed object reads/writes receive IR bodies after direct-body
+emission, with prepared ownership withdrawn as `param-signature-unstable`, and
+reject JS objects at their native-GC-parameter ABI. They are not IR-only. A dynamic `any` control
+does update the live JS object. Typed object rest elements also hit a native
+cast. These are open migration defects; using a copied graph would conceal,
+not close, them. Native callable-tail repairs, by themselves, do not certify
+typed-object or typed-array interop.
+
+This contract supersedes the former deep-marshaling proposal in this file.
+That proposal's recursive incoming Array-to-vector policy is not an approved
+implementation of the live boundary. Its historical text remains available
+in Git; the current contract is the one above.

@@ -1232,3 +1232,27 @@ source/raw-mode retirement, strict closure/cycles and full acceptance remain
 open. Both migration issues stay in progress and PR6762 draft on its prerequisite
 stack. Detailed evidence and next steps:
 `plan/audit/6979-native-argument-tails-20261019.json`.
+
+### 2026-10-19 — IR object identity and typed-object ABI diagnosis
+
+The S7 issue's "S7-q IR object identity and live typed-object ABI handoff"
+adds native IR identity comparison for logical objects through the canonical
+boxing/equality engine, without changing selectors, prepared admission or
+frozen AST bodies. New controls pass 32/32; the 670-case/31-file comparison is
+643/27→655/15, zero skipped or status regressions. The 12 changed rows prove
+actual IR body emission, not 12 newly fixed JS interop behaviors. All 15
+retained full errors match after tree normalization. All 33 policy inventories
+and binaries and six native control binaries match; policy remains 437/452.
+
+The separate 16-case boundary diagnostic remains 5/11: every JS-owned typed
+object case still fails. Its native/dynamic controls work, but typed public
+parameters require GC structs. Read/write/echo have IR overlays after direct
+emission, not prepared ownership; the signature vocabulary excludes logical
+objects. The implementation must declare a foreign-capable native interop ABI
+and propagate its carrier/operations through calls and returns, not just relax
+an admission guard or copy fields. The old architecture doc's deep-copy proposal
+is replaced by the normative live-reference contract with these gaps explicit.
+
+Runtime remains 10230 lines and the full migration remains in progress. Source
+hashes, counters, expected/actual negative cases, costs and next steps:
+`plan/audit/6979-live-object-abi-and-ir-identity-20261019.json`.

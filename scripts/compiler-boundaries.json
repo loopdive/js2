@@ -13338,6 +13338,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/object-identity-equality.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "6979",
+      "nextBoundary": "IR object identity uses canonical native boxing/equality without traversing fields. Retain builder/compatibility-barrel integration debt; this does not certify foreign-object entry ABI or prepared ownership."
+    },
+    {
       "path": "src/ir/value-coercion.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

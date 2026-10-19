@@ -3714,3 +3714,110 @@ raw-mode/runtime/source retirement, strict closure/cycles, prerequisite stack
 and full equivalence/conformance/npm compatibility/accelerator/cost acceptance
 remain open. The wider native tail is fixed; the migration is not complete.
 Keep both migration issues in progress and PR6762 draft.
+
+### S7-q IR object identity and live typed-object ABI handoff (2026-10-19, Codex)
+
+Continue from signed `519578344261746f63ad25d8d6914dcee980b033`.
+Trace typed object parameters/results and rest elements through actual IR
+ownership, ABI adaptation and native field operations. The boundary must retain
+the original JS object, live getters/prototypes, writes and round-trip identity;
+casting to a closed native struct or materializing a copied graph is not the
+requested model. Do not change selectors or frozen AST semantic bodies to
+claim support. Record exact failing source and actual body routes before
+choosing a shared representation/IR repair. The old deep-marshaling document
+also contradicts this direction and must be reconciled, not used to authorize
+copies. Full migration acceptance remains open.
+
+**Measured diagnosis, not a typed-object ingress fix.** Simple typed
+`read(input: {n:number})`, write, and typed echo receive IR bodies but their
+public parameters remain native `(ref null $struct)` slots. JS-owned objects
+are rejected before the body with `type incompatibility when transforming
+from/to JS`. Native facade inputs unwrap correctly and preserve identity.
+Dynamic `any` still updates the original JS object. Typed rest elements fail
+in the native vector materializer with `illegal cast`.
+
+The exact body ledger disproves an initial assumption: `irCompiledFuncs`
+does not mean IR-only ownership. Read/write/echo have one direct and one IR
+body emission; their prepared route is withdrawn as `param-signature-unstable`.
+The stable-signature vocabulary explicitly excludes logical object types.
+Do not weaken that guard or change selectors to pretend that an externref
+entry and native object-field operations have been declared/proven.
+
+**Implemented prerequisite:** IR previously rejected `===`, `!==`, `==`, `!=`
+between two logical objects at operand lowering. A small IR producer now erases
+only the physical shape and uses canonical native boxing/equality. It neither
+reads/copies fields nor implements a second identity/coercion engine. Both
+object operands use identity for abstract equality as well as strict equality;
+boxing still classifies the actual carrier rather than stamping an Object tag
+from its annotation. Native nullable-ABI controls pass. Source selection,
+prepared admission, frozen AST bodies, native callable ABI and runtime.ts are
+unchanged. This fixes a real IR body gap, **not** the foreign entry ABI.
+
+Against exact published `519578344261746f63ad25d8d6914dcee980b033`,
+Node 24.4.1 / Vitest 3.2.4 forks with `--experimental-wasm-exnref`:
+
+- New IR identity matrix **32/32**, with standalone/WASI instantiated against
+  empty import objects and native facade/null controls in JS. Scoped combined
+  **670 cases / 31 files: 643 passing / 27 failing → 655 passing / 15 failing**,
+  zero skipped or status regressions. All 12 transitions prove new actual IR
+  comparison-body emission; native value behavior already passed on the
+  parent's direct bodies. They are not 12 fixed JS-owned interop behaviors.
+  All 15 retained normalized full errors match. No old expectation changes.
+- A **separate 16-case typed-object diagnostic stays 5 passing / 11 failing**
+  on both trees: four native/dynamic functional controls and one truthful
+  overlay-route characterization pass; **every JS-owned typed-object case
+  still fails**. The initial wrong exclusive-IR assertion was corrected after
+  reading the ledger, not counted as conformance progress. Its exact source,
+  expected/actual results, physical WAT, policies and counters are in the audit.
+  `same` now emits an IR body too, but is still compile-twice, not prepared.
+- All **33** complete policy import inventories **and binaries** match;
+  unchanged guard passes **437/452**, zero unknown/gap entries. All six native
+  control binaries match, retain zero imports, outputs 42/7 and no JS boundary
+  probe export. The separate diagnostic fixture shrinks 266 bytes; no overall
+  size/performance win is inferred from it.
+- TypeScript7 typecheck, lint/format, LOC/function budgets, coercion/oracle,
+  IR layering/fallback, flat/inventory checks pass. New producer is explicitly
+  unmigrated/mixed-needs-split; flat codegen stays 833. No new detector, probe,
+  baseline, ceiling or allowance. Preservation-only witnesses stay six full/six
+  cut; strict modeled closure remains open at the two recorded nonliteral
+  imports. Both cycle gates retain codegen→ir 298→301 and ir→codegen 74→75.
+
+Runtime remains **10230 lines**, 2230 above target; resolveImport 1371/seven
+cases, owned adapters 896, capabilities 1194. Evidence:
+`plan/audit/6979-live-object-abi-and-ir-identity-20261019.json`.
+The architecture contract at `docs/architecture/marshaling-contract.md` now
+supersedes its old incoming deep-copy proposal and separates required ownership
+semantics from what is actually implemented.
+
+**Next implementation — foreign-capable native interop reference ABI:**
+
+1. Declare the public interop carrier and callable artifact through prepared
+   IR/Program-ABI planning, with exact source-unit, callable and type identities.
+   The public entry cannot simply call the old GC-struct-only body with a JS
+   object. Keep internal native fast paths only with native-origin proof.
+2. Lower the same logical IR object operations over native-or-foreign references
+   using the existing native Get/Set/equality engines. Any physical interop
+   specialization must come from that same IR, not a JS implementation of the
+   program or a hand-written field copier. This contract can also serve opaque
+   wasm-to-wasm values; it is not a new JS semantic mode.
+3. Propagate carriers through reachable calls, aliases, returns, object slots,
+   vectors and rest elements. A foreign-capable entry must not pass an opaque
+   JS object to a native-only typed callee. Validate final signatures and
+   bindings before atomically publishing any entry/adapter metadata.
+4. Do not ship a nominal native wrapper filled with defaults as a shortcut:
+   current raw struct.get/struct.set would read/write those defaults, and brand
+   tests/erasure could describe the wrapper rather than the original object.
+   All reachable consumers and identity paths must honor any view representation.
+5. Admission in wrapExports must preserve the original foreign object and use
+   authenticated instance/ABI authority. No eager ownKeys/prototype/property
+   reads, recursive materialization, or copied-record/name authority. Re-run
+   the 11 negative cases for live reads/writes, aliases, inherited receivers,
+   Proxy trap order, exact thrown tokens, round trips and rest contents.
+6. Recheck the actual source body ledger; do not count an IR overlay or an ABI
+   artifact as exclusive source ownership. Keep unknown/unsupported evidence
+   explicit and preserve no-host native controls and binary costs.
+
+This handoff does not close foreign-object/typed-array identity, BigInt/Number,
+strict receivers, tuple-rest, opaque/init callables, source/raw-mode/runtime
+retirement, strict closure/cycles, prerequisite resolution or full program
+acceptance. Both migration issues stay in progress and PR6762 stays draft.
