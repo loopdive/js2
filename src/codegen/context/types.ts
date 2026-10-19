@@ -31,6 +31,7 @@ import type { FallbackCounts } from "../fallback-telemetry.js";
 import {
   hostFreeEnvironment as profileHostFreeEnvironment,
   jsValueBoundary as profileJsValueBoundary,
+  wasmGcBackend as profileWasmGcBackend,
   type CompileTargetProfile,
 } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
@@ -4951,4 +4952,9 @@ export function hostFreeEnvironment(ctx: Pick<CodegenContext, "targetProfile">):
  */
 export function jsValueBoundary(ctx: Pick<CodegenContext, "targetProfile">): boolean {
   return profileJsValueBoundary(ctx.targetProfile);
+}
+
+/** Does this context emit the native WasmGC backend rather than linear Wasm? */
+export function wasmGcBackend(ctx: Pick<CodegenContext, "targetProfile">): boolean {
+  return profileWasmGcBackend(ctx.targetProfile);
 }

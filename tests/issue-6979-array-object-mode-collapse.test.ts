@@ -14,8 +14,7 @@ type NativeTarget = "standalone" | "wasi";
 async function compileNative(source: string, target: NativeTarget, emitWat = false) {
   const result = await compile(source, {
     target,
-    fileName: `issue-6979-${target}.js`,
-    allowJs: true,
+    fileName: `issue-6979-${target}.ts`,
     skipSemanticDiagnostics: true,
     inferModuleStrictArguments: false,
     deferTopLevelInit: true,
@@ -57,6 +56,23 @@ for (const target of ["standalone", "wasi"] as const) {
       const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
       exports.__module_init?.();
       expect(exports.readResult()).toBe(1);
+    });
+
+    it("an any-typed numeric property read uses the native object MOP", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = {};
+          Object.defineProperty(object, "0", { value: 41 });
+          export function readResult() {
+            return object[0];
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(41);
     });
   });
 }

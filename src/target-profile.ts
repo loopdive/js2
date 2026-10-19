@@ -121,6 +121,11 @@ export function jsValueBoundary(profile: Pick<CompileTargetProfile, "hostValueIn
   return profile.hostValueInterop === "required";
 }
 
+/** Whether codegen targets the native WasmGC backend rather than linear Wasm. */
+export function wasmGcBackend(profile: Pick<CompileTargetProfile, "backend">): boolean {
+  return profile.backend === "wasmgc";
+}
+
 /**
  * (#6986) Does this build have a host `Intl` to call? On WasmGC only under the
  * selected `intl` accelerator (#6979 removed the host-assisted lane, the other

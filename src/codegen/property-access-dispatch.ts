@@ -26,7 +26,13 @@ import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js"
 
 import { ts } from "../ts-api.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
-import { type CodegenContext, type FunctionContext, hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
+import {
+  type CodegenContext,
+  type FunctionContext,
+  hostFreeEnvironment,
+  jsValueBoundary,
+  wasmGcBackend,
+} from "./context/types.js";
 import {
   isExternalDeclaredClass,
   isIteratorResultType,
@@ -267,7 +273,7 @@ export function tryDynamicReceiverRuntimeDispatchReads(
   // answered normally. `byteOffset`/`buffer` already throw on their own path.
   if (
     (propName === "length" || propName === "byteLength") &&
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     tracesToTypedArrayIntrinsicProto(ctx, expr.expression)
   ) {
     emitThrowTypeError(
@@ -573,9 +579,9 @@ export function tryConstructorPrototypeIdentity(
   // never reach it (a RegExp-specific member path returns first). Gated on the
   // receiver being a genuine ambient-declared builtin (`isExternalDeclaredClass` +
   // the narrow `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` set) so a user `class Set {}`
-  // (not extern-declared) keeps its own `.constructor`. Standalone-only: gc/host
-  // keeps the real `Object_get_constructor` read (a genuine value there).
-  if (ctx.standalone && propName === "constructor") {
+  // (not extern-declared) keeps its own `.constructor`. The linear backend
+  // retains its provider read.
+  if (wasmGcBackend(ctx) && propName === "constructor") {
     const builtinName = objType.getSymbol()?.name;
     if (
       builtinName !== undefined &&
@@ -615,7 +621,7 @@ export function tryConstructorPrototypeIdentity(
   // classes), so `isExternalDeclaredClass` never matches them — require every
   // declaration to live in a `.d.ts` instead (a user `class Uint8Array {}`
   // declares in the user file → falls through to its own `.constructor`).
-  if (ctx.standalone && propName === "constructor") {
+  if (wasmGcBackend(ctx) && propName === "constructor") {
     const taSym = objType.getSymbol();
     const taName = taSym?.name;
     const taDecls = taSym?.getDeclarations();
@@ -669,7 +675,7 @@ export function tryConstructorPrototypeIdentity(
   // fold stands down for a provable primitive-wrapper receiver so #4223's
   // runtime arm answers instead. See object-ctor-primitive-receiver.ts for why
   // the check has to trace the identifier's initializer.
-  if (ctx.standalone && propName === "constructor") {
+  if (wasmGcBackend(ctx) && propName === "constructor") {
     const nsName = classifyPlainCtorReceiverNamespace(ctx, objType);
     if (
       nsName !== undefined &&
@@ -805,10 +811,7 @@ export function tryBuiltinNamespaceDeferredReads(
       (ts.isNewExpression(expr.expression) && ts.isIdentifier(expr.expression.expression)
         ? expr.expression.expression.text
         : undefined);
-    if (
-      (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
-      (objSym === "TextEncoder" || objSym === "TextDecoder")
-    ) {
+    if (wasmGcBackend(ctx) && (objSym === "TextEncoder" || objSym === "TextDecoder")) {
       if (propName === "encoding") {
         const recvType = compileExpression(ctx, fctx, expr.expression);
         if (recvType !== null) fctx.body.push({ op: "drop" });
@@ -910,10 +913,7 @@ export function tryBufferViewAttributeReads(
   //                      §25.1.5.4 (a fixed buffer reports its byteLength).
   // Only reached for a static ArrayBuffer receiver in the host-free lane; native
   // TAs / plain arrays / non-buffer programs never take this arm (byte-inert).
-  if (
-    (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
-    (propName === "maxByteLength" || propName === "resizable")
-  ) {
+  if (wasmGcBackend(ctx) && (propName === "maxByteLength" || propName === "resizable")) {
     const recvName =
       objType.getSymbol()?.name ??
       (ts.isNewExpression(expr.expression) && ts.isIdentifier(expr.expression.expression)
@@ -999,7 +999,7 @@ export function tryBufferViewAttributeReads(
   const hostBufferByteAttr =
     !noJsHost(ctx) && !ctx.strictNoHostImports && (propName === "byteLength" || propName === "byteOffset");
   if (
-    (ctx.wasi || ctx.standalone || ctx.strictNoHostImports || hostBufferByteAttr) &&
+    (wasmGcBackend(ctx) || hostBufferByteAttr) &&
     (propName === "byteLength" || propName === "byteOffset" || propName === "BYTES_PER_ELEMENT")
   ) {
     const recvNameRaw =
@@ -1334,7 +1334,7 @@ export function tryStandaloneBuiltinAndWasiMemberReads(
   // `struct.get` (fields: 0 = read, 1 = written, both f64) instead of the
   // generic `__extern_get` host import, which is unavailable standalone/WASI.
   if (
-    (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
+    wasmGcBackend(ctx) &&
     (propName === "read" || propName === "written") &&
     objType.getSymbol()?.name === "TextEncoderEncodeIntoResult"
   ) {
@@ -1811,7 +1811,7 @@ export function tryGlobalThisAndProcessRead(
   //     host-free. If the native object runtime is unavailable, falls through to
   //     the host-import path.
   if (ts.isIdentifier(expr.expression) && expr.expression.text === "globalThis") {
-    const nativeGlobal = ctx.standalone || ctx.wasi;
+    const nativeGlobal = wasmGcBackend(ctx);
     // Import registration order is preserved for the host/gc path
     // (`__get_globalThis` then `__extern_get`, as it was before #2988) so that
     // path stays byte-identical. In standalone/WASI both names resolve to DEFINED
@@ -1902,7 +1902,7 @@ export function tryGlobalThisAndProcessRead(
       // object the JS-host import answers when no `process` exists (react's
       // NODE_ENV gate). (#6910) The process is a PLATFORM capability: a JS
       // environment reads the host's, admitted at the value boundary.
-      const noHostProcess = ctx.standalone && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx));
+      const noHostProcess = wasmGcBackend(ctx) && (hostFreeEnvironment(ctx) || !jsValueBoundary(ctx));
       if (noHostProcess && procProp === "env") {
         const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -1975,10 +1975,10 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     // defer, so host-mode bytes for those are unchanged.
     const deferToWellKnownSymbolId = builtinName === "Symbol" && getWellKnownSymbolId(propName) !== undefined;
     const deferToNativeConstant =
-      deferToWellKnownSymbolId || (ctx.standalone && hasNativeBuiltinConstantHandler(builtinName, propName));
+      deferToWellKnownSymbolId || (wasmGcBackend(ctx) && hasNativeBuiltinConstantHandler(builtinName, propName));
     const isHostDescriptor = !ctx.wasi && builtinName === "Object" && propName === "getOwnPropertyDescriptor";
     if (
-      (ctx.standalone || isHostDescriptor) &&
+      (wasmGcBackend(ctx) || isHostDescriptor) &&
       BUILTIN_CTOR_NAMES.has(builtinName) &&
       !isShadowed &&
       !deferToNativeConstant
@@ -2106,7 +2106,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // (#3236 S1) Standalone sync generators route `genFn.prototype` to the
       // native `%GeneratorPrototype%` singleton (host-free) instead of leaking
       // `__get_generator_prototype`. Async generators keep the host import.
-      if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
+      if (!isAsyncGen && wasmGcBackend(ctx)) {
         ensureNativeDelegatedResultHelpers(ctx);
         const t = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
         if (t) {
@@ -2238,7 +2238,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // (#3236 S1) Standalone sync generators route `genFn.prototype` to the
       // native `%GeneratorPrototype%` singleton (host-free) instead of leaking
       // `__get_generator_prototype`. Async generators keep the host import.
-      if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
+      if (!isAsyncGen && wasmGcBackend(ctx)) {
         ensureNativeDelegatedResultHelpers(ctx);
         const t = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
         if (t) {
@@ -2691,7 +2691,7 @@ function emitStandaloneTupleLength(
   expr: ts.PropertyAccessExpression,
   objType: ts.Type,
 ): PADispatchResult {
-  if (!(ctx.standalone || ctx.wasi) || !isTupleType(objType)) return PA_FALLTHROUGH;
+  if (!wasmGcBackend(ctx) || !isTupleType(objType)) return PA_FALLTHROUGH;
 
   const tupleTarget = ((objType as ts.TypeReference).target ?? objType) as ts.TupleType;
   const tupleArity = tupleTarget.fixedLength;
@@ -2798,7 +2798,7 @@ function returnsAnonymousClassFieldInitializer(ctx: CodegenContext, value: ts.Ex
  * Declining costs only the fold: the read falls through to the ordinary property
  * path, which answers from the closure's own `$fnmeta` host-free and from
  * `__extern_get(v, "name")` on the JS host — both measured correct, which is why
- * this is unconditional rather than `ctx.standalone`-gated.
+ * this is unconditional rather than backend-gated.
  */
 function symbolIsPropertyDescriptorAccessorSlot(symbol: ts.Symbol | undefined): boolean {
   if (symbol === undefined) return false;
@@ -2885,7 +2885,8 @@ function emitArgumentsLengthRead(
   propName: string,
   objType: ts.Type,
 ): PADispatchResult {
-  if (!ctx.standalone || propName !== "length" || objType.getSymbol?.()?.name !== "IArguments") return PA_FALLTHROUGH;
+  if (!wasmGcBackend(ctx) || propName !== "length" || objType.getSymbol?.()?.name !== "IArguments")
+    return PA_FALLTHROUGH;
   const getIdx = ensureLateImport(
     ctx,
     "__extern_get",
@@ -3112,7 +3113,7 @@ export function tryLengthAndNameReads(
     // An import's immutable binding does not freeze its function object's name.
     // Its checker symbol/alias spelling cannot replace the ordinary value read.
     if (
-      ctx.standalone &&
+      wasmGcBackend(ctx) &&
       (objType.getCallSignatures?.().length ?? 0) > 0 &&
       nameReadHasModuleOrigin(ctx, expr.expression, objType)
     ) {
@@ -3571,7 +3572,7 @@ export function tryLengthAndNameReads(
         }
       }
       if (
-        !ctx.standalone &&
+        !wasmGcBackend(ctx) &&
         !inAsyncFn &&
         (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 &&
         exprType
@@ -3599,7 +3600,7 @@ export function tryLengthAndNameReads(
     // native `__extern_get` would mis-handle by casting "length" → key lookup,
     // yielding 0). JS-host mode is unchanged (this gate is standalone-only; the
     // host path's generic `__extern_get("length")` already works there).
-    if (ctx.standalone) {
+    if (wasmGcBackend(ctx)) {
       const isAnyOrUnknown = (objType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
       if (isAnyOrUnknown) {
         const exprResult = compileExpression(ctx, fctx, expr.expression);
@@ -3830,7 +3831,7 @@ export function tryNamespaceConstantAndSymbolReads(
   // The Symbol.prototype own members are excluded so a reflective
   // `sym.toString` / `sym.valueOf` / `sym.constructor` read keeps its closure.
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0 &&
     !SYMBOL_PROTOTYPE_OWN_MEMBERS.has(propName) &&
     // (#6651 V10a) A module that writes `Symbol.prototype` / `Object.prototype`
@@ -3934,7 +3935,7 @@ export function tryStringLengthIteratorAndExternClassReads(
   // the slot read ("reads the slot first"), and once it began honouring an own
   // override — which §7.1.1.1 requires — the two stopped being the same operation
   // (measured: `new String("ABCABC").length` became 2 after `s.valueOf = …`).
-  if (ctx.standalone && isStringWrapperType(objType) && propName === "length" && ctx.anyStrTypeIdx >= 0) {
+  if (wasmGcBackend(ctx) && isStringWrapperType(objType) && propName === "length" && ctx.anyStrTypeIdx >= 0) {
     ensureObjectRuntime(ctx);
     const slotIdx = ensureWrapperStringValueHelper(ctx);
     if (slotIdx >= 0) {
@@ -3970,9 +3971,9 @@ export function tryStringLengthIteratorAndExternClassReads(
     // `struct.get` TRAPS on a host string (it answered a silently-wrong `NaN`
     // via the dynamic path before). Read it through a runtime `ref.test`
     // instead: GC string → the native `len` field, host string → the host
-    // `__extern_length` import. Standalone/WASI cannot produce a host string
-    // here, so its #1797 coercion path is untouched.
-    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && recvType?.kind === "externref" && !ctx.standalone && !ctx.wasi) {
+    // `__extern_length` import. A host-free value boundary cannot produce a
+    // host string here, so its #1797 coercion path is untouched.
+    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && recvType?.kind === "externref" && jsValueBoundary(ctx)) {
       const externLengthIdx = ensureLateImport(ctx, "__extern_length", [{ kind: "externref" }], [{ kind: "f64" }]);
       flushLateImportShifts(ctx, fctx);
       if (externLengthIdx !== undefined) {
@@ -4218,7 +4219,9 @@ export function finalizeStructAndDynamicMemberGet(
     // member type. Class accessors are NOT migrated (no structAccessorClosure
     // entry) so they keep the bare-fn path below.
     const closureAccGet =
-      S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone ? ctx.structAccessorClosure.get(accessorKey)?.getGlobal : undefined;
+      S5C_STRUCT_ACCESSOR_CLOSURE && wasmGcBackend(ctx)
+        ? ctx.structAccessorClosure.get(accessorKey)?.getGlobal
+        : undefined;
     if (closureAccGet !== undefined) {
       const recvType = compileExpression(ctx, fctx, expr.expression);
       if (recvType && recvType.kind !== "externref") {
@@ -4421,8 +4424,8 @@ export function finalizeStructAndDynamicMemberGet(
     // handled by the Error fast-path above (~L2227); any other property is a
     // user-declared own field living in the `$Error_struct.$props` (fieldIdx 5)
     // open-`$Object` backing. Read it via `__extern_get(self.props, propName)`
-    // (null/undefined when props is null). Standalone only.
-    if (ctx.standalone && ctx.classExternrefBackedSet.has(typeName)) {
+    // (null/undefined when props is null). WasmGC only.
+    if (wasmGcBackend(ctx) && ctx.classExternrefBackedSet.has(typeName)) {
       const ownRead = emitExternrefBackedOwnFieldRead(ctx, fctx, expr, propName, typeName);
       if (ownRead !== undefined) return ownRead;
       // (#5383 S2b) The READ twin of the write fix in `assignment.ts`. When the
@@ -4448,10 +4451,10 @@ export function finalizeStructAndDynamicMemberGet(
       // undefined → helper unavailable; fall through to the legacy path.
     }
 
-    // Externref-backed builtin subclasses are represented by the host object
-    // returned from `super(...)` in JS-host mode. Their registered class struct
-    // is bookkeeping only and must never be used to read the live instance.
-    const isHostExternrefBackedClass = !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName);
+    // The linear backend's externref-backed builtin subclasses use their
+    // provider object. Their registered class struct is bookkeeping only and
+    // must never be used to read the live instance.
+    const isHostExternrefBackedClass = !wasmGcBackend(ctx) && ctx.classExternrefBackedSet.has(typeName);
 
     // Handle struct field access (named or anonymous)
     const structTypeIdx = ctx.structMap.get(typeName);
@@ -4630,7 +4633,7 @@ export function finalizeStructAndDynamicMemberGet(
   // here would drag an overriding object's "A" through __unbox_number to NaN.
   // The receiver already resolves externref (resolveWasmType degrade); this
   // keeps the RESULT representation equally honest.
-  const foreignReturnReceiver = (ctx.standalone || ctx.wasi) && typeIsForeignReturnFnctorInstance(objType);
+  const foreignReturnReceiver = wasmGcBackend(ctx) && typeIsForeignReturnFnctorInstance(objType);
   // #2573 — an empty object pinned to the open `$Object` carrier has a
   // checker-evolved shape, but its runtime property values remain dynamic.
   // Keep the read as externref so an absent property is not unboxed through
@@ -4796,7 +4799,7 @@ export function finalizeStructAndDynamicMemberGet(
   // use __extern_get(obj, key) to dynamically read the property at runtime.
   {
     const objWasmType =
-      typeName && !ctx.standalone && !ctx.wasi && ctx.classExternrefBackedSet.has(typeName)
+      typeName && !wasmGcBackend(ctx) && ctx.classExternrefBackedSet.has(typeName)
         ? ({ kind: "externref" } as const)
         : resolveWasmType(ctx, objType);
     // (#4249) A direct-eval accessor assignment can widen a function-local
@@ -4889,7 +4892,7 @@ export function finalizeStructAndDynamicMemberGet(
         }
         const receiverExpr = skipTransparentExpressions(expr.expression);
         const isUndefinedIdx =
-          ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+          wasmGcBackend(ctx) && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
         flushLateImportShifts(ctx, fctx);
         // Null check: throw TypeError for property access on null/undefined.
         // (#4157) Skipped when the receiver is PROVABLY non-null.
@@ -4988,7 +4991,7 @@ export function finalizeStructAndDynamicMemberGet(
             // #3927 hidden-carrier fixes above: contribute externref, which
             // de-narrows (measured: `obj.prop` holding "A" was narrowed to
             // the fnctor field's f64 and answered NaN, S13.2.2_A15_T2 shape).
-            if ((ctx.standalone || ctx.wasi) && !fieldKinds.has("externref")) {
+            if (wasmGcBackend(ctx) && !fieldKinds.has("externref")) {
               const sfForeign = expr.getSourceFile();
               const foreignNames = sfForeign === undefined ? undefined : foreignReturnFunctionNames(sfForeign);
               if (foreignNames !== undefined && foreignNames.size > 0) {
@@ -5064,7 +5067,7 @@ export function finalizeStructAndDynamicMemberGet(
                   // HERE or the resurrection falls back to a null externref —
                   // which reads as JS `null`, not `undefined`. Same precedent as
                   // `reserveMemberGetDispatch`'s `value` arm.
-                  if (!ctx.nativeStrings && !ctx.standalone) {
+                  if (!ctx.nativeStrings && !wasmGcBackend(ctx)) {
                     ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
                     flushLateImportShifts(ctx, fctx);
                     unboxIdx = undefined;

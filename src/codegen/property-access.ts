@@ -57,7 +57,7 @@ import {
 } from "./iterator-proto-next.js"; // (#6484 S2)
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
 import { sidecarKeyCoversReceiver } from "./sidecar-owner-scope.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import {
   emitCachedFuncClosureAccess,
   emitCachedMethodClosureAccess,
@@ -365,7 +365,7 @@ function prototypeMutationNames(sourceFile: ts.SourceFile): ReadonlySet<string> 
  * finalize, so a name no class declares as an accessor emits nothing.
  */
 export function recordDynamicClassAccessorRead(ctx: CodegenContext, receiverWasm: ValType, propName: string): void {
-  if (ctx.standalone || ctx.wasi) return;
+  if (wasmGcBackend(ctx)) return;
   if (propName.startsWith("__priv_")) return;
   if (receiverWasm.kind !== "externref") return;
   ctx.hostDynamicClassAccessorReads.add(propName);
@@ -376,7 +376,7 @@ function tryCompileStandaloneFunctionHasInstanceRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || fctx.localMap.has("Symbol")) return undefined;
+  if (!wasmGcBackend(ctx) || fctx.localMap.has("Symbol")) return undefined;
   if (resolveComputedKeyExpression(ctx, expr.argumentExpression) !== FUNCTION_PROTO_HAS_INSTANCE_MEMBER) {
     return undefined;
   }
@@ -428,7 +428,7 @@ function tryCompileStandaloneArrayIteratorRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ctx.funcMap.has("__protoidx_get_k") || fctx.localMap.has("Symbol")) return undefined;
+  if (!wasmGcBackend(ctx) || ctx.funcMap.has("__protoidx_get_k") || fctx.localMap.has("Symbol")) return undefined;
   if (resolveComputedKeyExpression(ctx, expr.argumentExpression) !== "@@iterator") return undefined;
   const receiver = skipTransparentExpressions(expr.expression);
   if (
@@ -555,7 +555,7 @@ export function maybeWrapAnyReadEqualityCarrier(
   expr: ts.Expression,
   result: ValType | null,
 ): ValType | null {
-  if (!ctx.standalone) return result;
+  if (!wasmGcBackend(ctx)) return result;
   if (!result || result.kind !== "externref") return result;
   if (!isAnyEqualityOperand(ctx, expr)) return result;
   // (#3169) The enclosing equality must be the ACTIVE `$AnyValue` dispatch
@@ -815,12 +815,12 @@ export function runtimeAccessorDescriptorKey(
     return bareKey;
   }
   if (
-    ctx.standalone &&
+    wasmGcBackend(ctx) &&
     [...(ctx.fnctorEscapeGate?.protoMethodWriteOnce.runtimeDefined.values() ?? [])].some((keys) => keys.has(propName))
   ) {
     return bareKey;
   }
-  if (ctx.standalone) {
+  if (wasmGcBackend(ctx)) {
     const installedOnFnctorPrototype = objectDefineCalls(receiver.getSourceFile(), "defineProperties").some((node) => {
       if (!ts.isPropertyAccessExpression(node.arguments[0]) || node.arguments[0].name.text !== "prototype")
         return false;
@@ -930,7 +930,7 @@ export function emitRuntimeDescriptorGet(
   // `typeof obj.prop` answered "number" after `{get: undefined}` (15.2.3.6-4-498
   // family). A numeric consumer re-narrows through its own coercion.
   const resultType: ValType =
-    !forceExternref && !ctx.standalone && (accessWasm.kind === "f64" || accessWasm.kind === "i32")
+    !forceExternref && !wasmGcBackend(ctx) && (accessWasm.kind === "f64" || accessWasm.kind === "i32")
       ? accessWasm
       : { kind: "externref" };
   const getIdx = ensureLateImport(
@@ -1749,7 +1749,7 @@ export function emitNullGuardedStructGet(
     if (
       objType.kind === "ref_null" &&
       (objType as { typeIdx: number }).typeIdx === typeIdx &&
-      (!ctx.standalone || (fctx as any).__lastGuardedCastBackup === undefined)
+      (!wasmGcBackend(ctx) || (fctx as any).__lastGuardedCastBackup === undefined)
     ) {
       const tmp = allocLocal(fctx, `__ng_${fctx.locals.length}`, objType);
       // (#4157) Proven non-null: emit the else-arm directly. The `if` block's
@@ -2571,7 +2571,7 @@ export function compileOptionalPropertyAccess(
         const getterName = `${structName}_get_${propName}`;
         const getterIdx = ctx.funcMap.get(classMemberFuncKey(ctx, getterName));
         const closureAccGet =
-          S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone
+          S5C_STRUCT_ACCESSOR_CLOSURE && wasmGcBackend(ctx)
             ? ctx.structAccessorClosure.get(accessorKey)?.getGlobal
             : undefined;
         if (closureAccGet !== undefined) {
@@ -2761,7 +2761,7 @@ export function receiverIsCatchClauseBinding(ctx: CodegenContext, recv: ts.Expre
  * (deferred follow-up).
  */
 export function receiverIsCaughtErrorStringRead(ctx: CodegenContext, recv: ts.Expression): boolean {
-  if (!(ctx.wasi || ctx.standalone)) return false;
+  if (!wasmGcBackend(ctx)) return false;
   if (!ts.isPropertyAccessExpression(recv)) return false;
   const p = recv.name.text;
   if (p !== "message" && p !== "name" && p !== "stack") return false;
@@ -2793,7 +2793,7 @@ export function receiverIsNativeStringValType(
   fctx: FunctionContext,
   recv: ts.Expression,
 ): boolean {
-  if (!(ctx.wasi || ctx.standalone)) return false;
+  if (!wasmGcBackend(ctx)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   // (#3753 S1c) `this.<field>` inside a typed twin, where #3753 S1b promoted the
   // slot to a native string ref. The value IS a `$AnyString` by construction —
@@ -2847,7 +2847,7 @@ export function receiverIsNativeStringValType(
  * already returns the correct length from the real JS value).
  */
 export function receiverMayBeNativeStringAtRuntime(ctx: CodegenContext, recv: ts.Expression): boolean {
-  if (!(ctx.wasi || ctx.standalone)) return false;
+  if (!wasmGcBackend(ctx)) return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   const t = ctx.checker.getTypeAtLocation(recv);
   return (
@@ -2945,7 +2945,7 @@ export function tryEmitPinnedStructMemberGet(
   // RegExp.exec is the canonical case). Prototype/accessor misses have no own
   // field entry and deliberately stay externref.
   const pinnedFieldType =
-    ctx.standalone && pinnedStructName !== undefined
+    wasmGcBackend(ctx) && pinnedStructName !== undefined
       ? ctx.structFields.get(pinnedStructName)?.find((field) => field.name === propName)?.type
       : undefined;
   const finishPinnedRead = (): ValType => {
@@ -3017,7 +3017,7 @@ export function tryEmitDeleteAwareDynamicGet(
   objType: ts.Type,
   propName: string,
 ): ValType | null | undefined {
-  if (!ctx.moduleUsesDelete || ctx.standalone) return undefined;
+  if (!ctx.moduleUsesDelete || wasmGcBackend(ctx)) return undefined;
   // Only dynamic (`any`/`unknown`) receivers take the bypassed fast-path that
   // ignores the tombstone. Concrete struct/class/array receivers are typed and
   // unaffected by the `any`-read path this guards.
@@ -3078,9 +3078,7 @@ export function tryEmitDeleteAwareDynamicGet(
   // host read when the dispatcher/flag can't be set up (byte-identical legacy).
   // The `__in_module_init` gate is a gc/host concern only: the host start-section
   // timing is what breaks `__extern_get`'s struct read at init. WASI/standalone
-  // have no host `__extern_get` (and this whole function is already gated
-  // `!ctx.standalone`); keep WASI on the legacy bare read so `__module_init`'s
-  // lazy-init guard wrap stays untouched.
+  // do not use this linear-provider path; their native MOP handles the read.
   const getMemberIdx = ctx.wasi ? undefined : reserveMemberGetDispatch(ctx, propName, fctx);
   addStringConstantGlobal(ctx, propName);
   flushLateImportShifts(ctx, fctx);
@@ -3154,7 +3152,7 @@ export function tryEmitDeleteAwareDynamicSet(
   objType: ts.Type,
   propName: string,
 ): ValType | undefined {
-  if (!ctx.moduleUsesDelete || ctx.standalone) return undefined;
+  if (!ctx.moduleUsesDelete || wasmGcBackend(ctx)) return undefined;
   // The receiver must be a shape-inferred dynamic struct that `delete` can
   // tombstone: `any`/`unknown` (the read side's case) OR a shape-inferred
   // ANONYMOUS object/type literal (`var o = { … }` / `(o: { a: T })`). The
@@ -3244,10 +3242,8 @@ export function tryEmitDeleteAwareDynamicSet(
   // `delete`d yet on a freshly-built object so the for-in re-add ordering the
   // runtime arm preserves is moot. At runtime keep the sidecar `__extern_set_strict`.
   //
-  // gc/host only: WASI/standalone have no host `__extern_set_strict` (this
-  // function already returns early for `ctx.standalone`), and WASI's
-  // `__module_init` lazy-init wrap must stay untouched — so WASI keeps the legacy
-  // bare sidecar write.
+  // Linear-provider only: WasmGC uses the native MOP and never reaches this
+  // sidecar write.
   //
   // The dispatcher is reserved HERE — AFTER both operands are evaluated into
   // locals — deliberately. The `value` expression (e.g. `conf.zz || 0`) can
@@ -3424,7 +3420,7 @@ export function tryEmitConstructorViaTag(
   // miss), so nothing regresses. Plain strictNoHostImports (gc, no-host)
   // keeps the null seed unchanged.
   let externGetIdx: number | undefined;
-  if (ctx.standalone || ctx.wasi) {
+  if (wasmGcBackend(ctx)) {
     ensureObjectRuntime(ctx);
     externGetIdx = ctx.funcMap.get("__extern_get");
   } else if (!ctx.strictNoHostImports) {
@@ -3580,9 +3576,9 @@ function tryOpenObjectDynamicGet(
 ): ValType | null | undefined {
   // (#6774 S2) `{ ["__proto__"]: v }` holds an OWN "__proto__" data property:
   // read it raw, never through the reserved proto-walk / typed-unbox lowerings.
-  const ownProto = ctx.standalone && propName === "__proto__" && receiverHasOwnComputedProto(ctx, expr);
+  const ownProto = wasmGcBackend(ctx) && propName === "__proto__" && receiverHasOwnComputedProto(ctx, expr);
   const irWithTarget = ownProto || isIrWithOpenObjectTargetReceiver(ctx, expr.expression);
-  if (!irWithTarget && !ctx.standalone) return undefined;
+  if (!irWithTarget && !wasmGcBackend(ctx)) return undefined;
   // (#6772 S2) a return-override class binding may hold the foreign override
   // object: read the raw MOP value (never the checker's field type).
   if (!irWithTarget && !chainRootIsGrowable(ctx, expr.expression) && !isReturnOverrideMemberRead(ctx, expr)) {
@@ -3623,7 +3619,8 @@ function tryOpenObjectDynamicGet(
   // the predicate AFTER compiling the receiver, because that compilation may
   // register imports which must be settled before the guard captures its idx.
   const baseExpr = skipTransparentExpressions(expr.expression);
-  const isUndefinedIdx = ctx.standalone && !ts.isIdentifier(baseExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+  const isUndefinedIdx =
+    wasmGcBackend(ctx) && !ts.isIdentifier(baseExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
   flushLateImportShifts(ctx, fctx);
   // §13.3 member access on null/undefined throws TypeError (keep parity with
   // the default read path's null guard).
@@ -3657,7 +3654,7 @@ function tryKnownFnctorDynamicObjectCarrierGet(
 ): ValType | undefined {
   // Narrow rollback switch used by the Acorn exact A/B benchmark.
   if (readEnv("JS2WASM_TYPED_OPEN_CARRIER_READS") === "0") return undefined;
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const carrierRead = expr.expression;
   const carrierOwner =
@@ -3706,7 +3703,7 @@ function tryKnownFnctorDynamicObjectCarrierGet(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
-  const isUndefinedIdx = ctx.standalone ? ensureExternIsUndefinedImport(ctx) : undefined;
+  const isUndefinedIdx = wasmGcBackend(ctx) ? ensureExternIsUndefinedImport(ctx) : undefined;
   flushLateImportShifts(ctx, fctx);
   const recvTmp = allocTempLocal(fctx, { kind: "externref" });
   emitExternRecvNullGuard(ctx, fctx, recvTmp, recvType, carrierRead, expr, "carrier-get:recv", isUndefinedIdx);
@@ -4088,7 +4085,7 @@ export function compilePropertyAccess(
   // `Object.getPrototypeOf(iterator).next` reports. Registering the helper
   // BEFORE the receiver is compiled keeps any late import out of the middle of
   // this body (the #2043 shift discipline).
-  if ((ctx.standalone || ctx.wasi) && propName === "next") {
+  if (wasmGcBackend(ctx) && propName === "next") {
     const iterKind = iteratorPrototypeKindOfSymbolName(objType.getSymbol()?.name);
     if (iterKind !== undefined) {
       // Resolve BOTH helpers before a single instruction of the receiver is
@@ -4112,7 +4109,7 @@ export function compilePropertyAccess(
   // widened to `any`, so its `.constructor` read cannot reach the later
   // statically-typed builtin dispatch. Let the native RegExp identity arm run
   // before generic any/object routing; it declines for every other receiver.
-  if (ctx.standalone && propName === "constructor") {
+  if (wasmGcBackend(ctx) && propName === "constructor") {
     const regexpCtor = tryCompileStandaloneRegExpPropertyRead(ctx, fctx, expr);
     if (regexpCtor !== undefined) return regexpCtor;
   }
@@ -5366,7 +5363,7 @@ export function compileElementAccess(
   // one #3027 uses; the emission is unchanged (`__to_primitive` of a primitive
   // string is identity per §7.1.1 step 1, so the wrapper slot-read doubles as
   // a pass-through).
-  if (ctx.standalone && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
+  if (wasmGcBackend(ctx) && ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
     const recvWrapTsType = ctx.checker.getTypeAtLocation(expr.expression);
     if (
       (isStringWrapperType(recvWrapTsType) || ctx.oracle.staticJsTypeOf(expr.expression) === "string") &&
@@ -5506,7 +5503,7 @@ export function compileElementAccess(
     if (!isProvablyNonNull(expr.expression, ctx.checker)) {
       const receiverExpr = skipTransparentExpressions(expr.expression);
       const isUndefinedIdx =
-        ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+        wasmGcBackend(ctx) && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
       flushLateImportShifts(ctx, fctx);
       emitNullCheckThrow(ctx, fctx, objType, expr, undefined, isUndefinedIdx);
     }
@@ -5708,7 +5705,11 @@ export function compileElementAccessBody(
     // `__extern_get(recv, boxed-idx)`. Host/gc only (standalone's `__extern_get_idx`
     // already ref.tests `$ObjVec`); numeric index only (a string key is a genuine
     // property, never a vec index).
-    if (!ctx.standalone && ctx.vecTypeMap.size > 0 && isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
+    if (
+      !wasmGcBackend(ctx) &&
+      ctx.vecTypeMap.size > 0 &&
+      isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
+    ) {
       // recv externref is on the stack → recvLocal (allocated FIRST so the local
       // numbering of recv / idx / anyTmp is unchanged from before #3007).
       const recvLocal = allocLocal(fctx, `__nve_recv_${fctx.locals.length}`, { kind: "externref" });
@@ -5804,7 +5805,7 @@ export function compileElementAccessBody(
     // observable result the old path produced for those cases (a host object read
     // / `undefined`), so this arm only *adds* the correct native-vec answer.
     // Host/gc only: standalone has its own `__extern_get_idx` `$ObjVec` path.
-    if (!ctx.standalone && ctx.vecTypeMap.size > 0 && isAnyTypedIndexExpression(ctx, expr.argumentExpression)) {
+    if (!wasmGcBackend(ctx) && ctx.vecTypeMap.size > 0 && isAnyTypedIndexExpression(ctx, expr.argumentExpression)) {
       // recv externref is on the stack → recvLocal (allocated FIRST so local
       // numbering is stable through the index compile, per #3007).
       const recvLocal = allocLocal(fctx, `__dyn_recv_${fctx.locals.length}`, { kind: "externref" });
@@ -5907,11 +5908,11 @@ export function compileElementAccessBody(
     // (canonical `number_toString` key, #2551) AND the #3169 closed-struct
     // array-like arms. A genuine string key keeps the byte-exact old result
     // (the string gate below); so does every read the old path answered.
-    // Standalone only (NOT wasi: the `$Object` delegation arm inside
-    // `__extern_get_idx` is `ctx.standalone`-gated, same reasoning as the
-    // #2166 numeric arm below).
+    // WasmGC only: the `$Object` delegation arm inside `__extern_get_idx`
+    // belongs to the native object MOP, same reasoning as the #2166 numeric
+    // arm below.
     if (
-      ctx.standalone &&
+      wasmGcBackend(ctx) &&
       isAnyTypedIndexExpression(ctx, expr.argumentExpression) &&
       // EXCLUSION — a read whose receiver chain is rooted at the materialized
       // `arguments` object (`arguments[i]`, `arguments[2][arguments[1]]`, …)
@@ -6043,14 +6044,9 @@ export function compileElementAccessBody(
     // `__extern_get_idx` ref.tests `$ObjVec` and returns `data[i]`; for an
     // array-like `$Object` it delegates to `__extern_get(v, ToString(i))` (its
     // #2036 arm), so it is a correct superset of the string-key path for a
-    // numeric index — but ONLY in `--target standalone`: that `$Object`
-    // delegation arm is gated on `objArrayLikeArms = ctx.standalone` in
-    // object-runtime.ts, so under `--target wasi` `__extern_get_idx` returns the
-    // null sentinel for a genuine `$Object`, which would break a plain-object
-    // numeric read. Hence this is scoped to `ctx.standalone` only (NOT wasi);
-    // wasi and host mode keep the existing `__extern_get` path. A non-numeric
+    // numeric index in the WasmGC semantic core. A non-numeric
     // (string/symbol/computed) key always stays on `__extern_get`.
-    if (ctx.standalone && isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
+    if (wasmGcBackend(ctx) && isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
       // (#3057) A boxed static `$__ta_view` or `$__ta_dyn_view` reaches this
       // arm as an `any`/externref receiver with a numeric index. Its element kind is
       // a RUNTIME field, so `__extern_get_idx` can't byte-decode it (reads returned

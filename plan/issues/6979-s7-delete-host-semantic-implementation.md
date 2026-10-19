@@ -1078,3 +1078,77 @@ The largest remaining top-level concentrations are `object-ops.ts` (36),
 rather than changing it as one mechanical batch. Keep native WasmGC objects as
 the semantic/storage authority and reuse JS-backed objects only at the explicit
 value boundary.
+
+### S7-c object/property dispatcher handoff (2026-10-19, Codex)
+
+This seventh bounded S7-c checkpoint completes the 101-site object/property
+dispatcher group on `codex/6979-s7c-ir-arms`. S7 remains `in-progress`; this
+lands another reviewed migration checkpoint rather than claiming the program
+is complete.
+
+**Ratchet.** The reviewed reduction is banked:
+
+| Measure | Top-level array checkpoint | Object/property checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,331 | **1,230** |
+| Matching source files | 410 | **407** |
+| `object-ops.ts` | 36 | **0** |
+| `property-access.ts` | 34 | **0** |
+| `property-access-dispatch.ts` | 31 | **0** |
+
+The shared `wasmGcBackend` policy query now names the backend decision directly
+without regrowing already-large dispatch functions. It is a backend fact, not
+an environment or interop synonym.
+
+**Classification.** Object descriptors, accessors, deletion, Proxy routing,
+open-object reads, numeric element reads, primitive wrappers, iterators and
+native carrier dispatch now select the WasmGC implementation by backend. The
+linear backend retains its provider-specific behavior. Two genuinely different
+axes stay explicit: `process.*` availability is decided from the WasmGC backend
+plus `hostFreeEnvironment`/`jsValueBoundary`, while an externref string's host
+length fallback is admitted only by `jsValueBoundary`. The existing host
+buffer byte-attribute bridge remains an explicit boundary exception.
+
+This is also the intended answer for boundary objects. Internal objects use the
+native WasmGC MOP and storage. An object that actually crosses the JavaScript
+boundary may keep the existing JS-host-backed representation and identity; it
+is not copied into a second object model. JS machinery is therefore reused at
+the boundary only, not selected as a competing semantic implementation.
+
+The earlier normalization was not harmful: default `gc` and literal
+`standalone` already projected `ctx.standalone` from `nativeRegime`, so their
+semantic branches were already the same. Replacing the compatibility bit with
+the backend query makes that fact explicit and intentionally brings WASI onto
+the same WasmGC object/property semantics. The environment and value-boundary
+queries preserve the places where WASI and a JavaScript embedder really differ;
+the linear backend remains outside this collapse.
+
+**Validation.** The candidate has the following evidence:
+
+- `issue-6979-array-object-mode-collapse.test.ts` now passes 5/5, including a
+  new standalone/WASI `any`-typed numeric-property probe through the native
+  object MOP. Together with the 64 boundary tests in `issue-4397` and the four
+  `process.env` regime tests in `issue-6910`, the focused policy set is 73/73.
+- The wider 31-file object/property cohort is 393 passing, 17 failing and ten
+  skipped assertions. A detached A/B at pre-checkpoint commit `0734da6c00`
+  reproduces all 17 failures exactly across the four failing files (38 passing,
+  17 failing in both runs), so there is no slice-specific failure.
+- Equivalence remains 20 failing, 2,008 passing and 22 known failures; two
+  baseline failures pass and there are **no new regressions**.
+- TypeScript 7 typecheck, Biome lint, Prettier, standalone-arm, host-import
+  policy, IR-fallback, import-cycle, flat-directory, LOC, function, coercion,
+  oracle and verdict-oracle gates pass. No function-budget allowance was added.
+- Host-import policy remains 33 probes / 452 imports / zero `regime-gap` or
+  `unknown` imports. Runtime metrics remain 12,066 lines, 1,959
+  `resolveImport` lines / 7 cases, 897 owned-adapter lines and 1,194 explicit
+  capability lines.
+- Compiler-boundary inventory remains
+  `inventory-valid-architecture-incomplete` with `errors: []`. Dead-export
+  preservation remains 6/6 full and 6/6 cut witnesses; the same two nonliteral
+  dynamic imports keep strict closure open and retirement uncertified.
+
+**Next handoff.** Continue with another bounded object-model group, preferably
+`closed-method-dispatch.ts` (29) plus `object-runtime.ts` (25), before entering
+the larger expression-call cluster. Keep semantic/storage choices on
+`wasmGcBackend`; use `jsValueBoundary` only for values that actually cross the
+JavaScript boundary and `hostFreeEnvironment` only for platform availability.
