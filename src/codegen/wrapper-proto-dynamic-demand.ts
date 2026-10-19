@@ -63,7 +63,7 @@ import {
   ensureNumberNativeProtoGlue,
   ensureStringNativeProtoGlue,
 } from "./array-object-proto.js";
-import type { CodegenContext } from "./context/types.js";
+import { type CodegenContext, wasmGcBackend } from "./context/types.js";
 import type { WrapperBrandName } from "./wrapper-proto-value-of.js";
 
 /** Register (once) the brand glue for one of the three wrapper families. */
@@ -77,7 +77,7 @@ function ensureWrapperGlue(ctx: CodegenContext, brandName: WrapperBrandName): nu
  * Mint `<brandName>.prototype.<member>`'s closure so the dynamic read
  * (`__extern_get`) can resolve it for a wrapper receiver.
  *
- * No-op outside standalone, for a member the brand does not advertise, and for
+ * No-op outside WasmGC, for a member the brand does not advertise, and for
  * an accessor member (a plain read of one must INVOKE it — a different
  * question, and one this route cannot answer).
  */
@@ -86,7 +86,7 @@ export function ensureWrapperProtoDynamicMember(
   brandName: WrapperBrandName,
   member: string,
 ): void {
-  if (!ctx.standalone) return;
+  if (!wasmGcBackend(ctx)) return;
   const brand = ensureWrapperGlue(ctx, brandName);
   if (brand === undefined) return;
   const glue = getNativeProtoBuiltinGlue(ctx, brand);

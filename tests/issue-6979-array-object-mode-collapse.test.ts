@@ -42,6 +42,83 @@ describe("#6979 S7-c array/object mode collapse — WASI structure", () => {
 
 for (const target of ["standalone", "wasi"] as const) {
   describe(`#6979 S7-c array/object mode collapse — ${target} runtime`, () => {
+    it("calls a typed String wrapper method through its native primitive value", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new String("ab");
+          export function readResult(): number { return boxed.charAt(1) === "b" ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("calls Boolean wrapper toString through native dispatch", async () => {
+      const { module } = await compileNative(
+        `
+          var boxed = new Boolean(true);
+          export function readResult(): number { return boxed.toString() === "true" ? 1 : 0; }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("maps a packed typed array through a native callback", async () => {
+      const { module } = await compileNative(
+        `
+          export function readResult(): number {
+            var values = new Uint8Array([1, 2]);
+            var mapped = values.map((value: number) => value + 40);
+            return mapped[1];
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
+    it("runs scalar callbacks over a packed typed array", async () => {
+      const { module } = await compileNative(
+        `
+          export function readResult(): number {
+            var values = new Uint8Array([1, 2]);
+            if (!values.some((value: number) => value === 2)) return -1;
+            return values.findIndex((value: number) => value === 2);
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
+
+    it("passes fixed and spread arguments to an open native method", async () => {
+      const { module } = await compileNative(
+        `
+          var object: any = { add(a: number, b: number, c: number) { return a + b + c; } };
+          var rest = [20, 21];
+          export function readResult(): number { return object.add(1, ...rest); }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(42);
+    });
+
     it("converts an open native object with valueOf before numeric arithmetic", async () => {
       const { module } = await compileNative(
         `

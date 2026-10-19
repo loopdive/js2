@@ -1704,3 +1704,75 @@ The next large expression owners are `call-receiver-method.ts` (46 raw
 references) and `calls.ts` (42); review their native-runtime dependencies
 before widening WASI admission. The full S7 acceptance checklist above stays
 open, including runtime retirement and program-wide conformance evidence.
+
+### S7-c receiver-method dispatch handoff (2026-10-19, Codex)
+
+This fifteenth bounded checkpoint migrates the receiver-method dispatcher and
+its native dependency closure: `call-receiver-method.ts`,
+`standalone-primitive-tail.ts`, `valueof-fallback.ts`, `ta-hof-map-filter.ts`,
+`regexp-exec-carrier.ts`, `wrapper-valueof.ts`, `boxed-proto-valueof.ts`,
+`wrapper-proto-dynamic-demand.ts`, and `native-proto.ts`. It continues on
+`codex/6979-s7c-ir-arms` / draft PR `#6762`; S7 remains `in-progress`.
+
+**Ratchet.** The reviewed reduction is **970 → 913** raw source references,
+**385 → 377** matching files, **686 → 679** in `src/codegen`, and **276 → 226**
+in expressions. The dispatcher falls from 46 references to two: both remaining
+hits are writes to the existing `standaloneNativeFinallyNodes` metadata field,
+not mode decisions. All mode decisions in this nine-file group are migrated,
+including five indirect checks through the old `noJsHost` composite helper.
+
+**Classification and dependencies.** Native fnctor dispatch, closed/open
+method calls, wrappers and overrides, internal array argument carriers,
+TypedArray callback methods, dynamic spread, and prototype companion seeding
+are WasmGC backend decisions. The old claim that WASI lacks native indexed
+argument readers is obsolete: the object runtime now reads the same ObjVec
+and native-vector carriers that the dispatcher writes. Packed map/filter must
+move with its helper gate; changing only the caller leaves WASI on a missing
+helper. Wrapper calls similarly need their native valueOf bodies, dynamic
+member demand, and prototype companion registration together.
+
+RegExp is a provider-capability decision. The call site and exec carrier now
+ask `usesNativeRegExpProvider`, so a WasmGC target without an enabled engine
+does not accidentally mint engine-only helpers. The dynamic-class method-name
+set remains restricted to the non-WasmGC provider, matching its authoritative
+reader in `closed-method-dispatch.ts`; it is legacy provider bookkeeping, not
+the JavaScript value-boundary adapter. JS-owned receivers still reach the
+existing admitted-object boundary arm of the native MOP with their identity
+intact. Wasm-owned objects and callback arguments stay native internally.
+
+**Runtime evidence.** The final focused run is **49/49**: 43 S7 array/object
+tests across standalone/WASI and six JavaScript-boundary tests. New probes
+exercise typed String-wrapper `charAt`, Boolean-wrapper `toString`, packed
+TypedArray `map`, scalar `some`/`findIndex`, and a fixed argument followed by a
+dynamic spread into an open method. Every native probe instantiates with an
+empty import object.
+
+With the same first eight new cases applied before editing production code,
+the exact 18-file parent control at
+`6947e10aeaa187ff7ed0865e0706cd701035ffee` is **202 passing / 16 failing / five
+skipped**; the candidate is **205 passing / 13 failing / five skipped**
+(223 rows each). All 13 residual failure messages match exactly. The only
+status changes are three WASI fixes: the String-wrapper method changes from an
+illegal cast to the correct answer; packed TypedArray mapping changes from an
+exception to 42; mixed method spread changes from `NaN` to 42. The two scalar
+TypedArray cases were added afterward and are covered by the 49/49 focused
+run, not counted in that 223-row comparison.
+
+**Residuals kept explicit.** The 13 compared failures are one dynamic-view
+regrow case, five array/object expando-method cases, five harness-flip utility
+expectations from `issue-3668.test.ts`, and two direct-call devirtualization
+expectations. This cohort is not green and is not a Test262 population. Its
+utility assertions are reported as measured rather than silently excluded
+from the denominator.
+
+**Validation and next work.** TypeScript 7 typecheck, Biome lint, Prettier,
+LOC/function, coercion-site, oracle, and standalone-arm gates pass. The
+host-import policy remains **33 probes / 452 imports / zero regime-gap or
+unknown imports**, with RegExp, Date, and Intl accelerator controls present.
+The IR-fallback gate has no unintended/post-claim/module-level growth.
+Dead-export preservation remains 6/6 full and cut witnesses, while strict
+retirement is still uncertified at the two recorded nonliteral dynamic imports.
+Continue with the 42 raw references in `calls.ts` and the remaining namespace
+and constructor groups. Keep the full S7 acceptance checklist open: these
+bounded native-runtime improvements do not establish program-wide conformance
+or certify deletion of the remaining host provider code.

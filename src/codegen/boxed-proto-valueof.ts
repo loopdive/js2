@@ -43,7 +43,7 @@
  * wrong boolean.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { mintDefinedFunc, pushDefinedFunc, definedFuncAt } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -201,7 +201,7 @@ export function emitBoxedProtoValueOfBody(
   fctx: FunctionContext,
   brand: BoxedValueOfBrand,
 ): ValType | null {
-  if (!ctx.standalone) return null;
+  if (!wasmGcBackend(ctx)) return null;
   const helperIdx = ensureBoxedValueOfHelper(ctx, brand);
   if (helperIdx < 0) return null;
 

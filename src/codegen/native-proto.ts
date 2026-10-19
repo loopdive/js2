@@ -44,7 +44,7 @@ import {
 } from "../runtime/wasmgc/values/prototype-seeder-bodies.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "./context/types.js";
 import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { ensureBuiltinFnMetaType, pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { addFuncType, getOrRegisterVecType, taCtorKindOf } from "./registry/types.js";
@@ -411,7 +411,7 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
         ensureNativeProtoCompanionSeeder(ctx, brand);
         const companionIdx = ctx.funcMap.get("__protoidx_companion");
         const companion =
-          ctx.standalone && nativeProtoSeederRegistry(ctx).has(brand) && companionIdx !== undefined
+          wasmGcBackend(ctx) && nativeProtoSeederRegistry(ctx).has(brand) && companionIdx !== undefined
             ? { functionIndex: companionIdx, brandOffset: brand - BUILTIN_BRAND_BASE }
             : undefined;
         step = recipe.next({ kind: "seed-companion", companion });
@@ -666,7 +666,7 @@ function seedSymbolDataProps(
 }
 
 export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: number): string | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
   const registry = nativeProtoSeederRegistry(ctx);
   const existing = registry.get(brand);
   if (existing !== undefined) return existing;
