@@ -1,0 +1,1044 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-y native SameValue equates distinct Number NaN representations",
+  "parentCommit": "7d7f8c88c8c77ec2d07216ac1b35dbeccd09a5c6",
+  "candidate": "Exact sourceHashes; signed checkpoint follows",
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forks": 2,
+    "flags": ["--experimental-wasm-exnref"],
+    "fullTest262": false
+  },
+  "sourceHashes": {
+    "src/runtime/wasmgc/values/native-object-same-value-definition.ts": "98f5a33399a828d8cacdb9a4bcba44cef113255038f597f5de726d3aaf6d4caa",
+    "src/backend/wasmgc/resources/native-object-same-value.ts": "79d164bad349daabf1603ba6a9c9824c051a190cac83a5911a9fce5e3fb5a133",
+    "tests/issue-6979-native-same-value-nan.test.ts": "33bbc11c2427232e6366a653fc43097fa50898c4fd792d84008eddb2a262c463",
+    "scripts/compiler-boundaries.json": "7df8a7367099a80b31bd3fd5ccbde0bd7004f3f3c982b2f4d9c11aa59a1311bf",
+    "src/runtime/wasmgc/values/object-same-value-body.ts": "ab29f1bc725f56fc8e33c66818ee103fc316faa0c11077a9b5a20e08fde00ebb",
+    "src/codegen/object-same-value.ts": "cb6256d1c40c0f90842e6b012f25e869d4767d9a03d31260c32d66b83c102974",
+    "tests/helpers/native-descriptor-fixture.ts": "9366380fb3c5ffc0398e944b268e1617f2895dd0f3ae6a6cf67fc3e090de2871",
+    "src/runtime/wasmgc/values/number-bodies.ts": "ddbd9a63f7e33074270e3d6b0ccb3b22cd357b2916ee0f49d411d0e66d0167eb",
+    "src/runtime/wasmgc/values/ordinary-object-descriptor-data.ts": "39a23088d20f4474c0f1198e20512d5c489ef2b30a1291a079d65fc13a696162"
+  },
+  "scope": {
+    "correctsNativeSameValueAndActualDescriptorRedefinition": true,
+    "nativeNumberBrandGuard": true,
+    "noCoercionOfOtherBrands": true,
+    "finiteAndSignedZeroPreserved": true,
+    "historicalRecipeAndProducerUnchanged": true,
+    "newNativeRuntimeDefinitionModules": 1,
+    "newRootsOrAllowancesOrAllowedPolicyEdges": false,
+    "newHostImportsOrGraphCopy": false,
+    "selectorOrFrozenAstExpansion": false,
+    "fullRealmOrPublicObjectIsCompleted": false
+  },
+  "tests": {
+    "newCases": {
+      "cases": 40,
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0,
+      "names": [
+        "native SameValue and frozen data descriptors, displaced=false does not coerce undefined, null or Boolean carriers into a numeric NaN",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads 7ff8000000000001/7ff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads 7ff8000000000001/7ff8000000000002",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads 7ff8000000000001/fff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads 7ff8000000000002/7ff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads 7ff8000000000002/7ff8000000000002",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads 7ff8000000000002/fff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads fff8000000000001/7ff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads fff8000000000001/7ff8000000000002",
+        "native SameValue and frozen data descriptors, displaced=false equates actual distinct NaN payloads fff8000000000001/fff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=false never equates NaN to a non-NaN number in either operand order",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for -0 and -0",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for -0 and 0",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for 0 and -0",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for 0 and 0",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for 42 and 42",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for 42 and 43",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for 5e-324 and 0",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for Infinity and -Infinity",
+        "native SameValue and frozen data descriptors, displaced=false preserves finite/signed-zero/infinite equality for Infinity and Infinity",
+        "native SameValue and frozen data descriptors, displaced=true does not coerce undefined, null or Boolean carriers into a numeric NaN",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads 7ff8000000000001/7ff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads 7ff8000000000001/7ff8000000000002",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads 7ff8000000000001/fff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads 7ff8000000000002/7ff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads 7ff8000000000002/7ff8000000000002",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads 7ff8000000000002/fff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads fff8000000000001/7ff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads fff8000000000001/7ff8000000000002",
+        "native SameValue and frozen data descriptors, displaced=true equates actual distinct NaN payloads fff8000000000001/fff8000000000001",
+        "native SameValue and frozen data descriptors, displaced=true never equates NaN to a non-NaN number in either operand order",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for -0 and -0",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for -0 and 0",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for 0 and -0",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for 0 and 0",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for 42 and 42",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for 42 and 43",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for 5e-324 and 0",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for Infinity and -Infinity",
+        "native SameValue and frozen data descriptors, displaced=true preserves finite/signed-zero/infinite equality for Infinity and Infinity"
+      ]
+    },
+    "focusedExecution": {
+      "cases": 120,
+      "passed": 120,
+      "failed": 0,
+      "skipped": 0
+    },
+    "resources": {
+      "cases": 161,
+      "passed": 147,
+      "failed": 14,
+      "skipped": 0,
+      "comparison": "Retained published-parent S7-x report, not a fresh parent checkout",
+      "normalizedFullRowsEqual": true,
+      "rowsSha256": "5b13088247f0001a5d6270de76f44182943a85fffd1ba4ff200205310b59906d",
+      "retainedFailures": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_accessor instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "57deb91c6af0d2de598d2463fc110a587342d199d8dbea73642bc8738d2eba97"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __defineProperty_value instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "57deb91c6af0d2de598d2463fc110a587342d199d8dbea73642bc8738d2eba97"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __new_plain_object instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "27c442e7d1f208901582643ba6b268c0571db9d4d4b105fd7d84f08aa88b9ee4"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_grow instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "27c442e7d1f208901582643ba6b268c0571db9d4d4b105fd7d84f08aa88b9ee4"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __obj_insert instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "27c442e7d1f208901582643ba6b268c0571db9d4d4b105fd7d84f08aa88b9ee4"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation preserves __object_is instructions, locals and all acquisition effects",
+          "normalizedFullErrorSha256": "57deb91c6af0d2de598d2463fc110a587342d199d8dbea73642bc8738d2eba97"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-descriptor…'",
+          "normalizedFullErrorSha256": "b1471e5d78d79a1b9dab1059ce43160a72d3eb9d70b810233f555433824ae4e6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-enumeratio…'",
+          "normalizedFullErrorSha256": "b1471e5d78d79a1b9dab1059ce43160a72d3eb9d70b810233f555433824ae4e6"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime.ts'",
+          "normalizedFullErrorSha256": "b167e97e10af8b4da4eefc3e4cb2daa648fc969206e26848cce1797b52cb08f0"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects altered receipts, old-source substitution and unknown paths",
+          "normalizedFullErrorSha256": "b2e0bf1502d2a5f0626489e15aad5c3373c267ae8da8d841ad3b2cfab605798e"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-descriptor…' after a positive reconstruction",
+          "normalizedFullErrorSha256": "9552605870ce3b1fa0459596a67299a3dbf9ac024b4b517c2fcc419384904af9"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-enumeratio…' after a positive reconstruction",
+          "normalizedFullErrorSha256": "9552605870ce3b1fa0459596a67299a3dbf9ac024b4b517c2fcc419384904af9"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime.ts' after a positive reconstruction",
+          "normalizedFullErrorSha256": "e7df281df1180222581cff25f5d45b6d67feed9bdd5a7cf7a738185a63f3f79c"
+        },
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "name": "fixed donor and whole-source preservation rejects missing, duplicated, reordered and semantic span mutations",
+          "normalizedFullErrorSha256": "8f7803c7f3c312789d9de5c52df39466e80a84ec8229706abeefa0871b858aeb"
+        }
+      ]
+    },
+    "historicalCustody": {
+      "parent": {
+        "cases": 35,
+        "passed": 9,
+        "failed": 26,
+        "skipped": 0
+      },
+      "candidate": {
+        "cases": 35,
+        "passed": 9,
+        "failed": 26,
+        "skipped": 0
+      },
+      "comparison": "Fresh exact-parent detached checkout with identical Node/Vitest/fork flags",
+      "normalizedFullRowsEqual": true,
+      "rowsSha256": "dc921e7ee949a0f60d7cbe18d49b2ccaf7e0ca8e585715b20abb21e931b52e36",
+      "retainedFailures": [
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "actual canonical donor definitions and acquisition captures live provider handles after equality acquisition, missing=false",
+          "normalizedFullErrorSha256": "04493612effdc56b6d61e7e996497e5ecf8cfeb4f982fe123a2a3b18293986ac"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "actual canonical donor definitions and acquisition captures live provider handles after equality acquisition, missing=true",
+          "normalizedFullErrorSha256": "04493612effdc56b6d61e7e996497e5ecf8cfeb4f982fe123a2a3b18293986ac"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "actual canonical donor definitions and acquisition retains exact equality helper definition and idempotence, missing=false",
+          "normalizedFullErrorSha256": "a2c72e441fa426a7bc0995b7cea9bb677050829e1a7db4ebf5c740aa06086652"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "actual canonical donor definitions and acquisition retains exact equality helper definition and idempotence, missing=true",
+          "normalizedFullErrorSha256": "a2c72e441fa426a7bc0995b7cea9bb677050829e1a7db4ebf5c740aa06086652"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "actual canonical donor definitions and acquisition retains exact ordered subtype registration at offset 0",
+          "normalizedFullErrorSha256": "87585f9368c64c69ca2edd7a935a97214dd4d49a5d84f0a295f067dfb16c66de"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "actual canonical donor definitions and acquisition retains exact ordered subtype registration at offset 17",
+          "normalizedFullErrorSha256": "87585f9368c64c69ca2edd7a935a97214dd4d49a5d84f0a295f067dfb16c66de"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction keeps the existing main-merge inverse after the authenticated new correction",
+          "normalizedFullErrorSha256": "cc0af6e8237a50d01839aeec6a4be9e94a269bc4046970d229e542681bd03c2c"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction reconstructs and replays the whole src/codegen/bigint-wide.ts",
+          "normalizedFullErrorSha256": "daa413989c9435a6e18102bf821640c156faa92d784c75d2ad61af18dea542b9"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction reconstructs and replays the whole src/codegen/object-runtime-enumeration.ts",
+          "normalizedFullErrorSha256": "a61fb0d37547fd05e6f11185d6a6fa283ee63bdee0404b5140ad14b47618be88"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction reconstructs and replays the whole src/codegen/registry/imports.ts",
+          "normalizedFullErrorSha256": "05d27e6d1dbd5cac6079b7e71a1b0306233439fca0cb2e481abc12dad750c9e6"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction refuses changed receipt authority and unknown source paths",
+          "normalizedFullErrorSha256": "3e2f7020354f6ad98a0197f9fe6b02307e4f52719429d88b8b9099e13c9cb1a9"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction rejects outside edits and historical substitution for src/codegen/bigint-wide.ts",
+          "normalizedFullErrorSha256": "cab154e52f02dfa59d845c77bc7aec7cedb5dd059c0309a9327fd96d53535e6c"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction rejects outside edits and historical substitution for src/codegen/object-runtime-enumeration.ts",
+          "normalizedFullErrorSha256": "0fa17bf7ba3b88c8327ef5b57b8237437914cb8e09a0ec0165132e0390ee831e"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction rejects outside edits and historical substitution for src/codegen/registry/imports.ts",
+          "normalizedFullErrorSha256": "8c1b666b336e706d454c0ebc1d4ef5dc500a55879d0083c5fb63de9ef91d68f0"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction rejects reordered spans for src/codegen/bigint-wide.ts",
+          "normalizedFullErrorSha256": "bdd167e95d8fde74f2f1843e5302978fa804261b8b34580afeb7cd659cfa18aa"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction rejects reordered spans for src/codegen/object-runtime-enumeration.ts",
+          "normalizedFullErrorSha256": "173ea58a6d06abd7f22e27df49f27323cc512b6310633b36ad9fbfa9c18b0062"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction rejects reordered spans for src/codegen/registry/imports.ts",
+          "normalizedFullErrorSha256": "e61016cf60d87ed2a4e4b3cfa988b5edc5f1e8d5d1a434ca7045573acbc5e4ab"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/bigint-wide.ts:0 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "ae40b55e71f92e3e3a427d71264a791a6d76d39e7c1a63e48d4dbdf66c657212"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/bigint-wide.ts:1 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "ae40b55e71f92e3e3a427d71264a791a6d76d39e7c1a63e48d4dbdf66c657212"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/bigint-wide.ts:2 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "ae40b55e71f92e3e3a427d71264a791a6d76d39e7c1a63e48d4dbdf66c657212"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/object-runtime-enumeration.ts:0 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "d3dca40e4df03786ed449bed28f0b1876fb5b1360eae6abf4c9cc5ebb7c537d4"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/object-runtime-enumeration.ts:1 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "d3dca40e4df03786ed449bed28f0b1876fb5b1360eae6abf4c9cc5ebb7c537d4"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/object-runtime-enumeration.ts:2 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "d3dca40e4df03786ed449bed28f0b1876fb5b1360eae6abf4c9cc5ebb7c537d4"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/registry/imports.ts:0 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "e61ef25a5b16fd14dafa1865025f22a16324acef37e4efa33badf51f5e5610b9"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/registry/imports.ts:1 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "e61ef25a5b16fd14dafa1865025f22a16324acef37e4efa33badf51f5e5610b9"
+        },
+        {
+          "file": "issue-3518-bigint-carrier-port.test.ts",
+          "name": "authenticated exact-main BigInt carrier extraction and SameValue correction src/codegen/registry/imports.ts:2 rejects damaged, missing and duplicate spans after a positive control",
+          "normalizedFullErrorSha256": "e61ef25a5b16fd14dafa1865025f22a16324acef37e4efa33badf51f5e5610b9"
+        }
+      ]
+    },
+    "existing": {
+      "cases": 779,
+      "passed": 756,
+      "failed": 23,
+      "skipped": 0,
+      "files": 38,
+      "comparison": "Retained published-parent S7-x report, not a fresh parent checkout",
+      "normalizedFullRowsEqual": true,
+      "rowsSha256": "cbd3bc10adc1fa8f1b28b6799fa6c4c15a21fc297cfa61b8fd27d0890dd90b4b",
+      "retainedFailures": [
+        {
+          "file": "issue-1058-closure-rest-host-dispatch.test.ts",
+          "name": "#1058 externref-backed closure rest host dispatch materializes empty and populated rest arrays for plain and method host calls",
+          "normalizedFullErrorSha256": "92b7339176e8c9d081725913caac1b4326f15fc4cce746dee5ba3e5734050c1f"
+        },
+        {
+          "file": "issue-1058-unmatched-closure-host-call.test.ts",
+          "name": "#1058 callback with its own ABI through a generic helper calls void, number and captured callbacks through forEach",
+          "normalizedFullErrorSha256": "3c27262f08cd28b08605c89652894f0f052f13de1c654048b08cf2f8e5a94761"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) nested fn-decl `this` inside a plain strict function is also undefined",
+          "normalizedFullErrorSha256": "c926c367a79bd124abc17b1c97225e3bc0b08fa4da1bf95e02773170dd8afae7"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 1: strict function-expression `typeof this` is 'undefined', not 'object'",
+          "normalizedFullErrorSha256": "43f394f3accb7211b16c710e8238b55797e351d41c6ab8c64c3f8c894e74b7b3"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 2: nested fn-decl in a class method sees `this === undefined`",
+          "normalizedFullErrorSha256": "7715cb795416c9c659f0884f1daf2fc31583223f3613e82db8fdc4145cd8d1da"
+        },
+        {
+          "file": "issue-1702-strict-this.test.ts",
+          "name": "#1702 — residual strict-mode `this` (10.4.3-1-*-s + class-method shapes) shape 2: the class method's own `this` is still the instance (not regressed)",
+          "normalizedFullErrorSha256": "f15b774525a31c2ebf62fc1fb95c6174d614acdd6f9ecdd8ca2a7db6605bef11"
+        },
+        {
+          "file": "issue-2623-p7-finally-bridge.test.ts",
+          "name": "#2623 P-7 — B-5: §27.2.5.3 synchronous abrupt completion through .finally() well-behaved .finally(cb) still chains (wrap removal does not break the happy path)",
+          "normalizedFullErrorSha256": "52235d93a35c74ee844264ab6c95b6a7f8b67ebbdfd0c5088310e64f46c2f797"
+        },
+        {
+          "file": "issue-3518-typed-program-preparation.test.ts",
+          "name": "source-free typed program preparation, standalone WasmGC gates intermediate allocation checks explicitly while retaining nonempty unconditional final checks",
+          "normalizedFullErrorSha256": "11c4e783c45eaa0738688f4e2d9bcb3729aa1e690e20cb54e7d2562bbfa2c46d"
+        },
+        {
+          "file": "issue-3518-typed-program-preparation.test.ts",
+          "name": "source-free typed program preparation, standalone WasmGC threads explicit false through every verifier, including final validation, with an omitted-option control",
+          "normalizedFullErrorSha256": "d88dc42591f6d81957e552e955a22b6f477b2e0a5f97b2b92ba8aa544d530a17"
+        },
+        {
+          "file": "issue-3526-callable-boundary-callback.test.ts",
+          "name": "#3526 F3-S1 end-to-end behaviour is unchanged dispatches the wrapped one-shot callback exactly as before",
+          "normalizedFullErrorSha256": "4cd8ec8f16672930d276aece252de70d8851d0f0add8b2a21f1132d619b95f90"
+        },
+        {
+          "file": "issue-3526-callable-boundary-callback.test.ts",
+          "name": "#3526 F3-S1 end-to-end behaviour is unchanged keeps the maker at its pre-slice import position and spells it from the record",
+          "normalizedFullErrorSha256": "af1f1549f7988a9cb3a5a69c56d185970f0b6f959c3664fc1bcf1ab2b4efc140"
+        },
+        {
+          "file": "issue-3526-callable-boundary-schema.test.ts",
+          "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits imports the fixed-arity members and the array sibling TOGETHER on gc-host",
+          "normalizedFullErrorSha256": "4cf2da25082758ef42745e7e1fb2e6592fc04610f525a7a3c17dcf6d854f4ed4"
+        },
+        {
+          "file": "issue-3526-callable-boundary-schema.test.ts",
+          "name": "#3526 F3-S2 (b) each row's ABI equals what a real module emits matches the maker siblings' emitted import ABI",
+          "normalizedFullErrorSha256": "c07b5b445c06f7c7823c4e8c5cab450399ad7eddbe10489e9cfe5ca2f5aba0e3"
+        },
+        {
+          "file": "issue-4515-wave5.test.ts",
+          "name": "#4515 wave-5 — §13 completion value: the forms that RESET V a break inside an if carries `undefined` out of the loop",
+          "normalizedFullErrorSha256": "1c9e2e33da5a5cf071c6451d4db630ec4a85c274d641f8837e3a5a086662e310"
+        },
+        {
+          "file": "issue-4515-wave5.test.ts",
+          "name": "#4515 wave-5 — §13 completion value: the forms that RESET V a do-while still reports the last value-producing statement that ran",
+          "normalizedFullErrorSha256": "e2dd99fa30775c9e558e8542ee1365e870886dd18237c5f82eb944c4c52c0e71"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier keeps the closure reachable through the host dispatcher",
+          "normalizedFullErrorSha256": "970afa0525aa13702b2995baa8d4593b4ec2033141f455cc557c18b3cb163976"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier produces a module that validates and calls the closure with its tuple",
+          "normalizedFullErrorSha256": "3478b5d3bdf1941e82e4dba7a446c4eeebe6d8373944f13127a7343f7be3ce5f"
+        },
+        {
+          "file": "issue-5329-tuple-rest-carrier.test.ts",
+          "name": "#5329 tuple-typed rest parameter carrier still reads NaN for a tuple's .length (documented residual)",
+          "normalizedFullErrorSha256": "b5a0774872ed33a7d8b766429a3dcfdd77de5e62df1486a84ba5341ba89dfb56"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary library in a separately linked package",
+          "normalizedFullErrorSha256": "a43e72af5043e943dd5b71ccc7690c7a2723f1108f90fcfdb622e504c38c824b"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary single module",
+          "normalizedFullErrorSha256": "6526eb48dda99634494bbe668a218b895c29129dced18409ae8fa38b844919d6"
+        },
+        {
+          "file": "issue-6426-linked-object-rest-source.test.ts",
+          "name": "#6426 — an object-rest source keeps its values across a package boundary two untyped .js modules in one compilation unit",
+          "normalizedFullErrorSha256": "bb0828abbf40b337c1f48e7101ae3607729a4a9b20460f94e87d39d7971d9699"
+        },
+        {
+          "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+          "name": "#6757 — a body-minted closure called by the linked harness runs through the module that minted it instead of overflowing the stack",
+          "normalizedFullErrorSha256": "234cd2d7ec8f660eaf958596f835f2a26a06e55cf6b9753828ef90a6454e69b1"
+        },
+        {
+          "file": "issue-6757-linked-closure-dispatch-bounce.test.ts",
+          "name": "#6757 — a body-minted closure called by the linked harness still reports a real mismatch from the body-minted validator",
+          "normalizedFullErrorSha256": "399f701d5ad304d81bd2a5f18a72c8fbe09084e697d311de16f980e8033a8b8a"
+        }
+      ]
+    },
+    "oldExpectationsReceiptsOrSkipsChanged": false
+  },
+  "pairedNaNProbe": {
+    "runnerSource": "import assert from 'node:assert/strict';\nimport {descriptorRuntime} from '../tests/helpers/native-descriptor-fixture.ts';\nconst bitPatterns=[0x7ff8000000000001n,0x7ff8000000000002n,0xfff8000000000001n];\nconst fromBits=(bits:bigint)=>{const b=new DataView(new ArrayBuffer(8));b.setBigUint64(0,bits,true);return b.getFloat64(0,true);};\nconst bitsOf=(value:number)=>{const b=new DataView(new ArrayBuffer(8));b.setFloat64(0,value,true);return b.getBigUint64(0,true);};\nconst r=descriptorRuntime(true),values=bitPatterns.map(bits=>r.boxNumber(fromBits(bits)));\nassert.deepEqual(values.map(v=>bitsOf(r.unboxNumber(v))),bitPatterns);\nfor(let a=0;a<values.length;a++)for(let b=0;b<values.length;b++){\n  const object=r.create();r.defineData(object,r.key(),values[a],128);\n  let redefined=true,exception:string|undefined;\n  try{r.defineData(object,r.key(),values[b],128);}catch(e){assert(e instanceof WebAssembly.Exception);assert(e.is(r.exception));redefined=false;exception='actual shared TypeError tag';}\n  const host={};Object.defineProperty(host,'value',{value:fromBits(bitPatterns[a]!)});Object.defineProperty(host,'value',{value:fromBits(bitPatterns[b]!)});\n  console.log(JSON.stringify({a:bitPatterns[a]!.toString(16),b:bitPatterns[b]!.toString(16),roundTripBitsRetained:true,expectedSameValue:Object.is(fromBits(bitPatterns[a]!),fromBits(bitPatterns[b]!)),sameValue:r.sameValue(values[a],values[b]),expectedRedefinition:true,redefined,exception}));\n}\nfor(const [a,b]of [[0,-0],[-0,0],[0,0],[-0,-0],[42,42],[42,43],[Infinity,Infinity],[Infinity,-Infinity],[Number.MIN_VALUE,0]])console.log(JSON.stringify({control:[String(a),String(b)],negativeZero:[Object.is(a,-0),Object.is(b,-0)],expected:Object.is(a,b),actual:r.sameValue(r.boxNumber(a!),r.boxNumber(b!))}));\n",
+    "parent": [
+      {
+        "a": "7ff8000000000001",
+        "b": "7ff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000001",
+        "b": "7ff8000000000002",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 0,
+        "expectedRedefinition": true,
+        "redefined": false,
+        "exception": "actual shared TypeError tag"
+      },
+      {
+        "a": "7ff8000000000001",
+        "b": "fff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 0,
+        "expectedRedefinition": true,
+        "redefined": false,
+        "exception": "actual shared TypeError tag"
+      },
+      {
+        "a": "7ff8000000000002",
+        "b": "7ff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 0,
+        "expectedRedefinition": true,
+        "redefined": false,
+        "exception": "actual shared TypeError tag"
+      },
+      {
+        "a": "7ff8000000000002",
+        "b": "7ff8000000000002",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000002",
+        "b": "fff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 0,
+        "expectedRedefinition": true,
+        "redefined": false,
+        "exception": "actual shared TypeError tag"
+      },
+      {
+        "a": "fff8000000000001",
+        "b": "7ff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 0,
+        "expectedRedefinition": true,
+        "redefined": false,
+        "exception": "actual shared TypeError tag"
+      },
+      {
+        "a": "fff8000000000001",
+        "b": "7ff8000000000002",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 0,
+        "expectedRedefinition": true,
+        "redefined": false,
+        "exception": "actual shared TypeError tag"
+      },
+      {
+        "a": "fff8000000000001",
+        "b": "fff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [false, true],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [true, false],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [false, false],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [true, true],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["42", "42"],
+        "negativeZero": [false, false],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["42", "43"],
+        "negativeZero": [false, false],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["Infinity", "Infinity"],
+        "negativeZero": [false, false],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["Infinity", "-Infinity"],
+        "negativeZero": [false, false],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["5e-324", "0"],
+        "negativeZero": [false, false],
+        "expected": false,
+        "actual": 0
+      }
+    ],
+    "candidate": [
+      {
+        "a": "7ff8000000000001",
+        "b": "7ff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000001",
+        "b": "7ff8000000000002",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000001",
+        "b": "fff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000002",
+        "b": "7ff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000002",
+        "b": "7ff8000000000002",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "7ff8000000000002",
+        "b": "fff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "fff8000000000001",
+        "b": "7ff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "fff8000000000001",
+        "b": "7ff8000000000002",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "a": "fff8000000000001",
+        "b": "fff8000000000001",
+        "roundTripBitsRetained": true,
+        "expectedSameValue": true,
+        "sameValue": 1,
+        "expectedRedefinition": true,
+        "redefined": true
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [false, true],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [true, false],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [false, false],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["0", "0"],
+        "negativeZero": [true, true],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["42", "42"],
+        "negativeZero": [false, false],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["42", "43"],
+        "negativeZero": [false, false],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["Infinity", "Infinity"],
+        "negativeZero": [false, false],
+        "expected": true,
+        "actual": 1
+      },
+      {
+        "control": ["Infinity", "-Infinity"],
+        "negativeZero": [false, false],
+        "expected": false,
+        "actual": 0
+      },
+      {
+        "control": ["5e-324", "0"],
+        "negativeZero": [false, false],
+        "expected": false,
+        "actual": 0
+      }
+    ],
+    "changedNaNPairs": 6,
+    "controlsUnchanged": 9,
+    "interpretation": "Actual native Number payload bit round trips prove distinct NaN representations. Parent wrongly reports inequality and throws the shared TypeError tag for six of nine NaN pairs; candidate equates/redefines all nine. Signed-zero/finite/infinite/subnormal controls are unchanged. This is a native kernel correction, not public Object.is or host primitive entry proof."
+  },
+  "policy": {
+    "completeInventoriesAndBinaries": 33,
+    "rowsEqual": true,
+    "rowsSha256": "ae48c6d9b52c7e2da12a05ecd41d6fd646226305fd9bb6010143819ec3d2aaf2"
+  },
+  "nativeControls": [
+    {
+      "target": "standalone",
+      "name": "scalar",
+      "bytes": 11413,
+      "sha256": "81d83998cf308dea1a6063218bfb63cba2c642ba3e62c8aee1ae9dbd5eea215e",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "flat",
+      "bytes": 33185,
+      "sha256": "671336c22fe661e836754ebaaa758e6b8a14b5202083538e6067e5a68aa4d134",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "standalone",
+      "name": "dynamic",
+      "bytes": 148315,
+      "sha256": "a2daea459c4f7dcf3811799c4b4a28b3c0425c95c5aeeb6340e7d41fe13ed356",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "scalar",
+      "bytes": 22719,
+      "sha256": "ab7f880debe1399bbf089b74cb76d26e154a50c3d8aeaff4f3a9e3511bd10c58",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "flat",
+      "bytes": 52928,
+      "sha256": "7b8d7a6e7a8ab1c22952e9c6e4e46147565202c419b0dc93f36936241c09d187",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    },
+    {
+      "target": "wasi",
+      "name": "dynamic",
+      "bytes": 147483,
+      "sha256": "90b5ec7cd893758f37d125bea6cf4bb1d937c55ecaeb8f3f5f633626ec363313",
+      "imports": [],
+      "outputs": [42, 7],
+      "boundaryProbeExported": false
+    }
+  ],
+  "statefulConstructionWitnesses": {
+    "parent": [
+      {
+        "offset": false,
+        "decoded": false,
+        "empty": false,
+        "bytes": 15840,
+        "sha256": "86d56a8d2bcec74efce7f9c1b51a96ae3b417a2133aac666b5fafedc6ef3ee15",
+        "imports": [],
+        "number": 42,
+        "ownCount": 4,
+        "constructors": 3,
+        "defaultPrototypeGaps": 3,
+        "declaredFunctions": 8,
+        "totalFunctions": 71,
+        "totalTypes": 57,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      },
+      {
+        "offset": true,
+        "decoded": false,
+        "empty": false,
+        "bytes": 16309,
+        "sha256": "0000889c30900df55acf0a3146e254cc0f98c06f5c8e150f579fdb28fe2a56ef",
+        "imports": [],
+        "number": 42,
+        "ownCount": 4,
+        "constructors": 3,
+        "defaultPrototypeGaps": 3,
+        "declaredFunctions": 8,
+        "totalFunctions": 73,
+        "totalTypes": 62,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      },
+      {
+        "offset": true,
+        "decoded": true,
+        "empty": false,
+        "bytes": 16309,
+        "sha256": "0000889c30900df55acf0a3146e254cc0f98c06f5c8e150f579fdb28fe2a56ef",
+        "imports": [],
+        "number": 42,
+        "ownCount": 4,
+        "constructors": 3,
+        "defaultPrototypeGaps": 3,
+        "declaredFunctions": 8,
+        "totalFunctions": 73,
+        "totalTypes": 62,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      },
+      {
+        "offset": true,
+        "decoded": true,
+        "empty": true,
+        "bytes": 15420,
+        "sha256": "fa9efbb2a5ad0b8ccdd5858e26ab383443329b3bb776803bad7a8ab3f9daaa20",
+        "imports": [],
+        "ownCount": 0,
+        "constructors": 1,
+        "defaultPrototypeGaps": 1,
+        "declaredFunctions": 2,
+        "totalFunctions": 65,
+        "totalTypes": 59,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      }
+    ],
+    "candidate": [
+      {
+        "offset": false,
+        "decoded": false,
+        "empty": false,
+        "bytes": 15877,
+        "sha256": "c164f4f26f1bfaf59fa6b017a086f4ca953600e131dd71a61909aa0a3547e03a",
+        "imports": [],
+        "number": 42,
+        "ownCount": 4,
+        "constructors": 3,
+        "defaultPrototypeGaps": 3,
+        "declaredFunctions": 8,
+        "totalFunctions": 71,
+        "totalTypes": 57,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      },
+      {
+        "offset": true,
+        "decoded": false,
+        "empty": false,
+        "bytes": 16346,
+        "sha256": "653e8d3eb30026213cff172c4953bea6cb49495131aa507588bff8faab9bc5de",
+        "imports": [],
+        "number": 42,
+        "ownCount": 4,
+        "constructors": 3,
+        "defaultPrototypeGaps": 3,
+        "declaredFunctions": 8,
+        "totalFunctions": 73,
+        "totalTypes": 62,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      },
+      {
+        "offset": true,
+        "decoded": true,
+        "empty": false,
+        "bytes": 16346,
+        "sha256": "653e8d3eb30026213cff172c4953bea6cb49495131aa507588bff8faab9bc5de",
+        "imports": [],
+        "number": 42,
+        "ownCount": 4,
+        "constructors": 3,
+        "defaultPrototypeGaps": 3,
+        "declaredFunctions": 8,
+        "totalFunctions": 73,
+        "totalTypes": 62,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      },
+      {
+        "offset": true,
+        "decoded": true,
+        "empty": true,
+        "bytes": 15457,
+        "sha256": "88fdd80bd8fb2ee50ca2f54b99e38b714ecf91f137f870af97bae76ba22df9ae",
+        "imports": [],
+        "ownCount": 0,
+        "constructors": 1,
+        "defaultPrototypeGaps": 1,
+        "declaredFunctions": 2,
+        "totalFunctions": 65,
+        "totalTypes": 59,
+        "missingRealmTraps": true,
+        "independentObjectAndState": true,
+        "sharedRealmIdentity": true,
+        "livePrototypeIdentity": true,
+        "sourceDefaultRealmCompleted": false,
+        "publicInteropCompleted": false
+      }
+    ],
+    "observedBehaviorEqual": true,
+    "perMeasuredModuleGrowthBytes": 37,
+    "interpretation": "Four complete resource test instances with observers; not an overall production-size or performance claim."
+  },
+  "historicalSourcesUnchanged": [
+    "src/runtime/wasmgc/values/object-same-value-body.ts",
+    "src/codegen/object-same-value.ts"
+  ],
+  "inventory": {
+    "valid": true,
+    "architectureComplete": false,
+    "errors": 0,
+    "newRuntimeModuleClassifiedClean": true
+  },
+  "gates": {
+    "typecheck": {
+      "logSha256": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+      "status": "passed"
+    },
+    "lint": {
+      "logSha256": "71054e77f66bf53aaf22445a369c2444d07efcf72407468ecf8e6de4e768f2c2",
+      "status": "passed"
+    },
+    "format": {
+      "logSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+      "status": "passed"
+    },
+    "loc": {
+      "logSha256": "d42ffb31d28c659049c0c5fba66592d48af273983c9e93963df485503a76cf66",
+      "status": "passed"
+    },
+    "func": {
+      "logSha256": "d02771dc45f586ab7388d302f21bc6f39c5fad0503e9d57cd63618a1cecdeba5",
+      "status": "passed"
+    },
+    "coercion": {
+      "logSha256": "f2467c0fff402c0f13810ec9a0954efdae80ec3e5b50fb2d8b3f06ce231d7c4c",
+      "status": "passed"
+    },
+    "oracle": {
+      "logSha256": "031546c532af36cd91146eb9710a7fb4c994c737a2a2a9ae9e60ae36d14212b7",
+      "status": "passed"
+    },
+    "layering": {
+      "logSha256": "cbbdbd4d531f68c7e942601605aa7d692a9f4eea68d5811a2da3339a4c1998df",
+      "status": "passed"
+    },
+    "flat": {
+      "logSha256": "79049ac96f5154b630c1549f619889ba8acd810b409837617b82fe92aa04a719",
+      "status": "passed"
+    },
+    "fallbacks": {
+      "logSha256": "92c2a09dda32ef4ed473117e829e8e39f5a8e646cf2ef34c0506fcffd0398cc5",
+      "status": "passed"
+    },
+    "dead": {
+      "logSha256": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2",
+      "status": "preservation-only passes; strict closure incomplete"
+    },
+    "cycles": {
+      "logSha256": "cadb688331fc03a884cb22cb53287071d62e555207be0298152aef2fa07ce248",
+      "status": "unchanged six-pair failure"
+    }
+  },
+  "architecture": {
+    "cyclesOutput": "import-cycles ratchet: FAIL — the value-import cycles in src/ grew (base: merge-base(upstream-remote(origin-is-a-fork))).\n  - twoWayDirEdges[backend->ir]: 115 → 117\n  - twoWayDirEdges[codegen->ir]: 298 → 301\n  - twoWayDirEdges[frontend->ir]: 17 → 19\n  - twoWayDirEdges[frontend->ts-api.ts]: 2 → 5\n  - twoWayDirEdges[ir->codegen]: 74 → 75\n  - twoWayDirEdges[ir->frontend]: 7 → 10\n\nFind the new edge with `node scripts/check-import-cycles.mjs --verbose`. Cut it with `import type`,\nby moving the shared code below both files (src/shared/, src/backend/wasmgc/), or by injecting\nthe dependency. If the growth is intended (a new file that must join the SCC, a split), grant it\nin the frontmatter of this change-set's own plan/issues/*.md file:\n  import-cycles-allow:\n    - largestSccSize: <new value> # <date> (#issue): <why>\nDo not edit scripts/import-cycles-baseline.json; main's post-merge job is its sole writer.\n",
+    "retirementOutput": "\n> @loopdive/js2@0.71.0 check:dead-exports /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms\n> node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types --require-core-nodes\n\ncore-node execution gate: PASS (12/12 observed callers; dispatch-cut UNKNOWN)\ncore-type gate: PASS (10/10 full, 10/10 dispatch-cut class-free references)\nmoved-runtime gate: FAIL (production-rooted evidence incomplete)\n  src/optimize.ts#getBinaryenModule: unknown nonliteral dynamic import module target at line 412\n  src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport: unknown nonliteral dynamic import module target at line 151\npreservation-only PASS: 6/6 full source witnesses, 6/6 cut witnesses\ngraph OPEN; strict modeled closure FAIL\nretirement/deletion NOT CERTIFIED\n",
+    "retirementCertified": false
+  },
+  "remaining": [
+    "Actual Object.is/catalog algorithm owner, genuine Call argument transport and Boolean result carrier",
+    "Full Object/Function algorithms and singleton population, authenticated mixed prototype/value admission, canonical property/callable/storage providers",
+    "Atomic source/public entry publication, foreign/dynamic fields and general first-class undefined",
+    "Linear/WASI record construction, source method/prototype semantics, architecture/strict closure and full conformance/retirement acceptance",
+    "Prerequisite stack remains open; both Markdown issues in progress and PR6762 draft"
+  ]
+}

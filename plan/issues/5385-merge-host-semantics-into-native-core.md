@@ -1468,3 +1468,27 @@ Evidence: `plan/audit/6979-realm-record-construction-20261019.json`.
 Both issues remain in progress. Actual default Object/Function algorithms and
 population, authenticated mixed prototype/field carriers, canonical provider
 publication, Linear/WASI construction and retirement acceptance remain required.
+
+### S7-y: correct native NaN SameValue before realm publication
+
+The actual native SameValue/descriptor kernel now equates distinct Number NaN
+payloads, without coercing other value brands. Paired carrier round trips prove
+the payloads survived: the parent wrongly rejects six of nine NaN pairs and
+their frozen-property redefinitions; the candidate accepts all nine. Signed
+zero and finite/infinite controls are unchanged. The frozen historical recipe
+and compiler binaries remain untouched; no JS callback or second property
+engine is introduced.
+
+**40/40 new, 120/120 focused execution cases** pass. Existing resource cases
+retain **147 pass / 14 fail of 161**, and the 779-case cohort **756 pass / 23
+fail**, with matching full rows. A fresh exact-parent custody control confirms
+the candidate's **9 pass / 26 fail of 35** with identical full errors; no
+receipt, skip or expectation is rewritten. All 33 policy binaries/inventories
+and six native compiled controls stay identical. Four native construction
+test modules preserve behavior and grow by 37 bytes each for the correction.
+
+Evidence: `plan/audit/6979-native-same-value-nan-20261019.json`.
+This fixes the native kernel prerequisite, not public Object.is admission or
+the whole realm. Actual catalog algorithms/population, public provider/carrier
+closure, Linear/WASI construction and architecture/retirement gates remain
+open. Both issues stay in progress and the PR remains draft.

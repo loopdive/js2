@@ -14623,6 +14623,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/native-object-same-value-definition.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-object-construction.ts",
       "state": "clean",
       "layer": "backend-wasmgc"

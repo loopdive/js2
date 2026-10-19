@@ -3,7 +3,7 @@ import type { FunctionReservation, PhysicalModuleReservations } from "../../../w
 import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
-import { buildObjectSameValueBody } from "../../../runtime/wasmgc/values/object-same-value-body.js";
+import { buildNativeObjectSameValueDefinition } from "../../../runtime/wasmgc/values/native-object-same-value-definition.js";
 import {
   requireNativeValueReservations,
   requireCompletedNativeValues,
@@ -158,12 +158,9 @@ export function fillNativeObjectSameValueResources(
     d = owner.dependencies;
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
   requireCompletedDependencies(tx, d);
-  tx.fillFunction(pack.sameValue, {
-    locals: [
-      { name: "aa", type: { kind: "anyref" } },
-      { name: "ba", type: { kind: "anyref" } },
-    ],
-    body: buildObjectSameValueBody({
+  tx.fillFunction(
+    pack.sameValue,
+    buildNativeObjectSameValueDefinition({
       typeofNumIdx: d.values.functions.isNumber.handle,
       typeofBoolIdx: d.booleans.isBoolean.handle,
       typeofBigIdx: d.bigints.isBigInt.handle,
@@ -175,7 +172,7 @@ export function fillNativeObjectSameValueResources(
       strFlattenIdx: d.flatten.flatten.handle,
       strEqualsIdx: d.equality.equals.handle,
     }),
-  });
+  );
   owner.filled = true;
 }
 

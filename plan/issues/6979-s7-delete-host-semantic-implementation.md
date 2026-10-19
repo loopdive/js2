@@ -4462,3 +4462,78 @@ Default realm, special source prototype/method semantics, foreign/dynamic fields
 first-class undefined, callable/storage closure, Linear/WASI construction and
 architecture/retirement gates remain open. Both issues stay in progress and
 PR6762 stays draft, behind its existing prerequisite stack.
+
+### S7-y native numeric SameValue (2026-10-19, Codex)
+
+Continue from signed `7d7f8c88c8c77ec2d07216ac1b35dbeccd09a5c6`.
+Before publishing Object.is/realm descriptor algorithms, verify the existing
+native SameValue numeric arm against distinct NaN payloads. The current bit-only
+comparison appears to confuse NaN representation identity with language value
+equality. Correct the genuine native semantic owner, including non-configurable
+descriptor redefinition, while preserving signed zero and frozen legacy bytes.
+No host import, selector expansion or default/public realm completion claim.
+
+Readers checked: the pure body has the native SameValue resource producer, the
+frozen direct-AST producer, historical donor/write fixtures and the BigInt port
+test. Only the issued native producer will select corrected numeric semantics;
+the historical recipe must remain byte-identical until separately retired.
+
+#### S7-y verified implementation and handoff
+
+The issued native SameValue producer now handles two actual Number NaNs as
+equal before delegating to the shared complete primitive/reference recipe.
+The guard checks both native Number brands before unboxing, so it does not
+coerce undefined/null/Boolean/BigInt values into NaN. Finite values and signed
+zero retain their existing comparison. Descriptor redefinition uses this same
+owned kernel, not a second property engine or a JS callback.
+
+The historical pure recipe is under source-custody receipts, so it remains
+untouched. The correction lives in one clean native-runtime definition module
+imported by the existing native producer. No new physical resource/root,
+allowance, policy-edge relaxation, selector or frozen AST expansion is needed.
+Keeping historical compilation byte-identical is not a claim that its existing
+NaN-payload defect has been repaired; it remains frozen pending retirement.
+
+Evidence at signed parent `7d7f8c88c8c77ec2d07216ac1b35dbeccd09a5c6`, Node24.4.1 /
+Vitest3.2.4, two forks with Wasm exception references:
+
+- A real native carrier round trip retains each of three distinct NaN payloads
+  (including opposite signs). In the paired nine-pair probe the parent gives
+  wrong SameValue/redefinition results for **six of nine** pairs, throwing the
+  actual shared TypeError tag. The candidate equates **all nine** pairs and
+  permits all nine non-configurable redefinitions, matching the Node oracle.
+  The nine signed-zero/finite/infinite controls remain correct on both trees.
+- **40/40 new cases** pass at ordinary/displaced indices, covering the NaN
+  matrix, actual descriptor writes, signed zeros, finite/infinite/subnormal
+  controls, NaN/non-NaN pairs and brand separation. Alongside the previous
+  construction/realm/inferred-return and wide-BigInt cases, **120/120 focused
+  execution cases** pass. All instances reject unexpected provider imports.
+- The resource cohort remains **147 passing / 14 failing of 161**, with
+  identical full rows against the retained published-parent report. The
+  historical custody cohort is **9 passing / 26 failing of 35** on both a fresh
+  exact-parent checkout and the candidate, with identical normalized full
+  errors. Existing receipts/expectations are not changed, skipped or waived.
+- Existing **779 cases / 38 files** remain **756 passing / 23 failing**, with
+  identical full rows against the retained published-parent report. No full
+  Test262, public Object.is, general host interop or conformance gain claimed.
+- All **33** complete policy inventories/binaries and **six** native compiled
+  controls stay identical. The four actual stateful construction instances
+  remain zero-import and preserve their observed behavior; each grows by
+  **37 bytes** to 15877/16346/16346/15457 bytes. These are measured resource test
+  modules with observers, not an overall performance/production-size claim.
+- Typecheck/lint/format, size/function, coercion/oracle, layering/fallback,
+  flat-directory and issue checks pass; inventory valid, architecture
+  incomplete. The same six cycle pairs remain red. Preservation-only checks
+  pass, but the same two strict-closure nonliteral imports prevent retirement
+  certification. No new waiver or completion authority.
+
+Exact source/report hashes, paired payload rows, unchanged-failure hashes and
+four binary witnesses:
+`plan/audit/6979-native-same-value-nan-20261019.json`.
+
+Next: use the corrected kernel in the actual Object.is/catalog algorithm
+owner, with genuine argument transport and Boolean result carriers. Full
+Object/Function algorithms/population, authenticated mixed prototype/value
+admission, canonical providers, source/public publication, Linear/WASI record
+construction and architecture/retirement closure remain required. Both issues
+stay in progress; PR6762 stays draft behind its existing prerequisite stack.
