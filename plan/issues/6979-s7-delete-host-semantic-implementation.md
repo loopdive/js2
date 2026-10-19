@@ -1674,8 +1674,10 @@ cohort at parent `ad0f0396529501f49962506aeca812207bd8e180` was 209 passing,
 15 failing, and three skipped. With the same two new numeric probes applied
 to both revisions, the exact detached parent is **210 passing / 16 failing /
 three skipped**, and the candidate is **211 passing / 15 failing / three
-skipped** (229 rows each). The only status change is the WASI valueOf probe;
-all 15 residual failure messages match after normalizing worktree paths.
+skipped** (229 rows each). The only status change is the WASI valueOf probe.
+The 14 available residual failure messages match after normalizing worktree
+paths. The Acorn private-name exception row has no serialized error text on
+either side; only its failing status is compared, not its exception payload.
 This is a mixed standalone/WASI/JavaScript/IR regression comparison, not a
 Test262 conformance population or proof of complete IR admission.
 
@@ -1698,3 +1700,7 @@ boundary cases, and one undefined callable-result assertion. Keep these
 visible rather than presenting the cohort as green. Continue with the
 remaining receiver/namespace call and constructor semantic groups, preserving
 the same explicit backend, value-boundary, environment, and accelerator facts.
+The next large expression owners are `call-receiver-method.ts` (46 raw
+references) and `calls.ts` (42); review their native-runtime dependencies
+before widening WASI admission. The full S7 acceptance checklist above stays
+open, including runtime retirement and program-wide conformance evidence.
