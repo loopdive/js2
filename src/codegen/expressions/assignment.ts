@@ -42,7 +42,7 @@ import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "..
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import { recordSidecarPropertyOwner } from "../sidecar-owner-scope.js";
-import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { type CodegenContext, type FunctionContext, wasmGcBackend } from "../context/types.js";
 import {
   addFuncType,
   addImport,
@@ -5023,7 +5023,9 @@ function compilePropertyAssignment(
   // (always a struct instance), so the proto/class-object dummy path is not a
   // concern here.
   const closureAccSet =
-    S5C_STRUCT_ACCESSOR_CLOSURE && ctx.standalone ? ctx.structAccessorClosure.get(accessorKey)?.setGlobal : undefined;
+    S5C_STRUCT_ACCESSOR_CLOSURE && wasmGcBackend(ctx)
+      ? ctx.structAccessorClosure.get(accessorKey)?.setGlobal
+      : undefined;
   if (closureAccSet !== undefined) {
     // recv: struct instance → externref
     const recvResult = compileExpression(ctx, fctx, target.expression);

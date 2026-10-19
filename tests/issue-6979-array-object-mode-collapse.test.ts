@@ -107,5 +107,27 @@ for (const target of ["standalone", "wasi"] as const) {
       exports.__module_init?.();
       expect(exports.readResult()).toBe(1);
     });
+
+    it("an open object literal keeps Symbol.toPrimitive and ordinary fields in one carrier", async () => {
+      const { module } = await compileNative(
+        `
+          var object = {
+            [Symbol.toPrimitive]: function (hint: string) {
+              return hint === "string" ? "coerced" : 7;
+            },
+            value: 41,
+          };
+          var alias = object;
+          export function readResult() {
+            return String(alias) === "coerced" && alias.value === 41 ? 1 : 0;
+          }
+        `,
+        target,
+      );
+      const instance = await WebAssembly.instantiate(module, {});
+      const exports = instance.exports as unknown as { __module_init?: () => void; readResult: () => number };
+      exports.__module_init?.();
+      expect(exports.readResult()).toBe(1);
+    });
   });
 }

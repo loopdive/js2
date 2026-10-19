@@ -17,6 +17,8 @@ sprint: current
 parent: 5385
 depends_on: [6708]
 related: [4396, 4397, 4399, 4401, 6191, 6749, 6750, 6978]
+func-budget-allow:
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
 ---
 
 # #6979 — S7: delete the host-semantic implementation
@@ -1222,3 +1224,92 @@ nonliteral dynamic imports keep strict closure open and retirement uncertified.
 WasmGC semantic/storage choices on `wasmGcBackend`; retain JavaScript machinery
 only for explicit value-boundary identities, platform capabilities and named
 accelerators.
+
+### S7-c literal/coercion handoff (2026-10-19, Codex)
+
+This ninth bounded S7-c checkpoint migrates the literal/coercion carrier group
+on `codex/6979-s7c-ir-arms`. S7 remains `in-progress`; this is a reviewed
+checkpoint in the existing draft PR, not completion of the full migration.
+
+**Ratchet.** The reviewed reduction is banked in
+`plan/audit/standalone-arms-baseline.json`:
+
+| Measure | Closed-method/runtime checkpoint | Literal/coercion checkpoint |
+| --- | ---: | ---: |
+| Raw `ctx.standalone` hits in `src/` | 1,173 | **1,152** |
+| Matching source files | 404 | **404** |
+| `literals.ts` | 20 | **1** |
+
+The closure also moves the type-level ToPrimitive/open-carrier decision in
+`index.ts` and the struct-accessor closure setter dispatch in
+`expressions/assignment.ts` onto `wasmGcBackend`. The latter adds two formatted
+lines to an already over-budget legacy function, so this issue explicitly
+allows that measured `compilePropertyAssignment` growth; no function-budget
+baseline is changed.
+
+**Classification.** Object-literal native prototype setup, overridden builtin
+prototype descriptors, `@@unscopables`, computed arithmetic carriers,
+`Symbol.toPrimitive`, callable-bearing literals, pure string-index objects,
+expected structs, accessor closure globals, generator methods, Map spread and
+`any[]` object-element widening are WasmGC backend decisions. Linear keeps its
+provider-owned paths. The JavaScript value boundary is unchanged: a caller-owned
+host object that actually crosses it keeps the existing host-backed object and
+identity, without copying it into a second representation. JS machinery stays
+available for that explicit boundary, platform capabilities and named
+accelerators, not as the internal object semantic core.
+
+The earlier mode normalization remains safe. It classified default `gc` and
+literal `standalone` as the same WasmGC semantic regime; replacing the legacy
+projection with `wasmGcBackend` makes that existing equivalence explicit and
+adds WASI where the implementation is backend-owned. No environment or
+boundary distinction is erased.
+
+**Focused and A/B evidence.**
+`issue-6979-array-object-mode-collapse.test.ts` passes 11/11. Its new probe
+builds an open literal with `Symbol.toPrimitive` plus an ordinary field, aliases
+it, and verifies both coercion and field access under standalone and WASI. The
+wider ten-file literal/coercion cohort is 172 passing, 15 failing and eight
+skipped assertions. An exact detached control at pre-checkpoint commit
+`d980a8e805` reproduces all 15 failures unchanged in the three failing files
+(35 passing, 15 failing and eight skipped), so the checkpoint adds no
+cohort-specific regression.
+
+**Measured prototype dependency.** Dynamic-prototype literal promotion is the
+one intentional `ctx.standalone` site left in `literals.ts`. Widening that site
+and its `index.ts` slot/global lockstep correctly marks both objects, constructs
+both as native `$Object` values, and makes
+`Object.getPrototypeOf(object) === proto` true under WASI. The inherited read
+still returns zero because the promoted prototype's first named property is not
+seeded during WASI module initialization:
+
+```ts
+var proto = { inherited: 41 };
+var object = { own: 1 };
+Object.setPrototypeOf(object, proto);
+export function readResult() {
+  return (object as any).inherited + object.own;
+}
+```
+
+The widened candidate returns `1`, not `42`; `(proto as any).inherited` is
+null until the same property is assigned after initialization. Generated WAT
+shows module initialization calling `__new_plain_object` followed by
+`__extern_set` (and a checked `__defineProperty_value` variant) with the
+initialized constant box. The later assignment succeeds. This isolates the
+next dependency to WASI module-init named-property seeding, not prototype
+linking or lookup.
+
+**Architecture validation.** TypeScript 7 typecheck, Biome lint, Prettier,
+standalone-arm, host-import policy (33 probes / 452 imports / zero `regime-gap`
+or `unknown` imports), IR-fallback, import-cycle, flat-directory, LOC,
+coercion, oracle and verdict-oracle gates pass. Compiler-boundary inventory
+remains `inventory-valid-architecture-incomplete` with `errors: []`.
+Dead-export preservation remains 6/6 full and 6/6 cut witnesses; the same two
+nonliteral dynamic imports keep strict closure open and retirement uncertified.
+
+**Next handoff.** Fix or explicitly model WASI module-initialization seeding for
+the first named property of a promoted open literal. Then migrate the final
+`literals.ts` dynamic-prototype gate together with its `index.ts` slot/global
+lockstep and restore the prototype regression above. After that, take
+`class-bodies.ts` (21) as the next bounded group rather than folding it into the
+61-site `index.ts` orchestrator.

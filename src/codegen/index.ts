@@ -291,15 +291,16 @@ import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-ca
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
-import type {
-  ClosureInfo,
-  CodegenContext,
-  CodegenOptions,
-  CodegenResult,
-  ExternClassInfo,
-  FunctionContext,
-  OptionalParamInfo,
-  RestParamInfo,
+import {
+  type ClosureInfo,
+  type CodegenContext,
+  type CodegenOptions,
+  type CodegenResult,
+  type ExternClassInfo,
+  type FunctionContext,
+  type OptionalParamInfo,
+  type RestParamInfo,
+  wasmGcBackend,
 } from "./context/types.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
@@ -13055,12 +13056,12 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // `$Object`; this is where every consumer of the value learns the same
     // fact. Without it only the three syntactic lockstep callers agreed, so an
     // alias / property slot / array element / parameter kept the inferred
-    // closed struct and the open object null-cast into it. Standalone-only, in
+    // closed struct and the open object null-cast into it. WasmGC-only, in
     // lockstep with the value-side gate. See `typeTakesToPrimitiveOpenPath` —
     // it answers for BOTH producer arms: the H-1 member the checker propagates
     // into every derived type, and the H-2 mutation case, which leaves no
     // member and is carried by the literal type's own identity.
-    if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
+    if (wasmGcBackend(ctx) && typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
     // (#4526) A literal with a runtime computed key is an open object; a closed
@@ -14993,8 +14994,8 @@ function walkStmtForLetConst(
         // the promoted `$Object` externref is ref.cast to it at runtime (cast
         // fails → the receiver goes null and `o.x`/inherited reads return NaN).
         // Registers the name in externrefAccessorVars so reads route through the
-        // dynamic `__extern_get` path. Standalone-only (gc/host keeps its existing
-        // closed-struct + host-sidecar path unchanged).
+        // dynamic `__extern_get` path. Standalone-only until the WASI module-
+        // init store can seed named fields on the promoted open carrier.
         const initIsProtoReceiverLiteral =
           ctx.standalone &&
           decl.initializer !== undefined &&
