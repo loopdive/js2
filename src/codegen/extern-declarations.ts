@@ -1559,7 +1559,7 @@ export function collectDeclaredGlobals(
         ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
       // (#6708) The regime in a JS environment keeps DOM globals: they are
       // platform capabilities of the embedder, not ECMAScript semantics.
-      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && DOM_ONLY_GLOBALS.has(name);
+      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && isJsEnvironmentPlatformGlobalName(name);
       if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal))
         continue;
       const importName = `global_${name}`;
@@ -1725,6 +1725,14 @@ export function usesJsEnvironmentPlatformGlobal(ctx: CodegenContext): boolean {
  * DOM-only globals that require a browser host and are not available in WASI.
  * Used to emit a compile error when `--target wasi` is combined with DOM usage.
  */
+/**
+ * (#6708/#7091) The ambient DOM globals the regime keeps in a JS environment
+ * (`global_<name>` handles); the IR platform lane admits exactly these.
+ */
+export function isJsEnvironmentPlatformGlobalName(name: string): boolean {
+  return DOM_ONLY_GLOBALS.has(name);
+}
+
 const DOM_ONLY_GLOBALS = new Set([
   "document",
   "window",

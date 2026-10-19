@@ -99,6 +99,15 @@ const LEGACY_SEMANTIC_BUILTIN_PREFIXES = [
   "__typeof",
 ] as const;
 
+/**
+ * (#7091) Is this extern class an ECMAScript builtin rather than a platform
+ * capability? The IR's platform-extern lane (JS environment, native regime)
+ * admits only the classes `classifyHostImport` calls `platform-capability`.
+ */
+export function isEcmascriptExternClass(className: string): boolean {
+  return ECMASCRIPT_EXTERN_CLASSES.has(className);
+}
+
 const ECMASCRIPT_EXTERN_CLASSES = new Set([
   "Array",
   "ArrayBuffer",
