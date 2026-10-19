@@ -4115,3 +4115,106 @@ complete-inventory hashes and binary costs:
 `plan/audit/6979-reference-program-planning-20261019.json`. PR6762 remains draft;
 resolve the same prerequisite stack before any merge. No GitHub issues or
 issue comments were created.
+
+### S7-u canonical native property/construction resources (2026-10-19, Codex)
+
+Continue from signed `e16a3ab88cf34cf0e308f23c695bd1b1dcd957dd`.
+Replace the remaining test-only field binding prerequisite with real owned
+native resources, starting at canonical ordinary-object operations and native
+construction ownership. Reuse the one semantic implementation; preserve
+descriptor/prototype behavior, receiver identity, explicit strict/sloppy
+refusal, exact setter/getter throws and realm/reentry. Unknown foreign/native
+carrier cases stay explicit gaps, not successful empty/default field paths.
+No new host import, copied graph, frozen AST body/selector expansion or public
+entry publication before full resource/callee/storage ownership is proven.
+
+#### S7-u checkpoint handoff — source construction facts only
+
+Published in [refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762).
+This checkpoint stops at source facts; it does **not** implement the proposed
+native construction resource or complete the migration. Keep this issue and
+the parent migration issue in progress, and the PR draft pending the existing
+prerequisite stack and acceptance gates.
+
+Completed:
+
+- Preserve object-literal insertion order independently of the existing sorted
+  field layout and operand coordinates. Source evaluation/storage behavior is
+  unchanged. Tag noncomputed colon `__proto__` initializers separately from
+  computed/shorthand data properties, and tag method home-object requirements.
+  These tags record unresolved requirements, not new semantic support.
+- Record index-free producer facts on allocation identities. Clone detached
+  facts through inlining and specialization, including their source-origin
+  paths; do not clone SSA-dependent ownership/escape/encoding evidence.
+- Retain facts through preparation/snapshot/codec replay. Check their schema,
+  live object owner and exact field-key permutation. This is structural
+  validation, not authentication of source order, runtime origin, a physical
+  carrier or a provider. Missing facts must remain an explicit construction
+  gap; callers without an allocation registry cannot manufacture authority.
+- Extract only the neutral object.new instruction/arity construction from the
+  builder; preserve the preflight-before-identity-allocation error behavior.
+  Inventory the new files; activate the exact pure allocation-clone helper,
+  without changing allowed dependency edges, existing roots or count floors.
+
+Next implementation owner:
+
+1. Join genuine prepared `object.new` instructions, live object allocations,
+   source facts, SSA operand types and runtime projection before issuing a
+   construction requirement. Source order can differ for the same storage
+   shape, so it must participate in constructor identity. Reject missing,
+   stale, special-prototype and method requirements until their owners exist.
+2. Compose existing canonical storage `createWithPrototype`, descriptor
+   `defineData` (all value/writable/enumerable/configurable bits specified,
+   mask 191), and actual native value/boolean/string owners. Install properties
+   in source order; preserve nested object references without copying. Do not
+   add a second descriptor/Set implementation or use JS stand-ins as receipts.
+3. An explicit-prototype inner kernel is only a prerequisite. The full native
+   Object/Function realm is still declaration-only: its completion check
+   explicitly rejects unfinished algorithms/runtime population. Default storage
+   with null prototype and flags zero is an unresolved implicit-prototype state,
+   not Object.prototype or an explicit-null certificate. Never silently replace
+   a source literal's default prototype with null or a fake empty object.
+4. Positively exercise genuine record-source ownership and zero-import native
+   construction with displaced reservation indices. The existing descriptor
+   fixture's getter-only source cannot certify record-allocation demand.
+   Authenticate same-program storage/descriptors/value packs and canonical
+   fill/completion receipts before testing a combined provider.
+5. Complete actual field-value carriers (missing/undefined/null/non-number and
+   dynamic getter results), canonical Get/strict-Set/sloppy-Set, callable and
+   storage closure. Test-only f64 imports coerce foreign results and are not
+   production value proof. Only then wire physical acceptance and atomically
+   publish boundary entry metadata; no selector or frozen AST expansion.
+
+The prior S7-t audit remains historical evidence for signed `e16a3ab8`, not a
+claim that construction is done. The final checkpoint verification below
+records the current reruns separately. No GitHub issues/comments were created.
+
+#### S7-u final checkpoint verification
+
+- Node24.4.1 / Vitest3.2.4, two fork workers with Wasm exception references:
+  **135/135 focused tests**, including **10 new source-construction tests**,
+  the prior 90 reference cases and 35 allocation/clone/replay cases.
+- Reran the exact **38-file / 779-case** existing population: **756 passing,
+  23 failing**, zero skips/status transitions. All 23 normalized full errors
+  match the retained post-commit `e16a3ab8` report; no fresh parent checkout
+  was run for this handoff. No old expectations changed; no full Test262 claim.
+- All **33** policy binaries/complete inventories and **six** native controls
+  exactly match the retained `e16a3ab8` artifacts. Native controls execute on
+  standalone and WASI, have zero imports and return 42/7. The separate public
+  typed-object diagnostic remains **5/16 passing, 11 failing**, with the same
+  131388-byte binary. No new public interoperability coverage is claimed.
+- TypeScript7, lint, size/function, coercion/oracle, layering, fallback,
+  flat-directory and issue checks pass. Inventory is valid; architecture is
+  incomplete. No new allowance, baseline, allowed-edge or floor changes.
+- **Cycle gate remains red**, with two new source-boundary edges versus S7-t:
+  frontend→ir 18→19 and ir→frontend 9→10. Against the gate baseline the five
+  pairs are codegen→ir 298→301, ir→codegen 74→75, frontend→ir 17→19,
+  frontend→ts-api 2→5, ir→frontend 7→10. No cycle waiver is added. Cut these
+  dependencies before claiming architecture completion or merge readiness.
+- Preservation-only remains **six full / six cut**. Strict modeled closure is
+  still open at the same two nonliteral imports (`optimize.ts` and the platform
+  capability adapter); retirement/deletion is not certified. Runtime remains
+  10230 lines. No overall size/performance or migration-completion claim.
+
+Machine-readable source/report hashes and counts:
+`plan/audit/6979-source-construction-handoff-20261019.json`.

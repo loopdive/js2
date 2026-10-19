@@ -15,6 +15,7 @@
 // site) rather than sharing the original's id.
 
 import type { AllocSiteRegistry } from "../alloc-registry.js";
+import { cloneSourceAllocation } from "../analysis/clone-source-allocation.js";
 import { type AllocSiteId, type IrInstr, forEachNestedBuffer } from "../nodes.js";
 
 /**
@@ -31,7 +32,7 @@ export function forkAllocInInstr(instr: IrInstr, registry: AllocSiteRegistry | u
   if (instr.alloc === undefined) return instr;
   const site = registry.resolve(instr.alloc);
   if (site === null) return instr; // retired/aliased — leave as-is, checker will flag if truly wrong
-  const fresh = registry.fresh(site.kind, site.type, site.origin);
+  const fresh = cloneSourceAllocation(registry, site);
   return { ...instr, alloc: fresh };
 }
 

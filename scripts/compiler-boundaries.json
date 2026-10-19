@@ -128,6 +128,7 @@
         "src/ir/analysis/contracts",
         "src/ir/analysis/allocation-evidence",
         "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/clone-source-allocation.ts",
         "src/ir/analysis/effects.ts",
         "src/ir/analysis/intrinsics.ts",
         "src/ir/analysis/async-plan.ts",
@@ -144,6 +145,7 @@
       "entries": [
         "src/ir/analysis/contracts/allocations.ts",
         "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/clone-source-allocation.ts",
         "src/ir/analysis/effects.ts",
         "src/ir/analysis/intrinsics.ts",
         "src/ir/analysis/async-plan.ts",
@@ -15882,6 +15884,29 @@
       "destination": "frontend-ts",
       "owner": "6979",
       "nextBoundary": "Checker-certified scalar/record annotation contracts, including aliases and nested records. Logical shapes do not certify physical layout, own properties, Get/Set providers or foreign entry publication."
+    },
+    {
+      "path": "src/frontend/object-construction.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "6979",
+      "nextBoundary": "Preserve source construction facts independently of storage layout. Facts do not certify ordinary-object construction, default prototypes or physical carriers."
+    },
+    {
+      "path": "src/ir/core/object-creation.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/analysis/clone-source-allocation.ts",
+      "state": "clean",
+      "layer": "ir-analysis"
+    },
+    {
+      "path": "src/ir/runtime/object-construction.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
     },
     {
       "path": "src/frontend/object-write.ts",

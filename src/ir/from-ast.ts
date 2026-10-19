@@ -51,6 +51,7 @@ import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { resolveOrdinaryObjectClosureSignature } from "./ordinary-object-closure-signatures.js";
 import { isDirectObjectCreateNullCall } from "../frontend/builtins/prepare-object-create.js";
 import { emitSourceObjectSet } from "../frontend/object-write.js";
+import { emitSourceObjectNew } from "../frontend/object-construction.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
 import {
@@ -6494,14 +6495,7 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       `ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`,
     );
   }
-  built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const shape: IrObjectShape = {
-    fields: built.map((b) => ({ name: b.name, type: b.type })),
-  };
-  return cx.builder.emitObjectNew(
-    shape,
-    built.map((b) => b.value),
-  );
+  return emitSourceObjectNew(cx.builder, built, expr);
 }
 
 /** Install descriptors in source order; creating a getter never invokes it. */
@@ -6646,12 +6640,7 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
     }
     built.push({ name: property.name, type: closureType, value: closure });
   }
-  built.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-  const shape: IrObjectShape = { fields: built.map(({ name, type }) => ({ name, type })) };
-  return cx.builder.emitObjectNew(
-    shape,
-    built.map(({ value }) => value),
-  );
+  return emitSourceObjectNew(cx.builder, built, expr);
 }
 
 /**

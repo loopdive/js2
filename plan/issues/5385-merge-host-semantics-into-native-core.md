@@ -1365,3 +1365,26 @@ three operation contracts per field, not a proof of physical cost or unused
 provider elision. All prior retirement/acceptance/prerequisite obligations stay
 open. Both issues stay in progress; PR6762 stays draft. Detailed S7-t handoff
 and exact evidence: `plan/audit/6979-reference-program-planning-20261019.json`.
+
+### S7-u handoff: preserve construction inputs, not a completed constructor
+
+The current checkpoint in [refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762)
+preserves literal insertion order separately from canonical storage order,
+distinguishes special `__proto__`/method requirements, and retains detached
+allocation source facts through cloning and replay. Structural validation of
+facts is not a runtime/provider certificate. No host import, graph copy or
+public interop admission was added.
+
+Native construction remains next: join actual source allocations and operands,
+then compose canonical storage, descriptors and value resources. The full native
+Object/Function realm is not complete; implicit default prototypes must not be
+replaced with null or fake Object.prototype. An explicit-prototype kernel would
+be a prerequisite, not full literal semantics. Physical property providers,
+actual foreign field-value carriers and publication remain open.
+
+Detailed next-owner instructions and current verification are in the S7-u
+section of `plan/issues/6979-s7-delete-host-semantic-implementation.md`
+(**S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators**).
+Both issues remain in progress; PR6762 remains a draft handoff, not a merge-ready
+migration. The existing prerequisite stack and inherited acceptance failures
+are unchanged. Tracking stays in repo Markdown; no GitHub issues or comments.
