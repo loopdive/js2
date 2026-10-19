@@ -73,6 +73,7 @@ import { tryEmitSpreadHostArgs } from "../host-method-args.js";
 import { hasSpreadArgument } from "../spread-arg-list.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { emitRefElemArraySnapshot } from "../dataview-native.js"; // (#6651 U2) drain-before-ToNumber
+import { emitNativeAtomicsCall } from "../atomics/atomics-native.js"; // (#7011)
 import { emitGlobalThisGopdFold } from "../dyn-read.js";
 import { dynamicProtoRootFor, dynamicProtoFieldIdx, reserveDynprotoNorm } from "../dynamic-proto.js"; // (#802)
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
@@ -606,6 +607,11 @@ export function compileBuiltinStaticCall(
     isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression) &&
     BUILTIN_STATIC_METHOD_ARITY.Atomics?.[propAccess.name.text] !== undefined
   ) {
+    // (#7011) Native single-agent Atomics over the in-module TypedArray carriers.
+    const atomics = emitNativeAtomicsCall(ctx, fctx, propAccess.name.text, expr.arguments, (e) =>
+      compileExpression(ctx, fctx, e),
+    );
+    if (atomics !== undefined) return atomics;
     emitThrowTypeError(
       ctx,
       fctx,

@@ -15,15 +15,18 @@
 // already reifies for `Atomics.<m>`. This flips the ~29 non-SAB
 // `built-ins/Atomics/*` error-path tests (which assert exactly this throw).
 //
-// Real atomic read-modify-write semantics stay gated on SharedArrayBuffer
-// (out of scope).
+// (#7011) Real single-agent Atomics semantics now exist (atomics/atomics-native.ts);
+// these rows keep pinning the TypeError paths that remain spec-required.
 
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
 async function runStandalone(body: string): Promise<number> {
   const src = `export function test(): number { ${body} }`;
-  const r = await compile(src, { target: "standalone", skipSemanticDiagnostics: true });
+  const r = await compile(src, {
+    target: "standalone",
+    skipSemanticDiagnostics: true,
+  });
   expect(r.success, r.errors?.map((e) => e.message).join("\n")).toBe(true);
   const { instance } = await WebAssembly.instantiate(r.binary, {});
   return (instance.exports as { test(): number }).test();
@@ -58,17 +61,15 @@ describe("#3145: standalone Atomics.<method> throws a catchable TypeError", () =
     });
   }
 
-  it("Atomics.notify on a valid Int32Array over a non-shared buffer throws TypeError", async () => {
-    // notify requires a *shared* Int32Array; over a non-shared buffer the
-    // waitable validation rejects it. (Int32Array IS an atomics-friendly int
-    // view, so this proves the throw is not merely the float/clamped guard.)
+  it("Atomics.notify on a valid Int32Array over a non-shared buffer returns 0 (#7011)", async () => {
+    // (#7011) §25.4.15 Atomics.notify: a non-shared buffer is NOT an error —
+    // step 9 returns +0 (no agent can be waiting on it). The pre-#7011 blanket
+    // TypeError was the "no native Atomics" stand-in.
     const ret = await runStandalone(`
       const v = new Int32Array(new ArrayBuffer(16)) as any;
-      let t = 0;
-      try { Atomics.notify(v, 0, 0); t = 2; } catch (e) { t = (e instanceof TypeError) ? 1 : 3; }
-      return t;
+      return Atomics.notify(v, 0, 0) + 10;
     `);
-    expect(ret).toBe(1);
+    expect(ret).toBe(10);
   });
 
   it("Atomics.wait / Atomics.waitAsync throw TypeError", async () => {
@@ -89,7 +90,8 @@ describe("#3145: standalone Atomics.<method> throws a catchable TypeError", () =
     const ret = await runStandalone(`
       let coerced = 0;
       const poisoned = { valueOf() { coerced = 1; return 0; } };
-      const v = new Int32Array(new ArrayBuffer(16)) as any;
+      // (#7011) A Float32Array fails ValidateIntegerTypedArray, the first step.
+      const v = new Float32Array(new ArrayBuffer(16)) as any;
       let threw = 0;
       try { Atomics.notify(v, poisoned as any, poisoned as any); } catch (e) { threw = 1; }
       // pass only when it threw AND the poisoned valueOf was never invoked.

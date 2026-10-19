@@ -244,6 +244,7 @@ import { emitLinkedStaticMemberRead, linkedStaticParentHeritage } from "./standa
 import { tryEmitPromiseSubclassCellRead } from "./promise-subclass-cell-read.js";
 import { tryEmitGuardedArrayConstructorRead } from "./array/array-ctor-this.js"; // (#6771 S7)
 import { recordRuntimeProtoInstallDemand } from "./classes/runtime-proto-install-demand.js"; // (#7061)
+import { emitSabGetter } from "./buffers/shared-array-buffer.js"; // (#7011)
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -911,6 +912,16 @@ export function tryBufferViewAttributeReads(
   //                      §25.1.5.4 (a fixed buffer reports its byteLength).
   // Only reached for a static ArrayBuffer receiver in the host-free lane; native
   // TAs / plain arrays / non-buffer programs never take this arm (byte-inert).
+  // (#7011) SharedArrayBuffer `maxByteLength` / `growable` → the native provider.
+  if (
+    (propName === "maxByteLength" || propName === "growable") &&
+    noJsHost(ctx) &&
+    objType.getSymbol()?.name === "SharedArrayBuffer" &&
+    !(ts.isPropertyAccessExpression(expr.expression) && expr.expression.name.text === "prototype")
+  ) {
+    const r = emitSabGetter(ctx, fctx, propName, expr.expression, (e) => compileExpression(ctx, fctx, e));
+    if (r !== undefined) return r;
+  }
   if (
     (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) &&
     (propName === "maxByteLength" || propName === "resizable")

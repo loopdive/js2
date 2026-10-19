@@ -944,7 +944,10 @@ function collectExternDeclarationsImpl(
             // late imports used by the Promise-specific handler. (#966)
             "Promise",
           ]);
-          if (!BUILTIN_SKIP.has(varName)) {
+          // (#7011) The native regime owns SharedArrayBuffer (buffers/shared-array-buffer.ts);
+          // only the opt-in host-assisted profile keeps the host extern class.
+          const nativeSab = varName === "SharedArrayBuffer" && (ctx.wasi || ctx.standalone);
+          if (!BUILTIN_SKIP.has(varName) && !nativeSab) {
             const hasCtor = libIndex
               ? libConstructSignatures(typeRefName(decl.type.typeName), libIndex).length > 0
               : ctx.checker.getTypeAtLocation(decl.type).getConstructSignatures().length > 0;

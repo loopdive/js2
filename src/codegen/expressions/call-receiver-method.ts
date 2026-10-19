@@ -295,6 +295,7 @@ import {
   tryEmitAsyncGenReturnThrowDispatch,
 } from "./calls.js";
 import { readEnv } from "../../env.js";
+import { emitSabMethodCall } from "../buffers/shared-array-buffer.js"; // (#7011)
 
 /**
  * (#742 slice 4) Receiver-type method-call dispatch — extracted verbatim from
@@ -1061,6 +1062,17 @@ export function compileReceiverMethodCall(
   // (#1698). Route both through the same native emitter — emit a byte copy
   // into a fresh i32_byte vec. (SharedArrayBuffer is filtered out: it has no
   // i32_byte struct, so the cast would trap.)
+  // (#7011) SharedArrayBuffer.prototype.slice / grow → the native provider.
+  if (
+    (propAccess.name.text === "slice" || propAccess.name.text === "grow") &&
+    noJsHost(ctx) &&
+    receiverType.getSymbol()?.name === "SharedArrayBuffer"
+  ) {
+    const sab = emitSabMethodCall(ctx, fctx, propAccess.name.text, propAccess.expression, expr.arguments, (e) =>
+      compileExpression(ctx, fctx, e),
+    );
+    if (sab !== undefined) return sab;
+  }
   if (propAccess.name.text === "slice") {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "ArrayBuffer") {
