@@ -1,10 +1,11 @@
 {
   "id": "7012",
   "assignee": "ttraenkler/opus-7012-temporal",
-  "requested_by": "ttraenkler/opus-7012-temporal",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7012-regime-temporal-string-field",
   "claimed_at": "2026-10-16T01:35:44Z",
-  "updated_at": "2026-10-16T01:35:44Z",
-  "write_id": "51941-ci197vrc"
+  "updated_at": "2026-10-19T13:43:23Z",
+  "write_id": "48393-ul9eie2m",
+  "released_at": "2026-10-19T13:43:23Z"
 }
