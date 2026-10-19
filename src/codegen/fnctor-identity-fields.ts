@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { FieldDef, Instr } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { type CodegenContext, wasmGcBackend } from "./context/types.js";
 import { presenceWordName } from "./fnctor-presence-bits.js";
 import { readEnv } from "../env.js";
 
@@ -32,7 +32,7 @@ export function fnctorProtoField(): FieldDef {
  */
 export function fnctorProtoStartNeeded(ctx: CodegenContext): boolean {
   const gate = ctx.fnctorEscapeGate;
-  return ctx.standalone && ((gate?.approvedNames.size ?? 0) > 0 || (gate?.ctorDeclByName.size ?? 0) > 0);
+  return wasmGcBackend(ctx) && ((gate?.approvedNames.size ?? 0) > 0 || (gate?.ctorDeclByName.size ?? 0) > 0);
 }
 
 /**
@@ -119,7 +119,7 @@ export function appendFnctorInternalFields(
   for (let word = 0; word < wordCount; word++) {
     fields.push({ name: presenceWordName(word * 32), type: { kind: "i32" }, mutable: true });
   }
-  if (ctx.standalone) {
+  if (wasmGcBackend(ctx)) {
     fields.push(fnctorConstructorField());
     fields.push(fnctorProtoField());
   }

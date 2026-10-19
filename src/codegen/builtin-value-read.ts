@@ -27,7 +27,7 @@ import {
   skipTransparentExpressions,
   valTypesMatch,
 } from "./shared.js";
-import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
+import { emitThrowTypeError } from "./expressions/helpers.js";
 import { emitObjectCreateValueBody } from "./object-create-value-body.js";
 import { allocLocal } from "./context/locals.js";
 import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
@@ -423,9 +423,9 @@ function hasNativeBuiltinConstantHandler(builtinName: string, propName: string):
  *
  * Spec basis: ECMA-262 §23.1.2.3 delegates to IsArray (§7.2.2).
  *
- * Two regimes (#2047 — unified):
+ * Two backends (#2047 — unified):
  *
- * - **`--target standalone`**: route through the in-module native
+ * - **WasmGC**: route through the in-module native
  *   `__extern_is_array` helper. That helper is reserved with the object runtime
  *   and *filled at finalize* (`fillExternIsArray`) with the COMPLETE, filtered
  *   array-carrier list, so a value-read of `Array.isArray` taken before a later
@@ -434,7 +434,7 @@ function hasNativeBuiltinConstantHandler(builtinName: string, propName: string):
  *   (`const f = Array.isArray; f(boolean[])` ⇒ `false`) and excludes the
  *   exclusively-non-array byte carriers (`i32_byte` ArrayBuffer/DataView,
  *   `i8_byte` Uint8Array) per §7.2.2.
- * - **Host / WASI**: keep the inline `ref.test` chain over every registered vec
+ * - **Legacy provider**: keep the inline `ref.test` chain over every registered vec
  *   type (it detects compiled WasmGC array values materialised into an externref
  *   slot — #1678), ORed in host mode with the real JS `Array.isArray` host
  *   predicate for foreign JS arrays (#1328). Host output is unchanged.
@@ -443,11 +443,9 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   // (#2047) Standalone: defer entirely to the finalize-filled native helper.
   // It owns the complete, byte-carrier-filtered carrier list (late binding),
   // so neither declaration order nor lazy vec registration can produce a wrong
-  // answer here. WASI is intentionally NOT routed here: its
-  // `__extern_is_array` does not resolve to the native object-runtime func
-  // (OBJECT_RUNTIME_HELPER_NAMES routing is `ctx.standalone`-only), so it stays
-  // on the inline chain below.
-  if (ctx.standalone) {
+  // answer here. Every WasmGC environment resolves the helper through the
+  // native object runtime, including WASI.
+  if (wasmGcBackend(ctx)) {
     const nativeIdx = ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }]);
     if (nativeIdx !== undefined) {
       flushLateImportShifts(ctx, fctx);
@@ -463,7 +461,7 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
 
   const vecTypeIdxs = Array.from(new Set(ctx.vecTypeMap.values()));
   const isArrIdx =
-    !noJsHost(ctx) && !ctx.strictNoHostImports
+    !wasmGcBackend(ctx) && !ctx.strictNoHostImports
       ? ensureLateImport(ctx, "__extern_is_array", [{ kind: "externref" }], [{ kind: "i32" }])
       : undefined;
 
@@ -732,7 +730,7 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (!wasmGcBackend(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const metaProp = expr.name.text;
   if (metaProp !== "length" && metaProp !== "name") return undefined;
   const memberAccess = skipTransparentExpressions(expr.expression);
@@ -928,7 +926,7 @@ function tryCompileStandaloneBuiltinProtoIteratorRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!ctx.standalone) return undefined;
+  if (!wasmGcBackend(ctx)) return undefined;
 
   const key = skipTransparentExpressions(expr.argumentExpression);
   if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
@@ -1243,7 +1241,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // only the value read fell to the generic "not yet implemented in --target
     // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
     case "ArrayBuffer.isView": {
-      if (!noJsHost(ctx)) return null;
+      if (!wasmGcBackend(ctx)) return null;
       paramTypes = [{ kind: "externref" }];
       returnType = BOOLEAN_PREDICATE_RESULT;
       break;

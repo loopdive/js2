@@ -40,10 +40,7 @@ export function main() {
   return (p.alpha().alpha | 0) + (p.beta().beta | 0);
 }`;
 
-async function buildSha(
-  hotFields: string | undefined,
-  target: "standalone" | "js-host" = "standalone",
-): Promise<string> {
+async function buildSha(hotFields: string | undefined, target: "standalone" | "gc" = "standalone"): Promise<string> {
   const saved = process.env.JS2WASM_FNCTOR_HOT_FIELDS;
   // `= undefined` coerces to the STRING "undefined", which the flag reader
   // would parse as NaN — only `delete` truly unsets an env var.
@@ -103,16 +100,14 @@ describe("#3927 — fnctor hot/cold tail split", () => {
     }
   });
 
-  /**
-   * The split is standalone-only. Before the default flip that held only by
-   * an argument about another pass ("flow-grown fields only happen in
-   * standalone"), checked nowhere; a shipped default needs the gate itself.
-   */
-  it("never splits a JS-host build, whatever the flag says", async () => {
-    const hostOff = await buildSha("off", "js-host");
-    for (const on of [undefined, "0", "20"]) {
-      expect(await buildSha(on, "js-host")).toBe(hostOff);
-    }
+  // The JS environment uses the same native core, so its shape controls must
+  // remain effective rather than silently selecting a retired host provider.
+  it("honors the native hot/cold control in a JavaScript environment", async () => {
+    const hostOff = await buildSha("off", "gc");
+    const hostDefault = await buildSha(undefined, "gc");
+    expect(hostDefault).toBe(await buildSha(String(COLD_TAIL_DEFAULT_HOT_FIELDS), "gc"));
+    expect(hostDefault).not.toBe(hostOff);
+    expect(await buildSha("off", "gc")).toBe(hostOff);
   });
 
   it("ranks fields by a TOTAL order — equal write-site counts break by name", () => {

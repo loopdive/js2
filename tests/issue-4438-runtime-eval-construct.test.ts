@@ -108,14 +108,20 @@ describe("#4438 — [[Construct]] through a runtime-eval callable", () => {
     expect(driverBody(wat)).toBeUndefined();
   });
 
-  it("REFUSES in the JS-host lane, where the host construct bridge owns `new`", async () => {
-    const { wat } = await compileWat(
+  it("uses the native construct driver in the JavaScript environment", async () => {
+    const result = await compileWat(
       `var F = Function("this.p = 1;");
        var i = new F();
        export function probe(): number { return 0; }`,
     );
-    expect(driverBody(wat)).toBeUndefined();
-    expect(wat).not.toContain("__runtime_new_function");
+    const body = driverBody(result.wat);
+    expect(body).toBeDefined();
+    expect(body).not.toContain("unreachable");
+    expect(body).toContain(`i32.const ${0x2928}`);
+    expect(body).toContain(`i32.const ${0x414f5443}`);
+    expect(result.wat).toContain("__runtime_new_function");
+    const imports = WebAssembly.Module.imports(new WebAssembly.Module(result.binary));
+    expect(imports).not.toContainEqual(expect.objectContaining({ module: "env", name: "__construct_closure" }));
   });
 
   it("does not add a host import — the standalone lane stays host-free", async () => {

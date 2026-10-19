@@ -20,7 +20,8 @@
  *  - **The narrowing vote de-narrows** — the #4217 `generator` defect analog:
  *    a flow-grown boxed value whose only *visible* carrier is another
  *    constructor's scalar slot must not be dragged through a number-unboxer.
- *  - **Host builds never change**, whatever the flag says.
+ *  - **JavaScript environments use the same native layout control**, with
+ *    unchanged observable answers when the layout changes.
  *
  * The acorn-scale payoff (bytes/parse) is measured on the standalone lane and
  * recorded in `plan/issues/3927-fnctor-shape-splitting.md`, not here.
@@ -29,6 +30,7 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 
 import { compile } from "../src/index.js";
+import { buildCompiledImports, wrapCompiledExports } from "../src/runtime.js";
 import { fnctorLayoutEmitEnabled, isFnctorLayoutStructName } from "../src/codegen/fnctor-layout-emit.js";
 
 /**
@@ -141,7 +143,7 @@ interface Built {
   exports: Exports;
 }
 
-async function build(flag: string | undefined, target: "standalone" | "js-host" = "standalone"): Promise<Built> {
+async function build(flag: string | undefined, target: "standalone" | "gc" = "standalone"): Promise<Built> {
   const saved = process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
   // biome-ignore lint/performance/noDelete: only `delete` truly unsets an env var
   if (flag === undefined) delete process.env.JS2WASM_FNCTOR_LAYOUT_EMIT;
@@ -155,7 +157,12 @@ async function build(flag: string | undefined, target: "standalone" | "js-host" 
     });
     if (!result.success) throw new Error(result.errors.map((e) => String(e.message ?? e)).join("; "));
     const sha = createHash("sha256").update(result.binary).digest("hex");
-    if (target === "js-host") return { sha, exports: {} };
+    if (target === "gc") {
+      const imports = buildCompiledImports(result);
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.setInstance?.(instance);
+      return { sha, exports: wrapCompiledExports(result, instance) as Exports };
+    }
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     (instance.exports as Record<string, () => void>).__module_init?.();
     return { sha, exports: instance.exports as Exports };
@@ -238,10 +245,20 @@ describe("#3927 — per-type fnctor layout emission", () => {
     expect(on.exports.structTypedFold!()).toBe(111);
   });
 
-  it("never changes a JS-host build, whatever the flag says", async () => {
-    const hostOff = await build(undefined, "js-host");
-    for (const flag of ["0", "1", ""]) {
-      expect((await build(flag, "js-host")).sha).toBe(hostOff.sha);
+  it("uses native layouts in a JavaScript environment without changing observable values", async () => {
+    const off = await build("0", "gc");
+    const on = await build("1", "gc");
+    expect(on.sha).not.toBe(off.sha);
+    for (const [name, expected] of Object.entries({
+      sum: 34,
+      absentReads: 2,
+      residRoundTrip: 4,
+      reflectiveSurface: 5,
+      voteSeam: 2,
+      structTypedFold: 111,
+    })) {
+      expect(off.exports[name]!(), `${name}: native layout disabled`).toBe(expected);
+      expect(on.exports[name]!(), `${name}: native layout enabled`).toBe(expected);
     }
   });
 });

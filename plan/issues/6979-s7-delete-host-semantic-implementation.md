@@ -1854,3 +1854,109 @@ partially migrated. `expressions.ts` retains the existing
 later review. Keep S7 runtime retirement, compatibility, accelerator, and
 conformance acceptance open. Do not infer that 851 lexical hits are 851 semantic
 branches, or that these bounded improvements certify deletion of host code.
+
+### S7-c constructor/value-reader handoff (2026-10-19, Codex)
+
+**Seventeenth checkpoint; full S7 remains open.** Continue on
+`codex/6979-s7c-ir-arms`, [PR 6762](https://github.com/loopdive/js2/pull/6762),
+stacked on the recorded policy-removal predecessor and S7-b recovery. Parent
+for this checkpoint is `c2475742eb5d39ab2c59a5291db54afc1f166ea5`.
+Seven source modules remove **33** raw references: **851 → 818**, **367 → 362**
+matching files, `src/codegen` **668 → 653**, expressions **175 → 157**.
+`new-super.ts` has no remaining raw or `noJsHost(ctx)` references.
+`builtin-value-read.ts` retains only four lexical references on three lines
+to the existing refusal set, not mode decisions. The dispatcher and builtin
+reader also replace 22 and two indirect `noJsHost(ctx)` checks respectively.
+
+**Classifications.** Native construction, static spread, proxy/closure
+construction, TypedArray carriers, class values, Promise result typing,
+constructor-context receivers, and native iterator-close exception transfer
+follow the WasmGC backend. Builtin method metadata and symbol-member values,
+Array.isArray, and ArrayBuffer.isView use the native runtime. Legacy fnctor
+registration, host-class naming stamps, host return-ABI annotations, and
+foreign-provider no-match bases remain non-WasmGC provider bookkeeping.
+They must not be re-enabled merely because a JavaScript value adapter exists.
+Actual JS-owned values continue through the native runtime's admitted-object
+and callable boundary arms; no new host import or copying adapter is added.
+Runtime-eval construction retains source-demand and helper-availability
+checks; a backend predicate alone is not proof of a linked provider.
+
+**Constructor ABI dependency closure.** WASI omitted the hidden
+`__constructor_identity` argument from the signature, parameter definitions,
+call-site operands, and cached user-parameter slicing. All four now agree
+that WasmGC constructors carry it. Preserve the pre-existing convention for
+the non-WasmGC provider. Native fnctor instance fields, initializer operands,
+prototype-start reservation, prototype reads/writes, and construction-time
+snapshots move together. Source fields and presence bits retain their indices:
+the compiler-owned fields append after them. The alternate layout initializer
+also recognizes the native identity field; its separate allocation-policy
+gates remain for the next layout/representation review.
+
+Readers of that hidden value include both instance identity initialization
+and the function-expression twin's transitive capture spill. The latter must
+not be enabled without the parameter it reads. With the complete candidate,
+restoring only its old standalone gate makes the standalone capture probe
+pass and its WASI twin return `NaN` instead of 42. Restoring the backend gate
+returns both to 42. This is a one-gate attribution control, not an inference
+from the overall passing count.
+
+**Runtime and binary evidence.** Twelve new native tests pass **12/12**, versus
+**8/12** on the parent. The four WASI changes are iterator alias identity,
+fnctor constructor identity (with a different-constructor negative control),
+transitive sibling captures, and construction-time prototype snapshots.
+Native method metadata and array/buffer classification retain passing
+controls. Each native module instantiates with an empty import object.
+The final six-file focused run is **84/84**, including the prior array/object
+and JS-boundary suites and the updated layout/runtime-eval controls.
+
+Seven compiler probes on the **valid `gc` target** produce byte-identical
+binaries at parent and candidate: constructor identity, transitive captures,
+prototype snapshots, builtin metadata, symbol iterator alias, Array.isArray,
+and JS-owned apply. The initial probe attempt used the unsupported string
+`js-host`; those results are superseded, not evidence about a valid JavaScript
+environment. The clean temporary parent checkout was removed after the valid
+comparison; its source remains recoverable from the parent commit. Local
+records are `.tmp/s7c-constructor-gc-{parent,candidate}.jsonl`.
+
+The unchanged-test **20-file / 272-row** comparison is **259 passing / 13
+failing → 263 passing / nine failing**, no skips. Only the four new WASI rows
+change status. Four available non-provider residual messages match exactly;
+five remaining rows cannot execute because the required QuickJS provider
+artifact is missing on both sides. Their messages match after normalizing
+only the source-content cache hash; this is not proof of QuickJS behavior.
+Reports: `.tmp/s7c-constructor-{parent,candidate}.json`.
+
+**Obsolete test contracts corrected separately.** Three old assertions expected
+the JS environment to disable native shape controls or omit the native eval
+construct driver. Replace them with the current native-core contract, not a
+compiler rollback. The two layout fixtures also used unsupported
+`target: "js-host"`; they now request `gc`. The layout-emission check actually
+instantiates through the generated adapter, proves ON/OFF binaries differ,
+and checks six absolute runtime answers with each layout. The eval check
+verifies a filled native driver and rejects a retired host construct import;
+it does not claim execution of an unavailable QuickJS artifact. These are
+test corrections, not three additional compiler fixes.
+
+After those test corrections the final same-size cohort is **266 passing /
+six failing / zero skipped**. The six residuals are the vec-constructor
+identity assertion and the five missing-provider rows described above.
+Record: `.tmp/s7c-constructor-final-cohort.json`. Do not describe this cohort
+as green or count unavailable-provider rows as successful runtime execution.
+
+**Gates and remaining work.** TypeScript, Biome, Prettier, LOC/function,
+coercion, oracle, and standalone-arm checks pass. Host-import policy remains
+33 probes / 452 imports / zero regime-gap or unknown imports, with the
+RegExp/Date/Intl controls intact. IR fallback has no unintended/post-claim/
+module-level growth. Dead-export preservation passes 6/6 full and cut source
+witnesses; strict retirement remains uncertified at the two previously
+recorded nonliteral dynamic imports. The four IR fnctor test files are in the
+272-row comparison, but the default runtime probes are not explicitly
+selected IR Test262 measurements.
+
+Next review native fnctor layout/flow-grown field gates, namespace readers,
+and the larger object-runtime dependency groups. The remaining constructor
+identity test for a genuine vec's `constructor === Array` still fails on both
+parent and candidate; keep it visible. Unknown runtime target spellings are
+not accepted adapter targets; do not reuse `js-host` fixtures as valid `gc`
+evidence. Preserve all full S7 retirement, compatibility, accelerator and
+conformance acceptance requirements: this checkpoint does not satisfy them.

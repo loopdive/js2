@@ -192,7 +192,6 @@ import {
   getFuncParamTypes,
   getWasmFuncReturnType,
   isEffectivelyVoidReturn,
-  noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js"; // (#5350 r2, R2) super-call callable guard
@@ -339,7 +338,7 @@ function evaluateCtorExtraArgument(ctx: CodegenContext, fctx: FunctionContext, a
  * `IsConstructor` probe (and therefore no `__construct` host import) is needed.
  *
  * This is what standalone/WASI lacked. The `resolvesToNonConstructableValue`
- * guard was gated `!noJsHost` because its *vehicle* is the `__construct` host
+ * guard used a provider-mode gate because its *vehicle* is the `__construct` host
  * import; in standalone that discarded the vehicle AND the proof, and control
  * fell through to the terminal `__new_<name>` lookup, found no import, and
  * emitted a bare `ref.null.extern` — so `new (String.prototype.charAt)` quietly
@@ -825,7 +824,7 @@ function isOrdinaryFunctionValueNewCallee(
   callSigs: readonly ts.Signature[],
   constructSigs: readonly ts.Signature[],
 ): boolean {
-  if (!noJsHost(ctx) || callee.kind === ts.SyntaxKind.ThisKeyword || callSigs.length === 0) return false;
+  if (!wasmGcBackend(ctx) || callee.kind === ts.SyntaxKind.ThisKeyword || callSigs.length === 0) return false;
   for (const sig of [...callSigs, ...constructSigs]) {
     const decl = sig.getDeclaration() as ts.SignatureDeclaration | undefined;
     if (!decl || decl.getSourceFile().isDeclarationFile) return false;
@@ -1074,7 +1073,7 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   // its own further down.
   const calleeGuardMessage = "called value is not a function";
   const buildNotCallableThrow = (): Instr[] => {
-    if (!noJsHost(ctx)) return [];
+    if (!wasmGcBackend(ctx)) return [];
     emitWasiErrorConstructor(ctx, "TypeError", 1);
     return buildThrowJsErrorInstrs(ctx, "TypeError", calleeGuardMessage, { flush: fctx });
   };
@@ -2369,8 +2368,8 @@ function compileFnctorNewAsObject(ctx: CodegenContext, fctx: FunctionContext, fn
  *   local.get $__fnctor_reg_tmp      ;; restore
  *
  * Gates (all must hold; any miss = status quo, no emission):
- *  - host lane only (`!ctx.standalone && !ctx.wasi`) — the sidecar/proto-walk
- *    machinery is JS-host; standalone stays byte-identical;
+ *  - legacy provider only — its sidecar/proto-walk registration is not the
+ *    JavaScript value-boundary adapter; WasmGC owns its native link;
  *  - the module-global gate MISSED (module-global fnctors keep the prologue
  *    registration — byte-identical for them);
  *  - `fctx.localMap` has a slot for `funcName` holding the closure VALUE
@@ -2392,7 +2391,7 @@ function emitCallSiteFnctorRegistration(
   funcName: string,
   instanceTypeIdx: number,
 ): void {
-  if (ctx.standalone || ctx.wasi) return;
+  if (wasmGcBackend(ctx)) return;
   if (ctx.moduleGlobals.get(funcName) !== undefined || ctx.funcClosureGlobals.get(funcName) !== undefined) {
     return; // module-global fnctor — the ctor-prologue registration (#1712) owns it
   }
@@ -2451,7 +2450,7 @@ function emitCallSiteFnctorRegistration(
  *
  * `emitCachedFuncClosureAccess` is the same helper identifiers.ts uses for a
  * bare `DummyError` mention, with the same `constructible` flag (unconditionally
- * false in the host lane — see `isOrdinaryFunctionDecl`'s `noJsHost` gate), so
+ * false in the legacy provider), so
  * the registered value is reference-identical to the one every later mention
  * yields. It fixes both failure modes at once: the singleton is created on
  * demand (no compile-order dependency) AND the lazy cache is evaluated here, so
@@ -2470,7 +2469,7 @@ function emitCtorPrologueFnctorRegistration(
   constructorIdentityParamIdx: number,
   selfLocal: number,
 ): void {
-  if (ctx.standalone || ctx.wasi) return;
+  if (wasmGcBackend(ctx)) return;
   ensureLateImport(ctx, "__register_fnctor_instance", [{ kind: "externref" }, { kind: "externref" }], []);
   flushLateImportShifts(ctx, ctorFctx);
   const regIdx = ctx.funcMap.get("__register_fnctor_instance");
@@ -2612,7 +2611,7 @@ function compileNewFunctionDeclaration(
   // and standalone/WASI-gated, so every other ctor keeps the historical
   // `(ref $Struct)` ABI byte-identically — including the host lane, whose
   // #1712 call-site registration tees the result into a struct-typed temp.
-  const resultIsExtern = (ctx.standalone || ctx.wasi) && fnctorBodyMayReturnForeignObject(funcDecl);
+  const resultIsExtern = wasmGcBackend(ctx) && fnctorBodyMayReturnForeignObject(funcDecl);
   const ctorResults: ValType[] = resultIsExtern ? [{ kind: "externref" }] : [{ kind: "ref", typeIdx: structTypeIdx }];
   const ctorTypeIdx = addFuncType(ctx, ctorParams, ctorResults, `${ctorName}_type`);
   const ctorFuncIdx = mintDefinedFunc(ctx);
@@ -2688,7 +2687,7 @@ function compileNewFunctionDeclaration(
     // exports are available. Standalone keeps the historical dynamic `this`
     // representation: forcing the struct fact there bypasses prototype
     // overrides used by generic String methods on custom constructors.
-    ...(!ctx.standalone && !ctx.wasi ? { thisStructName: structName } : {}),
+    ...(!wasmGcBackend(ctx) ? { thisStructName: structName } : {}),
   };
   // The synthesized fnctor body is still the source function's activation for
   // legacy Function#caller. Register it before any prologue/body emission so
@@ -2769,7 +2768,7 @@ function compileNewFunctionDeclaration(
   // frame locals named after the captures BEFORE the body compiles, so
   // sibling-call prepends and direct reads resolve in-frame instead of
   // addressing the declaring frame's dead slots.
-  if (ctx.standalone) {
+  if (wasmGcBackend(ctx)) {
     const closureRecord = ctx.closureStructByNode?.get(funcDecl);
     if (closureRecord) {
       materializeFnctorTwinCaptures(ctx, ctorFctx, closureRecord.structTypeIdx, ctorIdentityParamIdx);
@@ -3442,7 +3441,7 @@ function stampClassExprName(
   vt: ValType | null,
   displayName: string | undefined,
 ): void {
-  if (vt === null || ctx.standalone || ctx.wasi) return;
+  if (vt === null || wasmGcBackend(ctx)) return;
   if (displayName === undefined || displayName.length === 0) return;
   if (vt.kind !== "externref" && vt.kind !== "ref" && vt.kind !== "ref_null") return;
   const setIdx = ensureLateImport(
@@ -3552,7 +3551,7 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   // the assignment-only gate — its inline class values must stay host-callable.
   if (
     syntheticName !== undefined &&
-    (assignment !== undefined || ctx.standalone || ctx.wasi) &&
+    (assignment !== undefined || wasmGcBackend(ctx)) &&
     ctx.classObjectGlobals?.has(syntheticName)
   ) {
     // Heritage evaluation belongs at ClassDefinitionEvaluation, before the
@@ -3697,7 +3696,7 @@ function resolvesToNativeProxyValue(ctx: CodegenContext, expression: ts.Expressi
 
 /** (#6651 U3) Standalone `new <realm global>.Proxy(…)` — a member callee proven to hold `%Proxy%`. */
 function isMemberProxyConstructorCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
-  return noJsHost(ctx) && ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
+  return wasmGcBackend(ctx) && ts.isPropertyAccessExpression(callee) && tracesToProxyConstructorValue(ctx, callee);
 }
 
 function tryCompileNativeConstructFromValue(
@@ -3719,7 +3718,7 @@ function tryCompileNativeConstructFromValue(
   // `new Temporal.X(…)` lane is untouched.
   // (#6738) …and a callee that SELECTS a ctor value at run time, `new (a || B)()`.
   const dynamicCtorValue =
-    noJsHost(ctx) &&
+    wasmGcBackend(ctx) &&
     (((ts.isPropertyAccessExpression(calleeExpr) || ts.isElementAccessExpression(calleeExpr)) &&
       resolvesToDynamicAnyCtorValue(ctx, calleeExpr)) ||
       isValueSelectingNewCallee(calleeExpr) ||
@@ -3760,7 +3759,7 @@ function tryCompileNativeConstructFromValue(
     !dynamicCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr) &&
-    !(noJsHost(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
+    !(wasmGcBackend(ctx) && isDefaultExpressionImport(ctx, calleeExpr)) && // (#6720) the snapshot cell's VALUE
     !admitBoundValueConstruct(ctx, calleeExpr) // (#6651 W2b) `var D = f.bind(…); new D()`
   )
     return undefined;
@@ -3797,8 +3796,7 @@ function tryCompileNativeConstructFromValue(
   // from the harness's `duration.years`). Resolve the static arity first;
   // genuinely runtime-length spreads still decline.
   const args =
-    flattenCallArgs(rawArgs) ??
-    (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
+    flattenCallArgs(rawArgs) ?? (wasmGcBackend(ctx) ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? rawArgs) : rawArgs);
   if (args.some((a) => ts.isSpreadElement(a))) {
     // (#5383 S34) A genuinely runtime-length spread (`new construct(...args)`
     // where `args` is a parameter, not a literal or a resolvable local) used to
@@ -3811,7 +3809,7 @@ function tryCompileNativeConstructFromValue(
     // Standalone/WASI route through the arity-generic argv driver instead; the
     // JS-host lane is unaffected (it constructs through `__construct_closure`,
     // which already accepts a JS array built from an arbitrary spread).
-    if (!noJsHost(ctx)) return undefined;
+    if (!wasmGcBackend(ctx)) return undefined;
     return compileNativeConstructRuntimeArgv(ctx, fctx, calleeExpr, rawArgs);
   }
   // (#5383 S24) The ceiling used to be `MAX_NATIVE_CONSTRUCT_ARITY` (8) because
@@ -3941,7 +3939,7 @@ function tryCompileNativeConstructFromValue(
     ...argLocals.map((argLocal): Instr => ({ op: "local.get", index: argLocal })),
     { op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx },
   ];
-  if (noJsHost(ctx) && ctx.moduleUsesDynTaView) {
+  if (wasmGcBackend(ctx) && ctx.moduleUsesDynTaView) {
     const taCtorTypeIdx = getOrRegisterTaCtorType(ctx);
     const descLocal = allocLocal(fctx, `__nc_tadesc_${fctx.locals.length}`, { kind: "anyref" } as ValType);
     fctx.body.push({ op: "local.get", index: calleeLocal });
@@ -4263,7 +4261,7 @@ function prepareUserClosureConstructOnNull(
   fctx: FunctionContext,
   arity: number,
 ): number | undefined {
-  if (!noJsHost(ctx) || arity > MAX_DYNAMIC_CONSTRUCT_ARITY) return undefined;
+  if (!wasmGcBackend(ctx) || arity > MAX_DYNAMIC_CONSTRUCT_ARITY) return undefined;
   if (arity > MAX_NATIVE_CONSTRUCT_ARITY) {
     ensureObjVecBuilders(ctx);
     reserveApplyClosure(ctx);
@@ -4343,7 +4341,7 @@ function emitUserClosureConstructOnNullAfterFunctionArm(
   argLocals: readonly number[],
 ): void {
   const fact = ts.isIdentifier(callee) ? ctx.oracle.typeFactOf(callee) : undefined;
-  if (ctx.standalone && fact?.kind === "builtin" && fact.name === "Function") return;
+  if (wasmGcBackend(ctx) && fact?.kind === "builtin" && fact.name === "Function") return;
   const driverIdx = prepareUserClosureConstructOnNull(ctx, fctx, argLocals.length);
   if (driverIdx !== undefined) emitUserClosureConstructOnNull(ctx, fctx, driverIdx, calleeAnyLocal, argLocals);
 }
@@ -4424,7 +4422,7 @@ function emitDynamicNewFallback(
     // the construct drivers are minted per ARITY. Resolve the static arity
     // first; only the genuinely runtime-length spreads fall through.
     const flat =
-      flattenCallArgs(rawArgs) ?? (ctx.standalone || ctx.wasi ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? null) : null);
+      flattenCallArgs(rawArgs) ?? (wasmGcBackend(ctx) ? (resolveStaticSpreadArgs(ctx, rawArgs) ?? null) : null);
     if (flat !== null) {
       args = flat; // all spreads had a statically-known element list
     } else {
@@ -4491,7 +4489,7 @@ function emitDynamicNewFallback(
   // (#6954) The standalone no-match base's last arm; registered here, on the
   // live body, because the base itself is built detached.
   const uccDriver =
-    noJsHost(ctx) && !useRuntimeArgv && typedConstructDriver === undefined && !plainNullNoMatchBase
+    wasmGcBackend(ctx) && !useRuntimeArgv && typedConstructDriver === undefined && !plainNullNoMatchBase
       ? prepareUserClosureConstructOnNull(ctx, fctx, args.length)
       : undefined;
 
@@ -4871,7 +4869,7 @@ function emitDynamicNewFallback(
   // pure-Wasm (null). Host mode falls through to the existing import so genuine
   // builtins (Test262Error, …) keep working.
   const hostImportName = `__new_${ctorName}`;
-  const hostFuncIdx = noJsHost(ctx) ? undefined : ctx.funcMap.get(hostImportName);
+  const hostFuncIdx = wasmGcBackend(ctx) ? undefined : ctx.funcMap.get(hostImportName);
   let noMatchBase: Instr[];
   if (typedConstructDriver !== undefined) {
     const base: Instr[] = [
@@ -4915,7 +4913,7 @@ function emitDynamicNewFallback(
     // Emitting null here means a non-constructor callee behaves exactly as it
     // did before this change — no new throw, no new outcome to regress.
     noMatchBase = [{ op: "ref.null.extern" }];
-  } else if (noJsHost(ctx) && !useRuntimeArgv) {
+  } else if (wasmGcBackend(ctx) && !useRuntimeArgv) {
     // (#2872) Standalone/WASI unknown-ctor base: the runtime value may be a
     // first-class `$__ta_ctor` (the TypedArray-harness `function (TA) { new
     // TA(3) / new TA([…]) }` shape — the callee matched no user-class tag).
@@ -4933,7 +4931,7 @@ function emitDynamicNewFallback(
     if (uccDriver !== undefined) emitUserClosureConstructOnNull(ctx, fctx, uccDriver, descLocal, argLocals); // (#6954)
     fctx.body = savedBase;
     noMatchBase = base;
-  } else if (noJsHost(ctx) && useRuntimeArgv) {
+  } else if (wasmGcBackend(ctx) && useRuntimeArgv) {
     // A runtime value that matches no compiled class tag has no [[Construct]].
     // Throw a real, catchable TypeError in host-free targets instead of
     // silently returning null. The host lane reaches the bridge above, whose
@@ -5288,7 +5286,7 @@ function wrapWithIteratorClose(ctx: CodegenContext, fctx: FunctionContext, body:
     { op: "local.get", index: iterLocal },
     { op: "call", funcIdx: returnIdx },
   ];
-  if (ctx.wasi || ctx.standalone) {
+  if (wasmGcBackend(ctx)) {
     const tagIdx = ensureExnTag(ctx);
     const exnLocal = allocLocal(fctx, `__collctor_exn_${fctx.locals.length}`, { kind: "externref" });
     const innerClose = buildStandardTryTable({ kind: "empty" }, closeBody, [
@@ -5947,7 +5945,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // [[Construct]] through the established bridge; host-free builds refuse
   // explicitly until their dynamic construct carrier accepts this exact cell.
   if (isDefaultExpressionImport(ctx, unwrappedLiteralCtor)) {
-    if (noJsHost(ctx)) {
+    if (wasmGcBackend(ctx)) {
       // (#6720) lodash-es `import Set from './_Set.js'`: construct the snapshot's runtime VALUE.
       const fromValue = tryCompileNativeConstructFromValue(ctx, fctx, unwrappedLiteralCtor, expr.arguments ?? []);
       if (fromValue) return fromValue;
@@ -5965,7 +5963,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // WASI builds cannot depend on host `env.TextEncoder_*` imports. The instance
   // carries no state for the UTF-8-only surface implemented here, so the native
   // method fast paths use this evaluated placeholder receiver.
-  if ((noJsHost(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings && ts.isIdentifier(expr.expression)) {
+  if ((wasmGcBackend(ctx) || ctx.strictNoHostImports) && ctx.nativeStrings && ts.isIdentifier(expr.expression)) {
     const ctorName = expr.expression.text;
     if (ctorName === "TextEncoder" || ctorName === "TextDecoder") {
       const args = expr.arguments ?? [];
@@ -6319,7 +6317,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         fctx.body.push({ op: "call", funcIdx });
         // (#5197 r3 Step 1d) a standalone Promise-rooted class's `<C>_new` answers the
         // `$Promise` carrier as externref (D4), not the class struct: report what it returns.
-        const promiseRooted = ctx.standalone && resolvePromiseSubclassName(ctx, syntheticName) !== undefined;
+        const promiseRooted = wasmGcBackend(ctx) && resolvePromiseSubclassName(ctx, syntheticName) !== undefined;
         const ctorResult = promiseRooted ? funcSignatureOf(ctx, funcIdx)?.results[0] : undefined;
         if (ctorResult?.kind === "externref") {
           markPromiseSubclassValueRead(ctx);
@@ -6385,7 +6383,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     const callSigs = ctx.checker.getSignaturesOfType(exprType, ts.SignatureKind.Call);
     // (#6774 S3) A tag call's RESULT is a runtime value; the construct driver
     // performs the IsConstructor check (JS function values have [[Construct]]).
-    const tagResult = noJsHost(ctx) && ts.isTaggedTemplateExpression(unwrappedNonId);
+    const tagResult = wasmGcBackend(ctx) && ts.isTaggedTemplateExpression(unwrappedNonId);
     // (#6954) An ordinary user `function` value (`NS.C = create()`) constructs
     // natively here (Pattern 2 would throw) or at the terminal refusal below.
     ordinaryFunctionMemberValue = isOrdinaryFunctionValueNewCallee(ctx, unwrappedNonId, callSigs, constructSigs);
@@ -6860,13 +6858,13 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     isRuntimeEvalCallableResultExpression(ctx, expr.expression) ||
     // (#5383 S2g) the standalone member-callee form; the helper re-checks the
     // admission itself, so this only opens the door.
-    (noJsHost(ctx) &&
+    (wasmGcBackend(ctx) &&
       (ts.isPropertyAccessExpression(expr.expression) || ts.isElementAccessExpression(expr.expression)) &&
       resolvesToDynamicAnyCtorValue(ctx, expr.expression)) ||
     isValueSelectingNewSite(ctx, expr.expression, className) || // (#6738)
     isMemberProxyConstructorCallee(ctx, expr.expression) || // (#6651 U3)
     isFunctionIntrinsicValueCallee(ctx, expr.expression) || // (#6651 W2a)
-    (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
+    (wasmGcBackend(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
   ) {
     const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
     if (nativeCtor) return nativeCtor;
@@ -6911,7 +6909,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
           : (s1Callee as ts.NonNullExpression).expression;
     }
     // (#4017) Standalone parity — see `emitStaticNotAConstructorThrow`.
-    if (ts.isIdentifier(s1Callee) && noJsHost(ctx) && provablyNonConstructableStatically(ctx, s1Callee)) {
+    if (ts.isIdentifier(s1Callee) && wasmGcBackend(ctx) && provablyNonConstructableStatically(ctx, s1Callee)) {
       return emitStaticNotAConstructorThrow(ctx, fctx, args);
     }
 
@@ -7096,9 +7094,9 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
       // the arguments never evaluated). The tag dispatch below is callee-shape
       // agnostic: it compiles `calleeExpr` once into an anyref descriptor and
       // `ref.test`s it, so a call callee needs no new machinery. Gated to
-      // `noJsHost` so the JS-host lane's byte output is untouched — there the
+      // the WasmGC backend so the legacy provider is untouched — there the
       // legacy `__new_` path still reaches a real host global.
-      const dynCallCallee = noJsHost(ctx) && resolvesToDynamicCallCtorValue(ctx, dynCallee);
+      const dynCallCallee = wasmGcBackend(ctx) && resolvesToDynamicCallCtorValue(ctx, dynCallee);
       if ((ts.isIdentifier(dynCallee) && !ctx.classSet.has(dynCallee.text)) || dynCallCallee) {
         // (#3054 D) Dynamic `new <ctorVal>(buffer[, off[, len]])` where `ctorVal`
         // is a first-class `$__ta_ctor` value (a TA constructor held in a var /
@@ -7108,7 +7106,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // shared-backing `$__ta_view` in the standalone lane (no host import).
         // Gated to a buffer-typed first arg so `new ctor(5)` (count ctor) is NOT
         // captured here (a boxed number would `ref.cast`-trap).
-        if (noJsHost(ctx) && args.length >= 1 && !ts.isNumericLiteral(args[0]!)) {
+        if (wasmGcBackend(ctx) && args.length >= 1 && !ts.isNumericLiteral(args[0]!)) {
           const arg0Sym = ctx.checker.getTypeAtLocation(args[0]!).getSymbol?.()?.name;
           if (arg0Sym === "ArrayBuffer" || arg0Sym === "SharedArrayBuffer" || arg0Sym === "DataView") {
             // Compile the ctor value once into an anyref local to type-test.
@@ -7139,7 +7137,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // construct arm the class-bearing no-match base uses; a non-TA runtime
         // value still yields null-extern (byte-identical outcome to before).
         if (
-          noJsHost(ctx) &&
+          wasmGcBackend(ctx) &&
           resolvesToDynamicAnyCtorValue(ctx, dynCallee) &&
           !(expr.arguments ?? []).some((a) => ts.isSpreadElement(a))
         ) {
@@ -7460,7 +7458,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     // only in standalone/wasi; js-host keeps the host-global BigInt64Array so
     // SharedArrayBuffer/Atomics interop works (see new-builtin-globals.ts note).
     const isBigIntCtor838 = className === "BigInt64Array" || className === "BigUint64Array";
-    if (className && TYPED_ARRAY_CTORS.has(className) && (!isBigIntCtor838 || ctx.wasi || ctx.standalone)) {
+    if (className && TYPED_ARRAY_CTORS.has(className) && (!isBigIntCtor838 || wasmGcBackend(ctx))) {
       // (#2593) packed integer storage standalone/WASI — see the matching
       // count-ctor handler above. `typedArrayVecStorage` keeps host/gc on f64
       // and packs Int8/Uint8/Uint8Clamped→i8, Int16/Uint16→i16, Int32/Uint32→i32.
@@ -7494,7 +7492,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
         // is B2 — MUST match `inferTaViewType`'s `args.length === 1` gate so the
         // local's type and the constructed value agree.
         const taViewOk =
-          noJsHost(ctx) &&
+          wasmGcBackend(ctx) &&
           args.length === 1 &&
           (argSymName === "ArrayBuffer" || argSymName === "SharedArrayBuffer" || argSymName === "DataView");
         if (taViewOk && !ts.isNumericLiteral(args[0]!)) {
