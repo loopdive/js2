@@ -1,10 +1,11 @@
 {
   "id": "7089",
   "assignee": "ttraenkler/opus-7089-subclass",
-  "requested_by": "ttraenkler/opus-7089-subclass",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7089-regime-promise-subclass-combinators",
   "claimed_at": "2026-10-19T13:39:09Z",
-  "updated_at": "2026-10-19T13:39:09Z",
-  "write_id": "2417-4k2evhep"
+  "updated_at": "2026-10-20T01:01:08Z",
+  "write_id": "63420-0o18b2un",
+  "released_at": "2026-10-20T01:01:08Z"
 }
