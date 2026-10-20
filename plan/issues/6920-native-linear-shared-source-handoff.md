@@ -30,6 +30,7 @@ func-budget-allow:
   # 2026-10-19 (#6920 A-C1): +3 for the WasmGC resolver's selectedBackend, which its constructor must set
   - src/ir/integration.ts::makeFromAstResolver
 import-cycles-allow:
+  - largestSccSize: 721 # 2026-10-20 (#6920 A-C1 successor): main 7527a91c already measures 721 with the identical member list; this branch adds no file to the SCC
   - ir->backend: 28 # 2026-10-14 (#6920): three measured native Number/Undefined physical reserve/fill/completion recipe joins remain honest mixed IR/backend debt
 language_feature: arrays
 goal: correctness

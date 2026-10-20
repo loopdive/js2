@@ -675,6 +675,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   jsHostExterns?(): boolean;
   /**
+   * (#7091) The platform-extern lane (JS environment, native regime): true for
+   * an extern class that is a platform capability (DOM, declared external
+   * API). Its native-string / closure arguments cross as carriers the
+   * runtime's platform-arg marshal converts. Absent off the lane.
+   */
+  platformExternClass?(className: string): boolean;
+  /**
    * #4576 — exact source-node authorization for the standalone dom@1
    * provider. Absence never falls back to a name/type guess.
    */
@@ -5110,7 +5117,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
           standaloneDomGlobal.identifier === expr &&
           standaloneDomGlobal.importName === hg.importName;
         assertNotDeferred(
-          domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomGlobal),
+          domSurfaceCapability(hostExternSurfaceAdmits(cx, hg.className), exactStandaloneDomGlobal),
           `host global "${expr.text}"`,
           cx.funcName,
         );
@@ -6357,7 +6364,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     const standaloneDomRead = cx.resolver?.standaloneDomOperation?.(expr);
     const exactStandaloneDomRead = standaloneDomRead?.kind === "member-get" && standaloneDomRead.access === expr;
     assertNotDeferred(
-      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomRead),
+      domSurfaceCapability(hostExternSurfaceAdmits(cx, className), exactStandaloneDomRead),
       `extern property read .${propName}`,
       cx.funcName,
     );
@@ -7481,6 +7488,12 @@ function lowerImportedCall(
         boxConcreteToDynamic(value, actual, expr.arguments[i]!, cx),
       );
       actual = cx.builder.typeOf(value);
+      // (#7091) A native-string lane plans an ambient host `string` param as
+      // the externref carrier; the string crosses as `extern.convert_any`.
+      if (plan.source === "ambient-host" && actual.kind === "string" && asVal(expected)?.kind === "externref") {
+        value = cx.builder.emitCoerceToExternref(value);
+        actual = cx.builder.typeOf(value);
+      }
       if (!irTypeAssignable(actual, expected)) {
         demoteToLegacy(
           "imported-call-planning-unsupported",
@@ -8362,6 +8375,26 @@ function emitDefaultExternArg(cx: LowerCtx, expected: ValType): IrValueId {
   }
 }
 
+/**
+ * (#7091) Does the host-extern surface admit `className` here? The JS-host
+ * lane admits every extern class; the platform lane admits only platform
+ * capabilities. Feeds the same `domSurfaceCapability` asserts the selector's
+ * claim was gated on, so a drift stays an invariant, not a fallback.
+ */
+function hostExternSurfaceAdmits(cx: LowerCtx, className: string): boolean {
+  return cx.resolver?.jsHostExterns?.() === true || cx.resolver?.platformExternClass?.(className) === true;
+}
+
+/** (#7091) Platform-lane call: arguments cross as Wasm carriers the marshal converts. */
+function platformCarrierBoundary(cx: LowerCtx, className: string): boolean {
+  return cx.resolver?.jsHostExterns?.() !== true && cx.resolver?.platformExternClass?.(className) === true;
+}
+
+/** (#7091) The native-string carrier boundary for one platform-lane argument. */
+function platformStringBoundary(cx: LowerCtx, className: string): "native-string" | undefined {
+  return platformCarrierBoundary(cx, className) ? "native-string" : undefined;
+}
+
 function coerceToExpectedExtern(
   value: IrValueId,
   expected: ValType,
@@ -8389,10 +8422,13 @@ function coerceToExpectedExtern(
   if (expected.kind === "externref" && t.kind === "string" && cx.resolver?.stringIsExternref?.() !== false) {
     return value;
   }
-  // #4576 — the authenticated dom@1 adapter is the sole host boundary that
-  // accepts the native `$AnyString` carrier. The Wasm import still receives an
-  // externref, but the lifecycle-pinned adapter decodes it through the narrow
-  // readout pair before touching the DOM. No other host call may opt into this.
+  // #4576 — the authenticated dom@1 adapter accepts the native `$AnyString`
+  // carrier. The Wasm import still receives an externref, but the
+  // lifecycle-pinned adapter decodes it through the narrow readout pair before
+  // touching the DOM. (#7091) The only other boundary that opts in is a
+  // platform-capability extern call in a JS environment under the native
+  // regime, whose import the runtime's platform-arg marshal (#6708) wraps —
+  // the exact carrier the legacy body passes there.
   if (expected.kind === "externref" && t.kind === "string" && boundary === "native-string") {
     return cx.builder.emitCoerceToExternref(value);
   }
@@ -9597,7 +9633,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const standaloneDomCall = cx.resolver?.standaloneDomOperation?.(expr);
     const exactStandaloneDomCall = standaloneDomCall?.kind === "member-call" && standaloneDomCall.call === expr;
     assertNotDeferred(
-      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomCall),
+      domSurfaceCapability(hostExternSurfaceAdmits(cx, recvType.className), exactStandaloneDomCall),
       `extern method call .${methodName}`,
       cx.funcName,
     );
@@ -9646,7 +9682,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         }
         const closure = lowerHostVoidCallbackExpression(hostCallbackArrow, hostCallbackPlan, cx);
         const packed = cx.builder.emitCallablePack(closure, hostCallbackPlan.signature);
-        if (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") {
+        if (
+          (exactStandaloneDomCall && standaloneDomCall.argumentBoundaries[i] === "native-callback-zero-void") ||
+          platformCarrierBoundary(cx, recvType.className)
+        ) {
+          // (#7091) On the platform lane the packed closure IS the carrier:
+          // the runtime's platform-arg marshal bridges it to a JS function.
           args.push(packed);
           continue;
         }
@@ -9675,11 +9716,12 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         continue;
       }
       const argVal = lowerExpr(argument, cx, irVal(expected));
-      const boundary = coercibleStandaloneDomArgumentBoundary(
-        exactStandaloneDomCall ? standaloneDomCall : undefined,
-        i,
-        cx.funcName,
-      );
+      const boundary =
+        coercibleStandaloneDomArgumentBoundary(
+          exactStandaloneDomCall ? standaloneDomCall : undefined,
+          i,
+          cx.funcName,
+        ) ?? platformStringBoundary(cx, recvType.className);
       args.push(coerceToExpectedExtern(argVal, expected, cx, `arg ${i} of ${definingClass}.${methodName}`, boundary));
     }
     // (#2856) Pad missing OPTIONAL args with default sentinels: the host
@@ -10320,7 +10362,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       standaloneDomSet.assignment === expr &&
       standaloneDomSet.access === lhs;
     assertNotDeferred(
-      domSurfaceCapability(cx.resolver?.jsHostExterns?.() === true, exactStandaloneDomSet),
+      domSurfaceCapability(hostExternSurfaceAdmits(cx, recvType.className), exactStandaloneDomSet),
       `extern property write .${fieldName}`,
       cx.funcName,
     );
@@ -10344,7 +10386,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
       resolved.property.type,
       cx,
       `value of .${fieldName}`,
-      exactStandaloneDomSet ? standaloneDomSet.valueBoundary : undefined,
+      exactStandaloneDomSet ? standaloneDomSet.valueBoundary : platformStringBoundary(cx, recvType.className),
     );
     cx.builder.emitExternPropSet(resolved.importPrefix, fieldName, recv, coerced);
     return;

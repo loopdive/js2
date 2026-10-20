@@ -21,7 +21,7 @@ The line above is the retired **host-assisted** JS-host profile, frozen when its
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 42,173 / 48,232 (87.4 %)
+**standalone (host-free) test262 conformance**: 42,460 / 48,232 (88.0 %)
 
 <!-- AUTO:conformance-standalone-end -->
 

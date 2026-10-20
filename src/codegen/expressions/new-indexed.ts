@@ -31,6 +31,8 @@ import { buildThrowJsErrorInstrs } from "./helpers.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./array-constructor-carrier.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { inferArrayElementType } from "./new-super.js";
+import { emitSabConstruct } from "../buffers/shared-array-buffer.js"; // (#7011)
+import { noJsHost } from "../js-errors.js";
 
 /** Sentinel: the `new` target is not one of the indexed built-in constructors. */
 export const NEW_INDEXED_FALLTHROUGH = Symbol("new-indexed-fallthrough");
@@ -41,6 +43,11 @@ export function tryCompileIndexedBuiltinNew(
   expr: ts.NewExpression,
   className: string | undefined,
 ): ValType | null | typeof NEW_INDEXED_FALLTHROUGH {
+  // (#7011) new SharedArrayBuffer(length, options) → the native provider.
+  if (className === "SharedArrayBuffer" && noJsHost(ctx) && !ctx.classSet.has(className)) {
+    const r = emitSabConstruct(ctx, fctx, expr.arguments ?? [], (e) => compileExpression(ctx, fctx, e));
+    if (r !== undefined) return r;
+  }
   // new ArrayBuffer(byteLength) → vec struct with packed i8 elements (1 byte per
   // element, (#2835) — 4× smaller than the former i32-per-byte backing)
   if (className === "ArrayBuffer") {

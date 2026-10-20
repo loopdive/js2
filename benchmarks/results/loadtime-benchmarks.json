@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-18T22:14:59.497Z",
+  "timestamp": "2026-10-20T02:11:27.822Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -1140,7 +1140,6 @@
         }
       ],
       "stringPool": [
-        "RangeError: Invalid count value",
         "TypeError",
         "Cannot convert null or undefined to a BigInt",
         "Cannot convert value to a BigInt",
@@ -1221,12 +1220,15 @@
         "Cannot access property on null or undefined at 33:17",
         "Cannot convert a Symbol value",
         "RangeError: toFixed() digits argument must be between 0 and 100",
+        "RangeError: Invalid count value",
         "toString() radix must be between 2 and 36",
         "number",
         "@@1,at,concat,copyWithin,entries,every,fill,filter,find,findIndex,findLast,findLastIndex,flat,flatMap,forEach,includes,indexOf,join,keys,lastIndexOf,map,pop,push,reduce,reduceRight,reverse,shift,slice,some,sort,splice,toLocaleString,toReversed,toSorted,toSpliced,toString,unshift,values,with",
         "Array",
         "\u0000js2_data_struct_host_bridge_token",
-        "function () { [native code] }"
+        "function () { [native code] }",
+        "__defineGetter__,__defineSetter__,__lookupGetter__,__lookupSetter__,hasOwnProperty,isPrototypeOf,propertyIsEnumerable,toLocaleString,toString,valueOf",
+        "Object"
       ]
     },
     {
