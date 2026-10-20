@@ -166,7 +166,7 @@ function needsSymbolThrowArm(ctx: CodegenContext): boolean {
  *
  * A module that never registered the `$Symbol` carrier emits nothing.
  */
-function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
+export function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
   const symTypeIdx = ctx.symbolTypeIdx;
   if (!ctx.standalone || symTypeIdx < 0) return [];
   return [
@@ -185,6 +185,20 @@ function symbolThrowArm(ctx: CodegenContext, primLocal = 2): Instr[] {
     },
     { op: "local.get", index: primLocal },
   ];
+}
+
+/**
+ * Prepare an inline semantic Symbol-to-number guard before a caller compiles
+ * operands or retains helper indices. The relational caller has already
+ * ensured the native object runtime, which registers the Symbol carrier.
+ */
+export function prepareSymbolToNumberGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (!ctx.standalone) return;
+  if (ctx.symbolTypeIdx < 0) throw new Error("Missing native Symbol carrier for numeric value conversion");
+  void buildThrowJsErrorInstrs(ctx, "TypeError", SYMBOL_TO_NUMBER_MESSAGE, {
+    forceInModuleCtor: true,
+    flush: fctx,
+  });
 }
 
 /**
