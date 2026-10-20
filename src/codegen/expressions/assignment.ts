@@ -149,6 +149,7 @@ import { tryCompileStandaloneRegExpLastIndexWrite } from "../regexp-standalone.j
 import {
   emitPutValueTargetGuard,
   emitResolvedIdentifierWriteFromStack,
+  identifierLocalValueType,
   resolveModuleAwareIdentifierWriteTarget,
   tryConstSet,
   tryFunctionExpressionOwnNameWrite,
@@ -1443,7 +1444,7 @@ function compileDestructuringAssignment(
             localIdx === undefined ? currentSourceModuleGlobalIndex(ctx, targetIdentifier) : undefined;
           let targetType: ValType;
           if (localIdx !== undefined) {
-            targetType = getLocalType(fctx, localIdx) ?? { kind: "externref" as const };
+            targetType = identifierLocalValueType(fctx, localIdx) ?? { kind: "externref" as const };
           } else if (moduleGlobalIdx !== undefined) {
             const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
             targetType = globalDef?.type ?? { kind: "externref" as const };
@@ -1617,7 +1618,7 @@ function compileDestructuringAssignment(
         }
         const targetType =
           localIdx !== undefined
-            ? (getLocalType(fctx, localIdx) ?? { kind: "externref" as const })
+            ? (identifierLocalValueType(fctx, localIdx) ?? { kind: "externref" as const })
             : (ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type ?? { kind: "externref" as const });
         const initType = compileExpression(ctx, fctx, prop.objectAssignmentInitializer, targetType);
         if (initType && !valTypesMatch(initType, targetType)) {
@@ -1636,7 +1637,7 @@ function compileDestructuringAssignment(
       const fieldType = fields[fieldIdx]!.type;
       const targetType =
         localIdx !== undefined
-          ? getLocalType(fctx, localIdx)
+          ? identifierLocalValueType(fctx, localIdx)
           : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
 
       fctx.body.push({ op: "local.get", index: tmpLocal });
@@ -1754,7 +1755,7 @@ function compileDestructuringAssignment(
           }
           const targetType =
             localIdx !== undefined
-              ? (getLocalType(fctx, localIdx) ?? { kind: "externref" as const })
+              ? (identifierLocalValueType(fctx, localIdx) ?? { kind: "externref" as const })
               : (ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type ?? { kind: "externref" as const });
           const initType = compileExpression(ctx, fctx, defaultExpr, targetType);
           if (initType) {
@@ -1780,7 +1781,7 @@ function compileDestructuringAssignment(
 
         const targetType =
           localIdx !== undefined
-            ? getLocalType(fctx, localIdx)
+            ? identifierLocalValueType(fctx, localIdx)
             : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
 
         fctx.body.push({ op: "local.get", index: tmpLocal });
@@ -2347,7 +2348,7 @@ function compileArrayDestructuringAssignment(
         }
         const targetType =
           localIdx !== undefined
-            ? getLocalType(fctx, localIdx)
+            ? identifierLocalValueType(fctx, localIdx)
             : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
 
         // Per ECMA-262 §13.15.5.5 (AssignmentElement /
@@ -2759,7 +2760,7 @@ function compileExternrefArrayDestructuringAssignment(
         }
         const targetType =
           localIdx !== undefined
-            ? getLocalType(fctx, localIdx)
+            ? identifierLocalValueType(fctx, localIdx)
             : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
         attachDetachedAssignmentBodies(
           fctx,
@@ -3156,7 +3157,7 @@ function emitExternrefObjectPatternWrites(
         }
         const targetType =
           localIdx !== undefined
-            ? (getLocalType(fctx, localIdx) ?? valType)
+            ? (identifierLocalValueType(fctx, localIdx) ?? valType)
             : (ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type ?? valType);
         if (fromDefault) {
           const initType = compileExpression(ctx, fctx, initializer!, targetType);
@@ -3286,7 +3287,7 @@ export function emitObjectDestructureFromLocal(
         else fctx.body.push({ op: "ref.is_null" });
         const localTypeWithDefault =
           localIdx !== undefined
-            ? (getLocalType(fctx, localIdx) ?? fieldType)
+            ? (identifierLocalValueType(fctx, localIdx) ?? fieldType)
             : (ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type ?? fieldType);
         attachDetachedAssignmentBodies(
           fctx,
@@ -3578,7 +3579,7 @@ function emitArrayDestructureFromLocal(
       }
       const targetType =
         localIdx !== undefined
-          ? getLocalType(fctx, localIdx)
+          ? identifierLocalValueType(fctx, localIdx)
           : ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx!)]?.type;
       const tmpElem = allocLocal(fctx, `__arr_nested_d_${fctx.locals.length}`, elemType);
       const undefIdx =

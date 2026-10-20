@@ -38,6 +38,7 @@
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
@@ -16621,21 +16622,8 @@ function analyseCaptures(
     }
     if (ts.isIdentifier(node)) {
       referenced.add(node.text);
-    }
-    if (ts.isBinaryExpression(node)) {
-      const op = node.operatorToken.kind;
-      if (
-        op === ts.SyntaxKind.EqualsToken ||
-        (op >= ts.SyntaxKind.PlusEqualsToken && op <= ts.SyntaxKind.CaretEqualsToken)
-      ) {
-        if (ts.isIdentifier(node.left)) written.add(node.left.text);
-      }
-    }
-    if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-      const op = node.operator;
-      if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-        if (ts.isIdentifier(node.operand)) written.add(node.operand.text);
-      }
+      // (#6992) Every write form, destructuring and for-in/for-of heads included.
+      if (isLexicalBindingWrite(node)) written.add(node.text);
     }
     forEachChild(node, visit);
   };
