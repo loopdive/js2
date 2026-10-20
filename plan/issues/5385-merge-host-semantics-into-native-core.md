@@ -1787,3 +1787,27 @@ and custody runs were not repeated. Exact source/report hashes and remaining
 producer acceptance are in the detailed issue and
 `plan/audit/6979-native-object-prototype-setter-20261020.json`. The PR remains
 draft, both issues stay in progress, and the full migration is not complete.
+
+### S7-ah publication handoff: primitive prototype identity bootstrap, unfinished
+
+The user requested the current work be published in the existing draft PR6762.
+The checkpoint adds fixed Boolean/Number/String/Symbol/BigInt identity roles,
+pure capsule initializer/getter builders and an authentic dependency-bound
+backend owner. It adds no host import, object graph copy, production consumer,
+ToObject admission or complete prototype-member population. Its scope is
+identity bootstrap only; executable bootstrap and backend owner acceptance
+tests are still missing. **11/11 structural builder tests pass**, zero skips;
+typecheck and lint pass after correcting a declaration-observation type error.
+Prior component/compiler results are not fresh execution of this checkpoint.
+
+The detailed file map and ordered next steps are in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md),
+section “S7-ah publication checkpoint and actionable handoff”. First wire an
+opt-in genuine native fixture and verify identities/payloads/generation changes
+and owner rejection controls; then compose ToObject with genuine unary factories
+and strict native input admission. Full population/publication, live foreign
+boundary references, Linear/WASI and architecture/custody/conformance/retirement
+remain open. The same four dependency directions still fail against main;
+architectureComplete=false, and the prerequisite PR6701 remains OPEN/unmerged.
+Keep both issues in progress and this incomplete PR draft; no merge readiness
+or migration completion is claimed.

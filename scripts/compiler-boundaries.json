@@ -16081,6 +16081,21 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-primitive-prototype-identities.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/contracts/native-primitive-prototype-identities.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/primitive-prototype-identity-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/primitive-wrapper-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"

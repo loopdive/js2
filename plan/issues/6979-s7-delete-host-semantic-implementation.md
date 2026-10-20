@@ -5399,3 +5399,102 @@ undefined, Linear/WASI construction and full architecture/custody/conformance/
 retirement acceptance remain required. Complete prior 674-case, broader161/779,
 full Test262 and historical custody cohorts were not rerun; existing receipt
 and broader failures are not repinned or certified away.
+
+### S7-ah genuine primitive prototype bootstrap and ToObject prerequisites (2026-10-20, Codex)
+
+Continue from signed `4e57c7ce47d7bb4a866a0acf47489b6584f0f0c7`.
+Issue the five fixed primitive prototype identity roles from semantic contract
+data, never caller-selected globals. Build Boolean(false), Number(+0) and
+String(empty, with its real own length); Symbol/BigInt prototypes are ordinary
+objects without the corresponding private primitive-data slot. Use the genuine
+mixed realm, stateful wrapper storage and StringCreate owners. All parents are
+the actual issued Object.prototype role. Keep constructor/member population
+explicitly unfinished; these exact identities must be reused by later population,
+not replaced with fallback empty objects.
+
+Publish all five allocations atomically in a private immutable identity capsule,
+stamped with the current realm and Object.prototype identities. Getters are fixed
+by kind, preserve identity/user mutations and refuse missing/stale authority.
+Initialization is idempotent within one generation and refreshes only after a
+genuine base-generation change. Independently re-derive every executed body and
+empty-string initializer; failed partial fills remain terminal. This scope is
+not whole-prototype, public ToObject or realm completion.
+
+Then compose native ToObject wrapping from this real bootstrap and existing
+primitive/error/unbox/StringCreate resources, retaining strict canonical
+undefined/native-object admission and exact object/payload identity. Do not
+turn the pure builder's generic passthrough into private foreign-object authority.
+The full producer acceptance contract above remains in force; public/source
+publication, member population, live foreign boundary values, Linear/WASI and
+all wider migration acceptance remain open.
+
+Readers of the new capsule are its fixed getters and the later population/
+ToObject consumers; its only writer is its canonical initializer, publishing
+after all fresh allocations. No existing object/state/payload field moves.
+Expose retained declaration plans/dependencies in test fixtures without changing
+reservation order or emitted instructions. Preserve all existing component
+binaries and use cooperative fixture construction for the actual new bodies.
+
+#### S7-ah publication checkpoint and actionable handoff
+
+User requested publication of the work in progress, not completion of the
+remaining producer work. Publish this checkpoint on the existing draft PR6762;
+do not mark this issue done, ready the PR or merge the incomplete stack. The
+prerequisite PR6701 was freshly read OPEN/unmerged during publication.
+
+Implemented but **not runtime-accepted or wired into source/public execution**:
+
+- `src/runtime/contracts/native-primitive-prototype-identities.ts` fixes five
+  identity/payload roles; it is not a member/descriptor population catalog.
+- `src/runtime/wasmgc/values/primitive-prototype-identity-bodies.ts` builds the
+  immutable generation capsule, atomic initializer and five fixed getters.
+- `src/backend/wasmgc/resources/native-primitive-prototype-identities.ts`
+  reserves a private capsule/global and seven functions against genuine mixed,
+  wrapper-storage and StringCreate owners. Completion re-derives bodies and the
+  empty-string initializer; its declared scope is identity bootstrap only.
+  No production consumer invokes this owner yet. Backend owner authentication,
+  partial-fill behavior and executable Wasm still need dedicated tests.
+- Three modules are classified in the existing backend-wasmgc,
+  runtime-contracts and native-runtime layers. No root, allowance, floor or
+  baseline is changed.
+
+Verification for this checkpoint: **11/11 structural builder tests pass**, zero
+skips, runner exit zero, in
+`tests/issue-6979-primitive-prototype-identity-bodies.test.ts`. These assert the
+fixed roles/payloads, immutable fields, allocation-before-publication ordering,
+two-identity generation checks, fixed getter fields and copied instruction
+operands. They do not instantiate the new bootstrap or certify runtime/native
+provider completion. The initial typecheck failed because declaration
+observations used the wrong header/signature shape; the source was corrected
+and typecheck/lint rerun successfully. The prior S7-ag runtime/compiler results
+above are retained historical evidence, **not rerun on this checkpoint**.
+
+Resume in this order:
+
+1. Expose the original wrapper declaration plan/dependency identities and
+   StringCreate dependencies from the mixed fixture, without changing resource
+   order. Reserve/fill this owner in an opt-in cooperative component fixture.
+2. Execute real zero-import Wasm for all five prototypes. Check false/+0/empty
+   payloads, String own length and virtual indices, Symbol/BigInt absence of
+   primitive-data slots, exact Object.prototype parents, stable identity and
+   preserved user mutations on repeat init, fresh identities on a genuine
+   realm/Object.prototype generation change, and loud missing/stale rejection.
+3. Add genuine backend-owner positive controls and copied/foreign/mixed-family,
+   substituted declaration/body/literal, failed partial fill and forged receipt
+   negative controls. Recheck all existing component hashes with unchanged
+   assertions; retain the real ledger as incomplete/unsealed.
+4. Compose actual ToObject using owned unary adapters and native unbox/error
+   resources. Admit canonical undefined/native objects strictly; preserve object
+   identity and fresh wrappers. Do not bless raw foreign objects or public
+   constructors as private native authority.
+5. Complete member/constructor population, authenticated atomic source/public
+   admission, live foreign boundary references, Linear/WASI and the full
+   architecture/custody/conformance/retirement acceptance already tracked here.
+
+The dependency-cycle gate still fails the same four directions against main
+(backend→ir 115→117, codegen→ir 298→301, ir→codegen 74→75,
+ir→frontend 7→10); no waiver was added. Inventory covers 1984 source modules
+with zero reported errors but architectureComplete=false. Neither those counts
+nor the structural tests make this migration merge-ready. Full Test262,
+historical custody and broader known-failing cohorts were not rerun or repaired.
+No GitHub issue or comment is used for this handoff.
