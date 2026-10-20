@@ -2,9 +2,9 @@
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
 status: in-progress
-assignee: ttraenkler/codex
+assignee: ttraenkler/fable
 created: 2026-10-14
-updated: 2026-10-19
+updated: 2026-10-20
 priority: high
 horizon: xl
 feasibility: hard
@@ -17,6 +17,12 @@ sprint: current
 parent: 5385
 depends_on: [6708]
 related: [4396, 4397, 4399, 4401, 6191, 6749, 6750, 6978]
+# (2026-10-20, S7-a landing) Not growth: deleting the dead
+# `__rethrow_host_exception` provider arrow in resolveImport renumbers the
+# anonymous functions after it, so main's existing 309-line `<anonymous>#95`
+# is reported as a NEW over-budget `#94`. Same function, same size.
+func-budget-allow:
+  - src/runtime.ts::<anonymous>#94
 ---
 
 # #6979 — S7: delete the host-semantic implementation
@@ -401,3 +407,71 @@ Left for later slices:
 - Six `issue-2949` "gc runtime ($AnyValue)" execution describes are deleted.
   They only validated with host strings outside the production finalize
   pipeline; the round-trip is covered structurally.
+
+### S7-a landing (2026-10-20)
+
+Lead lane (Claude Fable) took the slice over from the Codex recovery lane;
+claim `ttraenkler/fable`. PR 6701 head `33af6d1cf1` was re-merged with
+`upstream/main` `7527a91ce5` (resolutions as agreed on the PR:
+`scripts/check-ir-fallbacks.ts` and
+`tests/issue-2637-b2-ctor-closure-registration.test.ts` take main's side,
+`src/codegen/promise-dynamic-member-read.ts` takes main's side with the S7-a
+deletion re-applied). What this landing pass changed on top:
+
+- **The red that broke every compile.** S7-a deletes `isStandalonePromiseActive`
+  (constant-true for every WasmGC build once `host-assisted` is gone), but three
+  callers had landed on main since the recovery: `promise-dynamic-member-read.ts`
+  (#7092/#7099), `promise/receiver-capability.ts` (#7089) and
+  `promise/with-resolvers.ts` (#7090). The guard is folded away at all three; the
+  missing ESM export is what turned the cheap gate, smoke, sanitizers and every
+  issue-test shard red.
+- **Three predicate sites the recovery missed**, each constant-true for WasmGC
+  (`semanticProviders` is `native-first` for every non-linear target):
+  `relational-to-primitive.ts` `admitsAnyRelational`, `coercion-engine.ts`
+  `nativeToPrimitive`, `operator-assignment.ts` (#7084 element `+=` arm).
+  `grep -rF semanticProviders src`: 234 hits / 94 files on main → 39 / 19.
+  `semanticProviders ==|!== "native-first"` comparisons: 191 → 11 (the profile
+  itself, the #4401 explicit-spelling publication gate, adapter-manifest
+  validation, boundary-policy, and comments).
+- **Dead provider body:** `__rethrow_host_exception` in `src/runtime.ts`. Its only
+  emitter, `src/codegen/export-throw-boundary.ts` (host-assisted only: it returned
+  early under native-first), is deleted by S7-a; the stale inventory entry for it
+  in `scripts/compiler-boundaries.json` goes too. `check:host-import-policy`: 33
+  probes, 452 imports, 0 legacy-semantic, 0 unknown; `runtime.ts` 20,232 lines,
+  `resolveImport` 7,859 lines / 15 cases (under the S7-a ceilings 20,240 / 7,868).
+- **README** no longer advertises `--semantic-providers host-assisted` (review
+  comment of 2026-10-15).
+
+Byte-neutrality (gc/standalone/wasi), measured by hooking `compile()` in both
+trees and running `tests/equivalence/` on each: 1,973 programs in common (gc
+1,757, standalone 211, wasi 5); 1,963 identical in the suite run. The other 10
+gc rows differ only in the TypeScript checker's process-global symbol counter
+(`__@iterator@19` vs `@159` in a struct field name), because the two suites run
+different test files before them; compiled in a fresh process per tree all 10
+are byte-identical. Net: 0 codegen differences.
+
+Equivalence gate: `20 failing, 2008 passing, 22 known-failures`; "No new
+equivalence regressions"; 2 baseline failures now pass.
+
+Tests re-pinned from `host-assisted` to the regime (not skipped):
+- `tests/issue-1528-closure-construct.test.ts`: a plain function value is
+  constructed in-module (no `__construct_closure`, answers 1); the capability-ctor
+  row locks that no `__call_function` helper is imported.
+- `tests/issue-1712-capture-closure-dispatch.test.ts`: the acorn-shape row reads
+  `.type` in-module; the dispatcher row gets the closure from an export instead of
+  intercepting the deleted `__extern_set_strict` path.
+
+GAPs exposed (pre-existing on main's default profile, identical before S7-a; to
+be filed against #5385, the allocator was unreachable from this sandbox):
+- `Promise.allSettled.call(Constructor, [thenable])` with a plain function
+  `Constructor` throws on the regime (Node returns normally).
+- A function-constructor instance returned across the export boundary marshals
+  to `{}` through `wrapExports` on the regime (`ast.type` reads `undefined`).
+
+Pre-existing reds left alone (red on main tip `7527a91ce5` with main's own copy
+of each file, same failing rows): 12 touched files, 25 rows, all host-lane unit
+tests on bare codegen contexts or byte/ABI pins (`issue-2949-s5-0/1/2/3/5`,
+`issue-2949-slice3`, `issue-3521-fast-mixed-signature-admission`,
+`issue-3521-prepared-free-function-routing`, `issue-3526-callable-boundary-callback`,
+`issue-3526-string-boundary-concat-many`, `issue-1183`, `native-strings-standalone`).
+Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).

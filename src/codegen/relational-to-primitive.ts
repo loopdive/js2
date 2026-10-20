@@ -131,7 +131,6 @@ function isStringMixedPrimitiveUnion(t: ts.Type): boolean {
 export function admitsAnyRelational(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
   const anyish = (left.flags & ANYISH) !== 0 || (right.flags & ANYISH) !== 0;
   if (ctx.anyValueTypeIdx < 0 && anyish) return true;
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   return anyish || isStringMixedPrimitiveUnion(left) || isStringMixedPrimitiveUnion(right);
 }

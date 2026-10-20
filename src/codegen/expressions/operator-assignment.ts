@@ -3369,7 +3369,7 @@ function compileElementCompoundAssignment(
     // (#7084) `o[k] += rhs` on a dynamic receiver is §13.15.3 ApplyStringOrNumericBinaryOperator,
     // not numeric-only — the element twin of the #3673 property arm below.
     // hono's `escapeToBuffer` does `buffer[0] += str` and answered NaN.
-    if (op === ts.SyntaxKind.PlusEqualsToken && ctx.targetProfile.semanticProviders === "native-first") {
+    if (op === ts.SyntaxKind.PlusEqualsToken) {
       return emitElementCompoundAnyAdd(ctx, fctx, target, rhs, objLocal, keyLocal);
     }
 

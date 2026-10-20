@@ -124,7 +124,7 @@ export function ensureAnyValuePayloadToNumber(
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   addUnionImports(ctx);
-  const nativeToPrimitive = ctx.standalone && ctx.targetProfile.semanticProviders === "native-first";
+  const nativeToPrimitive = ctx.standalone;
   if (nativeToPrimitive) ensureObjectRuntime(ctx);
   flushLateImportShifts(ctx, fctx);
   const toPrimitive = (nativeToPrimitive ? runtimeToPrimitiveInstrs(ctx, hint ?? "number") : null) ?? [];
