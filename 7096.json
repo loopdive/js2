@@ -1,10 +1,11 @@
 {
   "id": "7096",
   "assignee": "ttraenkler/opus-7096-loop-await",
-  "requested_by": "ttraenkler/opus-7096-loop-await",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7096-async-await-loop-body",
   "claimed_at": "2026-10-19T22:19:37Z",
-  "updated_at": "2026-10-19T22:19:37Z",
-  "write_id": "70442-6hy9ijns"
+  "updated_at": "2026-10-20T04:01:51Z",
+  "write_id": "42820-abqh7gww",
+  "released_at": "2026-10-20T04:01:51Z"
 }
