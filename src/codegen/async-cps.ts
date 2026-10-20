@@ -16,7 +16,7 @@ import {
 import type { Instr, ValType } from "../ir/types.js";
 import { forEachChild, ts } from "../ts-api.js";
 import { lowerAwaitingStatementByHoisting } from "./async-await-hoist.js";
-import { isLeadingReplaySafeAwait } from "./analysis/async-leading-await-replay.js";
+import { isLeadingReplaySafeAwait, replayPreAwaitReads } from "./analysis/async-leading-await-replay.js";
 import { isLoopContinueGuard, releaseForOfHeadTdzFlags } from "./analysis/async-for-of-region.js";
 import { collectBindingPatternNames, collectReferencedIdentifiers } from "./closures.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
@@ -147,8 +147,8 @@ export function analyzeAsyncBody(_ctx: CodegenContext, fn: ts.FunctionLikeDeclar
   for (const awaitExpr of awaitPoints) {
     const referencedAfter = new Set<string>();
     collectReferencedAfter(body!, awaitExpr, referencedAfter);
-    // Keep only names that are params/locals of THIS function — globals and
-    // imports don't need capturing.
+    for (const name of replayPreAwaitReads(awaitExpr)) referencedAfter.add(name); // (#7094)
+    // Keep only params/locals of THIS function — globals and imports need no capture.
     const live = new Set<string>();
     for (const name of referencedAfter) {
       if (ownLocals.has(name)) live.add(name);
