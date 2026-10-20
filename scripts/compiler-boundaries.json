@@ -341,6 +341,7 @@
         "src/backend/wasmgc/program/native-realm.ts",
         "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
         "src/backend/wasmgc/resources/native-object-realm.ts",
+        "src/backend/wasmgc/resources/native-realm-population.ts",
         "src/backend/wasmgc/resources/native-mixed-object-access.ts",
         "src/backend/wasmgc/resources/native-well-known-symbols.ts",
         "src/backend/wasmgc/resources/native-bigint-number.ts",
@@ -454,6 +455,7 @@
         "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
         "src/runtime/wasmgc/values/function-prototype-invoker-bodies.ts",
         "src/runtime/wasmgc/values/realm-object-layouts.ts",
+        "src/runtime/wasmgc/values/realm-population-bodies.ts",
         "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
         "src/runtime/wasmgc/values/number-from-value-body.ts"
@@ -16269,6 +16271,16 @@
       "path": "src/backend/wasmgc/resources/native-object-realm.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-population.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-population-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     },
     {
       "path": "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",

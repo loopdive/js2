@@ -305,10 +305,13 @@ export function requireCompletedNativeObjectDescriptors(
   tx: PhysicalModuleReservations,
   pack: NativeObjectDescriptorReservations,
   expectedDependencies: NativeObjectDescriptorDependencies,
+  expectedException?: TagReservation | TagImportReservation,
 ): NativeObjectDescriptorReservations {
   requireNativeObjectDescriptorReservations(tx, pack, expectedDependencies);
   const owner = owners.get(pack)!;
   if (!owner.filled || !owner.exception) fail("missing canonical fill");
+  if (expectedException !== undefined && owner.exception !== expectedException)
+    fail("different expected exception owner");
   tx.physicalIndex(owner.exception);
   requireCompletedDependencies(tx, owner.dependencies);
   owner.functions.forEach((token) => tx.assertCompletedReservation(token));

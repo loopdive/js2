@@ -2170,3 +2170,33 @@ That handoff records the actual next files/owner joins, retained verification an
 failures, and the full remaining scope including both no-host targets and live
 boundary identity without copying. It does not authorize merging the unfinished
 stack or replacing full migration acceptance with a formatter checkpoint.
+
+#### S7-ar native population implementation, 2026-10-20
+
+The full45-object/44-callable catalog initializer is now implemented in the
+original public realm slot, using genuine shared owners and native descriptor
+insertion, with atomic publication and terminal failure/reentry handling.
+It is initializer-definition completion only: missing algorithms still prevent
+sealing, wholeRealmReady stays immutable0, and full realm completion still refuses.
+The separate18-case graph witness does not execute builtin algorithms or prove
+the real consumer source join. Two guard-removal controls detect the intended
+failures; final unfiltered producer verification is recorded with its own report
+under **S7-ar implementation — real full-catalog initializer, migration still
+incomplete** in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+
+Retain the188/202 historical-storage preservation result and its14 unwaived
+receipt failures. The import gate passes437/452 across33 probes; the approved
+four-adapter historical increase is not needed or applied. Full algorithms,
+actual consumer admission, live foreign identity without copying, undefined,
+Linear/WASI, retirement and all existing conformance/architecture requirements
+remain required. Both issues stay in progress; the PR is not merge-ready.
+
+Final S7-ar verification is **30/30, zero skips/exit0**:12 genuine public producer
+cases plus18 separately labeled graph-witness cases. All133 catalog properties
+are observed; no builtin-algorithm or full consumer execution is inferred.
+[The exact S7-ar audit](../audit/6979-native-realm-population-20261020.json)
+retains the failed intermediate runs, controls, historical failures and gate scopes.
+Next consume the real initializer with genuine remaining algorithms and the
+original source/code/body/allocation owners; do not substitute the witness or
+declare this the complete host migration.

@@ -1,0 +1,475 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ar full retained Object/Function catalog initializer; full migration incomplete",
+  "parentCommit": "80a8e3d3a62f794331956a426417f27d81a2f682",
+  "sourceHashes": {
+    "src/runtime/wasmgc/values/realm-population-bodies.ts": "3cde41c2a175014ffaeaf391952a6e194fac173f09877886713b2731fb97071b",
+    "src/backend/wasmgc/resources/native-realm-population.ts": "1c2198e727a00c520ca31846483943ec52774842d9453fc4b7f8d237e424f990",
+    "src/backend/wasmgc/resources/native-object-descriptors.ts": "f40fa6a0e62b6bced8c205978333c16cb9ea8dec4a0a40784cd73aa3e46b76da",
+    "scripts/compiler-boundaries.json": "ac0a6fd9bf2338b8bda3dbd7a6fa8d129677524581e8a189b8c358e434eecb95",
+    "tests/helpers/native-realm-population.ts": "316d98fa1fb7697736f0d591b72b404ba4e98a60b4672a2884ce027923788104",
+    "tests/helpers/native-realm-population-witness.ts": "6c963389aa0de878279d102b2c59ab935852da8e148cd48141f9ee34de672cbd",
+    "tests/issue-6979-native-realm-population.test.ts": "d081e88e0e87e3b9550586cbacd90eb6c6ad40b3df87a3bd5472f9f86fe03fa3",
+    "tests/issue-6979-native-realm-population-witness.test.ts": "c02702da9c1e71991d808287bc2d45152ccd60b1acc9652fca50a78ea05a89e1"
+  },
+  "population": {
+    "intrinsics": 45,
+    "callables": 44,
+    "properties": 133,
+    "accessors": 3,
+    "scope": "initializer definition only; original production ledger remains unsealable without real algorithms",
+    "wholeRealmReady": "immutable 0",
+    "fullRealmCompletion": "still refuses",
+    "witness": "separate pure builder operand witness; unused observer refs are not public algorithms"
+  },
+  "tests": {
+    "s7ar-population-owner": {
+      "report": ".tmp/s7ar-population-owner.json",
+      "log": ".tmp/s7ar-population-owner.log",
+      "jsonSha256": "93df14be730b57c9782111612cf913daff35c1dc3fa1cb3be322c1e5712869a8",
+      "logSha256": "607b37a8de7935f981c539f611f4f4cd850fbd4af2786a7046065a35b94de9f0",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 11,
+      "passed": 7,
+      "failed": 4,
+      "skippedOrUnselected": 0,
+      "failures": [
+        {
+          "title": "real public catalog population initializer owner, not full realm completion fills the original initializer with all catalog slots displaced=false decoded=false",
+          "firstFailureLine": "AssertionError: expected [Function] to throw error matching /duplicate/ but got 'physical module reservations: physica…'"
+        },
+        {
+          "title": "real public catalog population initializer owner, not full realm completion fills the original initializer with all catalog slots displaced=true decoded=false",
+          "firstFailureLine": "AssertionError: expected [Function] to throw error matching /duplicate/ but got 'physical module reservations: physica…'"
+        },
+        {
+          "title": "real public catalog population initializer owner, not full realm completion fills the original initializer with all catalog slots displaced=true decoded=true",
+          "firstFailureLine": "AssertionError: expected [Function] to throw error matching /duplicate/ but got 'physical module reservations: physica…'"
+        },
+        {
+          "title": "real public catalog population initializer owner, not full realm completion rejects receipt-valid literal substitution before population",
+          "firstFailureLine": "Error: physical module reservations: global initializer is empty strings:u16:name"
+        }
+      ]
+    },
+    "s7ar-population-witness": {
+      "report": ".tmp/s7ar-population-witness.json",
+      "log": ".tmp/s7ar-population-witness.log",
+      "jsonSha256": "aae2f98d5ebbeb12f2417075683817127d94c72c1c72b7b2a95744e635bf905f",
+      "logSha256": "69e8eb87634fefaa041227a1bf33a26419c08fcf7d32f0189dccd321f838ba8c",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 18,
+      "passed": 0,
+      "failed": 0,
+      "skippedOrUnselected": 18,
+      "failures": []
+    },
+    "s7ar-witness-fixed": {
+      "report": ".tmp/s7ar-witness-fixed.json",
+      "log": ".tmp/s7ar-witness-fixed.log",
+      "jsonSha256": "9ad960f9baebc41a9a02cef77e51abe2fc8dbbd5c43dbec5a8e8b3ef428fdd68",
+      "logSha256": "061e3b2b1bbeda7386632110933c9745d5423a24dec97f03ca4e952a1cb3b8a6",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 18,
+      "passed": 15,
+      "failed": 3,
+      "skippedOrUnselected": 0,
+      "failures": [
+        {
+          "title": "pure catalog builder operand witness displaced=false decoded=false allocates independent identities and property bags per zero-import instance",
+          "firstFailureLine": "TypeError: WebAssembly objects are opaque"
+        },
+        {
+          "title": "pure catalog builder operand witness displaced=true decoded=false allocates independent identities and property bags per zero-import instance",
+          "firstFailureLine": "TypeError: WebAssembly objects are opaque"
+        },
+        {
+          "title": "pure catalog builder operand witness displaced=true decoded=true allocates independent identities and property bags per zero-import instance",
+          "firstFailureLine": "TypeError: WebAssembly objects are opaque"
+        }
+      ]
+    },
+    "s7ar-witness-identity": {
+      "report": ".tmp/s7ar-witness-identity.json",
+      "log": ".tmp/s7ar-witness-identity.log",
+      "jsonSha256": "84635240e623b04ef8ede8736567f380bc1126123ebca9a80100e6eef7a8d8e2",
+      "logSha256": "7233121023c16a26895539a65e888d5338788c87a74c22038990d482e52551d7",
+      "closed": true,
+      "runnerExit": 0,
+      "jsonSuccess": true,
+      "total": 18,
+      "passed": 18,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "failures": []
+    },
+    "s7ar-owner-fixed": {
+      "report": ".tmp/s7ar-owner-fixed.json",
+      "log": ".tmp/s7ar-owner-fixed.log",
+      "jsonSha256": "c9837a6397a1b48a0cd765476e843c6905786e42165feebfe20a12129e0dce90",
+      "logSha256": "13e99e8457b9742457de07efaf4c3f1364a4e667eec1d1dcfa7adbd45e86d152",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 11,
+      "passed": 9,
+      "failed": 2,
+      "skippedOrUnselected": 0,
+      "failures": [
+        {
+          "title": "real public catalog population initializer owner, not full realm completion fills the original initializer with all catalog slots displaced=false decoded=false",
+          "firstFailureLine": "Error: STACK_TRACE_ERROR"
+        },
+        {
+          "title": "real public catalog population initializer owner, not full realm completion fills the original initializer with all catalog slots displaced=true decoded=true",
+          "firstFailureLine": "Error: STACK_TRACE_ERROR"
+        }
+      ]
+    },
+    "s7ar-publish-guard-control": {
+      "report": ".tmp/s7ar-publish-guard-control.json",
+      "log": ".tmp/s7ar-publish-guard-control.log",
+      "jsonSha256": "e39909ecade48f28f092d2c2b195a70edb7a30c6d57e5a04e7aa453803d84e7f",
+      "logSha256": "a3397d23c2a3b03a778f29655f9a50e12ecb50f66b65ffa11dbf0018ad419ebe",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 18,
+      "passed": 3,
+      "failed": 3,
+      "skippedOrUnselected": 12,
+      "failures": [
+        {
+          "title": "pure catalog builder operand witness displaced=false decoded=false does not publish any singleton on interrupted/reentrant population mode=4",
+          "firstFailureLine": "AssertionError: expected undefined to be an instance of Exception"
+        },
+        {
+          "title": "pure catalog builder operand witness displaced=true decoded=false does not publish any singleton on interrupted/reentrant population mode=4",
+          "firstFailureLine": "AssertionError: expected undefined to be an instance of Exception"
+        },
+        {
+          "title": "pure catalog builder operand witness displaced=true decoded=true does not publish any singleton on interrupted/reentrant population mode=4",
+          "firstFailureLine": "AssertionError: expected undefined to be an instance of Exception"
+        }
+      ]
+    },
+    "s7ar-owner-cooperative-control": {
+      "report": ".tmp/s7ar-owner-cooperative-control.json",
+      "log": ".tmp/s7ar-owner-cooperative-control.log",
+      "jsonSha256": "7ca4396b374b47bbfffc04ec3650a111709d425b1d731552ecce95e7feb040ee",
+      "logSha256": "24bbf8b04edb385586b89c7a6b1fc1cbd367e0331e25d0337ee19e0b7979eb76",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 12,
+      "passed": 0,
+      "failed": 1,
+      "skippedOrUnselected": 11,
+      "failures": [
+        {
+          "title": "real public catalog population initializer owner, not full realm completion fills the original initializer with all catalog slots displaced=false decoded=false",
+          "firstFailureLine": "Error: STACK_TRACE_ERROR"
+        }
+      ]
+    },
+    "s7ar-owner-fast-refusal": {
+      "report": ".tmp/s7ar-owner-fast-refusal.json",
+      "log": ".tmp/s7ar-owner-fast-refusal.log",
+      "jsonSha256": "bdc1f26cc9b793ba862c83be8d0704a827f5f847021947479d1c7da8df7fcade",
+      "logSha256": "f4f01be7c7961a9fce3724120e6e2b6242b5e14bcdb09ae8a4a56ee19d4cb180",
+      "closed": true,
+      "runnerExit": 0,
+      "jsonSuccess": true,
+      "total": 12,
+      "passed": 1,
+      "failed": 0,
+      "skippedOrUnselected": 11,
+      "failures": []
+    },
+    "s7ar-initializer-guard-control": {
+      "report": ".tmp/s7ar-initializer-guard-control.json",
+      "log": ".tmp/s7ar-initializer-guard-control.log",
+      "jsonSha256": "3bbed83fa6eb8bf5d39b7254f0183563c01c914747910ee7d50df6ed0a147d7d",
+      "logSha256": "8d928f73c74467443794ab2c9c1d04e385560351777fc3208c8bd54fda2a0bd9",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 12,
+      "passed": 1,
+      "failed": 1,
+      "skippedOrUnselected": 10,
+      "failures": [
+        {
+          "title": "real public catalog population initializer owner, not full realm completion rejects a receipt-valid replacement of the actual initializer",
+          "firstFailureLine": "AssertionError: expected [Function] to throw an error"
+        }
+      ]
+    },
+    "s7ar-realm-preservation": {
+      "report": ".tmp/s7ar-realm-preservation.json",
+      "log": ".tmp/s7ar-realm-preservation.log",
+      "jsonSha256": "df61021f94c630704672500dce2f5e6c90bb1906ffdea0e98e3838e044f163d2",
+      "logSha256": "17606b96a7217d8989882a2dc1fe67c896d299382b017cbd9884107dae4fa36a",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 202,
+      "passed": 188,
+      "failed": 14,
+      "skippedOrUnselected": 0,
+      "failures": [
+        {
+          "title": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime.ts'",
+          "firstFailureLine": "Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts"
+        },
+        {
+          "title": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-descriptor…'",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation reconstructs and forward-replays the complete original 'src/codegen/object-runtime-enumeratio…'",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation preserves __new_plain_object instructions, locals and all acquisition effects",
+          "firstFailureLine": "Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts"
+        },
+        {
+          "title": "fixed donor and whole-source preservation preserves __obj_insert instructions, locals and all acquisition effects",
+          "firstFailureLine": "Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts"
+        },
+        {
+          "title": "fixed donor and whole-source preservation preserves __obj_grow instructions, locals and all acquisition effects",
+          "firstFailureLine": "Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts"
+        },
+        {
+          "title": "fixed donor and whole-source preservation preserves __defineProperty_value instructions, locals and all acquisition effects",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation preserves __defineProperty_accessor instructions, locals and all acquisition effects",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation preserves __object_is instructions, locals and all acquisition effects",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime.ts' after a positive reconstruction",
+          "firstFailureLine": "Error: later-main dependency mismatch: src/codegen/builtin-ctor-value-invoke.ts"
+        },
+        {
+          "title": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-descriptor…' after a positive reconstruction",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation rejects an unowned edit in 'src/codegen/object-runtime-enumeratio…' after a positive reconstruction",
+          "firstFailureLine": "Error: descriptor adapter actual helper mismatch"
+        },
+        {
+          "title": "fixed donor and whole-source preservation rejects missing, duplicated, reordered and semantic span mutations",
+          "firstFailureLine": "Error: write relocated module mismatch: src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts"
+        },
+        {
+          "title": "fixed donor and whole-source preservation rejects altered receipts, old-source substitution and unknown paths",
+          "firstFailureLine": "Error: write relocated module mismatch: src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts"
+        }
+      ]
+    },
+    "s7ar-final-population": {
+      "report": ".tmp/s7ar-final-population.json",
+      "log": ".tmp/s7ar-final-population.log",
+      "jsonSha256": "7430b1d208d1d0d6d26cf5325b71ad9aa49c402b525f0bdfee12608dacdfad79",
+      "logSha256": "042e0f0dc2f550f25a340b436d199c9543f9cbe24e14afb6acaeffac7755142d",
+      "closed": true,
+      "runnerExit": 1,
+      "jsonSuccess": false,
+      "total": 30,
+      "passed": 29,
+      "failed": 1,
+      "skippedOrUnselected": 0,
+      "failures": [
+        {
+          "title": "real public catalog population initializer owner, not full realm completion reauthenticates the captured original dependency identities",
+          "firstFailureLine": "AssertionError: expected [Function] to throw error matching /substituted dependency identity/ but got 'native realm population: invalid phas…'"
+        }
+      ]
+    },
+    "s7ar-final-population2": {
+      "report": ".tmp/s7ar-final-population2.json",
+      "log": ".tmp/s7ar-final-population2.log",
+      "jsonSha256": "52def1c68c51361cba417d169080d5673f5718b59d04118af72acf2c5755db09",
+      "logSha256": "2f2034d5c919e686f839046afcd548034e64f8572dd179d6e93b4c9476774c88",
+      "closed": true,
+      "runnerExit": 0,
+      "jsonSuccess": true,
+      "total": 30,
+      "passed": 30,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "failures": []
+    }
+  },
+  "controls": {
+    "publicationGuardRemoval": "Only the final state=1 pre-publication guard removed: 3/6 selected pass, all 3 swallowed-reentry refusals lost, 12 unselected; exact builder restored before final tests.",
+    "initializerGuardRemoval": "Only final independent function-body comparison removed; expected definition/dependency checks retained: 1/2 selected passes, receipt-valid replacement admitted, 10 unselected; exact owner restored.",
+    "restoredBuilderSha256": "3cde41c2a175014ffaeaf391952a6e194fac173f09877886713b2731fb97071b",
+    "restoredOwnerSha256": "1c2198e727a00c520ca31846483943ec52774842d9453fc4b7f8d237e424f990",
+    "unchangedDeadlineMs": 35000,
+    "timeoutResolution": "Private phase checks refuse impossible calls before expensive dependency validation; successful admission retains all checks. Cooperative test yields; no timeout increase or dropped checks."
+  },
+  "gateArtifactHashes": {
+    ".tmp/s7ar-final-loc.log": "6bc66deb79c5f848d224171210dbae4da2ce96b53192917ab59465164a1b2d49",
+    ".tmp/s7ar-final-func.log": "7750ade6fdd550364e975f750673440460c9d68fb435b9cd9210385f370bc18f",
+    ".tmp/s7ar-final-coercion.log": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+    ".tmp/s7ar-final-oracle.log": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a",
+    ".tmp/s7ar-final-preservation-only.log": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02",
+    ".tmp/s7ar-final-lint.log": "252cf6032657f98e244e5a78098a6db8eed57a18b29da17b18b70653fe9eddba",
+    ".tmp/s7ar-final-typecheck2.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7ar-current-inventory.log": "b2e38d61461101a15d9618b85c66e09d10ffea6025b13439a18d2c96b16da36a",
+    ".tmp/s7ar-current-layering.log": "cbbdbd4d531f68c7e942601605aa7d692a9f4eea68d5811a2da3339a4c1998df",
+    ".tmp/s7ar-current-flat.log": "79049ac96f5154b630c1549f619889ba8acd810b409837617b82fe92aa04a719",
+    ".tmp/s7ar-current-issues.log": "b1c71a7f2c4789e2d33b04964e037214a194af4b4ab9c226179f48c6d5b41833",
+    ".tmp/s7ar-import-cycles.json": "ecf9f7c1313f2fc190ecda53554ad76950976e9e92aee0da246386ae7c7508c4",
+    ".tmp/s7ar-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7ar-import-policy.log": "b38fee9483a3d3c4d793192a12f9eced418ec7a44b687d80c5284ea1307cde8d",
+    ".tmp/s7ar-import-policy-exnref.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861"
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "regimeGapImports": 0,
+    "unknownImports": 0,
+    "ceiling": 452,
+    "approvedHistoricalCeiling": 456,
+    "approvedIncreaseApplied": false,
+    "hostAccelerators": {
+      "regexp": 4,
+      "date": 1,
+      "intl": 4
+    },
+    "namedGaps": {
+      "eager-generator-buffer": [
+        "__create_async_generator",
+        "__gen_create_buffer",
+        "__gen_push_f64",
+        "__gen_push_ref",
+        "__gen_result_value_f64"
+      ],
+      "shared-array-buffer": ["SharedArrayBuffer_new"],
+      "temporal-strings": ["__temporal_plain_date_from_string_field", "__temporal_plain_date_to_string"]
+    },
+    "metrics": {
+      "runtimeTsLines": 10230,
+      "resolveImportLines": 1371,
+      "resolveImportCases": 7,
+      "ownedAdapterLines": 896,
+      "explicitCapabilityLines": 1194
+    }
+  },
+  "cycles": {
+    "metrics": {
+      "largestSccSize": 712,
+      "sccCountOver1": 4,
+      "twoWayDirEdges": {
+        "backend->ir": 117,
+        "checker->ir": 1,
+        "codegen->ir": 301,
+        "codegen-linear->ir": 9,
+        "compiler->deadcode-elide.ts": 1,
+        "deadcode-elide.ts->compiler": 1,
+        "frontend->ir": 17,
+        "ir->backend": 25,
+        "ir->checker": 8,
+        "ir->codegen": 75,
+        "ir->codegen-linear": 4,
+        "ir->frontend": 10,
+        "runtime->timer-capability-contract.ts": 1,
+        "runtime-eval.ts->runtime.ts": 1,
+        "runtime.ts->runtime-eval.ts": 1,
+        "timer-capability-contract.ts->runtime": 1
+      }
+    },
+    "exit": 1,
+    "waiverAdded": false,
+    "fourRetainedDirections": "backend->ir 115→117; codegen->ir 298→301; ir->codegen 74→75; ir->frontend 7→10"
+  },
+  "unchangedFromParent": [
+    {
+      "path": "src/runtime/wasmgc/values/closure-layouts.ts",
+      "currentSha256": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+      "parentSha256": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67"
+    },
+    {
+      "path": "tests/fixtures/issue-3518-closure-state-preservation/receipt.json",
+      "currentSha256": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e",
+      "parentSha256": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e"
+    },
+    {
+      "path": "plan/audit/host-import-policy-baseline.json",
+      "currentSha256": "3a9609b9569670d7faf58cc206e1fd56b318475644e9ba452779880ab1a89d76",
+      "parentSha256": "3a9609b9569670d7faf58cc206e1fd56b318475644e9ba452779880ab1a89d76"
+    },
+    {
+      "path": "src/codegen/builtin-ctor-value-invoke.ts",
+      "currentSha256": "63355df7fd7f96e8150db7967daaf06e939d39b6aa8db4d5f7e0f4cc75e8b1ad",
+      "parentSha256": "63355df7fd7f96e8150db7967daaf06e939d39b6aa8db4d5f7e0f4cc75e8b1ad"
+    },
+    {
+      "path": "src/codegen/object-same-value.ts",
+      "currentSha256": "cb6256d1c40c0f90842e6b012f25e869d4767d9a03d31260c32d66b83c102974",
+      "parentSha256": "cb6256d1c40c0f90842e6b012f25e869d4767d9a03d31260c32d66b83c102974"
+    },
+    {
+      "path": "src/codegen/object-descriptor-data.ts",
+      "currentSha256": "a3ec99b4212c033708c90f4df55b412f0bf0d2406b2a8726bbbd9bf40f7926d4",
+      "parentSha256": "a3ec99b4212c033708c90f4df55b412f0bf0d2406b2a8726bbbd9bf40f7926d4"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/ordinary-object-descriptor-common.ts",
+      "currentSha256": "df3bb6f396cc18a8a8ab086bc5074138ad5e5d23a0e3085b048a827a482e35fe",
+      "parentSha256": "df3bb6f396cc18a8a8ab086bc5074138ad5e5d23a0e3085b048a827a482e35fe"
+    },
+    {
+      "path": "tests/helpers/descriptor-adapter-relocation.ts",
+      "currentSha256": "c4aa02754f1c0ae68112bc1e0c4a5f5a876e8122bd098f447152a29ef89efa57",
+      "parentSha256": "c4aa02754f1c0ae68112bc1e0c4a5f5a876e8122bd098f447152a29ef89efa57"
+    },
+    {
+      "path": "tests/helpers/native-object-write-donor.ts",
+      "currentSha256": "8208cd3903500aa9d3b567db070cb574177f8dc0d507e92d7f5a7e0b99872270",
+      "parentSha256": "8208cd3903500aa9d3b567db070cb574177f8dc0d507e92d7f5a7e0b99872270"
+    },
+    {
+      "path": "tests/helpers/later-main-preservation-port.ts",
+      "currentSha256": "26be5329c2140c618078d8a149f5983dc68fe3fa24ffbc7ce51df4ef6efc5f77",
+      "parentSha256": "26be5329c2140c618078d8a149f5983dc68fe3fa24ffbc7ce51df4ef6efc5f77"
+    }
+  ],
+  "retainedFailures": [
+    "188/202 broader realm/storage run, 14 fixed-donor receipt failures, no skips, exit1; cited inputs/readers parent-equal, not a full parent checkout A/B; no repin.",
+    "Earlier five symbolic-reference source receipt failures were not rerun or waived.",
+    "Initial inventory refused two unclassified new leaves. Added exact existing-layer classifications, not allowed edges or reduced floors; final inventory valid1997, architectureComplete=false.",
+    "Unflagged Node24 import-policy run failed at the existing exnref opcode; rerun with explicit local flag is clean. No compiler target/host feature changed.",
+    "Source preservation-only gate passes 6/6 full and 6/6 cut, but strict modeled closure remains open at two unknown nonliteral imports; retirement not certified."
+  ],
+  "remaining": [
+    "real catalog algorithms and constructors",
+    "actual consumer original source/code/body/allocation join",
+    "semantic mixed Call/Get and arguments/receiver/results",
+    "live per-instance foreign boundary identity without graph copying",
+    "first-class undefined",
+    "complete Linear/WASI migration",
+    "named generator-buffer/SharedArrayBuffer/Temporal gaps",
+    "runtime/host-arm retirement and architecture closure",
+    "historical/Test262/npm/accelerator acceptance",
+    "open prerequisite and conflicting draft PR integration"
+  ],
+  "fullGoalComplete": false
+}

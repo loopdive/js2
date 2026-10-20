@@ -6853,3 +6853,109 @@ Concrete next implementation:
    copying, first-class undefined, and the complete Linear/WASI migration. Finish
    remaining catalog/named gaps, runtime/host-arm retirement, architecture closure
    and historical/Test262/npm/accelerator acceptance before final integration.
+
+#### Adapter-ceiling decision received, 2026-10-20
+
+The stakeholder approves the specifically reviewed four existing JS value
+adapters, allowing 452→456 across the same 33 probes when needed for those
+native builtin carriers. This is not approval for host semantics, new probes,
+457 or a general import-budget increase. Later work already resolved the
+historical 456/452 failure without a ceiling change (see the 433/452 and
+437/452 measurements above). Do not restate the old failure as current or raise
+the baseline gratuitously: retain the narrow approval and remeasure the actual
+candidate before using it. All unrelated budgets and acceptance remain intact.
+
+#### S7-ar implementation — real full-catalog initializer, migration still incomplete
+
+The initializer plan above is now implemented in
+`src/backend/wasmgc/resources/native-realm-population.ts` and the index-resolved
+`src/runtime/wasmgc/values/realm-population-bodies.ts`. It fills the original
+public realm's initialize slot for all45 retained identities/44 callable entries;
+no caller-selected subset, replacement bootstrap or dummy production algorithm.
+The genuine source closure owner is shared with the descriptor owner, together
+with the original program/projection, ordinary layouts, strings and exception
+tag. A copied or structurally similar closure root does not suffice.
+
+Allocate into typed locals before linking constructor cycles, prototype links,
+restricted accessor aliases and Symbol.hasInstance. Seed every catalog property
+through native hashed descriptor insertion, including exact name/length attributes,
+then finalize ThrowTypeError non-extensibility. Only after all seeding succeeds
+are identity/prototype/singleton globals published, with state2 last. Exceptions
+leave state−1; Wasm traps leave state1; both prevent retries from publishing a
+partial graph. A swallowed reentrant attempt also fails the final publication
+guard. Repeated successful initialization retains the original identities.
+
+The producer owns only initializer-definition completion. It independently
+re-derives the initializer and initial null/zero module state, verifies original
+catalog literal initializers and primitive number/symbol boxing definitions,
+and rejects receipt-valid initializer/global substitution or interrupted fills.
+The descriptor completion API additionally checks the actual expected exception
+token when requested. Existing callee completion checks remain dependencies;
+this does not certify every callee algorithm or whole semantic dependency closure.
+All original lifted slots are declared as references, but missing algorithms
+still prevent sealing. wholeRealmReady remains immutable0 and full realm
+completion still refuses. Actual consumer source/code/body/allocation admission,
+mixed semantic Call/Get and full public algorithm execution are NOT established.
+
+The separate pure-builder operand witness executes the entire45-object graph
+with genuine native storage/descriptors/values/strings/symbols. Its deliberately
+unused observer refs are not catalog algorithms, production public declarations
+or public-realm completion evidence. All18 graph tests pass, including exact
+properties, independent zero-import instances, codec/displaced indices and four
+failure/reentry modes. Removing ONLY the final publication guard makes the
+selected6 cases become3/6: three normal-population controls pass, all three
+swallowed-reentry refusals are lost. Removing ONLY the independent initializer
+body comparison makes the selected2 producer cases become1/2: genuine positive
+passes but receipt-valid replacement is admitted. Both guards are restored
+byte-for-byte before final unfiltered verification; no bypass option remains.
+
+The first owner tests exposed fixture mistakes (checking after a deliberately
+failed seal and using an empty global initializer), then the unchanged35-second
+deadline/RPC timeout. Genuine inventory-backed literal reuse and private-owner
+phase fast refusals avoid repeated validation only on unconditional failure;
+successful admission still revalidates all dependencies and expected definitions.
+Cooperative test yields preserve the same deadline and assertions. The phase
+mutation test now exercises the actual filling phase, not an invalid reservation
+phase. Retain the failed intermediate runs; final results belong to their own
+terminal report, not inferred assertion counts.
+
+The five-file realm/storage preservation run is **188/202, zero skips, exit1**.
+All14 failures are fixed-donor source-receipt checks in the storage suite, citing
+builtin-ctor-value-invoke, descriptor adapter helpers or descriptor-common. Those
+cited source files and receipt readers are byte-equal to this turn's parent
+`80a8e3d3a6`; this is not a full historical checkout A/B. Do not repin or waive
+them. The earlier five symbolic-reference receipt failures remain separately
+unresolved; they were not remeasured by this cohort.
+
+The actual import-policy run (Node24 requires its explicit local exnref flag)
+passes437 imports /33 probes /zero unknown or regime-gap imports against the
+unchanged452 ceiling. The narrowly approved historical four-adapter increase is
+recorded above but not needed or applied. Named generator-buffer, SharedArrayBuffer
+and Temporal gaps remain in the report. No new host import, budget allowance,
+baseline change, dependency-edge waiver, floor reduction or scope cut was made.
+Both new modules are classified in their existing backend/native-runtime layers;
+inventory1997 is valid, architectureComplete=false. The same four cycle directions
+remain red, largest SCC712/four nontrivial components. Preservation-only success
+does not close the two unknown nonliteral imports or certify retirement.
+
+Next: join the remaining real catalog algorithms and the original source/code/
+body/allocation resources into this same public population path and real consumer,
+then semantic arguments/receiver/results and mixed builtin/bound/source/live-foreign
+Call/Get. Keep live boundary identity without graph copying, first-class undefined,
+Linear/WASI, remaining named gaps, host/runtime retirement and all historical/
+Test262/npm/accelerator/architecture acceptance in scope. This checkpoint does not
+finish either migration issue or make the conflicting prerequisite/PR stack ready.
+
+Final stable-revision verification is **30/30 across two files, zero skips,
+explicit shell exit0**:12 genuine producer/owner cases and18 pure-builder graph
+cases, covering all133 catalog properties. All live handles from this turn are
+closed. The unfiltered run retains every original case and the35-second test
+deadline; successful production completion and full-realm refusal are both tested.
+[The exact S7-ar audit](../audit/6979-native-realm-population-20261020.json)
+records source/report/gate hashes, failed setup/timeout/phase-fixture stages,
+both narrow guard-removal controls, unchanged historical inputs and the broader
+188/202 result. Typecheck/lint/format, LOC/function/coercion/oracle, inventory,
+layering/flat-directory and issue-integrity checks pass in their stated scopes;
+the four existing cycle directions and strict architecture closure remain red.
+The two new modules add no dependency waiver or budget allowance. No full historical
+GC-byte-equivalence, Test262/npm or complete Linear/WASI result is newly certified.
