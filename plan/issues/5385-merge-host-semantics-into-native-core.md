@@ -2084,3 +2084,34 @@ not rewritten as a successful wrong-result witness. See
 [the exact source/report/gate audit](../audit/6979-native-consumer-primary-custody-20261020.json).
 All current handles are closed; broader failures, reporting errors, full migration
 and the conflicting/open prerequisite PR stack remain unresolved.
+
+#### S7-ap real consumer demand ownership and formatter source mismatch
+
+The unchanged full async family legitimately keeps the same SSA definition IDs
+in its logical plan and runtime representation. The object-demand producer had
+merged those namespaces and refused actual realm selection. It now resolves
+definitions/provenance per representation while rejecting duplicates across all
+states within each representation and retaining the entire occurrence census.
+Intermediate focused66/66 is clean; the unfiltered four-file consumer run is
+75/77, zero skips/exit1, with both prior ambiguous-SSA acceptance cases passing.
+The remaining two31-versus43 formatter errors exactly match earlier records.
+
+An exact old/current source comparison under the same current IR builder proves
+31 buffers for the original1618-byte formatter and43 for the current2226-byte
+integer-fast-path formatter. The producer still stamps the original hash/length
+on the current body. Do not normalize the counts or repin historical evidence;
+the next source/version migration must authenticate the actual successor while
+preserving old-version custody. Details, exact source hashes and ordered next
+steps live in **S7-ap actual consumer async-demand ownership prerequisite** in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+This repair is a prerequisite, not full async execution or full realm/source
+admission. The genuine public population/initializer join, semantic mixed Call/Get,
+live foreign identity-backed boundary, undefined, Linear/WASI, retirement and all
+existing acceptance requirements remain in scope. Both issues stay in progress.
+
+The exact-parent removal control now verifies5/8 versus restored66/66 cleanly;
+separate realm/startup/Linear preservation is52/52, zero skips/exit0. These are
+separate executions, not one combined cohort. All current handles are closed.
+[The S7-ap audit](../audit/6979-native-object-demand-scopes-20261020.json) records
+source/report hashes, the still-red75/77 consumer run and the concrete formatter
+successor work. Preserve both no-host targets and the full migration scope.

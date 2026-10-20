@@ -1,0 +1,350 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ap real consumer object-demand representation ownership",
+  "parentCommit": "22509b6fe5bf0eefdd1a400ec45318293b852609",
+  "status": "verified scoped repair; full migration incomplete",
+  "sourceHashes": {
+    "src/ir/program/native-object-access-requirements.ts": "bb70e688b8dc29e817708c47f7b594ede448ccfe147a185a63e95d12a84fec01",
+    "tests/issue-6979-native-object-demand-scopes.test.ts": "70ed35388218a602e0f286dbb043b63614ae938e08c50099a193c04f9c23f76e"
+  },
+  "unchangedSources": {
+    "src/frontend/builtins/prepare-number-format.ts": "1b348bfd2aa5b6cf60aede257da4b7dd9e8459419b2cdbb602050d352fd38a13",
+    "src/ir/program/runtime-support.ts": "da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9",
+    "src/stdlib/number-format.ts": "78d9b6b03f32cc1ec7861ab9441c1c2daaaadbaabac8b11ffe36b7755be02a4a",
+    "src/runtime/wasmgc/values/closure-layouts.ts": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+    "tests/fixtures/issue-3518-closure-state-preservation/receipt.json": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e"
+  },
+  "tests": {
+    "s7ap-async-acceptance": {
+      "report": ".tmp/s7ap-async-acceptance.json",
+      "log": ".tmp/s7ap-async-acceptance.log",
+      "jsonSha256": "a18cd57ed7f7e402e5bcb0e8e7989475be8a4f2d5d4951461058a9809d71c379",
+      "logSha256": "44148ec2eaa56bd23ab6ea1ef1eac69948b25f8ea09018bcdf6ea06345792109",
+      "jsonSuccess": true,
+      "total": 53,
+      "passed": 2,
+      "failed": 0,
+      "skipped": 51,
+      "files": [
+        {
+          "file": "issue-3518-native-number-format-requirements.test.ts",
+          "cases": 29
+        },
+        {
+          "file": "issue-3518-native-string-output-consumer.test.ts",
+          "cases": 24
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    },
+    "s7ap-object-scopes": {
+      "report": ".tmp/s7ap-object-scopes.json",
+      "log": ".tmp/s7ap-object-scopes.log",
+      "jsonSha256": "b2734ac5fc74a413138d00327872cf281c76a68f72e7278db37e4b4874e2e6b4",
+      "logSha256": "c20d7c052e461c6153f38b09f166fb111d8a2d25faf05a6315c25a662cc63157",
+      "jsonSuccess": true,
+      "total": 66,
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-getter-invocation.test.ts",
+          "cases": 42
+        },
+        {
+          "file": "issue-3518-native-prototype-requirements.test.ts",
+          "cases": 16
+        },
+        {
+          "file": "issue-6979-native-object-demand-scopes.test.ts",
+          "cases": 8
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    },
+    "s7ap-consumer-after": {
+      "report": ".tmp/s7ap-consumer-after.json",
+      "log": ".tmp/s7ap-consumer-after.log",
+      "jsonSha256": "3e90125fe0a36087267953368ce236eb3605d7fdb335756e284f70dcf5b0e8fe",
+      "logSha256": "90c0303107d68bb93ae9cabdf4c4f1a84d88e147b8d8d58a185926dd4565d81f",
+      "jsonSuccess": false,
+      "total": 77,
+      "passed": 75,
+      "failed": 2,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-number-format-requirements.test.ts",
+          "cases": 29
+        },
+        {
+          "file": "issue-3518-native-prototype-requirements.test.ts",
+          "cases": 16
+        },
+        {
+          "file": "issue-3518-native-string-output-consumer.test.ts",
+          "cases": 24
+        },
+        {
+          "file": "issue-6979-native-object-demand-scopes.test.ts",
+          "cases": 8
+        }
+      ],
+      "failures": [
+        {
+          "title": "complete prepared formatter demand joins borrows both primary views and separate support with fast path false",
+          "message": "AssertionError: expected [ { …(5) }, { …(5) }, { …(5) }, …(40) ] to have a length of 31 but got 43"
+        },
+        {
+          "title": "complete prepared formatter demand joins borrows both primary views and separate support with fast path true",
+          "message": "AssertionError: expected [ { …(5) }, { …(5) }, { …(5) }, …(40) ] to have a length of 31 but got 43"
+        }
+      ],
+      "closed": true,
+      "runnerExit": 1
+    },
+    "s7ap-parent-scope-control": {
+      "report": ".tmp/s7ap-parent-scope-control.json",
+      "log": ".tmp/s7ap-parent-scope-control.log",
+      "jsonSha256": "304be80e394d59685a310adbed1e94fd31d502390927476f7b3472aa2cd41c8f",
+      "logSha256": "df1da31c4e4a2328968bf4f33c0d340376d82814ccd654f73393842e0eb6df5b",
+      "jsonSuccess": false,
+      "total": 8,
+      "passed": 5,
+      "failed": 3,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-6979-native-object-demand-scopes.test.ts",
+          "cases": 8
+        }
+      ],
+      "failures": [
+        {
+          "title": "actual async object-demand SSA representation ownership retains both real async representations without ambiguous SSA, decoded=false",
+          "message": "Error: native object access requirements: ambiguous prepared SSA definition"
+        },
+        {
+          "title": "actual async object-demand SSA representation ownership retains both real async representations without ambiguous SSA, decoded=true",
+          "message": "Error: native object access requirements: ambiguous prepared SSA definition"
+        },
+        {
+          "title": "actual async object-demand SSA representation ownership rechecks all borrowed async regions after issuing descriptive demands",
+          "message": "Error: native object access requirements: ambiguous prepared SSA definition"
+        }
+      ],
+      "closed": true,
+      "runnerExit": 1
+    },
+    "s7ap-restored-scopes": {
+      "report": ".tmp/s7ap-restored-scopes.json",
+      "log": ".tmp/s7ap-restored-scopes.log",
+      "jsonSha256": "40388165ed4e6b84611235e664906a126db4f7666a6aa7d2ae97f35721b68b29",
+      "logSha256": "6aa1d428b4b144ce8f46a70092633e4d93ad75aa4156e930128e3629e05219de",
+      "jsonSuccess": true,
+      "total": 66,
+      "passed": 66,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-getter-invocation.test.ts",
+          "cases": 42
+        },
+        {
+          "file": "issue-3518-native-prototype-requirements.test.ts",
+          "cases": 16
+        },
+        {
+          "file": "issue-6979-native-object-demand-scopes.test.ts",
+          "cases": 8
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    },
+    "s7ap-realm-linear-preservation": {
+      "report": ".tmp/s7ap-realm-linear-preservation.json",
+      "log": ".tmp/s7ap-realm-linear-preservation.log",
+      "jsonSha256": "fd320af67ba206b75c3521cc82b422783298694e21f6c3928ec49cd35f0d35e9",
+      "logSha256": "e00d4a68839bc32630a4aad3165dc3ce0ffff0762e69bb8b89f4c50bd7cec49d",
+      "jsonSuccess": true,
+      "total": 52,
+      "passed": 52,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-realm-requirements.test.ts",
+          "cases": 26
+        },
+        {
+          "file": "issue-3518-program-module-completion.test.ts",
+          "cases": 9
+        },
+        {
+          "file": "issue-3525-prepared-linear-early-return.test.ts",
+          "cases": 17
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    }
+  },
+  "gates": {
+    "typecheck": {
+      "log": ".tmp/s7ap-final-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chainExit": 0
+    },
+    "lint": {
+      "log": ".tmp/s7ap-final-lint.log",
+      "sha256": "f6efcb9df04bb5ebde5c5a5cbed16de8f37329a70926254fa75c36acb391264a",
+      "chainExit": 0
+    },
+    "loc": {
+      "log": ".tmp/s7ap-final-loc.log",
+      "sha256": "bc295c83ed5dcb6a09240fcd8201edc528a841ad40cb07ac920ac02edd377e93",
+      "chainExit": 0
+    },
+    "functions": {
+      "log": ".tmp/s7ap-final-functions.log",
+      "sha256": "88b5ab3df5bae0650e461d33194f993e006d6332fb08c7e86f14ea1c8f11a87d",
+      "chainExit": 0
+    },
+    "coercion": {
+      "log": ".tmp/s7ap-final-coercion.log",
+      "sha256": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+      "chainExit": 0
+    },
+    "oracle": {
+      "log": ".tmp/s7ap-final-oracle.log",
+      "sha256": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a",
+      "chainExit": 0
+    },
+    "preservation": {
+      "log": ".tmp/s7ap-final-preservation.log",
+      "sha256": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02",
+      "chainExit": 0
+    },
+    "layering": {
+      "log": ".tmp/s7ap-final-layering.log",
+      "sha256": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9",
+      "chainExit": 0
+    },
+    "flat": {
+      "log": ".tmp/s7ap-final-flat.log",
+      "sha256": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f",
+      "chainExit": 0
+    }
+  },
+  "diagnostics": {
+    "s7ap-ssa-coordinates": {
+      "path": ".tmp/s7ap-ssa-coordinates.json",
+      "sha256": "cf2d80d9c77f95603af8e8c765ac436a34f00fea97b327f1ee5ec57a3bae08ee",
+      "probeSha256": "d7345885d5d88fdd87484ab9c46d6491062cd735196870fe516ece6f1a06348f",
+      "data": {
+        "units": 16,
+        "buffers": 80,
+        "duplicateKeys": 16
+      }
+    },
+    "s7ap-formatter-source-comparison": {
+      "path": ".tmp/s7ap-formatter-source-comparison.json",
+      "sha256": "10519bc1fb6f1282e1416a00b913df40fe31bb8f9130fc69f55d603bc58e9661",
+      "probeSha256": "4e50bd4ed136c344d44086bead13cc4cc40d6a9b604677b8dc3eef24c22d4e14",
+      "data": {
+        "scope": "Exact old/current source through the SAME current IR build/hygiene; not whole-commit behavior A/B",
+        "predecessorSource": "a3b61eddb0aef9e7458e81cac40bc782c7841166^",
+        "currentSource": "22509b6fe5bf0eefdd1a400ec45318293b852609",
+        "before": {
+          "utf8Bytes": 1618,
+          "sha256": "7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6",
+          "buffers": 31,
+          "branches": {
+            "if.stmt": 14,
+            "while.loop": 6,
+            "if": 2
+          },
+          "calls": {
+            "__num_fmt_trap": 1,
+            "__nfd_new": 1,
+            "__nfd_set": 7,
+            "__nfd_get": 2,
+            "__nfd_fin": 1
+          }
+        },
+        "after": {
+          "utf8Bytes": 2226,
+          "sha256": "1a09c01c1bd3577b05db730d518995b3ff5317e82decdd64901dcd242601232d",
+          "buffers": 43,
+          "branches": {
+            "if.stmt": 20,
+            "while.loop": 10,
+            "if": 2
+          },
+          "calls": {
+            "__num_fmt_trap": 1,
+            "__nfd_new": 2,
+            "__nfd_set": 9,
+            "__nfd_fin": 2,
+            "__nfd_get": 2
+          }
+        }
+      }
+    }
+  },
+  "scope": {
+    "namespace": "One SSA instruction-definition map per owner/view/representation kind: blocks, logical async-plan, async-runtime. States and nested buffers within each representation remain one namespace. Every occurrence remains in the census.",
+    "provenance": "Descriptor masks, receiver aliases and getter allocation selection resolve in each actual occurrence's namespace. Definition uniqueness and full borrowed-source snapshot/rederivation checks remain fail-closed.",
+    "authority": "Descriptive requirements only; no new semantic completion/public entry permission, raw binder or issuer flag.",
+    "fullAsyncExecution": false,
+    "fullRealmSourceAdmission": false,
+    "fullCatalogPopulationAndInitializer": false,
+    "mixedCallGet": false,
+    "liveForeignBoundaryOwner": false,
+    "undefinedMigration": false,
+    "linearWasiMigrationComplete": false,
+    "hostSemanticImportAdded": false,
+    "oldAstFeatureAdded": false,
+    "migrationComplete": false
+  },
+  "control": {
+    "lane": "Authoritative whole-program IR, WasmGC standalone, unchanged full async playground source; Node24.4.1/Vitest3.2.4, maxForks1, local-only exnref flag, verbose+JSON and explicit shell exit.",
+    "parent": "Exact parent implementation of src/ir/program/native-object-access-requirements.ts from22509b6fe5; every other candidate file and all8 new tests unchanged. Parent run5/8: original/codec positives and post-issuance setup fail on ambiguous SSA; all5 deliberate same-namespace negatives pass.",
+    "candidate": "Restore exact saved candidate file, verify SHA256 bb70e688b8dc29e817708c47f7b594ede448ccfe147a185a63e95d12a84fec01, then rerun66 cases clean. This is a controlled single-file removal, not a full historical checkout A/B.",
+    "distinctExecutionsOverlap": true,
+    "noDeadlinesOrAssertionsWeakened": true
+  },
+  "consumerResult": {
+    "after": "Unfiltered four-file75/77, zero skips, exit1. Both prior actual async acceptance failures pass; the only failures are the two prior31-versus43 support buffer assertions.",
+    "exactRemainingFailureMessagesMatchPrior": true,
+    "priorReport": ".tmp/s7ao-consumer-preservation.json",
+    "notAGreenCombinedRun": true
+  },
+  "formatterFinding": {
+    "changeCommit": "a3b61eddb0aef9e7458e81cac40bc782c7841166",
+    "predecessorCommit": "6128dd8244b65028ea89a48eb7259efebd3c8fba",
+    "predecessorGitBlob": "2bf649ec6c88fb53637a534c508e26f46e52060f",
+    "experiment": "Exact predecessor/current source text lowered through the SAME current frontend/IR/hygiene, without modifying production formatter code or source pins; not whole-commit behavior equivalence.",
+    "defect": "Current producer builds2226-byte integer-fast-path source with43 buffers but hardcodes/types/checks the older1618-byte source/hash provenance. The two shape failures expose real source-custody drift, not permission to bump31 to43.",
+    "sourceOrHistoricalPinsModified": false,
+    "next": "Introduce an explicitly authenticated successor source/version, preserving original bytes/receipts and old-version decoding. Prove actual build, allocation/call/literal population, codec and runtime behavior under retained controls. Do not accept arbitrary caller digests or silently repin old historical tests."
+  },
+  "gateLimits": {
+    "wholePrBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+    "changedSourceFiles": 400,
+    "netLoc": -14587,
+    "newGrantOrBaselineChange": false,
+    "preservationOnly": "6/6 full and6/6 cut witnesses; strict modeled closure still red on two unknown nonliteral imports, retirement/deletion NOT certified.",
+    "architectureOrFullConformanceNewlyCertified": false
+  },
+  "next": "Version/authenticate actual formatter source, then complete genuine full realm population/initializer and original source/code/allocation join in the real consumer; semantic arguments/receiver/results and mixed builtin/bound/source/live-foreign Call/Get; retain undefined, Linear/WASI, remaining catalog/named gaps, host-arm/runtime retirement, all architecture/strict closure/historical/Test262/npm/accelerator acceptance and prerequisite/conflict resolution."
+}

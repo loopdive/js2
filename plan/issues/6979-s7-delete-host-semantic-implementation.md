@@ -6567,3 +6567,92 @@ record the clean13/13 independently from255/259 and81/81-with-runner-error.
 [The S7-an allocation audit](../audit/6979-native-source-allocation-custody-20261020.json)
 now records closed statuses, the actual RPC diagnostic and separate clean39/39
 cooperative execution. No combined clean or completed migration claim is made.
+
+#### S7-ap actual consumer async-demand ownership prerequisite (in progress)
+
+Fresh22509b6fe5 readback confirms native-realm composition still reserves only
+bootstrap builtin requests and no full public population/initializer. The real
+consumer cannot legitimately acquire full realm/source/public completion by
+passing those bootstrap slots as full owners. Keep that guard refusing and
+complete the actual population join in the full goal, not a parallel fake realm.
+
+The shared object-access requirement producer is reached during actual realm
+selection even by the unchanged full async family. Its definitionsFor currently
+combines block, async-plan and async-runtime occurrences into one SSA map per
+unit/view. Inspect original duplicate coordinates before changing it. Distinct
+representations must have distinct definition namespaces, while duplicate
+definitions within one executable representation must still fail. Every property
+operation and getter/descriptor provenance lookup must use its actual original
+representation, not a first-match/deduplicated flattened census. Preserve the
+complete demand census, all async regions and exact semantic/projection pairing.
+Readers are pairedOperations, calculate and getterAllocation; source mutation
+validation must rederive the same scopes. Test actual full-family acceptance
+reaches its genuine later unsupported gap and adversarial same-scope ambiguity
+still refuses. No host imports, AST fallback feature or weakened completion guard.
+
+The independent formatter31-versus43 support census also remains unresolved.
+Measure its original support body/recipe and historical revision before deciding
+whether producer or stale assertion is wrong; do not bump the count blindly.
+
+Measured prerequisite repair: the unchanged full async source has16 owners,
+80 complete demand buffers and16 repeated SSA keys across async-plan/runtime
+representations. Its projected plan and runtime legitimately retain the same
+definition IDs. definitionsFor now keeps one map per representation kind, still
+shared across all states/blocks/nested buffers within that representation.
+Descriptor masks, aliases, getter allocation and receiver provenance use the
+actual occurrence's representation. No occurrence is dropped or deduplicated.
+The complete borrowed-source snapshot and rederivation checks remain intact.
+
+Intermediate focused run42076 closes cleanly at66/66:42 getter cases,16 prototype
+cases and8 new real-source/replay/ambiguity controls. The two prior async
+acceptance failures also pass in selected2/2 controls (51 explicitly unselected),
+then in the unfiltered four-file run62063:75/77, zero skips/exit1. Its remaining
+two errors are exactly the earlier31-versus43 assertion error records, without
+normalization. Full-family acceptance now reaches its genuine later async
+unsupported result rather than an unrelated SSA-provenance exception. This is
+not successful full async execution or full realm population.
+
+Formatter source comparison59093 is terminal/exit0. Extracting the exact source
+from `a3b61eddb0aef9e7458e81cac40bc782c7841166^` and building it through the SAME
+current frontend/IR/hygiene gives1618 UTF-8 bytes, SHA256
+`7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6`,31 buffers,
+14 if.stmt child buffers and6 while.loop child buffers. The current unchanged
+stdlib source is2226 bytes, SHA256
+`1a09c01c1bd3577b05db730d518995b3ff5317e82decdd64901dcd242601232d`,43 buffers,
+20 if.stmt child buffers and10 while.loop child buffers. The extra integer
+count/fill fast path was introduced by that commit, not the new demand scoping.
+This is source-content comparison under one current builder, **not** a whole
+historical-commit behavior A/B.
+
+Crucially, prepare-number-format and runtime-support still stamp/type/check the
+old1618-byte/hash provenance while building the current2226-byte source. Thus
+the mismatch is not permission to make31→43 green: the actual current source
+provenance is wrong. Preserve original source pins/receipts and old-version
+decoding; add an explicit authenticated successor source/version and prove its
+actual canonical build, allocation/call/literal population, codec transport and
+runtime output against retained old/current controls. Update selected-current
+shape assertions only as part of that measured version migration, not by
+repinning historical evidence or accepting arbitrary caller digests. The old
+source-support/symbolic-ref pin tests must remain historical controls, not silently
+claim to measure this new stdlib text. No formatter source/pin/receipt was changed
+by S7-ap. Its lying provenance and two shape failures remain open for that work.
+
+Terminal S7-ap verification: exact-parent single-file removal62679 gives5/8,
+zero skips/exit1. The real-source positive, codec positive and pre-mutation
+issuance case fail on the original ambiguous-SSA error; all five deliberate
+same-namespace duplicate controls pass. Restore the saved candidate byte-for-byte,
+verify SHA256, then69686 closes cleanly at66/66 across three files, zero skips/
+exit0. Separate77539 closes cleanly at52/52 across26 realm requirements,9 module
+completion/startup and17 actual prepared Linear controls. Do not sum overlapping
+runs or present the separate75/77 execution as green. All handles are closed.
+
+Typecheck/lint, LOC/function (400 changed source files, net−14587 LOC against the
+whole-PR base), coercion/oracle, preservation-only, layering/flat and issue checks
+pass with no new waiver, baseline edit, host import or old-AST feature. Strict
+closure and earlier architecture debts remain unresolved; no new full Test262,
+historical emitted-byte or Linear/WASI migration certification is claimed.
+[Exact S7-ap source/report/gate hashes and controlled source comparison](../audit/6979-native-object-demand-scopes-20261020.json)
+retain all successful and failed runs, the full formatter finding and next work.
+Publish this actual prerequisite repair to the existing unfinished draft PR,
+leave both migration issues/full goal active, then implement the explicit
+formatter successor and genuine realm population/source transaction join.

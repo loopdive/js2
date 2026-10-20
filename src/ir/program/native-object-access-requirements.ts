@@ -85,14 +85,31 @@ function mask(call: IrInstrCall, definitions: ReadonlyMap<IrValueId, Definition>
 }
 
 function definitionsFor(demands: NativeStringValueDemands, unitId: IrUnitId, view: "program" | "projection") {
-  const definitions = new Map<IrValueId, Definition>();
+  // Blocks, the logical async plan and its runtime projection retain the same
+  // SSA IDs in distinct representations. Do not merge those namespaces or
+  // deduplicate their occurrence census. Within each representation, definitions
+  // still have to be unique across all blocks/states and nested buffers.
+  const definitions = {
+    block: new Map<IrValueId, Definition>(),
+    "async-plan": new Map<IrValueId, Definition>(),
+    "async-runtime": new Map<IrValueId, Definition>(),
+  };
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const buffer = demands.buffers[row.bufferIndex]!;
     if (buffer.ownerUnitId !== unitId || buffer.view !== view || row.instruction.result === null) continue;
-    if (definitions.has(row.instruction.result)) fail("ambiguous prepared SSA definition");
-    definitions.set(row.instruction.result, { occurrence, instruction: row.instruction });
+    const scope = definitions[buffer.root.kind];
+    if (scope.has(row.instruction.result)) fail("ambiguous prepared SSA definition");
+    scope.set(row.instruction.result, { occurrence, instruction: row.instruction });
   }
   return definitions;
+}
+function definitionsAt(
+  demands: NativeStringValueDemands,
+  definitions: ReturnType<typeof definitionsFor>,
+  occurrence: number,
+) {
+  const row = demands.occurrences[occurrence]!;
+  return definitions[demands.buffers[row.bufferIndex]!.root.kind];
 }
 
 function descriptorHalfIdentity(
@@ -137,8 +154,10 @@ function pairedOperations(demands: NativeStringValueDemands): ReadonlyMap<number
       same(row.call.target.binding, original.call.target.binding, "property binding changed across projection");
       same(row.call.site, original.call.site, "property source site changed across projection");
       if (row.feature.startsWith("js.object.define-")) {
-        const originalMask = mask(original.call, semanticDefs),
-          projectedMask = mask(row.call, projectedDefs);
+        const originalDefinitions = definitionsAt(demands, semanticDefs, original.occurrence),
+          projectedDefinitions = definitionsAt(demands, projectedDefs, row.occurrence);
+        const originalMask = mask(original.call, originalDefinitions),
+          projectedMask = mask(row.call, projectedDefinitions);
         if (originalMask !== projectedMask) fail("descriptor presence/attribute mask changed across projection");
         if (row.feature === "js.object.define-accessor" && originalMask !== undefined) {
           for (const [bit, argument] of [
@@ -147,8 +166,8 @@ function pairedOperations(demands: NativeStringValueDemands): ReadonlyMap<number
           ] as const) {
             if (!(originalMask & bit)) continue;
             same(
-              descriptorHalfIdentity(demands, original.call.args[argument]!, semanticDefs),
-              descriptorHalfIdentity(demands, row.call.args[argument]!, projectedDefs),
+              descriptorHalfIdentity(demands, original.call.args[argument]!, originalDefinitions),
+              descriptorHalfIdentity(demands, row.call.args[argument]!, projectedDefinitions),
               "descriptor callable allocation changed across projection",
             );
           }
@@ -183,9 +202,15 @@ function getterAllocation(
   const site = demands.allocations.entries[allocation.id];
   if (site?.state !== "live" || site.site.id !== allocation.id) fail("getter canonical allocation row differs");
   same(site.site.type, instruction.resultType, "getter registry/occurrence type differs");
+  const originalBuffer = demands.buffers[demands.occurrences[row.occurrence]!.bufferIndex]!;
   const aliases = demands.occurrences.filter((candidate) => {
     const buffer = demands.buffers[candidate.bufferIndex]!;
-    return buffer.view === "projection" && buffer.ownerUnitId === ownerUnitId && candidate.instruction === instruction;
+    return (
+      buffer.view === "projection" &&
+      buffer.ownerUnitId === ownerUnitId &&
+      buffer.root.kind === originalBuffer.root.kind &&
+      candidate.instruction === instruction
+    );
   });
   if (aliases.length !== 1) fail("getter allocation occurrence is not unique in its selected owner");
   return {
@@ -206,7 +231,7 @@ function calculate(demands: NativeStringValueDemands) {
   const paired = pairedOperations(demands);
   const ownerData = new Map<
     IrUnitId,
-    { definitions: Map<IrValueId, Definition>; types: ReadonlyMap<IrValueId, IrType> }
+    { definitions: ReturnType<typeof definitionsFor>; types: ReadonlyMap<IrValueId, IrType> }
   >();
   for (const owner of demands.owners)
     ownerData.set(owner.unitId, {
@@ -221,7 +246,9 @@ function calculate(demands: NativeStringValueDemands) {
     if (!declaration) continue;
     const feature = declaration.feature as OrdinaryObjectRuntimeFeature,
       unitId = buffer.ownerUnitId;
-    const { definitions, types } = ownerData.get(unitId)!;
+    const owner = ownerData.get(unitId)!,
+      definitions = definitionsAt(demands, owner.definitions, occurrence),
+      types = owner.types;
     const gap = (detail: string) => gaps.push({ occurrence, unitId, detail });
     const mismatch = nativeAsyncCallMismatch(call, declaration, types);
     if (mismatch) fail("ordinary callable differs from canonical declaration: " + mismatch);
@@ -263,7 +290,7 @@ function calculate(demands: NativeStringValueDemands) {
   }
   for (const use of uses.filter((row) => row.feature === "js.object.get")) {
     const call = demands.occurrences[use.occurrence]!.instruction as IrInstrCall;
-    const { definitions } = ownerData.get(use.ownerUnitId)!;
+    const definitions = definitionsAt(demands, ownerData.get(use.ownerUnitId)!.definitions, use.occurrence);
     const roots = new Set<number>();
     let current = use.creationOccurrence;
     while (current !== undefined) {
