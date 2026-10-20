@@ -312,6 +312,7 @@
         "src/backend/wasmgc/resources/native-symbol-carrier.ts",
         "src/backend/wasmgc/resources/native-booleans.ts",
         "src/backend/wasmgc/resources/native-source-closures.ts",
+        "src/backend/wasmgc/resources/native-source-code-identities.ts",
         "src/backend/wasmgc/resources/native-ref-cells.ts",
         "src/backend/wasmgc/program/native-invocation-abi.ts",
         "src/backend/wasmgc/resources/native-invocation.ts",
@@ -14449,6 +14450,21 @@
       "path": "src/backend/wasmgc/resources/native-source-closures.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-source-code-identities.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/source-code-identity-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/contracts/native-string-resource-keys.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
     },
     {
       "path": "src/ir/program/callable-results.ts",

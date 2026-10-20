@@ -14,6 +14,7 @@
 // are added here as their groups get wired.
 
 import { emitConstInstr } from "./wasm-constants.js";
+import { buildNativeSourceCodeIdentityOperand } from "../../runtime/wasmgc/values/source-code-identity-bodies.js";
 import type { IrLowerResolver } from "./lower-contracts.js";
 import {
   asVal,
@@ -377,6 +378,7 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
       throw new Error("closure allocation cannot combine unrelated DOM and realm state tails");
     if (authorityGlobalIdx !== undefined) out.push({ op: "global.get", index: authorityGlobalIdx });
     if (layout.realmStateInitializer !== undefined) out.push({ op: "call", funcIdx: layout.realmStateInitializer });
+    out.push(...buildNativeSourceCodeIdentityOperand(layout));
     out.push({ op: "struct.new", typeIdx: layout.structTypeIdx });
   }
 

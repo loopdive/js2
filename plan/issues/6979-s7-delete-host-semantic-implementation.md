@@ -6159,3 +6159,113 @@ pending-run handoff in that commit was accurate when written; this terminal
 readback supersedes it without rewriting history. Prerequisite
 [refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
 is freshly OPEN/unmerged, and the migration PR remains draft/unmergeable.
+
+#### S7-am source code identities and actual allocation join (in progress)
+
+The next mixed Call join must identify actual source code without pretending
+that a matching funcref signature identifies a function. Wasm `ref.eq` accepts
+eqref, not function references. Use one fresh immutable GC code box per original
+lifted unit and instance, with its actual `ref.func` supplied only by the genuine
+source-body custody producer. Canonical global initializers and matcher bodies
+must be audited independently of fill receipts. The eventual native Call loads
+the target from that authenticated box, not an unchecked compatibility-header
+funcref. This is code-target identity, not arbitrary source allocation authority.
+
+Join the issued code declarations into native source carrier reservation and
+actual IR `closure.new` allocation: preserve capture/state coordinates, append
+an immutable code-box tail, and select its exact global from the original
+lifted unit binding. Keep the existing stateless/state-only paths unchanged.
+Do not edit the historically pinned closure-layout source/receipts; extend the
+native lowering metadata in its own shared leaf and consume it in the IR WasmGC
+emitter. Enumerated readers are native-source-closures, nativeSourceClosureResolver,
+the WasmGC closure allocator and existing layout/ABI/custody tests; existing
+Linear/bytecode refusal behavior must not be relabelled implemented.
+
+Test actual prepared allocations and code identity across distinct units sharing
+an ABI/shape, independent instances, fresh realm generations, captured/empty
+closures, receipt-valid substitutions and partial fills. Keep body/ABI/dependency,
+allocation and full realm/public completion scopes distinct. Foreign JS values
+stay live identity-backed boundary references; no graph copy or new host import.
+The full mixed Call/Get/publication, Linear/WASI and all earlier acceptance work
+remain in progress rather than being certified by this identity component.
+
+Architecture follow-through: semantic realm/source selection belongs in the IR
+producer, while the new backend owner reserves/authenticates a data-only physical
+description. The IR join must revalidate the genuine realm, canonical key and
+complete original source population; raw physical declarations are not semantic
+authority. Reuse the existing backend declaration comparator for actual type/
+global descriptors, not a new IR comparator dependency. Move the actual pure
+native String resource-key function below IR/backend (retain its compatibility
+export and exact function identity), and make the timer bridge read the existing
+canonical exception-policy contract directly instead of importing the compiler's
+IR compatibility facade. These are real dependency cuts, not edge allowances or
+rewritten historical receipts. Recheck the complete cycle/inventory graphs.
+
+The implementation is now verified by **24/24 focused cases**, one file, zero
+skips and terminal exit zero (session10771 closed). Actual prepared native IR
+allocations carry immutable code-box tails; three real source units include two
+sharing both signature and capture shape. Zero-import Wasm executes the actual
+boxed targets with captures, independent instances and live realm checks.
+Same-signature/same-shape target substitutions and accept-all matcher bodies
+can receive valid allocator receipts, but independent canonical audit rejects
+them. Partial fills remain terminal. Raw physical source-subset declarations do
+not grant source typing or semantic completion. String-key and callback-policy
+compatibility exports retain exact function/object identity.
+
+The first attempt was **1/22**,15 failures/6 skipped: a real production phase bug
+requested final indices before reservation freeze. The next was **4/22**,12
+failures/6 skipped: the code filler redundantly declared source references that
+the original binder already owned. Fix the real producer: bind the full reference
+union once and never redeclare it during code fill. These were not merely test
+instrument failures, and the skipped runtime cases are not measured successes.
+An intermediate22/22 run is separate from final24/24; all22 original full case
+identities/status/error fields exactly equal their final subset. No deadlines,
+ledger safeguards, assertions or historical pins were weakened.
+
+[The exact source-code identity audit](../audit/6979-native-source-code-identities-20261020.json)
+retains every report/hash and the final source hashes. Preliminary preservation
+was260/260 across seven files, including71 exact historical closure-state cases;
+it began before the final ownership/dependency corrections and is **not** a
+single final-source-revision cohort. Final nine-file preservation (the same seven
+plus native timer and async-provider coverage) now passes**284/284**, zero skips,
+all assertion failureMessages empty and terminal exit zero. Positive9-file/284-row
+and exact per-file count floors are checked. Full file/case identities, statuses
+and error fields equal clean S7-al171/18 and preliminary260 evidence in their
+respective positive5/1/7-file subsets, without case/error normalization or adding
+overlapping populations. This is separate from24/24, not one308-case run.
+Session65692 and every other test handle named in this S7-am section are now
+**closed**; do not poll or restart them. Final source hashes remain unchanged.
+
+Typecheck/lint/format and source gates pass within their stated scopes. The final
+inventory is valid for1991 modules/zero errors (pre-staging1988 tracked+3 new),
+architectureComplete=false. The runtime→IR edge and its two-way directory pair
+are actually removed; ir→backend stays at main's25. The same four older red
+directions remain unchanged, largest SCC712/four nontrivial SCCs. No new edge
+allowance/root/floor/baseline/grant. Strict modeled closure still fails the two
+unknown nonliteral imports; preservation-only6/6 full+6/6 cut is not retirement
+certification. The historically pinned closure-layout source and state receipt
+remain byte-for-byte unchanged; no broader emitted-byte comparison is claimed.
+
+This is **code-target identity**, not certification of the compatibility-header
+funcref, full source allocation custody, argument/receiver/result adaptation or
+general mixed Call. The test-only f64 observer loads the genuine boxed target;
+it is not a public JavaScript Call implementation. Next complete actual source
+allocation/ABI/dependency custody and semantic Call adaptation, then join source
+code identities with genuine builtin, bound and live foreign boundary owners.
+Keep Get/remaining catalog/constructors/population and atomic public admission,
+first-class undefined, Linear/WASI, three named gaps, runtime/arm retirement,
+architecture/strict closure, custody/conformance/npm-compat/accelerators and PR
+conflicts in full scope. Both issues and the full goal remain in progress. No
+GitHub issue or issue comment is created; do not mark this unfinished stack ready.
+
+Concrete next custody gap: `bindNativeSourceClosureUnits` records lifted source
+units, not all original functions owning `requirements.allocations` occurrences.
+`fillPreparedPrimaryUnit` therefore does not retain canonical definitions for
+ordinary factory bodies even when those factories emit the new code tail. Bind
+the union of genuine lifted and allocation-owner units to their original slots,
+and retain/audit their actual lowering without substituting a function count.
+Source closure/capture/ref-cell resolution and allocation target handles must
+come from the genuine source owner; a caller-supplied resolver or signature alone
+does not prove those bindings. Authenticate the actual slot ABI as well. Keep
+argument/receiver/result adaptation separate: the test's f64 observer is not
+permission to unbox arbitrary JavaScript arguments or call every source ABI.

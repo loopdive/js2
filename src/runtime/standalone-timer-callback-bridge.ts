@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
-import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "../ir/async-runtime-providers.js";
+import { ASYNC_CALLBACK_EXCEPTION_POLICY } from "./contracts/async-provider-schema.js";
 import {
   STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT,
   STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE,

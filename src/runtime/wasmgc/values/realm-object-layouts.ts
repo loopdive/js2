@@ -73,6 +73,7 @@ export function createRealmSourceClosureType(
   superTypeIdx: number,
   captures: readonly ValType[],
   stateTypeIdx: number,
+  codeTypeIdx?: number,
 ): StructTypeDef {
   const closure = createClosureCaptureType(name, superTypeIdx, captures);
   return {
@@ -81,6 +82,9 @@ export function createRealmSourceClosureType(
     fields: [
       ...closure.fields,
       { name: "[[ObjectState]]", type: { kind: "ref", typeIdx: stateTypeIdx }, mutable: false },
+      ...(codeTypeIdx === undefined
+        ? []
+        : [{ name: "[[SourceCode]]", type: { kind: "ref" as const, typeIdx: codeTypeIdx }, mutable: false }]),
     ],
   };
 }

@@ -36,17 +36,8 @@ import {
   nativeScalarTypeDeclaration,
 } from "./native-resource-declarations.js";
 
-export function nativeStringTypeKeys(key: string) {
-  return {
-    data: `${key}:data`,
-    any: `${key}:any`,
-    flat: `${key}:flat`,
-    cons: `${key}:cons`,
-    hashed: `${key}:hashed`,
-    utf8Data: `${key}:utf8-data`,
-    utf8: `${key}:utf8`,
-  } as const;
-}
+import { nativeStringTypeKeys } from "../../../runtime/contracts/native-string-resource-keys.js";
+export { nativeStringTypeKeys } from "../../../runtime/contracts/native-string-resource-keys.js";
 export function declareNativeStringLiteralTypes(key: string, utf8Storage: boolean): NativeResourceRecipe {
   if (typeof key !== "string" || !key || typeof utf8Storage !== "boolean")
     throw new Error("native strings: invalid type recipe key/config");

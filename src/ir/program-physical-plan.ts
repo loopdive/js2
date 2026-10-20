@@ -65,7 +65,7 @@ import {
   type NativeNumberFormatStringLayoutPlan,
   type NativeNumberFormatPhysicalPlan,
 } from "../backend/wasmgc/program/native-number-format.js";
-import { nativeStringTypeKeys } from "../backend/wasmgc/resources/native-string-literals.js";
+import { nativeStringTypeKeys } from "../runtime/contracts/native-string-resource-keys.js";
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";

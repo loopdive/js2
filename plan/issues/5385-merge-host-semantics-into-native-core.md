@@ -1978,3 +1978,35 @@ source-body custody; mixed Call join remains pending** handoff lives in
 Full mixed invocation and remaining catalog/population, live boundary refs,
 Linear/WASI, runtime retirement, architecture/closure/conformance and PR conflicts
 remain open. Both issues and the full migration remain in progress.
+
+#### S7-am code identity joined to actual native source allocation
+
+Actual native IR allocations now append an immutable per-unit/per-instance code
+box after unchanged captures and realm state. Canonical boxed targets come only
+from genuine completed source-body custody, with independent initializer/matcher
+audit and terminal partial fills. Semantic selection remains in IR, physical
+declarations below it; source-subset descriptions cannot issue completion.
+The actual String-key function now lives in runtime contracts, and the timer
+bridge reads the existing canonical exception policy without importing IR.
+Compatibility identities and historically pinned closure-layout bytes remain.
+
+Focused verification is**24/24**, zero skips/exit zero, with real same-ABI/same-shape
+source units and runtime code-box/realm identity. Earlier real phase/reference
+producer defects (1/22 and4/22, each with6 skipped runtime cases) remain in
+[the exact source-code identity audit](../audit/6979-native-source-code-identities-20261020.json).
+Preliminary260-case preservation is not final-source certification. Final
+nine-file preservation now passes**284/284**, zero skips/exit zero, with exact
+file/case/error comparisons to retained evidence and positive population floors.
+It is separate from24/24, not one308-case run. Session65692 is closed; do not
+poll or restart it. Final source hashes remain unchanged.
+The detailed **S7-am source code identities and actual allocation join** handoff
+lives in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+
+The runtime→IR dependency pair is removed without waivers; four earlier red
+directions and strict-closure retirement failures remain. Code identity does not
+certify compatibility-header funcrefs, full allocation/ABI/dependency ownership,
+general Call adaptation or public realm completion. Mixed Get/Call, remaining
+catalog/constructors/population, live foreign boundary refs, first-class undefined,
+Linear/WASI, runtime retirement and all conformance/architecture/merge acceptance
+stay in the full active goal. Both issues remain in progress.

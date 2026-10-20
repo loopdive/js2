@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { NativeInvocationRequirements } from "./program/native-invocation-requirements.js";
-import type { NativeRealmRequirements } from "./program/native-realm-requirements.js";
+import {
+  assertNativeRealmRequirementsCurrent,
+  type NativeRealmRequirements,
+} from "./program/native-realm-requirements.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
 import {
   planNativeSourceClosureRequirements,
@@ -21,6 +24,7 @@ import {
   resolveNativeSourceClosure,
   resolveNativeSourceClosureShape,
   resolveNativeSourceRefCell,
+  nativeSourceClosureCodeIdentities,
   type NativeSourceClosureTypes,
   type NativeSourceClosureCarriers,
 } from "../backend/wasmgc/resources/native-source-closures.js";
@@ -46,6 +50,17 @@ import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { LinearEmitter } from "./backend/linear-emitter.js";
 import type { IrBackendKind } from "./backend/legality.js";
 import type { NativeBuiltinFunctionRequestIssuer } from "../backend/wasmgc/resources/native-builtin-function-requests.js";
+import {
+  requireNativeSourceCodeIdentityReservations,
+  reserveNativeSourceCodeIdentityResources,
+  type NativeSourceCodeIdentityReservations,
+} from "../backend/wasmgc/resources/native-source-code-identities.js";
+import type { NativeRealmObjectLayoutReservations } from "../backend/wasmgc/resources/native-realm-object-layouts.js";
+import {
+  withNativeSourceCodeIdentity,
+  buildNativeSourceCodeIdentityInitializer,
+  buildNativeSourceCodeMatch,
+} from "../runtime/wasmgc/values/source-code-identity-bodies.js";
 
 export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
@@ -133,7 +148,13 @@ export function bindNativeSourceClosureUnits(
     if (slot.object.typeIdx !== shape.lowering.funcTypeIdx) fail("source slot does not use its exact lifted signature");
     return { unitId: unit.unitId, fn, slot };
   });
-  const referencedSlots = [...new Set(pack.requirements.allocations.map((row) => row.liftedUnitId))].map((id) => {
+  const codeIdentities = nativeSourceClosureCodeIdentities(tx, pack.types);
+  const referencedSlots = [
+    ...new Set([
+      ...pack.requirements.allocations.map((row) => row.liftedUnitId),
+      ...(codeIdentities ? pack.requirements.units.map((row) => row.unitId) : []),
+    ]),
+  ].map((id) => {
     const row = rows.find((candidate) => candidate.unitId === id);
     if (!row) fail("source allocation target has no authenticated lifted unit slot");
     return row.slot;
@@ -208,6 +229,133 @@ export function requireNativeRealmSourceClosureBodyCustody(
   return custody;
 }
 
+export interface NativeRealmSourceCodeIdentities {
+  readonly declarations: NativeSourceCodeIdentityReservations;
+  readonly bodies: NativeRealmSourceClosureBodyCustody;
+  readonly completionScope: "realm-source-code-identities";
+}
+interface SourceCodeOwner {
+  readonly source: NativeSourceClosureEmission;
+  phase: "filling" | "filled" | "failed";
+  completion?: NativeRealmSourceCodeIdentities;
+}
+const sourceCodeOwners = new WeakMap<NativeSourceCodeIdentityReservations, SourceCodeOwner>();
+/** Semantic selection stays in IR; the backend receives a complete physical description only. */
+export function reserveNativeRealmSourceCodeIdentities(
+  tx: PhysicalModuleReservations,
+  realm: NativeRealmRequirements,
+  layouts: NativeRealmObjectLayoutReservations,
+): NativeSourceCodeIdentityReservations {
+  assertNativeRealmRequirementsCurrent(realm);
+  if (!realm.source?.units.length || realm.source.gaps.length) fail("complete nonempty source requirements required");
+  return reserveNativeSourceCodeIdentityResources(
+    tx,
+    {
+      key: realm.description.key + ":source-code",
+      realm,
+      source: realm.source,
+      units: realm.source.units.map((row) => row.unitId),
+    },
+    layouts,
+  );
+}
+function sourceCodeGraph(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+) {
+  requireOwner(tx, source);
+  assertNativeRealmRequirementsCurrent(realm);
+  const declarations = nativeSourceClosureCodeIdentities(tx, source.types);
+  if (
+    !declarations ||
+    declarations.realm !== realm ||
+    realm.source !== source.requirements ||
+    declarations.key !== realm.description.key + ":source-code"
+  )
+    fail("missing original source code declarations");
+  requireNativeSourceCodeIdentityReservations(tx, declarations, source.requirements, declarations.layouts);
+  const bodies = completeNativeRealmSourceClosureBodyCustody(tx, source, realm);
+  const entries = declarations.entries.map((entry) => {
+    const callable = bodies.callables.entries.find((row) => row.unitId === entry.unitId);
+    if (!callable) fail("code identity lacks its actual lowered source unit");
+    const shape = source.requirements.shapes.find((row) => row.id === callable.shape.id)!;
+    return { entry, callable, stateField: 3 + shape.captures.length };
+  });
+  const match = buildNativeSourceCodeMatch({
+    realmGlobal: tx.physicalIndex(declarations.layouts.anchors.realm),
+    stateTypeIdx: declarations.layouts.types.state.typeIndex,
+    codeTypeIdx: declarations.type.typeIndex,
+    entries: entries.map((row) => ({
+      sourceTypeIdx: row.callable.shape.type.typeIndex,
+      stateField: row.stateField,
+      codeField: row.stateField + 1,
+      codeGlobal: tx.physicalIndex(row.entry.identity),
+    })),
+  });
+  return { declarations, bodies, entries, match };
+}
+/** Targets come only from the genuine complete IR body-custody graph, never passed-in definitions. */
+export function fillNativeRealmSourceCodeIdentities(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): void {
+  const graph = sourceCodeGraph(tx, source, realm),
+    { declarations } = graph;
+  if (tx.state !== "filling" || sourceCodeOwners.has(declarations)) fail("code identity fill is duplicate or terminal");
+  const owner: SourceCodeOwner = { source, phase: "filling" };
+  sourceCodeOwners.set(declarations, owner);
+  try {
+    for (const row of graph.entries) {
+      tx.fillGlobal(
+        row.entry.identity,
+        buildNativeSourceCodeIdentityInitializer(declarations.type.typeIndex, row.callable.slot.handle),
+      );
+    }
+    tx.fillFunction(declarations.match, graph.match);
+    owner.phase = "filled";
+  } catch (error) {
+    owner.phase = "failed";
+    throw error;
+  }
+}
+/** Re-derive exact code global initializers and matcher from genuine body custody on every use. */
+export function requireCompletedNativeRealmSourceCodeIdentities(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceCodeIdentities {
+  const graph = sourceCodeGraph(tx, source, realm),
+    { declarations, bodies } = graph,
+    owner = sourceCodeOwners.get(declarations);
+  if (!owner || owner.source !== source || owner.phase !== "filled")
+    fail("source code identities are incomplete or terminal");
+  for (const row of graph.entries)
+    tx.assertCanonicalGlobalInitializer(
+      row.entry.identity,
+      buildNativeSourceCodeIdentityInitializer(declarations.type.typeIndex, row.callable.slot.handle),
+    );
+  tx.assertCanonicalFunctionDefinition(declarations.match, graph.match);
+  owner.completion ??= Object.freeze({
+    declarations,
+    bodies,
+    completionScope: "realm-source-code-identities" as const,
+  });
+  if (owner.completion.bodies !== bodies) fail("changed source-body custody");
+  return owner.completion;
+}
+export function requireNativeRealmSourceCodeIdentities(
+  tx: PhysicalModuleReservations,
+  completion: NativeRealmSourceCodeIdentities,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceCodeIdentities {
+  const actual = requireCompletedNativeRealmSourceCodeIdentities(tx, source, realm);
+  if (completion !== actual) fail("foreign, copied or substituted completed code identities");
+  return actual;
+}
+
 export function nativeSourceClosureValueType(
   tx: PhysicalModuleReservations,
   pack: NativeSourceClosureEmission,
@@ -253,6 +401,12 @@ export function nativeSourceClosureResolver(
         );
         if (!association) fail("closure allocation does not target its selected lifted source slot");
         tx.physicalIndex(owner.units.get(association.unitId)!.slot);
+        const codes = nativeSourceClosureCodeIdentities(tx, pack.types);
+        if (codes) {
+          const identity = codes.entries.find((row) => row.unitId === association.unitId);
+          if (!identity) fail("allocation lacks its original source code identity");
+          return withNativeSourceCodeIdentity(shape.lowering, tx.physicalIndex(identity.identity));
+        }
       }
       return shape.lowering;
     },

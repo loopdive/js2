@@ -37,6 +37,10 @@ import {
 } from "./native-builtin-function-requests.js";
 import { createRealmSourceClosureType } from "../../../runtime/wasmgc/values/realm-object-layouts.js";
 import {
+  requireNativeSourceCodeIdentityReservations,
+  type NativeSourceCodeIdentityReservations,
+} from "./native-source-code-identities.js";
+import {
   requireNativeRealmObjectLayouts,
   requireCompletedNativeRealmObjectLayouts,
   type NativeRealmObjectLayoutReservations,
@@ -51,6 +55,7 @@ function requireSourceMetadataSeparation(type: TypeReservation): void {
 
 export interface NativeSourceClosureCarriers {
   readonly realmState?: NativeRealmObjectLayoutReservations;
+  readonly codeIdentities?: NativeSourceCodeIdentityReservations;
   readonly refCells?: NativeRefCellReservations;
   readonly vectors: NativeVectorTypeReservations;
   readonly vectorPlan: NativeVectorResourcePlan;
@@ -101,6 +106,7 @@ interface Owner {
   readonly stringTypes: NativeStringLiteralTypeReservations | undefined;
   readonly builtins: NativeBuiltinFunctionRequestIssuer | undefined;
   readonly realmState: NativeRealmObjectLayoutReservations | undefined;
+  readonly codeIdentities: NativeSourceCodeIdentityReservations | undefined;
   readonly shapeTypes: readonly {
     readonly id: string;
     readonly captures: readonly ValType[];
@@ -130,12 +136,34 @@ function authenticateCarriers(
   carriers: NativeSourceClosureCarriers,
   requirements: NativeSourceClosureRequirements,
 ): void {
-  realmStateCarrier(tx, carriers);
+  const state = realmStateCarrier(tx, carriers);
+  codeIdentityCarrier(tx, carriers, requirements, state);
   if (carriers.refCells) requireNativeRefCells(tx, carriers.refCells, requirements);
   else if (requirements.refCells.length) fail("mutable capture has no issued ref-cell type owner");
   requireNativeVectorTypeReservations(tx, carriers.vectors, carriers.vectorPlan);
   if (carriers.strings)
     requireNativeStringLiteralTypes(tx, carriers.strings.types, carriers.strings.key, carriers.strings.utf8Storage);
+}
+function codeIdentityCarrier(
+  tx: PhysicalModuleReservations,
+  carriers: NativeSourceClosureCarriers,
+  requirements: NativeSourceClosureRequirements,
+  state: NativeRealmObjectLayoutReservations | undefined,
+): NativeSourceCodeIdentityReservations | undefined {
+  const field = Object.getOwnPropertyDescriptor(carriers, "codeIdentities");
+  if (!field) {
+    if ("codeIdentities" in carriers) fail("inherited code identity carrier");
+    return undefined;
+  }
+  if (!Object.hasOwn(field, "value") || !field.enumerable || field.value === undefined || !state)
+    fail("code identity carrier requires genuine own data and realm state");
+  const codes = requireNativeSourceCodeIdentityReservations(tx, field.value, requirements, state);
+  if (
+    codes.entries.length !== requirements.units.length ||
+    codes.entries.some((row, i) => row.unitId !== requirements.units[i]!.unitId)
+  )
+    fail("code identities omit or substitute original source units");
+  return codes;
 }
 function carrierValue(tx: PhysicalModuleReservations, carriers: NativeSourceClosureCarriers, type: IrType): ValType {
   if (type.kind === "boxed") {
@@ -219,6 +247,7 @@ export function reserveNativeSourceClosureTypes(
   assertNativeSourceClosureRequirementsCurrent(requirements);
   authenticateCarriers(tx, carriers, requirements);
   const realmState = realmStateCarrier(tx, carriers);
+  const codeIdentities = codeIdentityCarrier(tx, carriers, requirements, realmState);
   const { closurePlan, references, shapeTypes } = physicalPlan(tx, requirements, carriers, builtins);
   // Check the complete connected allocation before consuming any wrapper/capture prefix.
   tx.assertReservationKeysAvailable([
@@ -244,6 +273,7 @@ export function reserveNativeSourceClosureTypes(
                   base.type.typeIndex,
                   structuredClone([...description.captures]),
                   realmState.types.state.typeIndex,
+                  codeIdentities?.type.typeIndex,
                 )
               : createClosureCaptureType(
                   description.name,
@@ -277,6 +307,7 @@ export function reserveNativeSourceClosureTypes(
     stringTypes: carriers.strings?.types,
     builtins,
     realmState,
+    codeIdentities,
     shapeTypes: structuredClone(shapeTypes),
   });
   return pack;
@@ -310,6 +341,8 @@ export function requireNativeSourceClosureTypes(
   }
   assertNativeSourceClosureRequirementsCurrent(expectedRequirements);
   if (realmStateCarrier(tx, owner.carriers) !== owner.realmState) fail("changed realm state carrier identity");
+  if (codeIdentityCarrier(tx, owner.carriers, expectedRequirements, owner.realmState) !== owner.codeIdentities)
+    fail("changed code identity carrier");
   if (
     owner.carriers.refCells !== owner.refCells ||
     owner.carriers.vectors !== owner.vectors ||
@@ -339,6 +372,7 @@ export function requireNativeSourceClosureTypes(
               base.type.typeIndex,
               structuredClone([...description.captures]),
               owner.realmState.types.state.typeIndex,
+              owner.codeIdentities?.type.typeIndex,
             )
           : createClosureCaptureType(description.name, base.type.typeIndex, structuredClone([...description.captures])),
         "changed capture layout",
@@ -349,6 +383,15 @@ export function requireNativeSourceClosureTypes(
     if (owner.builtins) requireSourceMetadataSeparation(row.type);
   }
   return pack;
+}
+
+/** Exact optional native allocator tail owner, never a caller-selected code handle. */
+export function nativeSourceClosureCodeIdentities(
+  tx: PhysicalModuleReservations,
+  pack: NativeSourceClosureTypes,
+): NativeSourceCodeIdentityReservations | undefined {
+  requireNativeSourceClosureTypes(tx, pack, pack.requirements);
+  return owners.get(pack)!.codeIdentities;
 }
 
 export function resolveNativeSourceClosure(
