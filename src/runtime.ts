@@ -139,7 +139,7 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
-import { declaredHostFunction, marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
+import { closureBridges, declaredHostFunction, marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -1808,6 +1808,7 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+closureBridges.configure(_wasmClosureWrapperSource, _wasmClosureWrapperTargets); // (#7098) host-read closure results
 /**
  * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
  * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a

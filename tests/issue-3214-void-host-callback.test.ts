@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { compile, compileMulti, type CompileOptions, type CompileResult, type ImportDescriptor } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { buildImports, wrapCompiledExports } from "../src/runtime.js";
 
 const HOST_CALLBACK_SOURCE = `
 export function install(target: EventTarget, sink: HTMLElement, value: number): void {
@@ -188,7 +188,6 @@ describe("#3214 B2 — ambient void host callbacks", () => {
         });
       }
     `,
-      HOST_ASSISTED,
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -212,15 +211,9 @@ describe("#3214 B2 — ambient void host callbacks", () => {
     };
     const numberSink = { textContent: "" };
     const textSink = { textContent: "" };
-    (
-      instance.exports.install as (
-        target: object,
-        numberSink: object,
-        textSink: object,
-        value: number,
-        label: string,
-      ) => void
-    )(target, numberSink, textSink, 42, "second");
+    // (#7098) Default profile: the native lane marshals the listeners' results,
+    // and the `label` string crosses through the export adapter.
+    wrapCompiledExports(result, instance).install(target, numberSink, textSink, 42, "second");
 
     expect(eventTypes).toEqual(["number", "text"]);
     expect(listeners).toHaveLength(2);

@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-20",
   "threshold": 1500,
-  "totalCeiling": 1036897,
+  "totalCeiling": 1037154,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4448,
@@ -9,7 +9,7 @@
     "src/codegen/array-holes.ts": 1538,
     "src/codegen/array-methods.ts": 10989,
     "src/codegen/array-object-proto.ts": 4529,
-    "src/codegen/async-cps.ts": 4207,
+    "src/codegen/async-cps.ts": 4287,
     "src/codegen/async-frame.ts": 3579,
     "src/codegen/async-scheduler.ts": 4780,
     "src/codegen/binary-ops-typed-dispatch.ts": 1651,
@@ -50,7 +50,7 @@
     "src/codegen/generators-native-consumer.ts": 2023,
     "src/codegen/generators-native.ts": 7269,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15443,
+    "src/codegen/index.ts": 15445,
     "src/codegen/ir-inline.ts": 1571,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 6555,
@@ -115,7 +115,7 @@
     "src/ir/select-identity.ts": 1642,
     "src/ir/select.ts": 11413,
     "src/package-linker.ts": 2137,
-    "src/runtime.ts": 20240,
+    "src/runtime.ts": 20241,
     "src/runtime/iterator-polyfills.ts": 1516
   }
 }
