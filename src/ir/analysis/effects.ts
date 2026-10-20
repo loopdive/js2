@@ -124,6 +124,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.undefined": // #7104 — the carrier's undefined constant: pure
     case "dyn.typeof":
     case "dyn.to_string":
+    case "dyn.json_stringify":
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":

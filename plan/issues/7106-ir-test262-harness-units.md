@@ -18,6 +18,12 @@ assignee: "ttraenkler/claude-c"
 # node, verifier, builder, lowering (both dynamic strategies), pre-registration
 # and the from-ast/selector arms that use it — the same shape as #7104's
 # dyn.typeof; each growth is that one arm.
+# 2026-10-20 (S1b): `dyn.json_stringify` pre-registers the native JSON codec
+# from the bridge (`src/ir/integration.ts` → `codegen/json-codec-native.ts`),
+# the same shape as the object-runtime and any-helpers edges already there;
+# one more two-way ir→codegen edge, no new SCC member.
+import-cycles-allow:
+  - ir->codegen: 75 # 2026-10-20 (#7106): integration.ts pre-registers the native JSON codec root
 func-budget-allow:
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
@@ -27,6 +33,9 @@ func-budget-allow:
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/from-ast.ts::lowerExprUnchecked
   - src/ir/from-ast.ts::lowerCall
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/from-ast.ts::lowerConditional
+  - src/ir/from-ast.ts::lowerTypeOf
   - src/ir/select.ts::dynamicUsesAreMoveOnly
   - src/ir/select.ts::scanExpr
   - src/ir/select.ts::isPhase1Expr
@@ -41,6 +50,8 @@ loc-budget-allow:
   - src/ir/runtime/verify.ts
   - src/ir/select.ts
   - src/ir/backend/handles.ts
+  - src/ir/backend/legality.ts
+  - src/ir/ambient-typeof.ts
 ---
 
 ## Problem

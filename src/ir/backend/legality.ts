@@ -23,7 +23,8 @@ export type IrBackendTargetCapability =
   | "standalone-wrapper-instanceof"
   | "primitive-wrapper-loose-equality"
   | "legacy-numeric-array-global"
-  | "number-to-string";
+  | "number-to-string"
+  | "native-json-codec";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -109,6 +110,16 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "native-json-codec":
+      // (#7106 S1b) `JSON.stringify(v)` through the native JSON codec
+      // (`__json_stringify_root`, `anyref -> ref $AnyString`): a native-strings
+      // lane with the non-fast externref dynamic carrier, which
+      // `any.convert_extern` turns into the codec's anyref operand.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
     case "number-to-string":
       // (#4467) §7.1.17 Number::toString as a callable provider. Both wasmgc
       // lanes own one: host binds `env.number_toString`, whose externref IS

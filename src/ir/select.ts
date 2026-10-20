@@ -119,6 +119,7 @@ import type {
 import type { IrFnctorAdmission, IrFnctorSelectionAdmissionResolver, LatticeType, TypeMap } from "./propagate.js";
 import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
+import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
@@ -639,7 +640,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "standalone-wrapper-instanceof"
       | "primitive-wrapper-loose-equality"
       | "legacy-numeric-array-global"
-      | "number-to-string",
+      | "number-to-string"
+      | "native-json-codec",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -2488,6 +2490,24 @@ function resolveReturnType(
   ) {
     return "void";
   }
+  // (#7106 S1b) An unannotated function whose value returns are all one
+  // concrete kind but whose body can FALL OUT (no terminating last statement:
+  // `switch` without default, a guard `if`) returns that kind OR `undefined`.
+  // Legacy registers the checker's `T | undefined` as `externref` — measured
+  // 2026-10-20 on assert.js's `formatIdentityFreeValue`: `(param externref)
+  // (result externref)` — so the IR signature is the dynamic carrier, the
+  // concrete returns box at `coerceReturnValue`, and the fall-out is
+  // #7104's `dyn.undefined`. Same divergence guard as the dynamic arm below.
+  if (
+    ts.isFunctionDeclaration(fn) &&
+    fn.body &&
+    mapped !== undefined &&
+    (mapped.kind === "f64" || mapped.kind === "bool" || mapped.kind === "string" || mapped.kind === "object") &&
+    irFunctionBodyReturnsValue(fn.body) &&
+    !blockLastStatementTerminates(fn.body)
+  ) {
+    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
+  }
   if (mapped?.kind === "f64") return "f64";
   if (mapped?.kind === "bool") return "bool";
   if (mapped?.kind === "string") return "string";
@@ -2845,6 +2865,14 @@ function dynamicUsesAreMoveOnly(
       return dynNames.has(e.text) === expectDyn;
     }
     if (ts.isCallExpression(e)) {
+      // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
+      // concrete string result; a concrete operand is boxed first.
+      const jsonStringifyArg = dynNames.has("JSON") ? null : ambientJsonStringifyCall(e);
+      if (jsonStringifyArg !== null) {
+        if (expectDyn) return false;
+        if (isDynShaped(jsonStringifyArg)) return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, true);
+        return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, false);
+      }
       const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
       if (receiverFirstMethod !== undefined) {
         if (!expectDyn || e.arguments.length !== receiverFirstMethod.arity) return false;
@@ -3124,6 +3152,11 @@ function dynamicUsesAreMoveOnly(
       return scanExpr(op, false);
     }
     if (ts.isConditionalExpression(e)) {
+      // (#7106 S1b) Constant `typeof <ambient>` condition → scan the live arm only.
+      const folded = foldAmbientTypeofComparison(e.condition, (id) =>
+        dynNames.has(id.text) ? undefined : ambientTypeofIdentifierTag(id, new Set<string>()),
+      );
+      if (folded !== undefined) return scanExpr(folded ? e.whenTrue : e.whenFalse, expectDyn);
       const trueIsDynamic = isDynShaped(e.whenTrue);
       const falseIsDynamic = isDynShaped(e.whenFalse);
       if (expectDyn) {
@@ -3206,7 +3239,20 @@ function dynamicUsesAreMoveOnly(
       // `coerceReturnValue` boxes only after the expression has lowered.
       // A mixed concrete ternary cannot form its join before that boundary;
       // keep it on direct codegen until branch-local boxing is represented.
-      if (ts.isConditionalExpression(concrete)) return false;
+      // (#7106 S1b) …unless the ternary's condition is a constant
+      // `typeof <ambient>` comparison: then the live arm IS the return value
+      // (from-ast's `lowerConditional` folds identically and never lowers the
+      // dead arm) — assert.js's `typeof JSON !== "undefined" ? JSON.stringify(v) : …`.
+      if (ts.isConditionalExpression(concrete)) {
+        const folded = foldAmbientTypeofComparison(concrete.condition, (id) =>
+          dynNames.has(id.text) ? undefined : ambientTypeofIdentifierTag(id, new Set<string>()),
+        );
+        if (folded === undefined) return false;
+        const live = unwrap(folded ? concrete.whenTrue : concrete.whenFalse);
+        if (isDynShaped(live)) return scanExpr(live, true);
+        if (ts.isConditionalExpression(live)) return false;
+        return concreteDynamicAssignmentOperandIsBuildable(live) && scanExpr(live, false);
+      }
       return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
     }
     if (ts.isExpressionStatement(s)) {
@@ -5507,7 +5553,10 @@ function isPhase1Tail(
     // A void function may fall out of the switch into its implicit empty
     // return, exactly like the `tail-if-noelse` arm above — no coverage or
     // termination analysis is needed there.
-    if (isVoidReturn) return true;
+    // (#7106 S1b) …and a dynamic-return function's fall-through is its
+    // implicit `return undefined` (#7104's `dyn.undefined`), exactly as the
+    // `tail-if-noelse` arm admits it — assert.js's `formatIdentityFreeValue`.
+    if (isVoidReturn || currentFnIsDynamicReturn) return true;
     if (!switchAllPathsTerminate(stmt)) return shapeNo("tail-switch-falls-through", stmt);
     return true;
   }
@@ -7269,6 +7318,52 @@ function ambientStringToStringCall(expr: ts.CallExpression): ts.Expression | nul
   const arg = expr.arguments[0]!;
   if (ts.isSpreadElement(arg)) return null;
   return selectorSeesAmbientStringBinding(expr.expression) ? arg : null;
+}
+
+/**
+ * (#7106 S1b) `JSON.stringify(<arg>)` against the ambient namespace with
+ * exactly one non-spread argument, on a lane whose native JSON codec the IR
+ * may call (`native-json-codec`). Returns the argument, else null.
+ */
+function ambientJsonStringifyCall(expr: ts.CallExpression): ts.Expression | null {
+  const callee = expr.expression;
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    !ts.isIdentifier(callee.expression) ||
+    callee.expression.text !== "JSON" ||
+    callee.name.text !== "stringify" ||
+    expr.arguments.length !== 1
+  ) {
+    return null;
+  }
+  const arg = expr.arguments[0]!;
+  if (ts.isSpreadElement(arg)) return null;
+  if (!selectorSeesAmbientBinding(callee.expression)) return null;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-json-codec") !== true) return null;
+  return arg;
+}
+
+/**
+ * (#7106 S1b) `typeof <ambient global>` folds to a constant tag when the
+ * identifier is the UNSHADOWED ambient binding (`typeof JSON !== "undefined"`
+ * in assert.js). Shadowing is settled by the checker-backed ambient predicate
+ * and the module-binding resolver, never by name alone.
+ */
+function ambientTypeofTag(expr: ts.TypeOfExpression, scope: ReadonlySet<string>): "object" | "function" | undefined {
+  const operand = expr.expression;
+  return ts.isIdentifier(operand) ? ambientTypeofIdentifierTag(operand, scope) : undefined;
+}
+
+function ambientTypeofIdentifierTag(
+  operand: ts.Identifier,
+  scope: ReadonlySet<string>,
+): "object" | "function" | undefined {
+  if (scope.has(operand.text)) return undefined;
+  const tag = AMBIENT_TYPEOF_TAGS[operand.text];
+  if (tag === undefined) return undefined;
+  if (!selectorSeesAmbientBinding(operand)) return undefined;
+  if (currentModuleBindingResolver?.isDirectModuleBinding(operand) === true) return undefined;
+  return tag;
 }
 
 function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
@@ -9758,6 +9853,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return selectorPrimitiveWrapperOrGenericBinary(expr, binOp, scope, localClasses);
   }
   if (ts.isConditionalExpression(expr)) {
+    // (#7106 S1b) A constant `typeof <ambient>` condition: only the live arm
+    // is the expression (from-ast folds the same way and never lowers the
+    // dead arm).
+    const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTag(id, scope));
+    if (folded !== undefined) return isPhase1Expr(folded ? expr.whenTrue : expr.whenFalse, scope, localClasses);
     const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
     const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
     const truePrimitive = classifyPrimitive?.(expr.whenTrue);
@@ -10041,6 +10141,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
+      // (#7106 S1b) `JSON.stringify(v)`: one argument, native codec lanes only.
+      const jsonStringifyArg = scope.has("JSON") ? null : ambientJsonStringifyCall(expr);
+      if (jsonStringifyArg !== null) return isPhase1Expr(jsonStringifyArg, scope, localClasses);
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
       // here and accept it; the lowerer in from-ast.ts emits a plain unary
@@ -10405,6 +10508,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (expressionMayBeModuleExtern(expr.expression)) {
       return shapeNo("expr-module-extern-typeof", expr);
     }
+    if (ambientTypeofTag(expr, scope) !== undefined) return true;
     return isPhase1Expr(expr.expression, scope, localClasses);
   }
   // Slice 1 (#1169a): no-substitution template literals are equivalent to a
@@ -11243,6 +11347,12 @@ export function buildLocalCallGraph(
           // Walk into the receiver and args to catch real external calls
           // nested inside.
           //
+          // (#7106 S1b) `JSON.stringify(v)` is a lowering, not a call edge.
+          const jsonStringifyArg = ambientJsonStringifyCall(node);
+          if (jsonStringifyArg !== null) {
+            visit(jsonStringifyArg);
+            return;
+          }
           // (#1371) Special case: `Math.<whitelisted>(arg)` lowers to a
           // pure Wasm op (no host import), so we DO NOT walk into the
           // receiver — `Math` is a host global that the receiver-walk

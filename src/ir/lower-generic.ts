@@ -1858,6 +1858,25 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitToString()) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.json_stringify": {
+        // #7106 S1b — JSON.stringify over the boxed-any carrier via the native codec root.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(
+            `ir/lower: dyn.json_stringify operand must be dynamic, got ${valueIrType.kind} (${func.name})`,
+          );
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.json_stringify (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitJsonStringify()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.truthy": {
         // #2949 S5.1 — ToBoolean on a boxed-any carrier. The operand MUST be
         // dynamic (verifier enforces); the op sequence comes from the
@@ -3762,6 +3781,7 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.truthy":
     case "dyn.typeof":
     case "dyn.to_string":
+    case "dyn.json_stringify":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.eq":

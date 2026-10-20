@@ -804,6 +804,11 @@ const VERDICTS = {
     why: "ECMAScript ToString over every partition of a boxed-any carrier (§7.1.17), one ToString engine shared with legacy.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `ToString` (§7.1.17) over EVERY partition" }],
   },
+  "dyn.json_stringify": {
+    verdict: "js",
+    why: "ECMAScript JSON.stringify (§25.5.2) over a boxed-any carrier, through the native codec root shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "`JSON.stringify(value)` (§25.5.2, one argument" }],
+  },
   "iter.new": {
     verdict: "js",
     why: "GetIterator — the @@iterator protocol (§7.4.2).",

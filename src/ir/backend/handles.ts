@@ -336,6 +336,14 @@ export interface IrDynamicLowering {
    */
   emitToString(): readonly Instr[];
   /**
+   * (#7106 S1b) Carrier on the stack → the native string carrier holding
+   * `JSON.stringify(value)`, through the SAME native codec root legacy calls
+   * (`__json_stringify_root`, `anyref -> ref $AnyString`). Only on the lanes
+   * where the `native-json-codec` capability holds; throws elsewhere, which
+   * the selector's capability gate makes unreachable.
+   */
+  emitJsonStringify(): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

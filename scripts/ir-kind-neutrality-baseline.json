@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 88,
+    "total": 89,
     "neutral": 55,
-    "js": 30,
+    "js": 31,
     "unresolved": 3,
     "core": 58,
-    "dialect": 30,
+    "dialect": 31,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -180,6 +180,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynEq",
       "why": "ECMAScript abstract/strict equality over dynamically-tagged values (§7.2.13/§7.2.15).",
       "evidence": ["src/ir/core/dialect/js.ts#2b4f27412292"]
+    },
+    "dyn.json_stringify": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynJsonStringify",
+      "why": "ECMAScript JSON.stringify (§25.5.2) over a boxed-any carrier, through the native codec root shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#00a3087bf1d1"]
     },
     "dyn.member_get": {
       "verdict": "js",

@@ -177,6 +177,20 @@ export interface IrInstrDynToString extends IrInstrBase {
 }
 
 /**
+ * `dyn.json_stringify{value}` — `JSON.stringify(value)` (§25.5.2, one argument,
+ * no replacer, no space) over a boxed-any carrier (#7106 S1b). `value` MUST be
+ * `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`. Lowering
+ * routes to the SAME native codec root legacy's one-argument
+ * `JSON.stringify(anyVar)` calls (`__json_stringify_root`), so the two
+ * frontends serialise identically, substrate limitations included. Admitted
+ * only where the `native-json-codec` backend capability holds.
+ */
+export interface IrInstrDynJsonStringify extends IrInstrBase {
+  readonly kind: "dyn.json_stringify";
+  readonly value: IrValueId;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

@@ -122,6 +122,7 @@ import {
 import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
+import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import {
   collectOuterWrites,
   collectTransitiveClosureCaptures,
@@ -5163,7 +5164,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return lowerBinary(expr, cx, hint);
   }
   if (ts.isConditionalExpression(expr)) {
-    return lowerConditional(expr, cx);
+    return lowerConditional(expr, cx, hint);
   }
   if (ts.isCallExpression(expr)) {
     const hostDateGetter = lowerHostDateGetterCall(expr, cx);
@@ -5914,6 +5915,12 @@ function lowerExactDynamicPrimitiveTypeof(
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
+  // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag — the
+  // same proof the selector's `ambientTypeofTag` demanded.
+  if (ts.isIdentifier(expr.expression)) {
+    const ambientTag = ambientTypeofIdentifierTagFromAst(expr.expression, cx);
+    if (ambientTag !== undefined) return cx.builder.emitStringConst(ambientTag);
+  }
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
@@ -9238,6 +9245,31 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   );
   if (consoleResult !== undefined) return consoleResult;
 
+  // (#7106 S1b) One-argument `JSON.stringify(v)` on the ambient namespace:
+  // the operand is boxed into the dynamic carrier (a primitive) or already is
+  // one, then serialised through the native codec root legacy calls.
+  if (
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "JSON" &&
+    methodName === "stringify" &&
+    expr.arguments.length === 1 &&
+    !ts.isSpreadElement(expr.arguments[0]!) &&
+    !receiverIsDirectModuleBinding &&
+    cx.scope.get("JSON") === undefined &&
+    cx.resolver?.isAmbientBinding?.(expr.expression.expression) !== false
+  ) {
+    const argument = expr.arguments[0]!;
+    const raw = lowerExpr(argument, cx, irDynamic());
+    const rawType = cx.builder.typeOf(raw);
+    if (rawType.kind === "dynamic") return cx.builder.emitDynJsonStringify(raw);
+    if (rawType.kind === "string" || irTypeIsBoolean(rawType) || asVal(rawType)?.kind === "f64") {
+      return cx.builder.emitDynJsonStringify(cx.builder.emitBox(raw, irDynamic()));
+    }
+    demoteToLegacy(
+      "method-call-unsupported",
+      `ir/from-ast: JSON.stringify of ${describeIrType(rawType)} operand is deferred (${cx.funcName})`,
+    );
+  }
   // Exact-arity Math builtins become semantic intrinsics before receiver
   // lowering because the ambient `Math` global has no IR value binding.
   // Recheck the selector proof here so divergence fails with a clear error.
@@ -13694,9 +13726,25 @@ function boxMixedConditionalArm(
   return boxed;
 }
 
-function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
+/** (#7106 S1b) from-ast's half of the `typeof <ambient>` fold proof (see `lowerTypeOf`). */
+function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "object" | "function" | undefined {
+  if (cx.scope.get(id.text) !== undefined) return undefined;
+  const tag = AMBIENT_TYPEOF_TAGS[id.text];
+  if (tag === undefined) return undefined;
+  if (cx.resolver?.isAmbientBinding?.(id) !== true) return undefined;
+  if (cx.resolver?.isDirectModuleBinding?.(id) === true) return undefined;
+  return tag;
+}
+
+function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
+  // (#7106 S1b) A constant `typeof <ambient>` condition selects its live arm
+  // at build time — the selector admitted exactly that arm.
+  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  if (folded !== undefined) {
+    return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
+  }
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {

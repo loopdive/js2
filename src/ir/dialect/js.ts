@@ -45,6 +45,7 @@ export type {
   IrInstrDynUndefined,
   IrInstrDynTypeof,
   IrInstrDynToString,
+  IrInstrDynJsonStringify,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

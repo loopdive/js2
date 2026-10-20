@@ -130,6 +130,7 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
     case "dyn.truthy":
     case "dyn.typeof":
     case "dyn.to_string":
+    case "dyn.json_stringify":
     case "dyn.to_number":
       return { ...instr, value: resolve(instr.value) };
     case "dyn.eq":

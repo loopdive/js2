@@ -98,6 +98,94 @@ describe("#7106 S1 — String(<dynamic>) through dyn.to_string", () => {
     expect(await call(result.binary, "ok")).toBe(7);
   });
 
+  it("S1b: JSON.stringify(<dynamic>) and the typeof-ambient fold (the assert.js formatter)", async () => {
+    const result = await compileStandalone(
+      `
+        function isNegativeZero(v: any): boolean { return v === 0 && 1 / v === -Infinity; }
+        function fmt(value: any): string {
+          switch (value === null ? "null" : typeof value) {
+            case "string":
+              return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
+            case "number":
+              if (isNegativeZero(value)) return "-0";
+            case "boolean":
+            case "undefined":
+            case "null":
+              return String(value);
+          }
+          return "?";
+        }
+        export function ok(): number {
+          let n = 0;
+          if (fmt("a") === '"a"') n += 1;
+          if (fmt(7) === "7") n += 2;
+          if (fmt(false) === "false") n += 4;
+          if (fmt(-0) === "-0") n += 8;
+          if (typeof JSON !== "undefined") n += 16;
+          if (typeof Object === "function") n += 32;
+          return n;
+        }
+      `,
+      "issue-7106-s1b-formatter.ts",
+    );
+    expect(result.irCompiledFuncs ?? [], JSON.stringify(result.irOutcomes, null, 2)).toContain("fmt");
+    expect(result.irCompiledFuncs ?? []).toContain("isNegativeZero");
+    expect(await call(result.binary, "ok")).toBe(63);
+  });
+
+  it("S1b: the verbatim assert.js formatIdentityFreeValue (falls out → undefined) ships an IR body", async () => {
+    const result = await compileStandalone(
+      `
+        function isNegativeZero(v: any) { return v === 0 && 1 / v === -Infinity; }
+        function formatIdentityFreeValue(value: any) {
+          switch (value === null ? 'null' : typeof value) {
+            case 'string':
+              return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
+            case 'bigint':
+              return String(value) + "n";
+            case 'number':
+              if (isNegativeZero(value)) return '-0';
+              // falls through
+            case 'boolean':
+            case 'undefined':
+            case 'null':
+              return String(value);
+          }
+        }
+        function probe(v: any): number {
+          var basic = formatIdentityFreeValue(v);
+          if (basic) return 1;
+          return 0;
+        }
+        export function ok(): number {
+          let n = 0;
+          if (probe("a") === 1) n += 1;
+          if (probe(7) === 1) n += 2;
+          if (probe(false) === 1) n += 4;
+          return n;
+        }
+      `,
+      "issue-7106-s1b-verbatim.ts",
+    );
+    expect(result.irCompiledFuncs ?? [], JSON.stringify(result.irOutcomes, null, 2)).toContain(
+      "formatIdentityFreeValue",
+    );
+    expect(await call(result.binary, "ok")).toBe(7);
+  });
+
+  it("S1b: a shadowing JSON parameter is not the ambient namespace and does not fold", async () => {
+    // Folding `typeof JSON` here would read "object" and take the wrong arm.
+    const result = await compileStandalone(
+      `
+        function j(JSON: any): string { return typeof JSON === "number" ? "num" : "other"; }
+        export function ok(): number { return j(5) === "num" && j("s") === "other" ? 1 : 0; }
+      `,
+      "issue-7106-s1b-shadow.ts",
+    );
+    expect(result.irCompiledFuncs ?? []).toContain("j");
+    expect(await call(result.binary, "ok")).toBe(1);
+  });
+
   it("a user-declared String binding is not the ambient constructor", async () => {
     const result = await compile(
       `

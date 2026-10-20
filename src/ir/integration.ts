@@ -92,6 +92,7 @@ import {
   TYPED_ARRAY_NAMES,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
   ensureIrNativeMapAdapters,
@@ -8879,6 +8880,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.typeof") return true;
   // #7106 S1 — dyn.to_string consumes the carrier and calls `__extern_toString`.
   if (instr.kind === "dyn.to_string") return true;
+  if (instr.kind === "dyn.json_stringify") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9105,6 +9107,8 @@ function preregisterDynamicSupport(
   // or on native lanes the function `ensureObjectRuntime` registers — either
   // way reserved BEFORE Phase 3 bakes funcIdxs.
   let usesDynToString = false;
+  // (#7106 S1b) `dyn.json_stringify` calls the native codec root.
+  let usesDynJsonStringify = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9114,6 +9118,7 @@ function preregisterDynamicSupport(
           if (isDynamicOp(i)) usesDynamicOps = true;
           if (i.kind === "dyn.undefined") usesDynUndefined = true;
           if (i.kind === "dyn.to_string") usesDynToString = true;
+          if (i.kind === "dyn.json_stringify") usesDynJsonStringify = true;
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9262,6 +9267,13 @@ function preregisterDynamicSupport(
     ensureObjectRuntime(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
+  }
+  if (usesDynJsonStringify && ctx.nativeStrings && !ctx.fast) {
+    // The native codec (`__json_stringify_value` + its 1-arg root) is a DEFINED
+    // function family; register it now so no Phase-3 body drives a late shift.
+    emitJsonStringifyValue(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, "__json_stringify_root");
   }
   if (usesDynToString && !ctx.fast) {
     if (ctx.nativeStrings) {
@@ -9486,6 +9498,11 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         // as `emitTypeof` — the selector keeps `String(<dynamic>)` off this strategy.
         throw new Error("ir/integration: dyn.to_string is not lowerable on the fast $AnyValue carrier (#7106)");
       },
+      emitJsonStringify(): readonly Instr[] {
+        throw new Error(
+          "ir/integration: dyn.json_stringify is not lowerable on the fast $AnyValue carrier (#7106 S1b)",
+        );
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9627,6 +9644,15 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
           ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr]
           : []),
       ];
+    },
+    emitJsonStringify(): readonly Instr[] {
+      // (#7106 S1b) Exactly legacy's one-argument `JSON.stringify(anyVar)`:
+      // the externref carrier → `any.convert_extern` → the native codec root,
+      // whose `(ref $AnyString)` result IS the native string carrier.
+      if (!ctx.nativeStrings) {
+        throw new Error("ir/integration: dyn.json_stringify needs the native JSON codec (native strings) (#7106 S1b)");
+      }
+      return [{ op: "any.convert_extern" } as Instr, callImport("__json_stringify_root")];
     },
     emitUndefined(): readonly Instr[] {
       // (#7104) Exactly legacy's `emitUndefined` on the externref carrier:
