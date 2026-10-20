@@ -3,36 +3,44 @@
   "compilerPathVerified": false,
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
-  "timestamp": "2026-10-20T06:14:40.704Z",
-  "baseline_generated_at": "2026-10-20T06:14:40.704Z",
-  "baseline_sha": "5474988b733dfbfdcf4a267e6162c9ed4eda4923",
+  "measurementState": "measured",
+  "attemptedCases": 57703,
+  "completedCases": 48735,
+  "skippedCases": 114,
+  "compileErrorCases": 1393,
+  "compileTimeoutCases": 27,
+  "verifiedExecutionCases": 0,
+  "unverifiedExecutionCases": 48621,
+  "timestamp": "2026-10-20T07:41:17.067Z",
+  "baseline_generated_at": "2026-10-20T07:41:17.067Z",
+  "baseline_sha": "d81540db1ddc59965b4a3cf9167e30971373e613",
   "oracle_version": 15,
   "mode": {
     "target": "standalone",
     "semantic_providers": "auto",
-    "include_proposals": 1,
-    "label": "official test262 + proposals"
+    "include_proposals": 0,
+    "label": "official test262 (default scope)"
   },
   "summary": {
     "total": 48232,
-    "pass": 42453,
-    "fail": 4494,
-    "compile_error": 1243,
-    "compile_timeout": 24,
+    "pass": 42452,
+    "fail": 4497,
+    "compile_error": 1238,
+    "compile_timeout": 27,
     "skip": 18,
-    "compilable": 46947,
-    "host_free_pass": 42453,
+    "compilable": 46949,
+    "host_free_pass": 42452,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
-        "pass": 41410,
-        "fail": 4465,
-        "compile_error": 1229,
-        "compile_timeout": 24,
+        "pass": 41409,
+        "fail": 4468,
+        "compile_error": 1224,
+        "compile_timeout": 27,
         "skip": 18,
-        "compilable": 45875,
-        "host_free_pass": 41410,
+        "compilable": 45877,
+        "host_free_pass": 41409,
         "stale": 0,
         "label": "ECMAScript current standard"
       },
@@ -62,25 +70,25 @@
       },
       "official": {
         "total": 48232,
-        "pass": 42453,
-        "fail": 4494,
-        "compile_error": 1243,
-        "compile_timeout": 24,
+        "pass": 42452,
+        "fail": 4497,
+        "compile_error": 1238,
+        "compile_timeout": 27,
         "skip": 18,
-        "compilable": 46947,
-        "host_free_pass": 42453,
+        "compilable": 46949,
+        "host_free_pass": 42452,
         "stale": 0,
         "label": "standard + annex_b (default)"
       },
       "full": {
         "total": 48735,
-        "pass": 42689,
-        "fail": 4510,
-        "compile_error": 1398,
-        "compile_timeout": 24,
+        "pass": 42688,
+        "fail": 4513,
+        "compile_error": 1393,
+        "compile_timeout": 27,
         "skip": 114,
-        "compilable": 47199,
-        "host_free_pass": 42689,
+        "compilable": 47201,
+        "host_free_pass": 42688,
         "stale": 0,
         "label": "standard + annex_b + proposals"
       }
@@ -88,35 +96,35 @@
   },
   "official_summary": {
     "total": 48232,
-    "pass": 42453,
-    "fail": 4494,
-    "compile_error": 1243,
-    "compile_timeout": 24,
+    "pass": 42452,
+    "fail": 4497,
+    "compile_error": 1238,
+    "compile_timeout": 27,
     "skip": 18,
-    "compilable": 46947,
-    "host_free_pass": 42453,
+    "compilable": 46949,
+    "host_free_pass": 42452,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
-    "pass": 42689,
-    "fail": 4510,
-    "compile_error": 1398,
-    "compile_timeout": 24,
+    "pass": 42688,
+    "fail": 4513,
+    "compile_error": 1393,
+    "compile_timeout": 27,
     "skip": 114,
-    "compilable": 47199,
-    "host_free_pass": 42689,
+    "compilable": 47201,
+    "host_free_pass": 42688,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
-    "pass": 40082,
-    "fail": 4401,
-    "compile_error": 1196,
-    "compile_timeout": 24,
+    "pass": 40081,
+    "fail": 4404,
+    "compile_error": 1191,
+    "compile_timeout": 27,
     "skip": 18,
-    "compilable": 44483,
-    "host_free_pass": 40082,
+    "compilable": 44485,
+    "host_free_pass": 40081,
     "stale": 0
   },
   "scope_summaries": {
@@ -144,13 +152,13 @@
     },
     "standard": {
       "total": 47146,
-      "pass": 41410,
-      "fail": 4465,
-      "compile_error": 1229,
-      "compile_timeout": 24,
+      "pass": 41409,
+      "fail": 4468,
+      "compile_error": 1224,
+      "compile_timeout": 27,
       "skip": 18,
-      "compilable": 45875,
-      "host_free_pass": 41410,
+      "compilable": 45877,
+      "host_free_pass": 41409,
       "stale": 0
     }
   },
@@ -204,8 +212,8 @@
       "path": "built-ins/Array",
       "pass": 2454,
       "fail": 536,
-      "compile_error": 90,
-      "compile_timeout": 2,
+      "compile_error": 88,
+      "compile_timeout": 4,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2454
@@ -643,8 +651,8 @@
       "name": "built-ins/Promise",
       "path": "built-ins/Promise",
       "pass": 553,
-      "fail": 130,
-      "compile_error": 46,
+      "fail": 133,
+      "compile_error": 43,
       "compile_timeout": 0,
       "skip": 0,
       "total": 729,
@@ -785,13 +793,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4480,
+      "pass": 4479,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 22,
+      "compile_timeout": 23,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4480
+      "host_free_pass": 4479
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -1209,9 +1217,9 @@
     "negative_test_fail": 4,
     "null_deref": 3,
     "oob": 7,
-    "other": 1170,
+    "other": 1168,
     "promise_error": 56,
-    "range_error": 30,
+    "range_error": 29,
     "runtime_error": 335,
     "syntax_error": 14,
     "type_error": 621,
@@ -1225,9 +1233,9 @@
   },
   "root_cause_map": {
     "target": "standalone",
-    "total_non_pass_non_skip": 5932,
-    "classified": 5932,
-    "unclassified_threshold": 0,
+    "total_non_pass_non_skip": 5933,
+    "classified": 5933,
+    "unclassified_threshold": null,
     "has_edition_breakdown": true,
     "buckets": [
       {
@@ -1276,14 +1284,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 123,
+        "count": 124,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 22,
+          "compile_timeout": 23,
           "skip": 0,
-          "total": 123,
+          "total": 124,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1294,7 +1302,7 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 123
+          "ES2026": 124
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
@@ -1385,15 +1393,15 @@
           "test/language/expressions/dynamic-import/namespace/promise-then-ns-has-property-str-found-init.js",
           "test/language/expressions/dynamic-import/import-attributes/2nd-param-yield-expr.js",
           "test/language/module-code/top-level-await/dynamic-import-resolution.js",
-          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js",
-          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js"
+          "test/language/expressions/dynamic-import/catch/nested-arrow-import-catch-specifier-tostring-abrupt-rejects.js",
+          "test/language/expressions/dynamic-import/import-attributes/2nd-param-with-undefined.js"
         ],
         "sample_signatures": [
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-code_FIXTURE.js' in the standalone module graph",
           "host_import_leak:standalone target emitted host imports: env::__create_generator, env::__gen_create_buffer, env::__gen_next, env::__gen_push_ref, env::__gen_result_done, env::__gen_result_value, env::__gen_return, env::__gen_throw (##)",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: Cannot find module './module-import-resolution_FIXTURE.js' in the standalone module graph",
-          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph",
-          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true"
+          "runtime_error:Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: import() failed: a non-literal specifier cannot be resolved in the standalone module graph», «\"custom error\"») to be true",
+          "other:Test262:AsyncTestFailure:Test262Error: TypeError: import() failed: import options are not supported by the standalone module graph"
         ]
       },
       {
@@ -1963,8 +1971,8 @@
         "statuses": {
           "pass": 0,
           "fail": 1107,
-          "compile_error": 77,
-          "compile_timeout": 2,
+          "compile_error": 75,
+          "compile_timeout": 4,
           "skip": 0,
           "total": 1186,
           "host_free_pass": 0
@@ -1974,7 +1982,7 @@
           "illegal_cast": 171,
           "host_import_leak": 65,
           "type_error": 87,
-          "other": 17,
+          "other": 15,
           "oob": 5,
           "promise_error": 2,
           "range_error": 2,
@@ -2508,7 +2516,6 @@
           "other": 106,
           "runtime_error": 4,
           "host_import_leak": 1,
-          "range_error": 1,
           "negative_test_fail": 1,
           "wasm_compile": 1
         },
@@ -2685,8 +2692,8 @@
         "count": 182,
         "statuses": {
           "pass": 0,
-          "fail": 115,
-          "compile_error": 67,
+          "fail": 118,
+          "compile_error": 64,
           "compile_timeout": 0,
           "skip": 0,
           "total": 182,
