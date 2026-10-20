@@ -1,0 +1,235 @@
+{
+  "schema": 1,
+  "kind": "native-number-undefined-optimization-policy-successor",
+  "before": {
+    "source": {
+      "bytes": 637204,
+      "sha256": "f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88",
+      "gitBlob": "70cc261bdce82ee1437e9beb571677069c49a0e4"
+    },
+    "count": 2016,
+    "data": "e56493e2ba1670320248acc370b04c48e19ed82d651985e91c23349b8d0b58f0",
+    "files": "e2ab5e0103848e548c08aa4ab20af8df745205d8588d503adb87d502ced67a0c",
+    "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+  },
+  "current": {
+    "source": {
+      "bytes": 638010,
+      "sha256": "c147c9a37950d784905920d5a226584b1ed8e823246964f89791d4e8f2769f8f",
+      "gitBlob": "54507344864a2a5689cee487d939b2b1b744b981"
+    },
+    "count": 2018,
+    "data": "f0294d7feb674268aa21e35f2bd75303d4964ecd8b83d2b9c88cc7226193bcf0",
+    "files": "fb82fdc26872841c6770c63c649dd16a7d2c28913c0312b44bd5cc9f0f80ae20",
+    "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+  },
+  "inserted": [
+    {
+      "index": 2016,
+      "row": {
+        "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+      }
+    },
+    {
+      "index": 2017,
+      "row": {
+        "path": "src/wasm/physical/native-number-undefined-binary.ts",
+        "state": "clean",
+        "layer": "wasm-physical"
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-native-number-undefined-source-successor.ts",
+      "bytes": 6768,
+      "sha256": "f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122",
+      "gitBlob": "e48e4c20e3cad8c1ea3767792f154111edc3662e"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-source-successor.json",
+      "bytes": 32537,
+      "sha256": "660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750",
+      "gitBlob": "9f2fe0044fc5a5e0254ba77da8c2ff1f76acd9e9"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-inventory-successor.ts",
+      "bytes": 30399,
+      "sha256": "52d31a9c7fd7ce39e0cc66c6c17ac0d52c62bdba5021eabb11878c621179233d",
+      "gitBlob": "94e07d85645514c7ae7d674aa86a44089c3370e8"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-inventory-successor.json",
+      "bytes": 21476,
+      "sha256": "def88ffa87ea3fc238d83127d79eb540668f83bee12a424547a9d140720f1e5c",
+      "gitBlob": "d6f2750367b1b4f6a59c7627bd0f0859ee63c609"
+    }
+  ],
+  "callers": [
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "bytes": 24382,
+      "sha256": "9f96fe707dc956d4150e730cdab2407506326eaa02ee64cef6d40402849014d0",
+      "gitBlob": "7eb2261ef05c3a45f5c918d96fe049ab71aadfba"
+    },
+    {
+      "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+      "bytes": 27959,
+      "sha256": "f9055ab6ea02f1b7a9723d13f2eca03b831e65dd794f135f5935eb6b2fb766a2",
+      "gitBlob": "3de673b3d0cadfeb2b8a7b829471e1ea67d1c212"
+    },
+    {
+      "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+      "bytes": 360647,
+      "sha256": "d776170cb1ba69e74aeab25d41d73095bf7dab5dd14a4fc530b9a0cc023bb924",
+      "gitBlob": "685d904d277fe196f349479a1b96b923f8b47fa8"
+    }
+  ],
+  "transforms": [
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "before": {
+        "bytes": 637204,
+        "sha256": "f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88",
+        "gitBlob": "70cc261bdce82ee1437e9beb571677069c49a0e4"
+      },
+      "current": {
+        "bytes": 638010,
+        "sha256": "c147c9a37950d784905920d5a226584b1ed8e823246964f89791d4e8f2769f8f",
+        "gitBlob": "54507344864a2a5689cee487d939b2b1b744b981"
+      },
+      "edits": [
+        {
+          "beforeStart": 637197,
+          "beforeEnd": 637197,
+          "beforeText": "",
+          "currentStart": 637197,
+          "currentEnd": 638003,
+          "currentText": ",\n    {\n      \"path\": \"src/compiler/ir-native-number-undefined-optimization.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows.\"\n    },\n    {\n      \"path\": \"src/wasm/physical/native-number-undefined-binary.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"wasm-physical\"\n    }"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "before": {
+        "bytes": 24019,
+        "sha256": "ab9600075c70d54c094887c2d06cf4b93b5b65a32bc422c04d4a26b51a7ea095",
+        "gitBlob": "13ceaad4b9fe3bc86fa3bf0b32a793f445900d53"
+      },
+      "current": {
+        "bytes": 24382,
+        "sha256": "9f96fe707dc956d4150e730cdab2407506326eaa02ee64cef6d40402849014d0",
+        "gitBlob": "7eb2261ef05c3a45f5c918d96fe049ab71aadfba"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "beforeText": "",
+          "currentStart": 0,
+          "currentEnd": 143,
+          "currentText": "import { createIrNativeNumberUndefinedOptimizationPolicyReader } from \"./helpers/ir-native-number-undefined-optimization-policy-successor.js\";\n"
+        },
+        {
+          "beforeStart": 1721,
+          "beforeEnd": 1822,
+          "beforeText": "const disk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\n",
+          "currentStart": 1864,
+          "currentEnd": 2083,
+          "currentText": "const actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\nconst disk = (path: string): string => createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk)(path);\n"
+        },
+        {
+          "beforeStart": 2318,
+          "beforeEnd": 2415,
+          "beforeText": "const snapshot = (): Map<string, string> => new Map(required.map((path) => [path, disk(path)]));\n",
+          "currentStart": 2579,
+          "currentEnd": 2778,
+          "currentText": "const snapshot = (): Map<string, string> => {\n  const current = createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk);\n  return new Map(required.map((path) => [path, current(path)]));\n};\n"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+      "before": {
+        "bytes": 27091,
+        "sha256": "235e885680e334b9bc194d88059766930f0ce88688cf8ddffbffa6be0af29163",
+        "gitBlob": "b9e0988aa71f172d6a5059f2ef9dbb0c924baf61"
+      },
+      "current": {
+        "bytes": 27959,
+        "sha256": "f9055ab6ea02f1b7a9723d13f2eca03b831e65dd794f135f5935eb6b2fb766a2",
+        "gitBlob": "3de673b3d0cadfeb2b8a7b829471e1ea67d1c212"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "beforeText": "",
+          "currentStart": 0,
+          "currentEnd": 207,
+          "currentText": "import {\n  createIrNativeNumberUndefinedOptimizationPolicyReader,\n  createLazyIrNativeNumberUndefinedOptimizationPolicyReader,\n} from \"./helpers/ir-native-number-undefined-optimization-policy-successor.js\";\n"
+        },
+        {
+          "beforeStart": 443,
+          "beforeEnd": 660,
+          "beforeText": "  createIrNativeNumberUndefinedInventoryReader as createReader,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicy as beforeData,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicySource as beforeRaw,\n",
+          "currentStart": 650,
+          "currentEnd": 891,
+          "currentText": "  createIrNativeNumberUndefinedInventoryReader as originalCreateReader,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicy as originalBeforeData,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicySource as originalBeforeRaw,\n"
+        },
+        {
+          "beforeStart": 14775,
+          "beforeEnd": 14857,
+          "beforeText": "const disk = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\n",
+          "currentStart": 15006,
+          "currentEnd": 15719,
+          "currentText": "const actualDisk = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\nconst disk = (path: string): string => createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk)(path);\ntype Reader = (path: string) => string;\nconst defaultInput = (supplied: Reader | undefined): Reader =>\n  supplied === undefined ? createLazyIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk) : supplied;\nconst createReader = (supplied?: Reader) => originalCreateReader(defaultInput(supplied));\nconst beforeData = (value: unknown, supplied?: Reader) => originalBeforeData(value, defaultInput(supplied));\nconst beforeRaw = (raw: string, supplied?: Reader) => originalBeforeRaw(raw, defaultInput(supplied));\n"
+        },
+        {
+          "beforeStart": 21786,
+          "beforeEnd": 21817,
+          "beforeText": "        original = disk(path);\n",
+          "currentStart": 22648,
+          "currentEnd": 22685,
+          "currentText": "        original = actualDisk(path);\n"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+      "before": {
+        "bytes": 360428,
+        "sha256": "529e1d9d98cf7a97c0418350547beae8c9d598ca98dc93cc786d14abeeb23e28",
+        "gitBlob": "dee50f79c3770585d18c7323024fc48be9a5597a"
+      },
+      "current": {
+        "bytes": 360647,
+        "sha256": "d776170cb1ba69e74aeab25d41d73095bf7dab5dd14a4fc530b9a0cc023bb924",
+        "gitBlob": "685d904d277fe196f349479a1b96b923f8b47fa8"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "beforeText": "",
+          "currentStart": 0,
+          "currentEnd": 143,
+          "currentText": "import { createIrNativeNumberUndefinedOptimizationPolicyReader } from \"./helpers/ir-native-number-undefined-optimization-policy-successor.js\";\n"
+        },
+        {
+          "beforeStart": 296053,
+          "beforeEnd": 296174,
+          "beforeText": "  createIrNativeNumberUndefinedInventoryReader((currentPath) => readFileSync(resolve(root, currentPath), \"utf8\"))(path);\n",
+          "currentStart": 296196,
+          "currentEnd": 296393,
+          "currentText": "  createIrNativeNumberUndefinedInventoryReader(\n    createIrNativeNumberUndefinedOptimizationPolicyReader((currentPath) =>\n      readFileSync(resolve(root, currentPath), \"utf8\"),\n    ),\n  )(path);\n"
+        }
+      ]
+    }
+  ]
+}

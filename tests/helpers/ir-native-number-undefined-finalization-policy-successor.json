@@ -295,5 +295,891 @@
         }
       ]
     }
-  ]
+  ],
+  "successor": {
+    "base": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+    "head": "3e16e53585",
+    "transforms": [
+      {
+        "path": "scripts/compiler-boundaries.json",
+        "mode": "epoch",
+        "before": {
+          "bytes": 639290,
+          "sha256": "d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985",
+          "gitBlob": "8f367782333e8ef6c7f6d27d2afb52f0f35ff9ac"
+        },
+        "current": {
+          "bytes": 654000,
+          "sha256": "f51cecdf06959e0ec5d86a514fd2b249115f8adcb28fc1bf82c1bf09f7b1878b",
+          "gitBlob": "192e6a95fd54caa909c008f227547ed1132976ee"
+        },
+        "edits": [
+          {
+            "beforeStart": 105946,
+            "beforeEnd": 105946,
+            "beforeText": "",
+            "currentStart": 105946,
+            "currentEnd": 106278,
+            "currentText": "    {\n      \"path\": \"src/codegen/object-model/anon-expando-bag-slot.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 162590,
+            "beforeEnd": 162590,
+            "beforeText": "",
+            "currentStart": 162922,
+            "currentEnd": 163246,
+            "currentText": "    {\n      \"path\": \"src/codegen/closures/outer-write-index.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 165889,
+            "beforeEnd": 165889,
+            "beforeText": "",
+            "currentStart": 166545,
+            "currentEnd": 166872,
+            "currentText": "    {\n      \"path\": \"src/codegen/closures/module-scope-binding.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 179951,
+            "beforeEnd": 179951,
+            "beforeText": "",
+            "currentStart": 180934,
+            "currentEnd": 181263,
+            "currentText": "    {\n      \"path\": \"src/codegen/declarations/cjs-module-exports.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 256978,
+            "beforeEnd": 256978,
+            "beforeText": "",
+            "currentStart": 258290,
+            "currentEnd": 259580,
+            "currentText": "    {\n      \"path\": \"src/codegen/helpers/host-date-parse.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/host-regexp-search.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/host-intl-classes.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/host-intl-locale.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 302209,
+            "beforeEnd": 302209,
+            "beforeText": "",
+            "currentStart": 304811,
+            "currentEnd": 305134,
+            "currentText": "    {\n      \"path\": \"src/codegen/array/tuple-array-carrier.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 339608,
+            "beforeEnd": 339608,
+            "beforeText": "",
+            "currentStart": 342533,
+            "currentEnd": 343246,
+            "currentText": "    {\n      \"path\": \"src/codegen/promise/receiver-capability.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate the AST receiver classification and argument compilation from the NewPromiseCapability / Promise.try instruction sequences.\"\n    },\n    {\n      \"path\": \"src/codegen/promise/with-resolvers.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate the call-site routing from the context-owned registration of the native withResolvers runtime function.\"\n    },\n"
+          },
+          {
+            "beforeStart": 347506,
+            "beforeEnd": 347506,
+            "beforeText": "",
+            "currentStart": 351144,
+            "currentEnd": 351472,
+            "currentText": "    {\n      \"path\": \"src/codegen/object-model/struct-proto-link.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 395153,
+            "beforeEnd": 395153,
+            "beforeText": "",
+            "currentStart": 399119,
+            "currentEnd": 399503,
+            "currentText": "    {\n      \"path\": \"src/codegen/object-model/object-spread-extern-source.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure AST + function-local slot predicate for the object-literal spread lowering (#7051); move with the object-literal struct assembly.\"\n    },\n"
+          },
+          {
+            "beforeStart": 400586,
+            "beforeEnd": 400586,
+            "beforeText": "",
+            "currentStart": 404936,
+            "currentEnd": 405910,
+            "currentText": "    {\n      \"path\": \"src/codegen/atomics/atomics-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/buffers/shared-array-buffer.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/buffers/shared-array-buffer-mop.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 402814,
+            "beforeEnd": 402814,
+            "beforeText": "",
+            "currentStart": 408138,
+            "currentEnd": 410387,
+            "currentText": "    {\n      \"path\": \"src/codegen/temporal/native-arith.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/temporal/native-format.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/temporal/native-helpers.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/temporal/native-parse-duration.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/temporal/native-parse-iso.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/temporal/native-parse-kit.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/temporal/wasm-kit.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 426257,
+            "beforeEnd": 426257,
+            "beforeText": "",
+            "currentStart": 433830,
+            "currentEnd": 434489,
+            "currentText": "    {\n      \"path\": \"src/codegen/object-model/closed-dispatch-rest-arm.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/array/ta-int-elem-coercion.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 531092,
+            "beforeEnd": 531092,
+            "beforeText": "",
+            "currentStart": 539324,
+            "currentEnd": 539462,
+            "currentText": "    {\n      \"path\": \"src/runtime/wasmgc/promise/with-resolvers-bodies.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n"
+          },
+          {
+            "beforeStart": 563889,
+            "beforeEnd": 563889,
+            "beforeText": "",
+            "currentStart": 572259,
+            "currentEnd": 572598,
+            "currentText": "    {\n      \"path\": \"src/codegen/declarations/string-replacement-callbacks.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 586209,
+            "beforeEnd": 586209,
+            "beforeText": "",
+            "currentStart": 594918,
+            "currentEnd": 595294,
+            "currentText": "    {\n      \"path\": \"src/runtime/platform-arg-marshal.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n    {\n      \"path\": \"src/runtime/regexp-host-accelerator.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n    {\n      \"path\": \"src/runtime/intl-host-accelerator.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n"
+          },
+          {
+            "beforeStart": 587539,
+            "beforeEnd": 587539,
+            "beforeText": "",
+            "currentStart": 596624,
+            "currentEnd": 596946,
+            "currentText": "    {\n      \"path\": \"src/codegen/analysis/async-loop-head.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 597700,
+            "beforeEnd": 597700,
+            "beforeText": "",
+            "currentStart": 607107,
+            "currentEnd": 609088,
+            "currentText": "    {\n      \"path\": \"src/codegen/array/array-shift-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/classes/runtime-proto-install-demand.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/callable-result-unbox.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/disposable-any-receiver-two-arm.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/element-compound-any-add.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/base64-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
+          },
+          {
+            "beforeStart": 639278,
+            "beforeEnd": 639278,
+            "beforeText": "",
+            "currentStart": 650666,
+            "currentEnd": 653988,
+            "currentText": "    },\n    {\n      \"path\": \"src/codegen/helpers/return-tail-funnel.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/classes/class-symbol-to-primitive-operand.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/loose-eq-object-identity.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/anyvalue-to-number.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/import-meta-url-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/runtime/native-microtask-checkpoint.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n    {\n      \"path\": \"src/ir/class-overrides.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary.\"\n    },\n    {\n      \"path\": \"src/ir/closure-signature-flow.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST callable-slot flow scan feeding the IR selector (#7003); retire with an arity-adapting IR closure call or move behind the frontend-ts boundary.\"\n    },\n    {\n      \"path\": \"src/ir/const-binding-writes.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST write-to-const scan feeding the IR lowerer's legacy demotion (#7014 wave 15); move behind the frontend-ts boundary with the mutation pre-pass.\"\n    },\n    {\n      \"path\": \"src/ir/logical-assignment-name-targets.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass.\"\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-number-undefined-source-successor.ts",
+        "mode": "live",
+        "before": {
+          "bytes": 6768,
+          "sha256": "f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122",
+          "gitBlob": "e48e4c20e3cad8c1ea3767792f154111edc3662e"
+        },
+        "current": {
+          "bytes": 9641,
+          "sha256": "ab6d9b38ebfc31b525540361f4694caa953d4ac6a0c54f0ac60aa7d17af2c7d5",
+          "gitBlob": "41d62b241275b31643e0b8729b1cd643f395443f"
+        },
+        "edits": [
+          {
+            "beforeStart": 792,
+            "beforeEnd": 792,
+            "beforeText": "",
+            "currentStart": 792,
+            "currentEnd": 1152,
+            "currentText": "interface SuccessorTransform extends Transform {\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\n  readonly mode: \"epoch\" | \"live\";\n}\ninterface SuccessorEpoch {\n  readonly base: string;\n  readonly head: string;\n  readonly transforms: readonly SuccessorTransform[];\n}\n"
+          },
+          {
+            "beforeStart": 1178,
+            "beforeEnd": 1178,
+            "beforeText": "",
+            "currentStart": 1538,
+            "currentEnd": 1577,
+            "currentText": "  readonly successor?: SuccessorEpoch;\n"
+          },
+          {
+            "beforeStart": 1180,
+            "beforeEnd": 1397,
+            "beforeText": "const receiptBytes = 32537;\nconst receiptSha256 = \"660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750\";\nconst canonicalReceiptSha256 = \"577978d510d8938ec6def95c29e863b84be43ad61caabd0a6912211a016aae85\";\n",
+            "currentStart": 1579,
+            "currentEnd": 1796,
+            "currentText": "const receiptBytes = 53049;\nconst receiptSha256 = \"6592544c685ae82f01271bae9a332fd46b88cd1359da4266f49dd7cbd0b1cf59\";\nconst canonicalReceiptSha256 = \"a0936b2966d8437b42e3b4cf40cc4b5e15d66b17abebb1ecade2f2ba9e56e685\";\n"
+          },
+          {
+            "beforeStart": 5064,
+            "beforeEnd": 5064,
+            "beforeText": "",
+            "currentStart": 5463,
+            "currentEnd": 6601,
+            "currentText": "/**\n * (#6920) A successor epoch maps the live tree back to this record's fixed\n * epoch before that epoch is replayed: every transform is authenticated and\n * replayed both ways. The fixed epoch's data is never edited.\n */\nfunction applySuccessor(\n  receipt: { readonly successor?: SuccessorEpoch },\n  actualReader: (path: string) => string,\n  captured: Map<string, string>,\n): ReadonlyMap<string, Pin> {\n  const overrides = new Map<string, Pin>();\n  const successor = receipt.successor;\n  if (!successor) return overrides;\n  for (const transform of successor.transforms) {\n    const live = actualReader(transform.path);\n    authenticate(live, transform.current, \"live \" + transform.path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + transform.path);\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\"complete successor forward replay\");\n    if (transform.mode === \"live\") {\n      overrides.set(transform.path, transform.current);\n      captured.set(transform.path, live);\n    } else captured.set(transform.path, epoch);\n  }\n  return overrides;\n}\n"
+          },
+          {
+            "beforeStart": 5749,
+            "beforeEnd": 5749,
+            "beforeText": "",
+            "currentStart": 7286,
+            "currentEnd": 7355,
+            "currentText": "  const overrides = applySuccessor(receipt, actualReader, captured);\n"
+          },
+          {
+            "beforeStart": 5833,
+            "beforeEnd": 5913,
+            "beforeText": "    const text = actualReader(row.path);\n    authenticate(text, row, row.path);\n",
+            "currentStart": 7439,
+            "currentEnd": 7572,
+            "currentText": "    const text = captured.get(row.path) ?? actualReader(row.path);\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\n"
+          },
+          {
+            "beforeStart": 6768,
+            "beforeEnd": 6768,
+            "beforeText": "",
+            "currentStart": 8427,
+            "currentEnd": 9641,
+            "currentText": "\n/**\n * (#6920) The live tree seen at this record's fixed epoch: successor\n * epoch-mode paths are authenticated and replayed back, every other path is\n * the live text. B's suites compare their own replay against this view.\n */\nexport function createIrNativeNumberUndefinedSourceEpochView(\n  actualRead: (path: string) => string,\n): (path: string) => string {\n  const rawReceipt = actualRead(irNativeNumberUndefinedSourceReceiptPath);\n  if (\n    typeof rawReceipt !== \"string\" ||\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\n    hash(rawReceipt) !== receiptSha256\n  )\n    fail(\"complete receipt pin\");\n  const receipt: unknown = JSON.parse(rawReceipt);\n  assertIrNativeNumberUndefinedSourceReceiptStructure(receipt);\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\n  return (path: string): string => {\n    const transform = epochPaths.get(path);\n    const live = actualRead(path);\n    if (!transform || transform.mode !== \"epoch\") return live;\n    authenticate(live, transform.current, \"live \" + path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + path);\n    return epoch;\n  };\n}\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-number-undefined-source-successor.json",
+        "mode": "live",
+        "before": {
+          "bytes": 32537,
+          "sha256": "660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750",
+          "gitBlob": "9f2fe0044fc5a5e0254ba77da8c2ff1f76acd9e9"
+        },
+        "current": {
+          "bytes": 53049,
+          "sha256": "6592544c685ae82f01271bae9a332fd46b88cd1359da4266f49dd7cbd0b1cf59",
+          "gitBlob": "6ec9b7ffd7f06a7fd7b671f07049d7f03fd20ac0"
+        },
+        "edits": [
+          {
+            "beforeStart": 32531,
+            "beforeEnd": 32535,
+            "beforeText": "  ]\n",
+            "currentStart": 32531,
+            "currentEnd": 53047,
+            "currentText": "  ],\n  \"successor\": {\n    \"base\": \"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\",\n    \"head\": \"3e16e53585\",\n    \"transforms\": [\n      {\n        \"path\": \"src/ir/runtime/verify.ts\",\n        \"mode\": \"epoch\",\n        \"before\": {\n          \"bytes\": 122476,\n          \"sha256\": \"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\",\n          \"gitBlob\": \"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\"\n        },\n        \"current\": {\n          \"bytes\": 124703,\n          \"sha256\": \"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\",\n          \"gitBlob\": \"0232eb2216e508c4cce5036a2433780bd87e7597\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 1270,\n            \"beforeEnd\": 1372,\n            \"beforeText\": \"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\",\n            \"currentStart\": 1270,\n            \"currentEnd\": 1390,\n            \"currentText\": \"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 1453,\n            \"beforeEnd\": 1501,\n            \"beforeText\": \"import type { IrType } from \\\"../core/types.js\\\";\\n\",\n            \"currentStart\": 1471,\n            \"currentEnd\": 1533,\n            \"currentText\": \"import type { IrClassShape, IrType } from \\\"../core/types.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 15279,\n            \"beforeEnd\": 15279,\n            \"beforeText\": \"\",\n            \"currentStart\": 15311,\n            \"currentEnd\": 15651,\n            \"currentText\": \"  /**\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\n   * `string` result non-assignable (native strings lower to\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\n   */\\n  readonly stringIsExternref?: boolean;\\n\"\n          },\n          {\n            \"beforeStart\": 23246,\n            \"beforeEnd\": 23299,\n            \"beforeText\": \"      if (!returnTypeAssignable(actual, declared)) {\\n\",\n            \"currentStart\": 23618,\n            \"currentEnd\": 23699,\n            \"currentText\": \"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 24737,\n            \"beforeEnd\": 24804,\n            \"beforeText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\n\",\n            \"currentStart\": 25137,\n            \"currentEnd\": 25232,\n            \"currentText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 25815,\n            \"beforeEnd\": 25890,\n            \"beforeText\": \"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\n\",\n            \"currentStart\": 26243,\n            \"currentEnd\": 26347,\n            \"currentText\": \"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\n\"\n          },\n          {\n            \"beforeStart\": 28284,\n            \"beforeEnd\": 28284,\n            \"beforeText\": \"\",\n            \"currentStart\": 28741,\n            \"currentEnd\": 29136,\n            \"currentText\": \"  // (#7001) A dynamic/externref value into a native-string result: string\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\n  if (\\n    declared.kind === \\\"string\\\" &&\\n    stringIsExternref === false &&\\n    (actual.kind === \\\"dynamic\\\" || a?.kind === \\\"externref\\\")\\n  ) {\\n    return false;\\n  }\\n\"\n          },\n          {\n            \"beforeStart\": 82195,\n            \"beforeEnd\": 82304,\n            \"beforeText\": \"  \\\"class.call\\\": { skip: \\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\" },\\n\",\n            \"currentStart\": 83047,\n            \"currentEnd\": 83151,\n            \"currentText\": \"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\n  \\\"class.call\\\": \\\"checked\\\",\\n\"\n          },\n          {\n            \"beforeStart\": 89889,\n            \"beforeEnd\": 89889,\n            \"beforeText\": \"\",\n            \"currentStart\": 90736,\n            \"currentEnd\": 90827,\n            \"currentText\": \"    case \\\"class.call\\\":\\n      checkClassCallTarget(instr, blockId, ctx);\\n      return true;\\n\"\n          },\n          {\n            \"beforeStart\": 89929,\n            \"beforeEnd\": 89929,\n            \"beforeText\": \"\",\n            \"currentStart\": 90867,\n            \"currentEnd\": 92156,\n            \"currentText\": \"/**\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\n * must be that member's own target: one bound to any other class's member is a\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\n * resolver-typed and is not judged here.\\n */\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\n  const receiver = ctx.typeOf.get(instr.receiver);\\n  if (!instr.target || receiver?.kind !== \\\"class\\\") return;\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\n    const member = shape.methods.find(\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\"method\\\") === instr.memberKind,\\n    );\\n    if (!member) continue;\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\n    const got = bindingKey(instr.target.binding);\\n    if (want !== null && got !== null && want !== got)\\n      roadmapError(\\n        ctx,\\n        blockId,\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\n      );\\n    return;\\n  }\\n}\\n\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"src/shared/contracts/ir-preparation-failure.ts\",\n        \"mode\": \"epoch\",\n        \"before\": {\n          \"bytes\": 12413,\n          \"sha256\": \"5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7\",\n          \"gitBlob\": \"0633ed29be3ce62ffed15c28f14142ff5e8ecd38\"\n        },\n        \"current\": {\n          \"bytes\": 13155,\n          \"sha256\": \"ca1686a9f6d91abfad93e4ba5540700f333dfaaaba2703bfc90a0dfe671f33e6\",\n          \"gitBlob\": \"4bccbdc9abd1c26f3e170ce718dbb6409d94e1af\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 3164,\n            \"beforeEnd\": 3164,\n            \"beforeText\": \"\",\n            \"currentStart\": 3164,\n            \"currentEnd\": 3906,\n            \"currentText\": \"  // (#7000) An instance method/accessor reached through a base-typed receiver\\n  // that a subclass overrides. The IR binds `class.call` statically to the\\n  // declared class's member and has no `__tag` virtual dispatch yet (#1299 is\\n  // legacy-only), so the unit keeps its legacy body until it does.\\n  | \\\"class-method-virtual\\\"\\n  // (#7003) A function-typed parameter that a caller may fill with a function\\n  // of a different Wasm signature (extra default/optional params, fewer\\n  // params, a value result in a `void` slot, or an untraceable value). IR\\n  // `closure.call` casts to the annotation's exact func type and would trap;\\n  // legacy's arity cascade handles it, so the unit keeps its legacy body.\\n  | \\\"closure-signature-mismatch\\\"\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"tests/helpers/ir-native-class-layout-source-successor.ts\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 6756,\n          \"sha256\": \"d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168\",\n          \"gitBlob\": \"d79ef4d53983fc9402f7911c5413fa64ce89d886\"\n        },\n        \"current\": {\n          \"bytes\": 9617,\n          \"sha256\": \"9d46fd209df70e97b59aad2b4b7aae7ae4dae27e8eea63590c9ff5015ed36525\",\n          \"gitBlob\": \"3def55a7ded701f97b6dcf2e97bcac796d05fecc\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 729,\n            \"beforeEnd\": 729,\n            \"beforeText\": \"\",\n            \"currentStart\": 729,\n            \"currentEnd\": 1089,\n            \"currentText\": \"interface SuccessorTransform extends Transform {\\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\\n  readonly mode: \\\"epoch\\\" | \\\"live\\\";\\n}\\ninterface SuccessorEpoch {\\n  readonly base: string;\\n  readonly head: string;\\n  readonly transforms: readonly SuccessorTransform[];\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 1115,\n            \"beforeEnd\": 1115,\n            \"beforeText\": \"\",\n            \"currentStart\": 1475,\n            \"currentEnd\": 1514,\n            \"currentText\": \"  readonly successor?: SuccessorEpoch;\\n\"\n          },\n          {\n            \"beforeStart\": 1117,\n            \"beforeEnd\": 1334,\n            \"beforeText\": \"const receiptBytes = 12174;\\nconst receiptSha256 = \\\"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\\\";\\nconst canonicalReceiptSha256 = \\\"f897d27f9f03813b894b06efde96da04dab6f746ae8424ff12835bbc33136997\\\";\\n\",\n            \"currentStart\": 1516,\n            \"currentEnd\": 1733,\n            \"currentText\": \"const receiptBytes = 18244;\\nconst receiptSha256 = \\\"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\\\";\\nconst canonicalReceiptSha256 = \\\"e0fe9bd8bf1f389a18cd96337d4a212e7a96654b3221a6478138dfe0e2db757c\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 4982,\n            \"beforeEnd\": 4982,\n            \"beforeText\": \"\",\n            \"currentStart\": 5381,\n            \"currentEnd\": 6519,\n            \"currentText\": \"/**\\n * (#6920) A successor epoch maps the live tree back to this record's fixed\\n * epoch before that epoch is replayed: every transform is authenticated and\\n * replayed both ways. The fixed epoch's data is never edited.\\n */\\nfunction applySuccessor(\\n  receipt: { readonly successor?: SuccessorEpoch },\\n  actualReader: (path: string) => string,\\n  captured: Map<string, string>,\\n): ReadonlyMap<string, Pin> {\\n  const overrides = new Map<string, Pin>();\\n  const successor = receipt.successor;\\n  if (!successor) return overrides;\\n  for (const transform of successor.transforms) {\\n    const live = actualReader(transform.path);\\n    authenticate(live, transform.current, \\\"live \\\" + transform.path);\\n    const epoch = replaceRanges(live, transform.edits, true);\\n    authenticate(epoch, transform.before, \\\"epoch \\\" + transform.path);\\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\\\"complete successor forward replay\\\");\\n    if (transform.mode === \\\"live\\\") {\\n      overrides.set(transform.path, transform.current);\\n      captured.set(transform.path, live);\\n    } else captured.set(transform.path, epoch);\\n  }\\n  return overrides;\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 5647,\n            \"beforeEnd\": 5647,\n            \"beforeText\": \"\",\n            \"currentStart\": 7184,\n            \"currentEnd\": 7253,\n            \"currentText\": \"  const overrides = applySuccessor(receipt, actualReader, captured);\\n\"\n          },\n          {\n            \"beforeStart\": 5711,\n            \"beforeEnd\": 5791,\n            \"beforeText\": \"    const text = actualReader(row.path);\\n    authenticate(text, row, row.path);\\n\",\n            \"currentStart\": 7317,\n            \"currentEnd\": 7450,\n            \"currentText\": \"    const text = captured.get(row.path) ?? actualReader(row.path);\\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\\n\"\n          },\n          {\n            \"beforeStart\": 6756,\n            \"beforeEnd\": 6756,\n            \"beforeText\": \"\",\n            \"currentStart\": 8415,\n            \"currentEnd\": 9617,\n            \"currentText\": \"\\n/**\\n * (#6920) The live tree seen at this record's fixed epoch: successor\\n * epoch-mode paths are authenticated and replayed back, every other path is\\n * the live text. B's suites compare their own replay against this view.\\n */\\nexport function createIrNativeClassLayoutSourceEpochView(\\n  actualRead: (path: string) => string,\\n): (path: string) => string {\\n  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);\\n  if (\\n    typeof rawReceipt !== \\\"string\\\" ||\\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\\n    hash(rawReceipt) !== receiptSha256\\n  )\\n    fail(\\\"complete receipt pin\\\");\\n  const receipt: unknown = JSON.parse(rawReceipt);\\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\\n  return (path: string): string => {\\n    const transform = epochPaths.get(path);\\n    const live = actualRead(path);\\n    if (!transform || transform.mode !== \\\"epoch\\\") return live;\\n    authenticate(live, transform.current, \\\"live \\\" + path);\\n    const epoch = replaceRanges(live, transform.edits, true);\\n    authenticate(epoch, transform.before, \\\"epoch \\\" + path);\\n    return epoch;\\n  };\\n}\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"tests/helpers/ir-native-class-layout-source-successor.json\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 12174,\n          \"sha256\": \"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\",\n          \"gitBlob\": \"ed2339f103426372d227ea9355899dbbfecfad09\"\n        },\n        \"current\": {\n          \"bytes\": 18244,\n          \"sha256\": \"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\",\n          \"gitBlob\": \"3dc827cccb7b35baedabd09af8bfb92e86660ad8\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 12168,\n            \"beforeEnd\": 12172,\n            \"beforeText\": \"  ]\\n\",\n            \"currentStart\": 12168,\n            \"currentEnd\": 18242,\n            \"currentText\": \"  ],\\n  \\\"successor\\\": {\\n    \\\"base\\\": \\\"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\\\",\\n    \\\"head\\\": \\\"3e16e53585\\\",\\n    \\\"transforms\\\": [\\n      {\\n        \\\"path\\\": \\\"src/ir/runtime/verify.ts\\\",\\n        \\\"mode\\\": \\\"epoch\\\",\\n        \\\"before\\\": {\\n          \\\"bytes\\\": 122476,\\n          \\\"sha256\\\": \\\"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\\\",\\n          \\\"gitBlob\\\": \\\"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\\\"\\n        },\\n        \\\"current\\\": {\\n          \\\"bytes\\\": 124703,\\n          \\\"sha256\\\": \\\"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\\\",\\n          \\\"gitBlob\\\": \\\"0232eb2216e508c4cce5036a2433780bd87e7597\\\"\\n        },\\n        \\\"edits\\\": [\\n          {\\n            \\\"beforeStart\\\": 1270,\\n            \\\"beforeEnd\\\": 1372,\\n            \\\"beforeText\\\": \\\"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\"../core/nodes.js\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1270,\\n            \\\"currentEnd\\\": 1390,\\n            \\\"currentText\\\": \\\"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\"../core/nodes.js\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 1453,\\n            \\\"beforeEnd\\\": 1501,\\n            \\\"beforeText\\\": \\\"import type { IrType } from \\\\\\\"../core/types.js\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1471,\\n            \\\"currentEnd\\\": 1533,\\n            \\\"currentText\\\": \\\"import type { IrClassShape, IrType } from \\\\\\\"../core/types.js\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 15279,\\n            \\\"beforeEnd\\\": 15279,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 15311,\\n            \\\"currentEnd\\\": 15651,\\n            \\\"currentText\\\": \\\"  /**\\\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\\\n   * `string` result non-assignable (native strings lower to\\\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\\\n   */\\\\n  readonly stringIsExternref?: boolean;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 23246,\\n            \\\"beforeEnd\\\": 23299,\\n            \\\"beforeText\\\": \\\"      if (!returnTypeAssignable(actual, declared)) {\\\\n\\\",\\n            \\\"currentStart\\\": 23618,\\n            \\\"currentEnd\\\": 23699,\\n            \\\"currentText\\\": \\\"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 24737,\\n            \\\"beforeEnd\\\": 24804,\\n            \\\"beforeText\\\": \\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\\\n\\\",\\n            \\\"currentStart\\\": 25137,\\n            \\\"currentEnd\\\": 25232,\\n            \\\"currentText\\\": \\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 25815,\\n            \\\"beforeEnd\\\": 25890,\\n            \\\"beforeText\\\": \\\"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\\\n\\\",\\n            \\\"currentStart\\\": 26243,\\n            \\\"currentEnd\\\": 26347,\\n            \\\"currentText\\\": \\\"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 28284,\\n            \\\"beforeEnd\\\": 28284,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 28741,\\n            \\\"currentEnd\\\": 29136,\\n            \\\"currentText\\\": \\\"  // (#7001) A dynamic/externref value into a native-string result: string\\\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\\\n  if (\\\\n    declared.kind === \\\\\\\"string\\\\\\\" &&\\\\n    stringIsExternref === false &&\\\\n    (actual.kind === \\\\\\\"dynamic\\\\\\\" || a?.kind === \\\\\\\"externref\\\\\\\")\\\\n  ) {\\\\n    return false;\\\\n  }\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 82195,\\n            \\\"beforeEnd\\\": 82304,\\n            \\\"beforeText\\\": \\\"  \\\\\\\"class.call\\\\\\\": { skip: \\\\\\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\\\\\" },\\\\n\\\",\\n            \\\"currentStart\\\": 83047,\\n            \\\"currentEnd\\\": 83151,\\n            \\\"currentText\\\": \\\"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\\\n  \\\\\\\"class.call\\\\\\\": \\\\\\\"checked\\\\\\\",\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 89889,\\n            \\\"beforeEnd\\\": 89889,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 90736,\\n            \\\"currentEnd\\\": 90827,\\n            \\\"currentText\\\": \\\"    case \\\\\\\"class.call\\\\\\\":\\\\n      checkClassCallTarget(instr, blockId, ctx);\\\\n      return true;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 89929,\\n            \\\"beforeEnd\\\": 89929,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 90867,\\n            \\\"currentEnd\\\": 92156,\\n            \\\"currentText\\\": \\\"/**\\\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\\\n * must be that member's own target: one bound to any other class's member is a\\\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\\\n * resolver-typed and is not judged here.\\\\n */\\\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\\\n  const receiver = ctx.typeOf.get(instr.receiver);\\\\n  if (!instr.target || receiver?.kind !== \\\\\\\"class\\\\\\\") return;\\\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\\\n    const member = shape.methods.find(\\\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\\\\\"method\\\\\\\") === instr.memberKind,\\\\n    );\\\\n    if (!member) continue;\\\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\\\n    const got = bindingKey(instr.target.binding);\\\\n    if (want !== null && got !== null && want !== got)\\\\n      roadmapError(\\\\n        ctx,\\\\n        blockId,\\\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\\\n      );\\\\n    return;\\\\n  }\\\\n}\\\\n\\\\n\\\"\\n          }\\n        ]\\n      }\\n    ]\\n  }\\n\"\n          }\n        ]\n      }\n    ]\n  }\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-number-undefined-optimization-policy-successor.ts",
+        "mode": "live",
+        "before": {
+          "bytes": 9381,
+          "sha256": "162669f6670fbe663f9ded632952eb196694b4cb51ece4bad534aa8d79d96f64",
+          "gitBlob": "0b061c70b80b61c3e9d7a10921ccfc60d99ceaca"
+        },
+        "current": {
+          "bytes": 13548,
+          "sha256": "8241f12d772cf4ea5af4ff15aea5a2f11b5e497070d72ca6727b8d65a138a627",
+          "gitBlob": "756acea94bd9802d38c796966d8a82e970efb55d"
+        },
+        "edits": [
+          {
+            "beforeStart": 991,
+            "beforeEnd": 991,
+            "beforeText": "",
+            "currentStart": 991,
+            "currentEnd": 1540,
+            "currentText": "interface SuccessorTransform extends Transform {\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\n  readonly mode: \"epoch\" | \"live\";\n}\ninterface SuccessorEpoch {\n  readonly base: string;\n  readonly head: string;\n  readonly transforms: readonly SuccessorTransform[];\n  readonly policy?: {\n    readonly before: Profile;\n    readonly current: Profile;\n    readonly inserted: readonly { readonly index: number; readonly row: Record<string, unknown> }[];\n  };\n}\n"
+          },
+          {
+            "beforeStart": 1417,
+            "beforeEnd": 1417,
+            "beforeText": "",
+            "currentStart": 1966,
+            "currentEnd": 2005,
+            "currentText": "  readonly successor?: SuccessorEpoch;\n"
+          },
+          {
+            "beforeStart": 1419,
+            "beforeEnd": 1627,
+            "beforeText": "const receiptBytes = 11533;\nconst receiptHash = \"470dafcb58a1feed449cb1594702a085c9ca4d01656aa9cb85ded10751d5fcf5\";\nconst receiptDataHash = \"972420f7dc267bb422a1da5d27f8b8420aa34b1f20ed367f9d1260dcc02c554c\";\n",
+            "currentStart": 2007,
+            "currentEnd": 2215,
+            "currentText": "const receiptBytes = 40310;\nconst receiptHash = \"11df801b78a5e232a67c6d00707d3909f22391c3ec6df131c494c922eeb17541\";\nconst receiptDataHash = \"a9150c544cfa4a5e6665a443475c588e42935da39c73189086f40de44b73634c\";\n"
+          },
+          {
+            "beforeStart": 6169,
+            "beforeEnd": 6169,
+            "beforeText": "",
+            "currentStart": 6757,
+            "currentEnd": 8935,
+            "currentText": "/**\n * (#6920) A successor epoch maps the live tree back to this record's fixed\n * epoch before that epoch is replayed: every transform is authenticated and\n * replayed both ways, and the policy's inserted rows are inverted and\n * replayed as whole DATA. The fixed epoch's data is never edited.\n */\nfunction applySuccessor(\n  receipt: { readonly successor?: SuccessorEpoch },\n  actualRead: (path: string) => string,\n  captured: Map<string, string>,\n): ReadonlyMap<string, Pin> {\n  const overrides = new Map<string, Pin>();\n  const successor = receipt.successor;\n  if (!successor) return overrides;\n  for (const transform of successor.transforms) {\n    const live = actualRead(transform.path);\n    authenticate(live, transform.current, \"live \" + transform.path);\n    const epoch = replace(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + transform.path);\n    if (replace(epoch, transform.edits, false) !== live) fail(\"complete successor forward replay\");\n    if (transform.path === \"scripts/compiler-boundaries.json\" && successor.policy) {\n      const liveData = profile(live, successor.policy.current);\n      const epochData = profile(epoch, successor.policy.before);\n      const inverseFiles = [...liveData.files];\n      for (const inserted of [...successor.policy.inserted].reverse()) {\n        if (JSON.stringify(inverseFiles[inserted.index]) !== JSON.stringify(inserted.row))\n          fail(\"successor inserted row coordinates\");\n        inverseFiles.splice(inserted.index, 1);\n      }\n      if (JSON.stringify({ ...liveData, files: inverseFiles }) !== JSON.stringify(epochData))\n        fail(\"successor whole DATA inverse\");\n      const forwardFiles = [...epochData.files];\n      for (const inserted of successor.policy.inserted) forwardFiles.splice(inserted.index, 0, inserted.row);\n      if (JSON.stringify({ ...epochData, files: forwardFiles }) !== JSON.stringify(liveData))\n        fail(\"successor whole DATA forward\");\n    }\n    if (transform.mode === \"live\") {\n      overrides.set(transform.path, transform.current);\n      captured.set(transform.path, live);\n    } else captured.set(transform.path, epoch);\n  }\n  return overrides;\n}\n"
+          },
+          {
+            "beforeStart": 6888,
+            "beforeEnd": 6956,
+            "beforeText": "  const rawPolicy = actualRead(\"scripts/compiler-boundaries.json\");\n",
+            "currentStart": 9654,
+            "currentEnd": 9841,
+            "currentText": "  const overrides = applySuccessor(receipt, actualRead, captured);\n  const rawPolicy = captured.get(\"scripts/compiler-boundaries.json\") ?? actualRead(\"scripts/compiler-boundaries.json\");\n"
+          },
+          {
+            "beforeStart": 7142,
+            "beforeEnd": 7220,
+            "beforeText": "    const text = actualRead(row.path);\n    authenticate(text, row, row.path);\n",
+            "currentStart": 10027,
+            "currentEnd": 10158,
+            "currentText": "    const text = captured.get(row.path) ?? actualRead(row.path);\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\n"
+          },
+          {
+            "beforeStart": 9381,
+            "beforeEnd": 9381,
+            "beforeText": "",
+            "currentStart": 12319,
+            "currentEnd": 13548,
+            "currentText": "\n/**\n * (#6920) The live tree seen at this record's fixed epoch: successor\n * epoch-mode paths are authenticated and replayed back, every other path is\n * the live text. B's suites compare their own replay against this view.\n */\nexport function createIrNativeNumberUndefinedOptimizationPolicyEpochView(\n  actualRead: (path: string) => string,\n): (path: string) => string {\n  const rawReceipt = actualRead(nativeNumberUndefinedOptimizationPolicyReceiptPath);\n  if (\n    typeof rawReceipt !== \"string\" ||\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\n    hash(rawReceipt) !== receiptHash\n  )\n    fail(\"complete receipt pin\");\n  const receipt: unknown = JSON.parse(rawReceipt);\n  assertNativeNumberUndefinedOptimizationPolicyReceipt(receipt);\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\n  return (path: string): string => {\n    const transform = epochPaths.get(path);\n    const live = actualRead(path);\n    if (!transform || transform.mode !== \"epoch\") return live;\n    authenticate(live, transform.current, \"live \" + path);\n    const epoch = replace(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + path);\n    return epoch;\n  };\n}\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-number-undefined-optimization-policy-successor.json",
+        "mode": "live",
+        "before": {
+          "bytes": 11533,
+          "sha256": "470dafcb58a1feed449cb1594702a085c9ca4d01656aa9cb85ded10751d5fcf5",
+          "gitBlob": "7df2aa64c6c58ea2fbbfcd137490ff870211c6b5"
+        },
+        "current": {
+          "bytes": 40310,
+          "sha256": "11df801b78a5e232a67c6d00707d3909f22391c3ec6df131c494c922eeb17541",
+          "gitBlob": "5a9ddb80626e2eb45ed91179aeef46b13acdf9bc"
+        },
+        "edits": [
+          {
+            "beforeStart": 11527,
+            "beforeEnd": 11531,
+            "beforeText": "  ]\n",
+            "currentStart": 11527,
+            "currentEnd": 40308,
+            "currentText": "  ],\n  \"successor\": {\n    \"base\": \"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\",\n    \"head\": \"3e16e53585\",\n    \"transforms\": [\n      {\n        \"path\": \"tests/helpers/ir-native-number-undefined-source-successor.ts\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 6768,\n          \"sha256\": \"f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122\",\n          \"gitBlob\": \"e48e4c20e3cad8c1ea3767792f154111edc3662e\"\n        },\n        \"current\": {\n          \"bytes\": 9641,\n          \"sha256\": \"ab6d9b38ebfc31b525540361f4694caa953d4ac6a0c54f0ac60aa7d17af2c7d5\",\n          \"gitBlob\": \"41d62b241275b31643e0b8729b1cd643f395443f\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 792,\n            \"beforeEnd\": 792,\n            \"beforeText\": \"\",\n            \"currentStart\": 792,\n            \"currentEnd\": 1152,\n            \"currentText\": \"interface SuccessorTransform extends Transform {\\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\\n  readonly mode: \\\"epoch\\\" | \\\"live\\\";\\n}\\ninterface SuccessorEpoch {\\n  readonly base: string;\\n  readonly head: string;\\n  readonly transforms: readonly SuccessorTransform[];\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 1178,\n            \"beforeEnd\": 1178,\n            \"beforeText\": \"\",\n            \"currentStart\": 1538,\n            \"currentEnd\": 1577,\n            \"currentText\": \"  readonly successor?: SuccessorEpoch;\\n\"\n          },\n          {\n            \"beforeStart\": 1180,\n            \"beforeEnd\": 1397,\n            \"beforeText\": \"const receiptBytes = 32537;\\nconst receiptSha256 = \\\"660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750\\\";\\nconst canonicalReceiptSha256 = \\\"577978d510d8938ec6def95c29e863b84be43ad61caabd0a6912211a016aae85\\\";\\n\",\n            \"currentStart\": 1579,\n            \"currentEnd\": 1796,\n            \"currentText\": \"const receiptBytes = 53049;\\nconst receiptSha256 = \\\"6592544c685ae82f01271bae9a332fd46b88cd1359da4266f49dd7cbd0b1cf59\\\";\\nconst canonicalReceiptSha256 = \\\"a0936b2966d8437b42e3b4cf40cc4b5e15d66b17abebb1ecade2f2ba9e56e685\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 5064,\n            \"beforeEnd\": 5064,\n            \"beforeText\": \"\",\n            \"currentStart\": 5463,\n            \"currentEnd\": 6601,\n            \"currentText\": \"/**\\n * (#6920) A successor epoch maps the live tree back to this record's fixed\\n * epoch before that epoch is replayed: every transform is authenticated and\\n * replayed both ways. The fixed epoch's data is never edited.\\n */\\nfunction applySuccessor(\\n  receipt: { readonly successor?: SuccessorEpoch },\\n  actualReader: (path: string) => string,\\n  captured: Map<string, string>,\\n): ReadonlyMap<string, Pin> {\\n  const overrides = new Map<string, Pin>();\\n  const successor = receipt.successor;\\n  if (!successor) return overrides;\\n  for (const transform of successor.transforms) {\\n    const live = actualReader(transform.path);\\n    authenticate(live, transform.current, \\\"live \\\" + transform.path);\\n    const epoch = replaceRanges(live, transform.edits, true);\\n    authenticate(epoch, transform.before, \\\"epoch \\\" + transform.path);\\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\\\"complete successor forward replay\\\");\\n    if (transform.mode === \\\"live\\\") {\\n      overrides.set(transform.path, transform.current);\\n      captured.set(transform.path, live);\\n    } else captured.set(transform.path, epoch);\\n  }\\n  return overrides;\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 5749,\n            \"beforeEnd\": 5749,\n            \"beforeText\": \"\",\n            \"currentStart\": 7286,\n            \"currentEnd\": 7355,\n            \"currentText\": \"  const overrides = applySuccessor(receipt, actualReader, captured);\\n\"\n          },\n          {\n            \"beforeStart\": 5833,\n            \"beforeEnd\": 5913,\n            \"beforeText\": \"    const text = actualReader(row.path);\\n    authenticate(text, row, row.path);\\n\",\n            \"currentStart\": 7439,\n            \"currentEnd\": 7572,\n            \"currentText\": \"    const text = captured.get(row.path) ?? actualReader(row.path);\\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\\n\"\n          },\n          {\n            \"beforeStart\": 6768,\n            \"beforeEnd\": 6768,\n            \"beforeText\": \"\",\n            \"currentStart\": 8427,\n            \"currentEnd\": 9641,\n            \"currentText\": \"\\n/**\\n * (#6920) The live tree seen at this record's fixed epoch: successor\\n * epoch-mode paths are authenticated and replayed back, every other path is\\n * the live text. B's suites compare their own replay against this view.\\n */\\nexport function createIrNativeNumberUndefinedSourceEpochView(\\n  actualRead: (path: string) => string,\\n): (path: string) => string {\\n  const rawReceipt = actualRead(irNativeNumberUndefinedSourceReceiptPath);\\n  if (\\n    typeof rawReceipt !== \\\"string\\\" ||\\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\\n    hash(rawReceipt) !== receiptSha256\\n  )\\n    fail(\\\"complete receipt pin\\\");\\n  const receipt: unknown = JSON.parse(rawReceipt);\\n  assertIrNativeNumberUndefinedSourceReceiptStructure(receipt);\\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\\n  return (path: string): string => {\\n    const transform = epochPaths.get(path);\\n    const live = actualRead(path);\\n    if (!transform || transform.mode !== \\\"epoch\\\") return live;\\n    authenticate(live, transform.current, \\\"live \\\" + path);\\n    const epoch = replaceRanges(live, transform.edits, true);\\n    authenticate(epoch, transform.before, \\\"epoch \\\" + path);\\n    return epoch;\\n  };\\n}\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"tests/helpers/ir-native-number-undefined-source-successor.json\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 32537,\n          \"sha256\": \"660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750\",\n          \"gitBlob\": \"9f2fe0044fc5a5e0254ba77da8c2ff1f76acd9e9\"\n        },\n        \"current\": {\n          \"bytes\": 53049,\n          \"sha256\": \"6592544c685ae82f01271bae9a332fd46b88cd1359da4266f49dd7cbd0b1cf59\",\n          \"gitBlob\": \"6ec9b7ffd7f06a7fd7b671f07049d7f03fd20ac0\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 32531,\n            \"beforeEnd\": 32535,\n            \"beforeText\": \"  ]\\n\",\n            \"currentStart\": 32531,\n            \"currentEnd\": 53047,\n            \"currentText\": \"  ],\\n  \\\"successor\\\": {\\n    \\\"base\\\": \\\"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\\\",\\n    \\\"head\\\": \\\"3e16e53585\\\",\\n    \\\"transforms\\\": [\\n      {\\n        \\\"path\\\": \\\"src/ir/runtime/verify.ts\\\",\\n        \\\"mode\\\": \\\"epoch\\\",\\n        \\\"before\\\": {\\n          \\\"bytes\\\": 122476,\\n          \\\"sha256\\\": \\\"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\\\",\\n          \\\"gitBlob\\\": \\\"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\\\"\\n        },\\n        \\\"current\\\": {\\n          \\\"bytes\\\": 124703,\\n          \\\"sha256\\\": \\\"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\\\",\\n          \\\"gitBlob\\\": \\\"0232eb2216e508c4cce5036a2433780bd87e7597\\\"\\n        },\\n        \\\"edits\\\": [\\n          {\\n            \\\"beforeStart\\\": 1270,\\n            \\\"beforeEnd\\\": 1372,\\n            \\\"beforeText\\\": \\\"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\"../core/nodes.js\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1270,\\n            \\\"currentEnd\\\": 1390,\\n            \\\"currentText\\\": \\\"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\"../core/nodes.js\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 1453,\\n            \\\"beforeEnd\\\": 1501,\\n            \\\"beforeText\\\": \\\"import type { IrType } from \\\\\\\"../core/types.js\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1471,\\n            \\\"currentEnd\\\": 1533,\\n            \\\"currentText\\\": \\\"import type { IrClassShape, IrType } from \\\\\\\"../core/types.js\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 15279,\\n            \\\"beforeEnd\\\": 15279,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 15311,\\n            \\\"currentEnd\\\": 15651,\\n            \\\"currentText\\\": \\\"  /**\\\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\\\n   * `string` result non-assignable (native strings lower to\\\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\\\n   */\\\\n  readonly stringIsExternref?: boolean;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 23246,\\n            \\\"beforeEnd\\\": 23299,\\n            \\\"beforeText\\\": \\\"      if (!returnTypeAssignable(actual, declared)) {\\\\n\\\",\\n            \\\"currentStart\\\": 23618,\\n            \\\"currentEnd\\\": 23699,\\n            \\\"currentText\\\": \\\"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 24737,\\n            \\\"beforeEnd\\\": 24804,\\n            \\\"beforeText\\\": \\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\\\n\\\",\\n            \\\"currentStart\\\": 25137,\\n            \\\"currentEnd\\\": 25232,\\n            \\\"currentText\\\": \\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 25815,\\n            \\\"beforeEnd\\\": 25890,\\n            \\\"beforeText\\\": \\\"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\\\n\\\",\\n            \\\"currentStart\\\": 26243,\\n            \\\"currentEnd\\\": 26347,\\n            \\\"currentText\\\": \\\"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 28284,\\n            \\\"beforeEnd\\\": 28284,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 28741,\\n            \\\"currentEnd\\\": 29136,\\n            \\\"currentText\\\": \\\"  // (#7001) A dynamic/externref value into a native-string result: string\\\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\\\n  if (\\\\n    declared.kind === \\\\\\\"string\\\\\\\" &&\\\\n    stringIsExternref === false &&\\\\n    (actual.kind === \\\\\\\"dynamic\\\\\\\" || a?.kind === \\\\\\\"externref\\\\\\\")\\\\n  ) {\\\\n    return false;\\\\n  }\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 82195,\\n            \\\"beforeEnd\\\": 82304,\\n            \\\"beforeText\\\": \\\"  \\\\\\\"class.call\\\\\\\": { skip: \\\\\\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\\\\\" },\\\\n\\\",\\n            \\\"currentStart\\\": 83047,\\n            \\\"currentEnd\\\": 83151,\\n            \\\"currentText\\\": \\\"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\\\n  \\\\\\\"class.call\\\\\\\": \\\\\\\"checked\\\\\\\",\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 89889,\\n            \\\"beforeEnd\\\": 89889,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 90736,\\n            \\\"currentEnd\\\": 90827,\\n            \\\"currentText\\\": \\\"    case \\\\\\\"class.call\\\\\\\":\\\\n      checkClassCallTarget(instr, blockId, ctx);\\\\n      return true;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 89929,\\n            \\\"beforeEnd\\\": 89929,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 90867,\\n            \\\"currentEnd\\\": 92156,\\n            \\\"currentText\\\": \\\"/**\\\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\\\n * must be that member's own target: one bound to any other class's member is a\\\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\\\n * resolver-typed and is not judged here.\\\\n */\\\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\\\n  const receiver = ctx.typeOf.get(instr.receiver);\\\\n  if (!instr.target || receiver?.kind !== \\\\\\\"class\\\\\\\") return;\\\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\\\n    const member = shape.methods.find(\\\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\\\\\"method\\\\\\\") === instr.memberKind,\\\\n    );\\\\n    if (!member) continue;\\\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\\\n    const got = bindingKey(instr.target.binding);\\\\n    if (want !== null && got !== null && want !== got)\\\\n      roadmapError(\\\\n        ctx,\\\\n        blockId,\\\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\\\n      );\\\\n    return;\\\\n  }\\\\n}\\\\n\\\\n\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"path\\\": \\\"src/shared/contracts/ir-preparation-failure.ts\\\",\\n        \\\"mode\\\": \\\"epoch\\\",\\n        \\\"before\\\": {\\n          \\\"bytes\\\": 12413,\\n          \\\"sha256\\\": \\\"5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7\\\",\\n          \\\"gitBlob\\\": \\\"0633ed29be3ce62ffed15c28f14142ff5e8ecd38\\\"\\n        },\\n        \\\"current\\\": {\\n          \\\"bytes\\\": 13155,\\n          \\\"sha256\\\": \\\"ca1686a9f6d91abfad93e4ba5540700f333dfaaaba2703bfc90a0dfe671f33e6\\\",\\n          \\\"gitBlob\\\": \\\"4bccbdc9abd1c26f3e170ce718dbb6409d94e1af\\\"\\n        },\\n        \\\"edits\\\": [\\n          {\\n            \\\"beforeStart\\\": 3164,\\n            \\\"beforeEnd\\\": 3164,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 3164,\\n            \\\"currentEnd\\\": 3906,\\n            \\\"currentText\\\": \\\"  // (#7000) An instance method/accessor reached through a base-typed receiver\\\\n  // that a subclass overrides. The IR binds `class.call` statically to the\\\\n  // declared class's member and has no `__tag` virtual dispatch yet (#1299 is\\\\n  // legacy-only), so the unit keeps its legacy body until it does.\\\\n  | \\\\\\\"class-method-virtual\\\\\\\"\\\\n  // (#7003) A function-typed parameter that a caller may fill with a function\\\\n  // of a different Wasm signature (extra default/optional params, fewer\\\\n  // params, a value result in a `void` slot, or an untraceable value). IR\\\\n  // `closure.call` casts to the annotation's exact func type and would trap;\\\\n  // legacy's arity cascade handles it, so the unit keeps its legacy body.\\\\n  | \\\\\\\"closure-signature-mismatch\\\\\\\"\\\\n\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"path\\\": \\\"tests/helpers/ir-native-class-layout-source-successor.ts\\\",\\n        \\\"mode\\\": \\\"live\\\",\\n        \\\"before\\\": {\\n          \\\"bytes\\\": 6756,\\n          \\\"sha256\\\": \\\"d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168\\\",\\n          \\\"gitBlob\\\": \\\"d79ef4d53983fc9402f7911c5413fa64ce89d886\\\"\\n        },\\n        \\\"current\\\": {\\n          \\\"bytes\\\": 9617,\\n          \\\"sha256\\\": \\\"9d46fd209df70e97b59aad2b4b7aae7ae4dae27e8eea63590c9ff5015ed36525\\\",\\n          \\\"gitBlob\\\": \\\"3def55a7ded701f97b6dcf2e97bcac796d05fecc\\\"\\n        },\\n        \\\"edits\\\": [\\n          {\\n            \\\"beforeStart\\\": 729,\\n            \\\"beforeEnd\\\": 729,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 729,\\n            \\\"currentEnd\\\": 1089,\\n            \\\"currentText\\\": \\\"interface SuccessorTransform extends Transform {\\\\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\\\\n  readonly mode: \\\\\\\"epoch\\\\\\\" | \\\\\\\"live\\\\\\\";\\\\n}\\\\ninterface SuccessorEpoch {\\\\n  readonly base: string;\\\\n  readonly head: string;\\\\n  readonly transforms: readonly SuccessorTransform[];\\\\n}\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 1115,\\n            \\\"beforeEnd\\\": 1115,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 1475,\\n            \\\"currentEnd\\\": 1514,\\n            \\\"currentText\\\": \\\"  readonly successor?: SuccessorEpoch;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 1117,\\n            \\\"beforeEnd\\\": 1334,\\n            \\\"beforeText\\\": \\\"const receiptBytes = 12174;\\\\nconst receiptSha256 = \\\\\\\"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\\\\\\\";\\\\nconst canonicalReceiptSha256 = \\\\\\\"f897d27f9f03813b894b06efde96da04dab6f746ae8424ff12835bbc33136997\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1516,\\n            \\\"currentEnd\\\": 1733,\\n            \\\"currentText\\\": \\\"const receiptBytes = 18244;\\\\nconst receiptSha256 = \\\\\\\"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\\\\\\\";\\\\nconst canonicalReceiptSha256 = \\\\\\\"e0fe9bd8bf1f389a18cd96337d4a212e7a96654b3221a6478138dfe0e2db757c\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 4982,\\n            \\\"beforeEnd\\\": 4982,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 5381,\\n            \\\"currentEnd\\\": 6519,\\n            \\\"currentText\\\": \\\"/**\\\\n * (#6920) A successor epoch maps the live tree back to this record's fixed\\\\n * epoch before that epoch is replayed: every transform is authenticated and\\\\n * replayed both ways. The fixed epoch's data is never edited.\\\\n */\\\\nfunction applySuccessor(\\\\n  receipt: { readonly successor?: SuccessorEpoch },\\\\n  actualReader: (path: string) => string,\\\\n  captured: Map<string, string>,\\\\n): ReadonlyMap<string, Pin> {\\\\n  const overrides = new Map<string, Pin>();\\\\n  const successor = receipt.successor;\\\\n  if (!successor) return overrides;\\\\n  for (const transform of successor.transforms) {\\\\n    const live = actualReader(transform.path);\\\\n    authenticate(live, transform.current, \\\\\\\"live \\\\\\\" + transform.path);\\\\n    const epoch = replaceRanges(live, transform.edits, true);\\\\n    authenticate(epoch, transform.before, \\\\\\\"epoch \\\\\\\" + transform.path);\\\\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\\\\\\\"complete successor forward replay\\\\\\\");\\\\n    if (transform.mode === \\\\\\\"live\\\\\\\") {\\\\n      overrides.set(transform.path, transform.current);\\\\n      captured.set(transform.path, live);\\\\n    } else captured.set(transform.path, epoch);\\\\n  }\\\\n  return overrides;\\\\n}\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 5647,\\n            \\\"beforeEnd\\\": 5647,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 7184,\\n            \\\"currentEnd\\\": 7253,\\n            \\\"currentText\\\": \\\"  const overrides = applySuccessor(receipt, actualReader, captured);\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 5711,\\n            \\\"beforeEnd\\\": 5791,\\n            \\\"beforeText\\\": \\\"    const text = actualReader(row.path);\\\\n    authenticate(text, row, row.path);\\\\n\\\",\\n            \\\"currentStart\\\": 7317,\\n            \\\"currentEnd\\\": 7450,\\n            \\\"currentText\\\": \\\"    const text = captured.get(row.path) ?? actualReader(row.path);\\\\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 6756,\\n            \\\"beforeEnd\\\": 6756,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 8415,\\n            \\\"currentEnd\\\": 9617,\\n            \\\"currentText\\\": \\\"\\\\n/**\\\\n * (#6920) The live tree seen at this record's fixed epoch: successor\\\\n * epoch-mode paths are authenticated and replayed back, every other path is\\\\n * the live text. B's suites compare their own replay against this view.\\\\n */\\\\nexport function createIrNativeClassLayoutSourceEpochView(\\\\n  actualRead: (path: string) => string,\\\\n): (path: string) => string {\\\\n  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);\\\\n  if (\\\\n    typeof rawReceipt !== \\\\\\\"string\\\\\\\" ||\\\\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\\\\n    hash(rawReceipt) !== receiptSha256\\\\n  )\\\\n    fail(\\\\\\\"complete receipt pin\\\\\\\");\\\\n  const receipt: unknown = JSON.parse(rawReceipt);\\\\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\\\\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\\\\n  return (path: string): string => {\\\\n    const transform = epochPaths.get(path);\\\\n    const live = actualRead(path);\\\\n    if (!transform || transform.mode !== \\\\\\\"epoch\\\\\\\") return live;\\\\n    authenticate(live, transform.current, \\\\\\\"live \\\\\\\" + path);\\\\n    const epoch = replaceRanges(live, transform.edits, true);\\\\n    authenticate(epoch, transform.before, \\\\\\\"epoch \\\\\\\" + path);\\\\n    return epoch;\\\\n  };\\\\n}\\\\n\\\"\\n          }\\n        ]\\n      },\\n      {\\n        \\\"path\\\": \\\"tests/helpers/ir-native-class-layout-source-successor.json\\\",\\n        \\\"mode\\\": \\\"live\\\",\\n        \\\"before\\\": {\\n          \\\"bytes\\\": 12174,\\n          \\\"sha256\\\": \\\"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\\\",\\n          \\\"gitBlob\\\": \\\"ed2339f103426372d227ea9355899dbbfecfad09\\\"\\n        },\\n        \\\"current\\\": {\\n          \\\"bytes\\\": 18244,\\n          \\\"sha256\\\": \\\"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\\\",\\n          \\\"gitBlob\\\": \\\"3dc827cccb7b35baedabd09af8bfb92e86660ad8\\\"\\n        },\\n        \\\"edits\\\": [\\n          {\\n            \\\"beforeStart\\\": 12168,\\n            \\\"beforeEnd\\\": 12172,\\n            \\\"beforeText\\\": \\\"  ]\\\\n\\\",\\n            \\\"currentStart\\\": 12168,\\n            \\\"currentEnd\\\": 18242,\\n            \\\"currentText\\\": \\\"  ],\\\\n  \\\\\\\"successor\\\\\\\": {\\\\n    \\\\\\\"base\\\\\\\": \\\\\\\"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\\\\\\\",\\\\n    \\\\\\\"head\\\\\\\": \\\\\\\"3e16e53585\\\\\\\",\\\\n    \\\\\\\"transforms\\\\\\\": [\\\\n      {\\\\n        \\\\\\\"path\\\\\\\": \\\\\\\"src/ir/runtime/verify.ts\\\\\\\",\\\\n        \\\\\\\"mode\\\\\\\": \\\\\\\"epoch\\\\\\\",\\\\n        \\\\\\\"before\\\\\\\": {\\\\n          \\\\\\\"bytes\\\\\\\": 122476,\\\\n          \\\\\\\"sha256\\\\\\\": \\\\\\\"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\\\\\\\",\\\\n          \\\\\\\"gitBlob\\\\\\\": \\\\\\\"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\\\\\\\"\\\\n        },\\\\n        \\\\\\\"current\\\\\\\": {\\\\n          \\\\\\\"bytes\\\\\\\": 124703,\\\\n          \\\\\\\"sha256\\\\\\\": \\\\\\\"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\\\\\\\",\\\\n          \\\\\\\"gitBlob\\\\\\\": \\\\\\\"0232eb2216e508c4cce5036a2433780bd87e7597\\\\\\\"\\\\n        },\\\\n        \\\\\\\"edits\\\\\\\": [\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 1270,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 1372,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\\\\\\\\\"../core/nodes.js\\\\\\\\\\\\\\\";\\\\\\\\n\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 1270,\\\\n            \\\\\\\"currentEnd\\\\\\\": 1390,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\\\\\\\\\"../core/nodes.js\\\\\\\\\\\\\\\";\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 1453,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 1501,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"import type { IrType } from \\\\\\\\\\\\\\\"../core/types.js\\\\\\\\\\\\\\\";\\\\\\\\n\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 1471,\\\\n            \\\\\\\"currentEnd\\\\\\\": 1533,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"import type { IrClassShape, IrType } from \\\\\\\\\\\\\\\"../core/types.js\\\\\\\\\\\\\\\";\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 15279,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 15279,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 15311,\\\\n            \\\\\\\"currentEnd\\\\\\\": 15651,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"  /**\\\\\\\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\\\\\\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\\\\\\\n   * `string` result non-assignable (native strings lower to\\\\\\\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\\\\\\\n   */\\\\\\\\n  readonly stringIsExternref?: boolean;\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 23246,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 23299,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"      if (!returnTypeAssignable(actual, declared)) {\\\\\\\\n\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 23618,\\\\n            \\\\\\\"currentEnd\\\\\\\": 23699,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 24737,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 24804,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\\\\\\\n\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 25137,\\\\n            \\\\\\\"currentEnd\\\\\\\": 25232,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 25815,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 25890,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\\\\\\\n\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 26243,\\\\n            \\\\\\\"currentEnd\\\\\\\": 26347,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 28284,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 28284,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 28741,\\\\n            \\\\\\\"currentEnd\\\\\\\": 29136,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"  // (#7001) A dynamic/externref value into a native-string result: string\\\\\\\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\\\\\\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\\\\\\\n  if (\\\\\\\\n    declared.kind === \\\\\\\\\\\\\\\"string\\\\\\\\\\\\\\\" &&\\\\\\\\n    stringIsExternref === false &&\\\\\\\\n    (actual.kind === \\\\\\\\\\\\\\\"dynamic\\\\\\\\\\\\\\\" || a?.kind === \\\\\\\\\\\\\\\"externref\\\\\\\\\\\\\\\")\\\\\\\\n  ) {\\\\\\\\n    return false;\\\\\\\\n  }\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 82195,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 82304,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"  \\\\\\\\\\\\\\\"class.call\\\\\\\\\\\\\\\": { skip: \\\\\\\\\\\\\\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\\\\\\\\\\\\\" },\\\\\\\\n\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 83047,\\\\n            \\\\\\\"currentEnd\\\\\\\": 83151,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\\\\\\\n  \\\\\\\\\\\\\\\"class.call\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"checked\\\\\\\\\\\\\\\",\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 89889,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 89889,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 90736,\\\\n            \\\\\\\"currentEnd\\\\\\\": 90827,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"    case \\\\\\\\\\\\\\\"class.call\\\\\\\\\\\\\\\":\\\\\\\\n      checkClassCallTarget(instr, blockId, ctx);\\\\\\\\n      return true;\\\\\\\\n\\\\\\\"\\\\n          },\\\\n          {\\\\n            \\\\\\\"beforeStart\\\\\\\": 89929,\\\\n            \\\\\\\"beforeEnd\\\\\\\": 89929,\\\\n            \\\\\\\"beforeText\\\\\\\": \\\\\\\"\\\\\\\",\\\\n            \\\\\\\"currentStart\\\\\\\": 90867,\\\\n            \\\\\\\"currentEnd\\\\\\\": 92156,\\\\n            \\\\\\\"currentText\\\\\\\": \\\\\\\"/**\\\\\\\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\\\\\\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\\\\\\\n * must be that member's own target: one bound to any other class's member is a\\\\\\\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\\\\\\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\\\\\\\n * resolver-typed and is not judged here.\\\\\\\\n */\\\\\\\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\\\\\\\n  const receiver = ctx.typeOf.get(instr.receiver);\\\\\\\\n  if (!instr.target || receiver?.kind !== \\\\\\\\\\\\\\\"class\\\\\\\\\\\\\\\") return;\\\\\\\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\\\\\\\n    const member = shape.methods.find(\\\\\\\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\\\\\\\\\\\\\"method\\\\\\\\\\\\\\\") === instr.memberKind,\\\\\\\\n    );\\\\\\\\n    if (!member) continue;\\\\\\\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\\\\\\\n    const got = bindingKey(instr.target.binding);\\\\\\\\n    if (want !== null && got !== null && want !== got)\\\\\\\\n      roadmapError(\\\\\\\\n        ctx,\\\\\\\\n        blockId,\\\\\\\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\\\\\\\n      );\\\\\\\\n    return;\\\\\\\\n  }\\\\\\\\n}\\\\\\\\n\\\\\\\\n\\\\\\\"\\\\n          }\\\\n        ]\\\\n      }\\\\n    ]\\\\n  }\\\\n\\\"\\n          }\\n        ]\\n      }\\n    ]\\n  }\\n\"\n          }\n        ]\n      }\n    ]\n  }\n"
+          }
+        ]
+      }
+    ],
+    "policy": {
+      "before": {
+        "source": {
+          "bytes": 639290,
+          "sha256": "d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985",
+          "gitBlob": "8f367782333e8ef6c7f6d27d2afb52f0f35ff9ac"
+        },
+        "count": 2020,
+        "data": "1e863199ae1e7972e03782e636bc45dc193788a72b96bd6729881cca03bd49a5",
+        "files": "20a8ce7f02f84b626aa249bfa2342c0b607f85a187ec3b978f022efa787753a3",
+        "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+      },
+      "current": {
+        "source": {
+          "bytes": 654000,
+          "sha256": "f51cecdf06959e0ec5d86a514fd2b249115f8adcb28fc1bf82c1bf09f7b1878b",
+          "gitBlob": "192e6a95fd54caa909c008f227547ed1132976ee"
+        },
+        "count": 2067,
+        "data": "3ffac2626826d95f512289945b2657198e63f992e433b1b71640aed3f020ba97",
+        "files": "5f2a80da74b16f3ef28208df5bc0d2a358adfbd894a86e5b75e40b8aae76b060",
+        "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+      },
+      "inserted": [
+        {
+          "index": 180,
+          "row": {
+            "path": "src/codegen/object-model/anon-expando-bag-slot.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 357,
+          "row": {
+            "path": "src/codegen/closures/outer-write-index.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 368,
+          "row": {
+            "path": "src/codegen/closures/module-scope-binding.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 413,
+          "row": {
+            "path": "src/codegen/declarations/cjs-module-exports.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 651,
+          "row": {
+            "path": "src/codegen/helpers/host-date-parse.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 652,
+          "row": {
+            "path": "src/codegen/helpers/host-regexp-search.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 653,
+          "row": {
+            "path": "src/codegen/helpers/host-intl-classes.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 654,
+          "row": {
+            "path": "src/codegen/helpers/host-intl-locale.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 796,
+          "row": {
+            "path": "src/codegen/array/tuple-array-carrier.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 912,
+          "row": {
+            "path": "src/codegen/promise/receiver-capability.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate the AST receiver classification and argument compilation from the NewPromiseCapability / Promise.try instruction sequences."
+          }
+        },
+        {
+          "index": 913,
+          "row": {
+            "path": "src/codegen/promise/with-resolvers.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate the call-site routing from the context-owned registration of the native withResolvers runtime function."
+          }
+        },
+        {
+          "index": 937,
+          "row": {
+            "path": "src/codegen/object-model/struct-proto-link.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1086,
+          "row": {
+            "path": "src/codegen/object-model/object-spread-extern-source.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Pure AST + function-local slot predicate for the object-literal spread lowering (#7051); move with the object-literal struct assembly."
+          }
+        },
+        {
+          "index": 1104,
+          "row": {
+            "path": "src/codegen/atomics/atomics-native.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1105,
+          "row": {
+            "path": "src/codegen/buffers/shared-array-buffer.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1106,
+          "row": {
+            "path": "src/codegen/buffers/shared-array-buffer-mop.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1114,
+          "row": {
+            "path": "src/codegen/temporal/native-arith.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1115,
+          "row": {
+            "path": "src/codegen/temporal/native-format.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1116,
+          "row": {
+            "path": "src/codegen/temporal/native-helpers.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1117,
+          "row": {
+            "path": "src/codegen/temporal/native-parse-duration.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1118,
+          "row": {
+            "path": "src/codegen/temporal/native-parse-iso.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1119,
+          "row": {
+            "path": "src/codegen/temporal/native-parse-kit.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1120,
+          "row": {
+            "path": "src/codegen/temporal/wasm-kit.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1195,
+          "row": {
+            "path": "src/codegen/object-model/closed-dispatch-rest-arm.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1196,
+          "row": {
+            "path": "src/codegen/array/ta-int-elem-coercion.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1569,
+          "row": {
+            "path": "src/runtime/wasmgc/promise/with-resolvers-bodies.ts",
+            "state": "clean",
+            "layer": "native-runtime"
+          }
+        },
+        {
+          "index": 1736,
+          "row": {
+            "path": "src/codegen/declarations/string-replacement-callbacks.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1807,
+          "row": {
+            "path": "src/runtime/platform-arg-marshal.ts",
+            "state": "unmigrated",
+            "layer": "legacy-host"
+          }
+        },
+        {
+          "index": 1808,
+          "row": {
+            "path": "src/runtime/regexp-host-accelerator.ts",
+            "state": "unmigrated",
+            "layer": "legacy-host"
+          }
+        },
+        {
+          "index": 1809,
+          "row": {
+            "path": "src/runtime/intl-host-accelerator.ts",
+            "state": "unmigrated",
+            "layer": "legacy-host"
+          }
+        },
+        {
+          "index": 1814,
+          "row": {
+            "path": "src/codegen/analysis/async-loop-head.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1857,
+          "row": {
+            "path": "src/codegen/array/array-shift-native.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1858,
+          "row": {
+            "path": "src/codegen/classes/runtime-proto-install-demand.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1859,
+          "row": {
+            "path": "src/codegen/expressions/callable-result-unbox.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1860,
+          "row": {
+            "path": "src/codegen/expressions/disposable-any-receiver-two-arm.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1861,
+          "row": {
+            "path": "src/codegen/expressions/element-compound-any-add.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 1862,
+          "row": {
+            "path": "src/codegen/helpers/base64-native.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 2057,
+          "row": {
+            "path": "src/codegen/helpers/return-tail-funnel.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 2058,
+          "row": {
+            "path": "src/codegen/classes/class-symbol-to-primitive-operand.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 2059,
+          "row": {
+            "path": "src/codegen/helpers/loose-eq-object-identity.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 2060,
+          "row": {
+            "path": "src/codegen/helpers/anyvalue-to-number.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 2061,
+          "row": {
+            "path": "src/codegen/expressions/import-meta-url-native.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "backend-wasmgc",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+          }
+        },
+        {
+          "index": 2062,
+          "row": {
+            "path": "src/runtime/native-microtask-checkpoint.ts",
+            "state": "unmigrated",
+            "layer": "legacy-host"
+          }
+        },
+        {
+          "index": 2063,
+          "row": {
+            "path": "src/ir/class-overrides.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "frontend-ts",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary."
+          }
+        },
+        {
+          "index": 2064,
+          "row": {
+            "path": "src/ir/closure-signature-flow.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "frontend-ts",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Pure TS-AST callable-slot flow scan feeding the IR selector (#7003); retire with an arity-adapting IR closure call or move behind the frontend-ts boundary."
+          }
+        },
+        {
+          "index": 2065,
+          "row": {
+            "path": "src/ir/const-binding-writes.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "frontend-ts",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Pure TS-AST write-to-const scan feeding the IR lowerer's legacy demotion (#7014 wave 15); move behind the frontend-ts boundary with the mutation pre-pass."
+          }
+        },
+        {
+          "index": 2066,
+          "row": {
+            "path": "src/ir/logical-assignment-name-targets.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "frontend-ts",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass."
+          }
+        }
+      ]
+    }
+  }
 }

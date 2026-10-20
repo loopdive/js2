@@ -306,5 +306,107 @@
       "beforeText": "",
       "currentText": ";\n    if (\n      program.inventory?.terminalUnits.some(\n        (u) =>\n          u.lexicalOwnerId === shape.classId &&\n          (u.kind === \"class-constructor\" || u.kind === \"class-implicit-constructor\"),\n      ) &&\n      !entry.contract.preparation\n    )\n      invalid(\"original source constructor lacks complete class preparation\");\n    if (\n      entry.contract.preparation &&\n      preparedIrDataMismatch(entry.contract.shape, entry.contract.preparation.shape) !== undefined\n    )\n      invalid(\"class ABI layout contradicts its source preparation\")"
     }
-  ]
+  ],
+  "successor": {
+    "base": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+    "head": "3e16e53585",
+    "transforms": [
+      {
+        "path": "src/ir/runtime/verify.ts",
+        "mode": "epoch",
+        "before": {
+          "bytes": 122476,
+          "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+          "gitBlob": "95fae5703c947c68feb3d29c8ae6703a59bcb0c3"
+        },
+        "current": {
+          "bytes": 124703,
+          "sha256": "acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad",
+          "gitBlob": "0232eb2216e508c4cce5036a2433780bd87e7597"
+        },
+        "edits": [
+          {
+            "beforeStart": 1270,
+            "beforeEnd": 1372,
+            "beforeText": "import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \"../core/nodes.js\";\n",
+            "currentStart": 1270,
+            "currentEnd": 1390,
+            "currentText": "import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \"../core/nodes.js\";\n"
+          },
+          {
+            "beforeStart": 1453,
+            "beforeEnd": 1501,
+            "beforeText": "import type { IrType } from \"../core/types.js\";\n",
+            "currentStart": 1471,
+            "currentEnd": 1533,
+            "currentText": "import type { IrClassShape, IrType } from \"../core/types.js\";\n"
+          },
+          {
+            "beforeStart": 15279,
+            "beforeEnd": 15279,
+            "beforeText": "",
+            "currentStart": 15311,
+            "currentEnd": 15651,
+            "currentText": "  /**\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\n   * strings)? `false` makes a dynamic/externref value returned into a declared\n   * `string` result non-assignable (native strings lower to\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\n   */\n  readonly stringIsExternref?: boolean;\n"
+          },
+          {
+            "beforeStart": 23246,
+            "beforeEnd": 23299,
+            "beforeText": "      if (!returnTypeAssignable(actual, declared)) {\n",
+            "currentStart": 23618,
+            "currentEnd": 23699,
+            "currentText": "      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\n"
+          },
+          {
+            "beforeStart": 24737,
+            "beforeEnd": 24804,
+            "beforeText": "        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\n",
+            "currentStart": 25137,
+            "currentEnd": 25232,
+            "currentText": "        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\n"
+          },
+          {
+            "beforeStart": 25815,
+            "beforeEnd": 25890,
+            "beforeText": "function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\n",
+            "currentStart": 26243,
+            "currentEnd": 26347,
+            "currentText": "function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\n"
+          },
+          {
+            "beforeStart": 28284,
+            "beforeEnd": 28284,
+            "beforeText": "",
+            "currentStart": 28741,
+            "currentEnd": 29136,
+            "currentText": "  // (#7001) A dynamic/externref value into a native-string result: string\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\n  if (\n    declared.kind === \"string\" &&\n    stringIsExternref === false &&\n    (actual.kind === \"dynamic\" || a?.kind === \"externref\")\n  ) {\n    return false;\n  }\n"
+          },
+          {
+            "beforeStart": 82195,
+            "beforeEnd": 82304,
+            "beforeText": "  \"class.call\": { skip: \"resolver-typed: method signature resolved from the receiver's shape at lowering\" },\n",
+            "currentStart": 83047,
+            "currentEnd": 83151,
+            "currentText": "  // (#7000) Target identity is checked; the signature stays resolver-typed.\n  \"class.call\": \"checked\",\n"
+          },
+          {
+            "beforeStart": 89889,
+            "beforeEnd": 89889,
+            "beforeText": "",
+            "currentStart": 90736,
+            "currentEnd": 90827,
+            "currentText": "    case \"class.call\":\n      checkClassCallTarget(instr, blockId, ctx);\n      return true;\n"
+          },
+          {
+            "beforeStart": 89929,
+            "beforeEnd": 89929,
+            "beforeText": "",
+            "currentStart": 90867,
+            "currentEnd": 92156,
+            "currentText": "/**\n * (#7000) `class.call` is a STATIC call of the member resolved on the\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\n * must be that member's own target: one bound to any other class's member is a\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\n * receiver that is not class-shaped, or a member the walk cannot see, stays\n * resolver-typed and is not judged here.\n */\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\n  const receiver = ctx.typeOf.get(instr.receiver);\n  if (!instr.target || receiver?.kind !== \"class\") return;\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\n    const member = shape.methods.find(\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \"method\") === instr.memberKind,\n    );\n    if (!member) continue;\n    const want = member.target ? bindingKey(member.target.binding) : null;\n    const got = bindingKey(instr.target.binding);\n    if (want !== null && got !== null && want !== got)\n      roadmapError(\n        ctx,\n        blockId,\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\n      );\n    return;\n  }\n}\n\n"
+          }
+        ]
+      }
+    ]
+  }
 }

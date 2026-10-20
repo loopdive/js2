@@ -20,6 +20,15 @@ interface Edit {
   readonly currentEnd: number;
   readonly currentText: string;
 }
+interface SuccessorTransform extends Transform {
+  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */
+  readonly mode: "epoch" | "live";
+}
+interface SuccessorEpoch {
+  readonly base: string;
+  readonly head: string;
+  readonly transforms: readonly SuccessorTransform[];
+}
 export interface IrNativeClassLayoutSourceReceipt {
   readonly schema: 1;
   readonly kind: "native-class-layout-source-successor";
@@ -30,10 +39,11 @@ export interface IrNativeClassLayoutSourceReceipt {
   readonly current: readonly SourcePin[];
   readonly anchors: readonly SourcePin[];
   readonly edits: readonly Edit[];
+  readonly successor?: SuccessorEpoch;
 }
-const receiptBytes = 12174;
-const receiptSha256 = "5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045";
-const canonicalReceiptSha256 = "f897d27f9f03813b894b06efde96da04dab6f746ae8424ff12835bbc33136997";
+const receiptBytes = 18244;
+const receiptSha256 = "3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0";
+const canonicalReceiptSha256 = "e0fe9bd8bf1f389a18cd96337d4a212e7a96654b3221a6478138dfe0e2db757c";
 function fail(detail: string): never {
   throw Error(`native class source successor: ${detail}`);
 }
@@ -113,6 +123,32 @@ function replaceRanges(source: string, edits: readonly Edit[], inverse: boolean)
   }
   return bytes.toString("utf8");
 }
+/**
+ * (#6920) A successor epoch maps the live tree back to this record's fixed
+ * epoch before that epoch is replayed: every transform is authenticated and
+ * replayed both ways. The fixed epoch's data is never edited.
+ */
+function applySuccessor(
+  receipt: { readonly successor?: SuccessorEpoch },
+  actualReader: (path: string) => string,
+  captured: Map<string, string>,
+): ReadonlyMap<string, Pin> {
+  const overrides = new Map<string, Pin>();
+  const successor = receipt.successor;
+  if (!successor) return overrides;
+  for (const transform of successor.transforms) {
+    const live = actualReader(transform.path);
+    authenticate(live, transform.current, "live " + transform.path);
+    const epoch = replaceRanges(live, transform.edits, true);
+    authenticate(epoch, transform.before, "epoch " + transform.path);
+    if (replaceRanges(epoch, transform.edits, false) !== live) fail("complete successor forward replay");
+    if (transform.mode === "live") {
+      overrides.set(transform.path, transform.current);
+      captured.set(transform.path, live);
+    } else captured.set(transform.path, epoch);
+  }
+  return overrides;
+}
 /** One explicit operation owns this fresh authenticated snapshot; no capture survives into the next operation. */
 export function createIrNativeClassLayoutSourceReader(actualReader: Reader): Reader {
   const receiptText = actualReader(irNativeClassLayoutSourceReceiptPath);
@@ -125,9 +161,10 @@ export function createIrNativeClassLayoutSourceReader(actualReader: Reader): Rea
   const receipt: unknown = JSON.parse(receiptText);
   assertIrNativeClassLayoutSourceReceiptStructure(receipt);
   const captured = new Map<string, string>([[irNativeClassLayoutSourceReceiptPath, receiptText]]);
+  const overrides = applySuccessor(receipt, actualReader, captured);
   for (const row of [...receipt.current, ...receipt.anchors]) {
-    const text = actualReader(row.path);
-    authenticate(text, row, row.path);
+    const text = captured.get(row.path) ?? actualReader(row.path);
+    authenticate(text, overrides.get(row.path) ?? row, row.path);
     captured.set(row.path, text);
   }
   const current = captured.get(irNativeClassLayoutSourcePath)!;
@@ -149,4 +186,33 @@ export function createIrNativeClassLayoutSourceReader(actualReader: Reader): Rea
 /** Standalone reads also create a fresh complete operation, including passthrough. */
 export function readBeforeIrNativeClassLayoutSource(path: string, actualReader: Reader): string {
   return createIrNativeClassLayoutSourceReader(actualReader)(path);
+}
+
+/**
+ * (#6920) The live tree seen at this record's fixed epoch: successor
+ * epoch-mode paths are authenticated and replayed back, every other path is
+ * the live text. B's suites compare their own replay against this view.
+ */
+export function createIrNativeClassLayoutSourceEpochView(
+  actualRead: (path: string) => string,
+): (path: string) => string {
+  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);
+  if (
+    typeof rawReceipt !== "string" ||
+    Buffer.byteLength(rawReceipt) !== receiptBytes ||
+    hash(rawReceipt) !== receiptSha256
+  )
+    fail("complete receipt pin");
+  const receipt: unknown = JSON.parse(rawReceipt);
+  assertIrNativeClassLayoutSourceReceiptStructure(receipt);
+  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));
+  return (path: string): string => {
+    const transform = epochPaths.get(path);
+    const live = actualRead(path);
+    if (!transform || transform.mode !== "epoch") return live;
+    authenticate(live, transform.current, "live " + path);
+    const epoch = replaceRanges(live, transform.edits, true);
+    authenticate(epoch, transform.before, "epoch " + path);
+    return epoch;
+  };
 }

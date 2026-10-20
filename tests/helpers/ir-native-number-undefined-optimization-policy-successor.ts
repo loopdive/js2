@@ -32,6 +32,20 @@ interface Transform {
   readonly current: Pin;
   readonly edits: readonly Edit[];
 }
+interface SuccessorTransform extends Transform {
+  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */
+  readonly mode: "epoch" | "live";
+}
+interface SuccessorEpoch {
+  readonly base: string;
+  readonly head: string;
+  readonly transforms: readonly SuccessorTransform[];
+  readonly policy?: {
+    readonly before: Profile;
+    readonly current: Profile;
+    readonly inserted: readonly { readonly index: number; readonly row: Record<string, unknown> }[];
+  };
+}
 export interface OptimizationPolicyReceipt {
   readonly schema: 1;
   readonly kind: "native-number-undefined-optimization-policy-successor";
@@ -41,10 +55,11 @@ export interface OptimizationPolicyReceipt {
   readonly anchors: readonly SourcePin[];
   readonly callers: readonly SourcePin[];
   readonly transforms: readonly Transform[];
+  readonly successor?: SuccessorEpoch;
 }
-const receiptBytes = 11533;
-const receiptHash = "470dafcb58a1feed449cb1594702a085c9ca4d01656aa9cb85ded10751d5fcf5";
-const receiptDataHash = "972420f7dc267bb422a1da5d27f8b8420aa34b1f20ed367f9d1260dcc02c554c";
+const receiptBytes = 40310;
+const receiptHash = "11df801b78a5e232a67c6d00707d3909f22391c3ec6df131c494c922eeb17541";
+const receiptDataHash = "a9150c544cfa4a5e6665a443475c588e42935da39c73189086f40de44b73634c";
 function fail(detail: string): never {
   throw Error(`native optimization policy successor: ${detail}`);
 }
@@ -150,6 +165,49 @@ function profile(raw: string, expected: Profile): Record<string, unknown> & { fi
     fail("complete raw source profile mismatch");
   return parsed;
 }
+/**
+ * (#6920) A successor epoch maps the live tree back to this record's fixed
+ * epoch before that epoch is replayed: every transform is authenticated and
+ * replayed both ways, and the policy's inserted rows are inverted and
+ * replayed as whole DATA. The fixed epoch's data is never edited.
+ */
+function applySuccessor(
+  receipt: { readonly successor?: SuccessorEpoch },
+  actualRead: (path: string) => string,
+  captured: Map<string, string>,
+): ReadonlyMap<string, Pin> {
+  const overrides = new Map<string, Pin>();
+  const successor = receipt.successor;
+  if (!successor) return overrides;
+  for (const transform of successor.transforms) {
+    const live = actualRead(transform.path);
+    authenticate(live, transform.current, "live " + transform.path);
+    const epoch = replace(live, transform.edits, true);
+    authenticate(epoch, transform.before, "epoch " + transform.path);
+    if (replace(epoch, transform.edits, false) !== live) fail("complete successor forward replay");
+    if (transform.path === "scripts/compiler-boundaries.json" && successor.policy) {
+      const liveData = profile(live, successor.policy.current);
+      const epochData = profile(epoch, successor.policy.before);
+      const inverseFiles = [...liveData.files];
+      for (const inserted of [...successor.policy.inserted].reverse()) {
+        if (JSON.stringify(inverseFiles[inserted.index]) !== JSON.stringify(inserted.row))
+          fail("successor inserted row coordinates");
+        inverseFiles.splice(inserted.index, 1);
+      }
+      if (JSON.stringify({ ...liveData, files: inverseFiles }) !== JSON.stringify(epochData))
+        fail("successor whole DATA inverse");
+      const forwardFiles = [...epochData.files];
+      for (const inserted of successor.policy.inserted) forwardFiles.splice(inserted.index, 0, inserted.row);
+      if (JSON.stringify({ ...epochData, files: forwardFiles }) !== JSON.stringify(liveData))
+        fail("successor whole DATA forward");
+    }
+    if (transform.mode === "live") {
+      overrides.set(transform.path, transform.current);
+      captured.set(transform.path, live);
+    } else captured.set(transform.path, epoch);
+  }
+  return overrides;
+}
 /** Each operation captures fresh physical inputs once; no shared authentication cache. */
 export function createIrNativeNumberUndefinedOptimizationPolicyReader(
   actualRead: OptimizationPolicyReader,
@@ -164,12 +222,13 @@ export function createIrNativeNumberUndefinedOptimizationPolicyReader(
   const receipt: unknown = JSON.parse(rawReceipt);
   assertNativeNumberUndefinedOptimizationPolicyReceipt(receipt);
   const captured = new Map<string, string>([[nativeNumberUndefinedOptimizationPolicyReceiptPath, rawReceipt]]);
-  const rawPolicy = actualRead("scripts/compiler-boundaries.json");
+  const overrides = applySuccessor(receipt, actualRead, captured);
+  const rawPolicy = captured.get("scripts/compiler-boundaries.json") ?? actualRead("scripts/compiler-boundaries.json");
   const currentData = profile(rawPolicy, receipt.current);
   captured.set("scripts/compiler-boundaries.json", rawPolicy);
   for (const row of [...receipt.callers, ...receipt.anchors]) {
-    const text = actualRead(row.path);
-    authenticate(text, row, row.path);
+    const text = captured.get(row.path) ?? actualRead(row.path);
+    authenticate(text, overrides.get(row.path) ?? row, row.path);
     captured.set(row.path, text);
   }
   for (const transform of receipt.transforms) {
@@ -212,5 +271,34 @@ export function createLazyIrNativeNumberUndefinedOptimizationPolicyReader(
     if (typeof path !== "string" || !path) fail("primitive nonempty path required");
     captured ??= createIrNativeNumberUndefinedOptimizationPolicyReader(actualRead);
     return captured(path);
+  };
+}
+
+/**
+ * (#6920) The live tree seen at this record's fixed epoch: successor
+ * epoch-mode paths are authenticated and replayed back, every other path is
+ * the live text. B's suites compare their own replay against this view.
+ */
+export function createIrNativeNumberUndefinedOptimizationPolicyEpochView(
+  actualRead: (path: string) => string,
+): (path: string) => string {
+  const rawReceipt = actualRead(nativeNumberUndefinedOptimizationPolicyReceiptPath);
+  if (
+    typeof rawReceipt !== "string" ||
+    Buffer.byteLength(rawReceipt) !== receiptBytes ||
+    hash(rawReceipt) !== receiptHash
+  )
+    fail("complete receipt pin");
+  const receipt: unknown = JSON.parse(rawReceipt);
+  assertNativeNumberUndefinedOptimizationPolicyReceipt(receipt);
+  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));
+  return (path: string): string => {
+    const transform = epochPaths.get(path);
+    const live = actualRead(path);
+    if (!transform || transform.mode !== "epoch") return live;
+    authenticate(live, transform.current, "live " + path);
+    const epoch = replace(live, transform.edits, true);
+    authenticate(epoch, transform.before, "epoch " + path);
+    return epoch;
   };
 }

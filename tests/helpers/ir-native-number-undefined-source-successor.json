@@ -814,5 +814,227 @@
         }
       ]
     }
-  ]
+  ],
+  "successor": {
+    "base": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+    "head": "3e16e53585",
+    "transforms": [
+      {
+        "path": "src/ir/runtime/verify.ts",
+        "mode": "epoch",
+        "before": {
+          "bytes": 122476,
+          "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+          "gitBlob": "95fae5703c947c68feb3d29c8ae6703a59bcb0c3"
+        },
+        "current": {
+          "bytes": 124703,
+          "sha256": "acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad",
+          "gitBlob": "0232eb2216e508c4cce5036a2433780bd87e7597"
+        },
+        "edits": [
+          {
+            "beforeStart": 1270,
+            "beforeEnd": 1372,
+            "beforeText": "import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \"../core/nodes.js\";\n",
+            "currentStart": 1270,
+            "currentEnd": 1390,
+            "currentText": "import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \"../core/nodes.js\";\n"
+          },
+          {
+            "beforeStart": 1453,
+            "beforeEnd": 1501,
+            "beforeText": "import type { IrType } from \"../core/types.js\";\n",
+            "currentStart": 1471,
+            "currentEnd": 1533,
+            "currentText": "import type { IrClassShape, IrType } from \"../core/types.js\";\n"
+          },
+          {
+            "beforeStart": 15279,
+            "beforeEnd": 15279,
+            "beforeText": "",
+            "currentStart": 15311,
+            "currentEnd": 15651,
+            "currentText": "  /**\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\n   * strings)? `false` makes a dynamic/externref value returned into a declared\n   * `string` result non-assignable (native strings lower to\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\n   */\n  readonly stringIsExternref?: boolean;\n"
+          },
+          {
+            "beforeStart": 23246,
+            "beforeEnd": 23299,
+            "beforeText": "      if (!returnTypeAssignable(actual, declared)) {\n",
+            "currentStart": 23618,
+            "currentEnd": 23699,
+            "currentText": "      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\n"
+          },
+          {
+            "beforeStart": 24737,
+            "beforeEnd": 24804,
+            "beforeText": "        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\n",
+            "currentStart": 25137,
+            "currentEnd": 25232,
+            "currentText": "        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\n"
+          },
+          {
+            "beforeStart": 25815,
+            "beforeEnd": 25890,
+            "beforeText": "function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\n",
+            "currentStart": 26243,
+            "currentEnd": 26347,
+            "currentText": "function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\n"
+          },
+          {
+            "beforeStart": 28284,
+            "beforeEnd": 28284,
+            "beforeText": "",
+            "currentStart": 28741,
+            "currentEnd": 29136,
+            "currentText": "  // (#7001) A dynamic/externref value into a native-string result: string\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\n  if (\n    declared.kind === \"string\" &&\n    stringIsExternref === false &&\n    (actual.kind === \"dynamic\" || a?.kind === \"externref\")\n  ) {\n    return false;\n  }\n"
+          },
+          {
+            "beforeStart": 82195,
+            "beforeEnd": 82304,
+            "beforeText": "  \"class.call\": { skip: \"resolver-typed: method signature resolved from the receiver's shape at lowering\" },\n",
+            "currentStart": 83047,
+            "currentEnd": 83151,
+            "currentText": "  // (#7000) Target identity is checked; the signature stays resolver-typed.\n  \"class.call\": \"checked\",\n"
+          },
+          {
+            "beforeStart": 89889,
+            "beforeEnd": 89889,
+            "beforeText": "",
+            "currentStart": 90736,
+            "currentEnd": 90827,
+            "currentText": "    case \"class.call\":\n      checkClassCallTarget(instr, blockId, ctx);\n      return true;\n"
+          },
+          {
+            "beforeStart": 89929,
+            "beforeEnd": 89929,
+            "beforeText": "",
+            "currentStart": 90867,
+            "currentEnd": 92156,
+            "currentText": "/**\n * (#7000) `class.call` is a STATIC call of the member resolved on the\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\n * must be that member's own target: one bound to any other class's member is a\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\n * receiver that is not class-shaped, or a member the walk cannot see, stays\n * resolver-typed and is not judged here.\n */\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\n  const receiver = ctx.typeOf.get(instr.receiver);\n  if (!instr.target || receiver?.kind !== \"class\") return;\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\n    const member = shape.methods.find(\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \"method\") === instr.memberKind,\n    );\n    if (!member) continue;\n    const want = member.target ? bindingKey(member.target.binding) : null;\n    const got = bindingKey(instr.target.binding);\n    if (want !== null && got !== null && want !== got)\n      roadmapError(\n        ctx,\n        blockId,\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\n      );\n    return;\n  }\n}\n\n"
+          }
+        ]
+      },
+      {
+        "path": "src/shared/contracts/ir-preparation-failure.ts",
+        "mode": "epoch",
+        "before": {
+          "bytes": 12413,
+          "sha256": "5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7",
+          "gitBlob": "0633ed29be3ce62ffed15c28f14142ff5e8ecd38"
+        },
+        "current": {
+          "bytes": 13155,
+          "sha256": "ca1686a9f6d91abfad93e4ba5540700f333dfaaaba2703bfc90a0dfe671f33e6",
+          "gitBlob": "4bccbdc9abd1c26f3e170ce718dbb6409d94e1af"
+        },
+        "edits": [
+          {
+            "beforeStart": 3164,
+            "beforeEnd": 3164,
+            "beforeText": "",
+            "currentStart": 3164,
+            "currentEnd": 3906,
+            "currentText": "  // (#7000) An instance method/accessor reached through a base-typed receiver\n  // that a subclass overrides. The IR binds `class.call` statically to the\n  // declared class's member and has no `__tag` virtual dispatch yet (#1299 is\n  // legacy-only), so the unit keeps its legacy body until it does.\n  | \"class-method-virtual\"\n  // (#7003) A function-typed parameter that a caller may fill with a function\n  // of a different Wasm signature (extra default/optional params, fewer\n  // params, a value result in a `void` slot, or an untraceable value). IR\n  // `closure.call` casts to the annotation's exact func type and would trap;\n  // legacy's arity cascade handles it, so the unit keeps its legacy body.\n  | \"closure-signature-mismatch\"\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-class-layout-source-successor.ts",
+        "mode": "live",
+        "before": {
+          "bytes": 6756,
+          "sha256": "d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168",
+          "gitBlob": "d79ef4d53983fc9402f7911c5413fa64ce89d886"
+        },
+        "current": {
+          "bytes": 9617,
+          "sha256": "9d46fd209df70e97b59aad2b4b7aae7ae4dae27e8eea63590c9ff5015ed36525",
+          "gitBlob": "3def55a7ded701f97b6dcf2e97bcac796d05fecc"
+        },
+        "edits": [
+          {
+            "beforeStart": 729,
+            "beforeEnd": 729,
+            "beforeText": "",
+            "currentStart": 729,
+            "currentEnd": 1089,
+            "currentText": "interface SuccessorTransform extends Transform {\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\n  readonly mode: \"epoch\" | \"live\";\n}\ninterface SuccessorEpoch {\n  readonly base: string;\n  readonly head: string;\n  readonly transforms: readonly SuccessorTransform[];\n}\n"
+          },
+          {
+            "beforeStart": 1115,
+            "beforeEnd": 1115,
+            "beforeText": "",
+            "currentStart": 1475,
+            "currentEnd": 1514,
+            "currentText": "  readonly successor?: SuccessorEpoch;\n"
+          },
+          {
+            "beforeStart": 1117,
+            "beforeEnd": 1334,
+            "beforeText": "const receiptBytes = 12174;\nconst receiptSha256 = \"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\";\nconst canonicalReceiptSha256 = \"f897d27f9f03813b894b06efde96da04dab6f746ae8424ff12835bbc33136997\";\n",
+            "currentStart": 1516,
+            "currentEnd": 1733,
+            "currentText": "const receiptBytes = 18244;\nconst receiptSha256 = \"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\";\nconst canonicalReceiptSha256 = \"e0fe9bd8bf1f389a18cd96337d4a212e7a96654b3221a6478138dfe0e2db757c\";\n"
+          },
+          {
+            "beforeStart": 4982,
+            "beforeEnd": 4982,
+            "beforeText": "",
+            "currentStart": 5381,
+            "currentEnd": 6519,
+            "currentText": "/**\n * (#6920) A successor epoch maps the live tree back to this record's fixed\n * epoch before that epoch is replayed: every transform is authenticated and\n * replayed both ways. The fixed epoch's data is never edited.\n */\nfunction applySuccessor(\n  receipt: { readonly successor?: SuccessorEpoch },\n  actualReader: (path: string) => string,\n  captured: Map<string, string>,\n): ReadonlyMap<string, Pin> {\n  const overrides = new Map<string, Pin>();\n  const successor = receipt.successor;\n  if (!successor) return overrides;\n  for (const transform of successor.transforms) {\n    const live = actualReader(transform.path);\n    authenticate(live, transform.current, \"live \" + transform.path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + transform.path);\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\"complete successor forward replay\");\n    if (transform.mode === \"live\") {\n      overrides.set(transform.path, transform.current);\n      captured.set(transform.path, live);\n    } else captured.set(transform.path, epoch);\n  }\n  return overrides;\n}\n"
+          },
+          {
+            "beforeStart": 5647,
+            "beforeEnd": 5647,
+            "beforeText": "",
+            "currentStart": 7184,
+            "currentEnd": 7253,
+            "currentText": "  const overrides = applySuccessor(receipt, actualReader, captured);\n"
+          },
+          {
+            "beforeStart": 5711,
+            "beforeEnd": 5791,
+            "beforeText": "    const text = actualReader(row.path);\n    authenticate(text, row, row.path);\n",
+            "currentStart": 7317,
+            "currentEnd": 7450,
+            "currentText": "    const text = captured.get(row.path) ?? actualReader(row.path);\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\n"
+          },
+          {
+            "beforeStart": 6756,
+            "beforeEnd": 6756,
+            "beforeText": "",
+            "currentStart": 8415,
+            "currentEnd": 9617,
+            "currentText": "\n/**\n * (#6920) The live tree seen at this record's fixed epoch: successor\n * epoch-mode paths are authenticated and replayed back, every other path is\n * the live text. B's suites compare their own replay against this view.\n */\nexport function createIrNativeClassLayoutSourceEpochView(\n  actualRead: (path: string) => string,\n): (path: string) => string {\n  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);\n  if (\n    typeof rawReceipt !== \"string\" ||\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\n    hash(rawReceipt) !== receiptSha256\n  )\n    fail(\"complete receipt pin\");\n  const receipt: unknown = JSON.parse(rawReceipt);\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\n  return (path: string): string => {\n    const transform = epochPaths.get(path);\n    const live = actualRead(path);\n    if (!transform || transform.mode !== \"epoch\") return live;\n    authenticate(live, transform.current, \"live \" + path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + path);\n    return epoch;\n  };\n}\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-class-layout-source-successor.json",
+        "mode": "live",
+        "before": {
+          "bytes": 12174,
+          "sha256": "5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045",
+          "gitBlob": "ed2339f103426372d227ea9355899dbbfecfad09"
+        },
+        "current": {
+          "bytes": 18244,
+          "sha256": "3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0",
+          "gitBlob": "3dc827cccb7b35baedabd09af8bfb92e86660ad8"
+        },
+        "edits": [
+          {
+            "beforeStart": 12168,
+            "beforeEnd": 12172,
+            "beforeText": "  ]\n",
+            "currentStart": 12168,
+            "currentEnd": 18242,
+            "currentText": "  ],\n  \"successor\": {\n    \"base\": \"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\",\n    \"head\": \"3e16e53585\",\n    \"transforms\": [\n      {\n        \"path\": \"src/ir/runtime/verify.ts\",\n        \"mode\": \"epoch\",\n        \"before\": {\n          \"bytes\": 122476,\n          \"sha256\": \"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\",\n          \"gitBlob\": \"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\"\n        },\n        \"current\": {\n          \"bytes\": 124703,\n          \"sha256\": \"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\",\n          \"gitBlob\": \"0232eb2216e508c4cce5036a2433780bd87e7597\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 1270,\n            \"beforeEnd\": 1372,\n            \"beforeText\": \"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\",\n            \"currentStart\": 1270,\n            \"currentEnd\": 1390,\n            \"currentText\": \"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 1453,\n            \"beforeEnd\": 1501,\n            \"beforeText\": \"import type { IrType } from \\\"../core/types.js\\\";\\n\",\n            \"currentStart\": 1471,\n            \"currentEnd\": 1533,\n            \"currentText\": \"import type { IrClassShape, IrType } from \\\"../core/types.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 15279,\n            \"beforeEnd\": 15279,\n            \"beforeText\": \"\",\n            \"currentStart\": 15311,\n            \"currentEnd\": 15651,\n            \"currentText\": \"  /**\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\n   * `string` result non-assignable (native strings lower to\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\n   */\\n  readonly stringIsExternref?: boolean;\\n\"\n          },\n          {\n            \"beforeStart\": 23246,\n            \"beforeEnd\": 23299,\n            \"beforeText\": \"      if (!returnTypeAssignable(actual, declared)) {\\n\",\n            \"currentStart\": 23618,\n            \"currentEnd\": 23699,\n            \"currentText\": \"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 24737,\n            \"beforeEnd\": 24804,\n            \"beforeText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\n\",\n            \"currentStart\": 25137,\n            \"currentEnd\": 25232,\n            \"currentText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 25815,\n            \"beforeEnd\": 25890,\n            \"beforeText\": \"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\n\",\n            \"currentStart\": 26243,\n            \"currentEnd\": 26347,\n            \"currentText\": \"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\n\"\n          },\n          {\n            \"beforeStart\": 28284,\n            \"beforeEnd\": 28284,\n            \"beforeText\": \"\",\n            \"currentStart\": 28741,\n            \"currentEnd\": 29136,\n            \"currentText\": \"  // (#7001) A dynamic/externref value into a native-string result: string\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\n  if (\\n    declared.kind === \\\"string\\\" &&\\n    stringIsExternref === false &&\\n    (actual.kind === \\\"dynamic\\\" || a?.kind === \\\"externref\\\")\\n  ) {\\n    return false;\\n  }\\n\"\n          },\n          {\n            \"beforeStart\": 82195,\n            \"beforeEnd\": 82304,\n            \"beforeText\": \"  \\\"class.call\\\": { skip: \\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\" },\\n\",\n            \"currentStart\": 83047,\n            \"currentEnd\": 83151,\n            \"currentText\": \"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\n  \\\"class.call\\\": \\\"checked\\\",\\n\"\n          },\n          {\n            \"beforeStart\": 89889,\n            \"beforeEnd\": 89889,\n            \"beforeText\": \"\",\n            \"currentStart\": 90736,\n            \"currentEnd\": 90827,\n            \"currentText\": \"    case \\\"class.call\\\":\\n      checkClassCallTarget(instr, blockId, ctx);\\n      return true;\\n\"\n          },\n          {\n            \"beforeStart\": 89929,\n            \"beforeEnd\": 89929,\n            \"beforeText\": \"\",\n            \"currentStart\": 90867,\n            \"currentEnd\": 92156,\n            \"currentText\": \"/**\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\n * must be that member's own target: one bound to any other class's member is a\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\n * resolver-typed and is not judged here.\\n */\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\n  const receiver = ctx.typeOf.get(instr.receiver);\\n  if (!instr.target || receiver?.kind !== \\\"class\\\") return;\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\n    const member = shape.methods.find(\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\"method\\\") === instr.memberKind,\\n    );\\n    if (!member) continue;\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\n    const got = bindingKey(instr.target.binding);\\n    if (want !== null && got !== null && want !== got)\\n      roadmapError(\\n        ctx,\\n        blockId,\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\n      );\\n    return;\\n  }\\n}\\n\\n\"\n          }\n        ]\n      }\n    ]\n  }\n"
+          }
+        ]
+      }
+    ]
+  }
 }
