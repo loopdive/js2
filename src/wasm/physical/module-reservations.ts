@@ -885,6 +885,17 @@ export class PhysicalModuleReservations {
     } else this.#fail("completion requires a defined function or global");
   }
 
+  /** Check the actual reserved type, not a caller's signature or function's fill receipt. */
+  assertFunctionSignature(token: FunctionReservation, expected: PhysicalFunctionSignature): void {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`signature requested in ${this.#state}`);
+    this.#verifyLayout();
+    this.#owned(token);
+    if (token.kind !== "function") this.#fail("signature requires a defined function");
+    const actual = this.#functionType(token.object.typeIdx);
+    if (!sameValTypes(actual.params, expected.params) || !sameValTypes(actual.results, expected.results))
+      this.#fail(`noncanonical function signature ${token.key}`);
+  }
+
   /** Compare a completed function with a definition re-derived by its semantic owner, not its fill receipt. */
   assertCanonicalFunctionDefinition(token: FunctionReservation, expected: { locals: LocalDef[]; body: Instr[] }): void {
     this.assertCompletedReservation(token);

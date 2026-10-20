@@ -37,11 +37,13 @@ import {
   nativeSourceClosureResolver,
   fillPreparedPrimaryUnit,
   requireCompletedNativeSourceClosures,
+  completeNativeRealmSourceAllocationBodyCustody,
   fillNativeRealmSourceCodeIdentities,
   requireCompletedNativeRealmSourceCodeIdentities,
   reserveNativeRealmSourceCodeIdentities,
 } from "../../src/ir/program-native-invocation.js";
 import { irUnitCallableBindingId } from "../../src/ir/core/callable-bindings.js";
+import { reserveNativeRefCells } from "../../src/backend/wasmgc/resources/native-ref-cells.js";
 import type { IrUnitId } from "../../src/shared/contracts/ir-identity.js";
 import type { Instr } from "../../src/wasm/model/instructions.js";
 import type { PhysicalFunctionSignature, FunctionReservation } from "../../src/wasm/physical/module-reservations.js";
@@ -179,6 +181,7 @@ export function publicRealmClosures(
     if (includeCodeIdentities && !state) throw Error("code identity fixture requires actual realm state");
     const codes = includeCodeIdentities ? reserveNativeRealmSourceCodeIdentities(f.tx, f.realm, f.pack) : undefined;
     const carriers = {
+      ...(f.realm.source.refCells.length ? { refCells: reserveNativeRefCells(f.tx, f.realm.source) } : {}),
       vectors: f.vectors,
       vectorPlan: f.vectorPlan,
       strings: { types: f.stringTypes, key: f.stringTypes.key, utf8Storage: f.stringTypes.utf8Storage },
@@ -239,6 +242,7 @@ export function publicRealmSourceRuntime(
   decoded = false,
   includeCodeIdentities = false,
   sourceText = STATE_SOURCE,
+  resolverOverrides: Partial<IrLowerResolver> = {},
 ) {
   const f = publicRealmFoundation(displaced, decoded, false, false, sourceText),
     c = publicRealmClosures(f, true, includeCodeIdentities),
@@ -274,6 +278,7 @@ export function publicRealmSourceRuntime(
     internFuncType(sig) {
       return f.tx.internFunctionType(sig.params, sig.results);
     },
+    ...resolverOverrides,
   };
   for (const [id, slot] of s.slots)
     fillPreparedPrimaryUnit(
@@ -362,12 +367,14 @@ export function publicRealmSourceRuntime(
   for (const { slot, name } of s.factories) f.tx.defineExport("control:export:" + name, name, slot);
   f.tx.defineExport("control:export:call", "call", call);
   requireCompletedNativeSourceClosures(f.tx, c.source!);
+  const allocationBodies = completeNativeRealmSourceAllocationBodyCustody(f.tx, c.source!, f.realm);
   f.tx.seal();
   const wasm = new WebAssembly.Module(emitBinary(f.module) as BufferSource);
   return {
     f,
     c,
     callables,
+    allocationBodies,
     wasm,
     instance: () => new WebAssembly.Instance(wasm).exports as Record<string, (...args: any[]) => any>,
   };

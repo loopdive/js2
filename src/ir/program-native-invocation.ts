@@ -72,14 +72,24 @@ export interface NativeRealmSourceClosureBodyCustody {
   readonly callables: NativeRealmSourceClosureCallables;
   readonly completionScope: "realm-source-body-custody";
 }
+/** Factory/lifted bodies and their physical ABI; not arbitrary dependency or Call authority. */
+export interface NativeRealmSourceAllocationBodyCustody {
+  readonly bodies: NativeRealmSourceClosureBodyCustody;
+  readonly completionScope: "realm-source-allocation-body-custody";
+}
 interface SourceOwner {
   readonly tx: PhysicalModuleReservations;
   readonly units: Map<IrUnitId, { readonly fn: IrFunction; readonly slot: FunctionReservation }>;
-  readonly completed: Map<IrUnitId, { readonly locals: LocalDef[]; readonly body: Instr[] }>;
+  readonly allocationUnits: Map<IrUnitId, { readonly fn: IrFunction; readonly slot: FunctionReservation }>;
+  readonly completed: Map<
+    IrUnitId,
+    { readonly locals: LocalDef[]; readonly body: Instr[]; readonly signature: PhysicalFunctionSignature }
+  >;
   readonly attempted: Set<IrUnitId>;
   callables?: NativeSourceClosureCallables;
   realmCallables?: NativeRealmSourceClosureCallables;
   realmBodyCustody?: NativeRealmSourceClosureBodyCustody;
+  realmAllocationBodyCustody?: NativeRealmSourceAllocationBodyCustody;
   bound: boolean;
   readonly builtins: NativeBuiltinFunctionRequestIssuer | undefined;
 }
@@ -94,6 +104,12 @@ function requireOwner(tx: PhysicalModuleReservations, pack: NativeSourceClosureE
   assertNativeSourceClosureRequirementsCurrent(pack.requirements);
   requireNativeSourceClosureTypes(tx, pack.types, pack.requirements);
   return owner;
+}
+function allocationOwnerUnitIds(pack: NativeSourceClosureEmission): ReadonlySet<IrUnitId> {
+  return new Set([
+    ...pack.requirements.allocations.map((row) => row.ownerUnitId),
+    ...pack.requirements.refCellAllocations.map((row) => row.ownerUnitId),
+  ]);
 }
 
 export function prepareNativeSourceClosureInput(
@@ -115,7 +131,15 @@ export function beginNativeSourceClosureEmission(
   assertNativeSourceClosureRequirementsCurrent(requirements);
   const types = reserveNativeSourceClosureTypes(tx, requirements, carriers, builtins);
   const pack = Object.freeze({ requirements, types });
-  owners.set(pack, { tx, units: new Map(), completed: new Map(), attempted: new Set(), bound: false, builtins });
+  owners.set(pack, {
+    tx,
+    units: new Map(),
+    allocationUnits: new Map(),
+    completed: new Map(),
+    attempted: new Set(),
+    bound: false,
+    builtins,
+  });
   return pack;
 }
 
@@ -149,6 +173,16 @@ export function bindNativeSourceClosureUnits(
     return { unitId: unit.unitId, fn, slot };
   });
   const codeIdentities = nativeSourceClosureCodeIdentities(tx, pack.types);
+  // Capture factories in the ORIGINAL binding operation. Limited lifted-only
+  // consumers may omit them, but can never acquire allocation-body custody.
+  const allocations = [...allocationOwnerUnitIds(pack)].flatMap((id) => {
+    const fn = prepared.find((candidate) => candidate.unitId === id),
+      slot = slots.get(id);
+    if (!slot) return [];
+    if (!fn || slot.key !== irUnitCallableBindingId(id)) fail("allocation owner has no exact original ABI slot");
+    tx.physicalIndex(slot);
+    return [{ id, fn, slot }];
+  });
   const referencedSlots = [
     ...new Set([
       ...pack.requirements.allocations.map((row) => row.liftedUnitId),
@@ -161,6 +195,7 @@ export function bindNativeSourceClosureUnits(
   });
   for (const slot of referencedSlots) tx.declareFunctionReference(slot);
   for (const row of rows) owner.units.set(row.unitId, { fn: row.fn, slot: row.slot });
+  for (const row of allocations) owner.allocationUnits.set(row.id, { fn: row.fn, slot: row.slot });
   owner.bound = true;
 }
 
@@ -226,6 +261,42 @@ export function requireNativeRealmSourceClosureBodyCustody(
     fail("foreign, copied or substituted source-body custody");
   requireCompletedNativeSourceClosures(tx, source);
   requireNativeRealmSourceClosureCallables(tx, custody.callables, source.types, realm);
+  return custody;
+}
+
+/** Require actual lowering of every original allocation owner, never a raw receipt/count. */
+export function completeNativeRealmSourceAllocationBodyCustody(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceAllocationBodyCustody {
+  const owner = requireOwner(tx, source);
+  const bodies = completeNativeRealmSourceClosureBodyCustody(tx, source, realm);
+  for (const unitId of allocationOwnerUnitIds(source)) {
+    const row = owner.allocationUnits.get(unitId);
+    if (!row || row.fn.asyncPlan || ("asyncRuntime" in row.fn && row.fn.asyncRuntime))
+      fail("allocation owner lacks native canonical body/frame custody");
+    const canonical = owner.completed.get(unitId);
+    if (!canonical) fail("allocation owner canonical lowering is incomplete");
+    tx.assertFunctionSignature(row.slot, canonical.signature);
+    tx.assertCanonicalFunctionDefinition(row.slot, canonical);
+  }
+  owner.realmAllocationBodyCustody ??= Object.freeze({
+    bodies,
+    completionScope: "realm-source-allocation-body-custody" as const,
+  });
+  if (owner.realmAllocationBodyCustody.bodies !== bodies) fail("changed source-body custody");
+  return owner.realmAllocationBodyCustody;
+}
+
+export function requireNativeRealmSourceAllocationBodyCustody(
+  tx: PhysicalModuleReservations,
+  custody: NativeRealmSourceAllocationBodyCustody,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceAllocationBodyCustody {
+  if (completeNativeRealmSourceAllocationBodyCustody(tx, source, realm) !== custody)
+    fail("foreign, copied or substituted allocation-body custody");
   return custody;
 }
 
@@ -424,10 +495,28 @@ export function fillPreparedPrimaryUnit(
   source?: NativeSourceClosureEmission,
 ): void {
   const owner = source ? requireOwner(tx, source) : undefined;
-  const association = owner?.units.get(fn.unitId);
+  const association = owner?.units.get(fn.unitId) ?? owner?.allocationUnits.get(fn.unitId);
   if (association && (association.fn !== fn || association.slot !== slot || owner!.attempted.has(fn.unitId)))
     fail("source canonical lowering uses a changed function/slot or repeats completion");
   if (fn.closureSubtype && source && !association) fail("unbound source closure body");
+  if (source && allocationOwnerUnitIds(source).has(fn.unitId) && !association) fail("unbound source allocation owner");
+  if (association) {
+    if (backend !== "wasmgc" || fn.asyncPlan || ("asyncRuntime" in fn && fn.asyncRuntime))
+      fail("source body has no native canonical backend/frame custody");
+    // A caller may resolve unrelated dependencies, but cannot replace source
+    // capture/ref-cell layouts, code tails or original source target handles.
+    const caller = resolver;
+    resolver = {
+      ...caller,
+      ...nativeSourceClosureResolver(tx, source!),
+      resolveFunc(ref) {
+        const original =
+          ref.binding.kind === "unit" &&
+          (owner!.units.get(ref.binding.unitId) ?? owner!.allocationUnits.get(ref.binding.unitId));
+        return original ? original.slot.handle : caller.resolveFunc(ref);
+      },
+    };
+  }
   const emitter = backend === "wasmgc" ? new WasmGcEmitter(resolver) : new LinearEmitter();
   const lowered = lowerIrFunctionBody<Instr[], ValType>(
     fn,
@@ -439,6 +528,7 @@ export function fillPreparedPrimaryUnit(
   const results = lowered.results.flatMap((result) => [...result]);
   if (!sameValTypes(params, signature.params) || !sameValTypes(results, signature.results))
     fail(`body ${fn.unitId} lowered to a signature different from its original ABI slot`);
+  tx.assertFunctionSignature(slot, { params, results });
   const definition = {
     locals: lowered.locals.flatMap((local) =>
       local.slots.map((type, index) => ({
@@ -450,7 +540,7 @@ export function fillPreparedPrimaryUnit(
   };
   // Clone BEFORE the ledger sees the definition: its receipt may faithfully
   // describe an intercepted/substituted fill rather than the actual IR output.
-  const canonical = association ? structuredClone(definition) : undefined;
+  const canonical = association ? structuredClone({ ...definition, signature: { params, results } }) : undefined;
   if (association) owner!.attempted.add(fn.unitId);
   tx.fillFunction(slot, definition);
   if (canonical) owner!.completed.set(fn.unitId, canonical);
@@ -461,12 +551,17 @@ export function requireCompletedNativeSourceClosures(
   pack: NativeSourceClosureEmission,
 ): NativeSourceClosureEmission {
   const owner = requireOwner(tx, pack);
-  if (!owner.bound || owner.units.size !== pack.requirements.units.length || owner.completed.size !== owner.units.size)
+  if (
+    !owner.bound ||
+    owner.units.size !== pack.requirements.units.length ||
+    [...owner.units.keys()].some((id) => !owner.completed.has(id))
+  )
     fail("source canonical lowering is incomplete");
   requireCompletedNativeSourceClosureState(tx, pack.types);
   for (const [unitId, row] of owner.units) {
     const canonical = owner.completed.get(unitId);
     if (!canonical) fail("source unit did not pass canonical lowering");
+    tx.assertFunctionSignature(row.slot, canonical.signature);
     tx.assertCanonicalFunctionDefinition(row.slot, canonical);
   }
   return pack;

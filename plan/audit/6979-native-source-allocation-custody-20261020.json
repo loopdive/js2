@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-an original allocation-owner body and physical ABI custody",
+  "parentCommit": "598a0f4c135e999e7e16543d2df8763b364953ae",
+  "status": "verification-in-progress",
+  "sourceHashes": {
+    "src/ir/program-native-invocation.ts": "70745e3387589269b55dc00768a8bd1c6b7636f2e31b2a4d5e00511cedaac937",
+    "src/wasm/physical/module-reservations.ts": "a6b25b267659423f8a417aff6f5f6b37e1966814f9b98b6cc54aecd03404151e",
+    "tests/helpers/native-object-realm.ts": "081e256b9b49c20e019124128b898a5f2cfd1fa463b3ba65471e729f9b6c01c0",
+    "tests/issue-6979-native-source-allocation-custody.test.ts": "4107b9bef8faba2aedd47aaca5cbef0ca0fccd8105b9f5b427472a2c7ae242df"
+  },
+  "scope": {
+    "completionScope": "realm-source-allocation-body-custody",
+    "originalPopulation": "Union of original lifted units and all closure/ref-cell allocation owners, captured during the one-time original source-slot binding operation. Limited lifted-only consumers retain their narrower scope; omitted factory slots cannot later acquire allocation-body custody.",
+    "canonicalDefinitions": "Actual prepared lowering retains private clones before ledger fill. Completion rechecks each original allocation owner's exact definition and physical ABI, completed source state and the genuine full realm/source association. Interrupted actual fills remain terminal.",
+    "sourceResolution": "Closure/capture/ref-cell layout hooks and known original source unit target handles come from the genuine source owner, not arbitrary caller overrides.",
+    "physicalAbi": "Compare lowered parameters/results with the actual reserved function type, preserving brands, reference coordinates and nullability, not only a caller-provided signature. The ledger authenticates physical ownership, not semantic source ownership by itself.",
+    "asyncFrameCustodyCompleted": false,
+    "nonSourceDependencyCustodyCompleted": false,
+    "generalArgumentReceiverResultAdaptationCompleted": false,
+    "mixedGetCallCompleted": false,
+    "fullRealmPopulationCompleted": false,
+    "sourcePublicBoundaryAdmissionCompleted": false,
+    "foreignBoundaryReferenceOwnerCompleted": false,
+    "linearWasiVerified": false,
+    "hostSemanticImportsAdded": false,
+    "runtimeGraphCopyingAdded": false,
+    "migrationComplete": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "localOnlyForkFlag": "--experimental-wasm-exnref",
+    "forkLimitPerExecution": 1,
+    "distinctExecutionsOverlap": true,
+    "performanceCausalityClaimed": false,
+    "caseTimeoutMs": 35000,
+    "runtimePreparationHookTimeoutMs": 120000,
+    "preparationCorrection": "Compile both actual default and mutable-capture programs in the same existing 120-second beforeAll hook. All runtime/refusal assertions remain in ordinary 35-second cases. No deadline increase, skipped fill/audit/emission or mock-reset erasure of source-hook call observations. Capture hook call count before earlier cases restore mocks."
+  },
+  "tests": {
+    "preparedExecution": {
+      "report": ".tmp/s7an-allocation-prepared.json",
+      "log": ".tmp/s7an-allocation-prepared.log",
+      "session": 20998,
+      "status": "confirmed-live-at-last-observation; recheck exact handle, do not restart",
+      "intendedCases": 39,
+      "fullCleanResultClaimed": false
+    },
+    "firstExecution": {
+      "report": ".tmp/s7an-allocation-custody.json",
+      "log": ".tmp/s7an-allocation-custody.log",
+      "session": 73796,
+      "closed": true,
+      "runnerExit": 1,
+      "cases": 37,
+      "passed": 35,
+      "failed": 2,
+      "skipped": 0,
+      "jsonSha256": "6ae7e183d4f7947ec15fdf0c8eccc8955555ceaf1559d2f2b3111276df3c2cd0",
+      "logSha256": "2b544b911de36a8dedfc76119fa3b5e0489a6c95413bdbcc52ac2e2761abd838",
+      "testSourceSha256": "3c0ca8e3e18094e8f6ebd08cc51065a236148ff54715fbef23b9426aa13e5ad7",
+      "failure": "Both hostile source-target controls expected four emitted allocations, incorrectly using the census retaining both program and projection occurrences. Actual projected emission has two. Correct each original factory's ordered target comparison against its exact projected occurrence records, retaining positive 4-total/2-projected/1-per-factory floors. Production and test helper changed during this preliminary run; it is not final-source-revision proof."
+    },
+    "expandedExecution": {
+      "report": ".tmp/s7an-allocation-final.json",
+      "log": ".tmp/s7an-allocation-final.log",
+      "session": 45757,
+      "closed": true,
+      "runnerExit": 1,
+      "cases": 39,
+      "passed": 35,
+      "failed": 4,
+      "skipped": 0,
+      "jsonSha256": "c4d048000507d34b0148bb211e629995bfa10f8fef5f78785773038fd8c73604",
+      "logSha256": "483f174a25320820a2e80d27e033359852d3251b255d6c227717a2d94c983e11",
+      "testSourceSha256": "7847564b9665862f4d0b0eab99f112ff2919d79dfaba9cf83d418c9428fe67b6",
+      "failure": "Two uncorrected 2-versus-4 count assertions, plus two mutable-capture cases registered with a 35-second deadline but including whole-program compilation and execution. They took 40843.404791 and 43496.835292 ms and report Vitest STACK_TRACE_ERROR; the installed withTimeout implementation rejects synchronous over-budget completion using the collection-time stack. Preserve exact errors; do not normalize them into a clean run. Move actual compilation into the existing bounded preparation hook without removing any runtime/refusal assertions. This execution began before final allocation-owner union changes."
+    },
+    "preparationUncorrectedExecution": {
+      "report": ".tmp/s7an-allocation-owned.json",
+      "log": ".tmp/s7an-allocation-owned.log",
+      "session": 59707,
+      "testSourceSha256": "f1b76bfba95fa97a503ff79c2f94bd937dcb130f13bb9ee7cc7ac5cc5ad75d14",
+      "closed": true,
+      "runnerExit": 1,
+      "cases": 39,
+      "passed": 37,
+      "failed": 2,
+      "skipped": 0,
+      "jsonSha256": "e6478140aebee25a0829f814a22766726b23e7df5bdc1093dd44ae4ead7e03bc",
+      "logSha256": "93b28471661b4e28ad4504dbcc1e6261423fd48463d7a503f9db9ad039712cf4",
+      "failure": "Both exact projected-target controls now pass. Only the two inline mutable-capture preparations exceed the unchanged35-second case limit, at45772.299541 and41848.307916 ms, with exact STACK_TRACE_ERROR records retained. No clean39-case result is claimed. The subsequent test moves real preparation into the original120-second hook while preserving all assertions and deadlines."
+    },
+    "preliminaryPreservation": {
+      "report": ".tmp/s7an-preservation.json",
+      "log": ".tmp/s7an-preservation.log",
+      "session": 13369,
+      "status": "confirmed-live-at-last-observation; recheck exact handle, do not restart",
+      "finalSourceRevisionProof": false
+    },
+    "finalPreservation": {
+      "report": ".tmp/s7an-preservation-final.json",
+      "log": ".tmp/s7an-preservation-final.log",
+      "session": 54748,
+      "status": "confirmed-live-at-last-observation; recheck exact handle, do not restart",
+      "intendedFiles": 11,
+      "includes": "The previous nine-file 284-case cohort, source code identities and physical snapshot comparison. No result/count claimed until terminal report and positive file/case floors are checked."
+    }
+  },
+  "gates": {
+    "sourceRatchets": "Current LOC/function/coercion/oracle/preservation-only/layering/flat chain exits zero, .tmp/s7an-owned-*.log. Whole PR396 source files/net-14914 LOC; only the same two earlier function grants. Strict modeled closure still fails the two named unknown nonliteral imports. Preservation-only 6/6 full plus 6/6 cut is not retirement certification.",
+    "cycles": {
+      "report": ".tmp/s7an-owned-cycles.json",
+      "sha256": "173f0d929593eaa1d20737116cea743371f0dcd4fea2d73ed4ca8a5e1a5c8c93",
+      "runnerExit": 1,
+      "exactPriorMetrics": true,
+      "largestSccSize": 712,
+      "nontrivialSccs": 4,
+      "remainingFailures": "Same four directions versus main: backend->ir115->117, codegen->ir298->301, ir->codegen74->75, ir->frontend7->10. No waiver or new edge allowance."
+    },
+    "inventory": {
+      "report": ".tmp/s7an-owned-inventory.json",
+      "sha256": "add15adebb4b7a55640ddecc41f854b99946b9eeaa942f6d4682f2db8a64b187",
+      "runnerExit": 0,
+      "modules": 1991,
+      "errors": 0,
+      "architectureComplete": false,
+      "policySha256": "5032a3b8f52e4bb43532390de6967d144cf351a68060333034404917fc3481fe"
+    }
+  },
+  "historicalPins": {
+    "src/runtime/wasmgc/values/closure-layouts.ts": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+    "tests/fixtures/issue-3518-closure-state-preservation/receipt.json": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e",
+    "modified": false,
+    "broaderBeforeAfterEmittedByteComparisonClaimed": false
+  },
+  "next": "Authenticate non-source dependency owners through the genuine accepted-consumer reconciliation, not a caller-registered resolver or issuer marker. Adapt semantic arguments/receiver/results for each real source ABI, then join source code/body/allocation custody with genuine builtin, bound and live per-instance foreign boundary owners in mixed Call/Get. Keep full realm population/publication, first-class undefined, Linear/WASI, the three named gaps, runtime/arm retirement, architecture/strict closure, conformance/historical custody/npm compatibility/accelerators and PR conflict resolution in scope. Both Markdown issues and the full migration goal remain in progress."
+}

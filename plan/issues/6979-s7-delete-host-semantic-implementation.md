@@ -6269,3 +6269,85 @@ come from the genuine source owner; a caller-supplied resolver or signature alon
 does not prove those bindings. Authenticate the actual slot ABI as well. Keep
 argument/receiver/result adaptation separate: the test's f64 observer is not
 permission to unbox arbitrary JavaScript arguments or call every source ABI.
+
+#### S7-an allocation-owner body and physical ABI custody (in progress)
+
+Retain the original functions/slots owning the actual closure and mutable-cell
+allocation occurrences during the same one-time source binding operation. Preserve the
+lifted-only completion scope for its existing consumers; a separate realm
+allocation-body capability must require every original allocation owner, actual
+canonical lowering, completed source state and the genuine realm association.
+Missing factory slots, raw ledger fills, substitutions and interrupted fills
+must never issue that capability. Recheck definitions and exact physical slot
+signatures on every use. Async factories still need native frame custody.
+
+Enumerated callers of the shared producer are program-consumer and the native
+source/getter/invocation/realm/mixed/builtin test fixtures. Its lifted-only
+completion readers remain unchanged in scope. The new lowering must derive
+closure/capture/ref-cell hooks and source unit target handles from the original
+source owner, not caller overrides. The physical ledger will check the actual
+reserved function type including brands, nullability and reference coordinates;
+matching a caller-supplied signature is insufficient. Canonical snapshots are
+retained before ledger fill, with attempted fills terminal.
+
+Verify genuine prepared factory execution in ordinary and displaced/decoded
+layouts, positive full populations, incomplete/raw/substituted definitions,
+copied/foreign capabilities, interrupted fills and hostile resolver/ABI controls.
+This proves allocation-owner body/ABI custody, not all non-source dependency
+owners, arbitrary argument/receiver/result adaptation or full mixed Call/Get.
+Keep the full migration, both no-host targets, live identity-backed foreign
+boundary refs, catalog/population/public admission and all recorded retirement,
+architecture/conformance/merge acceptance in scope. No new host import, graph
+copy, historical pin edit, baseline/floor/root/edge waiver or GitHub issue.
+
+The actual producer now retains the union of original lifted and closure/ref-cell
+allocation-owner units. Private snapshots include exact lowered ABIs as well as
+bodies/locals, before ledger fill. Actual reserved types are checked independently
+of caller signatures. Source layout hooks and known source unit targets are
+derived from the original owner. The separate allocation-body capability rechecks
+the complete original population and genuine realm association; existing
+lifted-only APIs do not acquire this stronger scope.
+
+Verification is **not yet clean**. First focused execution is35/37, zero skips;
+two tests incorrectly compare emitted projected allocations with the census
+retaining both original and projected representations. Correct each factory's
+ordered targets against its exact projected occurrence records, retaining
+4-total/2-projected/1-per-factory floors. Expanded execution is35/39, zero skips:
+the two uncorrected count checks plus two mutable-capture cases exceeding their
+35-second case budget while building entire programs (40.843/43.497 seconds;
+exact Vitest STACK_TRACE_ERROR diagnostics are retained, not normalized).
+Move both actual compilations into the same existing120-second preparation hook;
+do not raise case/hook deadlines or remove any fill/audit/emission or runtime/
+refusal assertions. Capture source-hook call observations before mock restoration
+by earlier cases can erase them. A transient duplicate-beforeAll lint refusal
+was fixed by sharing that original single preparation hook, not suppressing it.
+
+Current full39-case execution20998 is confirmed live, report
+`.tmp/s7an-allocation-prepared.json`; do not restart it. Prior execution59707
+(`.tmp/s7an-allocation-owned.json`) is now closed at37/39, zero skips/exit one:
+both exact projected-target controls pass; only the two inline mutable setup
+cases exceed35 seconds (45.772/41.848 seconds). Final11-file preservation54748
+(`.tmp/s7an-preservation-final.json`) and preliminary11-file preservation13369
+(`.tmp/s7an-preservation.json`) are confirmed live too. No current clean focused
+or preservation result is claimed until those exact handles are terminal and
+their positive file/case floors and full identities/error records are checked.
+All earlier failed handles73796/45757/59707 are closed; never poll them.
+
+[The allocation-custody audit](../audit/6979-native-source-allocation-custody-20261020.json)
+retains source/report hashes, real failures, active handles and proof limits.
+Current typecheck/lint pass; source ratchets pass within their stated scopes.
+Inventory is valid1991 modules/zero errors, architectureComplete=false. Current
+cycle metrics exactly equal S7-am, including its same four red directions;
+largest SCC712/four nontrivial SCCs. Preservation-only6/6 full+6/6 cut still does
+not certify strict closure or retirement: the same two unknown nonliteral imports
+remain. No graph/floor/root/baseline/waiver change or historical pin edit.
+
+Concrete next owner: non-source resolver authority must come from the genuine
+accepted-consumer reconciliation (private maps of original reservations in
+program-consumer), not an exported raw-resolver binder, issuer flag or signature
+promise. Keep that proof separate from this actual body/physical ABI scope.
+Then implement semantic arguments/receiver/results for the real source ABIs and
+join code/body/allocation custody with builtin, bound and live foreign boundary
+owners in mixed Call/Get. Keep both no-host targets and every earlier full
+migration/acceptance obligation open. Publish this as an unfinished draft PR
+checkpoint, not ready/merged or migration complete. No GitHub issue/comment.

@@ -2010,3 +2010,35 @@ general Call adaptation or public realm completion. Mixed Get/Call, remaining
 catalog/constructors/population, live foreign boundary refs, first-class undefined,
 Linear/WASI, runtime retirement and all conformance/architecture/merge acceptance
 stay in the full active goal. Both issues remain in progress.
+
+#### S7-an original factory-body and physical ABI custody (in progress)
+
+The actual source producer now retains original allocation-owner functions and
+slots alongside lifted units. A distinct realm allocation-body scope must
+independently verify every genuine factory definition and its actual physical
+ABI; lifted-only completion must not imply this stronger scope. Source capture,
+ref-cell, code-tail and target-handle resolution comes from the genuine source
+owner rather than caller overrides. Raw fill receipts and matching caller
+signatures are not authority; missing/interrupted/substituted factories remain
+incomplete. Async-frame and non-source dependency custody are not certified.
+
+Implementation and verification are recorded under **S7-an allocation-owner
+body and physical ABI custody** in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+General mixed Call/Get, semantic argument/receiver/result adaptation, full realm
+population/publication, live foreign boundary references without copying,
+first-class undefined, Linear/WASI and all existing retirement/architecture/
+conformance/PR acceptance remain required. No migration completion is claimed.
+
+The implementation is ready for an **unfinished draft checkpoint**, not a clean
+or merge-ready claim. Preserve first35/37 and expanded35/39 focused failures in
+[the allocation-custody audit](../audit/6979-native-source-allocation-custody-20261020.json).
+The count controls now compare each original factory with its projected sites;
+both actual default/mutable compilations use the existing120-second setup hook,
+with case deadlines unchanged at35 seconds. Current39-case session20998 and
+final11-file preservation54748 remain confirmed live; retain and recheck their
+exact handles, alongside earlier live13369. Intermediate59707 is now closed at
+37/39, only two inline mutable setup deadlines failing; exact target controls
+pass. All earlier failed handles73796/45757/59707 are closed. No current clean cohort
+result is claimed. Source/ABI body custody still does not certify non-source
+dependency ownership, generic Call, full source/public admission or Linear/WASI.
