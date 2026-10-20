@@ -2467,6 +2467,21 @@ function resolveReturnType(
   if (effectiveType) {
     return resolveReturnTypeNode(effectiveType);
   }
+  // An unannotated function whose body never returns a value (`{}`, bare
+  // `return;`, a throw tail) is VOID on the legacy lane — it registers the
+  // function with no result (the checker's `void`/`never` return). The lattice
+  // seeds the same function `unknown`, which the dynamic arm below would turn
+  // into a `() -> externref` claim that withdraws on `abi-signature-parity`
+  // (every test262 harness helper, measured 2026-10-20). Mirror legacy here so
+  // the claim carries legacy's ABI; a value-returning body keeps its lattice fact.
+  if (
+    ts.isFunctionDeclaration(fn) &&
+    fn.body &&
+    (mapped === undefined || mapped.kind === "unknown" || mapped.kind === "dynamic") &&
+    !irFunctionBodyReturnsValue(fn.body)
+  ) {
+    return "void";
+  }
   if (mapped?.kind === "f64") return "f64";
   if (mapped?.kind === "bool") return "bool";
   if (mapped?.kind === "string") return "string";
@@ -2480,6 +2495,26 @@ function resolveReturnType(
     return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
   }
   return null;
+}
+
+/**
+ * True when `body` contains a `return <expr>` outside nested function-likes.
+ * Shared with the override-map builder so the selector's void verdict and the
+ * registered IR signature agree (both mirror legacy's no-result registration).
+ */
+export function irFunctionBodyReturnsValue(body: ts.Block): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isReturnStatement(node)) {
+      if (node.expression) found = true;
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return found;
 }
 
 // ---------------------------------------------------------------------------
