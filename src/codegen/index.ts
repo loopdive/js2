@@ -118,7 +118,13 @@ import type {
   IrImportedCallLoweringPlan,
   IrTopLevelFunctionValueLoweringPlan,
 } from "../ir/ast-lowering-plans.js";
-import { makeIrAmbientClassCallResolver, makeIrHostGlobalResolver } from "../ir/host-extern.js"; // (#2856/#3214/#3657)
+import {
+  irPlatformExternClassPredicate,
+  irTypeHasPlatformDeclaration,
+  makeIrAmbientClassCallResolver,
+  makeIrHostGlobalResolver,
+  makeIrPlatformGlobalUseProbe,
+} from "../ir/host-extern.js"; // (#2856/#3214/#3657/#7091)
 import {
   projectIrBackendTargetProfile,
   supportsIrBackendTargetCapability,
@@ -698,6 +704,7 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
+import { exposeClosureResultProbes } from "./native-dynamic-boundary-tag.js";
 import {
   hasReservedStandaloneDomCallbackDispatch,
   reserveStandaloneDomCallbackDispatch,
@@ -755,6 +762,7 @@ import {
   checkWasiDomUsage,
   rejectTimersUnderWasi,
   collectEnumDeclarations,
+  isJsEnvironmentPlatformGlobalName,
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { rejectIntlWithoutHost } from "./helpers/host-intl-classes.js"; // (#6986)
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
@@ -1474,7 +1482,10 @@ function resolvePositionType(
           STANDALONE_DOM_EXTERN_POSITION_CLASSES.has(className);
         if (
           isExternalDeclaredClass(refType, ctx.checker) &&
-          (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports) || exactStandaloneDomPosition)
+          (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports) ||
+            exactStandaloneDomPosition ||
+            // (#7091) the platform-extern lane (JS environment, native regime)
+            (irPlatformExternClassPredicate(ctx)?.(className) === true && irTypeHasPlatformDeclaration(refType)))
         ) {
           return { kind: "extern", className };
         }
@@ -3052,12 +3063,16 @@ function planIrOverlay(
   // resolution happens.
   const irTargetProfile = projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast });
   const jsHostExterns = irTargetProfile.allowHostImports;
+  // (#7091) Platform capabilities (DOM, declared external APIs) in a JS
+  // environment under the native regime — see `irPlatformExternClassPredicate`.
+  const platformExternClass = irPlatformExternClassPredicate(ctx);
+  const hostExternSurface = jsHostExterns || platformExternClass !== undefined;
   const standaloneDomCapability = planStandaloneDomCapability(ctx, ast.checker, ast.sourceFile);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(irTargetProfile, capability);
   const calendarResolvers = planIrCalendarResolvers(
     ast.checker,
-    jsHostExterns,
+    hostExternSurface,
     supportsBackendCapability("host-date-snapshot"),
     standaloneDomCapability,
     ctx.requiresStandaloneClockCapability === true,
@@ -3093,7 +3108,9 @@ function planIrOverlay(
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
-    jsHostExterns && options.resolveModuleBindings !== false ? makeIrAmbientClassCallResolver(ast.checker) : undefined;
+    hostExternSurface && options.resolveModuleBindings !== false
+      ? makeIrAmbientClassCallResolver(ast.checker)
+      : undefined;
   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
   const supportsStandalonePromiseDelay =
     ctx.standalone &&
@@ -3258,6 +3275,7 @@ function planIrOverlay(
           }
         : {}),
       jsHostExterns,
+      ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
       dynamicRuntimeBuildable: !ctx.fast,
@@ -3330,7 +3348,7 @@ function planIrOverlay(
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
-      ...(jsHostExterns && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
+      ...(hostExternSurface && legacyImportedFunctions ? { importedFunctions: legacyImportedFunctions } : {}),
       ...programCallableSelectionOptions(ctx, identityContext, ast.sourceFile),
       // (#1373b C-1) Async claim gate: IR claims an async fn IFF the ONE
       // async engine ($AsyncFrame drive / host-drive) declines it — the
@@ -3576,7 +3594,7 @@ function planIrOverlay(
     ctx,
     identityPlan,
     preparationFailuresByUnitId,
-    ...(jsHostExterns && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+    ...(hostExternSurface && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
     ...(timerShim ? { resolvePreparedTimerShim: timerShim } : {}),
     ...(resolveAmbientClassCall ? { resolveAmbientClassCall } : {}),
     classShapeSidecar,
@@ -6489,6 +6507,7 @@ export function generateModule(
       const topArity = topHighClosureMethodCallArity(ctx, cap);
       if (topArity !== undefined) emitClosureMethodCallExportN(ctx, topArity, cap + 1);
     }
+    exposeClosureResultProbes(ctx); // (#7098) host-read closure results need the module's probes
 
     // (#1058) Callable-property sites can compile before the closure stored by
     // a later source has published its concrete funcref ABI. Complete their
@@ -10550,6 +10569,24 @@ function restoreNativeGeneratorEndState(ctx: CodegenContext, endState: OwnNative
   }
 }
 
+/**
+ * The certified imported-call surface of a multi-source overlay, per source.
+ * Host-free lanes have none; (#7091) on the platform-extern lane (JS
+ * environment, native regime) a source that names a platform global keeps the
+ * one its host-assisted twin has — in the early prepared routes and the
+ * overlay loop alike, so both plan that source identically. Every other source
+ * keeps its existing native-regime routes.
+ */
+function multiIrHostImportedFunctions(
+  ctx: CodegenContext,
+  multiAst: MultiTypedAST,
+  resolver: irOverlayIdentity.IrIdentityImportedFunctionResolver,
+): (sourceFile: ts.SourceFile) => irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined {
+  if (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports)) return () => resolver;
+  const namesPlatformGlobal = makeIrPlatformGlobalUseProbe(ctx, multiAst.checker, isJsEnvironmentPlatformGlobalName);
+  return (sourceFile) => (namesPlatformGlobal?.(sourceFile) ? resolver : undefined);
+}
+
 function planMultiPreparedProgramRoutes(
   owner: MultiPreparedProgramOwner<IrOverlayPlan> | undefined,
   multiAst: MultiTypedAST,
@@ -10559,6 +10596,7 @@ function planMultiPreparedProgramRoutes(
 ): void {
   if (!owner || !authority) return;
   const { identityContext, resolver } = authority;
+  const hostImportedFunctions = multiIrHostImportedFunctions(ctx, multiAst, resolver);
   planMultiPreparedProgramEarlyRoutes({
     owner,
     multiAst,
@@ -10573,7 +10611,7 @@ function planMultiPreparedProgramRoutes(
         sourceFile,
         identityContext,
         resolver,
-        undefined,
+        hostImportedFunctions(sourceFile),
         undefined,
         stringShape ? { loop: stringShape.loop, plan: stringShape.plan } : undefined,
       ),
@@ -10584,7 +10622,7 @@ function planMultiPreparedProgramRoutes(
         sourceFile,
         identityContext,
         resolver,
-        undefined,
+        hostImportedFunctions(sourceFile),
         undefined,
         undefined,
         true,
@@ -10637,7 +10675,7 @@ function compileMultiPreparedProgramOverlays(
   // ABI cannot safely be replaced by the current f64 IR ABI.
   if (!options?.experimentalIR || ctx.fast || !authority) return;
   const { identityContext, resolver } = authority;
-  const hostImportedFunctions = ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? undefined : resolver;
+  const hostImportedFunctions = multiIrHostImportedFunctions(ctx, multiAst, resolver);
   const safety = buildMultiIrGraphSafety(ctx, multiAst.sourceFiles, multiAst.checker);
   profilePhase("ir-overlay", () => {
     for (const sourceFile of multiAst.sourceFiles) {
@@ -10650,7 +10688,7 @@ function compileMultiPreparedProgramOverlays(
             identityContext!,
             safety,
             resolver,
-            hostImportedFunctions,
+            hostImportedFunctions(sourceFile),
             early,
           );
         if (owner) owner.withOverlayState(sourceFile, compile);
