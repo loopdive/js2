@@ -10,6 +10,11 @@
  * identity-stable `%Promise%` (the same reference the bare `Promise` value read
  * yields) and `@@toStringTag` with `"Promise"`, through the prototype's live
  * companion when the program wrote or deleted the key.
+ *
+ * #7099 — the nullish comparison (`p.then === undefined`, `== null`,
+ * `!== undefined`) reads the member through its own route, which never demanded
+ * that arm, so it answered `undefined` while `typeof p.then` answered
+ * `"function"`. Each #7099 case reads the member ONLY through the comparison.
  */
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -101,6 +106,40 @@ const CASES: Record<string, string> = {
     const p: any = new Promise((r: any) => r(1));
     return (p.foo === undefined ? 10 : 0) + (p[Symbol.iterator] === undefined ? 1 : 0);`,
 };
+
+// (#7099) The member is read only through the nullish comparison.
+const COMPARISON_CASES: Record<string, string> = {
+  "then === undefined": `
+    const p: any = new Promise((r: any) => r(1));
+    return p.then === undefined ? 1 : 0;`,
+  "constructor === undefined (typed receiver)": `
+    const p = new Promise<number>((r: any) => r(1));
+    return p.constructor === undefined ? 1 : 0;`,
+  "== null and !== undefined": `
+    const p = Promise.resolve(1);
+    return (p.then == null ? 100 : 0) + (p.constructor !== undefined ? 10 : 0) + (p.then != null ? 1 : 0);`,
+  "catch and finally compared": `
+    const p = Promise.withResolvers<number>().promise;
+    return (p.catch === undefined ? 10 : 0) + (p.finally === null ? 1 : 0);`,
+  "reversed operands and optional chain": `
+    const p: any = new Promise((r: any) => r(1));
+    return (undefined === p.then ? 10 : 0) + (p?.constructor === undefined ? 1 : 0);`,
+  "a user object's members compared (control)": `
+    const p: any = { then: 1 };
+    return (p.then === undefined ? 10 : 0) + (p.missing === undefined ? 1 : 0);`,
+};
+
+describe("#7099 nullish comparison of a native promise member", () => {
+  for (const lane of ["native-first", "standalone"] as const) {
+    describe(lane, () => {
+      for (const [name, body] of Object.entries(COMPARISON_CASES)) {
+        it(name, async () => {
+          expect(await run(body, lane)).toBe(node(body));
+        });
+      }
+    });
+  }
+});
 
 describe("#7092 Promise.prototype data properties on a native promise", () => {
   for (const lane of ["native-first", "standalone"] as const) {
