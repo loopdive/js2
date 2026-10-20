@@ -90,6 +90,7 @@ import {
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
+  scriptVarSlotIsSoleHome,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
@@ -2359,6 +2360,9 @@ export function compileIrPathFunctions(
     allowNativeMapStorage: ctx.nativeStrings,
     resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
     stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
+    // (#7105) Must agree with the selector-side option: a script `var` the
+    // selector admitted is written here through the same slot predicate.
+    admitScriptVar: (declaration: ts.VariableDeclaration) => scriptVarSlotIsSoleHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
