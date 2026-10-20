@@ -825,6 +825,17 @@ export interface IrModuleBindingResolverOptions {
   readonly stableFnctorArrayPrototypeNames?: ReadonlySet<string>;
   /** Oracle shared with legacy module-global allocation when one is active. */
   readonly oracle?: TypeOracle;
+  /**
+   * (#7105) Script-goal admission for a unique top-level `var`. Legacy
+   * allocates the same `__mod_<name>` slot for a script `var` as for a module
+   * one, so the #2949 scalar capability extends to scripts — but only where
+   * the direct frontend keeps that slot as the binding's single home. The
+   * predicate is codegen's: it answers `false` when the slot was widened for
+   * runtime eval, when a bare read resolves through the global-object
+   * environment instead, or when the allocator has not placed the slot yet.
+   * Absent ⇒ scripts stay excluded (the pre-#7105 rule).
+   */
+  readonly admitScriptVar?: (declaration: ts.VariableDeclaration) => boolean;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -908,7 +919,11 @@ function uniqueTopLevelVariableDeclaration(
   return [...directDeclarations][0]!;
 }
 
-function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker): ts.VariableDeclaration | undefined {
+function directTopLevelDeclaration(
+  node: ts.Identifier,
+  checker: ts.TypeChecker,
+  admitScriptVar?: (declaration: ts.VariableDeclaration) => boolean,
+): ts.VariableDeclaration | undefined {
   const declaration = uniqueTopLevelVariableDeclaration(node, checker);
   if (!declaration) return undefined;
   const sourceFile = node.getSourceFile();
@@ -922,7 +937,11 @@ function directTopLevelDeclaration(node: ts.Identifier, checker: ts.TypeChecker)
   // share that slot with IR just like `let`. Reject scripts and merged/repeated
   // declarations: their hoisting/global-alias rules are wider than this exact
   // source-owned capability.
-  if (!ts.isExternalModule(sourceFile)) return undefined;
+  //
+  // (#7105) …and a SCRIPT-goal `var` is the same slot, admitted only when
+  // codegen's predicate confirms the direct frontend reads and writes it
+  // through that slot alone (see `IrModuleBindingResolverOptions.admitScriptVar`).
+  if (!ts.isExternalModule(sourceFile) && admitScriptVar?.(declaration) !== true) return undefined;
   const declaredType = checker.getTypeAtLocation(declaration.name);
   if (
     (declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0 &&
@@ -2074,7 +2093,7 @@ export function makeIrLegacyModuleBindingResolver(
   const resolveCapabilityExtern = options.resolveCapabilityExternBinding;
   const stableFunctionCallPlans = new Map<ts.FunctionDeclaration, IrStableFunctionCallPlan | null>();
   const inspectDirectBinding = (node: ts.Identifier, writeValue?: ts.Expression): IrLegacyModuleBindingInspection => {
-    const declaration = directTopLevelDeclaration(node, checker);
+    const declaration = directTopLevelDeclaration(node, checker, options.admitScriptVar);
     if (!declaration) return { kind: "not-direct" };
     const list = declaration.parent as ts.VariableDeclarationList;
     const statement = list.parent;
@@ -2195,7 +2214,7 @@ export function makeIrLegacyModuleBindingResolver(
     inspectDirectBinding,
     isDirectModuleBinding(node: ts.Identifier): boolean {
       try {
-        return directTopLevelDeclaration(node, checker) !== undefined;
+        return directTopLevelDeclaration(node, checker, options.admitScriptVar) !== undefined;
       } catch {
         return false;
       }

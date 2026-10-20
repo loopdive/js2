@@ -3017,6 +3017,7 @@ function planIrOverlay(
             resolveCapabilityExternBinding: standaloneDomCapability?.moduleBinding,
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
+            admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
           },
           identityContext,
         );
@@ -4144,6 +4145,43 @@ function compileMultiIrOverlaySource(
     report,
     consume: () => consumeIrOverlayReport(ctx, report, plan, safeSelection, sourceFile, early?.skippedFunctionUnitIds),
   };
+}
+
+/**
+ * (#7105) May the IR share a SCRIPT-goal top-level `var`'s `__mod_<name>` slot?
+ * Legacy allocates that slot for scripts exactly as for modules, and a plain
+ * read/write is `global.get`/`global.set` on it — measured 2026-10-20 on the
+ * standalone target (`var called = 0; function cb(v) { called = called + 1; … }`
+ * compiles `cb` to `global.get 9 … global.set 9`). Three script-only arms move
+ * the binding's home away from the slot, and each answers `false` here:
+ *   - a runtime-eval consumer widens every script `var` to `externref`
+ *     (`registerReassignedFunctionGlobals`), so the slot's type no longer
+ *     matches the checker type the IR would resolve;
+ *   - a name in `sloppyImplicitGlobals` (an undeclared `p = v` or a top-level
+ *     `this.p = v`) resolves bare reads through the global-environment object;
+ *   - a slot the declaration collector has not placed (or has already widened)
+ *     is not a scalar home at all.
+ * Scripts are the entire test262 corpus: every top-level `var` read inside a
+ * test function was `expr-ident-not-in-scope` before this (e.g. the `kValue`
+ * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
+ */
+export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(declaration.name)) return false;
+  const name = declaration.name.text;
+  const plan = ctx.runtimeEvalBoundaryPlan;
+  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return false;
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalProviderAbsent !== true &&
+    plan.sharedRealmMayContainCanonicalValues
+  ) {
+    return false;
+  }
+  if (ctx.sloppyImplicitGlobals.has(name)) return false;
+  const globalIdx = ctx.moduleGlobals.get(name);
+  if (globalIdx === undefined) return false;
+  const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+  return global !== undefined && global.type.kind !== "externref";
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
