@@ -1,10 +1,11 @@
 {
   "id": "7094",
   "assignee": "ttraenkler/opus-7094-await-then",
-  "requested_by": "ttraenkler/opus-7094-await-then",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7094-regime-await-then-compound",
   "claimed_at": "2026-10-19T18:39:34Z",
-  "updated_at": "2026-10-19T18:39:34Z",
-  "write_id": "24142-56vd9o3g"
+  "updated_at": "2026-10-20T01:01:15Z",
+  "write_id": "63596-4287mktv",
+  "released_at": "2026-10-20T01:01:15Z"
 }
