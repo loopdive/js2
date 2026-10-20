@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 87,
+    "total": 88,
     "neutral": 55,
-    "js": 29,
+    "js": 30,
     "unresolved": 3,
     "core": 58,
-    "dialect": 29,
+    "dialect": 30,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -201,6 +201,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynToNumber",
       "why": "ECMAScript ToNumber over a dynamically-tagged value (§7.1.4).",
       "evidence": ["src/ir/core/dialect/js.ts#46a73157bf27"]
+    },
+    "dyn.to_string": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynToString",
+      "why": "ECMAScript ToString over every partition of a boxed-any carrier (§7.1.17), one ToString engine shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#8f750198c6ce"]
     },
     "dyn.truthy": {
       "verdict": "js",

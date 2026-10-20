@@ -2886,6 +2886,15 @@ function dynamicUsesAreMoveOnly(
         }
         return true;
       }
+      // (#7106 S1) `String(<dynamic>)` → `dyn.to_string`: a concrete string
+      // result, lowered through the lane's `__extern_toString`; a concrete
+      // operand folds inline. Not on the fast $AnyValue strategy.
+      const toStringArg = dynNames.has("String") ? null : ambientStringToStringCall(e);
+      if (toStringArg !== null) {
+        if (expectDyn) return false;
+        if (isDynShaped(toStringArg)) return currentDynamicRuntimeBuildable && scanExpr(toStringArg, true);
+        return scanExpr(toStringArg, false);
+      }
       // Direct call to a (possibly) top-level function. A dyn-NAMED callee
       // (`x()` where x is dynamic) is calling a dynamic value — slice 3.
       if (ts.isIdentifier(e.expression)) {
@@ -3260,7 +3269,21 @@ function dynamicUsesAreMoveOnly(
     if (ts.isLabeledStatement(s)) {
       return scanStmt(s.statement);
     }
-    // For-of / switch / try / throw / nested functions /
+    // (#7106 S1) `switch (<discriminant>) { case <expr>: … }` — the
+    // discriminant and every case expression are scanned like an `if`
+    // condition (a `typeof <dynamic>` discriminant is a concrete string via
+    // `dyn.typeof`); clause bodies are ordinary statements. This is the
+    // assert.js `formatIdentityFreeValue` shape, which until now fell into
+    // the conservative tail and reported `param-type-not-resolvable`.
+    if (ts.isSwitchStatement(s)) {
+      if (!scanExpr(s.expression, isDynShaped(s.expression))) return false;
+      for (const clause of s.caseBlock.clauses) {
+        if (ts.isCaseClause(clause) && !scanExpr(clause.expression, isDynShaped(clause.expression))) return false;
+        for (const inner of clause.statements) if (!scanStmt(inner)) return false;
+      }
+      return true;
+    }
+    // For-of / try / throw / nested functions /
     // anything else: conservative — claimable exactly when the statement
     // doesn't touch a dynamic value at all.
     return !subtreeTouchesDynamic(s, dynNames);
@@ -7233,6 +7256,21 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
   );
 }
 
+/**
+ * (#7106 S1) `String(<arg>)` against the ambient constructor with exactly one
+ * non-spread argument: the general ToString call. Returns the argument, or
+ * null when the call is not that shape (a user `String` binding, arity ≠ 1,
+ * a spread). The #5092 mixed-conditional arm is consulted FIRST by every
+ * caller, so this only sees the shapes that arm declined.
+ */
+function ambientStringToStringCall(expr: ts.CallExpression): ts.Expression | null {
+  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "String" || expr.arguments.length !== 1)
+    return null;
+  const arg = expr.arguments[0]!;
+  if (ts.isSpreadElement(arg)) return null;
+  return selectorSeesAmbientStringBinding(expr.expression) ? arg : null;
+}
+
 function selectorSeesAmbientWrapperConstructor(node: ts.Identifier): boolean {
   if (node.text !== "Number" && node.text !== "String" && node.text !== "Boolean") return false;
   return node.text === "String" ? selectorSeesAmbientStringBinding(node) : selectorSeesAmbientBinding(node);
@@ -10275,6 +10313,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (mixedPrimitiveWrapper) {
       return isPhase1Expr(mixedPrimitiveWrapper.conditional, scope, localClasses);
     }
+    // (#7106 S1) The general `String(v)`: a dynamic operand lowers through
+    // `dyn.to_string` (the dynamic scan gates that on the runtime being
+    // buildable); a concrete primitive operand folds inline in from-ast.
+    const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
+    if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
     // Only the await arm admits local async callees; other uses stay direct.
     if (isUnpreparedAsyncCallee(expr, scope, currentAsyncDeclNames, currentSelectionOptions)) {
       return shapeNo("expr-async-callee-not-awaited", expr);
@@ -11130,6 +11173,12 @@ export function buildLocalCallGraph(
           const mixedPrimitiveWrapper = exactMixedPrimitiveWrapperCall(node, false);
           if (mixedPrimitiveWrapper) {
             visit(mixedPrimitiveWrapper.conditional);
+            return;
+          }
+          // (#7106 S1) The ambient `String(v)` is a lowering, not a call edge.
+          const toStringArg = ambientStringToStringCall(node);
+          if (toStringArg !== null) {
+            visit(toStringArg);
             return;
           }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);

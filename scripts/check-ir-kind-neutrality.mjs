@@ -799,6 +799,11 @@ const VERDICTS = {
     why: "ECMAScript `typeof` over every partition of a boxed-any carrier (§13.5.3), one typeof engine shared with legacy.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `typeof` (§13.5.3) over EVERY partition" }],
   },
+  "dyn.to_string": {
+    verdict: "js",
+    why: "ECMAScript ToString over every partition of a boxed-any carrier (§7.1.17), one ToString engine shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `ToString` (§7.1.17) over EVERY partition" }],
+  },
   "iter.new": {
     verdict: "js",
     why: "GetIterator — the @@iterator protocol (§7.4.2).",

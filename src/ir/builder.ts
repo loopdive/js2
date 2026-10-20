@@ -664,6 +664,24 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /**
+   * Emit `dyn.to_string{value}` — JS `ToString` over every partition of the
+   * boxed-any carrier (#7106 S1); result is `string`. Routes to the lane's
+   * runtime `__extern_toString` via `IrDynamicLowering.emitToString`.
+   */
+  emitDynToString(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynToString operand ${value} is not dynamic — static ToString folds inline (#7106) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.to_string", value, result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

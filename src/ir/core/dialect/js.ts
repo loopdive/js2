@@ -162,6 +162,21 @@ export interface IrInstrDynTypeof extends IrInstrBase {
 }
 
 /**
+ * `dyn.to_string{value}` — JS `ToString` (§7.1.17) over EVERY partition of a
+ * boxed-any carrier (#7106 S1): the general `String(v)` on a dynamic operand.
+ * `value` MUST be `IrType.dynamic`; result (via `IrInstrBase.result`) is
+ * `string`. Lowering routes to the SAME `__extern_toString` legacy calls for
+ * an `any`-typed `String(v)` argument (host import, or the native-first
+ * function `ensureObjectRuntime` registers), re-tagged into the lane's string
+ * carrier — one ToString engine. The static arms (`String(number)`,
+ * `String(boolean)`, the #5092 mixed conditional) stay inline.
+ */
+export interface IrInstrDynToString extends IrInstrBase {
+  readonly kind: "dyn.to_string";
+  readonly value: IrValueId;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

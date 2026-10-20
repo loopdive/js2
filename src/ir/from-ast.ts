@@ -7633,6 +7633,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
+  const generalToString = tryLowerAmbientStringToStringCall(expr, cx);
+  if (generalToString !== null) return generalToString;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -13489,6 +13491,41 @@ function convertMixedPrimitiveArm(
     );
   }
   return number;
+}
+
+/**
+ * (#7106 S1) The general `String(v)` against the ambient constructor. A
+ * dynamic operand is `dyn.to_string` (the lane's `__extern_toString`, one
+ * ToString engine with legacy's `String(any)` arm); a concrete primitive
+ * operand folds inline exactly as the #5092 mixed-conditional arms do. Any
+ * other operand representation demotes — the selector admitted the shape, the
+ * dynamic scan proved the operand's family, so reaching the demote is a
+ * producer/selector disagreement worth a withdrawal, not an invariant.
+ */
+function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerAmbientStringToStringCall(expr, cx));
+  if (
+    !ts.isIdentifier(expr.expression) ||
+    expr.expression.text !== "String" ||
+    cx.scope.has("String") ||
+    expr.arguments.length !== 1 ||
+    ts.isSpreadElement(expr.arguments[0]!) ||
+    cx.resolver?.isAmbientStringBinding?.(expr.expression) !== true
+  ) {
+    return null;
+  }
+  const argument = expr.arguments[0]!;
+  const value = lowerExpr(argument, cx, irDynamic());
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return cx.builder.emitDynToString(value);
+  if (type.kind === "string") return value;
+  if (irTypeIsBoolean(type)) return lowerBooleanToString(cx.builder, value);
+  if (asVal(type)?.kind === "f64") return lowerNumericSubstitutionToString(value, type, argument, cx);
+  demoteToLegacy(
+    "operand-coercion-unsupported",
+    `ir/from-ast: String() of ${describeIrType(type)} operand is deferred (${cx.funcName})`,
+  );
 }
 
 function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {

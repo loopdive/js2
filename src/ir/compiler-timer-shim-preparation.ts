@@ -96,6 +96,7 @@ export function isDynamicInstruction(instr: IrInstr): boolean {
     instr.kind === "dyn.truthy" ||
     instr.kind === "dyn.undefined" ||
     instr.kind === "dyn.typeof" ||
+    instr.kind === "dyn.to_string" ||
     instr.kind === "dyn.to_number" ||
     instr.kind === "dyn.eq" ||
     instr.kind === "dyn.member_get" ||

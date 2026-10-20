@@ -612,6 +612,7 @@ function implicitSupportRequirement(
     case "dyn.truthy":
     case "dyn.undefined":
     case "dyn.typeof":
+    case "dyn.to_string":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":

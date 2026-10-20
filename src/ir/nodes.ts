@@ -129,6 +129,7 @@ export type {
   IrInstrDynTruthy,
   IrInstrDynUndefined,
   IrInstrDynTypeof,
+  IrInstrDynToString,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,
