@@ -1,10 +1,11 @@
 {
   "id": "7092",
   "assignee": "ttraenkler/opus-7092-ctor-read",
-  "requested_by": "ttraenkler/opus-7092-ctor-read",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7092-regime-promise-constructor-read",
   "claimed_at": "2026-10-19T18:39:40Z",
-  "updated_at": "2026-10-19T18:39:40Z",
-  "write_id": "25709-kb8itvy0"
+  "updated_at": "2026-10-20T01:01:22Z",
+  "write_id": "63765-lldj1xj5",
+  "released_at": "2026-10-20T01:01:22Z"
 }
