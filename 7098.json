@@ -1,10 +1,11 @@
 {
   "id": "7098",
   "assignee": "ttraenkler/opus-7098-void-listener",
-  "requested_by": "ttraenkler/opus-7098-void-listener",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7098-marshalled-closure-result",
   "claimed_at": "2026-10-19T22:20:30Z",
-  "updated_at": "2026-10-19T22:20:30Z",
-  "write_id": "89749-bvwy0821"
+  "updated_at": "2026-10-20T04:02:04Z",
+  "write_id": "43175-nbiojsmq",
+  "released_at": "2026-10-20T04:02:04Z"
 }
