@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 336,
-    "fail": 83,
-    "ce": 53,
+    "fail": 86,
+    "ce": 50,
     "skip": 0,
     "total": 472,
     "pct": 71,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 49,
-        "fail": 22,
-        "ce": 21,
+        "fail": 25,
+        "ce": 18,
         "skip": 0,
         "total": 92,
         "pct": 53
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 17,
-        "fail": 12,
-        "ce": 11,
+        "fail": 15,
+        "ce": 8,
         "skip": 0,
         "total": 40,
         "pct": 43
@@ -1996,8 +1996,8 @@
       {
         "name": "Symbol",
         "pass": 13,
-        "fail": 18,
-        "ce": 8,
+        "fail": 21,
+        "ce": 5,
         "skip": 0,
         "total": 39,
         "pct": 33
@@ -2023,8 +2023,8 @@
       {
         "name": "Symbol.iterator",
         "pass": 10,
-        "fail": 16,
-        "ce": 4,
+        "fail": 19,
+        "ce": 1,
         "skip": 0,
         "total": 30,
         "pct": 33
@@ -2032,8 +2032,8 @@
       {
         "name": "computed-property-names",
         "pass": 22,
-        "fail": 2,
-        "ce": 3,
+        "fail": 5,
+        "ce": 0,
         "skip": 0,
         "total": 27,
         "pct": 81
@@ -2856,12 +2856,12 @@
   },
   {
     "edition": "ES2024",
-    "pass": 403,
-    "fail": 96,
+    "pass": 404,
+    "fail": 95,
     "ce": 57,
     "skip": 0,
     "total": 556,
-    "pct": 72,
+    "pct": 73,
     "features": [
       {
         "name": "TypedArray",
@@ -3054,12 +3054,12 @@
       },
       {
         "name": "promise-with-resolvers",
-        "pass": 5,
-        "fail": 4,
+        "pass": 6,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 9,
-        "pct": 56
+        "pct": 67
       },
       {
         "name": "String.prototype.isWellFormed",
@@ -3263,12 +3263,12 @@
   },
   {
     "edition": "ES2025",
-    "pass": 665,
-    "fail": 282,
+    "pass": 666,
+    "fail": 281,
     "ce": 54,
     "skip": 0,
     "total": 1001,
-    "pct": 66,
+    "pct": 67,
     "features": [
       {
         "name": "iterator-helpers",
@@ -3371,12 +3371,12 @@
       },
       {
         "name": "promise-try",
-        "pass": 11,
-        "fail": 1,
+        "pass": 12,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 92
+        "pct": 100
       },
       {
         "name": "Reflect.construct",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4582,
+    "pass": 4586,
     "fail": 197,
-    "ce": 142,
+    "ce": 138,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4483,
+        "pass": 4487,
         "fail": 106,
-        "ce": 22,
+        "ce": 18,
         "skip": 0,
         "total": 4611,
         "pct": 97
