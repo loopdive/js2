@@ -1,0 +1,289 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ax: actual intrinsic population joins native integrity",
+  "parent": "c3ba39be659822fed416922627ffc99548aa9487",
+  "scope": "Authenticated actual NativeRealmPopulation and original shared value/descriptor owners join the existing integrity issuer. Native callable and Object.prototype bags require real ready state=2. Partial unsealed component execution only; source/foreign/public source bindings and full realm/Linear integration remain incomplete.",
+  "sourceSha256": {
+    "src/backend/wasmgc/resources/native-object-integrity.ts": "922aca6591d0a04747f5005a8e6d9a15e5f3ab89614364ce9671e5fe9759a802",
+    "src/backend/wasmgc/resources/native-realm-population.ts": "6727e602e193eb0b4d26bcc757a9a51ea3c7dc0c31ecc43d55d3f47b7acc866a",
+    "src/runtime/wasmgc/values/native-object-integrity-bodies.ts": "4ebf03ec59e40a837b417f23d3c80fb37738bb2bb11bf2734eb5d2e924ea6699",
+    "tests/helpers/native-object-extensibility.ts": "7f775e7568fd037c26e169fe3dc75cf4cb8595d93d102346ebf92fc5350ff17a",
+    "tests/issue-6979-native-integrity-population.test.ts": "7bd43cc0c1b2351737bbcc71aac6ba0b3f95e46714d37d7b6848bef59f5cf0f3",
+    "tests/issue-6979-native-integrity-population-custody.test.ts": "b5162850946b8604c1d2aedf255717c8e0ca9f4f71f0feaca71cbae16ed56272",
+    "src/runtime/wasmgc/values/closure-layouts.ts": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+    "tests/fixtures/issue-3518-closure-state-preservation/receipt.json": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e",
+    "src/ir/program/errors.ts": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+    "src/ir/program/data.ts": "6010f226a79bef58d1f8a2a84761eca2fa479ca33d5ace96636c75fa58512b06"
+  },
+  "reports": {
+    "s7ax-population-first": {
+      "sha256": "af0ca03c4cc92c5c70681f340a9a431f14108449927a2429105e1bbae2c09401",
+      "total": 12,
+      "passed": 8,
+      "failed": 4,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population.test.ts",
+          "status": "failed",
+          "passed": 8,
+          "failed": [
+            "actual populated integrity displaced=false decoded=false mode=interned runs the actual 45-identity initializer, retains 133 real descriptors, and never certifies a complete realm",
+            "actual populated integrity displaced=false decoded=false mode=interned uses the genuine descriptor validator for writes after seal/freeze, with its real TypeError tag",
+            "actual populated integrity displaced=true decoded=true mode=allocating runs the actual 45-identity initializer, retains 133 real descriptors, and never certifies a complete realm",
+            "actual populated integrity displaced=true decoded=true mode=allocating uses the genuine descriptor validator for writes after seal/freeze, with its real TypeError tag"
+          ],
+          "pending": 0
+        }
+      ]
+    },
+    "s7ax-population-second": {
+      "sha256": "4f284cd03f4b3b3e35ebb2a70e7c5e860a28f9974a661e8b8dff5c5df1dcf9c1",
+      "total": 12,
+      "passed": 12,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population.test.ts",
+          "status": "passed",
+          "passed": 12,
+          "failed": [],
+          "pending": 0
+        }
+      ]
+    },
+    "s7ax-custody-first": {
+      "sha256": "564e3af7c06052d45ec3ed1d24f0ff15c0f624ae734fb7c1b6d46d9f6d3f6ffa",
+      "total": 2,
+      "passed": 1,
+      "failed": 1,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population-custody.test.ts",
+          "status": "failed",
+          "passed": 1,
+          "failed": [
+            "integrity consumes the genuine independent population owner receipt-valid alternate initializer does not admit intrinsic bags from an unfilled initializer or an allocator-valid replacement"
+          ],
+          "pending": 0
+        }
+      ]
+    },
+    "s7ax-preservation-and-custody": {
+      "sha256": "17211b87dbc639040a5a9335ee4fd152790f927264c83b9dec6fc43442a07e16",
+      "total": 26,
+      "passed": 24,
+      "failed": 2,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population-custody.test.ts",
+          "status": "failed",
+          "passed": 1,
+          "failed": [
+            "integrity consumes the genuine independent population owner receipt-valid alternate initializer does not admit intrinsic bags from an unfilled initializer or an allocator-valid replacement"
+          ],
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-object-integrity.test.ts",
+          "status": "failed",
+          "passed": 23,
+          "failed": [
+            "integrity algorithm owner custody receipt-valid substituted kernel refuses receipt-valid kernel substitution before semantic completion"
+          ],
+          "pending": 0
+        }
+      ]
+    },
+    "s7ax-custody-restored": {
+      "sha256": "23650f1a9e5086beba6dc1dbd420fa4aac2656a91d6f40d0a28eb04e5b1d8667",
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population-custody.test.ts",
+          "status": "passed",
+          "passed": 2,
+          "failed": [],
+          "pending": 0
+        }
+      ]
+    },
+    "s7ax-readiness-removal": {
+      "sha256": "7d14094868eb9789cc0d533abad071379461262d5923a7ba59f9a8a6c91fa901",
+      "total": 12,
+      "passed": 1,
+      "failed": 1,
+      "pending": 10,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population.test.ts",
+          "status": "failed",
+          "passed": 1,
+          "failed": [
+            "actual populated integrity displaced=false decoded=false mode=interned requires actual readiness even when genuine published bags already exist"
+          ],
+          "pending": 10
+        }
+      ]
+    },
+    "s7ax-final-restored": {
+      "sha256": "60699536ecdff94f7b03031d97dba9795e994c0dcbec9b9426e8f51937d6062a",
+      "total": 38,
+      "passed": 38,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population-custody.test.ts",
+          "status": "passed",
+          "passed": 2,
+          "failed": [],
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-integrity-population.test.ts",
+          "status": "passed",
+          "passed": 12,
+          "failed": [],
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-object-integrity.test.ts",
+          "status": "passed",
+          "passed": 24,
+          "failed": [],
+          "pending": 0
+        }
+      ]
+    }
+  },
+  "gateSha256": {
+    ".tmp/s7ax-typecheck-restored.log": "32bea5d9cb5b71f69f616f2a866fc67986f0d29ba268f84e14442f97f59821ac",
+    ".tmp/s7ax-lint-restored.log": "e7ba623cf892b1fa2a792a328a9f953cf7b3cfa726f99376b5cdde08fa6a2bea",
+    ".tmp/s7ax-format-restored.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    ".tmp/s7ax-format-final.log": "c5257ac21a249034ea958e24e96da8a7a4ae706633531e46623216985436617c",
+    ".tmp/s7ax-loc-final.log": "e6b4ff8fe86733306f3fcb0bef78d2a9b084f83df7a77542c03a46c145c8cc7b",
+    ".tmp/s7ax-func-final.log": "df30db3c6c52e883fd3cc1f6b1c05a1fe8a71b9388afaa9ddec78a59e0cc996c",
+    ".tmp/s7ax-coercion-final.log": "e1032c3f8a41101e9d86ac8e87487288facebb31686c9d879e75c10e866b39cb",
+    ".tmp/s7ax-oracle-final.log": "109ec5e4e5a5e52ed43cdac095f7fa382c4bcdedcd212cb3dee0f0610662958f",
+    ".tmp/s7ax-inventory.log": "1bf62ce34b1f19f67a84e4f7cb855743883f6d9a6de7c6a5d2ace32d5a1d4da4",
+    ".tmp/s7ax-import-cycles.json": "e935d65382ba0b8a608e9122c72a23355d4f4877abb43d8a4ee64f0c5ebc671d",
+    ".tmp/s7ax-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7ax-layering.log": "7002492e0944f5379ba89436ef7894eddb5955e5bb1c659131c72a9e51627251",
+    ".tmp/s7ax-flat.log": "ae2a9c337b277ea4c6c8086c21a68b9e35ab55ec43c07f8d205cf440b24a1951",
+    ".tmp/s7ax-dead-exports.log": "d56c9e132d0e964c8b67ff37f0dfa075bb928faa69e90697c6a1610de1f097f0",
+    ".tmp/s7ax-import-policy-final.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7ax-issues-final.log": "ee4a093c9bd811a4a65de789ca9363ab6c0e3eab227f495d4f413a6528661bab",
+    ".tmp/s7ax-old-storage-comparison.json": "cae7dbf045ae79d4bd9a65b6d7ab6dcc64a914ae7f5091f232c25dd6092fafa2"
+  },
+  "oldFactoryComparison": {
+    "parent": "c3ba39be659822fed416922627ffc99548aa9487",
+    "path": "src/runtime/wasmgc/values/native-object-integrity-bodies.ts",
+    "parentSourceSha256": "d3a511803b8c614fc33b08e8a4ddfeab2c5fcd96bf55976ca721376988a87150",
+    "storageCompared": 12,
+    "operationsCompared": 12,
+    "equal": 24,
+    "dependencyImportRewritten": false,
+    "fullHistoricalGcBytesCertified": false
+  },
+  "reportMeaning": {
+    "s7ax-population-first": "8/12; four test assertion defects: omitted original dependency argument or wrong configured TypeError tag. Production execution behavior unchanged by corrections.",
+    "s7ax-population-second": "12/12 restored; both native original and decoded/displaced allocating profiles.",
+    "s7ax-custody-first": "1/2; wrong expected error regex omitted initializer.",
+    "s7ax-preservation-and-custody": "24/26, exit1. Old integrity23/24 with unchanged setup-hook timeout; custody1/2 with second audit after allocator already failed closed. Not a preservation pass.",
+    "s7ax-custody-restored": "2/2; actual integrity consumer rejects receipt-valid alternate initializer first, allocator fails closed. Before final genuine alternate same-ledger Boolean/classifier negative was added.",
+    "s7ax-readiness-removal": "1/2 selected passes,10unselected,exit1. Only intrinsic ready conditional replaced with drop; genuine unready intrinsic returned1 instead of2. Independent source/foreign/primitive case passes.",
+    "s7ax-final-restored": "38/38,0skip,exit0,257.94s;12 population+2 newest custody+24 existing integrity. Exact restored body; all tests and deadlines intact."
+  },
+  "execution": {
+    "intrinsicIdentities": 45,
+    "callables": 44,
+    "properties": 133,
+    "actualIntegrityDefinitionsPreservedInClone": 13,
+    "actualInitializerPreservedInClone": true,
+    "observerOnlyTrappedUnrelatedLiftedFunctions": 38,
+    "imports": 0,
+    "wholeRealmReady": 0,
+    "productionMissingAlgorithmsFilled": false,
+    "fullRealmSealed": false,
+    "profiles": [
+      {
+        "decoded": false,
+        "displaced": false,
+        "boxes": "interned",
+        "bytes": 70446,
+        "sha256": "f53d0a8c0a32338ec0111e03c9bd447dddef264d3294eb6634046dfd239fbd30"
+      },
+      {
+        "decoded": true,
+        "displaced": true,
+        "boxes": "allocating",
+        "bytes": 70258,
+        "sha256": "f891f14049dd86b51584effd063784e8f0371cc7a438d7025414cf59d3470a4a"
+      }
+    ]
+  },
+  "harness": "Node24 workers temporarily used --experimental-wasm-exnref; local flag restored and not committed. CLI --maxWorkers=1 was requested, but repo poolOptions.forks.maxForks takes precedence in installed Vitest; final file timestamps overlap. No serial-file execution claim. Single-file selected timeout isolation remains a separate run.",
+  "restoredBodySha256": "4ebf03ec59e40a837b417f23d3c80fb37738bb2bb11bf2734eb5d2e924ea6699",
+  "olderPreservation": {
+    "audit": "6979-native-object-integrity-20261020.json",
+    "snapshot": "c3ba39be659822fed416922627ffc99548aa9487",
+    "total": 226,
+    "passed": 224,
+    "failed": 2,
+    "pending": 0,
+    "exit": 1,
+    "selectedTimeoutIsolation": {
+      "passed": 2,
+      "failed": 0,
+      "unselected": 36,
+      "exit": 0,
+      "unchangedSourceAnd35sDeadlines": true
+    },
+    "fullRunRewritten": false
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "ceiling": 452,
+    "unknown": 0,
+    "regimeGap": 0,
+    "approvedFourAdapterIncreaseUsed": false
+  },
+  "architecture": {
+    "modules": 2000,
+    "inventoryValid": true,
+    "architectureComplete": false,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cycleGateExit": 1,
+    "unchangedRedDirections": ["backend->ir115→117", "codegen->ir298→301", "ir->codegen74→75", "ir->frontend7→10"],
+    "waiverAdded": false,
+    "preservationOnlyFull": 6,
+    "preservationOnlyCut": 6,
+    "strictClosureUnknownImports": ["src/optimize.ts:412", "src/runtime/platform-capability-adapter.ts:151"],
+    "retirementCertified": false
+  },
+  "remaining": [
+    "Actual public builtin bindings/catalog consumption and original source/realm/code/body/allocation joins",
+    "All remaining algorithms/constructors, including Function/CreateDynamicFunction; general arguments/values/undefined/defaults",
+    "Source/bound/native/live-foreign mixed Call/Get and per-instance identity without recursive copying",
+    "Complete Linear/WASI, named generator-buffer/SharedArrayBuffer/Temporal gaps and host-runtime/arm retirement",
+    "Architecture cycles/strict closure, historical storage188/202 and five symbolic receipt failures, full GC-byte/Test262/npm/accelerator acceptance",
+    "Unmerged prerequisite PR6701 and draft/conflicted PR6762 require reviewed integration"
+  ],
+  "fullGoalComplete": false
+}

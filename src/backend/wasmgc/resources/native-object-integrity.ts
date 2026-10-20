@@ -8,6 +8,11 @@ import {
   type NativeObjectExtensibilityDependencies,
 } from "./native-object-structural-algorithms.js";
 import { nativeMixedObjectAccessOperands } from "./native-mixed-object-access.js";
+import {
+  nativeRealmPopulationDependencies,
+  requireCompletedNativeRealmPopulation,
+  type NativeRealmPopulation,
+} from "./native-realm-population.js";
 import { requireNativeStringLiteral } from "./native-string-literals.js";
 import { buildBuiltinFunctionCheckedEntryDefinition } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
 import { buildNativeObjectExtensibilityDefinition } from "../../../runtime/wasmgc/values/native-object-extensibility-bodies.js";
@@ -27,7 +32,8 @@ export interface NativeObjectIntegrityAlgorithms {
   readonly entries: readonly NativeObjectRealmEntry[];
   readonly storage: FunctionReservation;
   readonly operations: readonly FunctionReservation[];
-  /** Intrinsic/source descriptor populations and foreign admission remain gaps. */
+  readonly intrinsicPopulation?: NativeRealmPopulation;
+  /** Source descriptor populations and foreign admission remain gaps. */
   readonly completionScope: "selected-native-integrity-calls";
 }
 interface Owner {
@@ -42,10 +48,42 @@ const realms = new WeakSet<NativeObjectRealmDeclarations>();
 function fail(detail: string): never {
   throw Error("native Object integrity: " + detail);
 }
+function population(
+  tx: PhysicalModuleReservations,
+  d: NativeObjectExtensibilityDependencies,
+  selected: NativeRealmPopulation | undefined,
+): void {
+  if (selected === undefined) return;
+  const p = nativeRealmPopulationDependencies(tx, selected);
+  const m = d.mixedDependencies;
+  const descriptors = p.descriptorDependencies;
+  const values = descriptors.sameValueDependencies;
+  if (
+    p.realm !== m.realm ||
+    p.realmDependencies !== m.realmDependencies ||
+    descriptors.closures !== m.realmDependencies.closures ||
+    descriptors.storageDependencies.lookup !== m.stringOwnDependencies.lookup ||
+    descriptors.storageDependencies.lookupDependencies !== m.stringOwnDependencies.lookupDependencies ||
+    descriptors.errors !== d.errors ||
+    descriptors.errorRequirements !== d.errorRequirements ||
+    descriptors.errorDependencies !== d.errorDependencies ||
+    values.values !== m.values ||
+    values.valuePlan !== m.valuePlan ||
+    values.valueDependencies !== m.valueDependencies ||
+    values.booleans !== d.primitiveDependencies.booleans ||
+    values.bigints !== d.primitiveDependencies.bigints ||
+    values.bigintPlan !== d.primitiveDependencies.bigintPlan ||
+    values.strings !== d.primitiveDependencies.strings ||
+    values.flatten !== m.stringOwnDependencies.lookupDependencies.flatten ||
+    values.equality !== m.stringOwnDependencies.lookupDependencies.equality
+  )
+    fail("population does not share the original realm/value/descriptor owners");
+}
 function current(tx: PhysicalModuleReservations, pack: NativeObjectIntegrityAlgorithms): Owner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx || owner.pack !== pack) fail("foreign or copied algorithm owner");
   const captured = requireNativeObjectAlgorithmDependencies(tx, owner.original);
+  population(tx, captured, pack.intrinsicPopulation);
   for (const key of Object.keys(owner.captured) as (keyof NativeObjectExtensibilityDependencies)[])
     if (owner.captured[key] !== captured[key]) fail("changed dependency identity");
   if (pack.realm !== captured.mixedDependencies.realm) fail("different original realm");
@@ -64,9 +102,11 @@ function entries(realm: NativeObjectRealmDeclarations) {
 export function reserveNativeObjectIntegrityAlgorithms(
   tx: PhysicalModuleReservations,
   original: NativeObjectExtensibilityDependencies,
+  intrinsicPopulation?: NativeRealmPopulation,
 ): NativeObjectIntegrityAlgorithms {
   if (tx.state !== "reserving") fail("reservation phase required");
   const captured = Object.freeze(requireNativeObjectAlgorithmDependencies(tx, original));
+  population(tx, captured, intrinsicPopulation);
   const realm = captured.mixedDependencies.realm;
   if (realms.has(realm)) fail("realm already has its integrity algorithm owner");
   const selected = Object.freeze(entries(realm));
@@ -90,6 +130,7 @@ export function reserveNativeObjectIntegrityAlgorithms(
     entries: selected,
     storage,
     operations,
+    ...(intrinsicPopulation === undefined ? {} : { intrinsicPopulation }),
     completionScope: "selected-native-integrity-calls" as const,
   });
   owners.set(pack, { tx, original, captured, pack, phase: "reserved" });
@@ -110,6 +151,8 @@ function definitions(tx: PhysicalModuleReservations, owner: Owner) {
     pack = owner.pack;
   const layout = m.stringOwnDependencies.layoutDependencies.objects;
   const mixed = nativeMixedObjectAccessOperands(tx, d.mixed, m);
+  const populationState =
+    pack.intrinsicPopulation === undefined ? undefined : tx.physicalIndex(pack.realm.globals.state);
   const failure = (text: string): Instr[] => {
     const literal = requireNativeStringLiteral(tx, d.errorDependencies.strings, text);
     return [
@@ -122,7 +165,7 @@ function definitions(tx: PhysicalModuleReservations, owner: Owner) {
     ];
   };
   return {
-    storage: buildNativeIntegrityStorageDefinition(mixed),
+    storage: buildNativeIntegrityStorageDefinition(mixed, populationState),
     methods: methods.map((method, index) => {
       const entry = pack.entries[index]!;
       return {
@@ -173,6 +216,7 @@ export function fillNativeObjectIntegrityAlgorithms(
   const owner = current(tx, pack);
   if (tx.state !== "filling" || owner.phase !== "reserved") fail("invalid phase or duplicate/failed fill");
   requireCompletedNativeObjectAlgorithmDependencies(tx, owner.captured);
+  if (pack.intrinsicPopulation) requireCompletedNativeRealmPopulation(tx, pack.intrinsicPopulation);
   const bodies = definitions(tx, owner);
   owner.phase = "filling";
   try {
@@ -197,6 +241,7 @@ export function requireCompletedNativeObjectIntegrityAlgorithms(
   const owner = current(tx, pack);
   if (owner.phase !== "complete") fail("missing canonical algorithm fill");
   requireCompletedNativeObjectAlgorithmDependencies(tx, owner.captured);
+  if (pack.intrinsicPopulation) requireCompletedNativeRealmPopulation(tx, pack.intrinsicPopulation);
   const bodies = definitions(tx, owner);
   tx.assertCanonicalFunctionDefinition(pack.storage, bodies.storage);
   pack.entries.forEach((entry, i) => {

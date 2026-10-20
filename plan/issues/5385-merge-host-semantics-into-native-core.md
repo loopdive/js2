@@ -2327,3 +2327,43 @@ Both issues remain in progress. All public builtin/population/source/realm/code/
 body/allocation joins,remaining algorithms/constructors,general values and live
 foreign Call/Get,both no-host backends,named gaps,retirement and full historical/
 conformance/architecture/reviewed-integration requirements remain open.
+
+#### S7-ax actual intrinsic descriptor population join (in progress)
+
+The integrity owner now consumes the genuine independently checked population
+initializer and its original realm/value/descriptor dependencies. The runtime
+requires actual ready-state2 before native callable or Object.prototype storage
+is usable. The component observer executes all45 identities/133 descriptors and
+the actual integrity slots, preserving live bags and identities; its38 unrelated
+unavailable lifted entries are traps only in a clone, never production fills.
+Source and foreign populations and full public realm completion remain unjoined.
+
+Populated execution12/12 and custody2/2 pass. Old no-selection factory arrays
+match24/24; final restored preservation and the readiness-removal control are
+pending. The original five-file preservation runner24574 remains live and has
+reported two unchanged35s prototype-setter custody timeouts; no success or final
+denominator is inferred. Full details and the continuing handoff live under
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+The four-adapter approval is unused: fresh437/452 across the same33 probes,
+zero unknown/regime-gap imports. Both issues and the full migration remain in
+progress, including complete Linear/WASI and all public/foreign/retirement work.
+
+Preservation runner24574 subsequently closed224/226pass,2fail,exit1: Linear17,
+extensibility63,set-prototype38 and ToObject70 all pass; prototype-setter36/38,
+two unchanged35s custody timeouts. The failed full report is preserved; a
+separate unchanged-source/deadline two-case isolation run is pending.
+
+That selected isolation run subsequently passes2/2,36unselected,exit0; both cases
+remain inside their original35s deadlines. It is separate evidence, not a revised
+226/226 full result; hashes and exact rows stay in the S7-aw audit.
+
+S7-ax final restored verification closes38/38,zero skips,exit0:12 populated
+runtime,2 custody and24 old integrity cases. Readiness removal gives1/2selected
+passes,10unselected,exit1,with the independent source/foreign/primitive control
+passing; exact source is restored. The repo's explicit fork count overrides the
+requested --maxWorkers=1, so the full run is not claimed serial. Local exnref
+config flags were restored without committing them. Source/type/lint/format and
+ratchets pass within scope; existing cycle/strict-closure failures remain.
+[Exact source/report/gate evidence and continuation](../audit/6979-native-integrity-population-20261020.json).
+Full public/source/foreign, complete Linear/WASI and retirement acceptance remain
+required; both issues remain in-progress and the PR remains a draft checkpoint.

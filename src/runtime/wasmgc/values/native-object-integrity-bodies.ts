@@ -2,23 +2,68 @@
 import type { FuncHandle, Instr } from "../../../wasm/model/instructions.js";
 import type { MixedObjectAccessOperands, MixedObjectDefinition } from "./mixed-object-access-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as bits } from "./ordinary-object-descriptor-common.js";
+import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 
 const get = (index: number): Instr => ({ op: "local.get", index });
 const set = (index: number): Instr => ({ op: "local.set", index });
 const n = (value: number): Instr => ({ op: "i32.const", value });
 const when = (then: Instr[]): Instr => ({ op: "if", blockType: { kind: "empty" }, then });
 
-/** Own storage only. Intrinsic/source descriptor populations are not yet joined
- * to this issuer: they are explicitly unready, never empty ordinary bags.
+/** Own storage only. A selected intrinsic population must be actually ready;
+ * unjoined intrinsic/source populations are never treated as empty ordinary bags.
  */
-export function buildNativeIntegrityStorageDefinition(d: MixedObjectAccessOperands): MixedObjectDefinition {
+export function buildNativeIntegrityStorageDefinition(
+  d: MixedObjectAccessOperands,
+  intrinsicPopulationState?: number,
+): MixedObjectDefinition {
   const missing = (status: number): Instr[] => [
     n(status),
     { op: "ref.null", typeIdx: d.objectTypeIdx },
     { op: "return" },
   ];
+  const ordinary = (): Instr[] => [
+    n(1),
+    get(0),
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: d.objectTypeIdx },
+    { op: "return" },
+  ];
+  const intrinsic = (typeIdx: number, callable: boolean): Instr[] => {
+    if (intrinsicPopulationState === undefined) return missing(2);
+    return [
+      { op: "global.get", index: intrinsicPopulationState },
+      n(2),
+      { op: "i32.ne" },
+      when(missing(2)),
+      ...(callable
+        ? [
+            get(0),
+            { op: "any.convert_extern" } as Instr,
+            { op: "ref.cast", typeIdx } as Instr,
+            { op: "struct.get", typeIdx, fieldIdx: CLOSURE_BAG_FIELD_IDX } as Instr,
+            set(2),
+            get(2),
+            { op: "ref.is_null" } as Instr,
+            when(missing(2)),
+            get(2),
+            { op: "any.convert_extern" } as Instr,
+            { op: "ref.test", typeIdx: d.objectTypeIdx } as Instr,
+            { op: "i32.eqz" } as Instr,
+            when(missing(3)),
+            n(1),
+            get(2),
+            { op: "any.convert_extern" } as Instr,
+            { op: "ref.cast", typeIdx: d.objectTypeIdx } as Instr,
+            { op: "return" } as Instr,
+          ]
+        : ordinary()),
+    ];
+  };
   return {
-    locals: [{ name: "family", type: { kind: "i32" } }],
+    locals: [
+      { name: "family", type: { kind: "i32" } },
+      ...(intrinsicPopulationState === undefined ? [] : [{ name: "bag", type: { kind: "externref" as const } }]),
+    ],
     body: [
       get(0),
       { op: "call", funcIdx: d.classify },
@@ -35,15 +80,11 @@ export function buildNativeIntegrityStorageDefinition(d: MixedObjectAccessOperan
         n(index + 1),
         { op: "i32.eq" },
         when(
-          c.kind === "native" || c.kind === "source" || c.kind === "object-prototype"
+          c.kind === "source"
             ? missing(2)
-            : [
-                n(1),
-                get(0),
-                { op: "any.convert_extern" },
-                { op: "ref.cast", typeIdx: d.objectTypeIdx },
-                { op: "return" },
-              ],
+            : c.kind === "native" || c.kind === "object-prototype"
+              ? intrinsic(c.typeIdx, c.kind === "native")
+              : ordinary(),
         ),
       ]),
       { op: "unreachable" },

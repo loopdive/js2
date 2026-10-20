@@ -96,12 +96,36 @@
     "meaning": "Unfiltered full file after exact native source restoration and hook-only lint cleanup,203.81s. Duplicate setup hooks were merged into one beforeEach; no suppression or deadline increase."
   },
   "preservationRun": {
-    "closed": false,
+    "closed": true,
     "sessionId": 24574,
     "report": ".tmp/s7aw-preservation.json",
     "log": ".tmp/s7aw-preservation.log",
     "files": 5,
-    "meaning": "Full existing extensibility, set-prototype, prototype-setter, ToObject catalog and prepared Linear early-return files; no inferred denominator before terminal report. Still live at checkpoint publication. The two ToObject components have emitted exact prior S7-as bytes, not proof of all test results. Re-poll the same live handle; never restart for buffered output."
+    "sha256": "28ae4fbbe05b05ecf8e1d5b43af98ce1407d1d84e10f75500b2cce9cd7b08e12",
+    "total": 226,
+    "passed": 224,
+    "failed": 2,
+    "pending": 0,
+    "exit": 1,
+    "durationSeconds": 2526.68,
+    "fileResults": [
+      { "file": "issue-3525-prepared-linear-early-return.test.ts", "passed": 17, "failed": 0 },
+      { "file": "issue-6979-native-object-extensibility.test.ts", "passed": 63, "failed": 0 },
+      { "file": "issue-6979-native-object-prototype-setter.test.ts", "passed": 36, "failed": 2 },
+      { "file": "issue-6979-native-object-set-prototype.test.ts", "passed": 38, "failed": 0 },
+      { "file": "issue-6979-native-object-to-object-algorithms.test.ts", "passed": 70, "failed": 0 }
+    ],
+    "meaning": "Closed on original c3ba39be65 worktree snapshot. Both failures are unchanged35s prototype-setter custody deadlines: independent algorithm re-derivation and interrupted-fill retry refusal. The full run remains failed. Exact old ToObject component bytes were retained.",
+    "selectedTimeoutIsolation": {
+      "sha256": "f5cc74ecf5fe61bfb6c583537ed86e8fda16b45e68c4a19baec7dab67d310e61",
+      "total": 38,
+      "passed": 2,
+      "failed": 0,
+      "pending": 36,
+      "exit": 0,
+      "caseDurationMs": [30936, 28776],
+      "meaning": "Only the two failed cases selected, original c3ba39be65 source and unchanged35s deadlines. Separate evidence, not a rewritten226/226 full run or a conclusive attribution of the original timeouts."
+    }
   },
   "oldFactoryComparison": {
     "equal": 24,

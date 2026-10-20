@@ -88,6 +88,14 @@ function current(tx: PhysicalModuleReservations, pack: NativeRealmPopulation): O
   return owner;
 }
 
+/** Original dependency data, not population completion or a caller-selected body binding. */
+export function nativeRealmPopulationDependencies(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmPopulation,
+): NativeRealmPopulationDependencies {
+  return current(tx, pack).captured;
+}
+
 /** Claims the existing real initialize slot, with no caller-selected catalog or function handles. */
 export function reserveNativeRealmPopulation(
   tx: PhysicalModuleReservations,

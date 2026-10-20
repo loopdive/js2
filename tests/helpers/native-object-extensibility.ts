@@ -45,6 +45,9 @@ import { emitBinary } from "../../src/emit/binary.js";
 import { as, get, ext, i32 } from "./native-realm-object-layouts.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
 import { setImmediate } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
+import { NATIVE_REALM_CATALOG } from "../../src/runtime/contracts/native-realm-catalog.js";
+import { WELL_KNOWN_SYMBOL_IDS } from "../../src/runtime/contracts/well-known-symbols.js";
 import { buildInlineNativeStringLiteral } from "../../src/runtime/wasmgc/values/string-literal-bodies.js";
 import {
   reserveNativePrimitivePrototypeIdentities,
@@ -66,6 +69,21 @@ import {
   fillNativeObjectIntegrityAlgorithms,
   requireCompletedNativeObjectIntegrityAlgorithms,
 } from "../../src/backend/wasmgc/resources/native-object-integrity.js";
+import {
+  declareNativeObjectSameValueResources,
+  reserveNativeObjectSameValueResources,
+  fillNativeObjectSameValueResources,
+} from "../../src/backend/wasmgc/resources/native-object-same-value.js";
+import {
+  declareNativeObjectDescriptorResources,
+  reserveNativeObjectDescriptorResources,
+  fillNativeObjectDescriptorResources,
+} from "../../src/backend/wasmgc/resources/native-object-descriptors.js";
+import {
+  reserveNativeRealmPopulation,
+  fillNativeRealmPopulation,
+  requireCompletedNativeRealmPopulation,
+} from "../../src/backend/wasmgc/resources/native-realm-population.js";
 
 export function objectExtensibilityFixture(
   displaced = false,
@@ -77,6 +95,7 @@ export function objectExtensibilityFixture(
   includeToObject = false,
   includeToObjectAlgorithms = false,
   includeIntegrity = false,
+  populatedIntegrity = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -130,7 +149,63 @@ export function objectExtensibilityFixture(
     errorDependencies,
   };
   const algorithms = reserveNativeObjectExtensibilityAlgorithms(tx, algorithmDependencies);
-  const integrity = includeIntegrity ? reserveNativeObjectIntegrityAlgorithms(tx, algorithmDependencies) : undefined;
+  if (populatedIntegrity && !includeIntegrity) throw Error("population fixture requires integrity selection");
+  const intrinsic = populatedIntegrity
+    ? (() => {
+        const sameValueDependencies = {
+          values: r.values,
+          valuePlan: r.valuePlan,
+          valueDependencies: r.valueDependencies,
+          booleans,
+          bigints,
+          bigintPlan,
+          strings: r.f.strings,
+          flatten: r.flatten,
+          equality: r.equality,
+        };
+        const sameValue = reserveNativeObjectSameValueResources(
+          tx,
+          "integrity:same-value",
+          sameValueDependencies,
+          declareNativeObjectSameValueResources("integrity:same-value"),
+        );
+        const descriptorDependencies = {
+          access: r.realm.declarations.realm.access,
+          storage: r.storage,
+          storageDependencies: r.stringCreateDependencies.storageDependencies,
+          sameValue,
+          sameValueDependencies,
+          errors,
+          errorRequirements,
+          errorDependencies,
+          closures: r.c.closures,
+        };
+        const descriptors = reserveNativeObjectDescriptorResources(
+          tx,
+          "integrity:descriptors",
+          descriptorDependencies,
+          declareNativeObjectDescriptorResources("integrity:descriptors"),
+        );
+        const populationDependencies = {
+          realm: r.realm.declarations,
+          realmDependencies: r.realm.dependencies,
+          descriptors,
+          descriptorDependencies,
+        };
+        const population = reserveNativeRealmPopulation(tx, populationDependencies);
+        return {
+          sameValue,
+          sameValueDependencies,
+          descriptors,
+          descriptorDependencies,
+          populationDependencies,
+          population,
+        };
+      })()
+    : undefined;
+  const integrity = includeIntegrity
+    ? reserveNativeObjectIntegrityAlgorithms(tx, algorithmDependencies, intrinsic?.population)
+    : undefined;
   const prototypeAlgorithm = includeSetPrototype
     ? reserveNativeObjectSetPrototypeAlgorithm(tx, algorithmDependencies)
     : undefined;
@@ -187,6 +262,7 @@ export function objectExtensibilityFixture(
     algorithmDependencies,
     algorithms,
     integrity,
+    intrinsic,
     prototypeAlgorithm,
     prototypeSetter,
     primitivePrototypeDependencies,
@@ -304,6 +380,7 @@ export function* objectExtensibilityRuntimeSteps(
   includeToObject = false,
   includeToObjectAlgorithms = false,
   includeIntegrity = false,
+  populatedIntegrity = false,
 ) {
   const r = objectExtensibilityFixture(
       displaced,
@@ -315,6 +392,7 @@ export function* objectExtensibilityRuntimeSteps(
       includeToObject,
       includeToObjectAlgorithms,
       includeIntegrity,
+      populatedIntegrity,
     ),
     { tx, f } = r;
   const selectedEntries = [
@@ -326,6 +404,16 @@ export function* objectExtensibilityRuntimeSteps(
   ];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
+    ...(populatedIntegrity
+      ? {
+          populationState: { params: [i32], results: [] },
+          populationReady: { params: [], results: [i32] },
+          wholeRealmReady: { params: [], results: [i32] },
+          intrinsicBag: { params: [i32], results: [ext] },
+          populationKey: { params: [i32], results: [ext] },
+          populationTextIs: { params: [ext, i32], results: [i32] },
+        }
+      : {}),
     ...Object.fromEntries(
       (r.integrity?.entries ?? []).map((_, index) => [
         "stored" + (selectedEntries.length - r.integrity!.entries.length + index),
@@ -440,6 +528,16 @@ export function* objectExtensibilityRuntimeSteps(
   yield;
   fillObjectExtensibilityDependencies(r);
   yield;
+  if (r.intrinsic) {
+    fillNativeObjectSameValueResources(tx, r.intrinsic.sameValue);
+    yield;
+    fillNativeObjectDescriptorResources(tx, r.intrinsic.descriptors, r.realm.declarations.exception.tag);
+    yield;
+    fillNativeRealmPopulation(tx, r.intrinsic.population);
+    yield;
+    requireCompletedNativeRealmPopulation(tx, r.intrinsic.population);
+    yield;
+  }
   fillNativeObjectExtensibilityAlgorithms(tx, r.algorithms);
   requireCompletedNativeObjectExtensibilityAlgorithms(tx, r.algorithms);
   yield;
@@ -606,6 +704,101 @@ export function* objectExtensibilityRuntimeSteps(
       ]),
     ],
   });
+  if (r.intrinsic) {
+    tx.fillFunction(controls.populationState!, {
+      locals: [],
+      body: [get(0), { op: "global.set", index: tx.physicalIndex(r.realm.declarations.globals.state) }],
+    });
+    for (const [name, token] of [
+      ["populationReady", r.realm.declarations.globals.state],
+      ["wholeRealmReady", r.realm.declarations.globals.wholeRealmReady],
+    ] as const)
+      tx.fillFunction(controls[name]!, { locals: [], body: [global(tx.physicalIndex(token))] });
+    tx.fillFunction(controls.intrinsicBag!, {
+      locals: [],
+      body: [
+        ...r.realm.declarations.entries.flatMap((entry, index): Instr[] => [
+          get(0),
+          n(index),
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              global(tx.physicalIndex(entry.singleton)),
+              { op: "ref.as_non_null" },
+              ...(entry.request.intrinsic.id === "%Function.prototype%"
+                ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: entry.type.typeIndex } as Instr]
+                : []),
+              { op: "struct.get", typeIdx: entry.type.typeIndex, fieldIdx: 2 },
+              { op: "return" },
+            ],
+          },
+        ]),
+        { op: "unreachable" },
+      ],
+    });
+    tx.defineExport("integrity:population-initialize", "initializePopulation", r.intrinsic.population.initialize);
+    tx.defineExport("integrity:define-data", "defineData", r.intrinsic.descriptors.defineData);
+    tx.defineExport("integrity:unbox-number", "populationNumber", r.values.functions.unboxNumber);
+    tx.fillFunction(controls.populationKey!, {
+      locals: [],
+      body: [
+        ...NATIVE_REALM_CATALOG.intrinsics
+          .flatMap((row) => row.properties)
+          .flatMap((property, index): Instr[] => [
+            get(0),
+            n(index),
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                ...(property.key.kind === "string"
+                  ? [
+                      ...buildInlineNativeStringLiteral(f.strings.layout, property.key.value),
+                      { op: "extern.convert_any" } as Instr,
+                    ]
+                  : [n(WELL_KNOWN_SYMBOL_IDS.hasInstance), call(r.symbols.functions.box.handle)]),
+                { op: "return" },
+              ],
+            },
+          ]),
+        { op: "unreachable" },
+      ],
+    });
+    tx.fillFunction(controls.populationTextIs!, {
+      locals: [],
+      body: [
+        ...NATIVE_REALM_CATALOG.intrinsics
+          .flatMap((row) => row.properties)
+          .flatMap((property, index): Instr[] =>
+            property.kind === "data" && property.value.kind === "string"
+              ? [
+                  get(1),
+                  n(index),
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      ...as(0, f.strings.layout.anyStrTypeIdx),
+                      ...buildInlineNativeStringLiteral(f.strings.layout, property.value.value),
+                      call(r.equality.equals.handle),
+                      { op: "return" },
+                    ],
+                  },
+                ]
+              : [],
+          ),
+        { op: "unreachable" },
+      ],
+    });
+    for (const [index, entry] of r.realm.declarations.entries.entries()) {
+      tx.defineExport("integrity:identity:" + index, "intrinsic" + index, entry.singleton);
+      tx.defineExport("integrity:call:" + index, "intrinsicCall" + index, entry.lifted);
+    }
+  }
   if (includePrimitivePrototypes) {
     tx.fillFunction(controls.renewRealm!, {
       locals: [],
@@ -935,7 +1128,12 @@ export function* objectExtensibilityRuntimeSteps(
   const live = reachableFunctionPositions(f.module),
     liveNames = f.module.functions.filter((_, i) => live[i]).map((fn) => fn.name);
   const unfilledReachable = f.module.functions.filter((fn, i) => live[i] && !completed.has(fn));
-  if (unfilledReachable.length)
+  const unrelated = r.intrinsic
+    ? r.realm.declarations.entries
+        .filter((entry) => !selectedEntries.includes(entry))
+        .map((entry) => entry.lifted.object)
+    : [];
+  if (unfilledReachable.some((fn) => !unrelated.includes(fn)))
     throw Error("unfilled component dependency: " + unfilledReachable.map((fn) => fn.name).join(", "));
   if (
     liveNames.length < 20 ||
@@ -947,6 +1145,27 @@ export function* objectExtensibilityRuntimeSteps(
   // Sweep ONLY a clone; never fill dead production obligations or certify sealing.
   const snapshot = structuredClone(f.module),
     stubbed = stubUnreachableFunctions(snapshot, live);
+  // Only a component observer: real population references all identity slots,
+  // but unrelated missing algorithms remain loud traps, never production fills.
+  if (r.intrinsic)
+    for (const fn of unfilledReachable) {
+      const index = f.module.functions.indexOf(fn);
+      snapshot.functions[index]!.locals = [];
+      snapshot.functions[index]!.body = [{ op: "unreachable" }];
+    }
+  if (r.intrinsic) {
+    const owned = [
+      r.intrinsic.population.initialize,
+      r.integrity!.storage,
+      ...r.integrity!.operations,
+      ...r.integrity!.entries.flatMap((entry) => [entry.algorithm, entry.lifted]),
+    ];
+    for (const token of owned) {
+      const index = f.module.functions.indexOf(token.object);
+      if (index < 0 || !live[index] || !isDeepStrictEqual(snapshot.functions[index], token.object))
+        throw Error("observer changed a real populated integrity body");
+    }
+  }
   if (!stubbed || stubsReachedAfterFinalize(snapshot).length) throw Error("invalid component sweep");
   yield;
   const bytes = emitBinary(snapshot),
@@ -957,5 +1176,15 @@ export function* objectExtensibilityRuntimeSteps(
     for (const value of values) api.push(v, value);
     return v;
   };
-  return { r, wasm, bytes, api, vector, liveNames, stubbed, wholeRealmCompleted: false as const };
+  return {
+    r,
+    wasm,
+    bytes,
+    api,
+    vector,
+    liveNames,
+    stubbed,
+    observerOnlyTraps: unfilledReachable.map((fn) => fn.name),
+    wholeRealmCompleted: false as const,
+  };
 }

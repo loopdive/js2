@@ -7405,3 +7405,127 @@ public bindings,values/undefined/defaults,mixed builtin/bound/source/live-foreig
 Call/Get,live boundary identity without copying,complete Linear/WASI,named gaps,
 host runtime retirement,historical/conformance/architecture acceptance and reviewed
 prerequisite/conflict integration all remain required. Both issues stay in progress.
+
+#### S7-ax join the actual intrinsic population to integrity (in progress)
+
+Work is isolated in worktrees/codex-6979-s7ax-population on
+codex/6979-s7ax-population, based on published c3ba39be65, while the S7-aw
+five-file preservation runner continues unchanged in its original worktree on
+session24574. Do not restart that runner or overwrite its source snapshot.
+
+Add an optional genuine NativeRealmPopulation selection to the existing integrity
+owner, not a second algorithm family or raw-body binder. Authenticate the exact
+realm, descriptor storage/closure, value/string/Boolean/BigInt owners before any
+new reservation. Require the independently checked completed initializer before
+filling selected intrinsic storage. At runtime require its actual ready state=2
+before reading native callable or Object.prototype bags. Source callable
+populations and foreign/proxy operations stay explicitly unready/unsupported.
+Keep old storage instruction arrays exact when no population is selected.
+
+Execute the actual full initializer plus real integrity slots in an explicitly
+unsealed component observer. Any unavailable unrelated algorithm bodies needed
+only to typecheck referenced function identities may be traps in the observer
+clone only; they are never production fills/completion witnesses. Assert the
+actual owned bodies remain exact, unrelated calls still trap, wholeRealmReady=0
+and full realm completion/sealing still refuses. Test all intrinsic identities,
+name/length descriptors, Object.prototype, before/after readiness and real native
+descriptor redefinitions after seal/freeze. Reject copied/foreign/mismatched
+population owners and receipt-valid alternate initializer definitions. Add
+isolated ready-check removal attribution; retain full public bindings, all
+remaining algorithms/constructors, original source/realm/code/body/allocation
+joins, general arguments/undefined/defaults, mixed live-foreign Call/Get, complete
+Linear/WASI and all retirement/historical/conformance/integration requirements.
+
+S7-ax now selects the genuine existing population owner and independently checks
+its completed canonical initializer before filling or certifying integrity bodies.
+The exact same original realm, closure/storage lookup, values, errors, strings,
+Boolean and BigInt owners are required. Native callable bags and Object.prototype
+are admitted only while the actual population state is2. Source and foreign
+objects remain explicit gaps; this adds no recursive copying or host semantics.
+
+The observer executes the real full initializer, all45 identities and133 live
+descriptors, all44 callable bags and Object.prototype, and the actual integrity
+algorithm/guarded slots. Real native descriptor writes after seal succeed where
+writable; unequal writes after freeze throw the genuine tagged TypeError.
+The13 integrity bodies and real initializer remain byte-for-byte instruction
+definitions in the clone. Exactly38 unavailable unrelated lifted entries are
+observer-only traps; no missing production algorithm is filled or certified.
+Full realm completion and allocator sealing still refuse, wholeRealmReady stays0.
+
+Restored populated execution currently passes12/12 and owner/alternate-initializer
+custody passes2/2, both exit0. The initial execution run was8/12 because four test
+assertions omitted an original-owner argument or expected the wrong configured
+TypeError tag; corrected without changing production semantics. The initial
+custody assertion missed the word initializer; the next version audited the bad
+initializer twice after the allocator had already failed closed. The final test
+checks its valid allocator receipt, makes the actual integrity consumer reject
+the substituted body first, and verifies allocator state=failed. No deadline was
+raised. The24 old storage/operation factory comparisons match c3ba39be65 exactly
+when no population is selected; full historical emitted-GC equivalence remains
+unclaimed.
+
+The concurrent26-case old-integrity/new-custody run is not green:24pass,2fail,
+exit1. One was that already corrected double-audit custody assertion; the old
+integrity substituted-kernel case timed out in its unchanged setup hook. A final
+single-worker restored run and isolated readiness-removal attribution are in
+progress. S7-aw's original five-file runner24574 is still live in the frozen
+original worktree and has already reported two35s prototype-setter custody
+timeouts. Do not claim preservation success or normalize these failures away.
+
+The reviewed452→456 four-adapter increase remains authorized only for those
+existing adapters and unchanged33 probes. The fresh check is437/452, unknown0,
+regimeGap0, so the approval is unused and no baseline changed. Inventory2000 is
+valid but incomplete; the same four cycle directions and two unknown nonliteral
+imports remain red/unwaived. Full public builtin/source/realm/code/body/allocation
+integration, remaining catalog/constructors, complete Linear/WASI, live foreign
+Call/Get and identity without copying, named gaps and retirement/conformance/
+architecture/integration acceptance all remain required. Both issues stay open.
+
+The original preservation runner24574 has now closed:224/226pass,2fail,zero
+pending,exit1,2526.68s. Per-file results: Linear17/17,extensibility63/63,
+prototype-setter36/38,set-prototype38/38,ToObject70/70. Its two failures are the
+unchanged35s algorithm re-derivation and interrupted-fill retry-refusal custody
+cases in prototype-setter. The full failed report is retained in the S7-aw audit;
+a separate selected two-case rerun uses the same c3ba39be65 source and deadlines.
+Do not rewrite the full run as226/226 or attribute the timeouts without a control.
+
+The selected original-source isolation run closes2/2 selected passes,36unselected,
+exit0,69.43s; the cases take30.936s and28.776s under the unchanged35s deadlines.
+This is separate evidence and does not turn the full run green or prove its
+precise timing cause. Both reports/hashes are retained in the existing S7-aw audit.
+
+S7-ax final restored run now closes **38/38pass,zero skips,exit0**,257.94s:
+12 populated-runtime,2 owner/canonical-initializer custody,24 existing integrity
+cases. The newest custody also rejects an independently genuine same-ledger
+Boolean/classifier family whose owner differs from the actual population's.
+Readiness removal closes1/2 selected passes,10unselected,exit1: the actual unready
+intrinsic returns1 instead of2; independent primitive/source/foreign execution
+passes. Only the readiness branch was replaced with drop; restored source hash
+4ebf03ec59e40a837b417f23d3c80fb37738bb2bb11bf2734eb5d2e924ea6699
+is exact before the final run. No test deadline, assertion or production phase
+was removed/raised.
+
+Harness correction: --maxWorkers=1 was requested, but this repo explicitly sets
+poolOptions.forks.maxForks, which takes precedence in installed Vitest. Final
+file timestamps overlap; this is not claimed as a serial-file run. The earlier
+"single-worker" plan describes intent, not the measured configuration. The
+selected original-source two-case isolation is a separate single-file run.
+Both worktrees' local Node24 exnref worker flags were restored, never staged.
+
+Final typecheck/lint/scoped format, old factory comparison, issue checks and
+unchanged source ratchets pass. Whole PR419 source files,net−11928LOC,only the
+two existing function grants. Same33 import probes437/452,unknown0/regimeGap0,
+approved four-adapter increase unused. Same four cycle directions/SCC712/four
+components and two strict-closure unknown imports remain unwaived.
+[Exact S7-ax source/report/gate hashes, real observer scope and full remaining work](../audit/6979-native-integrity-population-20261020.json).
+
+Handoff: continue from the actual population join, not observer-only missing
+algorithms or a private success claim. Fill/authenticate remaining real catalog
+algorithms (including Function.prototype/ThrowTypeError and constructors), join
+actual public source builtin bindings and original realm/source/code/body/
+allocation owners, and remove observer traps only as genuine production owners
+complete. Finish general arguments/values/defaults, source/bound/live foreign
+Call/Get and identity-backed boundary behavior without copying, complete Linear/
+WASI and named gaps, then prove retirement/conformance/architecture acceptance.
+The draft PR remains conflicted; prerequisite PR6701 is OPEN/MERGEABLE/BEHIND,
+not merged. No merge or full migration completion is claimed.
