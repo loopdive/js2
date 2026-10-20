@@ -180,19 +180,19 @@ describe("#1042 host drive — unclaimed shapes keep the legacy fallback (no reg
     await expect(settled(exports.main())).resolves.toBe(3);
   });
 
-  it("await-elidable bodies stay on the legacy synchronous path", async () => {
-    // Both awaits are statically resolved (literals) → no genuine suspension →
-    // neither the CPS lane nor the host drive claims the fn; the legacy
-    // "compile away" idiom (#1313/#1727) keeps returning the raw value.
+  it("statically resolved awaits still yield in a JS environment and settle the right value", async () => {
+    // #6982: in a JS environment even `await 20` yields a microtask turn (the
+    // #1313/#1727 elision now applies only host-free), so `f()` is a real
+    // Promise — surfaced on #7096's touch of this file.
     const exports = await compileToWasm(`
       async function f(): Promise<number> {
         const x = await 20;
         const y = await 22;
         return x + y;
       }
-      export function main(): number { return f() as any as number; }
+      export async function main(): Promise<number> { return await f(); }
     `);
-    expect(exports.main()).toBe(42);
+    await expect(settled(exports.main())).resolves.toBe(42);
   });
 
   it("single-tail-await stays on the CPS lane (control)", async () => {
