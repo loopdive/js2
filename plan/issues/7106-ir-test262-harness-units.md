@@ -52,6 +52,7 @@ loc-budget-allow:
   - src/ir/backend/handles.ts
   - src/ir/backend/legality.ts
   - src/ir/ambient-typeof.ts
+  - src/ir/prepared-component-dependencies.ts
 ---
 
 ## Problem
