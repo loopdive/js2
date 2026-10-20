@@ -2154,3 +2154,19 @@ remain separate and unwaived. All current handles are closed. See
 The full public realm population/initializer and actual consumer source join are
 next, not certified by these formatter/component results. Both issues remain in
 progress; keep the open prerequisite/draft PR and every full acceptance obligation.
+
+#### Requested work-so-far PR and implementation handoff, 2026-10-20
+
+Work is published in
+[refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762).
+Fresh readback confirms OPEN/draft/CONFLICTING, with the prerequisite still
+OPEN/unmerged. Latest implemented checkpoint is `ff212b1bdf`; the S7-ar full
+catalog initializer is planned, **not implemented**. No new runtime result is
+claimed by this Markdown-only publication. Both issues remain in progress.
+
+Resume from **Publication handoff — work so far, 2026-10-20** and the S7-ar plan in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+That handoff records the actual next files/owner joins, retained verification and
+failures, and the full remaining scope including both no-host targets and live
+boundary identity without copying. It does not authorize merging the unfinished
+stack or replacing full migration acceptance with a formatter checkpoint.

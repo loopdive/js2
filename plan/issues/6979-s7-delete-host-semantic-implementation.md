@@ -6774,3 +6774,82 @@ typed f64 witnesses for complete realm/source/public admission. Preserve boundar
 identity without copying, undefined, Linear/WASI, remaining catalog/named gaps,
 runtime/host-arm retirement and all architecture/historical/Test262/npm/accelerator/
 merge acceptance. Both issues and the full migration goal remain in progress.
+
+#### S7-ar full catalog population initializer (in progress)
+
+Fresh ff212b1bdf confirms the actual public declaration owner reserves all45
+Object/Function identities but never fills its initialize slot; only null/zero
+module initializers exist. Implement the real catalog population initializer,
+not another caller-selected subset or bootstrap realm. Allocate fresh per-instance
+realm/Object.prototype/callable singletons into typed locals, seed the entire
+retained catalog (including constructor cycles, accessor aliases, Symbol.hasInstance,
+names/lengths and exact attributes) through the genuine native descriptor/storage/
+value/string/symbol owners, and publish all anchors/singletons only after seeding
+and final extensibility changes succeed. State0→1→2, with reentry/failure terminal;
+no half-populated anchors on a caught failure. Keep wholeRealmReady immutable0.
+
+The new producer must bind the original issued public declarations, complete
+catalog and actual shared closure/ordinary/string/value/symbol dependencies.
+Missing/foreign/mutated owners, receipt-valid initializer replacement and interrupted
+fills cannot acquire its initializer-only completion. Re-derive canonical null/
+zero module state and the exact initializer on later observations. Declared
+funcrefs must use all original lifted slots, never arbitrary caller handles.
+
+This is a required production population step, NOT full realm completion. Do not
+invent bodies for unimplemented catalog algorithms or flip ready/publish an
+incomplete realm to make it execute. A production ledger with missing algorithms
+must remain unsealable and requireCompletedNativeObjectRealm must still refuse.
+Complement actual full-catalog producer/phase/identity tests with a clearly named
+instruction-builder operand witness for graph/descriptor/atomicity behavior; any
+observer-only function refs in that witness are not public builtin algorithm
+owners or full consumer execution evidence. The remaining catalog algorithms,
+semantic mixed Call/Get and original source/code/allocation join must then consume
+this same real population path, not substitute the witness. Preserve both no-host
+targets, live foreign identity, undefined and all earlier full-goal acceptance.
+
+#### Publication handoff — work so far, 2026-10-20
+
+Requested handoff, not migration completion. The latest implemented and tested
+checkpoint is signed commit `ff212b1bdf6bd67ec2ddeb87f1762d94b1e5bfe5`.
+The S7-ar section above is an **implementation plan only**: no population builder,
+resource owner or initializer tests have been implemented. This publication adds
+only repository Markdown; it does not change compiler behavior or certify new
+runtime execution. Both migration issues remain in progress.
+
+The existing [refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762)
+contains the work so far on `codex/6979-s7c-ir-arms`. Fresh server readback confirms
+OPEN, draft and CONFLICTING at the checkpoint SHA. Its prerequisite
+[refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+is also OPEN/unmerged and CONFLICTING. Do not mark this ready, enqueue or merge
+until implementation, prerequisite integration, conflict resolution and required
+verification genuinely succeed. No GitHub issues or issue comments are needed.
+
+Resume in `worktrees/codex-6979-s7c-ir-arms`, not the dirty primary checkout.
+Start with the S7-aq audit linked above: final **108/108, zero skips, exit0** is
+recorded evidence for that exact formatter checkpoint, not a test rerun for this
+Markdown handoff. Keep the five historical symbolic-reference receipt failures
+and four architecture dependency directions red and unwaived. Do not repin their
+historical hashes, shrink acceptance or infer full public-realm completion from
+component tests.
+
+Concrete next implementation:
+
+1. Join the genuine public declarations in
+   `src/backend/wasmgc/resources/native-object-realm.ts` to the genuine native
+   descriptor/storage/string/value/symbol owners. Audit original closure-owner
+   identity when composing fixtures; a structurally similar closure pack is not
+   proof that descriptor and public-realm owners share the same root.
+2. Implement the full retained catalog initializer in the original `initialize`
+   slot as specified in S7-ar. Use native descriptor insertion, not sequential
+   writes into the hashed property map. Allocate into locals, seed all properties
+   and finalize extensibility before atomically publishing anchors. Reentry and
+   interrupted fills must never authorize a half-populated realm.
+3. Test the real producer's ownership, phase and canonical-body checks separately
+   from an explicitly labeled instruction-builder graph witness. Do not supply
+   dummy production algorithms merely to seal the module: missing catalog
+   algorithms must still prevent sealing and full-realm completion must refuse.
+4. Continue through actual source/code/body/allocation admission and semantic
+   mixed Call/Get, live identity-backed foreign boundary references without graph
+   copying, first-class undefined, and the complete Linear/WASI migration. Finish
+   remaining catalog/named gaps, runtime/host-arm retirement, architecture closure
+   and historical/Test262/npm/accelerator acceptance before final integration.
