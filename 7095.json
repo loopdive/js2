@@ -1,10 +1,11 @@
 {
   "id": "7095",
   "assignee": "ttraenkler/opus-7095-marshal",
-  "requested_by": "ttraenkler/opus-7095-marshal",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-7095-platform-arg-marshal-declared",
   "claimed_at": "2026-10-19T18:42:01Z",
-  "updated_at": "2026-10-19T18:42:01Z",
-  "write_id": "4105-mnwfgnaq"
+  "updated_at": "2026-10-20T01:00:22Z",
+  "write_id": "57544-61agju1g",
+  "released_at": "2026-10-20T01:00:22Z"
 }
