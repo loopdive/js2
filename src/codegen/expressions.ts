@@ -16,7 +16,13 @@ import { ORDINARY_NEW_TARGET } from "./closures/ordinary-new-target.js";
 import { buildPromiseRejectionEvent } from "../runtime/wasmgc/promise/rejection-event-bodies.js";
 import { promiseRejectionDispatcher } from "./registry/promise-rejection-dispatch.js";
 import { isBooleanType, isPromiseType, mapTsTypeToWasm } from "../checker/type-mapper.js";
-import { classifyAsyncConsumer, analyzeAsyncBody, asyncFnNeedsCps } from "./async-cps.js";
+import {
+  classifyAsyncConsumer,
+  analyzeAsyncBody,
+  asyncFnNeedsCps,
+  staticPromiseResolveSettledExpr,
+} from "./async-cps.js";
+import { asyncFnNeedsDrive, asyncGenConsumerNeedsDrive } from "./async-frame.js";
 import { emitAsyncValueSinkUnwrap, emitStandaloneAwaitUnwrap } from "./async-value-sink-unwrap.js";
 import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -478,7 +484,25 @@ function calleeIsDriveLowered(ctx: CodegenContext, expr: ts.CallExpression): boo
   if (!isAsyncDecl) return false;
   // Carrier lane (wasi): a genuinely-suspending async fn is frame-driven and
   // already returns a real `$Promise`.
-  return asyncFnNeedsCps(decl, analyzeAsyncBody(ctx, decl));
+  // (#6995) AND the activation predicate itself: `asyncFnNeedsCps` alone also
+  // admits bodies the drive gate declines (e.g. an await over a provably
+  // non-thenable struct), whose compiled result is the raw `T` — skipping the
+  // wrap then `ref.cast`-trapped (`illegal cast`) at the consumer.
+  const plan = analyzeAsyncBody(ctx, decl);
+  if (asyncFnNeedsCps(decl, plan) && asyncFnNeedsDrive(ctx, decl, plan)) return true;
+  // (#3132) `--target standalone` with the native-`$Promise` CARRIER still OFF
+  // (#2980): the async-gen-CONSUMER drive lane (`for await (x of asyncGen)`) is
+  // carrier-independent — every suspension awaits a promise MINTED by the
+  // producer's own `__async_gen_next_<name>` driver (a native `$Promise` on
+  // every lane), and the driven consumer settles its result via native
+  // `__promise_fulfill`. So its CALL result is already a native `$Promise` and
+  // must pass through UN-wrapped: the HOST try/catch wrap
+  // (`Promise_reject`/`__get_caught_exception`) was the last host dependency for
+  // the for-await-over-async-gen files whose consumer drives natively but whose
+  // call site still pulled in the host Promise machinery. Plain awaits / Promise
+  // statics stay on the legacy path pending the #2980 carrier widen.
+  if (ctx.standalone === true) return asyncGenConsumerNeedsDrive(ctx, decl, plan);
+  return false;
 }
 
 /**
@@ -1537,7 +1561,7 @@ function compileExpressionInner(
     // true frame suspension (#2865 AG1 / PATH B).
     const operandType = compileExpressionInner(ctx, fctx, expr.expression);
     if (operandType !== null && operandType !== VOID_RESULT && operandType.kind === "externref") {
-      emitStandaloneAwaitUnwrap(ctx, fctx);
+      emitStandaloneAwaitUnwrap(ctx, fctx, /*throwOnRejected*/ true); // (#6995) rejected → throw
       return { kind: "externref" };
     }
     return operandType;

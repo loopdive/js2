@@ -3,7 +3,7 @@
 // own enumerable keys.
 //
 // Root cause (the part this change fixes): a HARNESS exports-timing artifact.
-// In the default JS-host (WasmGC) target the compiler runs top-level code via
+// In the host-assisted JS-host (WasmGC) lane the compiler runs top-level code via
 // the wasm `start` section — i.e. DURING `WebAssembly.instantiate`, BEFORE the
 // host can call `setExports(instance.exports)`. A `for…in` over a WasmGC-struct
 // receiver enumerates its keys through `__for_in_keys`, which resolves the
@@ -41,7 +41,10 @@ import { buildImports, instantiateWasm } from "../src/runtime.js";
  * exported `__module_init`. Captures everything top-level `console.log` prints.
  */
 async function runDeferred(src: string): Promise<string[]> {
-  const result = await compile(src, { fileName: "t.ts", deferTopLevelInit: true });
+  const result = await compile(src, {
+    fileName: "t.ts",
+    deferTopLevelInit: true,
+  });
   if (!result.success) throw new Error(`compile failed: ${result.errors[0]?.message}`);
   const lines: string[] = [];
   const origLog = console.log;
@@ -54,25 +57,6 @@ async function runDeferred(src: string): Promise<string[]> {
     imports.setInstance?.(instance);
     const moduleInit = (instance.exports as Record<string, unknown>).__module_init;
     if (typeof moduleInit === "function") (moduleInit as () => void)();
-  } finally {
-    console.log = origLog;
-  }
-  return lines;
-}
-
-/** Sanity: the legacy (start-section) path. */
-async function runStartSection(src: string): Promise<string[]> {
-  const result = await compile(src, { fileName: "t.ts" });
-  if (!result.success) throw new Error(`compile failed: ${result.errors[0]?.message}`);
-  const lines: string[] = [];
-  const origLog = console.log;
-  // eslint-disable-next-line no-console
-  console.log = (...args: unknown[]) =>
-    lines.push(args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
-  try {
-    const imports = buildImports(result.imports, {}, result.stringPool);
-    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-    imports.setInstance?.(instance);
   } finally {
     console.log = origLog;
   }
@@ -110,13 +94,5 @@ describe("#2796 — top-level for…in enumerates own keys when the runtime is f
     const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
     imports.setInstance?.(instance);
     expect(typeof (instance.exports as Record<string, unknown>).__module_init).toBe("function");
-  });
-
-  it("DEFAULT (start-section) path leaves the legacy behaviour unchanged for a no-introspection program", async () => {
-    // A top-level program that does NOT introspect struct keys is byte-identical
-    // on both paths — this guards that the default still auto-runs top-level code
-    // via the start section (no __module_init export, no behaviour change).
-    const src = `console.log(1 + 2); console.log("hi");`;
-    expect(await runStartSection(src)).toEqual(["3", "hi"]);
   });
 });

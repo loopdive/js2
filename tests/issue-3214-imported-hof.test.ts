@@ -252,7 +252,12 @@ describe("#3214 A+B1 — imported HOF calls", () => {
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 
-  it("rejects an imported overload set before claiming", async () => {
+  // (#7014) Was "rejects an imported overload set before claiming". 41e4840f7d
+  // ("fix(#5300): admit a compatible overload set as a direct-call target",
+  // 2026-09-03) deliberately admits an overload set whose signatures agree with
+  // the implementation, so the claim of `main` is now by design. Pin what the
+  // rejection was protecting instead: no post-claim error, and the right answer.
+  it("admits a compatible imported overload set (#5300) and computes the call", async () => {
     const result = await compileGraph({
       "./hof.ts": `
         function apply(fn: () => number): number;
@@ -266,8 +271,7 @@ describe("#3214 A+B1 — imported HOF calls", () => {
       `,
     });
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irCompiledFuncs ?? []).not.toContain("main");
+    expect(await runMain(result)).toBe(42);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
   });
 

@@ -16,12 +16,11 @@ import { REGIME_GAP_FAMILIES } from "../src/host-import-policy.ts";
 
 /**
  * (#6979) The regime-gap ceiling: exactly these families, and within them only
- * these import names (or name prefixes ending in `*`). A fourth family, or a new
+ * these import names (or name prefixes ending in `*`). A third family, or a new
  * name in an existing one, fails this ratchet until it is reviewed.
  */
 const REGIME_GAP_CEILING: Record<string, readonly string[]> = {
   "eager-generator-buffer": ["__gen_*", "__create_generator", "__create_async_generator"],
-  "shared-array-buffer": ["SharedArrayBuffer_*"],
   "temporal-strings": [
     "__temporal_plain_date_to_string",
     "__temporal_plain_time_to_string",
@@ -391,10 +390,6 @@ const regimeGapProbes = {
       const it = values(); await it.next(); return (await it.next(2)).value as number;
     }
   `,
-  "shared-array-buffer": `export function run(): number {
-    const buffer: any = new SharedArrayBuffer(16);
-    return Atomics.load(new Int32Array(buffer), 0);
-  }`,
   "temporal-strings": `export function run(): string { return Temporal.PlainDate.from("2020-01-02").toString(); }`,
 } as const;
 const regimeGapImports: Record<string, string[]> = Object.create(null);
@@ -418,6 +413,31 @@ for (const [family, source] of Object.entries(regimeGapProbes)) {
     .sort();
   if (regimeGapImports[family]!.length === 0) {
     throw new Error(`regime-gap ${family} probe no longer needs the gap: close it and drop the family (#5385)`);
+  }
+}
+
+// #6979 S7-b — closed regime gaps stay closed: their probe must compile with no
+// regime-gap and no retired (`unknown`) import. `shared-array-buffer` closed
+// with #7011's native SharedArrayBuffer/Atomics provider.
+const closedRegimeGapProbes = {
+  "shared-array-buffer": `export function run(): number {
+    const buffer: any = new SharedArrayBuffer(16);
+    return Atomics.load(new Int32Array(buffer), 0);
+  }`,
+} as const;
+for (const [family, source] of Object.entries(closedRegimeGapProbes)) {
+  const result = await compile(source, { fileName: `host-import-policy-closed-gap-${family}.ts` });
+  if (!result.success) {
+    throw new Error(`closed regime gap ${family} probe no longer compiles: ${JSON.stringify(result.errors?.[0])}`);
+  }
+  const reopened = (result.hostImportInventory ?? []).filter(
+    (entry) => entry.classification === "unknown" || entry.classification === "regime-gap",
+  );
+  if (reopened.length > 0) {
+    throw new Error(
+      `closed regime gap ${family} reopened: ` +
+        reopened.map((entry) => `${entry.name} (${entry.classification}/${entry.family})`).join(", "),
+    );
   }
 }
 

@@ -13,13 +13,16 @@ import { buildImports } from "../src/runtime.js";
  * `__construct_closure` host helper, whose `_wrapCallableForHost` construct
  * trap runs the compiled closure body as ECMA-262 §10.2.2.
  *
- * JS-host only (the default compile mode). The non-constructable throw cases
+ * (#6979 S7-a) The `host-assisted` profile that owned the bridge is retired:
+ * these rows now run on the native regime (the default profile), which
+ * constructs a function value in-module, so the host helper is never imported.
+ * The non-constructable throw cases
  * (arrow / bound / prototype method) remain on the throwing `__construct`
  * brand-check path (#1921) and are covered by issue-1528.test.ts.
  */
 
 async function runHost(source: string): Promise<unknown> {
-  const r = await compile(source, {});
+  const r = await compile(source);
   expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(r.imports, undefined, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
@@ -99,7 +102,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
   // them WORSE by routing them to a constructing path. We assert the
   // construct-closure import is NOT emitted for these shapes.
   async function constructClosureImportEmitted(source: string): Promise<boolean> {
-    const r = await compile(source, {});
+    const r = await compile(source);
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     return (r.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
       const n = i.name ?? i.intent?.name;
@@ -134,14 +137,17 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
     ).toBe(false);
   });
 
-  it("DOES route a plain function value through the construct bridge", async () => {
-    expect(
-      await constructClosureImportEmitted(`
+  // (#6979 S7-a) Under the retired `host-assisted` profile a plain function
+  // value WAS routed through `__construct_closure`. The regime constructs it
+  // in-module: no host bridge, and the construct still answers the own field.
+  it("constructs a plain function value in-module, without the host construct bridge", async () => {
+    const source = `
         function mk() { return function C(x: number) { (this as any).x = x; }; }
         const C = mk();
         export function test(): number { const i: any = new C(1); return i.x; }
-      `),
-    ).toBe(true);
+      `;
+    expect(await constructClosureImportEmitted(source)).toBe(false);
+    expect(await runHost(source)).toBe(1);
   });
 
   // #86 class-ctor arm: `executor(...)` inside a function used as a Promise
@@ -162,7 +168,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
   // the call through the host helper (the deliverable), not the end-to-end
   // capturing-closure run.
   async function importEmitted(source: string, importName: string): Promise<boolean> {
-    const r = await compile(source, {});
+    const r = await compile(source);
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     return (r.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
       const n = i.name ?? i.intent?.name;
@@ -170,7 +176,13 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
     });
   }
 
-  it("routes the capability-ctor executor call through __call_function", async () => {
+  // (#6979 S7-a) Re-pinned from the retired `host-assisted` profile, where the
+  // capability-ctor gate routed the executor call through the host
+  // `__call_function` helper. The regime has no such helper: the row now locks
+  // that the program compiles without it. Running it still throws on the
+  // regime (identically on main's default profile before S7-a) — a regime gap
+  // filed against #5385, not a host path to keep.
+  it("compiles the capability-ctor executor call without the host __call_function helper", async () => {
     // Bare `Promise.allSettled.call(Constructor, …)` is the test262 shape the
     // syntactic gate keys on (V8's NewPromiseCapability runs the executor).
     expect(
@@ -184,7 +196,7 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
          export function test(): number { Promise.allSettled.call(Constructor as any, [p1]); return 0; }`,
         "__call_function",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("does NOT route an ordinary callable param (no capability-ctor flow) through __call_function (#1941 dual-mode)", async () => {

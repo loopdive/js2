@@ -38,6 +38,7 @@ import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { irPlatformExternClassPredicate } from "./host-extern.js"; // (#7091)
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -6089,6 +6090,16 @@ function resolveModuleBindingGlobal(
     global.type.kind === storageType.kind &&
     ((global.type.kind !== "ref" && global.type.kind !== "ref_null") ||
       (storageType.kind === global.type.kind && storageType.typeIdx === global.type.typeIdx));
+  if (!storageMatches && identity.valueKind.kind === "dynamic") {
+    // (#7014) `const a: any = x` (x a number const) is NARROWED to f64 by the
+    // #4178 const-chain trace; #5289 (163eb5bc5c) assumed the dynamic carrier.
+    // A contradicted admission, not a corrupt ABI: demote the module-init.
+    throw new IrUnsupportedError(
+      "module-init-legacy-coupling",
+      "build",
+      `module-init: dynamic binding ${globalName} uses narrowed legacy ${global.type.kind} storage`,
+    );
+  }
   if (!storageMatches) {
     throw new IrInvariantError(
       "abi-type-index-mismatch",
@@ -7108,6 +7119,11 @@ function makeFromAstResolver(
     // host-extern arms.
     jsHostExterns(): boolean {
       return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+    },
+    // (#7091) The platform-extern lane's per-class admission — the SAME
+    // predicate the selector was handed in `planIrOverlay`.
+    platformExternClass(className: string): boolean {
+      return irPlatformExternClassPredicate(ctx)?.(className) === true;
     },
     standaloneDomOperation(node: ts.Node) {
       return standaloneDomCapability?.operation(node);

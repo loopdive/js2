@@ -113,12 +113,39 @@
     return url.href;
   };
 
-  const measuredIrData = (data) =>
-    data?.compilerPath === "ir" && data.compilerPathVerified === true && data.executionCompilerPath === "ir";
+  const measuredIrData = (data, target) => {
+    if (data?.compilerPath !== "ir" || data.requestedCompilerPath !== "ir" || data.measurementState !== "measured")
+      return false;
+    if (target && data.mode?.target !== target) return false;
+    const counts = [
+      "attemptedCases",
+      "completedCases",
+      "skippedCases",
+      "compileErrorCases",
+      "compileTimeoutCases",
+      "verifiedExecutionCases",
+      "unverifiedExecutionCases",
+    ];
+    if (!counts.every((key) => Number.isSafeInteger(data[key]) && data[key] >= 0)) return false;
+    const nonSkipped = data.completedCases - data.skippedCases;
+    if (
+      data.attemptedCases <= 0 ||
+      nonSkipped <= 0 ||
+      data.verifiedExecutionCases + data.unverifiedExecutionCases !== nonSkipped ||
+      data.compileErrorCases + data.compileTimeoutCases > data.unverifiedExecutionCases
+    )
+      return false;
+    if (data.compilerPathVerified === true)
+      return (
+        data.executionCompilerPath === "ir" && data.verifiedExecutionCases > 0 && data.unverifiedExecutionCases === 0
+      );
+    return data.compilerPathVerified === false && ["unknown", "mixed"].includes(data.executionCompilerPath);
+  };
 
-  const readData = (data, field) => {
+  const readData = (data, field, target) => {
     if (!read().ir) return data;
-    if (!measuredIrData(data)) throw new Error("IR data is unmeasured or unavailable");
+    if (!measuredIrData(data, target))
+      throw new Error("IR data is unmeasured, unavailable or belongs to another runtime");
     if (!field) return data;
     if (!Object.prototype.hasOwnProperty.call(data, field)) throw new Error("IR data envelope is incomplete");
     return data[field];
@@ -127,7 +154,8 @@
   const fetchData = async (href, field) => {
     const response = await global.fetch(dataUrl(href));
     if (!response.ok) throw new Error("Conformance data unavailable");
-    return readData(await response.json(), field);
+    const target = new URL(href, global.location.href).pathname.includes("standalone") ? "standalone" : "gc";
+    return readData(await response.json(), field, target);
   };
 
   const bindIrToggle = (label) => {
@@ -144,6 +172,33 @@
       global.location.reload();
     });
   };
+
+  const irMeasurementLabel = (data, mode) => {
+    const target = mode === "standalone" ? "standalone" : "gc";
+    if (!measuredIrData(data, target)) return "IR requested · " + mode + " · unmeasured";
+    return (
+      "IR requested · " +
+      mode +
+      " · measured " +
+      data.completedCases +
+      " cases / " +
+      data.attemptedCases +
+      " compiler attempts · verified IR executions " +
+      data.verifiedExecutionCases +
+      " · unverified cases " +
+      data.unverifiedExecutionCases +
+      " · source " +
+      (data.baseline_sha || "unknown") +
+      " · " +
+      (data.timestamp || "date unknown")
+    );
+  };
+
+  const historicalHostLabel = (data) =>
+    "Historical JS Host · frozen results · source " +
+    (data?.baseline_sha || "unknown") +
+    " · " +
+    (data?.baseline_generated_at || data?.timestamp || "date unknown");
 
   const irStatus = async (base, mode) => {
     const filename = mode === "host" ? "test262-ir-status.json" : "test262-standalone-ir-status.json";
@@ -162,5 +217,17 @@
     }
   };
 
-  global.t262ViewState = { read, write, linkTo, dataUrl, measuredIrData, readData, fetchData, bindIrToggle, irStatus };
+  global.t262ViewState = {
+    read,
+    write,
+    linkTo,
+    dataUrl,
+    measuredIrData,
+    readData,
+    fetchData,
+    bindIrToggle,
+    irMeasurementLabel,
+    historicalHostLabel,
+    irStatus,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

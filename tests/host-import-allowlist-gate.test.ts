@@ -44,15 +44,11 @@ describe("#1524 — strict --no-host-imports gate", () => {
       expect(envImportNames(result.wat)).toEqual([]);
     });
 
-    it("non-WASI targets do NOT enable strict mode by default", async () => {
-      // Regression guard: adding the gate must not change default
-      // behaviour for the JS-host path. A program that uses JSON.stringify
-      // compiles under the default gc target without any new errors.
+    it("non-WASI targets use the native JSON implementation", async () => {
       const src = `export function f(o: object): string { return JSON.stringify(o); }`;
       const result = await compile(src);
       expect(result.success).toBe(true);
-      // The JS host target still requests JSON_stringify.
-      expect(envImportNames(result.wat)).toContain("JSON_stringify");
+      expect(envImportNames(result.wat)).not.toContain("JSON_stringify");
     });
   });
 

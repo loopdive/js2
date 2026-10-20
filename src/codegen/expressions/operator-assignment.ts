@@ -92,6 +92,7 @@ import {
   isStrictContext,
 } from "./assignment.js";
 import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
+import { emitElementCompoundAnyAdd } from "./element-compound-any-add.js"; // (#7084)
 import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
@@ -3364,6 +3365,13 @@ function compileElementCompoundAssignment(
     flushLateImportShifts(ctx, fctx);
     if (getIdx === undefined) return null;
     fctx.body.push({ op: "call", funcIdx: getIdx });
+
+    // (#7084) `o[k] += rhs` on a dynamic receiver is §13.15.3 ApplyStringOrNumericBinaryOperator,
+    // not numeric-only — the element twin of the #3673 property arm below.
+    // hono's `escapeToBuffer` does `buffer[0] += str` and answered NaN.
+    if (op === ts.SyntaxKind.PlusEqualsToken) {
+      return emitElementCompoundAnyAdd(ctx, fctx, target, rhs, objLocal, keyLocal);
+    }
 
     // Ensure union imports (including __unbox_number, __box_number) are registered
     addUnionImports(ctx);

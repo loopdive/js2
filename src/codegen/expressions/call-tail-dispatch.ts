@@ -29,7 +29,7 @@ import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import { emitLiveCollectionIterRec } from "../map-runtime.js"; // (#5267 R3-1a)
-import { ensureNativeIteratorRuntime } from "../iterator-native.js"; // (#6484 S2) array @@iterator carrier
+import { ensureNativeIteratorRuntime, generatorSelfIteratorInstrs } from "../iterator-native.js"; // (#6484 S2) array @@iterator carrier
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
@@ -137,6 +137,36 @@ function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: 
  * `return compileTailDispatch(...)`. `expectedType` is threaded through. Moved
  * unchanged so the emitted Wasm is byte-identical.
  */
+/**
+ * (#6980) Native regime: `x[Symbol.iterator]()` on a receiver whose class or
+ * closed struct carries a COMPILED `@@iterator` method is an ordinary method
+ * call — its value is whatever the method returns. Routing it through the
+ * GetIterator helper wrapped/validated that result (a method returning `42`
+ * threw "value is not iterable"). Such receivers fall through to the
+ * `ClassName_method` / `structName_method` dispatch below. The JS-host lane
+ * keeps its `__iterator` bridge (that import returns the raw method result).
+ */
+function receiverHasCompiledSymbolMethod(
+  ctx: CodegenContext,
+  elemAccess: ts.ElementAccessExpression,
+  receiverType: ts.Type,
+  methodName: string,
+): boolean {
+  if (!ctx.standalone) return false;
+  let className = receiverType.getSymbol()?.name;
+  if (className && !ctx.classSet.has(className)) className = ctx.classExprNameMap.get(className) ?? className;
+  const owners: (string | undefined)[] = [ctx.classSet.has(className ?? "") ? className : undefined];
+  if (!isAccessorReceiver(ctx, skipTransparentExpressions(elemAccess.expression))) {
+    owners.push(resolveStructName(ctx, receiverType));
+  }
+  return owners.some(
+    (owner) =>
+      owner !== undefined &&
+      ctx.funcMap.has(classMemberFuncKey(ctx, `${owner}_${methodName}`, "instance")) &&
+      !elementCallTargetsStaticMethod(ctx, elemAccess.expression, methodName),
+  );
+}
+
 export function compileTailDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -732,7 +762,10 @@ export function compileTailDispatch(
       //   - WasmGC closure via __call_fn_0
       //   - __call_@@iterator export for user-defined iterable classes
       //   - __vec_len/__vec_get fallback for vec structs (arrays)
-      if (methodName === "@@iterator" || methodName === "@@asyncIterator") {
+      if (
+        (methodName === "@@iterator" || methodName === "@@asyncIterator") &&
+        !receiverHasCompiledSymbolMethod(ctx, elemAccess, receiverType, methodName)
+      ) {
         // (#3013) Standalone/WASI: `<array>[Symbol.iterator]()` is, per
         // §23.1.3.40, the SAME operation as `Array.prototype.values` —
         // `Array.prototype[Symbol.iterator] === Array.prototype.values`. Route an
@@ -886,6 +919,11 @@ export function compileTailDispatch(
         flushLateImportShifts(ctx, fctx);
         if (iterIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: iterIdx });
+          // (#6980) A generator's @@iterator is `return this`.
+          if (ctx.standalone && methodName === "@@iterator") {
+            const scratch = allocLocal(fctx, `__gen_self_iter_${fctx.locals.length}`, { kind: "externref" });
+            fctx.body.push(...generatorSelfIteratorInstrs(ctx, scratch));
+          }
         } else {
           fctx.body.push({ op: "ref.null.extern" });
         }

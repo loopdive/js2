@@ -59,6 +59,7 @@ import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
+import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -189,6 +190,15 @@ function probeShape(check: () => boolean): boolean {
   typedShapeRejectReason = savedReason;
   return false;
 }
+
+/** (#7003) Selector-owned hooks for `./closure-signature-flow.ts`. */
+const closureSignatureFlowHooks = {
+  slotSignature: (node: ts.FunctionTypeNode) => irClosureSignatureFromFunctionTypeNode(node),
+  get resolveValue() {
+    const resolver = currentModuleBindingResolver;
+    return resolver ? (node: ts.Identifier) => resolver.localValueDeclaration(node) : undefined;
+  },
+};
 
 /** Read and clear the recorded reject detail (used by `planIrCompilation`). */
 function takeShapeRejectDetail(): string | undefined {
@@ -446,6 +456,24 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** (#2856) True iff the compile targets a JS host (NOT standalone / wasi /
    *  strictNoHostImports). Gates the host-extern capability. */
   readonly jsHostExterns?: boolean;
+  /**
+   * (#7091) Platform-capability extern lane. Present only in a JavaScript
+   * environment whose module keeps the JS value bridge while the semantic
+   * provider regime is native (`jsHostExterns` stays false there: no implicit
+   * host SEMANTIC import). Platform capabilities — DOM and other declared
+   * external APIs, which `classifyHostImport` calls `platform-capability` —
+   * are still the environment's, and their native-string / closure arguments
+   * cross as carriers the runtime's platform-arg marshal converts. Answers
+   * whether one extern class name belongs to that lane; ECMAScript builtins
+   * and `console` never do (they keep their native / host-free-sink arms).
+   */
+  readonly platformExternClass?: (className: string) => boolean;
+  /**
+   * (#7091) The ambient globals whose `global_<name>` handle the platform lane
+   * registers (legacy `collectDeclaredGlobals`). A platform-class global
+   * outside it (`performance` — natively lowered in the regime) stays deferred.
+   */
+  readonly platformHostGlobal?: (name: string) => boolean;
   /**
    * (#4576) Exact checker-owned standalone DOM subtree plan. This is a
    * provider capability, not permission to enable the generic host-extern
@@ -1437,6 +1465,25 @@ function armHostGlobalResolvers(sourceFile: ts.SourceFile, options: IrSelectionO
   const resolver = options?.resolveHostGlobal ?? null;
   currentHostGlobalResolver = resolver && !deferred ? resolver : null;
   currentDeferredHostGlobalResolver = resolver && deferred ? resolver : null;
+  // (#7091) The platform lane splits the one resolver by class: platform
+  // capability globals (`document`, `window`, …) arm the live resolver, every
+  // other ambient global (`console`, ECMAScript-shaped ones) stays on the
+  // deferred one, so the host-free console sink and the honest
+  // `host-surface-unavailable` reason are unchanged for them.
+  const platform = deferred ? options?.platformExternClass : undefined;
+  const platformGlobal = options?.platformHostGlobal;
+  if (resolver && platform && platformGlobal) {
+    const admits = (node: ts.Identifier, className: string): boolean =>
+      platform(className) && platformGlobal(node.text);
+    currentHostGlobalResolver = (node) => {
+      const className = resolver(node);
+      return className !== undefined && admits(node, className) ? className : undefined;
+    };
+    currentDeferredHostGlobalResolver = (node) => {
+      const className = resolver(node);
+      return className !== undefined && !admits(node, className) ? className : undefined;
+    };
+  }
   const candidate = options?.standaloneDomCapability;
   currentStandaloneDomCapability =
     candidate &&
@@ -1926,6 +1973,9 @@ function whyNotIrClaimable(
     if (className !== null) currentClassBindings.set(p.name.text, className);
     if (paramType && ts.isFunctionTypeNode(paramType)) {
       const signature = irClosureSignatureFromFunctionTypeNode(paramType);
+      // (#7003) A caller may pass a function of another Wasm signature.
+      if (signature && callableParameterMayReceiveForeignSignature(p, closureSignatureFlowHooks))
+        return "closure-signature-mismatch";
       if (signature) recordCallableProjection(p.name.text, signature.params.length, paramType.type);
     }
 
@@ -2246,6 +2296,20 @@ export interface IrImportedCallCertification {
  * a bare same-file top-level FunctionDeclaration in an exact FunctionTypeNode
  * parameter position.
  */
+/**
+ * (#7091) An imported call that passes a certified top-level function value
+ * (the #3214 A+B1 higher-order shape). The fixed-target program-callable
+ * route has no function-argument carrier, so wherever both could own the call
+ * — the multi-source native-regime lane — this exact shape stays on the
+ * imported-call plan. Every other call keeps the program-callable route.
+ */
+export function certifiedImportedHofCall(
+  call: ts.CallExpression,
+  resolver: IrImportedFunctionResolver | undefined,
+): boolean {
+  return (certifyImportedIrCall(call, resolver)?.functionArguments.length ?? 0) > 0;
+}
+
 export function certifyImportedIrCall(
   call: ts.CallExpression,
   resolver: IrImportedFunctionResolver | undefined,
@@ -6270,6 +6334,9 @@ const NATIVE_TYPED_ARRAY_CLASSES = new Set<string>([
 // by the legacy exception runtime and have no IrClass/extern producer.
 const LEGACY_ERROR_CONSTRUCTOR_CLASSES = new Set<string>(["Error", "TypeError", "RangeError"]);
 
+// (#6981) Known extern classes whose construction has a host-free IR arm.
+const HOST_FREE_EXTERN_CONSTRUCTORS = new Set<string>(["Map", "RegExp", "Date"]);
+
 function isKnownExternClass(name: string): boolean {
   return KNOWN_EXTERN_CLASSES.has(name);
 }
@@ -9198,6 +9265,20 @@ function phase1NewExpression(
   if (LEGACY_ERROR_CONSTRUCTOR_CLASSES.has(ctorName) && isAmbientConstructor) {
     return capabilityNo("error-constructor-unsupported", "expr-new-error-constructor", expr);
   }
+  // (#6981) A host-free lane (standalone, the native regime in a JS
+  // environment) has no `<Class>_new` import to lower an extern class to, and
+  // every member use on the result is capability-deferred at build. Only the
+  // classes with their own host-free arm (native `$Map`, the gated RegExp/Date
+  // arms) may stay claimed.
+  if (
+    isAmbientConstructor &&
+    !isLocalClass &&
+    isKnownExternClass(ctorName) &&
+    !HOST_FREE_EXTERN_CONSTRUCTORS.has(ctorName) &&
+    hostExternCapability(jsHostExternsEnabled(currentSelectionOptions)) === "defer"
+  ) {
+    return capabilityNo("host-surface-unavailable", "expr-new-extern-host-free", expr);
+  }
   if (isLocalClass) {
     if (localClassHasKnownProjectionGap(ctorName)) {
       return capabilityNo("class-projection-unsupported", "expr-new-local-class-shape", expr);
@@ -9647,7 +9728,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isCallExpression(expr)) {
     const programCallableVerdict = programCallablePhase1Verdict(
-      currentSelectionOptions?.resolveProgramCallableUse,
+      certifiedImportedHofCall(expr, currentSelectionOptions?.importedFunctions)
+        ? undefined
+        : currentSelectionOptions?.resolveProgramCallableUse,
       expr,
       () => phase1CallPreambleIsBuildable(expr),
       (argument) => isPhase1Expr(argument, scope, localClasses),
@@ -9837,6 +9920,14 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         ) {
           return isPhase1Expr(expr.arguments[0]!, scope, localClasses);
         }
+        return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
+      }
+      // (#7014) Every OTHER host-free RegExp method (`(/a/g).toString()`) keeps
+      // that refusal; claimed, it hit from-ast's capability-violation assert.
+      if (
+        currentSelectionOptions?.isRegExpExpression?.(expr.expression.expression) === true &&
+        currentSelectionOptions.supportsBackendCapability?.("host-regexp-constructor") === false
+      ) {
         return capabilityNo("regexp-constructor-unsupported", "expr-regexp-method-target", expr);
       }
       if (currentSelectionOptions?.preparedAsyncDateNowCall?.(expr) === true) return true;
@@ -10087,6 +10178,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
           return shapeNo("expr-host-void-callback-body", hostVoidCallback.callback.body);
         }
         return true;
+      }
+      // (#7091) An uncertified function argument to the host listener surface
+      // reaches the extern arg coercion as a bare closure and demotes at build;
+      // decline it here, where the certified B2 shape is decided.
+      if (
+        currentSelectionOptions?.hostVoidCallbacks &&
+        expr.expression.name.text === "addEventListener" &&
+        expr.arguments.some((arg) => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg))
+      ) {
+        return capabilityNo("call-resolution-unsupported", "expr-host-callback-uncertified", expr);
       }
       for (const arg of expr.arguments) {
         // Slice 8a (#1169g): spread args restricted to method calls is
@@ -10942,6 +11043,7 @@ export function buildLocalCallGraph(
       }
       if (ts.isCallExpression(node)) {
         if (
+          !certifiedImportedHofCall(node, currentSelectionOptions?.importedFunctions) &&
           visitProgramCallableUse(currentSelectionOptions?.resolveProgramCallableUse, node, visit, () =>
             hasExternalCall.add(callerName),
           )

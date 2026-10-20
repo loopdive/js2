@@ -100,7 +100,11 @@ import {
   createHostNumberUnboxImport,
 } from "./runtime/host-async-imports.js";
 import { createHostImportCallState } from "./runtime/host-import-call-state.js";
-import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
+import {
+  createBoundaryValueAdapter,
+  isBoundaryValueImportIntent,
+  withModuleTagThrow,
+} from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
 import {
   installFreshDataStructAssociationToken,
@@ -108,7 +112,7 @@ import {
   sameExportedFunction,
 } from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport, wrapConsoleForHost } from "./runtime/console-host-marshal.js"; // (#6685)
-import { marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708) regime carriers → JS values
+import { closureBridges, declaredHostFunction, marshalPlatformArgs } from "./runtime/platform-arg-marshal.js"; // (#6708/#7095) regime carriers ↔ JS values
 import {
   CLOCK_CAPABILITY_AUTHORITY,
   createCompiledDomCapabilityRuntime,
@@ -1203,6 +1207,7 @@ const _wasmClosureWrapperSource = new WeakMap<Function, { closure: any; arity: n
 const _wasmClosureDynamicWrapperCache = new WeakMap<object, Function>();
 const _wasmClosureWrapperCache = new WeakMap<object, Map<number, Function>>();
 const _wasmClosureWrapperTargets = new WeakMap<Function, object>();
+closureBridges.configure(_wasmClosureWrapperSource, _wasmClosureWrapperTargets); // (#7098) host-read closure results
 /**
  * (#4771) [[BoundTargetFunction]] of a bound function this module produced.
  * OrdinaryHasInstance §7.3.20 step 2 forwards to the bound target, and a
@@ -9235,8 +9240,8 @@ export function markCoherentBuiltinRealm(sandbox: object): void {
  */
 function resolveDeclaredFunctionImport(name: string, deps: Record<string, any> | undefined): Function {
   const userDep = deps?.[name];
-  if (typeof userDep === "function") return (...args: any[]) => userDep(...args);
-  if (userDep !== undefined) return () => userDep;
+  const bind = typeof userDep === "function" ? (...args: any[]) => userDep(...args) : () => userDep;
+  if (userDep !== undefined) return declaredHostFunction(bind, _nativeDynamicFromHost); // (#7095) marshalled
   return () => undefined;
 }
 
@@ -9258,8 +9263,14 @@ function resolveImport(
     coherentBuiltinRealms.has(globalSandbox!) ? ((globalSandbox![name] as T | undefined) ?? fallback) : fallback;
   if (isBoundaryValueImportIntent(intent)) {
     return createBoundaryValueAdapter(intent, {
-      object: (operation) => _createBoundaryObjectImport(operation, callbackState),
-      callback: (arity) => _createBoundaryCallbackImport(arity, callbackState),
+      object: (operation) =>
+        withModuleTagThrow(
+          _createBoundaryObjectImport(operation, callbackState),
+          callbackState,
+          _nativeDynamicFromHost,
+        ),
+      callback: (arity) =>
+        withModuleTagThrow(_createBoundaryCallbackImport(arity, callbackState), callbackState, _nativeDynamicFromHost),
       promise: (operation) => _createBoundaryPromiseImport(operation, callbackState),
     });
   }
@@ -10333,15 +10344,6 @@ assert._isSameValue = isSameValue;
       if (name === "__temporal_duration_to_string") return _temporalDurationToString;
       if (name === "__temporal_duration_from_string_field") return _temporalDurationFromStringField;
       if (name === "__temporal_duration_sign") return _temporalDurationSign;
-      // (#5247) Export-boundary rethrow: the export wrapper
-      // (codegen/export-throw-boundary.ts) catches its own `__exn` tag and hands
-      // the payload here so this JS frame raises it by identity, instead of the
-      // caller seeing a bare `WebAssembly.Exception`. Deliberately NO coercion
-      // to Error — a compiled `throw { name, message }` must cross unchanged.
-      if (name === "__rethrow_host_exception")
-        return (payload: any): never => {
-          throw payload;
-        };
       if (name === "__register_prototype")
         return (proto: any, csv: any): void => {
           // #1047 — populate the prototype method-name allowlist consulted by
@@ -11837,7 +11839,13 @@ export function wrapExports(
             return symbolId;
           }
           if (sig.params[index] === "promise") return _nativeDynamicFromHost(arg, exportsForMarshal);
-          if (sig.params[index] === "dynamic") return _nativeDynamicFromHost(arg, exportsForMarshal);
+          // (#6980) An `any` argument's null is the in-module `ref.null` every
+          // null check tests (and the one `_nativePrimitiveToHost` maps back);
+          // the tag-0 box is only for boundary-object reads, where a raw null
+          // return means "not admitted".
+          if (sig.params[index] === "dynamic") {
+            return arg === null ? null : _nativeDynamicFromHost(arg, exportsForMarshal);
+          }
           return arg;
         });
       }

@@ -768,7 +768,11 @@ export function compileObjectDestructuring(
       compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
       return;
     }
-    // No __box_number available — fall through to error
+    // (#6981) No host `__box_number` (native regime): box through the
+    // coercion engine's native arm instead of rejecting a coercible number.
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+    compileExternrefObjectDestructuringDecl(ctx, fctx, pattern, { kind: "externref" });
+    return;
   }
 
   // Determine struct type — prefer the actual Wasm type from compileExpression
@@ -1134,7 +1138,11 @@ export function compileArrayDestructuring(
 
   const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
   const arrDef = ctx.mod.types[arrTypeIdx];
-  const isVecArray = arrDef && arrDef.kind === "array";
+  // (#6980) The native `$Map`/`$Set` struct's field 1 is its entries array, so
+  // the vec probe matched it and destructuring read raw `$MapEntry` slots
+  // (null-deref). A collection is an iterable, not a vec: it takes the
+  // unknown-struct externref path below, whose GetIterator drives it.
+  const isVecArray = arrDef && arrDef.kind === "array" && typeIdx !== ctx.mapTypeIdx;
 
   // (#2169) Array-destructuring a Wasm-native generator (`const [a,b]=g()`).
   // The initializer lowered to a ref to the generator state struct

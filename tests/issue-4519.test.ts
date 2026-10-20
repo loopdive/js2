@@ -278,7 +278,7 @@ describe("#4519 member read on an undefined VALUE throws a catchable TypeError",
   // lowering path answers a read, not what a guard tests. They are pinned
   // `it.fails` so the day one of them starts throwing is visible.
 
-  it.fails("residual: a module-scope `var` receiver does not throw (no guard on its path)", async () => {
+  it("a module-scope `var` receiver throws a catchable TypeError (was an it.fails residual, #7014)", async () => {
     expect(
       await runStandalone(`
         var out = 0;

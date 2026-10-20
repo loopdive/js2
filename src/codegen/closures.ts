@@ -21,7 +21,11 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
-import { emitEagerAsyncPromiseWrap, parkedAsyncClosureWrapsPromise } from "./async-eager-promise.js"; // (#4630)
+import {
+  emitEagerAsyncPromiseWrap,
+  parkedAsyncClosureWrapsPromise,
+  wrapEagerAsyncClosureRejection,
+} from "./async-eager-promise.js"; // (#4630)
 import { widenAsyncThenableResult } from "./async-thenable-return.js"; // (#5371)
 import { restPatternParamSlot } from "./resolved-rest-param.js"; // (#6774 S7)
 import { hoistParameterEvalVars } from "./expressions/eval-param-scope-hoist.js"; // (#6774 S7)
@@ -200,9 +204,10 @@ function emitClosureDefaultReturnValue(
     // (#4630) The parked-async `$Promise` promotion settles the implicit
     // `undefined` completion the same way an explicit `return` does.
     if (fctx.eagerAsyncPromiseReturn === true) emitEagerAsyncPromiseWrap(ctx, fctx);
-    return;
+  } else {
+    emitDefaultReturnValue(fctx, returnType, alreadyHasValue);
   }
-  emitDefaultReturnValue(fctx, returnType, alreadyHasValue);
+  wrapEagerAsyncClosureRejection(ctx, fctx);
 }
 import { spliceNullGuarded, emitDefaultReturnValue } from "./closures/param-emit-helpers.js";
 import type { ArrowClosureCapture } from "./closures/arrow-phases.js";
@@ -3732,10 +3737,8 @@ export function compileArrowAsClosure(
   // the env param is untouched — richer shapes stay on the legacy path via the
   // predicate gate.
   const asyncDecision = isAsync && !isGenerator ? planAsyncClosureActivation(ctx, arrow, /*isAsync*/ true) : null;
-  // (#4630) A PARKED async closure with a void unwrapped result gets an
-  // `externref` `$Promise` result instead — see async-eager-promise.ts. Without
-  // it a dynamically-dispatched `testFunc()` yields `undefined` and every
-  // `.then` on it throws the §27.2.5.4 non-Promise-receiver TypeError.
+  // (#4630/#6995) Parked void async closures settle completion and rejection
+  // into a native Promise (async-eager-promise.ts), including value calls.
   let eagerAsyncPromiseWrap = false;
   if (asyncDecision) {
     closureReturnType = { kind: "externref" };
@@ -3744,11 +3747,8 @@ export function compileArrowAsClosure(
       closureReturnType = { kind: "externref" };
       eagerAsyncPromiseWrap = true;
     }
-    // (#3587/#6780) Declined async arrow/fn-expr with a suspension inside a `try`
-    // or only settled awaits: refuse loudly instead of silently compiling the
-    // legacy pass-through (lost rejections / inline continuations). Still reported for
-    // the #4630 wrap — the wrap settles the COMPLETION value, it does not make
-    // the parked pass-through deliver awaited rejections.
+    // (#3587/#6780/#6995) Report declined await hazards independently of the
+    // completion wrapper; Promise promotion cannot provide frame suspension.
     reportDeclinedAsyncBody(ctx, arrow);
   }
   // (#4648) NOTE — a DECLINED (await-free) async closure does NOT get the

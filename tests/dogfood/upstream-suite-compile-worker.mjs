@@ -11,6 +11,15 @@ import {
   signalWorkerCompileComplete,
 } from "./upstream-suite-worker-protocol.mjs";
 import { createUnhandledRejectionSink } from "./upstream-unhandled-rejections.mjs";
+import {
+  STANDALONE_COMPILE_OVERRIDES,
+  StandaloneHostImportError,
+  drainStandaloneMicrotasks,
+  instantiateStandaloneResult,
+  isStandaloneUpstreamLane,
+  runStandaloneUpstreamTests,
+} from "./upstream-standalone-lane.mjs";
+import { renderHarnessThrownText } from "../../scripts/lib/wasm-exn-render.mjs";
 
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
@@ -152,6 +161,55 @@ async function loadWebHostDependencies() {
   return dependencies;
 }
 
+/**
+ * (#7013) Instantiate a standalone binary with no imports and run its tests
+ * through the numeric boundary. A retained host import is a compile-tier
+ * finding (`hostImports`), never papered over with stub imports.
+ */
+async function runStandaloneLane(result, durationMs) {
+  const compile = {
+    success: true,
+    validates: true,
+    durationMs,
+    binaryBytes: result.binary.length,
+    linkPlan: result.linkPlan ?? null,
+    errors: [],
+    target: "standalone",
+  };
+  let instance;
+  try {
+    instance = await instantiateStandaloneResult(result);
+  } catch (error) {
+    if (error instanceof StandaloneHostImportError) {
+      emit({
+        compile: { ...compile, hostImports: error.imports },
+        wasm: { fatal: `host-import: ${error.message}`, count: 0, statuses: [] },
+      });
+    } else {
+      emit({ compile, wasm: { fatal: `instantiate: ${errorText(error)}`, count: 0, statuses: [] } });
+    }
+    return;
+  }
+  try {
+    instance.exports.__module_init?.();
+    drainStandaloneMicrotasks(instance.exports);
+  } catch (error) {
+    emit({
+      compile,
+      wasm: { fatal: `module init: ${renderHarnessThrownText(error, instance)}`, count: 0, statuses: [] },
+    });
+    return;
+  }
+  let run;
+  try {
+    run = runStandaloneUpstreamTests(instance);
+  } catch (error) {
+    emit({ compile, wasm: { fatal: renderHarnessThrownText(error, instance), count: 0, statuses: [] } });
+    return;
+  }
+  emit({ compile, wasm: { count: run.count, statuses: run.statuses, errors: run.errors, names: run.names } });
+}
+
 async function main() {
   // (#5369) Installed before anything guest-authored runs. Without a listener
   // Node's default `unhandled-rejections=throw` mode kills this worker on the
@@ -168,6 +226,9 @@ async function main() {
   const rejections = createUnhandledRejectionSink({ label: "dogfood wasm worker" });
   const started = performance.now();
   const platform = process.env.DOGFOOD_PLATFORM ?? "web";
+  // (#7013) Opt-in standalone lane: same module, `target: "standalone"`, an
+  // empty import object, and the numeric test boundary instead of wrapExports.
+  const standaloneLane = isStandaloneUpstreamLane();
   // ReactDOM's original tests execute against Jest's jsdom environment. The
   // compiler worker is a separate process, so the parent harness's globals do
   // not cross the process boundary. Install the same explicit browser-global
@@ -230,7 +291,10 @@ async function main() {
             allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
             deferTopLevelInit: true,
           })
-        : await compileProject(generatedPath, projectOptions);
+        : await compileProject(
+            generatedPath,
+            standaloneLane ? { ...projectOptions, ...STANDALONE_COMPILE_OVERRIDES } : projectOptions,
+          );
   } catch (error) {
     emit({
       compile: {
@@ -295,6 +359,11 @@ async function main() {
       },
       wasm: null,
     });
+    return;
+  }
+
+  if (standaloneLane) {
+    await runStandaloneLane(result, durationMs);
     return;
   }
 

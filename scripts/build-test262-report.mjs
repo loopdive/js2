@@ -57,6 +57,9 @@ function parseArgs(argv) {
       const value = argv[++i];
       if (!value) throw new Error("--compiler-path requires legacy or ir");
       args.compilerPath = parseTest262CompilerPath(value);
+    } else if (arg === "--eval-engine") {
+      args.evalEngine = argv[++i];
+      if (!["quickjs", "interpreter"].includes(args.evalEngine)) throw new Error("Invalid requested eval engine");
     } else if (arg === "--target") {
       args.target = argv[++i] || "";
     } else if (arg === "--file-editions") {
@@ -1050,6 +1053,10 @@ async function main() {
       executionCompilerPath: record.executionCompilerPath,
       compilerPathVerified: record.compilerPathVerified,
       configuredCompilerPath: record.configuredCompilerPath,
+      status: record.status,
+      compilerAttempts: record.compilerAttempts,
+      preparedExecutionReport: record.preparedExecutionReport,
+      compilerPathFailureKind: record.compilerPathFailureKind,
     });
     // (#6979) Rows from the removed host-assisted control lane cannot be merged.
     const rowProviders = record.semantic_providers ?? "auto";
@@ -1184,6 +1191,8 @@ async function main() {
     mode: {
       target,
       semantic_providers: semanticProviders ?? "auto",
+      ...(args.evalEngine ? { eval_engine_requested: args.evalEngine } : {}),
+      ...(args.compilerPath === "ir" ? { runtime_eval_provider: "unsupported-strict-native" } : {}),
       include_proposals: args.includeProposals ? 1 : 0,
       label: args.includeProposals ? "official test262 + proposals" : "official test262 (default scope)",
     },
@@ -1250,7 +1259,8 @@ async function main() {
   // report and avoids the indirection of "fetch report.json then read
   // .categories". Same schema as `report.categories`.
   const outputDir = args.output.replace(/[^/\\]+$/, "");
-  const categoriesFile = target === "standalone" ? "test262-standalone-categories.json" : "test262-categories.json";
+  const categoryPrefix = target === "standalone" ? "test262-standalone" : "test262";
+  const categoriesFile = `${categoryPrefix}${report.compilerPath === "ir" ? "-ir" : ""}-categories.json`;
   const categoriesPath = outputDir + categoriesFile;
   const categoriesPayload = {
     compilerPath: report.compilerPath,
@@ -1258,6 +1268,14 @@ async function main() {
     executionCompilerPath: report.executionCompilerPath,
     configuredCompilerPath: report.configuredCompilerPath,
     ...(report.requestedCompilerPath === undefined ? {} : { requestedCompilerPath: report.requestedCompilerPath }),
+    measurementState: report.measurementState,
+    attemptedCases: report.attemptedCases,
+    completedCases: report.completedCases,
+    skippedCases: report.skippedCases,
+    compileErrorCases: report.compileErrorCases,
+    compileTimeoutCases: report.compileTimeoutCases,
+    verifiedExecutionCases: report.verifiedExecutionCases,
+    unverifiedExecutionCases: report.unverifiedExecutionCases,
     timestamp: report.timestamp,
     baseline_generated_at: report.baseline_generated_at,
     baseline_sha: report.baseline_sha,

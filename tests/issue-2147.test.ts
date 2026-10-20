@@ -7,19 +7,33 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const SCRIPT = resolve(fileURLToPath(import.meta.url), "..", "..", "scripts", "reconcile-tasklist.mjs");
 
+// The fixture dir is not a git repo, so the script's `git` probes must not be
+// redirected at the real checkout by an inherited GIT_DIR (see issue-3969.test.ts).
+const LEAKY_GIT_ENV = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"];
+function cleanEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
+  for (const k of LEAKY_GIT_ENV) delete env[k];
+  return env;
+}
+
 interface Fixture {
   dir: string;
   issuesDir: string;
   binDir: string;
 }
 
+// (d31db7888d, #3969) A single merged-PR claim only reads as DONE when the
+// issue's acceptance criteria are all checked; with none it is `unknown`. The
+// fixture issues carry one checked criterion so the #2147 behaviour under test
+// (ready/in-progress issue claimed by a merged code PR is flagged) lands in
+// `mergedPrDone`.
 function issue(id: string, status: string, title: string): string {
-  return `---\nid: ${id}\ntitle: "${title}"\nstatus: ${status}\nsprint: 63\n---\n\n# #${id}\n`;
+  return `---\nid: ${id}\ntitle: "${title}"\nstatus: ${status}\nsprint: 63\n---\n\n# #${id}\n\n- [x] fixed\n`;
 }
 
 /** Write a fake `gh` on PATH that returns the given merged-PR JSON for `pr list`. */
 function fakeGh(binDir: string, prTitles: string[]): void {
-  const json = JSON.stringify(prTitles.map((t) => ({ title: t })));
+  const json = JSON.stringify(prTitles.map((t, i) => ({ number: 100 + i, title: t })));
   const script = `#!/usr/bin/env node
 const a = process.argv.slice(2).join(" ");
 if (a.includes("pr list")) { process.stdout.write(${JSON.stringify(json)}); process.exit(0); }
@@ -29,10 +43,26 @@ process.exit(0);
   chmodSync(join(binDir, "gh"), 0o755);
 }
 
+interface MergedPrRow {
+  id: string;
+  issueStatus: string;
+  prTitle: string;
+  title: string;
+}
+
+// (d31db7888d, #3969) The single `mergedPrFixed` list was split into
+// done / unknown / rejected so an un-adjudicable claim is reported, not guessed.
 interface ReconcileJson {
   mergedPrCheckSkipped: boolean | string;
-  mergedPrFixed: Array<{ id: string; issueStatus: string; prTitle: string; title: string }>;
+  mergedPrDone: MergedPrRow[];
+  mergedPrUnknown: MergedPrRow[];
+  mergedPrRejected: MergedPrRow[];
   stale: unknown[];
+}
+
+/** Every issue id the merged-PR cross-check surfaced, whatever its verdict. */
+function flagged(json: ReconcileJson): string[] {
+  return [...json.mergedPrDone, ...json.mergedPrUnknown, ...json.mergedPrRejected].map((x) => x.id);
 }
 
 function run(fx: Fixture): { stdout: string; json: ReconcileJson } {
@@ -40,13 +70,12 @@ function run(fx: Fixture): { stdout: string; json: ReconcileJson } {
   // store is unlikely to exist in CI, but the merged-PR section runs regardless.
   const stdout = execFileSync("node", [SCRIPT, "--json"], {
     encoding: "utf8",
-    env: {
-      ...process.env,
+    env: cleanEnv({
       REPO_ROOT: fx.dir,
       PATH: `${fx.binDir}:${process.env.PATH}`,
       // Point the task store somewhere empty so the task section is a no-op.
       CLAUDE_HOME: join(fx.dir, "empty-claude-home"),
-    },
+    }),
   });
   // --json prints one JSON object; if no task store, the early-exit prints a
   // different shape, so guard.
@@ -84,7 +113,7 @@ describe("#2147 reconcile-tasklist flags ready issues fixed by a merged PR", () 
     const f = setup([["2002", "ready", "some bug"]], ["fix(#2002): correct the thing", "feat(#9999): unrelated"]);
     const { json } = run(f);
     expect(json.mergedPrCheckSkipped).toBe(false);
-    expect(json.mergedPrFixed.map((x) => x.id)).toContain("2002");
+    expect(json.mergedPrDone.map((x) => x.id)).toContain("2002");
   });
 
   it("does NOT flag an issue only mentioned by a plan/docs PR", () => {
@@ -93,27 +122,27 @@ describe("#2147 reconcile-tasklist flags ready issues fixed by a merged PR", () 
       ["plan(s63): triage #2003 into the sprint", "docs: note #2003 in the changelog"],
     );
     const { json } = run(f);
-    expect(json.mergedPrFixed.map((x) => x.id)).not.toContain("2003");
+    expect(flagged(json)).not.toContain("2003");
   });
 
   it("does NOT flag an issue already marked done", () => {
     const f = setup([["2004", "done", "fixed bug"]], ["fix(#2004): correct the other thing"]);
     const { json } = run(f);
-    expect(json.mergedPrFixed.map((x) => x.id)).not.toContain("2004");
+    expect(flagged(json)).not.toContain("2004");
   });
 
   it("flags in-progress issues too, and reports skipped when --no-merged-prs", () => {
     const f = setup([["2005", "in-progress", "wip bug"]], ["fix(#2005): land it"]);
     const { json } = run(f);
-    expect(json.mergedPrFixed.map((x) => x.id)).toContain("2005");
+    expect(json.mergedPrDone.map((x) => x.id)).toContain("2005");
 
     // --no-merged-prs path
     const stdout = execFileSync("node", [SCRIPT, "--json", "--no-merged-prs"], {
       encoding: "utf8",
-      env: { ...process.env, REPO_ROOT: f.dir, CLAUDE_HOME: join(f.dir, "empty-claude-home") },
+      env: cleanEnv({ REPO_ROOT: f.dir, CLAUDE_HOME: join(f.dir, "empty-claude-home") }),
     });
     const parsed = JSON.parse(stdout) as ReconcileJson;
     expect(parsed.mergedPrCheckSkipped).toBe("--no-merged-prs");
-    expect(parsed.mergedPrFixed).toEqual([]);
+    expect(flagged(parsed)).toEqual([]);
   });
 });

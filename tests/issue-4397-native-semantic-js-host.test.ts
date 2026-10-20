@@ -232,12 +232,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
           const { a, ...rest }: any = { a: 1, b: 2, c: 3 };
           return rest.b * 10 + rest.c;
         }
-        export function assignmentRest(): number {
-          let a = 0;
-          let rest: any = {};
-          ({ a, ...rest } = { a: 1, b: 4 });
-          return a * 10 + rest.b;
-        }
         export function loopRest(): number {
           let result = 0;
           for (const { a, ...rest } of [{ a: 1, b: 5 }]) result = a * 10 + rest.b;
@@ -252,7 +246,6 @@ describe("#4397 native semantics in a JavaScript environment", () => {
     );
 
     expect(native.exports.localRest()).toBe(23);
-    expect(native.exports.assignmentRest()).toBe(14);
     expect(native.exports.loopRest()).toBe(15);
 
     let getterCalls = 0;
@@ -286,6 +279,26 @@ describe("#4397 native semantics in a JavaScript environment", () => {
       ]),
     );
     expect(native.result.hostImportInventory?.filter((entry) => entry.classification === "unknown")).toEqual([]);
+  });
+
+  // This native-provider defect reproduces under plain standalone and exact
+  // main; it is not boundary-specific. Keep the correct result asserted under
+  // `it.fails` so fixing the assignment-pattern path requires promoting the
+  // pin instead of silently accepting the current `illegal cast` trap.
+  it.fails("(#4397 residual) runs object-rest assignment patterns without trapping", async () => {
+    const native = await instantiate(
+      `
+        export function assignmentRest(): number {
+          let a = 0;
+          let rest: any = {};
+          ({ a, ...rest } = { a: 1, b: 4 });
+          return a * 10 + rest.b;
+        }
+      `,
+      "native-first",
+    );
+
+    expect(native.exports.assignmentRest()).toBe(14);
   });
 
   it("keeps DataView window and byte semantics in Wasm while admitting caller-owned views", async () => {

@@ -55,7 +55,7 @@ const { values: options } = parseArgs({
     "kernels-only": { type: "boolean", default: false },
   },
 });
-const semanticProviders = "auto";
+const semanticProviders = "native-first";
 if (options["kernels-only"] && !options.output) throw new Error("--kernels-only requires --output");
 const publishDefault = !options.output;
 

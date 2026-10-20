@@ -31,6 +31,7 @@ import {
   compileNumericBinaryOp,
 } from "./binary-ops.js";
 import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
+import { identityEqualityFlags } from "./helpers/loose-eq-object-identity.js"; // (#6997)
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already
@@ -66,8 +67,7 @@ export function compileTypedBinaryDispatch(
     const rightIsRef = rightType.kind === "ref" || rightType.kind === "ref_null";
     if (leftIsRef || rightIsRef) {
       // Strict equality: reference identity comparison (no valueOf coercion)
-      const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
-      const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      const [isStrictEq, isStrictNeq] = identityEqualityFlags(ctx, op, leftType, rightType, leftTsType, rightTsType);
       if (isStrictEq || isStrictNeq) {
         if (leftIsRef && rightIsRef) {
           // (#2742) Native strings are structs, but JS String strict equality

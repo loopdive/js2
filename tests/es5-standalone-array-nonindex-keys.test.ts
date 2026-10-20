@@ -148,13 +148,15 @@ describe.each(LANES)("#4247 — non-array-index element keys are named propertie
   });
 
   it("the largest real array index (2^32-2) is NOT diverted to the bag", async () => {
-    // It is a genuine index, so it must keep the element lowering. The vec
-    // cannot hold 4 billion slots, so the honest outcome is the pre-existing
-    // grow trap — NOT a silent named-property write that would answer a bogus
-    // `length`. Pinning the classification, not the trap's wording.
+    // It is a genuine index, so it must keep the element (index) semantics:
+    // §10.4.2.1 ArraySetLength makes `length` 2^32-1. When this pin was written
+    // the vec could not hold the write and trapped, so it pinned the trap; the
+    // sparse-index write path that landed since (#4765/#6482 family; not
+    // bisected) now answers the SPEC value, so pin that. A named-property
+    // diversion would leave `length` at 0, which this still rejects.
     const src = `const a: any[] = [];
                  export function test(): number { a[4294967294] = 1; return a.length; }`;
-    await expect(run(src, lane)).rejects.toThrow();
+    expect(await run(src, lane)).toBe(4294967295);
   });
 
   it("`length` is never captured by the named-key routing", async () => {

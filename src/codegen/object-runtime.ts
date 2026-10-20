@@ -333,6 +333,7 @@ import type {
   ToPrimitiveMethodLiterals,
   ToPrimitiveSymbolBindings,
 } from "../runtime/wasmgc/values/to-primitive-method-bodies.js";
+import { collectTupleArrayCarrierTypeIdxs } from "./array/tuple-array-carrier.js"; // (#7020)
 
 const restOnlyApplyServices = {
   get classifyClosureDispatchRest() {
@@ -5393,6 +5394,8 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       const ARG0 = 6;
       const ARG1 = 7;
       const ARGSANY = 8;
+      const CI = 9; // (#7086) concat loop index
+      const CACC = 10; // (#7086) concat accumulator
       // argc/arg0/arg1 from the $ObjVec args carrier (null-safe: argc 0).
       const loadArgs: Instr[] = [
         { op: "i32.const", value: 0 },
@@ -5446,6 +5449,69 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
         ...nativeStringLiteralInstrs(ctx, lit),
         { op: "ref.eq" },
       ];
+      // (#7086) concat(...args) → recv + ToString(arg0) + ToString(arg1) + …
+      // (§22.1.3.5). `concat` is also an Array member, so an `any` receiver's
+      // call goes through the closed dispatcher, whose `$__vec_base` arm owns
+      // the array case and leaves a STRING receiver here — where no arm
+      // answered and the resolved callee (no String.prototype read on a
+      // primitive) threw "called value is not a function". hono's
+      // `getFilePath` does `filename.concat(defaultDocument)`.
+      const stringConcatArm = (): Instr[] => {
+        const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+        const toStrIdx = ctx.funcMap.get("__extern_toString");
+        if (concatIdx === undefined || toStrIdx === undefined) return [];
+        return [
+          ...nameEq("concat"),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...loadArgs,
+              { op: "local.get", index: 3 },
+              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+              { op: "local.set", index: CACC },
+              { op: "i32.const", value: 0 },
+              { op: "local.set", index: CI },
+              {
+                op: "block",
+                blockType: { kind: "empty" },
+                body: [
+                  {
+                    op: "loop",
+                    blockType: { kind: "empty" },
+                    body: [
+                      { op: "local.get", index: CI },
+                      { op: "local.get", index: ARGC },
+                      { op: "i32.ge_s" },
+                      { op: "br_if", depth: 1 },
+                      { op: "local.get", index: CACC },
+                      { op: "ref.as_non_null" },
+                      { op: "local.get", index: ARGSANY },
+                      { op: "ref.cast", typeIdx: objVecTypeIdx },
+                      { op: "struct.get", typeIdx: objVecTypeIdx, fieldIdx: 1 },
+                      { op: "local.get", index: CI },
+                      { op: "array.get", typeIdx: objVecArrTypeIdx },
+                      { op: "call", funcIdx: toStrIdx },
+                      { op: "any.convert_extern" },
+                      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+                      { op: "call", funcIdx: concatIdx },
+                      { op: "local.set", index: CACC },
+                      { op: "local.get", index: CI },
+                      { op: "i32.const", value: 1 },
+                      { op: "i32.add" },
+                      { op: "local.set", index: CI },
+                      { op: "br", depth: 0 },
+                    ],
+                  },
+                ],
+              },
+              { op: "local.get", index: CACC },
+              { op: "extern.convert_any" },
+              { op: "return" },
+            ],
+          },
+        ];
+      };
       return [
         { op: "local.get", index: 3 }, // any (recv)
         { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
@@ -5533,6 +5599,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     { op: "return" },
                   ],
                 },
+                ...stringConcatArm(),
               ],
             },
           ],
@@ -5550,6 +5617,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
             { name: "arg0", type: { kind: "externref" } },
             { name: "arg1", type: { kind: "externref" } },
             { name: "argsAny", type: { kind: "anyref" } },
+            // (#7086) string `concat` loop index + accumulator (locals 9-10).
+            { name: "concatI", type: { kind: "i32" } },
+            { name: "concatAcc", type: { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx } },
           ]
         : [{ name: "any", type: { kind: "anyref" } }];
 
@@ -7320,7 +7390,8 @@ export function fillExternIsArray(ctx: CodegenContext): void {
   const fn = definedFuncAt(ctx, funcIdx);
   if (!fn) return;
 
-  const carrierTypeIdxs = collectStandaloneArrayCarrierTypeIdxs(ctx);
+  // (#7020) + tuple structs: a TS tuple is a JS array (host-free lane only).
+  const carrierTypeIdxs = [...collectStandaloneArrayCarrierTypeIdxs(ctx), ...collectTupleArrayCarrierTypeIdxs(ctx)];
   const anyLocal = 1;
   const body: Instr[] = [
     { op: "local.get", index: 0 },
@@ -7601,8 +7672,16 @@ interface ExternGetIdxBodyParams {
   externGetIdx: number;
   /** (#6651 H6) `$Proxy` type: its indexed read is the same `Get(O, ToString(i))`. */
   proxyTypeIdx?: number;
+  /** (#7082) `$AnyString`: a String exotic object's integer-indexed read
+   *  (§10.4.3) is the same `Get(O, ToString(i))`, which `__extern_get` serves. */
+  anyStrTypeIdx?: number;
   /** Pre-built per-`__vec_<k>` dispatch arms (empty at registration time). */
   vecArms: Instr[];
+  /** (#6981) A JS-environment native regime admits host objects through the
+   *  export boundary: a non-null value that is no native carrier is read with
+   *  the same `Get(O, ToString(i))` as the `$Object` arm, whose `__extern_get`
+   *  owns the boundary-object fallback. False keeps the historical miss. */
+  foreignIndexedGet?: boolean;
   /** (#2106 S1) Factory for the miss ("index absent") result instrs. A FACTORY
    *  — not a shared array — because the miss appears in several branches and
    *  shared Instr objects get double-remapped by the finalize walks (see
@@ -7624,6 +7703,27 @@ interface ExternGetIdxBodyParams {
  * The typed-vec arms sit BEFORE the `$ObjVec` test because a `__vec_<k>` is not
  * a `$ObjVec`; placing them first keeps the `$ObjVec` fast path unchanged.
  */
+/** (#6981) The `foreignIndexedGet` arm: non-null → `__extern_get(v, ToString(i))`. */
+function foreignIndexedGetInstrs(p: ExternGetIdxBodyParams): Instr[] {
+  if (!p.foreignIndexedGet || !p.objArrayLikeArms) return [];
+  return [
+    { op: "local.get", index: 2 },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: p.numberToStringIdx },
+        { op: "call", funcIdx: p.externGetIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+}
+
 export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
   const { objArrayLikeArms, objectTypeIdx, objVecTypeIdx, objVecArrTypeIdx } = p;
   const objIdxArm: Instr[] = objArrayLikeArms
@@ -7635,6 +7735,13 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
           : ([
               { op: "local.get", index: 2 },
               { op: "ref.test", typeIdx: p.proxyTypeIdx },
+              { op: "i32.or" },
+            ] satisfies Instr[])),
+        ...(p.anyStrTypeIdx === undefined
+          ? []
+          : ([
+              { op: "local.get", index: 2 },
+              { op: "ref.test", typeIdx: p.anyStrTypeIdx },
               { op: "i32.or" },
             ] satisfies Instr[])),
         {
@@ -7669,7 +7776,7 @@ export function buildExternGetIdxBody(p: ExternGetIdxBodyParams): Instr[] {
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [...p.missInstrs(), { op: "return" }],
+      then: [...foreignIndexedGetInstrs(p), ...p.missInstrs(), { op: "return" }],
     },
     // vec = cast<$ObjVec>(any) ; i = i32(idx)
     { op: "local.get", index: 2 },

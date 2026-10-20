@@ -278,3 +278,19 @@ Cost summary: #2795 + #2796 (the two `current` clusters) are the cheap,
 high-value front — both ~M, both likely a single shared primitive each. The
 "done-but-failing" re-verifications are a PO reopening sweep. #1042 and #2797
 are the genuinely larger items, correctly deferred to backlog.
+
+## S6 provider-lane handoff (2026-10-18, PR #6672)
+
+The S6 merge queue initially replayed this corpus under the new omitted-option
+native-first default, although #2787's tests and baseline intentionally describe
+the Node-host compatibility lane. That produced nine apparent regressions,
+including empty Promise output and host-object copy/enumeration differences.
+They were provider-family drift, not newly introduced native codegen failures.
+
+`runJs2wasm()` now compiles with explicit `host-assisted` semantics in both the
+default and `-O3` paths. The three async-capture regressions remain normal
+passing assertions (3/3), the full host differential corpus returns to 116/120
+matches with no new delta, and optimized/unoptimized outcomes agree for all
+120 programs. S7 (#6979) owns removing or replacing this host-only evidence;
+changing the baseline to accept the accidental native-first measurement would
+have mixed two different lane contracts.

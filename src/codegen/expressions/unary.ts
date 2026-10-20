@@ -20,6 +20,7 @@ import { emitThrowTypeError } from "./helpers.js";
 import { tryStaticToNumber } from "./misc.js";
 import { compileMemberIncDec, compilePostfixUnary, compilePrefixUpdate } from "./unary-updates.js";
 import { emitBigIntCarrierNegate } from "../bigint-wide.js";
+import { coercionMode } from "../coercion-engine.js";
 
 /**
  * §7.1.4 ToNumber / §7.1.3 ToNumeric step 3 — a Symbol operand in any numeric
@@ -108,8 +109,10 @@ function compilePrefixUnary(
       }
       const operandType = compileExpression(ctx, fctx, expr.operand);
       if (!operandType) return null;
-      // any-typed negate: call __any_neg
-      if (isAnyValue(operandType, ctx)) {
+      // any-typed negate: call __any_neg. (#6998) Host-free targets instead take
+      // the f64 tail below, whose $AnyValue → f64 ToNumber handles every tag
+      // (`__any_neg` reads `f64val`, which is 0 for a string/boolean/object).
+      if (isAnyValue(operandType, ctx) && coercionMode(ctx) !== "standalone") {
         ensureAnyHelpers(ctx);
         const negIdx = ctx.funcMap.get("__any_neg");
         if (negIdx !== undefined) {

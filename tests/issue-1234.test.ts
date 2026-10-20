@@ -23,8 +23,8 @@ async function runWasm(src: string, timeoutMs: number = 5_000): Promise<{ ret: a
   }
   const importResult = buildImports(result.imports as any, undefined, result.stringPool);
   const inst = await WebAssembly.instantiate(result.binary, importResult as any);
-  if (typeof (importResult as any).setExports === "function")
-    (importResult as any).setExports(inst.instance.exports as any);
+  // (#7014) setInstance: raw setExports(instance.exports) lost data-struct authority in 708ebbd56d (#5337).
+  if (typeof (importResult as any).setInstance === "function") (importResult as any).setInstance(inst.instance);
   const t0 = performance.now();
   // Wasm exec is synchronous in Node; we can't truly time-limit it, but
   // we'd rather observe the ms and let vitest's outer testTimeout fire on hangs.

@@ -1,10 +1,11 @@
 ---
 id: 6708
 title: "S6: `semanticProviders` defaults to native-first in every environment; host semantics only as named opt-in accelerators"
-status: in-progress
-assignee: ttraenkler/opus-6708-a
+status: done
+completed: 2026-10-18
+assignee: ttraenkler/codex
 created: 2026-09-27
-updated: 2026-10-14
+updated: 2026-10-18
 priority: high
 horizon: l
 feasibility: hard
@@ -136,13 +137,13 @@ semantic column with an "accelerator" note.
 ## Acceptance
 
 - [ ] Evidence bar items 1–4 recorded in #5385 with run ids.
-- [ ] `tests/issue-4396-target-profile.test.ts`: `{}` ≡ `native-first`;
+- [x] `tests/issue-4396-target-profile.test.ts`: `{}` ≡ `native-first`;
       `host-assisted` ≡ pre-S6 default byte-for-byte; `"auto"` warns once.
-- [ ] Accelerator opt-ins: `js-string` and `regexp` each have a focused test
+- [x] Accelerator opt-ins: `js-string` and `regexp` each have a focused test
       proving the host provider is used only when selected, the native
       provider otherwise, and that selecting one for `standalone`/`wasi` is a
       compile error.
-- [ ] `pnpm run check:host-import-policy`: the compatibility control probe
+- [x] `pnpm run check:host-import-policy`: the compatibility control probe
       now spells `host-assisted` explicitly and still reports ≥ 1 legacy
       import (non-vacuity); the default probe reports zero.
 - [ ] Nightly after merge: host lane number equals the previous native-first
@@ -303,3 +304,167 @@ binding-null-guard). Every one is owned by a fix PR that has not merged yet
 | #6981 IR path + compile failures | 6673 | ir-slice10-error (d), ir-slice10-map-set ×2, destructuring-require-object-coercible, gradual-typing ×2, yield-as-expression, issue-6798 resolve-stage-catch |
 | #6982 toPrimitive/indexOf/await/import.meta | 6676 | symbol-toPrimitive ×2, array-indexof-no-arg ×2, await-settled-operand-yields ×2, import-meta ×2, element-assignment-externref, issue-6798 string-bool-union |
 | #6984 yield* return value | 6683 | issue-6798 yield-star-return |
+
+**2026-10-16 — final state (S6-A done).** #6980, #6981, #6982, #6984 and
+#6986 are on main and merged into this branch (merge `1d20eeee45`; the
+runtime.ts conflict resolved like the S7-a branch: an Intl-accelerated import
+takes the #6986 marshal, every other import the #6708 platform marshal).
+`node scripts/equivalence-gate.mjs`: `equivalence-gate: 20 failing, 1787
+passing, 22 known-failures in baseline.` / `✓ No new equivalence regressions.`
+(passing 1787 ≥ floor 1740; the nine `issue-1197` rows stay pinned to
+host-assisted, #6979). `pnpm run check:host-import-policy`: default probes 33
+probes / 452 imports / 0 legacy / 0 unknown; host-assisted control 23 legacy;
+`runtimeTsLines` 20240 under main's ceiling 20243. Focused suites on the
+merged tree: 4396 18/18, 6686 5/5, 6978 9/9, 6986 17/17, playground 1/1,
+4401 7/7, 4397 29/30 (the known `assignmentRest` row, red on main too).
+Evidence item 3 (npm-compat parity, #6664) remains open in #5385. Item 4
+(performance) is now met by #7087's 2026-10-18 evidence in #5385; the
+accelerators are #6978 (done).
+
+### 2026-10-18 — current-main landing refresh and handoff
+
+PR [#6672](https://github.com/loopdive/js2/pull/6672) was refreshed from its
+stale 2026-10-16 head onto `upstream/main` `1990d67b28` (merge
+`338d62e16b`), then through the baseline-only main tip `5495eb6102` (merge
+`430b2254fa`), and finally through the npm-compat refresh tip `50a1734711`
+(merge `7ea774fd6c`). The original S6 implementation is unchanged: omitted
+`semanticProviders` selects native-first, `host-assisted` is the named
+compatibility profile, and JS values/objects still cross through the boundary
+adapter rather than becoming host-backed core representations.
+
+The refresh exposed implicit uses of the old default in tests and quality
+ledgers added after the S6 branch was cut. They now name their intended lane:
+
+- legacy closure/constructor bridge suites (#1116b, #1528, #1712, #2623,
+  #2637 B2, #3520, #6419 and the #6651 D4 host-constructor control)
+  compile with `semanticProviders: "host-assisted"`; #2637 B2 specifically
+  asserts the JS-synthesized Promise-subclass registration path, so S7 must
+  delete or replace that implementation-specific guard when the path goes;
+- the test262 worker extraction test receives the production
+  `test262CompileSemanticProviders` free variable instead of accidentally
+  capturing no provider selection;
+- `check-ir-fallbacks` and the `check-ir-only` `single-host` lane explicitly
+  use `host-assisted`, matching their existing `jsHostExterns: true` planning
+  contract; the native/standalone lanes remain native;
+- the #6995/#6996 async reference lanes and #7002/#7003 host-IR controls added
+  on main explicitly use `host-assisted`. The rest of the equivalence corpus
+  continues to exercise the new native-first default.
+
+No semantic-equivalence or host-import baseline was widened. Exact-main
+control at `1990d67b28` also reproduced the two unrelated focused reds seen
+during the refresh: #4397 object-rest
+`CopyDataProperties` traps with `illegal cast`, and #5383's named static
+method call on a dynamic class-value receiver returns `-1` instead of `8`.
+They are not S6 regressions. The #5383 Temporal smoke child also needs Node's
+exnref support enabled when run under local Node 24.
+
+Validation on the refreshed tree:
+
+- `pnpm run typecheck` — pass;
+- `node --experimental-wasm-exnref --import tsx scripts/check-host-import-policy.ts`
+  — 33 native-first probes / 452 imports / **0 legacy / 0 unknown**;
+  host-assisted control remains non-vacuous at 23 legacy imports;
+- `node --experimental-wasm-exnref --import tsx scripts/check-ir-fallbacks.ts`
+  — pass, no unintended, post-claim or module-level increases;
+- `node --experimental-wasm-exnref --import tsx scripts/check-ir-only.ts`
+  — READY in both lanes (38 emitted, 3 non-executable, 0 unsupported or
+  invariants per lane);
+- focused provider/bridge/Temporal/Intl suites — 138 passed, 2 skipped;
+- refreshed #6995/#6996/#7002/#7003 controls — 92 passed;
+- Node 25.9.0 `node scripts/equivalence-gate.mjs` — 2,020 passing, 20
+  baseline-known failures, 2 baseline rows newly fixed, **0 new
+  regressions** (floor 1,740). The baseline was deliberately not ratcheted in
+  this refactor.
+
+The required `quality` job then made one intentional cost of the default flip
+visible: the deterministic #3437 harness compile-work probe measures the
+default profile, so its shared-`forEachChild` count moved from the committed
+142,936 to 260,711 on a cold native-first compile. The unit guard also exposed
+that 28,760 of those walks are one-time provider initialization, not per-file
+harness work. The production probe and its test now warm that initialization
+outside the meter, matching the thousands-of-files-per-worker test262 path.
+On the same tree, the steady explicit host-assisted control measures 158,639
+and explicit native-first measures 231,951, confirming that the remaining
+increase is the selected provider family rather than a de-memoized scan or
+runner variance. The #3437 contract allows an explicit rebank for a justified
+default-path change, so `scripts/harness-compile-budget.json` was refreshed
+with its documented `--update` flow to 231,951 (15% margin). This is a
+compile-work ratchet update, not a semantic waiver; future per-file growth
+still fails against the native-first default that users and test262 now
+exercise.
+
+The next required `quality` ratchet was also default-sensitive. The fixed
+#1918 playground corpus reproduces its old baseline exactly under explicit
+host-assisted (`drop-excess=0`, `default-value-lossy=43`,
+`call-arg-coerce=1`) and reports the already-existing native-provider floor
+under explicit native-first (`11`, `57`, `1248` respectively; every other
+bucket remains zero). S6 did not add those repairs; it made the lane that
+already contained them the omitted-option lane. The baseline was refreshed
+with `check:stack-balance -- --update` so CI now rejects growth from the
+native-first floor instead of comparing two different provider families.
+This is recorded as inherited emitter debt in #1918 Phase 2, not described as
+clean codegen or erased by the equivalence result.
+
+The #1524 host-import/strict-mode gate also contained one deliberate
+non-WASI JS-host control that asserted `JSON_stringify` was imported while
+calling `compile(src)` with no provider selection. That assertion described
+the old default rather than strict-mode policy. It now selects
+`semanticProviders: "host-assisted"` explicitly; the adjacent omitted-option
+and strict-mode checks continue to prove native JSON lowering. S7 should
+remove this compatibility-only import assertion when it deletes the
+host-assisted provider, not weaken the native/strict checks to preserve it.
+
+The changed-root gate then reached the already-recorded #4397
+`assignmentRest` residual: 29/30 native semantic JS-host cases pass, while the
+assignment-pattern object-rest case traps `illegal cast` identically on exact
+main and plain standalone. It is isolated as an `it.fails` correct-result pin
+in #4397 so S6 can land without pretending the native provider defect is new
+or weakening the other object-rest/boundary assertions. The #4397 handoff
+requires a native assignment-pattern carrier fix; host-backed copying is not
+an acceptable repair.
+
+After that pin let the fail-fast gate continue, it reached the second
+exact-main red recorded above: #5383's named static method call on a dynamic
+class-value receiver answers `-1` rather than `8`. That single correct-result
+assertion is likewise an `it.fails` pin in the in-progress #5383 issue; its 80
+neighboring Temporal/provider checks remain normal passing tests. The repair
+belongs to native class-value dispatch, not to S6 policy selection or a new
+host-semantic fallback.
+
+The required #3552 guard suite then exposed three untouched guards whose
+prose already scoped them to the JS host/legacy lane but whose compile calls
+still omitted provider selection: #3471 host-lane polymorphic inference,
+#3565 designed demote-to-legacy diagnostics, and #6789's JS-host trampoline
+matrix. They now select `host-assisted` explicitly (with #3565's standalone
+controls left native). Every behavior and diagnostic assertion is unchanged;
+this is lane normalization, not delisting or weakening the required guards.
+
+The 2026-10-18 npm-compat refresh on main made the last S6 product-bar row
+directly auditable: Lit was still `measured` under host-assisted but the stale
+`jsHostNative` record was `runtime-error`. The exact S6 head was therefore
+remeasured instead of accepting the aggregate at face value. All eleven
+currently host-measured workloads are `measured` under the new default at O4,
+with matching expected/actual checksums: acorn 422/422, clsx 7/7, cookie 1/1,
+hono 9/9, Lit 7/7, marked 75/75, Moment 10/10, Prettier 49/49, React 8/8,
+Redux 7/7 and UUID 2/2. Moment used the keyed QuickJS pair built and
+canary-verified by `scripts/build-quickjs-eval-provider.mjs`; the other ten
+ran without a linked eval provider. Focused fragments were written outside
+the repository and no dashboard artifact was hand-edited. The post-merge CI
+refresh remains the publication proof required before S7 opens.
+
+Landing handoff: merge #6672, then observe the post-merge native-first lane
+and npm-compat refresh already required by the acceptance list. S7 deletion
+remains #6979; it must remove host semantics without weakening the boundary
+object/value adapter or the named accelerator contract.
+
+The first #6672 merge-group run found one final pre-S6 implicit-default caller:
+the #1203/#2787 differential harness. That harness intentionally measures the
+Node-host compatibility lane and keeps a committed 116/120 host baseline, but
+its compile calls omitted `semanticProviders`. Under S6 they therefore ran the
+native-first family and the queue reported nine false delta regressions. The
+harness now selects `host-assisted` explicitly in both optimized and
+unoptimized modes; #2796's host-path regression helpers are pinned the same
+way. Local replay restored 116/120 with zero new regressions, identical `-O3`
+outcomes, and 7/7 focused #2787/#2796 tests. No baseline was widened. This is
+the intended boundary: host machinery remains available only when a host lane
+names it, while omitted/default product compilation stays native-first.

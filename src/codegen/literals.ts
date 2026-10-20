@@ -43,6 +43,7 @@ import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation 
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
+import { spreadSourceNeedsRuntimeCopy } from "./object-model/object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import { isForeignEvalNode } from "./expressions/eval-source.js";
@@ -103,9 +104,11 @@ import {
   isAnyValue,
   registerMaterializeStructAsObject,
   registerResolveComputedKeyExpression,
+  unpackedElemType,
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
+import { taSpreadGetOp } from "./array/ta-int-elem-coercion.js"; // (#7018)
 import { buildVecFromExternref, getVecInfo, pushDefaultValue } from "./type-coercion.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "./custom-iterable.js";
 import { compileOneElementArray, widenDenseArrayElementType } from "./expressions/array-constructor-carrier.js";
@@ -126,6 +129,7 @@ import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
 import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js"; // (#5371)
 import { readEnv } from "../env.js";
+import { recordObjectLiteralCarrier } from "./object-model/anon-expando-bag-slot.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3351,6 +3355,7 @@ export function compileObjectLiteralForStruct(
     reportError(ctx, expr, `Unknown struct type: ${typeName}`);
     return null;
   }
+  recordObjectLiteralCarrier(ctx, expr, structTypeIdx); // (#7020) expando-receiver $bag slot
   const mayHaveModuleHostSpreadField = isModuleGlobalObjectLiteral(expr);
 
   // Check if there are any spread assignments — if so, compile spread sources into locals.
@@ -3396,6 +3401,11 @@ export function compileObjectLiteralForStruct(
         srcStructName = resolveStructName(ctx, srcType);
       }
       let resolved = false;
+      // (#7014) An externref-stored source (optional param) may hold any shape.
+      if (srcStructName && spreadSourceNeedsRuntimeCopy(fctx, expr, propIndex, runtimeSpreadSources.length)) {
+        runtimeSpreadSources.push({ expr: prop.expression, propIndex });
+        continue;
+      }
       if (srcStructName) {
         const srcStructTypeIdx = ctx.structMap.get(srcStructName);
         const srcFields = ctx.structFields.get(srcStructName);
@@ -5515,6 +5525,9 @@ export function compileArrayLiteral(
       // element is a single-code-point string. Must match the element type
       // `__str_to_char_vec` produces (same key as `__str_split`'s string[]).
       elemWasm = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+    } else if ((ctx.standalone || ctx.wasi) && /^(?:Readonly)?Map$/.test(spreadType.symbol?.name ?? "")) {
+      // (#7057) A Map yields `[key, value]` ENTRIES, not its first type argument.
+      elemWasm = { kind: "externref" };
     } else {
       const typeArgs = ctx.checker.getTypeArguments(spreadType as ts.TypeReference);
       const innerType = typeArgs[0];
@@ -6548,9 +6561,12 @@ export function compileArrayLiteral(
       const srcVecInfo = getVecInfo(ctx, spreadInfo.srcVecTypeIdx);
       const dstVecInfo = getVecInfo(ctx, vecTypeIdx);
       let elemCoerce: Instr[] = [];
-      if (srcVecInfo && dstVecInfo && !valTypesMatch(srcVecInfo.elemType, dstVecInfo.elemType)) {
+      // (#7018) A packed i8/i16 source reads with the source VIEW's `get_s`/`_u` and widens to i32.
+      const srcGetOp = srcVecInfo ? taSpreadGetOp(ctx, srcVecInfo.elemType, el) : "array.get";
+      const [srcRead, dstStore] = [srcVecInfo, dstVecInfo].map((info) => info && unpackedElemType(info.elemType));
+      if (srcRead && dstStore && !valTypesMatch(srcRead, dstStore)) {
         elemCoerce = collectInstrs(fctx, () => {
-          coerceType(ctx, fctx, srcVecInfo.elemType, dstVecInfo.elemType);
+          coerceType(ctx, fctx, srcRead, dstStore);
         });
       }
 
@@ -6568,7 +6584,7 @@ export function compileArrayLiteral(
       loopBody.push({ op: "local.get", index: spreadInfo.local });
       loopBody.push({ op: "struct.get", typeIdx: spreadInfo.srcVecTypeIdx, fieldIdx: 1 }); // get data from vec
       loopBody.push({ op: "local.get", index: readIdx });
-      loopBody.push({ op: "array.get", typeIdx: srcArrTypeIdx });
+      loopBody.push({ op: srcGetOp, typeIdx: srcArrTypeIdx } as Instr);
       for (const instr of elemCoerce) loopBody.push(instr);
       loopBody.push({ op: "array.set", typeIdx: arrTypeIdx });
       // writeIdx++; readIdx++

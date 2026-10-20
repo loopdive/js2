@@ -1,10 +1,10 @@
 ---
 id: 6995
 title: "standalone async: the legacy synchronous pass-through lane silently miscompiles every shape the drive engine declines — a rejected `await` inside nested try/catch/finally is swallowed (function fulfils), `await <thenable>` returns the thenable, `await <struct object>` traps `illegal cast`; the #3587 loud refusal returns early for standalone/wasi"
-status: ready
+status: in-review
 sprint: current
 created: 2026-10-15
-updated: 2026-10-15
+updated: 2026-10-18
 priority: high
 horizon: m
 feasibility: medium
@@ -14,6 +14,26 @@ area: compiler
 language_feature: async-await, try-finally, promises
 goal: standalone-gap
 related: [3587, 2895, 2865, 6428, 6996]
+# 2026-10-15 (#6995): growth is the honest-unwrap/refusal fix itself, kept in
+# the modules that own each half — async-frame.ts (the settled-operand
+# predicate shares its private checker helpers; thenable-adoption wiring at the
+# native await), lower-generic.ts (the IR await arm's lockstep mirror, extracted
+# to a module-level helper so the two giant functions grow by one call line),
+# expressions.ts (the call-site drive predicate + throwOnRejected flag).
+loc-budget-allow:
+  - src/codegen/async-frame.ts
+  - src/ir/lower-generic.ts
+  - src/codegen/expressions.ts
+func-budget-allow:
+  - src/codegen/async-frame.ts::ensureAsyncResumeFunction
+  - src/codegen/async-frame.ts::buildStateBody
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+# 2026-10-18 (#6995): the closure-boundary try (f32837fc) imports `buildTargetTaggedTry`
+# from `src/ir/try-table.ts` in `src/codegen/closures.ts` — the same shared try-table
+# edge nine codegen files already carry; one more codegen->ir two-way edge, no new SCC member.
+import-cycles-allow:
+  - codegen->ir: 298 # 2026-10-18 (#6995): closures.ts joins the existing codegen->ir try-table edge for the native void-closure rejection boundary
 ---
 
 # Standalone async: declined shapes fall to a lane that cannot see rejection
@@ -62,3 +82,199 @@ Two layers, both in this PR; the first is the safety net, the second the fix for
 - Scoped checks before pushing: the new test file, the nearest existing equivalence files for the touched area, `npx tsc --noEmit -p .` if it is fast enough, and the chained gates from CLAUDE.md (`check-loc-budget`, `check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`).
 - Keep gc output byte-identical where the change is standalone-only; if a shared path changes, say so in the PR body and name the equivalence files that cover it.
 - Do not widen scope: one root cause per PR. Record anything adjacent you notice as a note in this file, not as code.
+
+## Implementation notes (2026-10-15)
+
+Shipped: honest unwrap + a NARROWED refusal + the two adjacent repro fixes.
+All five nested-try repros now print node's output on standalone and wasi
+(`"cfo1"`, `"cf"`, `"cfF"`, …); the thenable repro prints `42`; the struct
+repro prints `1`.
+
+### What changed
+
+1. **Honest unwrap** (`emitStandaloneAwaitUnwrap(ctx, fctx, throwOnRejected)`,
+   `src/codegen/async-value-sink-unwrap.ts`; the `await` site in
+   `expressions.ts` passes `true`). A `$Promise` in state REJECTED throws its
+   reason through `ensureExnTag` (the same `throw $exn` a `throw` statement
+   emits), after marking it handled. The #6428 value sink keeps the old
+   behaviour (`false`). `src/ir/lower-generic.ts`'s `await` arm emits the same
+   state test + throw (lockstep; the resolver's `ensureExnTag`).
+   `tests/issue-4376-ir-await-rejection-events.test.ts` pinned the old
+   "rejected → return the reason" contract; it now asserts the throw (payload
+   read back through an exported tag).
+2. **Never silent — scoped refusal.** `reportDeclinedAsyncRejectionHazard` no
+   longer returns early for standalone/wasi. On those lanes it covers:
+   - only the drive engine's claimable entry points — top-level, non-generator
+     `async function` declarations. Arrows / function expressions / nested
+     declarations are parked on the native lane (`planAsyncClosureActivation`)
+     and methods are #2957 residue, so the engine never claims them at any
+     shape; refusing them would refuse a population, not a residue (the same
+     reasoning #3587 used for methods). They get the honest unwrap instead.
+   - only awaits whose operand may still be PENDING
+     (`awaitOperandProvablySettled`, `async-frame.ts`): statically-resolved
+     operands, provably non-thenable operands, a once-written settled local,
+     `Promise.reject(...)` and `Promise.resolve(<non-thenable>)` are delivered
+     exactly by the honest unwrap (value, or a thrown rejection), so they are
+     not a hazard. The host lane keeps every await (unchanged).
+
+   Why narrowed: the plain "drop the early return" (step 1 as written) refused
+   20 test262 files in the try+await population, 18 of them async arrows /
+   function expressions / harness `asyncTest(async function …)` bodies, and it
+   refused `tests/issue-2906-3c-trycatch.test.ts` "leads before the
+   return-await run once" — a top-level wasi declaration whose in-try awaits
+   are `Promise.resolve(<number>)` and which the honest unwrap runs correctly.
+3. **Thenable adoption on the drive lane.** The thenable repro is driven (not
+   the pass-through the plan assumed); `buildNativeAwaitClassification`
+   delivered any non-`$Promise` operand as a plain value. It now takes an
+   optional `thenableAdoption` (`src/runtime/wasmgc/async/native-await.ts`):
+   a non-`$Promise` operand goes through PromiseResolve — a fresh pending
+   `$Promise` (minted handled) resolved with the operand by
+   `__promise_resolve_value`, which performs the ONE observable `Get(then)`
+   and carries the fetched function into the #3125 PromiseResolveThenableJob.
+   The fresh promise is then classified like any awaited `$Promise`:
+   fulfilled (non-thenable) delivers, rejected (throwing getter) throws into
+   the frame, pending (callable `then`) suspends. Wired from `async-frame.ts`
+   (`nativeThenableAdoption`); the prepared IR engine caller is unchanged.
+   (Review on PR #6700: the first cut probed `__promise_has_callable_then`
+   and then resolved, i.e. two `Get(then)` — a getter saw 2 reads and the
+   second-fetched function ran. Controls pinned in the #6995 test: read count
+   `1 1`, first-fetched function used, throwing getter rejects with the thrown
+   value, plain value / non-callable `then` delivered as-is. Re-measured: the
+   two test262 populations and the 69 related files are unchanged by it.)
+4. **Struct operand (`illegal cast`).** Root cause was not the await operand
+   (plan step 4) but the call site: `calleeIsDriveLowered` (expressions.ts)
+   keyed on `asyncFnNeedsCps`, which admits `await <non-thenable struct>`
+   while the activation gate `asyncFnNeedsDrive` declines it — so the caller
+   skipped the Promise wrap around a raw `T` and `ref.cast`-trapped. It now
+   requires both predicates. The await operand itself is left as is (a
+   non-externref operand cannot be a `$Promise`; passing it through is the
+   right value).
+
+### Measurements (all `--standalone`, `scripts/run-test262-paths.mts`, base = `origin/main` 3032e7c2, same tree with the six src files swapped)
+
+| population | base pass / fail / CE | this PR |
+|---|---|---|
+| stride: every 3rd `built-ins/Promise` + all `language/statements/async-function` (317 files) | 237 / 65 / 15 | 238 / 63 / 16 |
+| every test262 file containing both `try {` and `await` (91 files) | 45 / 18 / 25 | 51 / 11 / 26 |
+
+Per-file, try+await population (stride rows are a subset):
+
+- **pass → compile_error (newly refused, 1):**
+  `language/statements/async-function/try-reject-finally-reject.js` — the
+  operand is `new Promise(function (resolve, reject) { reject(...) })`, which
+  the settled-operand rule does not prove. It passed vacuously before (the
+  swallowed rejection fulfilled `f()`, and the test's onFulfilled is `$DONE`).
+- **pass → fail (1):** `harness/asyncHelpers-throwsAsync-custom-typeerror.js` —
+  also a vacuous pass: its first `await p` (outside any `try`) awaits a
+  promise the wasm `assert.throwsAsync` rejects (a shadowed `function
+  TypeError(){}` collision), and the swallowed rejection hid that. The honest
+  unwrap surfaces the pre-existing throwsAsync bug.
+- **fail → pass (8):** `try-return-finally-reject.js` and
+  `try-throw-finally-reject.js` in each of `expressions/async-arrow-function`,
+  `expressions/async-function` and `statements/async-function` (6), plus
+  `await-awaits-thenables-that-throw.js` in `expressions/await` and
+  `module-code/top-level-await` (2).
+
+Related unit/equivalence files (69 files: `tests/*async*`,
+`tests/equivalence/*async*|*await*`, `issue-2865*`, `2867*`, `1326*`, `3469*`,
+`6428*`, `6780*`, `3587*`, `2906*`, `3220*`, `1373*`), single run each on the
+merged tree: base 698 pass / 63 fail → 718 / 43. The only flip outside the new
+file was `issue-4574-standalone-native-async-family` "keeps the grounded loop,
+Promise.all …": its `/promise.*all/i` call-count regex also matched the new
+thenable probe `__promise_has_callable_then`; tightened to `/promise_all/i`.
+The 43 remaining failures are the identical pre-existing set.
+
+gc lane: byte-identical. Every `await`-bearing source in
+`tests/equivalence/{async-function,async-iteration,await-settled-operand-yields,for-await-of}.test.ts`,
+`tests/issue-6780-await-static-suspends.test.ts` and
+`tests/issue-3587-async-rejection-delivery.test.ts` compiled on the default
+lane hashes identically before and after (32 compiled sources, 75,448 bytes,
+sha256 prefix `d6deba1317f84df8`; the 49 fragments that do not compile alone
+fail with identical messages). Every changed path is gated on
+`isStandalonePromiseActive` / `ctx.wasi || ctx.standalone`.
+
+### Left out / residue
+
+- **Parked arrows / function expressions / nested declarations / methods with
+  a PENDING operand inside a `try`** still continue past the await with the
+  pending promise's `undefined` value (the AG0 synchronous model). They are
+  not refused for the population reason above; fixing them needs the native
+  closure park lifted (#2957 / #6780 step 4).
+- **`await <thenable>` on the pass-through** (an arrow, not a driven
+  declaration) still yields the thenable object: that lane cannot suspend for
+  the thenable job.
+- **Adjacent, pre-existing (not touched):** on standalone, `.then(f, g)` with
+  BOTH handlers over a promise resolved from a thenable reads `null` in `f` —
+  `Promise.resolve({ then(r) { r(42); } }).then((v) => log(v), (e) => log(e))`
+  logs `null` (one handler logs `42`). Same with `new Promise((r) => r(thenable))`.
+  The new test pins the single-handler form.
+- `harness/asyncHelpers-throwsAsync-custom-typeerror.js` (above): a
+  pre-existing throwsAsync constructor-name collision bug, now visible.
+
+## Protected merge failure and finite repair (2026-10-18)
+
+The authored implementation was recorded complete on October 15, but PR6700
+has not delivered through the protected merge queue. Merge group
+`4d1a73feb0784e0b77378f04e2b20a6a4fe93366` (main parent
+`02229455308c7f3ddbba609658b0b8cde2f1d6c5`, authored parent
+`68d2e31e6035713c507dfe80c5ea4d1bbd3bf3ad`) failed the ES5 guard:
+9,028 to 9,026 passes in 48,735 standalone rows. Run `39074134855`,
+job `117520770966`, artifact `12117080466` retain the original failures:
+
+- `test/harness/asyncHelpers-throwsAsync-native.js`: expected Error to be
+  thrown asynchronously, but the function threw synchronously.
+- `test/harness/asyncHelpers-throwsAsync-custom-typeerror.js`: the same
+  synchronous escape for the matching custom TypeError.
+
+Both reproduce at the exact authored head through `runTest262File` with the
+untouched original upstream harness, standalone target, honest oracle and auto
+semantic providers. A positive `throwsAsync-incorrect-ctor.js` control passes:
+one of three. Restoring only the exact pre-PR legacy unwrap helper makes all
+three pass; this is a causal control, not a proposed rollback. The honest
+rejected-await throw exposed the missing abrupt-completion half of the
+existing native void async-closure Promise promotion.
+
+The repair in `async-eager-promise.ts` finishes that existing boundary:
+compiler-tagged JS-value exceptions reject a native Promise with their original
+payload. The existing closure completion helper applies it only to closures
+already selected for the native void Promise promotion. Normal completion and
+explicit return retain their existing settlement. Non-async functions stay
+synchronous; foreign traps are not caught. No function-declaration trampoline,
+async-method boundary, pending-await suspension or issue6996 ordering fix is
+claimed. No harness, expected-failure annotation, floor, baseline or budget
+allowance changes accompany this repair.
+
+Validation on the clean composition with actual main
+`2cc151665727833f614799e58a616860d03cc9bd`:
+
+- **64/64 Vitest cases** across the 34-case issue6995 file (original 28 plus six
+  additive call-boundary cases), 12-case issue6996 file, seven async-function
+  cases, seven async-iteration cases and four IR rejection-event cases. The
+  original issue6995 test bytes remain an unchanged prefix; issue6996 is
+  byte-identical, including its four standalone expected failures.
+- **14/14 original upstream throwsAsync harness files pass**, including both
+  protected failures and the cross-realm control. The canonical assembler
+  classifies all 14 files as strict-neutral: 14 primary executions, zero strict
+  reruns. This is bounded harness qualification, not an independent strict-mode
+  census, full Test262 census or protected merge-group verdict.
+- The first family run measured 13 passes and one missing-QuickJS resource
+  failure. The normal provider builder then verified the existing raw artifact
+  SHA256 `5a58689e1bc86f18c7cc1a8fa37355d4e924baf2621b35bc970d727e9f7c7a78`,
+  compiled adapter `77b3968811064d5d` for compiler bundle `7960e0f9deebe11f`,
+  and passed its canaries before the complete 14-file rerun. The earlier
+  resource-failure receipt is retained.
+- GC comparison against a separate same-composition control with only this
+  two-file repair removed: three valid binaries are byte-identical; a fourth
+  plain non-async probe has the same pre-existing stack-underflow diagnostic
+  on both sides. All four outcomes are retained; a compile failure is not
+  credited as a passing binary.
+- TypeScript `tsc --noEmit -p .` completes with zero diagnostics.
+- All **7,660 tracked production/test inputs** remained unchanged throughout
+  final behavioral qualification. Source LOC/function ratchets against the
+  actual main above, coercion vocabulary and oracle ratchets pass. The required
+  dead-export preservation command exits zero with 6/6 full and cut witnesses;
+  its stricter graph-retirement analysis remains explicitly uncertified.
+
+Raw receipts, source seals and original failed controls are retained under the
+repair worktree's `.tmp/pr6700-repair/`. Protected delivery and the original
+acceptance population remain required; this issue stays in review.

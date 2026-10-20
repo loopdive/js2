@@ -4,7 +4,7 @@ title: "Merge JS-host and standalone modes: one native semantic core, host seman
 status: in-progress
 assignee: ttraenkler/codex-5385
 created: 2026-09-07
-updated: 2026-10-15
+updated: 2026-10-18
 priority: high
 horizon: xl
 feasibility: hard
@@ -700,8 +700,9 @@ a missing feature.
 
 - [ ] A native-first test262 lane and npm-compat lane exist, run in CI on
       dispatch/nightly, and their baselines are committed (Phase 1).
-- [ ] Host-vs-native-first runtime performance is measured and recorded here
-      (Phase 1).
+- [x] Host-vs-native-first runtime performance is measured and recorded here
+      (Phase 1). #7087 closed the one string-kernel blocker at 1.426x
+      native-first / host-assisted; the S6 runtime-performance bar is met.
 - [ ] Native-first official pass ≥ host official pass minus the explicitly
       deferred set; standalone floor unchanged (Phase 2).
 - [ ] `semanticProviders` defaults to `native-first` in every environment;
@@ -800,3 +801,199 @@ measured since 10-06; uuid waits on the next refresh. S6 (#6708) evidence
 items: (1) test262 ≥ host — **met**; (2) per-edition ratchet — three
 editions pending the slices above; (3) npm-compat parity — prettier `-O4`
 and uuid pending the refresh; (4) perf — still needs Node ≥ 24.
+
+### 2026-10-18 — host vs native-first performance evidence (Node 24)
+
+Measured sequentially on macOS arm64, Node 24.4.1 / V8
+13.6.233.10-node.17, at main commit `730b984168`, using the exact kernel and
+npm-compat lanes required by #6708. The checked-in machine-readable record is
+`plan/audit/5385-native-first-perf-evidence-20261018.json`.
+
+Kernel medians are Wasm microseconds; ratio is native-first / host-assisted:
+
+| kernel | host-assisted | native-first | ratio | verdict |
+| --- | ---: | ---: | ---: | --- |
+| fib | 2342.666 | 2335.806 | 0.997x | pass |
+| loop | 86.170 | 86.853 | 1.008x | pass |
+| string | 0.05975 | 1.21779 | **20.380x** | **blocker: #7087** |
+| array | 10.5546 | 10.5752 | 1.002x | pass |
+
+The string row is a narrow profile delta, not a broad claim that native
+strings are slow: native-first still beats its plain-JS control (1.218 us vs
+2.099 us), while host-assisted produces an unusually small 0.060 us row.
+#7087 owns the required optimized-IR/Wasm comparison to distinguish a legal
+provider-specific fold from a benchmark that stopped measuring equivalent
+work. Under #6708's stated rule, this >2x row blocks the performance bar until
+investigated.
+
+The real-package rows all measured, matched their native-oracle checksums and
+favoured native-first runtime execution:
+
+| npm workload | host-assisted | native-first | native-first / host | reading |
+| --- | ---: | ---: | ---: | --- |
+| acorn | 1,826,638.750 us | 66,317.675 us | 0.0363x | 27.54x faster |
+| cookie | 178.681 us | 17.928 us | 0.1003x | 9.97x faster |
+| redux | 37.589 us | 1.830 us | 0.0487x | 20.54x faster |
+| hono | 98.738 us | 2.388 us | 0.0242x | 41.34x faster |
+
+**Architecture verdict:** these runtime measurements do not justify retaining
+host-assisted semantics as the general model. They support the one-native-core
+direction and the existing separation of boundary interop from semantics. The
+measured string exception is exactly the kind of narrow case for which a named
+`js-string` accelerator can remain available while #7087 closes or explains
+the native-provider gap. This evidence does not erase the compile-time and
+binary-size costs already recorded elsewhere; it answers the runtime row only.
+
+### 2026-10-18 — #7087 post-fix: S6 runtime-performance bar met
+
+Optimized-Wasm inspection proved the 20.38x row was not constant folding. The
+host path retained `repeat`/concat/length and let V8 keep a rope; the native
+`__str_repeat` path doubled to 5,120 code units and then flattened/copies via
+`substring(0, 5000)` before reading the length. #7087 changes the shared native
+kernel to binary decomposition, producing an exact 5,000-code-unit rope with
+no substring tail. Repeat-count normalization, RangeError handling, prepared
+provider provenance and the JS value/boundary adapter are unchanged.
+
+The exact #6708 kernel lanes were rerun sequentially at
+`5b36f318c5e9a5b1a9e11da6b924d64f5be8d1b2` on the same Node 24.4.1 / V8
+13.6 environment:
+
+| kernel | host-assisted | native-first | native-first / host | verdict |
+| --- | ---: | ---: | ---: | --- |
+| fib | 2347.651 us | 2340.268 us | 0.997x | pass |
+| loop | 86.057 us | 85.413 us | 0.993x | pass |
+| string | 0.06365 us | 0.09078 us | **1.426x** | **pass** |
+| array | 10.5734 us | 10.5358 us | 0.996x | pass |
+
+The string blocker falls from 20.38x to 1.426x, below the explicit 2.0x gate;
+`bench_string()` still returns 5000. Acorn, cookie, redux and hono were also
+remeasured under native-first from that commit, all with optimization verified
+and checksums 422/422, 1/1, 7/7 and 9/9 respectively. Their recorded host
+comparisons remain 27.24x, 9.09x, 18.18x and 36.53x in native-first's favour.
+The machine-readable pre/post record is
+`plan/audit/5385-native-first-perf-evidence-20261018.json`.
+
+**Handoff:** runtime performance no longer blocks S6. This does not by itself
+authorize the default flip or S7 deletion; the other #6708 correctness,
+ratchet and active-PR entry conditions still decide those steps. Architecturally
+the result strengthens the existing verdict: keep one native semantic core,
+retain JS-host interop as a boundary adapter, and reserve `js-string` or other
+host machinery for explicit accelerators rather than object representation in
+the core.
+
+### 2026-10-18 — S6 current-main landing handoff
+
+#6708 / PR [#6672](https://github.com/loopdive/js2/pull/6672) is refreshed on
+current main and locally green. The refresh did not move JS machinery into the
+semantic core: the default is native-first, JS-backed objects remain confined
+to the boundary adapter, and `host-assisted` is now explicit wherever a
+legacy control genuinely needs it. The detailed conflict resolution, control
+repins and command-level evidence are recorded in #6708.
+
+The decisive refreshed acceptance result is Node 25.9.0's full equivalence
+gate: 2,020 passing, 20 baseline-known failures and zero new regressions.
+Host-import policy remains 0 legacy / 0 unknown across 33 native-first probe
+families, while the explicit compatibility control still observes 23 legacy
+imports. IR fallback and IR-only readiness gates are green after their
+pre-existing JS-host control lanes were made explicit.
+
+Handoff after #6672 lands: observe the post-merge lane/npm refresh, then take
+the measured S7 deletion plan in #6979. The migration is not complete until
+that deletion removes the compatibility semantic providers; the JS value,
+object, callback, exception and lifecycle adapters remain required interop.
+
+### 2026-10-18 — S6 npm-compat product bar verified on the candidate
+
+Main's fresh `npm-compat.json` exposed one stale blocker rather than hiding it:
+Lit was host-measured but `jsHostNative` still reported a runtime exception.
+The exact #6672 head, after merging main through `50a1734711`, was run through
+the focused O4 JS-host perf lane for every currently host-measured workload.
+All eleven measured and matched their native-oracle checksum: acorn 422,
+clsx 7, cookie 1, hono 9, Lit 7, marked 75, Moment 10, Prettier 49, React 8,
+Redux 7 and UUID 2. The expected and actual value was identical in every row.
+Moment ran through the repository's keyed, canary-verified QuickJS provider.
+
+This closes the pre-merge S6 product-bar question without broadening the
+architecture: the packages use the native semantic core plus the existing JS
+boundary/capability adapters. It does not yet satisfy S7's post-merge entry
+condition. The CI npm refresh must publish the same no-`measured → error`
+result after #6672 lands; only then may #6979 delete the compatibility policy.
+
+The landing CI also exposed two default-profile quality ratchets. #3437 now
+meters the steady per-file native-first harness path after an unmetered
+one-time provider warm-up and is banked at 231,951 traversals. #1918's fixed
+playground corpus reproduces the old `0/43/1` fixup floor under explicit
+host-assisted and the inherited native-provider `11/57/1248` floor under
+explicit native-first (`drop-excess` / `default-value-lossy` /
+`call-arg-coerce`). Both baselines now gate the new default. The stack-balance
+numbers remain explicit Phase 2 emitter debt; the rebank prevents S6 from
+comparing different provider families and does not declare the repairs clean.
+
+### 2026-10-19 — regime gaps closed in parallel; IR measures production again
+
+Fable lead, three Opus implementers in parallel worktrees; the lead merged
+main, ran the gates on each merged state, pushed and opened every PR.
+
+| PR | Issue | What landed / is in the queue |
+| --- | --- | --- |
+| 6764 (merged) | #7012 | Temporal string-field imports replaced by in-module natives |
+| 6767 (merged) | #7090 | `Promise.withResolvers()` on the native promise provider; withResolvers test262 subset 2 → 4 of 6 on standalone |
+| 6772 | #7011 | native `SharedArrayBuffer` (`$__sab` subtype of the ArrayBuffer byte vec) + native `Atomics.*`; SAB/Atomics subset standalone 93 → 271 of 493, gc 149 → 271; zero `SharedArrayBuffer_*` imports on any native lane |
+| 6773 | #7089 | `Promise.try`, `withResolvers.call(Sub)` and the TS-cast `.call` spellings construct through the subclass (`src/codegen/promise/receiver-capability.ts`); deterministic +7 rows, 0 regressions; 5,160 binaries byte-identical |
+| 6775 | #7091 | IR claims and lowers platform-capability externs (DOM, `declare function`) under native strings in a JS environment; all seven benchmark `main`s IR-emitted on the default profile; `check:ir-fallbacks` measures production again (decision (B) retired); 7,656 binaries byte-identical |
+| 6768, 6774, this | docs | gaps filed: #7092 (`p.constructor` reads `undefined`), #7093 (first-class Promise static `.call(Sub)`, backlog), #7094 (`r += await p.then(f, g)` on a rejected `p` answers 0), #7095 (declared host functions receive the raw string carrier) |
+
+Every "after" test262 number above combines a subset run with an isolated
+re-run of that run's compile-timeout rows (the box sat at load 60–110 during
+the runs); every apparent pass→non-pass was a timeout that passes alone.
+
+**S7 consequences.** #7091 removes the `host-assisted` spelling from
+`scripts/check-ir-fallbacks.ts`, which was S7-a's remaining entry condition
+on the gate; #7011 lets S7-b delete the `SharedArrayBuffer_new` entry of the
+`regime-gap` family. The S7 stack itself (6701 / 6705 / S7-c) is owned by
+the Codex recovery lane and still needs 6701's inventory + pinned-test reds
+fixed at head `3349cc9145`.
+
+**Still open for the stakeholder:** the README's first conformance line after
+retirement (S7 entry condition 5); whether a schedule-only regime test262
+lane is re-enabled; PR 6707 (#7010) stays `hold` until the review lane
+accepts the freeze disposition.
+
+### 2026-10-20 — second gap wave landed; host-retirement entry conditions cleared on the IR gate, SAB and the 3214 pins
+
+Same working model as 10-19 (Fable lead plans, files and merges; Opus
+implementers in parallel worktrees). Landed or queued since the 10-19
+checkpoint:
+
+| PR | Issue | What |
+| --- | --- | --- |
+| 6772 (merged) | #7011 | native `SharedArrayBuffer` + `Atomics`; no `SharedArrayBuffer_*` import on any native lane |
+| 6773 (merged) | #7089 | `Promise.try`, `withResolvers.call(Sub)` and TS-cast `.call` spellings construct through the subclass |
+| 6775 (merged) | #7091 | IR lowers DOM / declared-function calls on the default profile; `check:ir-fallbacks` measures production again (decision (B) retired); a selector bug (uncertified callback reaching the DOM call) fixed on the way |
+| 6779 (merged) | #7095 | declared host functions receive JS strings and callables; the string bridge is exported when a declared function carries a reference |
+| 6780 (merged) | #7094 | `await` as a compound/binary right operand delivers the settled value; pre-await reads saved across the suspension |
+| 6783 (merged) | #7092 | native promises answer `.constructor` and `@@toStringTag` |
+| 6785 | #7098 | host-read closure results answer JS values (boundary-tag + boolean probes exported where the closure bridge meets a JS boundary); the last `issue-3214` host-assisted pin un-pinned |
+| 6787 | #7097 | the "string length after await" symptom was an unsound legacy constant fold of `.length` on a reassigned `let`/`var`; narrowed to const / never-reassigned bindings |
+| 6788 | #7096 | async loop CFG drives `for` and `do…while` bodies with a pending await; pre-loop locals read after the loop saved across the suspension |
+| docs | | #7093 (first-class Promise static `.call(Sub)`, backlog), #7099 (`p.then === undefined` compares true on a native promise) filed |
+
+Measured facts worth keeping: every "after" test262 number in the issue files
+combines a subset run with isolated re-runs of compile-timeout rows (the box
+sat at load 60–110); every apparent pass→non-pass was a timeout. Three
+premises in my issue plans were wrong and are corrected in the files: the
+runtime alone cannot read a native string without the exported bridge
+(#7095), cannot recognise the `$undefined` singleton without an exported
+probe (#7098), and #7097 was never an async-frame bug.
+
+**S7 entry conditions now cleared by this wave:** the IR-fallback gate no
+longer spells `host-assisted` (#7091); the `SharedArrayBuffer_new`
+regime-gap entry can be deleted (#7011); the `issue-3214` host-assisted pins
+reduce to the B2 host-bridge shape rows only once 6785 lands (#7098), which
+S7 retires with the profile. The S7 stack (6701 / 6705 / S7-c) remains with
+the Codex recovery lane; 6701 and 6705 are DIRTY against current main and
+need a re-merge there.
+
+**Still open for the stakeholder:** PR 6707 (#7010) `hold`; README
+conformance line after retirement (S7 entry condition 5); schedule-only
+regime test262 lane.

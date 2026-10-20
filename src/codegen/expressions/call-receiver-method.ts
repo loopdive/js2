@@ -181,6 +181,7 @@ import {
 } from "./object-method-rest-abi.js";
 import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
 import { emitHostMethodCallArgs } from "../host-method-args.js"; // (#5361)
+import { noteOwnShadowDispatchCandidate } from "./own-property-method-shadow.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -289,6 +290,7 @@ import {
   tryEmitAsyncGenReturnThrowDispatch,
 } from "./calls.js";
 import { readEnv } from "../../env.js";
+import { emitSabMethodCall } from "../buffers/shared-array-buffer.js"; // (#7011)
 
 /**
  * (#742 slice 4) Receiver-type method-call dispatch — extracted verbatim from
@@ -1055,6 +1057,17 @@ export function compileReceiverMethodCall(
   // (#1698). Route both through the same native emitter — emit a byte copy
   // into a fresh i32_byte vec. (SharedArrayBuffer is filtered out: it has no
   // i32_byte struct, so the cast would trap.)
+  // (#7011) SharedArrayBuffer.prototype.slice / grow → the native provider.
+  if (
+    (propAccess.name.text === "slice" || propAccess.name.text === "grow") &&
+    noJsHost(ctx) &&
+    receiverType.getSymbol()?.name === "SharedArrayBuffer"
+  ) {
+    const sab = emitSabMethodCall(ctx, fctx, propAccess.name.text, propAccess.expression, expr.arguments, (e) =>
+      compileExpression(ctx, fctx, e),
+    );
+    if (sab !== undefined) return sab;
+  }
   if (propAccess.name.text === "slice") {
     const recvSym = receiverType.getSymbol()?.name;
     if (recvSym === "ArrayBuffer") {
@@ -1098,7 +1111,11 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
+  if (
+    isExternalDeclaredClass(receiverType, ctx.checker) ||
+    hostMapCarrierClassName(ctx, receiverType) !== undefined ||
+    (ctx.nativeStrings && /^Readonly(?:Map|Set)$/.test(receiverType.getSymbol()?.name ?? "")) // (#7058)
+  ) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
@@ -2088,11 +2105,6 @@ export function compileReceiverMethodCall(
         if (wasmFuncReturnsVoid(ctx, finalMethodIdx)) return VOID_RESULT;
         return getWasmFuncReturnType(ctx, finalMethodIdx) ?? expectedType ?? { kind: "externref" };
       }
-      // An own property installed at runtime shadows this prototype method
-      // (`h.pre = (x) => …` over `class H { pre(x){…} }`). Route through the
-      // guard wrapper — same signature, so nothing below changes — which
-      // consults the receiver's own slot before running the static body.
-      // Undefined (the common case) keeps the direct call byte-identical.
       // Push self (the receiver) as first argument, with type hint from method's first param
       const methodParamTypes0 = getFuncParamTypes(ctx, funcIdx);
       // (#2132) A method call on a statically-nullable receiver (`C | null`,
@@ -2415,11 +2427,6 @@ export function compileReceiverMethodCall(
       const directMethodFuncIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx);
       const hasLiteralMethodOverride = directMethodFuncIdx !== undefined && directMethodFuncIdx !== nameMethodFuncIdx;
       if ((funcIdx = directMethodFuncIdx) !== undefined) {
-        // Same own-property guard as the class arm above. A CLASS instance also
-        // reaches this arm — `resolveStructNameForExpr` recovers its wasm
-        // carrier — and it is the arm that actually claims `h.pre("a")` for a
-        // `const h = new H()` binding. Object-literal structs are declined by
-        // the helper's `ctx.classSet` test, so they stay byte-identical.
         // Push self (the receiver) as first argument, with type hint from method's first param
         const structMethodPTypes = getFuncParamTypes(ctx, funcIdx);
         const recvType = compileExpression(ctx, fctx, propAccess.expression, structMethodPTypes?.[0]);
@@ -4166,6 +4173,11 @@ export function compileReceiverMethodCall(
         !recvIsBuiltinClass
       ) {
         const arity = dispatchArgs.length;
+        // The dispatcher's fill runs at finalize with no AST in hand, so record
+        // HERE whether this call's file could install an own callable member of
+        // this name — the fill then guards its user-class arms with an own-slot
+        // check.
+        noteOwnShadowDispatchCandidate(ctx, expr, methodName);
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
         // indices are still append-safe. The dispatcher fill only reads it.

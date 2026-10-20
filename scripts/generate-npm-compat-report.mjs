@@ -508,8 +508,12 @@ function moduleImportMetadata(moduleImports) {
 
 function firstCompileDiagnostic(result) {
   const errors = result?.errors ?? [];
+  const reportable = (entry) => typeof entry?.message === "string" && !isJsGrammarNoiseDiagnostic(entry.message);
+  // (#6843) A failed compile failed on an error; a warning recorded earlier
+  // (a host-import leak, a #6843 package-declaration note) must not stand in for it.
   const error =
-    errors.find((entry) => typeof entry?.message === "string" && !isJsGrammarNoiseDiagnostic(entry.message)) ??
+    errors.find((entry) => entry?.severity === "error" && reportable(entry)) ??
+    errors.find(reportable) ??
     errors[0] ??
     result?.diagnostics?.[0];
   const value = error?.messageText ?? error?.message ?? error;
@@ -3357,7 +3361,11 @@ if (partialOutputPath) {
       2,
     ) + "\n",
   );
-  console.log(`[npm-compat] wrote partial report ${resolve(ROOT, partialOutputPath)}`);
+  // (#7088) Upstream suites run in this process and may replace console.log.
+  // The partial is already safely on disk; report completion through the
+  // generator-owned process stream so console pollution cannot turn a
+  // successful measurement into a failed matrix row before artifact upload.
+  process.stdout.write(`[npm-compat] wrote partial report ${resolve(ROOT, partialOutputPath)}\n`);
 }
 
 function assertMeasuredOptimizationReceipts(packageRows) {
@@ -3407,7 +3415,9 @@ if (writeArtifacts) {
   console.log(`[npm-compat] wrote ${HISTORY_RESULTS_PATH}`);
   console.log(`[npm-compat] wrote ${HISTORY_PUBLIC_PATH}`);
 } else if (partialOutputPath) {
-  console.log("[npm-compat] skipped aggregate artifact writes (partial report is ready for the coordinator)");
+  process.stdout.write(
+    "[npm-compat] skipped aggregate artifact writes (partial report is ready for the coordinator)\n",
+  );
 } else {
   console.log("[npm-compat] skipped aggregate artifact writes");
   console.log(JSON.stringify({ ...summary, perfRows, perfHistory }, null, 2));
