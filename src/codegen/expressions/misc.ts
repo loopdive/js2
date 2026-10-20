@@ -25,6 +25,7 @@ import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.js";
 // (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
 import { analyzeTdzAccess, topLevelConstInitializedBeforeAnyUserCode } from "./identifiers.js";
+import { bindingIsSingleAssignment } from "../single-assignment-binding.js";
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
@@ -521,15 +522,17 @@ export function tryStaticToNumber(
     if (ts.isStringLiteral(obj) || ts.isNoSubstitutionTemplateLiteral(obj)) {
       return obj.text.length;
     }
-    // Also resolve through const variables: const s = "hello"; s.length → 5
+    // Also resolve through a binding whose value IS its initializer:
+    // `const s = "hello"; s.length` → 5. (#7097) Only a `const`, or a
+    // `let`/`var` that is never written after its initializer: the arm used to
+    // take any variable's initializer, so `let s = "a"; s += "bc"; s.length * 10`
+    // folded to 10 on every direct-AST function (every async function).
     if (ts.isIdentifier(obj)) {
-      const sym = ctx.checker.getSymbolAtLocation(obj);
-      const decl = sym?.valueDeclaration;
-      if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
-        const init = decl.initializer;
-        if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)) {
-          return init.text.length;
-        }
+      const init =
+        ctx.oracle.constInitializerOf(obj) ??
+        (bindingIsSingleAssignment(ctx, obj) ? ctx.oracle.variableInitializerOf(obj) : undefined);
+      if (init && (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init))) {
+        return init.text.length;
       }
     }
   }
