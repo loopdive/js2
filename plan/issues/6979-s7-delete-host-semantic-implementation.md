@@ -5498,3 +5498,132 @@ with zero reported errors but architectureComplete=false. Neither those counts
 nor the structural tests make this migration merge-ready. Full Test262,
 historical custody and broader known-failing cohorts were not rerun or repaired.
 No GitHub issue or comment is used for this handoff.
+
+### S7-ai execute and authenticate the primitive prototype bootstrap (2026-10-20, Codex)
+
+Continue from signed `28119417bc729d92118cd50e19fde713befc297e`. The previous
+goal turn made authoritative progress by committing/publishing S7-ah; its 11
+structural checks deliberately leave native execution unproven. Add opt-in
+genuine component integration, preserving existing fixture defaults/resource
+order and binary witnesses. Enumerated readers of mixedFoundation and
+objectExtensibilityFixture are the mixed-object and extensibility/SetPrototype/
+retained-setter tests; only add retained declaration/dependency views and an
+opt-in sixth fixture parameter. Existing fields are not moved or reinterpreted.
+
+Execute actual owner-issued initializer/getter slots without host semantic
+imports. Check five identities and payload roles, actual Object.prototype
+parents, String own length, idempotent mutation-preserving initialization,
+independently changed realm/Object.prototype generations, missing/stale refusal
+and ordinary Symbol/BigInt prototypes without private payloads. Add genuine
+backend owner positive/negative controls and compare existing component hashes.
+Keep full population, ToObject/source/public admission and the wider migration
+acceptance open; no catalog stub, receipt repin or fake completion is permitted.
+
+#### S7-ai development observations (retain failed evidence)
+
+The first executable run terminated exit one: **16/28 passed, 12 failed**, zero
+skips. Four generation-refresh assertions used `not.toBe` on different opaque
+WasmGC references; installed Vitest3.2.4's matcher performs deep equality advice
+when Object.is is false, before considering the negation, and throws while
+enumerating WasmGC objects. Replace only those comparisons with explicit
+`Object.is(a,b) === false`; the identity requirement is unchanged. Eight owner
+cases exceeded the existing 35000ms case limit while doing fixture construction,
+dependency filling and the actual assertions in one case. An isolated initializer
+receipt case reproduces `Test timed out in 35000ms` (one failed, 34 deliberately
+unselected/skipped); its selection is diagnostic, not a passing cohort.
+
+Keep `.tmp/s7ai-runtime.json` (SHA256
+`50c13e0b8595b36b5c518bd3692afd71144787bcede5699bc744ac2baff4afb8`)
+and `.tmp/s7ai-owner-failure.log` (SHA256
+`29543ab5a46d546d4c081f8bb66ddaf610d80a1ea590d202cb0c3bc8fde1ca74`).
+That first run predates additional owner controls/index observer and final
+fixture phase scheduling; it does not verify the current complete test file.
+No semantic expectation, receipt or production source was changed to repair
+those failures. Move genuine fresh fixture preparation/dependency filling to
+explicit setup hooks, bounded by the existing component-hook limit120000ms;
+retain 35000ms cases and every actual canonical comparison. Split the new
+async component fill and completion audits with a yield; old default paths
+and emitted instructions remain unchanged. No timeout is raised or ignored,
+and no concurrency/performance causal claim follows from these observations.
+
+The final run includes the new runtime/owner file, the original 11 structural
+builder checks and all three older extensibility/SetPrototype/retained-setter
+files. Require terminal success and positive case/component counts before
+claiming the bootstrap verified. Compare all ten old component witnesses
+against their retained audits, including coordinates, bytes, hashes, imports
+and reachability counts. No fresh parent execution is implied by that comparison.
+
+The expanded file subsequently reports **33/36 pass** inside the still-running
+combined regression execution: all 18 runtime cases pass, with three new owner
+control assertions failing. The changed getter signature is already refused by
+the physical ledger as an `altered function descriptor`; assert that actual
+diagnostic. The corrupt empty String is refused earlier by the genuine mixed
+owner as `noncanonical executable empty literal`; keep that stronger upstream
+rejection and assert downstream incompleteness. An empty private-global
+initializer never obtains a fill receipt, so replace that invalid control with
+a nonempty, deliberately noncanonical initializer, assert its actual receipt,
+then require the independent canonical completion rejection. This negative
+receipt control does not claim the forged module is executable/valid Wasm.
+
+No production source or old test assertion changed for these corrections. A
+separate corrected native/structural run is active alongside the original
+combined run's unchanged older suites. Keep both reports; neither may be called
+a single clean 186-case run. The two bootstrap binary hashes are identical
+across these assertion-only corrections. Wait for terminal processes and inspect
+the complete rows/errors before recording final verification or publishing.
+
+#### S7-ai verified native bootstrap and next producer handoff
+
+The corrected native execution is terminal, exit zero: **47/47 pass**, zero
+skips and no reported runner errors across two files. It covers 18 runtime
+cases, 18 authenticated owner controls and the original 11 structural checks.
+Two actual zero-import component witnesses execute all seven bootstrap
+functions. Both normal/interned and displaced/decoded/allocating coordinates
+verify exact prototype parents, false/+0/empty payloads, String length flags and
+virtual-index presence/absence controls, stable identities/user mutations and
+independent missing/stale/generation handling. This closes the S7-ah executable
+bootstrap/owner evidence gap, not complete member population or public ToObject.
+
+All ten older component rows match retained audits exactly: four extensibility,
+three Object.setPrototypeOf and three retained setters, including configuration,
+bytes, SHA256, import lists and reachable/dead snapshot counts. Positive row
+floors are enforced; no fresh parent execution or marginal production size is
+claimed. The separate combined regression process is terminal, exit one:
+**183/186 pass, three new control assertions fail**, zero skips/reported runner
+errors. All **139/139 older cases pass**; complete identities/statuses/assertion
+error fields equal the retained S7-ag reports. The three new control assertions
+are corrected and pass in the separate clean47-case run; do not relabel this
+a clean186-case execution. Exact source/report hashes and interpretation are recorded in
+`plan/audit/6979-native-primitive-prototype-identities-20261020.json`.
+
+Production source is unchanged from S7-ah. Typecheck, lint, formatting and
+selected budget/coercion/oracle/layering/fallback checks pass. The standard tsx
+fallback checks required an outside-sandbox rerun after local IPC permission
+refusal; no check was bypassed. Whole-PR source budget remains382 files,
+net -16253 LOC against `ae913d622f3cb5c4136e43a27594b8ec48e4c933`.
+The same two prior function grants remain; no new allowance. Inventory is
+valid with1984 tracked modules and zero errors. Policy hash and all cycle
+direction metrics equal the S7-ah parent, architectureComplete=false; the same
+four directions remain red, strict dynamic-import closure still fails and
+retirement is not certified. No full Test262, historical custody, broader
+known-failing cohorts or 33-policy/six-native compiler controls were rerun.
+
+Next compose the genuine ToObject wrapping kernel from this owner and existing
+primitive classifier, Boolean/Number unboxers, wrapper allocation, StringCreate
+and native error/tag resources. Own the fixed unary adapters and predicate
+bridges; accept neither caller-selected handles nor public constructors.
+Independently audit the actual unbox/error bodies, not just their receipts.
+Check canonical undefined identity before broad primitive classification and
+reject unknown/unready private values before the generic pure body's final
+object passthrough. Genuine native objects must return unchanged; each admitted
+primitive must get a fresh wrapper with the exact retained intrinsic identity
+and unchanged native payload. Missing/stale bootstrap must trap, never choose
+an explicit-null or placeholder prototype. Keep this private kernel scope
+separate from full prototype/constructor population and source/public admission.
+
+Then complete the remaining catalog and mixed Get/Call population and atomic
+authenticated publication, live foreign per-instance boundary references,
+first-class undefined, Linear/WASI and full architecture/custody/conformance/
+retirement acceptance. The prerequisite was freshly read OPEN/unmerged; PR6762
+remains draft, both Markdown issues stay in progress and the full goal stays
+active. No GitHub issue/comment was created or existing failure repinned.

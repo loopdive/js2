@@ -1811,3 +1811,34 @@ remain open. The same four dependency directions still fail against main;
 architectureComplete=false, and the prerequisite PR6701 remains OPEN/unmerged.
 Keep both issues in progress and this incomplete PR draft; no merge readiness
 or migration completion is claimed.
+
+### S7-ai: close executable primitive prototype bootstrap evidence
+
+Continue from `28119417bc729d92118cd50e19fde713befc297e`. The opt-in genuine
+native component now wires the owner-issued bootstrap and five getters; fixture
+defaults remain unchanged. The tests cover native payloads/String descriptors,
+stable identities and user mutations, independent realm/Object.prototype
+generation changes and missing/stale refusal. Owner controls include genuine
+positive completion and copied/foreign/mixed-family/substituted-body/literal/
+signature/partial-fill rejection. They do not add public/source admission or
+complete member population. The first development run's 16/28 pass result and
+12 failures are retained in the detailed issue; current complete regression
+verification is pending, not assumed green. No production source changed in
+this follow-on checkpoint. ToObject composition and the full migration
+acceptance remain required.
+
+S7-ai corrected native verification is terminal: **47/47 pass**, zero skips and
+runner exit zero (18 runtime, 18 owner controls, 11 structural checks). Two real
+zero-import components execute all seven bootstrap slots, with the real ledger
+still unsealed/incomplete. All ten old component hashes/configurations/imports/
+reachability rows match retained audits. No production source changed. The
+combined earlier run is terminal183/186 pass, exit one, retaining three
+subsequently corrected new test-control failures. All139/139 older cases pass,
+with complete identities/statuses/error fields equal retained reports; this is
+not claimed as a clean186-case run. Detailed failure history, exact hashes,
+scope limits and the concrete next ToObject producer contract are in the S7
+issue and `plan/audit/6979-native-primitive-prototype-identities-20261020.json`.
+The same architecture/strict retirement proof gaps remain; broader conformance,
+custody and compiler-control cohorts were not rerun. Both issues stay in
+progress and the PR stays draft. Resume with actual ToObject composition,
+not another placeholder prototype/member catalog or a narrowed migration goal.

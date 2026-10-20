@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ai executable primitive prototype identity bootstrap and authenticated owner controls",
+  "parentCommit": "28119417bc729d92118cd50e19fde713befc297e",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-primitive-prototype-identities.ts": "1ae505bbebe29d3cb052e69d875e683c71a4860230889f2908298ea3e8b94efb",
+    "src/runtime/contracts/native-primitive-prototype-identities.ts": "8a4ff4147b92c9fca362919b72a72bef7d4c3134e73826c9eebd5cebaefe5bc5",
+    "src/runtime/wasmgc/values/primitive-prototype-identity-bodies.ts": "48b1d33bd896edb9a87b8d416c19470b42e519cb7ecb3bf3083cec5a1df4bc34",
+    "tests/helpers/native-object-extensibility.ts": "32f279286000611dbd5cb222c7d33a129ceca02facb00f390a5388f0c5170e00",
+    "tests/helpers/native-mixed-object-access.ts": "eda0ab1f077580ef8fbdd12f37c2be6c79169e022f6661c677c123f0f9080f37",
+    "tests/issue-6979-native-primitive-prototype-identities.test.ts": "f6b6d9b5d88b8826494f4f1e2e27efada79a6c8a9b1761458ab457cb8b91e7c0"
+  },
+  "scope": {
+    "completionScope": "primitive-prototype-identities-only",
+    "productionSourceChangedThisCheckpoint": false,
+    "actualIssuedInitializerAndFiveGettersExecuted": true,
+    "falsePositiveZeroAndRealEmptyStringPayloads": true,
+    "stringOwnLengthAndVirtualIndexPositiveControl": true,
+    "symbolAndBigIntPrototypesOrdinaryWithoutPrimitiveData": true,
+    "exactObjectPrototypeParentsAndStableIdentity": true,
+    "repeatInitializationPreservesUserPrototypeAndFlagMutations": true,
+    "independentRealmAndObjectPrototypeGenerationControls": true,
+    "missingAndStaleAuthorityRefused": true,
+    "canonicalBodiesAndPrerequisitesIndependentlyAuthenticated": true,
+    "partialFillTerminal": true,
+    "hostSemanticImportsAdded": false,
+    "objectsOrImmutablePayloadGraphsCopied": false,
+    "toObjectMemberPopulationOrPublicSourceAdmissionCompleted": false,
+    "wholeRealmCompleted": false,
+    "migrationComplete": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forkLimitEnvironmentPerExecution": { "VITEST_MAX_FORKS": 1 },
+    "twoDistinctExecutionsOverlapped": true,
+    "wholeRunConcurrencyOrPerformanceCausalityClaimed": false,
+    "flags": ["--experimental-wasm-exnref"],
+    "caseTimeoutMs": 35000,
+    "componentAndFixtureHookTimeoutMs": 120000,
+    "rpcCaseOrHookDeadlinesRaised": false,
+    "fixturePreparationSeparatedFromCaseAssertions": true,
+    "componentFillAndCompletionAuditsYieldSeparately": true
+  },
+  "tests": {
+    "correctedNative": {
+      "path": ".tmp/s7ai-native-final.json",
+      "log": ".tmp/s7ai-native-final.log",
+      "status": "terminal",
+      "runnerExit": 0,
+      "files": 2,
+      "cases": 47,
+      "passed": 47,
+      "failed": 0,
+      "skipped": 0,
+      "runtimeCases": 18,
+      "ownerControls": 18,
+      "structuralBuilderChecks": 11,
+      "jsonSha256": "88a6b2333766834a764f3233c2431ac63caf20f35c2b35327c30d0af926a48b2",
+      "logSha256": "261737aca364d96789e6b1a4c993c89b70e6d35d333d9f0deefed5f0f8e92b91"
+    },
+    "initialDevelopment": {
+      "path": ".tmp/s7ai-runtime.json",
+      "runnerExit": 1,
+      "cases": 28,
+      "passed": 16,
+      "failed": 12,
+      "skipped": 0,
+      "opaqueReferenceMatcherErrors": 4,
+      "ownerCaseTimeouts": 8,
+      "jsonSha256": "50c13e0b8595b36b5c518bd3692afd71144787bcede5699bc744ac2baff4afb8"
+    },
+    "isolatedTimeoutDiagnostic": {
+      "log": ".tmp/s7ai-owner-failure.log",
+      "runnerExit": 1,
+      "failed": 1,
+      "deliberatelyUnselected": 34,
+      "diagnostic": "Test timed out in 35000ms",
+      "logSha256": "29543ab5a46d546d4c081f8bb66ddaf610d80a1ea590d202cb0c3bc8fde1ca74"
+    },
+    "combinedRegression": {
+      "path": ".tmp/s7ai-regression.json",
+      "log": ".tmp/s7ai-regression.log",
+      "status": "terminal",
+      "runnerExit": 1,
+      "cases": 186,
+      "passed": 183,
+      "failed": 3,
+      "skipped": 0,
+      "reportedRunnerErrors": 0,
+      "olderCases": 139,
+      "olderCasesPassed": 139,
+      "olderCaseIdentitiesStatusesAndErrorFieldsEqualRetainedParentReports": true,
+      "structuralChecksPassed": 11,
+      "jsonSha256": "aee7a1a0fdc40b69b29ab6d744020affd8a165214179e640b6748f84c3804fcb",
+      "logSha256": "30e6f9cc46ad3c455a528ca7e326d4673965c5b55fecfc0036a416cfed3f248b",
+      "nativeFileBeforeThreeControlCorrections": { "passed": 33, "failed": 3, "runtimePassed": 18 },
+      "singleClean186CaseRunClaimed": false
+    }
+  },
+  "componentWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "interned",
+      "bytes": 46253,
+      "sha256": "661fc0eab491e143f366a30f305a03d1cbc2defafdfef057a721f739b4cacab2",
+      "imports": [],
+      "reachableFunctions": 94,
+      "deadSnapshotBodies": 100
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "booleans": "allocating",
+      "bytes": 46039,
+      "sha256": "2402cd92cebb3ffa23399c7f0fbdd4654fb57f44e86d7e70e69b3d10ca1ae08e",
+      "imports": [],
+      "reachableFunctions": 95,
+      "deadSnapshotBodies": 101
+    }
+  ],
+  "componentInterpretation": {
+    "realLedgerUnsealedAndIncomplete": true,
+    "reachableBodiesRequireActualRecordedFills": true,
+    "sevenBootstrapFunctionsReachable": true,
+    "unreachableSweepOnlyOnNamedClonedSnapshot": true,
+    "baseRealmInitializationTestOnly": true,
+    "sizesAreNotMarginalProductionCosts": true,
+    "hashesUnchangedAcrossThreeAssertionControlCorrections": true
+  },
+  "existingComponentComparison": {
+    "rows": 10,
+    "extensibility": 4,
+    "setPrototypeOf": 3,
+    "retainedPrototypeSetter": 3,
+    "allCoordinatesBytesHashesImportsAndReachabilityCountsEqualRetainedAudits": true,
+    "positiveRowFloorsEnforced": true,
+    "freshParentExecutionThisTurn": false,
+    "parentAudits": [
+      "plan/audit/6979-native-object-extensibility-20261020.json",
+      "plan/audit/6979-native-object-set-prototype-20261020.json",
+      "plan/audit/6979-native-object-prototype-setter-20261020.json"
+    ]
+  },
+  "qualityAndArchitecture": {
+    "inventoryValid": true,
+    "modules": 1984,
+    "allTracked": true,
+    "inventoryErrors": 0,
+    "policyHash": "e4102e16f6f3c0af376a52328610a0d7bc7f3c09f2d1f57069d9857ca6ccc3e3",
+    "policyAndAllCycleDirectionMetricsEqualParent": true,
+    "architectureComplete": false,
+    "cycleGateExit": 1,
+    "remainingRedDirections": [
+      "backend->ir 115->117",
+      "codegen->ir 298->301",
+      "ir->codegen 74->75",
+      "ir->frontend 7->10"
+    ],
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "preservationOnlyFullAndCutWitnesses": [6, 6],
+    "strictModeledClosure": "FAIL: two unconstrained dynamic imports",
+    "retirementCertified": false,
+    "newAllowancesBaselinesRootsFloorsOrWaivers": false
+  },
+  "remaining": [
+    "Genuine ToObject unary factory composition and strict private native input admission",
+    "Complete prototype members, constructors, mixed Get/Call and authenticated atomic source/public publication",
+    "Live per-instance foreign boundary references and first-class undefined",
+    "Linear/WASI parity and full architecture, custody, conformance and retirement acceptance",
+    "Fresh complete merge-ready regression/conformance evidence; prior receipt and broader failures remain open"
+  ]
+}

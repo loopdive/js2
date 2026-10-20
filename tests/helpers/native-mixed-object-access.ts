@@ -144,10 +144,11 @@ export function mixedFoundation(displaced = false, decoded = false) {
   const layoutPlan = declareNativePrimitiveWrapperLayouts("mixed:wrappers", keys, f.pack.types.state.key);
   const layouts = reserveNativePrimitiveWrapperLayouts(tx, "mixed:wrappers", layoutPlan, layoutDependencies);
   const wrapperDependencies = { layouts, layoutPlan, layoutDependencies };
+  const wrapperPlan = declareNativePrimitiveWrapperStorageResources("mixed:wrapper-storage", keys, 8);
   const wrappers = reserveNativePrimitiveWrapperStorageResources(
     tx,
     "mixed:wrapper-storage",
-    declareNativePrimitiveWrapperStorageResources("mixed:wrapper-storage", keys, 8),
+    wrapperPlan,
     wrapperDependencies,
   );
   const ownDependencies = { ...wrapperDependencies, lookup, lookupDependencies };
@@ -198,7 +199,10 @@ export function mixedFoundation(displaced = false, decoded = false) {
     values,
     scanner,
     wrappers,
+    wrapperPlan,
+    wrapperDependencies,
     stringCreate,
+    stringCreateDependencies,
   };
 }
 export function mixedOwnerFixture(displaced = false, decoded = false) {

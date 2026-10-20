@@ -45,6 +45,12 @@ import { emitBinary } from "../../src/emit/binary.js";
 import { as, get, ext, i32 } from "./native-realm-object-layouts.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
 import { setImmediate } from "node:timers/promises";
+import { buildInlineNativeStringLiteral } from "../../src/runtime/wasmgc/values/string-literal-bodies.js";
+import {
+  reserveNativePrimitivePrototypeIdentities,
+  fillNativePrimitivePrototypeIdentities,
+  requireCompletedNativePrimitivePrototypeIdentities,
+} from "../../src/backend/wasmgc/resources/native-primitive-prototype-identities.js";
 
 export function objectExtensibilityFixture(
   displaced = false,
@@ -52,6 +58,7 @@ export function objectExtensibilityFixture(
   mode: "interned" | "allocating" = "interned",
   includeSetPrototype = false,
   includePrototypeSetter = false,
+  includePrimitivePrototypes = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -112,6 +119,18 @@ export function objectExtensibilityFixture(
   const prototypeSetter = includePrototypeSetter
     ? reserveNativeObjectPrototypeSetterAlgorithm(tx, algorithmDependencies)
     : undefined;
+  const primitivePrototypeDependencies = {
+    mixed,
+    mixedDependencies: r.dependencies,
+    wrappers: r.wrappers,
+    wrapperPlan: r.wrapperPlan,
+    wrapperDependencies: r.wrapperDependencies,
+    stringCreate: r.stringCreate,
+    stringCreateDependencies: r.stringCreateDependencies,
+  };
+  const primitivePrototypes = includePrimitivePrototypes
+    ? reserveNativePrimitivePrototypeIdentities(tx, primitivePrototypeDependencies)
+    : undefined;
   return {
     ...r,
     mixed,
@@ -129,6 +148,8 @@ export function objectExtensibilityFixture(
     algorithms,
     prototypeAlgorithm,
     prototypeSetter,
+    primitivePrototypeDependencies,
+    primitivePrototypes,
   };
 }
 export function fillObjectExtensibilityDependencies(r: ReturnType<typeof objectExtensibilityFixture>) {
@@ -154,8 +175,16 @@ export function objectExtensibilityRuntime(
   mode: "interned" | "allocating" = "interned",
   includeSetPrototype = false,
   includePrototypeSetter = false,
+  includePrimitivePrototypes = false,
 ) {
-  const steps = objectExtensibilityRuntimeSteps(displaced, decoded, mode, includeSetPrototype, includePrototypeSetter);
+  const steps = objectExtensibilityRuntimeSteps(
+    displaced,
+    decoded,
+    mode,
+    includeSetPrototype,
+    includePrototypeSetter,
+    includePrimitivePrototypes,
+  );
   let step = steps.next();
   while (!step.done) step = steps.next();
   return step.value;
@@ -170,8 +199,16 @@ export async function objectExtensibilityRuntimeAsync(
   mode: "interned" | "allocating" = "interned",
   includeSetPrototype = false,
   includePrototypeSetter = false,
+  includePrimitivePrototypes = false,
 ) {
-  const steps = objectExtensibilityRuntimeSteps(displaced, decoded, mode, includeSetPrototype, includePrototypeSetter);
+  const steps = objectExtensibilityRuntimeSteps(
+    displaced,
+    decoded,
+    mode,
+    includeSetPrototype,
+    includePrototypeSetter,
+    includePrimitivePrototypes,
+  );
   const synchronousPhaseMs: number[] = [];
   for (;;) {
     const start = performance.now(),
@@ -180,7 +217,14 @@ export async function objectExtensibilityRuntimeAsync(
     if (step.done) {
       console.info(
         "component scheduling",
-        JSON.stringify({ displaced, decoded, mode, includePrototypeSetter, synchronousPhaseMs }),
+        JSON.stringify({
+          displaced,
+          decoded,
+          mode,
+          includePrototypeSetter,
+          includePrimitivePrototypes,
+          synchronousPhaseMs,
+        }),
       );
       return step.value;
     }
@@ -194,8 +238,16 @@ function* objectExtensibilityRuntimeSteps(
   mode: "interned" | "allocating" = "interned",
   includeSetPrototype = false,
   includePrototypeSetter = false,
+  includePrimitivePrototypes = false,
 ) {
-  const r = objectExtensibilityFixture(displaced, decoded, mode, includeSetPrototype, includePrototypeSetter),
+  const r = objectExtensibilityFixture(
+      displaced,
+      decoded,
+      mode,
+      includeSetPrototype,
+      includePrototypeSetter,
+      includePrimitivePrototypes,
+    ),
     { tx, f } = r;
   const selectedEntries = [
     ...r.algorithms.entries,
@@ -204,6 +256,17 @@ function* objectExtensibilityRuntimeSteps(
   ];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
+    ...(includePrimitivePrototypes
+      ? {
+          renewRealm: { params: [], results: [] },
+          renewObjectPrototype: { params: [], results: [] },
+          clearObjectPrototype: { params: [], results: [] },
+          prototypeStringLength: { params: [ext], results: [i32] },
+          prototypeLengthValue: { params: [ext], results: [{ kind: "f64" as const }] },
+          prototypeLengthFlags: { params: [ext], results: [i32] },
+          prototypeHasIndexZero: { params: [ext], results: [i32] },
+        }
+      : {}),
     initialize: { params: [], results: [] },
     ordinary: { params: [i32], results: [ext] },
     flags: { params: [ext], results: [i32] },
@@ -279,6 +342,12 @@ function* objectExtensibilityRuntimeSteps(
     requireCompletedNativeObjectPrototypeSetterAlgorithm(tx, r.prototypeSetter);
   }
   yield;
+  if (r.primitivePrototypes) {
+    fillNativePrimitivePrototypeIdentities(tx, r.primitivePrototypes);
+    yield;
+    requireCompletedNativePrimitivePrototypeIdentities(tx, r.primitivePrototypes, r.primitivePrototypeDependencies);
+  }
+  if (includePrimitivePrototypes) yield;
   // Exercise the real prevention algorithm's false branch with the genuine
   // IsExtensible result of a non-extensible object. This derivative is a named
   // test control, never filled into a catalog slot or accepted by its owner.
@@ -343,6 +412,68 @@ function* objectExtensibilityRuntimeSteps(
       ]),
     ],
   });
+  if (includePrimitivePrototypes) {
+    tx.fillFunction(controls.renewRealm!, {
+      locals: [],
+      body: [
+        { op: "struct.new", typeIdx: f.pack.types.identity.typeIndex },
+        { op: "global.set", index: realm },
+      ],
+    });
+    tx.fillFunction(controls.renewObjectPrototype!, {
+      locals: [],
+      body: [
+        ...prefix(),
+        { op: "struct.new", typeIdx: f.pack.types.objectPrototype.typeIndex },
+        { op: "global.set", index: tx.physicalIndex(r.realm.declarations.objectPrototype.singleton) },
+      ],
+    });
+    tx.fillFunction(controls.clearObjectPrototype!, {
+      locals: [],
+      body: [
+        { op: "ref.null", typeIdx: f.pack.types.objectPrototype.typeIndex },
+        { op: "global.set", index: tx.physicalIndex(r.realm.declarations.objectPrototype.singleton) },
+      ],
+    });
+    tx.fillFunction(controls.prototypeStringLength!, {
+      locals: [],
+      body: [
+        get(0),
+        { op: "call", funcIdx: r.wrappers.read.String.handle },
+        { op: "struct.get", typeIdx: f.strings.layout.anyStrTypeIdx, fieldIdx: 0 },
+      ],
+    });
+    const lengthEntry = (): Instr[] => [
+      ...as(0, f.objects.object.typeIndex),
+      ...text("length"),
+      { op: "call", funcIdx: r.own.findOwn.handle },
+      { op: "ref.as_non_null" },
+    ];
+    tx.fillFunction(controls.prototypeLengthValue!, {
+      locals: [],
+      body: [
+        ...lengthEntry(),
+        { op: "struct.get", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 1 },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: r.values.functions.unboxNumber.handle },
+      ],
+    });
+    tx.fillFunction(controls.prototypeLengthFlags!, {
+      locals: [],
+      body: [...lengthEntry(), { op: "struct.get", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 2 }],
+    });
+    tx.fillFunction(controls.prototypeHasIndexZero!, {
+      locals: [],
+      body: [
+        ...as(0, f.objects.object.typeIndex),
+        ...buildInlineNativeStringLiteral(f.strings.layout, "0"),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: r.own.findOwn.handle },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    });
+  }
   if (includeSetPrototype) {
     tx.fillFunction(controls.corruptParent!, {
       locals: [],
@@ -531,6 +662,15 @@ function* objectExtensibilityRuntimeSteps(
     newBigInt: r.wrappers.allocation.BigInt,
     newString: r.stringCreate.create,
     objectPrototype: r.realm.declarations.objectPrototype.singleton,
+    ...(r.primitivePrototypes
+      ? {
+          initializePrimitivePrototypes: r.primitivePrototypes.initialize,
+          ...Object.fromEntries(
+            Object.entries(r.primitivePrototypes.read).map(([kind, token]) => ["prototype_" + kind, token]),
+          ),
+          ...Object.fromEntries(Object.entries(r.wrappers.read).map(([kind, token]) => ["payload_" + kind, token])),
+        }
+      : {}),
     ...(includeSetPrototype
       ? { getPrototypeOf: r.mixed.getPrototypeOf, internalSetPrototypeOf: r.mixed.setPrototypeOf }
       : {}),
