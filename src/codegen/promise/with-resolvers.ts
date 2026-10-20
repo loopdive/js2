@@ -15,8 +15,11 @@
 
 import type { Instr } from "../../ir/types.js";
 import {
+  buildPromiseIntrinsicCapabilityBody,
+  buildPromiseIntrinsicCapabilityLocals,
   buildPromiseWithResolversBody,
   buildPromiseWithResolversLocals,
+  type PromiseWithResolversResources,
 } from "../../runtime/wasmgc/promise/with-resolvers-bodies.js";
 import { ts } from "../../ts-api.js";
 import {
@@ -37,13 +40,11 @@ import { compileExpression } from "../shared.js";
 import type { InnerResult } from "../shared.js";
 
 const FUNC_NAME = "__promise_with_resolvers";
+const INTRINSIC_CAPABILITY = "__promise_intrinsic_capability";
 const KEYS = ["promise", "resolve", "reject"] as const;
 
-/** Idempotently register `__promise_with_resolvers`; undefined when the carrier is unavailable. */
-export function ensurePromiseWithResolvers(ctx: CodegenContext): number | undefined {
-  const existing = ctx.funcMap.get(FUNC_NAME);
-  if (existing !== undefined) return existing;
-  // Register every dependency BEFORE minting, so no index lands mid-build.
+/** Register every dependency BEFORE minting (so no index lands mid-build) and collect them. */
+function withResolversResources(ctx: CodegenContext): PromiseWithResolversResources | undefined {
   const closures = ensurePromiseExecutorClosures(ctx);
   if (!closures) return undefined;
   ensureObjectRuntime(ctx);
@@ -51,8 +52,7 @@ export function ensurePromiseWithResolvers(ctx: CodegenContext): number | undefi
   const newPlainObjectFuncIdx = ctx.funcMap.get("__new_plain_object");
   const externSetFuncIdx = ctx.funcMap.get("__extern_set");
   if (newPlainObjectFuncIdx === undefined || externSetFuncIdx === undefined) return undefined;
-
-  const resources = {
+  return {
     closures,
     promiseTypeIdx: closures.promiseTypeIdx,
     resolveClFuncIdx: closures.resolveClFuncIdx,
@@ -63,6 +63,35 @@ export function ensurePromiseWithResolvers(ctx: CodegenContext): number | undefi
     initHook: (promiseInstrs: Instr[]) => buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, promiseInstrs),
     keyInstrs: (key: (typeof KEYS)[number]) => stringConstantExternrefInstrs(ctx, key),
   };
+}
+
+/**
+ * (#7089) Idempotently register `__promise_intrinsic_capability(record) -> externref` —
+ * NewPromiseCapability(%Promise%) written into a `$__promise_custom_capability` record.
+ */
+export function ensurePromiseIntrinsicCapability(ctx: CodegenContext, recordTypeIdx: number): number | undefined {
+  const existing = ctx.funcMap.get(INTRINSIC_CAPABILITY);
+  if (existing !== undefined) return existing;
+  const resources = withResolversResources(ctx);
+  if (!resources) return undefined;
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: INTRINSIC_CAPABILITY,
+    typeIdx: addFuncType(ctx, [{ kind: "ref", typeIdx: recordTypeIdx }], [{ kind: "externref" }]),
+    locals: buildPromiseIntrinsicCapabilityLocals(resources),
+    body: buildPromiseIntrinsicCapabilityBody(resources, recordTypeIdx),
+    exported: false,
+  });
+  ctx.funcMap.set(INTRINSIC_CAPABILITY, funcIdx);
+  return funcIdx;
+}
+
+/** Idempotently register `__promise_with_resolvers`; undefined when the carrier is unavailable. */
+export function ensurePromiseWithResolvers(ctx: CodegenContext): number | undefined {
+  const existing = ctx.funcMap.get(FUNC_NAME);
+  if (existing !== undefined) return existing;
+  const resources = withResolversResources(ctx);
+  if (!resources) return undefined;
   const funcIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, funcIdx, {
     name: FUNC_NAME,

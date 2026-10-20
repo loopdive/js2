@@ -2856,12 +2856,12 @@
   },
   {
     "edition": "ES2024",
-    "pass": 402,
-    "fail": 97,
+    "pass": 404,
+    "fail": 95,
     "ce": 57,
     "skip": 0,
     "total": 556,
-    "pct": 72,
+    "pct": 73,
     "features": [
       {
         "name": "TypedArray",
@@ -3054,12 +3054,12 @@
       },
       {
         "name": "promise-with-resolvers",
-        "pass": 4,
-        "fail": 5,
+        "pass": 6,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 9,
-        "pct": 44
+        "pct": 67
       },
       {
         "name": "String.prototype.isWellFormed",
@@ -3198,12 +3198,12 @@
       },
       {
         "name": "class",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 1,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "dynamic-import",
@@ -3263,12 +3263,12 @@
   },
   {
     "edition": "ES2025",
-    "pass": 660,
-    "fail": 283,
-    "ce": 58,
+    "pass": 666,
+    "fail": 281,
+    "ce": 54,
     "skip": 0,
     "total": 1001,
-    "pct": 66,
+    "pct": 67,
     "features": [
       {
         "name": "iterator-helpers",
@@ -3371,12 +3371,12 @@
       },
       {
         "name": "promise-try",
-        "pass": 6,
-        "fail": 2,
-        "ce": 4,
+        "pass": 12,
+        "fail": 0,
+        "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 50
+        "pct": 100
       },
       {
         "name": "Reflect.construct",
@@ -3533,12 +3533,12 @@
       },
       {
         "name": "class",
-        "pass": 0,
-        "fail": 1,
+        "pass": 1,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 1,
-        "pct": 0
+        "pct": 100
       },
       {
         "name": "Map",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4581,
+    "pass": 4583,
     "fail": 197,
-    "ce": 143,
+    "ce": 141,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4482,
+        "pass": 4484,
         "fail": 106,
-        "ce": 23,
+        "ce": 21,
         "skip": 0,
         "total": 4611,
         "pct": 97

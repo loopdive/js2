@@ -8864,6 +8864,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/promise/receiver-capability.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the AST receiver classification and argument compilation from the NewPromiseCapability / Promise.try instruction sequences."
+    },
+    {
       "path": "src/codegen/promise/with-resolvers.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
