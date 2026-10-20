@@ -2200,3 +2200,28 @@ retains the failed intermediate runs, controls, historical failures and gate sco
 Next consume the real initializer with genuine remaining algorithms and the
 original source/code/body/allocation owners; do not substitute the witness or
 declare this the complete host migration.
+
+#### S7-as native isPrototypeOf implementation, 2026-10-20
+
+The genuine fixed native ToObject catalog owner now fills its fourth actual
+algorithm/lifted pair, `%Object.prototype.isPrototypeOf%`, with native Boolean
+results from the same original value/realm owners. Primitive argument order,
+ToObject(this), exact live prototype identity and a4097-link traversal are covered
+by50 selected runtime cases. Removing only the primitive branch makes both
+primitive-order cases fail while both live-chain controls still pass; the exact
+source is restored. All9 prior-method factory comparisons match parent1502f2ae49.
+No full emitted-GC equivalence is inferred.
+
+The full70-case owner/runtime file and separate wrapping/prototype preservation
+cohort are still pending at initial handoff preparation; do not report the
+selected50 as70 or infer their terminal results. The
+[exact S7-as audit](../audit/6979-native-is-prototype-of-20261020.json) and final
+handoff in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md)
+retain scope, evidence and unresolved failures. Actual import policy stays437/452
+across33 probes; the approved four-adapter increase remains unapplied. The stable
+native cycle proof does not authorize the same proof for effectful foreign/proxy
+getters. Raw foreign/source/public consumer admission, remaining real algorithms,
+live boundary identity without copying, undefined, Linear/WASI and all retirement,
+historical/conformance/architecture and reviewed-integration work remain required.
+Both issues remain in progress; the PR is not merge-ready.

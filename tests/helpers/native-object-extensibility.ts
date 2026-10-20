@@ -159,7 +159,7 @@ export function objectExtensibilityFixture(
   const toObject = includeToObject ? reserveNativeToObjectKernel(tx, toObjectDependencies!) : undefined;
   if (includeToObjectAlgorithms && !toObject) throw Error("catalog fixture requires genuine ToObject kernel");
   const toObjectAlgorithmsDependencies = toObject
-    ? { toObject, toObjectDependencies: toObjectDependencies! }
+    ? { toObject, toObjectDependencies: toObjectDependencies!, booleanBoxes }
     : undefined;
   const toObjectAlgorithms = includeToObjectAlgorithms
     ? reserveNativeObjectToObjectAlgorithms(tx, toObjectAlgorithmsDependencies!)
@@ -314,7 +314,7 @@ export function* objectExtensibilityRuntimeSteps(
     ...Object.fromEntries(
       (r.toObjectAlgorithms?.entries ?? []).flatMap((_, index) => [
         [
-          "stored" + (selectedEntries.length - 3 + index),
+          "stored" + (selectedEntries.length - r.toObjectAlgorithms!.entries.length + index),
           {
             params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }],
             results: [ext],
@@ -360,13 +360,13 @@ export function* objectExtensibilityRuntimeSteps(
     },
     stored0: { params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }], results: [ext] },
     stored1: { params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }], results: [ext] },
+    ...(includeSetPrototype || includeToObjectAlgorithms ? { corruptParent: { params: [ext, ext], results: [] } } : {}),
     ...(includeSetPrototype
       ? {
           stored2: {
             params: [ext, ext, { kind: "ref" as const, typeIdx: f.substrate.arguments.carrier.typeIndex }],
             results: [ext],
           },
-          corruptParent: { params: [ext, ext], results: [] },
           fakePrefix: { params: [ext, ext], results: [] },
           native2: { params: [i32, i32], results: [ext] },
         }
@@ -561,7 +561,7 @@ export function* objectExtensibilityRuntimeSteps(
       ],
     });
   }
-  if (includeSetPrototype) {
+  if (includeSetPrototype || includeToObjectAlgorithms) {
     tx.fillFunction(controls.corruptParent!, {
       locals: [],
       body: [
@@ -571,6 +571,8 @@ export function* objectExtensibilityRuntimeSteps(
         { op: "struct.set", typeIdx: f.pack.types.state.typeIndex, fieldIdx: 0 },
       ],
     });
+  }
+  if (includeSetPrototype) {
     tx.fillFunction(controls.fakePrefix!, {
       locals: [],
       body: [

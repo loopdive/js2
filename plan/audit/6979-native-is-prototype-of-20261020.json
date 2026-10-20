@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "issue": "6979-s7-delete-host-semantic-implementation",
+  "checkpoint": "S7-as: genuine native Object.prototype.isPrototypeOf",
+  "parent": "1502f2ae49c7c4ccd230dca0bd296ff7d0534de7",
+  "scope": "Four fixed actual catalog algorithm/lifted pairs through the genuine native ToObject owner. Private native ABI only; not full public realm, source or live foreign admission.",
+  "sourceSha256": {
+    "src/backend/wasmgc/resources/native-object-to-object-algorithms.ts": "e1c2120af120b62cefa4d5035e5127a980224908f0ab604f106d49d72b507a18",
+    "src/runtime/wasmgc/values/native-object-to-object-bodies.ts": "226337ed03c9dcc3746a64d1d9569a8193c6539e4b0e40b52a140f86b8095c79",
+    "tests/helpers/native-object-extensibility.ts": "c6a5689fa42956e751d0253dfd8d64edcbdae7da7f08b38f4deaea6f48d2bcfe",
+    "tests/issue-6979-native-object-to-object-algorithms.test.ts": "e28c62502450d14a1761f7e66446fbe4d8682c229a2f5a36aaff13dce9a217b8"
+  },
+  "semantics": {
+    "argumentOrder": "Canonical undefined or native primitive V returns false before ToObject(this) or primitive prototype bootstrap. Object V requires ToObject(this), then actual prototype identity traversal.",
+    "traversal": "One semantic GetPrototypeOf per edge, exact reference identity, no graph copy or arbitrary depth cutoff; 4097-link positive control.",
+    "cycles": "Brent constant-space bookkeeping over already observed edges; malformed closed native cycles trap. This proof is valid only for the callback-free structural native owner. Effectful foreign/proxy getters must not inherit the proof merely because references are GC-wrapped.",
+    "results": "Authenticated native Boolean box owner from the same original values/realm; both interned and allocating modes.",
+    "refusals": "Unknown, unready, stale, counterfeit and raw foreign/source inputs do not silently become false; existing mixed owner continues to refuse them."
+  },
+  "tests": {
+    "runtimeSelection": {
+      "report": ".tmp/s7as-runtime-first.json",
+      "sha256": "aa182219de171cb7282d1445341b6c3f1e46f611f8e23c99c8402ac86bc4b42e",
+      "closed": true,
+      "runnerExit": 0,
+      "total": 70,
+      "passed": 50,
+      "failed": 0,
+      "skippedOrUnselected": 20
+    },
+    "primitiveBranchRemoval": {
+      "report": ".tmp/s7as-primitive-guard-control.json",
+      "sha256": "bf8f42d4b93805d23acf04f3bb152cd6acdcf766c87e40cd8a06dae1273821bd",
+      "closed": true,
+      "runnerExit": 1,
+      "total": 70,
+      "passed": 2,
+      "failed": 2,
+      "skippedOrUnselected": 66,
+      "mutation": "Only get(cursor), call(isPrimitive), conditional false-return replaced with get(cursor), drop; canonical undefined branch, all producer checks and live-chain controls retained.",
+      "observed": "Both primitive-order cases fail with RuntimeError: unreachable; both live heterogeneous-chain controls pass.",
+      "restoredSourceSha256": "226337ed03c9dcc3746a64d1d9569a8193c6539e4b0e40b52a140f86b8095c79"
+    },
+    "finalCatalog": {
+      "report": ".tmp/s7as-final-catalog.json",
+      "closed": false,
+      "runnerExit": null,
+      "status": "Running; no final result claimed."
+    },
+    "wrappingPreservation": {
+      "report": ".tmp/s7as-wrapping-preservation.json",
+      "files": [
+        "tests/issue-6979-native-to-object.test.ts",
+        "tests/issue-6979-native-primitive-prototype-identities.test.ts"
+      ],
+      "closed": false,
+      "runnerExit": null,
+      "status": "Running; separate cohort, no final result claimed."
+    }
+  },
+  "actualComponents": [
+    {
+      "mode": "interned, original coordinates",
+      "bytes": 48067,
+      "sha256": "953f3674f23125412bb9ad9d6fca5a806a05731532ff41ca4ac6e72a986d3bcf",
+      "imports": [],
+      "reachable": 119,
+      "deadSnapshotBodies": 93,
+      "wholeRealmCompleted": false
+    },
+    {
+      "mode": "allocating, displaced coordinates, codec replay",
+      "bytes": 47859,
+      "sha256": "89a8f80b715cb262363d1cc6412e7ba22c30996ef44daf318a65870fa5359ddd",
+      "imports": [],
+      "reachable": 120,
+      "deadSnapshotBodies": 94,
+      "wholeRealmCompleted": false
+    }
+  ],
+  "fixtureScope": "Actual producer slots execute in a reachability-checked clone. Dead-body sweeping/stubs are clone-only, not production missing-algorithm fills or full realm completion.",
+  "oldFactoryPreservation": {
+    "report": ".tmp/s7as-old-factory-comparison.json",
+    "sha256": "c6eb2795745e01a759e95216b4130f9245d7d43b89a09b65a5e1d9b0809f4840",
+    "passed": 9,
+    "total": 9,
+    "method": "Actual parent factory versus current complete locals/instruction deep-strict equality for three prior operations at offsets 0, 17, 500. Only parent local runtime import relocated; imported helper byte-equal to parent.",
+    "notClaimed": "Full historical emitted-GC byte equivalence."
+  },
+  "gateArtifactHashes": {
+    ".tmp/s7as-final-typecheck.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7as-final-lint.log": "5d3880e9bd185ccbc6c57da19fffffa50f5af13383a705419d9f0f24410faf08",
+    ".tmp/s7as-inventory.log": "0a06071cdf1ff5835f6f0b369f58b55deab562437f7556c663c8431f42252ead",
+    ".tmp/s7as-coercion.log": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+    ".tmp/s7as-oracle.log": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a",
+    ".tmp/s7as-preservation-only.log": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02",
+    ".tmp/s7as-import-policy.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7as-final-loc.log": "0afce3839bb4d2508ecfad6fc2715e6853ff706932762668e6b24cb1b58e2dd7",
+    ".tmp/s7as-final-func.log": "7750ade6fdd550364e975f750673440460c9d68fb435b9cd9210385f370bc18f",
+    ".tmp/s7as-final-layering.log": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9",
+    ".tmp/s7as-final-flat.log": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f",
+    ".tmp/s7as-import-cycles.json": "465cae039ee66e6d2ea79f56dd76dc65f3462564548a08f447a6ebcdfbd304c8",
+    ".tmp/s7as-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62"
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "ceiling": 452,
+    "approvedHistoricalCeiling": 456,
+    "approvedIncreaseApplied": false,
+    "namedGaps": ["eager-generator-buffer", "shared-array-buffer", "temporal-strings"]
+  },
+  "retainedFailures": [
+    "Import-cycle gate exit1: largest SCC712, four nontrivial SCCs; same four retained red directions backend->ir 115->117, codegen->ir 298->301, ir->codegen 74->75, ir->frontend 7->10. No waiver.",
+    "Preservation-only 6/6 full and 6/6 cut is not strict modeled closure: unknown nonliteral imports in optimize.ts and platform-capability-adapter.ts remain; retirement not certified.",
+    "S7-ar historical realm/storage cohort remains 188/202, 14 unwaived fixed-donor source-receipt failures; not rerun here. Earlier five symbolic-reference source-receipt failures remain separate. No repin.",
+    "Prerequisite PR6701 remains open/unmerged and conflicting. PR6762 remains an incomplete draft checkpoint; no reviewed integration or merge claim."
+  ],
+  "remaining": [
+    "Remaining genuine catalog algorithms/constructors and real full population consumption",
+    "Original consumer source/code/body/allocation ownership join",
+    "Semantic mixed builtin/bound/source/live-foreign Call/Get and arguments/receiver/results",
+    "Live per-instance boundary identity without graph copying",
+    "First-class undefined and complete Linear/WASI migration",
+    "Named gaps and runtime/host-semantic-arm retirement",
+    "Historical/Test262/npm/accelerator acceptance and architecture/strict closure",
+    "Prerequisite/conflict integration and reviewed merge"
+  ],
+  "fullGoalComplete": false
+}

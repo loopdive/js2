@@ -6959,3 +6959,87 @@ layering/flat-directory and issue-integrity checks pass in their stated scopes;
 the four existing cycle directions and strict architecture closure remain red.
 The two new modules add no dependency waiver or budget allowance. No full historical
 GC-byte-equivalence, Test262/npm or complete Linear/WASI result is newly certified.
+
+#### S7-as Object.prototype.isPrototypeOf algorithm (in progress)
+
+Extend the existing genuine ToObject catalog owner from three fixed methods to
+four, adding the actual `%Object.prototype.isPrototypeOf%` algorithm/lifted slots.
+Bind its native Boolean result owner to the same original values/realm as ToObject.
+The new algorithm must read argv[0] (canonical undefined when absent), return false
+for primitive arguments before examining this, then ToObject(this) and walk the
+live heterogeneous prototype chain with exact object identity. Never coerce the
+argument, copy its graph or invoke property hooks. Unknown/unready/counterfeit
+native inputs must not masquerade as false. Preserve the private native ABI's
+scope; do not claim raw foreign/source/public admission or full realm completion.
+
+Use a single GetPrototypeOf per traversed edge. Brent's constant-space cycle
+check compares already-observed identities instead of extra getter reads, with
+i64 internal distance counters and no arbitrary depth cap. Malformed native
+cycles fail closed, not false or an infinite loop. Keep all prior method bodies
+and ownership checks; authenticate/re-derive Boolean boxing, the new body and
+guarded Call. Update the real fixture's fixed-method count and stored-call mapping,
+then test primitive/receiver order, identity not payload equality, live mutation,
+long chains, cycles, gap refusal and both result-boxing modes through actual slots.
+Retain full catalog population/consumer/source/allocation/bound/live-foreign joins,
+undefined, Linear/WASI and all remaining migration acceptance.
+
+S7-as now fills the fourth fixed algorithm/lifted pair through the original
+ToObject owner, with an authenticated Boolean boxing dependency from the same
+value plan/realm. The existing three method definitions are unchanged: an exact
+parent-factory comparison passes9/9 across all three operations and three displaced
+coordinate sets, using full deep-strict locals/instruction equality. Only the
+parent module's local runtime import is relocated for the probe; that imported
+helper is byte-equal to parent1502f2ae49. This is not full emitted-GC equivalence.
+
+The new body uses actual native object identity, canonical undefined, a single
+semantic GetPrototypeOf edge and constant-space Brent bookkeeping. It has no
+graph copy or language-level numeric depth limit. The cycle proof is restricted
+to the genuine closed, callback-free native structural owner. A future effectful
+foreign/proxy traversal must not inherit this stable-chain proof merely because
+its references are GC-wrapped: repeated identities under effectful getters do
+not alone prove an infinite cycle. Raw foreign/source/public admission is still
+refused by the existing graph, not misreported as false or full migration success.
+
+The intermediate runtime selection passes50/50 (20 owner cases unselected),
+both Boolean modes and original/codec/displaced resources. Tests cover primitive
+V before this/bootstrap, nullish this for object V, identity versus equal numeric
+payloads, live ordinary/wrapper/builtin chains, 4097 links, malformed native cycles,
+unknown/counterfeit/stale inputs, exact native exceptions and all four guarded Calls.
+Removing ONLY the primitive-argument branch, keeping actual producer checks and
+the independent live-chain controls, gives2/4 selected passing: both primitive-order
+cases fail, both live-chain cases pass (66 unselected). The exact source is restored
+to SHA256226337ed03c9dcc3746a64d1d9569a8193c6539e4b0e40b52a140f86b8095c79
+before final unfiltered verification. No production bypass or deadline change.
+
+Final ownership coverage also retains both new entry body-substitution checks,
+copied/foreign Boolean owner refusal, and receipt-valid Boolean function/global
+substitutions. The fixture's stored-call mapping now derives the fixed-family size
+instead of assuming three entries. Component reachability and dead-body sweeping
+remain clone-only; the real ledger is unsealed and missing algorithms are not
+filled. The full45-object initializer/remaining catalog algorithms, original
+consumer source/code/body/allocation join, mixed Call/Get, live foreign boundary
+identity, first-class undefined, Linear/WASI and retirement/conformance/architecture
+requirements remain in progress.
+
+S7-as verification/publication handoff: the source-size/function-size gates pass
+for409 changed source files/net−12826 LOC; only the two previously recorded
+function allowances apply. Typecheck, full lint (7312 files), scoped Prettier,
+coercion/oracle, inventory, layering (87 lines/15 files, baseline90) and flat-dir
+(833) checks pass within their scopes. The actual import-policy run is437/452
+across33 unchanged probes, zero unknown/regime-gap imports. The specifically
+approved historical452→456 adapter increase remains unnecessary and unapplied.
+The cycle gate remains exit1 (largest SCC712/four components, same four red
+directions); preservation-only6/6 full+6/6 cut still does not certify strict
+closure at the two existing nonliteral dynamic imports. No baseline, floor,
+source receipt, dependency waiver or deadline was relaxed.
+
+[The S7-as audit](../audit/6979-native-is-prototype-of-20261020.json) records exact
+source/gate hashes, emitted component hashes and the semantic branch-removal
+control. At this handoff's initial preparation, the full unfiltered70-case catalog
+run and the separate two-file wrapping/prototype preservation cohort are still
+running, not green results. Retain their exact final exit/counts before claiming
+completion of verification. The earlier50 selected runtime cases are not a
+substitute for the20 owner cases. Existing S7-ar188/202 storage receipt failures
+and earlier five symbolic receipt failures remain unwaived, not rerun by this
+cohort. Public/foreign/source/Linear admission and the full migration are unfinished;
+the existing PR stays an incomplete draft, not a merge-ready implementation.

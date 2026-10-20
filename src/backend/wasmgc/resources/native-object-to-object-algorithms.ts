@@ -12,12 +12,20 @@ import { planNativeStringLiteral } from "../../../runtime/wasmgc/values/string-l
 import { buildBuiltinFunctionCheckedEntryDefinition } from "../../../runtime/wasmgc/values/builtin-function-bodies.js";
 import {
   buildNativeObjectToObjectDefinition,
+  buildNativeObjectIsPrototypeOfDefinition,
   type NativeObjectToObjectOperation,
 } from "../../../runtime/wasmgc/values/native-object-to-object-bodies.js";
+import {
+  requireNativeBooleanBoxReservations,
+  requireCompletedNativeBooleanBoxes,
+  type NativeBooleanBoxReservations,
+} from "./native-booleans.js";
+import { buildBoxBooleanBody, buildBooleanBoxInitializer } from "../../../runtime/wasmgc/values/boolean-bodies.js";
 
 export interface NativeObjectToObjectDependencies {
   readonly toObject: NativeToObjectKernel;
   readonly toObjectDependencies: NativeToObjectDependencies;
+  readonly booleanBoxes: NativeBooleanBoxReservations;
 }
 /** Actual catalog slots with a strict private native value ABI; not a complete public realm. */
 export interface NativeObjectToObjectAlgorithms {
@@ -29,6 +37,7 @@ const methods: readonly (readonly [string, string, number, NativeObjectToObjectO
   ["%Object.getPrototypeOf%", "getPrototypeOf", 1, "get-prototype"],
   ["%Object.prototype.valueOf%", "valueOf", 0, "value-of"],
   ["%get Object.prototype.__proto__%", "get __proto__", 0, "prototype-getter"],
+  ["%Object.prototype.isPrototypeOf%", "isPrototypeOf", 1, "is-prototype-of"],
 ];
 interface Owner {
   readonly tx: PhysicalModuleReservations;
@@ -46,7 +55,7 @@ function dependencies(tx: PhysicalModuleReservations, input: NativeObjectToObjec
   if (!input || ![null, Object.prototype].includes(Object.getPrototypeOf(input)))
     fail("plain own-data dependencies required");
   const fields = Object.getOwnPropertyDescriptors(input),
-    roles = ["toObject", "toObjectDependencies"] as const;
+    roles = ["toObject", "toObjectDependencies", "booleanBoxes"] as const;
   if (Reflect.ownKeys(fields).length !== roles.length) fail("unexpected dependency roles");
   for (const role of roles)
     if (
@@ -60,6 +69,8 @@ function dependencies(tx: PhysicalModuleReservations, input: NativeObjectToObjec
     roles.map((role) => [role, fields[role]!.value]),
   ) as unknown as NativeObjectToObjectDependencies;
   requireNativeToObjectKernel(tx, d.toObject, d.toObjectDependencies);
+  const m = d.toObjectDependencies.prototypeDependencies.mixedDependencies;
+  requireNativeBooleanBoxReservations(tx, d.booleanBoxes, m.values, m.valuePlan, m.valueDependencies);
   return d;
 }
 function entries(tx: PhysicalModuleReservations, d: NativeObjectToObjectDependencies) {
@@ -110,7 +121,11 @@ function current(tx: PhysicalModuleReservations, pack: NativeObjectToObjectAlgor
   const o = owners.get(pack);
   if (!o || o.tx !== tx) fail("foreign or copied catalog owner");
   const d = dependencies(tx, o.original);
-  if (d.toObject !== o.dependencies.toObject || d.toObjectDependencies !== o.dependencies.toObjectDependencies)
+  if (
+    d.toObject !== o.dependencies.toObject ||
+    d.toObjectDependencies !== o.dependencies.toObjectDependencies ||
+    d.booleanBoxes !== o.dependencies.booleanBoxes
+  )
     fail("changed dependency identity");
   if (
     pack.realm !== d.toObject.realm ||
@@ -145,6 +160,26 @@ function errorLiteral(tx: PhysicalModuleReservations, o: Owner) {
 function completedDependencies(tx: PhysicalModuleReservations, o: Owner) {
   const d = o.dependencies;
   requireCompletedNativeToObjectKernel(tx, d.toObject, d.toObjectDependencies);
+  const m = d.toObjectDependencies.prototypeDependencies.mixedDependencies;
+  const boxes = d.booleanBoxes;
+  requireCompletedNativeBooleanBoxes(tx, boxes, m.values, m.valuePlan, m.valueDependencies);
+  for (const [i, token] of boxes.globals.entries())
+    tx.assertCanonicalGlobalInitializer(
+      token,
+      buildBooleanBoxInitializer(m.values.types.boxedBoolean.typeIndex, i === 0 ? 1 : 0),
+    );
+  tx.assertCanonicalFunctionDefinition(boxes.boxBoolean, {
+    locals: [],
+    body: buildBoxBooleanBody(
+      boxes.mode === "interned"
+        ? {
+            mode: "interned",
+            trueGlobalIndex: tx.physicalIndex(boxes.globals[0]!),
+            falseGlobalIndex: tx.physicalIndex(boxes.globals[1]!),
+          }
+        : { mode: "allocating", typeIndex: m.values.types.boxedBoolean.typeIndex },
+    ),
+  });
   return errorLiteral(tx, o);
 }
 function definitions(tx: PhysicalModuleReservations, o: Owner) {
@@ -155,33 +190,45 @@ function definitions(tx: PhysicalModuleReservations, o: Owner) {
     realm = d.toObject.realm,
     literal = requireNativeStringLiteral(tx, base.errorDependencies.strings, message);
   if (literal.kind !== "global") fail("missing direct guarded Call error leaf");
-  return o.entries.map((entry, index) => ({
-    algorithm: buildNativeObjectToObjectDefinition({
-      operation: methods[index]![3],
+  return o.entries.map((entry, index) => {
+    const operation = methods[index]![3];
+    const common = {
       vectorTypeIdx: substrate.arguments.carrier.typeIndex,
       vectorArrayTypeIdx: substrate.arguments.array.typeIndex,
       undefinedGlobal: tx.physicalIndex(m.values.globals.undefined),
       toObject: d.toObject.toObject.handle,
       getPrototypeOf: base.prototypeDependencies.mixed.getPrototypeOf.handle,
-    }),
-    lifted: buildBuiltinFunctionCheckedEntryDefinition({
-      identity: {
-        typeIdx: entry.type.typeIndex,
-        metadataId: entry.metadata.metadata.id,
-        liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
-        singleton: tx.physicalIndex(entry.singleton),
-        singletonExtern: false,
-        realm: tx.physicalIndex(realm.globals.realm),
-      },
-      failure: [
-        { op: "global.get", index: tx.physicalIndex(literal.global) },
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: base.errors.newTypeError.handle },
-        { op: "throw", tagIdx: tx.physicalIndex(realm.exception.tag) },
-      ],
-      algorithm: entry.algorithm.handle,
-    }),
-  }));
+    };
+    return {
+      algorithm:
+        operation === "is-prototype-of"
+          ? buildNativeObjectIsPrototypeOfDefinition({
+              ...common,
+              undefinedTypeIdx: m.values.types.anyValue.typeIndex,
+              isPrimitive: base.primitives.isPrimitive.handle,
+              classify: base.prototypeDependencies.mixed.classify.handle,
+              boxBoolean: d.booleanBoxes.boxBoolean.handle,
+            })
+          : buildNativeObjectToObjectDefinition({ ...common, operation }),
+      lifted: buildBuiltinFunctionCheckedEntryDefinition({
+        identity: {
+          typeIdx: entry.type.typeIndex,
+          metadataId: entry.metadata.metadata.id,
+          liftedTypeIdx: entry.metadata.signature.liftedFuncTypeIndex,
+          singleton: tx.physicalIndex(entry.singleton),
+          singletonExtern: false,
+          realm: tx.physicalIndex(realm.globals.realm),
+        },
+        failure: [
+          { op: "global.get", index: tx.physicalIndex(literal.global) },
+          { op: "extern.convert_any" },
+          { op: "call", funcIdx: base.errors.newTypeError.handle },
+          { op: "throw", tagIdx: tx.physicalIndex(realm.exception.tag) },
+        ],
+        algorithm: entry.algorithm.handle,
+      }),
+    };
+  });
 }
 export function fillNativeObjectToObjectAlgorithms(
   tx: PhysicalModuleReservations,

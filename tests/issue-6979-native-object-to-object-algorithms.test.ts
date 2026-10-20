@@ -22,6 +22,7 @@ import {
   nativeStringLiteralReservationInventory,
 } from "../src/backend/wasmgc/resources/native-string-literals.js";
 import { planNativeStringLiteral } from "../src/runtime/wasmgc/values/string-literal-bodies.js";
+import { buildBooleanBoxInitializer } from "../src/runtime/wasmgc/values/boolean-bodies.js";
 
 afterEach(async () => await setImmediate());
 for (const [displaced, decoded, mode] of [
@@ -106,7 +107,7 @@ for (const [displaced, decoded, mode] of [
       expect(status).toBe(1);
       return parent;
     };
-    it("executes all six real algorithm/guarded Call slots without completing the realm", () => {
+    it("executes all eight real algorithm/guarded Call slots without completing the realm", () => {
       expect(WebAssembly.Module.imports(r.wasm)).toEqual([]);
       const pack = r.r.toObjectAlgorithms!;
       expect(pack.completionScope).toBe("native-object-to-object-calls");
@@ -114,6 +115,7 @@ for (const [displaced, decoded, mode] of [
         ["%Object.getPrototypeOf%", 1],
         ["%Object.prototype.valueOf%", 0],
         ["%get Object.prototype.__proto__%", 0],
+        ["%Object.prototype.isPrototypeOf%", 1],
       ]);
       for (const entry of pack.entries)
         for (const token of [entry.algorithm, entry.lifted]) expect(r.liveNames).toContain(token.object.name);
@@ -198,6 +200,113 @@ for (const [displaced, decoded, mode] of [
       same(run(2, value, [hostile], true), null);
       expect(reads).toBe(0);
     });
+    it("returns false for primitive V before inspecting this, ignored arguments or primitive bootstrap", () => {
+      let reads = 0;
+      const trap = () => {
+        reads++;
+        throw Error("unexpected receiver access");
+      };
+      const hostile = new Proxy({}, { get: trap, getPrototypeOf: trap, ownKeys: trap });
+      r.api.clearObjectPrototype();
+      for (const value of [
+        null,
+        r.api.undefinedValue(),
+        r.api.boxNumber(3),
+        r.api.boxBoolean(1),
+        r.api.text(),
+        r.api.symbol(1),
+        r.api.wide96high(),
+      ]) {
+        for (const receiver of [null, r.api.undefinedValue(), hostile, r.api.undefinedCopy()]) {
+          for (const stored of [false, true])
+            expect(r.api.readBoolean(run(3, receiver, [value, hostile], stored))).toBe(0);
+        }
+      }
+      expect(r.api.readBoolean(run(3, hostile, [], true))).toBe(0);
+      expect(reads).toBe(0);
+    });
+    it("converts this before reading an object's null prototype, but never converts V", () => {
+      const value = r.api.ordinary(0);
+      for (const receiver of [null, r.api.undefinedValue()])
+        for (const stored of [false, true]) typeError(() => run(3, receiver, [value], stored));
+      r.api.initializePrimitivePrototypes();
+      // Equal number payloads cannot replace object identity, including fresh ToObject(this).
+      const a = r.api.newNumber(null, 7),
+        b = r.api.newNumber(null, 7);
+      expect(r.api.internalSetPrototypeOf(value, a)).toBe(1);
+      expect(r.api.readBoolean(run(3, a, [value], true))).toBe(1);
+      expect(r.api.readBoolean(run(3, b, [value], true))).toBe(0);
+      expect(r.api.readBoolean(run(3, r.api.boxNumber(7), [value], true))).toBe(0);
+      expect(r.api.readBoolean(run(3, a, [r.api.boxNumber(7)], true))).toBe(0);
+    });
+    it("walks live heterogeneous parents without copying or mutating flags", () => {
+      const leaf = r.api.ordinary(0),
+        middle = r.api.newNumber(null, 1),
+        root = r.api.singleton2.value;
+      expect(r.api.internalSetPrototypeOf(leaf, middle)).toBe(1);
+      expect(r.api.internalSetPrototypeOf(middle, root)).toBe(1);
+      r.api.setFlags(leaf, 0x20000080);
+      for (const stored of [false, true]) {
+        expect(r.api.readBoolean(run(3, root, [leaf], stored))).toBe(1);
+        expect(r.api.readBoolean(run(3, middle, [leaf], stored))).toBe(1);
+        expect(r.api.readBoolean(run(3, leaf, [leaf], stored))).toBe(0);
+      }
+      expect(r.api.internalSetPrototypeOf(middle, null)).toBe(1);
+      expect(r.api.readBoolean(run(3, root, [leaf], true))).toBe(0);
+      expect(r.api.flags(leaf)).toBe(0x20000080);
+    });
+    it("has no arbitrary prototype depth bound and detects malformed native cycles", () => {
+      const first = r.api.ordinary(0),
+        outside = r.api.ordinary(0);
+      let tail = first;
+      for (let i = 0; i < 4097; i++) {
+        const next = r.api.ordinary(0);
+        expect(r.api.internalSetPrototypeOf(tail, next)).toBe(1);
+        tail = next;
+      }
+      expect(r.api.readBoolean(run(3, tail, [first], true))).toBe(1);
+      expect(r.api.readBoolean(run(3, outside, [first], true))).toBe(0);
+      for (const length of [1, 2, 3, 5]) {
+        const nodes = Array.from({ length }, () => r.api.ordinary(0));
+        nodes.forEach((node, i) => r.api.corruptParent(node, nodes[(i + 1) % length]));
+        expect(() => run(3, outside, [nodes[0]], true)).toThrow(WebAssembly.RuntimeError);
+      }
+    });
+    it("refuses unknown, stale or counterfeit V instead of returning a primitive false", () => {
+      let reads = 0;
+      const hostile = new Proxy(
+        {},
+        {
+          get() {
+            reads++;
+            throw Error("unexpected host get");
+          },
+          getPrototypeOf() {
+            reads++;
+            throw Error("unexpected host prototype");
+          },
+        },
+      );
+      const other = new WebAssembly.Instance(r.wasm).exports as Record<string, any>;
+      other.initialize();
+      for (const value of [
+        hostile,
+        {},
+        undefined,
+        r.api.undefinedCopy(),
+        other.undefinedValue(),
+        other.ordinary(0),
+        r.api.ordinary(1),
+        r.api.source(),
+      ]) {
+        for (const stored of [false, true])
+          expect(() => run(3, r.api.objectPrototype.value, [value], stored)).toThrow(WebAssembly.RuntimeError);
+      }
+      const value = r.api.ordinary(0);
+      r.api.corruptParent(value, hostile);
+      expect(() => run(3, r.api.objectPrototype.value, [value], true)).toThrow(WebAssembly.RuntimeError);
+      expect(reads).toBe(0);
+    });
     it("throws the actual nullish TypeError for omission or nullish this before bootstrap", () => {
       typeError(() => run(0, {}, [], true));
       for (const value of [null, r.api.undefinedValue()]) {
@@ -249,7 +358,7 @@ for (const [displaced, decoded, mode] of [
     it("guards each actual lifted entry while stored transport invokes its supplied callee", () => {
       const value = r.api.ordinary(0),
         argv = r.vector([value]);
-      for (let index = 0; index < 3; index++) {
+      for (let index = 0; index < 4; index++) {
         const ordinal = index + 2,
           entry = r.r.toObjectAlgorithms!.entries[index]!;
         // Stored transport reads self's actual function pointer. All catalog
@@ -266,7 +375,7 @@ for (const [displaced, decoded, mode] of [
         ])
           typeError(() => r.api["lifted" + ordinal](self, value, argv));
       }
-      const saved = [2, 3, 4].map((ordinal) => r.api["singleton" + ordinal].value);
+      const saved = [2, 3, 4, 5].map((ordinal) => r.api["singleton" + ordinal].value);
       r.api.initialize();
       for (const [index, self] of saved.entries()) {
         const ordinal = index + 2;
@@ -300,7 +409,7 @@ describe("authenticated ToObject catalog owner", () => {
   beforeEach(() => {
     r = fixture();
   }, 120000);
-  it("borrows only three fixed actual entries and rejects duplicate/copied/foreign owners", () => {
+  it("borrows only four fixed actual entries and rejects duplicate/copied/foreign owners", () => {
     const pack = r.toObjectAlgorithms!,
       d = r.toObjectAlgorithmsDependencies!,
       count = r.f.module.functions.length;
@@ -329,6 +438,9 @@ describe("authenticated ToObject catalog owner", () => {
     expect(() =>
       reserveNativeObjectToObjectAlgorithms(r.tx, { ...d, toObjectDependencies: { ...d.toObjectDependencies } }),
     ).toThrow(/different expected/);
+    expect(() => reserveNativeObjectToObjectAlgorithms(r.tx, { ...d, booleanBoxes: { ...d.booleanBoxes } })).toThrow(
+      /copied|foreign/,
+    );
     expect(r.f.module.functions.length).toBe(count);
   });
   it("does not grant algorithm authority from reserved slots or missing prerequisites", () => {
@@ -345,7 +457,7 @@ describe("authenticated ToObject catalog owner", () => {
     ).toThrow(/altered function descriptor/);
     expect(r.tx.state).toBe("failed");
   });
-  for (const role of ["kernel", "guard-error"] as const)
+  for (const role of ["kernel", "guard-error", "boolean-box", "boolean-global"] as const)
     describe(`receipt-valid substituted ${role} dependency`, () => {
       beforeEach(async () => {
         if (role === "kernel") {
@@ -353,6 +465,16 @@ describe("authenticated ToObject catalog owner", () => {
             target = r.toObject!.toObject;
           r.tx.fillFunction = (token, definition) =>
             fill(token, token === target ? { locals: [], body: [{ op: "unreachable" }] } : definition);
+        } else if (role === "boolean-box") {
+          const fill = r.tx.fillFunction.bind(r.tx),
+            target = r.booleanBoxes.boxBoolean;
+          r.tx.fillFunction = (token, definition) =>
+            fill(token, token === target ? { locals: [], body: [{ op: "unreachable" }] } : definition);
+        } else if (role === "boolean-global") {
+          const fill = r.tx.fillGlobal.bind(r.tx),
+            target = r.booleanBoxes.globals[0]!;
+          r.tx.fillGlobal = (token, init) =>
+            fill(token, token === target ? buildBooleanBoxInitializer(r.values.types.boxedBoolean.typeIndex, 0) : init);
         } else {
           const binding = requireNativeStringLiteral(
             r.tx,
@@ -378,6 +500,8 @@ describe("authenticated ToObject catalog owner", () => {
         fillNativeToObjectKernel(r.tx, r.toObject!);
         await setImmediate();
         if (role === "kernel") r.tx.assertCompletedReservation(r.toObject!.toObject);
+        else if (role === "boolean-box") r.tx.assertCompletedReservation(r.booleanBoxes.boxBoolean);
+        else if (role === "boolean-global") r.tx.assertCompletedReservation(r.booleanBoxes.globals[0]!);
         else {
           const binding = requireNativeStringLiteral(
             r.tx,
@@ -390,7 +514,9 @@ describe("authenticated ToObject catalog owner", () => {
       }, 120000);
       it("requires the independent canonical definition despite a valid allocator receipt", () => {
         expect(() => fillNativeObjectToObjectAlgorithms(r.tx, r.toObjectAlgorithms!)).toThrow(
-          role === "kernel" ? /noncanonical function definition/ : /noncanonical global initializer/,
+          role === "kernel" || role === "boolean-box"
+            ? /noncanonical function definition/
+            : /noncanonical global initializer/,
         );
         expect(r.tx.state).toBe("failed");
       });
@@ -424,7 +550,7 @@ describe("authenticated ToObject catalog owner", () => {
         expect(() => requireCompletedNativeObjectRealm(r.tx, r.toObjectAlgorithms!.realm)).toThrow(/incomplete/);
       });
     });
-    for (const index of [0, 1, 2])
+    for (const index of [0, 1, 2, 3])
       for (const role of ["algorithm", "lifted"] as const)
         describe(`substituted entry${index} ${role}`, () => {
           beforeEach(async () => {
