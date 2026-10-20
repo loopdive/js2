@@ -36,3 +36,19 @@ export {
   HARNESS_STUB_KEY,
 } from "../src/test262-harness-provider.ts";
 export type { HarnessProvider } from "../src/test262-harness-provider.ts";
+
+// Explicit Test262 whole-program requests use the genuine prepared transaction.
+// Omitted requests retain the existing compiler entry behavior.
+export {
+  compile,
+  compileMulti,
+  createIncrementalCompiler,
+  requiredPreparedEmission,
+  requiredPreparedFinalArtifactObservation,
+  requiredPreparedFailure,
+  requiredPreparedFrontendFailure,
+} from "../src/compiler/test262-prepared-entry.ts";
+export {
+  instantiatePreparedArtifact,
+  preparedRuntimeExecutionObservation,
+} from "../src/compiler/test262-prepared-runtime.ts";

@@ -350,6 +350,8 @@ type RecordMetadata = {
   compilerPathVerified?: boolean;
   executionCompilerPath?: string;
   preparedExecutionReport?: Readonly<Record<string, unknown>>;
+  frontendPathVerified?: boolean;
+  preparedFrontendReport?: Readonly<Record<string, unknown>>;
   compilerPathFailureKind?: string;
   imports?: string[];
   hostImportLeakClass?: string;
@@ -422,8 +424,9 @@ function metadataFromImports(imports: any[] | undefined, reachedTest: boolean): 
 
 const combinedWorkerMetadata = new WeakMap<object, RecordMetadata>();
 function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): RecordMetadata {
+  const owned = combinedWorkerMetadata.get(result) ?? test262CompilerResultMetadata(result);
   return {
-    ...(combinedWorkerMetadata.get(result) ?? test262CompilerResultMetadata(result)),
+    ...owned,
     ...(result.imports && result.imports.length > 0 ? { imports: result.imports } : {}),
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
@@ -431,7 +434,7 @@ function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): Re
     ...((result as { linkedFallbackReason?: string }).linkedFallbackReason
       ? { linkedFallbackReason: (result as { linkedFallbackReason?: string }).linkedFallbackReason }
       : {}),
-    reachedTest: result.reachedTest ?? reachedTestFallback,
+    reachedTest: owned.frontendPathVerified === true ? false : (result.reachedTest ?? reachedTestFallback),
   };
 }
 
@@ -466,6 +469,8 @@ function recordResult(
           compilerPathVerified: metadata?.compilerPathVerified === true,
           executionCompilerPath: metadata?.compilerPathVerified === true ? "ir" : "unknown",
           preparedExecutionReport: metadata?.preparedExecutionReport,
+          frontendPathVerified: metadata?.frontendPathVerified === true,
+          preparedFrontendReport: metadata?.preparedFrontendReport,
           compilerPathFailureKind: metadata?.compilerPathFailureKind,
         }
       : { compilerAttempts: metadata?.compilerAttempts ?? 0 }),
@@ -799,10 +804,24 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               compilerAttempts += Number(test262CompilerResultMetadata(result).compilerAttempts ?? 0);
               return result;
             };
-            const metadataFromWorkerResult = (result: TestResult, reached = false): RecordMetadata => ({
-              ...baseWorkerMetadata(result, reached),
-              compilerAttempts,
-            });
+            // Retain the primary variant through strict poison/timeout retries.
+            // A retried strict result alone cannot certify both executions.
+            let primaryVariantIdentity: RecordMetadata | undefined;
+            const metadataFromWorkerResult = (result: TestResult, reached = false): RecordMetadata => {
+              const current = baseWorkerMetadata(result, reached);
+              return {
+                ...current,
+                compilerAttempts,
+                ...(primaryVariantIdentity
+                  ? {
+                      compilerPathVerified:
+                        primaryVariantIdentity.compilerPathVerified === true && current.compilerPathVerified === true,
+                      frontendPathVerified:
+                        primaryVariantIdentity.frontendPathVerified === true && current.frontendPathVerified === true,
+                    }
+                  : {}),
+              };
+            };
             // Exact discovery intentionally realpaths each file to enforce
             // containment. Keep its canonical manifest identity for policy
             // rules, since a symlinked corpus root may erase `test262/` from
@@ -1288,6 +1307,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   isNegative: isNegative || false,
                   isRuntimeNegative: isRuntimeNegative || false,
                   expectedErrorType: meta.negative?.type,
+                  negativePhase: meta.negative?.phase,
                   originalHarness: true,
                   asyncTest: harnessAssembly.async,
                   wasmPath,
@@ -1340,6 +1360,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 linkedHarnessOpts.linkedHarnessHonestSource = harnessAssembly.strictRerun.source;
               }
               const primaryIdentity = baseWorkerMetadata(r);
+              primaryVariantIdentity = primaryIdentity;
               const strictResult = await runHarnessSource(compileSource, `${relPath} [strict rerun]`);
               if ((strictResult as { linkedFallback?: boolean }).linkedFallback) {
                 lineAdjustOffset = harnessAssembly.strictRerun.bodyLineOffset;
@@ -1357,6 +1378,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 ...strictIdentity,
                 compilerPathVerified:
                   primaryIdentity.compilerPathVerified === true && strictIdentity.compilerPathVerified === true,
+                frontendPathVerified:
+                  primaryIdentity.frontendPathVerified === true && strictIdentity.frontendPathVerified === true,
               });
             }
 
@@ -1400,6 +1423,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       isNegative: isNegative || false,
                       isRuntimeNegative: isRuntimeNegative || false,
                       expectedErrorType: meta.negative?.type,
+                      negativePhase: meta.negative?.phase,
                       originalHarness: true,
                       asyncTest: harnessAssembly.async,
                       wasmPath,
@@ -1488,6 +1512,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       isNegative: isNegative || false,
                       isRuntimeNegative: isRuntimeNegative || false,
                       expectedErrorType: meta.negative?.type,
+                      negativePhase: meta.negative?.phase,
                       originalHarness: true,
                       asyncTest: harnessAssembly.async,
                       wasmPath,
