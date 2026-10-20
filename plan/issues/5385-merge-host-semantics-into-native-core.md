@@ -2230,3 +2230,8 @@ S7-as final unfiltered catalog verification subsequently completed **70/70,
 zero skips, exit0**, including all20 ownership checks (not only50 runtime cases).
 The separate wrapping/prototype cohort remains pending; no full migration,
 foreign/source consumer or Linear/WASI result is inferred.
+
+The separate S7-as preservation run subsequently closed **104/104, zero skips,
+exit0** (36 primitive-prototype identity and68 native ToObject cases), with its
+own report/hash in the audit. Neither run changes the retained historical
+receipt failures, architecture debt or full migration/merge-readiness status.

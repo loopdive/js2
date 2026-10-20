@@ -55,13 +55,20 @@
     },
     "wrappingPreservation": {
       "report": ".tmp/s7as-wrapping-preservation.json",
+      "sha256": "5b4bc521beae6847f80f021f8c3c5ccac6834fcfc6f9920f442b1f029a437f48",
       "files": [
         "tests/issue-6979-native-to-object.test.ts",
         "tests/issue-6979-native-primitive-prototype-identities.test.ts"
       ],
-      "closed": false,
-      "runnerExit": null,
-      "status": "Running; separate cohort, no final result claimed."
+      "closed": true,
+      "runnerExit": 0,
+      "success": true,
+      "total": 104,
+      "passed": 104,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "perFile": { "primitivePrototypeIdentities": 36, "nativeToObject": 68 },
+      "durationSeconds": 1687.19
     }
   },
   "actualComponents": [

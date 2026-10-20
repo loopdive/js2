@@ -7064,3 +7064,15 @@ Working branch `codex/6979-s7c-ir-arms`, worktree
 `/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms`.
 The implementation checkpoint is signed commit2dfb8edd492c959fe141e51fa6d4f9d9933c8389;
 this verification update follows it without rewriting history.
+
+S7-as final preservation/publication update: the existing runner79497 has now
+closed **104/104 passed, zero skips, exit0**, two unfiltered files in1687.19s:
+36 primitive-prototype identity cases and68 native ToObject cases. Report SHA256
+5b4bc521beae6847f80f021f8c3c5ccac6834fcfc6f9920f442b1f029a437f48.
+This is separate from the70/70 catalog file, not a claim that the older188/202
+storage cohort or earlier symbolic receipt failures were fixed/retested.
+Both original final runners are closed; no test was killed/restarted. After
+the final normal pre-push checks, remove only the local exnref execArgv addition.
+Resume substantive work at the real remaining catalog algorithms and original
+source/code/body/allocation consumer joins, preserving full boundary/Linear/WASI
+and retirement acceptance. Both Markdown issues remain in progress.
