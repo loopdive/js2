@@ -15,13 +15,14 @@ on:
   # once more when Refresh Benchmarks finishes closes that window without
   # touching the `[skip ci]` semantics.
   workflow_run:
-    workflows: ["Refresh Benchmarks"]
+    workflows: ["Refresh Benchmarks", "Test262 Sharded"]
     types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read # Download separate completed IR measurements, never write results to main.
   pages: write
   id-token: write
 
@@ -44,7 +45,7 @@ jobs:
     # redeploying on it would just burn a build — only follow through on success.
     if: |
       github.repository == 'loopdive/js2' &&
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.name == 'Test262 Sharded')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -131,6 +132,79 @@ jobs:
           else
             echo "Warning: baselines repo not available — pages will build with stale/empty baseline."
           fi
+
+      - name: Fetch separate completed IR standalone measurements
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          // IR_MEASUREMENT_FETCH_START
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+          const api = path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8' }));
+          const repository = process.env.GITHUB_REPOSITORY;
+          const artifacts = [];
+          for (let page = 1; ; page++) {
+            const response = api(`repos/${repository}/actions/artifacts?name=test262-ir-standalone-measurement&per_page=100&page=${page}`);
+            artifacts.push(...response.artifacts);
+            if (response.artifacts.length < 100) break;
+          }
+          const runs = [];
+          let latest;
+          for (const artifact of artifacts.filter(a => !a.expired && a.workflow_run?.head_branch === 'main')
+              .sort((a, b) => b.id - a.id)) {
+            const execution = api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`);
+            if (execution.name !== 'Test262 Sharded' || execution.status !== 'completed' ||
+                execution.head_repository?.full_name !== repository) continue;
+            const jobs = [];
+            for (let page = 1; ; page++) {
+              const response = api(`repos/${repository}/actions/runs/${execution.id}/jobs?per_page=100&page=${page}`);
+              jobs.push(...response.jobs);
+              if (response.jobs.length < 100) break;
+            }
+            const producers = jobs.filter(job => job.name === 'merge complete IR standalone measurement');
+            if (producers.length !== 1 || producers[0].status !== 'completed' || producers[0].conclusion !== 'success') continue;
+            const directory = `.ir-measurement-download/${artifact.id}`;
+            mkdirSync(directory, { recursive: true });
+            execFileSync('gh', ['run', 'download', String(execution.id), '--repo', repository,
+              '--name', 'test262-ir-standalone-measurement', '--dir', directory]);
+            const report = JSON.parse(readFileSync(`${directory}/test262-standalone-ir-report.json`, 'utf8'));
+            if (report.compilerPath !== 'ir' || report.requestedCompilerPath !== 'ir' ||
+                report.mode?.target !== 'standalone' || !['measured', 'unavailable'].includes(report.measurementState) ||
+                (report.measurementState === 'measured' && report.attemptedCases <= 0) || report.baseline_sha !== execution.head_sha)
+              throw new Error('IR artifact does not match its actual source run');
+            const status = JSON.parse(readFileSync(`${directory}/test262-standalone-ir-status.json`, 'utf8'));
+            if (status.compilerPath !== 'ir' || status.requestedCompilerPath !== 'ir' ||
+                status.mode?.target !== 'standalone' || status.state !== report.measurementState ||
+                status.baseline_sha !== report.baseline_sha ||
+                (status.state === 'unavailable' && (typeof status.reason !== 'string' || !status.reason)))
+              throw new Error('IR status contradicts its actual requested result');
+            const { categories, ...metadata } = report;
+            const row = { ...metadata, runId: String(execution.id), sourceSha: execution.head_sha };
+            if (report.measurementState === 'measured') runs.push(row);
+            latest ||= { directory, report, row, status };
+          }
+          mkdirSync('benchmarks/results/ir/runs', { recursive: true });
+          if (latest) {
+            writeFileSync('benchmarks/results/test262-standalone-ir-status.json', JSON.stringify(latest.status));
+            if (latest.report.measurementState === 'measured') {
+              writeFileSync('benchmarks/results/test262-standalone-ir-report.json', JSON.stringify(latest.report));
+              const envelope = JSON.parse(readFileSync(`${latest.directory}/ir/test262-standalone-categories.json`, 'utf8'));
+              writeFileSync('benchmarks/results/ir/test262-standalone-categories.json', JSON.stringify(envelope));
+              writeFileSync('benchmarks/results/ir/runs/standalone-index.json', JSON.stringify({ ...latest.row, runs }));
+            } else {
+              rmSync('benchmarks/results/test262-standalone-ir-report.json', { force: true });
+            }
+          } else {
+            // Artifact retention is finite: never substitute legacy numbers or a stale IR score.
+            rmSync('benchmarks/results/test262-standalone-ir-report.json', { force: true });
+            writeFileSync('benchmarks/results/test262-standalone-ir-status.json', JSON.stringify({
+              schema: 'test262-compiler-path-status-v1', compilerPath: 'ir', requestedCompilerPath: 'ir', compilerPathVerified: false,
+              executionCompilerPath: 'unknown', measurementState: 'unavailable', state: 'unavailable',
+              mode: { target: 'standalone' }, reason: 'No retained completed IR standalone measurement is available.' }));
+          }
+          // IR_MEASUREMENT_FETCH_END
+          NODE
 
       - name: Setup Node
         uses: actions/setup-node@v6

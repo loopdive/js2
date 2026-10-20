@@ -11,13 +11,7 @@ export function parseTest262CompilerPath(raw) {
 }
 
 export function requireTest262CompilerPath(raw) {
-  const path = parseTest262CompilerPath(raw);
-  if (path === "ir") {
-    const error = new Error(IR_COMPILER_PATH_REASON);
-    error.code = IR_COMPILER_PATH_BLOCKER;
-    throw error;
-  }
-  return path;
+  return parseTest262CompilerPath(raw);
 }
 
 export function test262CompilerPathStatus(raw) {
@@ -27,8 +21,7 @@ export function test262CompilerPathStatus(raw) {
     compilerPath,
     compilerPathVerified: false,
     executionCompilerPath: "unknown",
-    state: compilerPath === "ir" ? "unavailable" : "requested",
-    ...(compilerPath === "ir" ? { reason: IR_COMPILER_PATH_REASON, blockerCode: IR_COMPILER_PATH_BLOCKER } : {}),
+    state: "requested",
   };
 }
 
@@ -36,53 +29,95 @@ export function test262RequestedCompilerPathMetadata(raw, target) {
   const compilerPath = requireTest262CompilerPath(raw);
   return {
     compilerPath,
+    ...(compilerPath === "ir" ? { requestedCompilerPath: "ir" } : {}),
     compilerPathVerified: false,
     executionCompilerPath: "unknown",
     // This describes configuration, never proves which executable units ran.
     // Actual target-profile.ts maps only linear to Linear; WASI stays WasmGC.
     configuredCompilerPath:
-      target === "linear"
-        ? "legacy"
-        : target === undefined || ["gc", "wasi", "standalone"].includes(target)
-          ? "hybrid"
-          : "unknown",
+      compilerPath === "ir"
+        ? "ir"
+        : target === "linear"
+          ? "legacy"
+          : target === undefined || ["gc", "wasi", "standalone"].includes(target)
+            ? "hybrid"
+            : "unknown",
   };
 }
 
+/** Serialized reports describe producer observations; this function cannot issue runtime ownership. */
 export function summarizeTest262CompilerPaths(records, requested) {
   if (requested !== undefined) requireTest262CompilerPath(requested);
-  const paths = new Set();
-  const configurations = new Set();
+  const paths = new Set(),
+    configurations = new Set();
+  let attemptedCases = 0,
+    skippedCases = 0,
+    compileErrorCases = 0,
+    compileTimeoutCases = 0,
+    verifiedExecutionCases = 0;
+  let infrastructure = false;
   for (const record of records) {
     const path = record.compilerPath ?? "unknown";
-    if (!["legacy", "ir", "unknown"].includes(path)) throw new Error(`Invalid result compilerPath: ${path}`);
     const execution = record.executionCompilerPath ?? "unknown";
-    if (!["legacy", "hybrid", "ir", "unknown"].includes(execution)) {
+    if (!["legacy", "ir", "unknown"].includes(path)) throw new Error(`Invalid result compilerPath: ${path}`);
+    if (!["legacy", "hybrid", "ir", "unknown"].includes(execution))
       throw new Error(`Invalid executionCompilerPath: ${execution}`);
-    }
-    // No adopted authentic IR execution contract exists yet. Row booleans,
-    // filenames and CLI requests cannot manufacture it, including negatives.
-    if (path === "ir" || record.executionCompilerPath === "ir" || record.compilerPathVerified === true) {
-      throw new Error(IR_COMPILER_PATH_REASON);
-    }
-    if (requested !== undefined && path !== "unknown" && path !== requested) {
+    if (requested !== undefined && path !== "unknown" && path !== requested)
       throw new Error("Compiler path request contradicts result rows");
+    const verified = record.compilerPathVerified === true;
+    if (verified || execution === "ir") {
+      const proof = record.preparedExecutionReport;
+      if (
+        path !== "ir" ||
+        execution !== "ir" ||
+        !verified ||
+        !proof ||
+        proof.schema !== "test262-prepared-execution-report-v1" ||
+        !Number.isSafeInteger(proof.jobId) ||
+        proof.jobId < 0 ||
+        !Number.isSafeInteger(proof.workerPid) ||
+        proof.workerPid <= 0 ||
+        !Number.isSafeInteger(proof.emittedUnits) ||
+        proof.emittedUnits <= 0 ||
+        !Number.isSafeInteger(proof.binaryBytes) ||
+        proof.binaryBytes <= 8 ||
+        !/^[a-f0-9]{64}$/.test(proof.sourceSha256 ?? "")
+      )
+        throw new Error("Missing same-job Prepared execution report");
     }
     paths.add(path);
     const configuration = record.configuredCompilerPath ?? "unknown";
-    if (!["legacy", "hybrid", "unknown"].includes(configuration)) {
+    if (!["legacy", "hybrid", "ir", "unknown"].includes(configuration))
       throw new Error(`Invalid configuredCompilerPath: ${configuration}`);
-    }
     configurations.add(configuration);
+    if (record.status === "skip") skippedCases++;
+    else if (verified) verifiedExecutionCases++;
+    if (record.status === "compile_error") compileErrorCases++;
+    if (record.status === "compile_timeout") compileTimeoutCases++;
+    const attempts = record.compilerAttempts ?? 0;
+    if (!Number.isSafeInteger(attempts) || attempts < 0) throw new Error("Invalid compiler attempt count");
+    attemptedCases += attempts;
+    infrastructure ||=
+      record.compilerPathFailureKind === "transport" || record.compilerPathFailureKind === "infrastructure";
   }
   const identity = (values) =>
     values.size === 1 ? values.values().next().value : values.size > 1 ? "mixed" : "unknown";
+  const unverifiedExecutionCases = records.length - skippedCases - verifiedExecutionCases;
+  const compilerPathVerified = verifiedExecutionCases > 0 && unverifiedExecutionCases === 0;
   return {
     compilerPath: identity(paths),
-    compilerPathVerified: false,
-    executionCompilerPath: "unknown",
+    compilerPathVerified,
+    executionCompilerPath: compilerPathVerified ? "ir" : "unknown",
     configuredCompilerPath: identity(configurations),
     ...(requested === undefined ? {} : { requestedCompilerPath: requested }),
+    measurementState: attemptedCases > 0 && !infrastructure ? "measured" : "unavailable",
+    attemptedCases,
+    completedCases: records.length,
+    skippedCases,
+    compileErrorCases,
+    compileTimeoutCases,
+    verifiedExecutionCases,
+    unverifiedExecutionCases,
   };
 }
 

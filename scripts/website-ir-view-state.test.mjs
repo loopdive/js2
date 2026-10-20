@@ -147,9 +147,84 @@ describe("URL-gated website IR data selection", () => {
     }
     const metadata = { compilerPath: "ir", compilerPathVerified: true, executionCompilerPath: "ir" };
     assert.throws(() => view.state.readData(metadata, "editions"));
-    // Format-only control: no scores or genuine compiler execution are represented by this empty envelope.
+    // A path label plus an empty format envelope is not measured data.
     const envelope = { ...metadata, editions: [] };
-    assert.equal(view.state.readData(envelope, "editions"), envelope.editions);
+    assert.throws(() => view.state.readData(envelope, "editions"));
+  });
+
+  it("accepts a synthetic measured all-compile-error envelope without claiming verified execution", () => {
+    const view = page("?ir=1");
+    // Synthetic reader-contract control only: not an actual compiler run,
+    // corpus result, published measurement or execution proof.
+    const rows = [
+      { status: "compile_error", execution: "unknown" },
+      { status: "compile_timeout", execution: "unknown" },
+      { status: "compile_error", execution: "unknown" },
+    ];
+    const envelope = {
+      compilerPath: "ir",
+      requestedCompilerPath: "ir",
+      measurementState: "measured",
+      compilerPathVerified: false,
+      executionCompilerPath: "unknown",
+      mode: { target: "standalone" },
+      attemptedCases: rows.length,
+      completedCases: rows.length,
+      skippedCases: rows.filter((row) => row.status === "skip").length,
+      compileErrorCases: rows.filter((row) => row.status === "compile_error").length,
+      compileTimeoutCases: rows.filter((row) => row.status === "compile_timeout").length,
+      verifiedExecutionCases: rows.filter((row) => row.execution === "ir").length,
+      unverifiedExecutionCases: rows.filter((row) => row.execution === "unknown").length,
+      editions: [],
+    };
+    assert.equal(envelope.verifiedExecutionCases, 0);
+    assert.equal(envelope.unverifiedExecutionCases, rows.length);
+    assert.equal(view.state.readData(envelope, "editions", "standalone"), envelope.editions);
+    assert.equal(view.state.readData(envelope, undefined, "standalone"), envelope);
+    assert.match(view.state.irMeasurementLabel(envelope, "standalone"), /verified IR executions 0/);
+    assert.throws(() => view.state.readData(envelope, "editions", "gc"));
+    assert.throws(() => view.state.readData({ ...envelope, attemptedCases: 0 }, "editions", "standalone"));
+    assert.throws(() => view.state.readData({ ...envelope, compilerPathVerified: true }, "editions", "standalone"));
+  });
+
+  it("accepts a synthetic measured verified envelope only with matching count and runtime identity", () => {
+    const view = page("?ir=1");
+    // A failed runtime case can still have a verified compiler path. These
+    // synthetic row identities establish counts only for this format control.
+    const rows = [
+      { status: "pass", execution: "ir" },
+      { status: "runtime_error", execution: "ir" },
+    ];
+    const envelope = {
+      compilerPath: "ir",
+      requestedCompilerPath: "ir",
+      measurementState: "measured",
+      compilerPathVerified: true,
+      executionCompilerPath: "ir",
+      mode: { target: "standalone" },
+      attemptedCases: rows.length,
+      completedCases: rows.length,
+      skippedCases: rows.filter((row) => row.status === "skip").length,
+      compileErrorCases: rows.filter((row) => row.status === "compile_error").length,
+      compileTimeoutCases: rows.filter((row) => row.status === "compile_timeout").length,
+      verifiedExecutionCases: rows.filter((row) => row.execution === "ir").length,
+      unverifiedExecutionCases: rows.filter((row) => row.execution === "unknown").length,
+      editions: [],
+    };
+    assert.equal(envelope.verifiedExecutionCases, rows.length);
+    assert.equal(envelope.unverifiedExecutionCases, 0);
+    assert.equal(view.state.readData(envelope, "editions", "standalone"), envelope.editions);
+    assert.equal(view.state.readData(envelope, undefined, "standalone"), envelope);
+    assert.throws(() => view.state.readData(envelope, "editions", "gc"));
+    assert.throws(() =>
+      view.state.readData({ ...envelope, requestedCompilerPath: "legacy" }, "editions", "standalone"),
+    );
+    assert.throws(() =>
+      view.state.readData({ ...envelope, verifiedExecutionCases: rows.length - 1 }, "editions", "standalone"),
+    );
+    assert.throws(() =>
+      view.state.readData({ ...envelope, executionCompilerPath: "unknown" }, "editions", "standalone"),
+    );
   });
 
   it("rejects request-only fetch data without reading historical report URLs", async () => {
