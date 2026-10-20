@@ -337,8 +337,31 @@ export function requireCompletedNativeValues(
     if (tx.physicalIndex(token) !== token.typeIndex) fail("stale primitive layout coordinate");
     same(token.object, expected, "altered primitive layout");
   }
-  tx.assertCompletedReservation(pack.globals.undefined);
-  for (const token of Object.values(pack.functions)) tx.assertCompletedReservation(token);
+  // A successful allocator receipt can describe a substituted definition.
+  // Re-derive this producer's actual bodies instead of trusting that receipt.
+  tx.assertCanonicalGlobalInitializer(pack.globals.undefined, buildUndefinedInitializer(pack.types.anyValue.typeIndex));
+  tx.assertCanonicalFunctionDefinition(pack.functions.boxNumber, {
+    locals: buildBoxNumberLocals(),
+    body: buildBoxNumberBody(pack.types.boxedNumber.typeIndex),
+  });
+  tx.assertCanonicalFunctionDefinition(pack.functions.unboxNumber, {
+    locals: buildUnboxNumberLocals(),
+    body: buildUnboxNumberBody(
+      pack.types.boxedNumber.typeIndex,
+      pack.types.boxedBoolean.typeIndex,
+      strings.kind === "native-string"
+        ? {
+            kind: "native-string",
+            anyStringTypeIdx: strings.stringPack.layout.anyStrTypeIdx,
+            toNumber: strings.scanner.toNumber.handle,
+          }
+        : { kind: "absent", evidence: "selected-primitive-only" },
+    ),
+  });
+  tx.assertCanonicalFunctionDefinition(pack.functions.isNumber, {
+    locals: [],
+    body: buildTypeofNumberBody(pack.types.boxedNumber.typeIndex),
+  });
   if (strings.kind === "native-string")
     requireCompletedNativeStringNumber(tx, strings.scanner, expectedRequirements, strings.stringPack);
   return pack;

@@ -1,0 +1,652 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ay: independent shared native primitive/error conversion definition custody",
+  "parent": "8a578ac8e37b74fe4f7e2039535b26569eb7993c",
+  "scope": "Correct shared backend completion authority for native value bodies/undefined, TypeError constructor/name, and transitive StringToNumber/decimal-power/copy-tree/UTF8-decoder/flatten/empty-string definitions. No filler or emitted-runtime algorithm change. Not full public Object/Number admission or a completed realm/Linear/WASI migration.",
+  "sourceSha256": {
+    "src/backend/wasmgc/resources/native-values.ts": "f80039b138604d3c1bb08eb79dfe58081817069a06b035e2c4e93017c9986ded",
+    "src/backend/wasmgc/resources/native-errors.ts": "fd8b611528751ad19fb5a56eacfe04e6e00c395117450ea8e1d12b18520d03b5",
+    "src/backend/wasmgc/resources/native-string-flatten.ts": "5a4249d67eed2d95a6f394e59df23799bc3844fbb1250e9e40846bb06f985776",
+    "src/backend/wasmgc/resources/native-string-number.ts": "fc1d7bdfa4bef5089812c9c636b6ce00416da55a3e43251a686eb32fdd596363",
+    "tests/issue-6979-native-leaf-completion.test.ts": "65e75b8b7314461245a4e73c22fcd419f4b21ad28227bc73925a4775360f76a3",
+    "tests/issue-6979-native-string-leaf-completion.test.ts": "cb2c901fac6dfcb2e6d77cace9b322afc441e879d6aff82efc8cd488d58b6b86",
+    "src/runtime/wasmgc/values/closure-layouts.ts": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+    "tests/fixtures/issue-3518-closure-state-preservation/receipt.json": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e",
+    "src/ir/program/errors.ts": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+    "src/ir/program/data.ts": "6010f226a79bef58d1f8a2a84761eca2fa479ca33d5ace96636c75fa58512b06",
+    "tests/fixtures/issue-3518-native-object-access-712.ts.txt": "c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9"
+  },
+  "reports": {
+    "s7ay-leaf-baseline": {
+      "sha256": "e629888ad25afbddaf39bfad7d0f9554b0633798893d6395cd8572c335fd4dfb",
+      "total": 14,
+      "passed": 2,
+      "failed": 12,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-leaf-completion.test.ts",
+          "passed": 2,
+          "failed": 12,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-leaf-valid-baseline": {
+      "sha256": "b896f2659335c9d5b186769aebac1a836ea8abaab790df7af6d4315e887d5559",
+      "total": 14,
+      "passed": 2,
+      "failed": 12,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-leaf-completion.test.ts",
+          "passed": 2,
+          "failed": 12,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-leaf-corrected": {
+      "sha256": "04164e3e7ef623bc1a674b064fe30fa8ed84e55b40f491b676f44a9d6a89a770",
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-6979-native-leaf-completion.test.ts",
+          "passed": 14,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-string-dependency-baseline": {
+      "sha256": "1fb50242c8e45b1e9aa9edaa969863eaf73ffee9af70844b692e6f425277976a",
+      "total": 23,
+      "passed": 10,
+      "failed": 13,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-string-leaf-completion.test.ts",
+          "passed": 10,
+          "failed": 13,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-leaves-corrected": {
+      "sha256": "db6825c78c5b4aa66ef61ecb731c15d17cdd9abd9822f11a7286fc39c9881da0",
+      "total": 37,
+      "passed": 37,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-6979-native-leaf-completion.test.ts",
+          "passed": 14,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-string-leaf-completion.test.ts",
+          "passed": 23,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-four-file-candidate": {
+      "sha256": "1c3f4159fc8150696694a20182a064ef722efbec9dddb17972dbdf058f7e9cec",
+      "total": 214,
+      "passed": 139,
+      "failed": 75,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "passed": 37,
+          "failed": 14,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-error-resources.test.ts",
+          "passed": 29,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-value-resources.test.ts",
+          "passed": 57,
+          "failed": 61,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-realm-base-algorithms.test.ts",
+          "passed": 16,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-six-file-candidate": {
+      "sha256": "cf7e5f59179affac834b1d2c3178bf76d5d8e6de621495f54c5b9709ec1007c9",
+      "total": 398,
+      "passed": 323,
+      "failed": 75,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "passed": 37,
+          "failed": 14,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-error-resources.test.ts",
+          "passed": 29,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-flatten-resources.test.ts",
+          "passed": 61,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-number-resources.test.ts",
+          "passed": 123,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-value-resources.test.ts",
+          "passed": 57,
+          "failed": 61,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-realm-base-algorithms.test.ts",
+          "passed": 16,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-public-owner-preservation": {
+      "sha256": "85938f9a1f3d82e32ba9695d0d5fc94179661815acad67fbccd763e965094104",
+      "total": 38,
+      "passed": 38,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-6979-native-integrity-population-custody.test.ts",
+          "passed": 2,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-integrity-population.test.ts",
+          "passed": 12,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-object-integrity.test.ts",
+          "passed": 24,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-linear": {
+      "sha256": "087e05324e41a621f2af0dc99588ba250945ea3fc722ee08f96e5779b5ca0ea2",
+      "total": 17,
+      "passed": 17,
+      "failed": 0,
+      "pending": 0,
+      "success": true,
+      "files": [
+        {
+          "file": "issue-3525-prepared-linear-early-return.test.ts",
+          "passed": 17,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    }
+  },
+  "parentReports": {
+    "s7ay-four-file-parent": {
+      "sha256": "d62073712f2bc1221193db28e237de7e470f0eaea7500aa1250b44869fe00fd8",
+      "total": 214,
+      "passed": 139,
+      "failed": 75,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "passed": 37,
+          "failed": 14,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-error-resources.test.ts",
+          "passed": 29,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-value-resources.test.ts",
+          "passed": 57,
+          "failed": 61,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-realm-base-algorithms.test.ts",
+          "passed": 16,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-six-file-parent": {
+      "sha256": "71e7ed3c45fb52d2d2cd30ae1b8c34d9c840f404d9f9ff55ec083b88d13c9d51",
+      "total": 398,
+      "passed": 323,
+      "failed": 75,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-3518-native-object-storage-resources.test.ts",
+          "passed": 37,
+          "failed": 14,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-error-resources.test.ts",
+          "passed": 29,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-flatten-resources.test.ts",
+          "passed": 61,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-string-number-resources.test.ts",
+          "passed": 123,
+          "failed": 0,
+          "pending": 0
+        },
+        {
+          "file": "issue-3518-native-value-resources.test.ts",
+          "passed": 57,
+          "failed": 61,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-realm-base-algorithms.test.ts",
+          "passed": 16,
+          "failed": 0,
+          "pending": 0
+        }
+      ]
+    },
+    "s7ay-leaves-parent-full": {
+      "sha256": "f0cc6823cddf3095854d56af775076265d790ee6c7c1c5444e14824e17746d53",
+      "total": 37,
+      "passed": 4,
+      "failed": 33,
+      "pending": 0,
+      "success": false,
+      "files": [
+        {
+          "file": "issue-6979-native-leaf-completion.test.ts",
+          "passed": 2,
+          "failed": 12,
+          "pending": 0
+        },
+        {
+          "file": "issue-6979-native-string-leaf-completion.test.ts",
+          "passed": 2,
+          "failed": 21,
+          "pending": 0
+        }
+      ]
+    }
+  },
+  "preservationComparison": {
+    "rows": 398,
+    "assertionIdentityAndOrderEqual": true,
+    "statusAndFirstErrorEqual": true,
+    "changes": [],
+    "rawStacksNotNormalizedOrClaimedEqual": true
+  },
+  "emittedComparison": {
+    "parent": "8a578ac8e37b74fe4f7e2039535b26569eb7993c",
+    "fillerSourcesCompared": 4,
+    "exactFillerSources": 4,
+    "reports": [
+      {
+        "native": false,
+        "displaced": false,
+        "decoded": false,
+        "bytes": 667,
+        "sha256": "b292909b0326bd4383e7d075acf17e59751c0f3e3ce4e26d80377c3b68adf9ef",
+        "imports": 0
+      },
+      {
+        "native": false,
+        "displaced": true,
+        "decoded": false,
+        "bytes": 683,
+        "sha256": "f9ce5cf6172974ec7bd2a1409004a89b8cbf624366f55b4777814affa0a8fcc9",
+        "imports": 0
+      },
+      {
+        "native": false,
+        "displaced": true,
+        "decoded": true,
+        "bytes": 683,
+        "sha256": "f9ce5cf6172974ec7bd2a1409004a89b8cbf624366f55b4777814affa0a8fcc9",
+        "imports": 0
+      },
+      {
+        "native": true,
+        "displaced": false,
+        "decoded": false,
+        "bytes": 5910,
+        "sha256": "6ebadc5952d40b13ed6a259a1fb50e284d439f57498a56d5141886b4d23e3a1d",
+        "imports": 0
+      },
+      {
+        "native": true,
+        "displaced": true,
+        "decoded": false,
+        "bytes": 6355,
+        "sha256": "2a9ca3ea5566a8df96f63c28b48584a33472d9c1a53a46ed2696f87236726b01",
+        "imports": 0
+      },
+      {
+        "native": true,
+        "displaced": true,
+        "decoded": true,
+        "bytes": 6355,
+        "sha256": "2a9ca3ea5566a8df96f63c28b48584a33472d9c1a53a46ed2696f87236726b01",
+        "imports": 0
+      }
+    ],
+    "fullHistoricalGcBytesCertified": false,
+    "parentReportSha256": "9ac54c291039feb8120bc3a74cfeee9e4ef378ef86c611946bdb63a2da379316",
+    "candidateReportSha256": "9ac54c291039feb8120bc3a74cfeee9e4ef378ef86c611946bdb63a2da379316",
+    "equal": 6
+  },
+  "gateSha256": {
+    ".tmp/s7ay-typecheck-second.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7ay-lint-second.log": "2dc9c1f413db698b6fe6d1a15b0731b930ac1760f3238e3810912e870e7d31be",
+    ".tmp/s7ay-loc.log": "638c949a8409ca7c1303cde62b25493d401182b74780bd52218d518bc5a30c1e",
+    ".tmp/s7ay-functions.log": "c769225a069454f36b583963ee9a7055a93318bddc571c5c6847500bb8c72076",
+    ".tmp/s7ay-inventory.json": "96dfd7b8c409fcec29a371d1f4b052414d69b61a92b1b2b3e9f2d2149231239d",
+    ".tmp/s7ay-layering.log": "cbbdbd4d531f68c7e942601605aa7d692a9f4eea68d5811a2da3339a4c1998df",
+    ".tmp/s7ay-flat.log": "79049ac96f5154b630c1549f619889ba8acd810b409837617b82fe92aa04a719",
+    ".tmp/s7ay-coercion.log": "f2467c0fff402c0f13810ec9a0954efdae80ec3e5b50fb2d8b3f06ce231d7c4c",
+    ".tmp/s7ay-oracle.log": "031546c532af36cd91146eb9710a7fb4c994c737a2a2a9ae9e60ae36d14212b7",
+    ".tmp/s7ay-import-policy.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7ay-issues.log": "ec95a07d4b3b4682d4819175644e67a778fc1698be112c770eeb59be6e353129",
+    ".tmp/s7ay-import-cycles.json": "7cb38d6a4c2906c8f7ecfd7b065a34d02208c536eec02d4c75cdd0dfed70df5f",
+    ".tmp/s7ay-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7ay-dead-exports.log": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2",
+    ".tmp/s7ay-format.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    ".tmp/s7ay-emitted-parent.json": "9ac54c291039feb8120bc3a74cfeee9e4ef378ef86c611946bdb63a2da379316",
+    ".tmp/s7ay-emitted-candidate.json": "9ac54c291039feb8120bc3a74cfeee9e4ef378ef86c611946bdb63a2da379316",
+    ".tmp/s7ay-public-catalog-probe.json": "c5272fdfe3652cbb2a36cafc0469ed226af3ab632076e5aa716c3cd0e5418216",
+    ".tmp/s7ay-dynamic-program-probe.json": "aa187ddb30ac3199f447348bb3e8bc3058189fc0d91e0b56ac50eed7d3aba4c4",
+    ".tmp/s7ay-unary-program-probe.json": "f903090ed4cf75d74bcbb6717cba26f2a05e1600f3de4e734a32650938b6b555"
+  },
+  "publicNumberProbe": {
+    "backend": "wasmgc",
+    "target": "standalone",
+    "rows": [
+      {
+        "name": "dynamic-native-string",
+        "decoded": false,
+        "kind": "refused",
+        "message": "Error: invariant: runtime feature js.number.from-value has no provider"
+      },
+      {
+        "name": "dynamic-native-boolean",
+        "decoded": false,
+        "kind": "ran",
+        "imports": [],
+        "functions": [],
+        "results": [
+          {
+            "input": 0,
+            "value": 0,
+            "negativeZero": false
+          },
+          {
+            "input": 1,
+            "value": 1,
+            "negativeZero": false
+          }
+        ]
+      },
+      {
+        "name": "dynamic-native-string",
+        "decoded": true,
+        "kind": "refused",
+        "message": "Error: invariant: runtime feature js.number.from-value has no provider"
+      },
+      {
+        "name": "dynamic-native-boolean",
+        "decoded": true,
+        "kind": "ran",
+        "imports": [],
+        "functions": [],
+        "results": [
+          {
+            "input": 0,
+            "value": 0,
+            "negativeZero": false
+          },
+          {
+            "input": 1,
+            "value": 1,
+            "negativeZero": false
+          }
+        ]
+      }
+    ]
+  },
+  "publicNumberProbeMatchesParent": true,
+  "originalPublicObjectProbe": {
+    "backend": "wasmgc",
+    "target": "standalone",
+    "rows": [
+      {
+        "name": "number-control",
+        "phase": "ran",
+        "result": 4,
+        "imports": 0
+      },
+      {
+        "name": "object-is-numeric",
+        "phase": "prepare-refused",
+        "message": "Error: unsupported: ir/from-ast: identifier \"Object\" is not in scope in run"
+      },
+      {
+        "name": "object-is-object",
+        "phase": "prepare-refused",
+        "message": "Error: unsupported: ir/from-ast: identifier \"Object\" is not in scope in run"
+      }
+    ]
+  },
+  "unaryProbe": {
+    "backend": "wasmgc",
+    "target": "standalone",
+    "rows": [
+      {
+        "decoded": false,
+        "kind": "not-accepted",
+        "failure": {
+          "kind": "unsupported",
+          "code": "body-shape-rejected",
+          "stage": "build",
+          "detail": "wasmgc:standalone physical setup cannot be materialized (1 gap): body run has no accepted host async dynamic carrier",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "location": {
+            "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+            "line": 1,
+            "column": 1,
+            "declarationStart": 0,
+            "declarationEnd": 81
+          },
+          "sourceFile": "entry.ts"
+        }
+      },
+      {
+        "decoded": true,
+        "kind": "not-accepted",
+        "failure": {
+          "kind": "unsupported",
+          "code": "body-shape-rejected",
+          "stage": "build",
+          "detail": "wasmgc:standalone physical setup cannot be materialized (1 gap): body run has no accepted host async dynamic carrier",
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "location": {
+            "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+            "line": 1,
+            "column": 1,
+            "declarationStart": 0,
+            "declarationEnd": 81
+          },
+          "sourceFile": "entry.ts"
+        }
+      }
+    ]
+  },
+  "inventory": {
+    "modules": 2000,
+    "inventoryValid": true,
+    "architectureComplete": false,
+    "unknownEdges": 4
+  },
+  "importPolicy": {
+    "probes": 33,
+    "imports": 437,
+    "regimeGapImports": 0,
+    "unknownImports": 0
+  },
+  "cycles": {
+    "largestSccSize": 712,
+    "sccCountOver1": 4,
+    "twoWayDirEdges": {
+      "backend->ir": 117,
+      "checker->ir": 1,
+      "codegen->ir": 301,
+      "codegen-linear->ir": 9,
+      "compiler->deadcode-elide.ts": 1,
+      "deadcode-elide.ts->compiler": 1,
+      "frontend->ir": 17,
+      "ir->backend": 25,
+      "ir->checker": 8,
+      "ir->codegen": 75,
+      "ir->codegen-linear": 4,
+      "ir->frontend": 10,
+      "runtime->timer-capability-contract.ts": 1,
+      "runtime-eval.ts->runtime.ts": 1,
+      "runtime.ts->runtime-eval.ts": 1,
+      "timer-capability-contract.ts->runtime": 1
+    }
+  },
+  "reportMeaning": {
+    "s7ay-leaf-baseline": "Initial14:2genuine pass,12substituted definitions accepted. Undefined negative initially retained only the tag field: not used as Wasm-valid evidence.",
+    "s7ay-leaf-valid-baseline": "Corrected undefined negative retains all five real fields and changes only tag. Still2/14pass,12fail,exit1.",
+    "s7ay-leaf-corrected": "14/14after shared values/error checks, before conversion-dependency hardening.",
+    "s7ay-string-dependency-baseline": "23cases:10pass,13bad conversion-dependency definitions wrongly accepted,exit1; owned native-string value substitutions already reject.",
+    "s7ay-leaves-corrected": "Final37/37,zero skips,exit0. Four genuine controls including executed UTF16/UTF8 conversions and negative zero;33 receipt-valid substitutes reject.",
+    "s7ay-leaves-parent-full": "Identical copied test files on unchanged parent production source:4genuine pass,33bad substitutes accepted,exit1. Baseline copy SHA values match final test hashes; temporary copies removed only after closure; reports retained.",
+    "s7ay-four-file-candidate": "Intermediate139/214pass,75fail; exact same identities/statuses/first errors as parent. Not green.",
+    "s7ay-six-file-candidate": "Final323/398pass,75fail,zero pending,exit1; all398 identities/order/statuses/first errors match parent. Storage14 and value61 historical donor/custody failures remain unwaived. No raw stack normalization or whole-trace equality claim.",
+    "s7ay-public-owner-preservation": "38/38,zero skips,exit0,500.84s. Actual catalog-owner/component cases, NOT public source builtin admission. Same two emitted populated observer binaries as S7-ax. All previous35s and setup limits unchanged.",
+    "s7ay-linear": "17/17,zero skips,exit0. Existing prepared/legacy WasmGC and Linear early-return fixtures only; no complete Linear/WASI or general builtin parity claim."
+  },
+  "harness": {
+    "node": "24.4.1",
+    "workerFlag": "--experimental-wasm-exnref",
+    "localFlagCommitted": false,
+    "fileForks": "VITEST_MAX_FORKS=1 set explicitly per run; parent/candidate processes overlapped during comparative checks. No claim of serial system-wide execution.",
+    "timeoutsRaised": false,
+    "assertionsRemoved": false,
+    "compilerPath": "Genuine native resource owners and prepared-program probes; no new old direct-AST features or host IR paths."
+  },
+  "semantics": {
+    "fillFunctionsChanged": 0,
+    "newWasmImports": 0,
+    "newHostSemanticFallback": false,
+    "recursiveBoundaryCopying": false,
+    "fullHistoricalGcBytesCertified": false,
+    "wholeRealmCompleted": false,
+    "numberFromValueProviderImplemented": false,
+    "fullLiteralPackCanonicalizationClaimed": false
+  },
+  "architecture": {
+    "modules": 2000,
+    "inventoryValid": true,
+    "architectureComplete": false,
+    "unknownEdges": 4,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cycleGateExit": 1,
+    "sameRedDirections": ["backend->ir115→117", "codegen->ir298→301", "ir->codegen74→75", "ir->frontend7→10"],
+    "waiverAdded": false,
+    "strictClosureUnknownImports": ["src/optimize.ts:412", "src/runtime/platform-capability-adapter.ts:151"],
+    "preservationOnlyFull": 6,
+    "preservationOnlyCut": 6,
+    "retirementCertified": false
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "regimeGapImports": 0,
+    "unknownImports": 0,
+    "ceiling": 452,
+    "approvedFourAdapterIncreaseUsed": false
+  },
+  "productionFindings": [
+    "Full Number(value) feature js.number.from-value has no provider for either dynamic native-string request; exact parent behavior. Contract explicitly forbids aliasing primitive unboxing because ToPrimitive effects, Symbol errors and BigInt conversion are required.",
+    "Boolean Number requests execute via static primitive lowering and list no scanner/unbox helpers; Number(4) is not a dynamic-conversion witness.",
+    "Dynamic unary string requests are not accepted: physical setup lacks an accepted host async dynamic carrier. No success credit; no guard/host override installed.",
+    "Object.is source requests still fail: Object identifier is not in scope. Actual full-catalog resources are not yet consumed by production public binding/emission.",
+    "Existing Function.prototype/ThrowTypeError owners already exist and must be reused, not reimplemented. Full mixed Get/Call/catalog/source integration must precede activating general Number.",
+    "Original293-byte public fixture hash remains exact; the historical nine-row public suite was not rerun here. General literal-pack and other transitive completion work is not certified by these four owned definition checks."
+  ],
+  "remaining": [
+    "Full public builtin/catalog consumption and original source/realm/code/body/allocation joins",
+    "Full mixed scalar Get/Call/IsCallable, bound/source/live-foreign identity and abrupt-completion preservation",
+    "Real full Number provider and remaining Object/Function catalog/constructors including Function/CreateDynamicFunction; no primitive alias or observer-trap admission",
+    "General values/receivers/arguments/results/undefined/defaults and per-instance identity-backed boundary references without copying",
+    "Complete Linear/WASI, named generator-buffer/SharedArrayBuffer/Temporal gaps and runtime/host-arm retirement",
+    "Strict architecture/closure, historical custody failures, original public fixture/suite, full historical GC-byte/Test262/npm/accelerator acceptance",
+    "Unmerged prerequisite PR6701, draft/conflicted PR6762 and reviewed integration"
+  ],
+  "fullGoalComplete": false
+}

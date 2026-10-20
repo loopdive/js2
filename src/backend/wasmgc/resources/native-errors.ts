@@ -10,9 +10,11 @@ import { buildErrorConstructorBody } from "../../../runtime/wasmgc/values/error-
 import {
   requireNativeStringLiteral,
   requireCompletedNativeStringLiterals,
+  nativeStringLiteralReservationInventory,
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
+import { planNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 
 export interface NativeErrorDependencies {
   readonly strings: NativeStringLiteralReservations;
@@ -103,8 +105,33 @@ export function requireCompletedNativeErrors(
 ): NativeErrorReservations {
   requireNativeErrorReservations(tx, pack, expectedRequirements, expectedDependencies);
   if (!owners.get(pack)!.filled) throw new Error("native errors: incomplete producer; missing canonical fill");
-  tx.assertCompletedReservation(pack.newTypeError);
   requireCompletedNativeStringLiterals(tx, expectedDependencies.strings);
+  const name = requireNativeStringLiteral(tx, expectedDependencies.strings, "TypeError");
+  const inventory = nativeStringLiteralReservationInventory(tx, expectedDependencies.strings);
+  const selected = inventory.requests.find((row) => row.binding === name);
+  const plan = ([undefined, "ascii", "wtf16", "utf8-guaranteed"] as const)
+    .map((encoding) =>
+      planNativeStringLiteral(
+        expectedDependencies.strings.layout,
+        inventory.typePack.utf8Storage,
+        "TypeError",
+        encoding,
+      ),
+    )
+    .find((candidate) => candidate.key === selected?.cacheKey);
+  // The fixed nine-code-unit name always has a short initializer; inability to
+  // identify its genuine encoding is a refusal, never an empty completion proof.
+  if (name.kind !== "global" || plan?.kind !== "global")
+    throw new Error("native errors: missing canonical short TypeError name");
+  tx.assertCanonicalGlobalInitializer(name.global, plan.init);
+  tx.assertCanonicalFunctionDefinition(pack.newTypeError, {
+    locals: [],
+    body: buildErrorConstructorBody(pack.type.typeIndex, expectedDependencies.typeErrorTag, 1, {
+      kind: "global",
+      index: tx.physicalIndex(name.global),
+      representation: "gc",
+    }),
+  });
   return pack;
 }
 

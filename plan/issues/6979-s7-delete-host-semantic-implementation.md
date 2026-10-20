@@ -7529,3 +7529,108 @@ Call/Get and identity-backed boundary behavior without copying, complete Linear/
 WASI and named gaps, then prove retirement/conformance/architecture acceptance.
 The draft PR remains conflicted; prerequisite PR6701 is OPEN/MERGEABLE/BEHIND,
 not merged. No merge or full migration completion is claimed.
+
+#### S7-ay shared primitive/error completion custody (in progress)
+
+Fresh8a578ac8e3 confirms Function.prototype/ThrowTypeError already have real base
+algorithm and lifted-Call owners; do not reimplement them from the earlier
+handoff's shorthand. They remain unjoined in the latest mixed/integrity observer,
+and none of the public realm reservation/population producers is yet consumed by
+the production prepared-program emitter. Full public integration remains required.
+
+Before composing more catalog consumers, close a shared authority gap:
+requireCompletedNativeValues currently checks only allocator receipts for its
+undefined global and three numeric functions; requireCompletedNativeErrors does
+the same for the constructor and delegates its name leaf to receipt-only literal
+completion. A receipt-valid alternative body can therefore be accepted as
+semantic completion. Add fresh genuine-owner adversarial tests before changing
+production, retain their failing baseline, and independently derive the expected
+definitions at these shared owners. Preserve emitted definitions exactly; do
+not change primitive/error semantics, historical custody receipts or old output.
+
+Cover primitive-only and native-string value dependencies, original/decoded and
+displaced layouts, all three functions/undefined, TypeError constructor/name
+leaf, genuine completion and downstream base/catalog refusal. Keep caller/header/
+phase identity checks, no caller-selected bodies/handles, and no new imports.
+Check affected consumers rather than normalizing earlier rejection as a pass;
+retain prior failed runs/denominators and unchanged deadlines. Then continue
+actual catalog/population/public source/realm/code/body/allocation integration,
+mixed live-foreign Call/Get and identity without copying, complete Linear/WASI,
+remaining constructors/named gaps and full retirement/conformance/architecture
+acceptance. This shared correction is a prerequisite, not completion of the goal.
+
+Initial falsification closes14cases:2genuine controls pass,12receipt-valid
+substitutions are incorrectly accepted (exit1); correcting the undefined negative
+to retain all five real fields gives the same2/14 baseline. After independent
+owned-definition checks,14/14pass. Four affected files compare exactly against
+published8a578ac8e3:both139/214pass,75fail,zero pending,exit1. Every assertion row,
+status and first error text matches; storage14 and value61 historical donor/
+whole-source custody failures remain failures,not waived or repinned. Typecheck
+and lint pass. This is not a green214-case preservation result.
+
+The native-string branch also depends transitively on receipt-only StringToNumber
+and flatten completion. Extend the same independent checks to their actual
+scanner/power-table,copy-tree/UTF8 decoder/flatten and UTF16-empty definitions,
+with genuine original/displaced/decoded and executable conversion controls.
+Preserve all emitted bodies, reject receipt-valid dependency substitutes at the
+actual downstream value filler, and keep scope/phase/ownership distinct from full
+public realm completion. No source ABI normalization or generic host conversion.
+
+S7-ay now independently derives the actual native value/undefined and TypeError
+constructor/name definitions, plus the transitive StringToNumber scanner/decimal
+table and copy-tree/UTF8-decoder/flatten/UTF16-empty definitions. All four filler
+functions are text-identical to8a578ac8e3; generated algorithms were not changed.
+The same37 adversarial/genuine tests on the unchanged parent give4pass/33fail
+(invalid substitutions accepted), while the candidate gives37/37,zero skips,
+exit0. Parent copies had exact matching SHA256s and were removed only after
+their runner closed; original new tests and all reports remain retained.
+
+Final six-file A/B is323/398pass,75fail,zero pending,exit1 on BOTH snapshots.
+All398 assertion identities/order/statuses/first error lines match. Raw stack
+traces are retained,not normalized or claimed equal across worktree locations.
+Per-file passing/total: storage37/51,string/error29/29,flatten61/61,scanner123/123,
+values57/118,base algorithms16/16. These75 historical failures remain unwaived;
+this is not a green398-case suite or a source receipt repin.
+
+Six primitive-only/native-string × original/displaced/fresh-decoded executable
+components emit exact parent bytes with zero imports, including native UTF8/
+UTF16 conversion,negative zero and actual TypeError tag. This finite component
+comparison is not full historical GC-byte certification. The actual populated
+integrity/owner files pass38/38,zero skips,exit0,500.84s,with both previous
+S7-ax observer binaries unchanged. Explicit VITEST_MAX_FORKS=1 selects serial
+files within each run; other A/B processes overlapped. No system-wide serial
+timing claim or deadline relaxation. Existing prepared/legacy WasmGC/Linear
+early-return controls pass17/17; complete Linear/WASI remains required.
+
+Fresh public probes prevent a false integration claim. Number(4) still runs4
+with zero imports, but dynamic Number(condition ? '-0' : '43') refuses with
+js.number.from-value lacking a provider for both original/decoded requests.
+The exact parent probe matches; no decoded/runtime credit is earned for refused
+requests. Dynamic Boolean Number runs through its primitive lowering and has no
+scanner/unbox helpers, so it is not a dynamic-conversion witness. Dynamic unary
+string conversion is also not accepted: physical setup has no accepted host
+async dynamic carrier. Object.is still refuses because Object is not in scope.
+Do not solve any of these by turning on host carriers or aliasing full Number
+to primitive unboxing: the existing number-conversion-callable contract requires
+observable ToPrimitive/Get/Call ordering, Symbol errors and BigInt conversion.
+
+Continue the existing full public Number graph plan in
+[IR-only default and direct front-end retirement](3518-ir-only-default-and-direct-frontend-retirement.md),
+including its original fixture/suite and real mixed/source/catalog prerequisites;
+do not replace it with a string-only provider or private observer success.
+The original293-byte fixture remains c0550b99175c0eb61afa7d5d110a287f3fe90e9fc8e581c6d58a19fe0a971ba9;
+the retained nine-row public suite was NOT rerun here. Existing base algorithms
+must be reused, not reimplemented. Complete Get/Call/source identity and remaining
+catalog/constructors, the real Number provider/public bindings and original
+realm/source/code/body/allocation joins; general values/defaults/live foreign
+identity without copying, complete Linear/WASI,named gaps,all remaining resource
+closure,retirement/historical/conformance/architecture/integration stay required.
+
+Type/lint/format/source/issue gates pass within scope; wholePR422src,net−11843LOC,
+only two old function grants. Inventory2000 is valid but architecture incomplete;
+same four cycle directions/SCC712/four components and two strict-closure unknown
+nonliteral imports remain unwaived. Fresh imports437/452 across unchanged33
+probes,unknown0/regimeGap0; approved four-adapter increase unused. Pinned closure
+layout/receipt and IR errors/data files remain exact. No private component or
+receipt/canonical-definition check here certifies the full public migration.
+[Exact S7-ay source/report/gate hashes and required continuation](../audit/6979-native-leaf-custody-20261020.json).

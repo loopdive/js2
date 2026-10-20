@@ -203,5 +203,17 @@ export function requireCompletedNativeStringNumber(
   if (!owner.filled) fail("scanner canonical fill is incomplete");
   requireCompletedNativeStringFlatten(tx, owner.flattenPack, expectedStringPack);
   validateTokens(tx, pack);
+  tx.assertCanonicalGlobalInitializer(pack.powerGlobal, buildDecimalPowerArrayInitializer(pack.powerArray.typeIndex));
+  const layout = owner.stringPack.layout;
+  tx.assertCanonicalFunctionDefinition(pack.toNumber, {
+    locals: buildStringToNumberLocals(layout),
+    body: [
+      ...buildStringToNumberPrelude(layout, owner.flattenPack.flatten.handle),
+      ...buildStringToNumberResult({
+        arrayTypeIndex: pack.powerArray.typeIndex,
+        globalIndex: tx.physicalIndex(pack.powerGlobal),
+      }),
+    ],
+  });
   return pack;
 }

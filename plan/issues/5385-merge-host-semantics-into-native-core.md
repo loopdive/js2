@@ -2367,3 +2367,27 @@ ratchets pass within scope; existing cycle/strict-closure failures remain.
 [Exact source/report/gate evidence and continuation](../audit/6979-native-integrity-population-20261020.json).
 Full public/source/foreign, complete Linear/WASI and retirement acceptance remain
 required; both issues remain in-progress and the PR remains a draft checkpoint.
+
+#### S7-ay shared native primitive/error definition custody
+
+The shared value/error and StringToNumber/flatten owners now independently check
+their real definitions rather than trusting successful allocator receipts.
+Identical tests on parent8a578ac8e3 accept33 invalid substitutions (4/37pass);
+candidate37/37pass,with all4 genuine controls retained. Four fillers are unchanged;
+six executable primitive/native-string profiles have exact parent bytes/import0.
+Existing catalog/integrity-owner files38/38 and prepared Linear controls17/17 pass.
+
+The six-file398-case comparison is NOT green:both323pass/75fail,exact same
+assertion rows/statuses/first errors. Historical value61/storage14 custody failures
+remain unwaived. The full dynamic Number provider and Object public binding
+remain absent: fresh parent/candidate probes match those actual refusals. Numeric/
+Boolean primitive fast paths do not prove full Number's effectful conversion.
+No primitive-unbox alias,host fallback or narrower public-realm shortcut was added.
+
+The continuation remains real public catalog/source/mixed Get/Call/constructors/
+Number integration,full values/defaults/live foreign identity without copying,
+complete Linear/WASI,named gaps and retirement/conformance/architecture acceptance.
+Both issues remain in-progress; see
+[Exact shared native-leaf evidence and handoff](../audit/6979-native-leaf-custody-20261020.json)
+and the detailed latest section under
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).

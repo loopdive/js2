@@ -18,6 +18,7 @@ import {
   buildStringFlattenDefinition,
 } from "../../../runtime/wasmgc/values/string-flatten-bodies.js";
 import { buildStringUtf8ToFlatDefinition } from "../../../runtime/wasmgc/values/string-utf8-decode-bodies.js";
+import { planNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 import type {
   NativeResourceRecipe,
   NativeStringValueDeclaration,
@@ -183,5 +184,27 @@ export function requireCompletedNativeStringFlatten(
   if (owner.stringPack !== expectedStringPack) fail("foreign string dependency");
   if (!owner.filled) fail("missing canonical fill");
   requireCompletedNativeStringLiterals(tx, owner.stringPack);
+  const layout = owner.stringPack.layout;
+  const inventory = nativeStringLiteralReservationInventory(tx, owner.stringPack);
+  const empty = planNativeStringLiteral(layout, inventory.typePack.utf8Storage, "", "wtf16");
+  if (empty.kind !== "global") fail("missing canonical UTF-16 empty initializer");
+  tx.assertCanonicalGlobalInitializer(pack.emptyLiteral, empty.init);
+  tx.assertCanonicalFunctionDefinition(
+    pack.copyTree,
+    buildStringCopyTreeDefinition(
+      layout,
+      pack.worklist.typeIndex,
+      pack.utf8Decoder ? { kind: "present", handle: pack.utf8Decoder.handle } : { kind: "absent" },
+    ),
+  );
+  if (pack.utf8Decoder) tx.assertCanonicalFunctionDefinition(pack.utf8Decoder, buildStringUtf8ToFlatDefinition(layout));
+  tx.assertCanonicalFunctionDefinition(
+    pack.flatten,
+    buildStringFlattenDefinition(layout, {
+      copyTree: pack.copyTree.handle,
+      emptyLiteralGlobalIndex: tx.physicalIndex(pack.emptyLiteral),
+      utf8Decoder: pack.utf8Decoder ? { kind: "present", handle: pack.utf8Decoder.handle } : { kind: "absent" },
+    }),
+  );
   return pack;
 }
