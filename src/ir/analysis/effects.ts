@@ -121,6 +121,8 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "unbox":
     case "tag.test":
     case "dyn.truthy": // #2949 S5.1 — ToBoolean read on the carrier: pure (no heap/control effect)
+    case "dyn.undefined": // #7104 — the carrier's undefined constant: pure
+    case "dyn.typeof": // #7104 — typeof read on the carrier: pure
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":

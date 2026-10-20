@@ -42,6 +42,8 @@ export type {
   IrInstrAsyncReturn,
   IrInstrAsyncThrow,
   IrInstrDynTruthy,
+  IrInstrDynUndefined,
+  IrInstrDynTypeof,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

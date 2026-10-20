@@ -134,6 +134,34 @@ export interface IrInstrDynTruthy extends IrInstrBase {
 }
 
 /**
+ * `dyn.undefined` — the JS `undefined` value on the boxed-any carrier
+ * (#7104). No operands; result (via `IrInstrBase.result`) is
+ * `IrType.dynamic` refined to the Undefined partition. Lowering routes to
+ * the SAME `undefined` representation legacy uses on each lane via
+ * `IrDynamicLowering.emitUndefined` (the standalone `$undefined` singleton /
+ * `ref.null.extern`, the host `__get_undefined` import), so a dynamic-return
+ * function's bare `return;`, its fall-through after an `if` tail, and an
+ * explicit `return undefined` carry exactly legacy's value.
+ */
+export interface IrInstrDynUndefined extends IrInstrBase {
+  readonly kind: "dyn.undefined";
+}
+
+/**
+ * `dyn.typeof{value}` — JS `typeof` (§13.5.3) over EVERY partition of a
+ * boxed-any carrier (#7104). `value` MUST be `IrType.dynamic`; result (via
+ * `IrInstrBase.result`) is `string`. Lowering routes to the SAME runtime
+ * `__typeof` legacy calls for an `any`-typed operand (host import or the
+ * native-first function), re-tagged into the lane's string carrier — one
+ * typeof engine. The static two-family fast path (`tag.test` + string consts)
+ * stays for producers that prove the partition set.
+ */
+export interface IrInstrDynTypeof extends IrInstrBase {
+  readonly kind: "dyn.typeof";
+  readonly value: IrValueId;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

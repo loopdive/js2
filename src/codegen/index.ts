@@ -108,6 +108,7 @@ import {
   irClosureSignatureFromFunctionTypeNode,
   type IrFallbackReason,
   type IrSelection,
+  irFunctionBodyReturnsValue,
 } from "../ir/select.js";
 import type {
   IrFnctorNativeStringBoundaryPlan,
@@ -3444,7 +3445,20 @@ function planIrOverlay(
       // Slice 14 (#1228) — VoidKeyword return: bypass resolvePositionType
       // (it has no representation for void in IrType) and set returnType
       // to null. The lowerer treats null returnType as "no result".
-      const isVoidReturn = !isGenerator && effectiveReturnNode?.kind === ts.SyntaxKind.VoidKeyword;
+      // Mirrors the selector's `resolveReturnType` void arm: an unannotated
+      // body with no value-returning `return` registers no result, as legacy
+      // does — otherwise the lattice-dynamic `externref` result withdraws every
+      // such claim on `abi-signature-parity` (test262 harness, 2026-10-20).
+      const isVoidReturn =
+        !isGenerator &&
+        (effectiveReturnNode?.kind === ts.SyntaxKind.VoidKeyword ||
+          (effectiveReturnNode === undefined &&
+            !isAsyncFn &&
+            declaration.body !== undefined &&
+            (entry?.returnType === undefined ||
+              entry.returnType.kind === "unknown" ||
+              entry.returnType.kind === "dynamic") &&
+            !irFunctionBodyReturnsValue(declaration.body)));
       const returnType: IrType | null = promiseDelayByOwner.has(unitId)
         ? ({ kind: "extern", className: "Promise" } as IrType)
         : isGenerator

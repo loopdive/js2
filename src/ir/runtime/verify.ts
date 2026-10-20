@@ -941,6 +941,26 @@ function verifyInstrStructure(
   // operand MUST be dynamic (a concrete scalar has an inline ToBoolean
   // and must not route through the carrier helper). Result is i32,
   // already enforced structurally by the loop/if condValue rules.
+  // #7104 — dyn.undefined is the carrier's `undefined` value: no operands,
+  // and its result MUST be dynamic (a concrete slot has no undefined).
+  if (instr.kind === "dyn.undefined" && instr.resultType?.kind !== "dynamic") {
+    errors.push({
+      message: `dyn.undefined result must be a dynamic IrType, got ${instr.resultType?.kind ?? "none"} (#7104)`,
+      func: func.name,
+      block: block.id as number,
+    });
+  }
+  // #7104 — dyn.typeof is typeof over the boxed-any carrier: operand dynamic.
+  if (instr.kind === "dyn.typeof") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.typeof operand must be a dynamic IrType, got ${operandIr.kind} (#7104)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   if (instr.kind === "dyn.truthy") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
     if (operandIr && operandIr.kind !== "dynamic") {
@@ -1267,10 +1287,13 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.cond];
     case "raw.wasm":
       return [];
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.eq":
@@ -1855,6 +1878,8 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "tag.test": { skip: "checked-elsewhere: shares unbox's dynamic-operand tagId rules in verifyInstrStructure (#2949)" },
   "dyn.truthy": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.1)" },
+  "dyn.undefined": { skip: "checked-elsewhere: result-must-be-dynamic rule in verifyInstrStructure (#7104)" },
+  "dyn.typeof": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7104)" },
   "dyn.to_number": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.3)" },
   "dyn.eq": { skip: "checked-elsewhere: both-operands-dynamic rule in verifyInstrStructure (#2949 S5.2)" },
   "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },

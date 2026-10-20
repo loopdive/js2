@@ -1810,6 +1810,37 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitBinary("i32.eq", out);
         return;
       }
+      case "dyn.undefined": {
+        // #7104 — the carrier's `undefined` value; no operands. The op sequence
+        // comes from the `IrDynamicLowering` handle so each lane pushes exactly
+        // the representation legacy's `emitUndefined` pushes.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.undefined (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7104): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitUndefined()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.typeof": {
+        // #7104 — typeof over the boxed-any carrier via the lane's `__typeof`.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(`ir/lower: dyn.typeof operand must be dynamic, got ${valueIrType.kind} (${func.name})`);
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.typeof (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7104): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitTypeof()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.truthy": {
         // #2949 S5.1 — ToBoolean on a boxed-any carrier. The operand MUST be
         // dynamic (verifier enforces); the op sequence comes from the
@@ -3706,10 +3737,13 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.cond];
     case "raw.wasm":
       return [];
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.eq":

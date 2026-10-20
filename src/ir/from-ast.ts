@@ -2143,6 +2143,11 @@ function denseArrayReductionPlan(stmts: readonly ts.Statement[]): DenseArrayRedu
 
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
+    // #7104 — an empty dynamic-return body returns the carrier's undefined.
+    if (cx.returnType?.kind === "dynamic") {
+      terminateImplicitSourceReturn(cx, [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)]);
+      return;
+    }
     if (cx.returnType !== null)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: empty statement list in ${cx.funcName}`);
     terminateImplicitSourceReturn(cx, []);
@@ -2607,6 +2612,15 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
       cx.builder.terminate({ kind: "return", values: [] });
       return;
     }
+    // #7104 — a dynamic-return function's bare `return;` and `return undefined`
+    // return the carrier's undefined (exactly legacy's value for the slot).
+    if (
+      cx.returnType.kind === "dynamic" &&
+      (!stmt.expression || isUnshadowedUndefinedExpression(stmt.expression, cx))
+    ) {
+      cx.builder.terminate({ kind: "return", values: [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)] });
+      return;
+    }
     if (!stmt.expression) {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: Phase 1 return must have an expression in ${cx.funcName}`);
     }
@@ -2681,14 +2695,44 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   }
   if (ts.isIfStatement(stmt)) {
     if (!stmt.elseStatement) {
-      if (cx.returnType !== null) {
+      const isDynamicReturn = cx.returnType?.kind === "dynamic";
+      if (cx.returnType !== null && !isDynamicReturn) {
         demoteToLegacy(
           "body-shape-rejected",
           `ir/from-ast: non-void Phase 1 if must have an else arm in ${cx.funcName}`,
         );
       }
+      // #7104 — the implicit return after the guard: empty for void, the
+      // carrier's undefined for a dynamic-return function.
+      const implicitReturn = (): void =>
+        cx.builder.terminate({
+          kind: "return",
+          values: isDynamicReturn ? [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)] : [],
+        });
+      if (thenArmTerminates(stmt.thenStatement)) {
+        // `if (c) { …; return x; }` as the tail: lower like an if/else whose
+        // else arm is the implicit return (selector: #7104 terminating-then).
+        const rawGuard = lowerExpr(stmt.expression, cx, irVal({ kind: "i32" }));
+        const guard = lowerToBooleanForCondition(rawGuard, stmt.expression, cx);
+        if (guard === null) {
+          demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: if condition must be bool in ${cx.funcName}`);
+        }
+        const thenId = cx.builder.reserveBlockId();
+        const elseId = cx.builder.reserveBlockId();
+        cx.builder.terminate({
+          kind: "br_if",
+          condition: guard,
+          ifTrue: { target: thenId, args: [] },
+          ifFalse: { target: elseId, args: [] },
+        });
+        cx.builder.openReservedBlock(thenId);
+        lowerTail(stmt.thenStatement, { ...cx, scope: new Map(cx.scope) });
+        cx.builder.openReservedBlock(elseId);
+        implicitReturn();
+        return;
+      }
       lowerIfBodyStatement(stmt, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
+      implicitReturn();
       return;
     }
     // #1043: compile-time constant fold. After --define substitution of
@@ -5024,6 +5068,13 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     if (!p) {
       const moduleBinding = cx.resolver?.resolveModuleBinding?.(expr);
       if (moduleBinding) return lowerResolvedModuleBindingRead(expr.text, moduleBinding, cx);
+      // #7104 — global numeric constants (legacy: `identifiers.ts` NaN/Infinity arm).
+      if (expr.text === "NaN" || expr.text === "Infinity") {
+        return cx.builder.emitConst(
+          { kind: "f64", value: expr.text === "NaN" ? NaN : Infinity },
+          irVal({ kind: "f64" }),
+        );
+      }
       const standaloneDomGlobal = cx.resolver?.standaloneDomOperation?.(expr);
       const hg = cx.resolver?.getHostGlobalInfo?.(expr.text);
       if (standaloneDomGlobal?.kind === "global-get" && !hg) {
@@ -5870,6 +5921,8 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
     if (innerType.kind === "dynamic") {
       const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
       if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
+      // #7104 — the general case: every partition through the lane's `__typeof`.
+      return cx.builder.emitDynTypeof(inner);
     }
     demoteToLegacy(
       "operand-coercion-unsupported",
@@ -12949,6 +13002,11 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
       lowerDiscardedExpression(stmt.expression, cx);
     }
     cx.builder.emitEarlyReturn(null);
+    return;
+  }
+  if (cx.returnType.kind === "dynamic" && (!stmt.expression || isUnshadowedUndefinedExpression(stmt.expression, cx))) {
+    // #7104 — same carrier undefined as the tail form.
+    cx.builder.emitEarlyReturn(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined));
     return;
   }
   if (!stmt.expression) {

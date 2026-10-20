@@ -93,6 +93,18 @@ export function emitUndefinedSingleton(ctx: CodegenContext, fctx: FunctionContex
 }
 
 /**
+ * (#7104) The gc `$AnyValue` carrier's `undefined` (tag 1): the reserved
+ * `$undefined` global where `ensureAnyValueType` reserved one, otherwise the
+ * same initializer inline. Used by the IR `dyn.undefined` lowering on the gc
+ * dynamic strategy.
+ */
+export function undefinedAnyValueInstrs(ctx: CodegenContext): Instr[] {
+  ensureAnyValueType(ctx);
+  if (ctx.undefinedGlobalIdx !== undefined) return [{ op: "global.get", index: ctx.undefinedGlobalIdx }];
+  return buildUndefinedInitializer(ctx.anyValueTypeIdx);
+}
+
+/**
  * (#2106 S1) Is the `undefinedSingleton` regime ACTIVE for this module?
  * True only when the flag is set AND we are in standalone/native-strings mode
  * (host mode has a real host `undefined` via `__get_undefined` and is never

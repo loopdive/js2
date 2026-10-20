@@ -94,6 +94,8 @@ export function isDynamicInstruction(instr: IrInstr): boolean {
   if (instr.kind === "unbox" || instr.kind === "tag.test") return instr.tagId !== undefined;
   return (
     instr.kind === "dyn.truthy" ||
+    instr.kind === "dyn.undefined" ||
+    instr.kind === "dyn.typeof" ||
     instr.kind === "dyn.to_number" ||
     instr.kind === "dyn.eq" ||
     instr.kind === "dyn.member_get" ||

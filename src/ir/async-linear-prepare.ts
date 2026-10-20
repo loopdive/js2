@@ -122,10 +122,13 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
         whenTrue: resolve(instr.whenTrue),
         whenFalse: resolve(instr.whenFalse),
       };
+    case "dyn.undefined":
+      return instr;
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
     case "dyn.to_number":
       return { ...instr, value: resolve(instr.value) };
     case "dyn.eq":

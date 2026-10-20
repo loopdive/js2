@@ -703,12 +703,14 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
     case "dyn.to_number": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
       return { ...inst, value: v };
     }
     case "string.const":
+    case "dyn.undefined":
       return inst;
     case "dyn.eq":
     case "string.concat":
