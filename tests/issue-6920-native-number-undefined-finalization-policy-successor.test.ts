@@ -5,6 +5,7 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import { expect, it } from "vitest";
 import {
   createIrNativeNumberUndefinedFinalizationPolicyReader as capture,
+  createIrNativeNumberUndefinedFinalizationPolicyEpochView,
   createLazyIrNativeNumberUndefinedFinalizationPolicyReader as lazy,
   assertNativeNumberUndefinedFinalizationPolicyReceipt as structure,
   nativeNumberUndefinedFinalizationPolicyReceiptPath as receiptPath,
@@ -19,7 +20,13 @@ import {
   captureIrNativeNumberUndefinedInventoryPredecessorPolicySource as inventoryRaw,
   createIrNativeNumberUndefinedInventoryReader as inventory,
 } from "./helpers/ir-native-number-undefined-inventory-successor.js";
-const physical = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+const disk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+// #6920: the record is pinned at its own epoch; `physical` is the live tree
+// as the reader captures it (the successor epoch replays what main has since
+// moved; helper code and data stay live; every read still goes to disk, so
+// drift is still refused). `epoch` replays every successor path for F02.
+const physical = createIrNativeNumberUndefinedFinalizationPolicyEpochView(disk, "reader");
+const epoch = createIrNativeNumberUndefinedFinalizationPolicyEpochView(disk);
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const receiptText = physical(receiptPath),
   receipt = JSON.parse(receiptText) as FinalizationPolicyReceipt;
@@ -60,13 +67,13 @@ function replay(
 }
 it("F01 externally pins the new helper and receipt without modifying six old authorities", () => {
   expect(Buffer.byteLength(physical("tests/helpers/ir-native-number-undefined-finalization-policy-successor.ts"))).toBe(
-    10046,
+    18093,
   );
   expect(sha(physical("tests/helpers/ir-native-number-undefined-finalization-policy-successor.ts"))).toBe(
-    "9143fbe561b23e4bda132f4ed2fe7d4d07e5cee1d287c64e6d93635e13f77f0b",
+    "fd3c165bb7262e6358526e9eb40218c36de67b3c0cb08499441e3ce001879d03",
   );
-  expect(Buffer.byteLength(receiptText)).toBe(18232);
-  expect(sha(receiptText)).toBe("78ab11c6a40f0ac5a9728c375b3d3f1de374447908d0c9bcc85972dbc491a44f");
+  expect(Buffer.byteLength(receiptText)).toBe(160617);
+  expect(sha(receiptText)).toBe("34fa7b401486ca2b4b1b4920d752bbe8b585ceb19762bd1235e5e5c51fe72296");
   structure(receipt);
   expect(receipt.anchors).toHaveLength(6);
   expect(receipt.callers).toHaveLength(4);
@@ -75,7 +82,7 @@ it("F01 externally pins the new helper and receipt without modifying six old aut
   expect(receipt.current.source.sha256).toBe("d0d2fdb7591c875303a0197fb413076a1f316c0ecb38ed7bcbc35ce40448f985");
 });
 it.each(receipt.transforms)("F02 independently replays complete raw inverse and forward $path", (transform) => {
-  const current = physical(transform.path),
+  const current = epoch(transform.path),
     before = replay(current, transform.edits, true);
   expect(Buffer.byteLength(before)).toBe(transform.before.bytes);
   expect(sha(before)).toBe(transform.before.sha256);

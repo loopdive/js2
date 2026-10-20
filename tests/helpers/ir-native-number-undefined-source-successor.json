@@ -948,9 +948,9 @@
           "gitBlob": "d79ef4d53983fc9402f7911c5413fa64ce89d886"
         },
         "current": {
-          "bytes": 9617,
-          "sha256": "9d46fd209df70e97b59aad2b4b7aae7ae4dae27e8eea63590c9ff5015ed36525",
-          "gitBlob": "3def55a7ded701f97b6dcf2e97bcac796d05fecc"
+          "bytes": 11924,
+          "sha256": "f81c22bdfdb5a43bbbbc753f97f646185756964528fa2413ace2daa63b146a84",
+          "gitBlob": "50f97e37d14ffbb4447e0485367a85e5cca583f7"
         },
         "edits": [
           {
@@ -982,32 +982,40 @@
             "beforeEnd": 4982,
             "beforeText": "",
             "currentStart": 5381,
-            "currentEnd": 6519,
-            "currentText": "/**\n * (#6920) A successor epoch maps the live tree back to this record's fixed\n * epoch before that epoch is replayed: every transform is authenticated and\n * replayed both ways. The fixed epoch's data is never edited.\n */\nfunction applySuccessor(\n  receipt: { readonly successor?: SuccessorEpoch },\n  actualReader: (path: string) => string,\n  captured: Map<string, string>,\n): ReadonlyMap<string, Pin> {\n  const overrides = new Map<string, Pin>();\n  const successor = receipt.successor;\n  if (!successor) return overrides;\n  for (const transform of successor.transforms) {\n    const live = actualReader(transform.path);\n    authenticate(live, transform.current, \"live \" + transform.path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + transform.path);\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\"complete successor forward replay\");\n    if (transform.mode === \"live\") {\n      overrides.set(transform.path, transform.current);\n      captured.set(transform.path, live);\n    } else captured.set(transform.path, epoch);\n  }\n  return overrides;\n}\n"
+            "currentEnd": 7069,
+            "currentText": "/**\n * (#6920) Reads through the successor epoch, lazily, in the caller's own read\n * order: a path the successor transforms is authenticated against its live\n * pin and replayed back to this record's fixed epoch (both directions), or\n * accepted as already at the epoch when an outer reader replayed it first.\n * `live`-mode paths (helper code and data) keep their live text and are\n * re-pinned by the successor; the fixed epoch's data is never edited.\n */\nfunction successorReader(\n  receipt: { readonly successor?: SuccessorEpoch },\n  actualRead: (path: string) => string,\n): (path: string) => { readonly text: string; readonly pin?: Pin; readonly epoch: string } {\n  const transforms = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\n\n  return (path) => {\n    const live = actualRead(path);\n    const transform = transforms.get(path);\n    if (!transform) return { text: live, epoch: live };\n    if (typeof live !== \"string\") fail(`non-string source ${path}`);\n    const actual = pin(live);\n    if (\n      actual.bytes === transform.before.bytes &&\n      actual.sha256 === transform.before.sha256 &&\n      actual.gitBlob === transform.before.gitBlob\n    )\n      return { text: live, pin: transform.before, epoch: live };\n    authenticate(live, transform.current, path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + path);\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\"complete successor forward replay\");\n    return transform.mode === \"live\"\n      ? { text: live, pin: transform.current, epoch }\n      : { text: epoch, pin: transform.before, epoch };\n  };\n}\n"
           },
           {
-            "beforeStart": 5647,
-            "beforeEnd": 5647,
+            "beforeStart": 5436,
+            "beforeEnd": 5825,
+            "beforeText": "  const receipt: unknown = JSON.parse(receiptText);\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\n  const captured = new Map<string, string>([[irNativeClassLayoutSourceReceiptPath, receiptText]]);\n  for (const row of [...receipt.current, ...receipt.anchors]) {\n    const text = actualReader(row.path);\n    authenticate(text, row, row.path);\n    captured.set(row.path, text);\n",
+            "currentStart": 7523,
+            "currentEnd": 7702,
+            "currentText": "  if (parsedReceipt === undefined) {\n    const parsed: unknown = JSON.parse(receiptText);\n    assertIrNativeClassLayoutSourceReceiptStructure(parsed);\n    parsedReceipt = parsed;\n"
+          },
+          {
+            "beforeStart": 5829,
+            "beforeEnd": 6209,
+            "beforeText": "  const current = captured.get(irNativeClassLayoutSourcePath)!;\n  const before = replaceRanges(current, receipt.edits, true);\n  authenticate(before, receipt.before, \"historical class layouts\");\n  const forward = replaceRanges(before, receipt.edits, false);\n  if (forward !== current) fail(\"complete forward reconstruction\");\n  captured.set(irNativeClassLayoutSourcePath, before);\n",
+            "currentStart": 7706,
+            "currentEnd": 8555,
+            "currentText": "  const receipt = parsedReceipt;\n  const live = new Map<string, unknown>();\n  for (const row of [...receipt.current, ...receipt.anchors])\n    if (!live.has(row.path)) live.set(row.path, actualReader(row.path));\n  const operands = [...live.values()];\n  const captureKey = operands.every((text): text is string => typeof text === \"string\")\n    ? [receiptSha256, ...operands].join(\"\\0\")\n    : undefined;\n  const verified = captureKey === undefined ? undefined : verifiedCaptures.get(captureKey);\n  const captured = verified\n    ? new Map(verified)\n    : new Map<string, string>([[irNativeClassLayoutSourceReceiptPath, receiptText]]);\n  if (!verified) verify(receipt, (path) => (live.has(path) ? live.get(path) : actualReader(path)) as string, captured);\n  if (!verified && captureKey !== undefined) verifiedCaptures.set(captureKey, new Map(captured));\n"
+          },
+          {
+            "beforeStart": 6500,
+            "beforeEnd": 6500,
             "beforeText": "",
-            "currentStart": 7184,
-            "currentEnd": 7253,
-            "currentText": "  const overrides = applySuccessor(receipt, actualReader, captured);\n"
-          },
-          {
-            "beforeStart": 5711,
-            "beforeEnd": 5791,
-            "beforeText": "    const text = actualReader(row.path);\n    authenticate(text, row, row.path);\n",
-            "currentStart": 7317,
-            "currentEnd": 7450,
-            "currentText": "    const text = captured.get(row.path) ?? actualReader(row.path);\n    authenticate(text, overrides.get(row.path) ?? row, row.path);\n"
+            "currentStart": 8846,
+            "currentEnd": 10594,
+            "currentText": "/**\n * Whole-capture memo (#6920): an operation whose receipt and every required\n * operand are byte-identical to an already verified operation reuses that\n * verification's captured texts (as a fresh map). The key is the operands' exact\n * bytes, not a digest, so a hit is byte equality. Every operand is still read\n * by every operation; a changed or nonprimitive operand misses and\n * takes the full verification with its original refusal.\n */\nconst verifiedCaptures = new Map<string, ReadonlyMap<string, string>>();\n/** The receipt is pinned by hash above, so its parse and structure are pure facts of that hash; it is never mutated. */\nlet parsedReceipt: IrNativeClassLayoutSourceReceipt | undefined;\nfunction verify(receipt: IrNativeClassLayoutSourceReceipt, actualReader: Reader, captured: Map<string, string>): void {\n  // A `live`-mode path that this record's own epoch also transforms is\n  // replayed from its successor epoch text, never from the live text.\n  const epochs = new Map<string, string>();\n  const read = successorReader(receipt, actualReader);\n  for (const row of [...receipt.current, ...receipt.anchors]) {\n    const { text, pin: successorPin, epoch } = read(row.path);\n    authenticate(text, successorPin ?? row, row.path);\n    captured.set(row.path, text);\n    epochs.set(row.path, epoch);\n  }\n  const current = epochs.get(irNativeClassLayoutSourcePath) ?? captured.get(irNativeClassLayoutSourcePath)!;\n  const before = replaceRanges(current, receipt.edits, true);\n  authenticate(before, receipt.before, \"historical class layouts\");\n  const forward = replaceRanges(before, receipt.edits, false);\n  if (forward !== current) fail(\"complete forward reconstruction\");\n  captured.set(irNativeClassLayoutSourcePath, before);\n}\n"
           },
           {
             "beforeStart": 6756,
             "beforeEnd": 6756,
             "beforeText": "",
-            "currentStart": 8415,
-            "currentEnd": 9617,
-            "currentText": "\n/**\n * (#6920) The live tree seen at this record's fixed epoch: successor\n * epoch-mode paths are authenticated and replayed back, every other path is\n * the live text. B's suites compare their own replay against this view.\n */\nexport function createIrNativeClassLayoutSourceEpochView(\n  actualRead: (path: string) => string,\n): (path: string) => string {\n  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);\n  if (\n    typeof rawReceipt !== \"string\" ||\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\n    hash(rawReceipt) !== receiptSha256\n  )\n    fail(\"complete receipt pin\");\n  const receipt: unknown = JSON.parse(rawReceipt);\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\n  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\n  return (path: string): string => {\n    const transform = epochPaths.get(path);\n    const live = actualRead(path);\n    if (!transform || transform.mode !== \"epoch\") return live;\n    authenticate(live, transform.current, \"live \" + path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + path);\n    return epoch;\n  };\n}\n"
+            "currentStart": 10850,
+            "currentEnd": 11924,
+            "currentText": "\n/**\n * (#6920) The live tree seen at this record's fixed epoch. `\"epoch\"` (the\n * default) replays every successor-transformed path back, so the record's own\n * epoch edits apply to it; `\"reader\"` is what the reader captures — `live`-mode\n * helper code and data stay live, only epoch-mode paths are replayed. Every\n * other path is the live text. B's suites compare their own replay against it.\n */\nexport function createIrNativeClassLayoutSourceEpochView(\n  actualRead: (path: string) => string,\n  view: \"epoch\" | \"reader\" = \"epoch\",\n): (path: string) => string {\n  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);\n  if (\n    typeof rawReceipt !== \"string\" ||\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\n    hash(rawReceipt) !== receiptSha256\n  )\n    fail(\"complete receipt pin\");\n  const receipt: unknown = JSON.parse(rawReceipt);\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\n  const read = successorReader(receipt, actualRead);\n  return (path: string): string => (view === \"epoch\" ? read(path).epoch : read(path).text);\n}\n"
           }
         ]
       },
@@ -1032,6 +1040,30 @@
             "currentStart": 12168,
             "currentEnd": 18242,
             "currentText": "  ],\n  \"successor\": {\n    \"base\": \"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\",\n    \"head\": \"3e16e53585\",\n    \"transforms\": [\n      {\n        \"path\": \"src/ir/runtime/verify.ts\",\n        \"mode\": \"epoch\",\n        \"before\": {\n          \"bytes\": 122476,\n          \"sha256\": \"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\",\n          \"gitBlob\": \"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\"\n        },\n        \"current\": {\n          \"bytes\": 124703,\n          \"sha256\": \"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\",\n          \"gitBlob\": \"0232eb2216e508c4cce5036a2433780bd87e7597\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 1270,\n            \"beforeEnd\": 1372,\n            \"beforeText\": \"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\",\n            \"currentStart\": 1270,\n            \"currentEnd\": 1390,\n            \"currentText\": \"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 1453,\n            \"beforeEnd\": 1501,\n            \"beforeText\": \"import type { IrType } from \\\"../core/types.js\\\";\\n\",\n            \"currentStart\": 1471,\n            \"currentEnd\": 1533,\n            \"currentText\": \"import type { IrClassShape, IrType } from \\\"../core/types.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 15279,\n            \"beforeEnd\": 15279,\n            \"beforeText\": \"\",\n            \"currentStart\": 15311,\n            \"currentEnd\": 15651,\n            \"currentText\": \"  /**\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\n   * `string` result non-assignable (native strings lower to\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\n   */\\n  readonly stringIsExternref?: boolean;\\n\"\n          },\n          {\n            \"beforeStart\": 23246,\n            \"beforeEnd\": 23299,\n            \"beforeText\": \"      if (!returnTypeAssignable(actual, declared)) {\\n\",\n            \"currentStart\": 23618,\n            \"currentEnd\": 23699,\n            \"currentText\": \"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 24737,\n            \"beforeEnd\": 24804,\n            \"beforeText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\n\",\n            \"currentStart\": 25137,\n            \"currentEnd\": 25232,\n            \"currentText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 25815,\n            \"beforeEnd\": 25890,\n            \"beforeText\": \"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\n\",\n            \"currentStart\": 26243,\n            \"currentEnd\": 26347,\n            \"currentText\": \"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\n\"\n          },\n          {\n            \"beforeStart\": 28284,\n            \"beforeEnd\": 28284,\n            \"beforeText\": \"\",\n            \"currentStart\": 28741,\n            \"currentEnd\": 29136,\n            \"currentText\": \"  // (#7001) A dynamic/externref value into a native-string result: string\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\n  if (\\n    declared.kind === \\\"string\\\" &&\\n    stringIsExternref === false &&\\n    (actual.kind === \\\"dynamic\\\" || a?.kind === \\\"externref\\\")\\n  ) {\\n    return false;\\n  }\\n\"\n          },\n          {\n            \"beforeStart\": 82195,\n            \"beforeEnd\": 82304,\n            \"beforeText\": \"  \\\"class.call\\\": { skip: \\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\" },\\n\",\n            \"currentStart\": 83047,\n            \"currentEnd\": 83151,\n            \"currentText\": \"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\n  \\\"class.call\\\": \\\"checked\\\",\\n\"\n          },\n          {\n            \"beforeStart\": 89889,\n            \"beforeEnd\": 89889,\n            \"beforeText\": \"\",\n            \"currentStart\": 90736,\n            \"currentEnd\": 90827,\n            \"currentText\": \"    case \\\"class.call\\\":\\n      checkClassCallTarget(instr, blockId, ctx);\\n      return true;\\n\"\n          },\n          {\n            \"beforeStart\": 89929,\n            \"beforeEnd\": 89929,\n            \"beforeText\": \"\",\n            \"currentStart\": 90867,\n            \"currentEnd\": 92156,\n            \"currentText\": \"/**\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\n * must be that member's own target: one bound to any other class's member is a\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\n * resolver-typed and is not judged here.\\n */\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\n  const receiver = ctx.typeOf.get(instr.receiver);\\n  if (!instr.target || receiver?.kind !== \\\"class\\\") return;\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\n    const member = shape.methods.find(\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\"method\\\") === instr.memberKind,\\n    );\\n    if (!member) continue;\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\n    const got = bindingKey(instr.target.binding);\\n    if (want !== null && got !== null && want !== got)\\n      roadmapError(\\n        ctx,\\n        blockId,\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\n      );\\n    return;\\n  }\\n}\\n\\n\"\n          }\n        ]\n      }\n    ]\n  }\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/issue-6920-native-class-layout-source-successor.test.ts",
+        "mode": "live",
+        "before": {
+          "bytes": 22794,
+          "sha256": "81ee32076343ed3ae69ba45527a151e813eacb29157e20b0779a92bc52e7863f",
+          "gitBlob": "456f531bc52be0df5b8feb6e7fee56e2d662a6e7"
+        },
+        "current": {
+          "bytes": 22795,
+          "sha256": "8d987a17da1bc72295195a4c94465c6279a45026c52b1963ab1ae2d4606cdaaa",
+          "gitBlob": "c12ad7887c607e9815239126a8e022e4e20160b3"
+        },
+        "edits": [
+          {
+            "beforeStart": 3944,
+            "beforeEnd": 4263,
+            "beforeText": "  expect(Buffer.byteLength(disk(helperPath))).toBe(6756);\n  expect(sha(disk(helperPath))).toBe(\"d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168\");\n  expect(Buffer.byteLength(receiptText)).toBe(12174);\n  expect(sha(receiptText)).toBe(\"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\");\n",
+            "currentStart": 3944,
+            "currentEnd": 4264,
+            "currentText": "  expect(Buffer.byteLength(disk(helperPath))).toBe(11924);\n  expect(sha(disk(helperPath))).toBe(\"f81c22bdfdb5a43bbbbc753f97f646185756964528fa2413ace2daa63b146a84\");\n  expect(Buffer.byteLength(receiptText)).toBe(18244);\n  expect(sha(receiptText)).toBe(\"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\");\n"
           }
         ]
       }

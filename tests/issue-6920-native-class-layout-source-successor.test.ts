@@ -68,10 +68,10 @@ const composed = (path: string): string =>
   );
 const helperPath = "tests/helpers/ir-native-class-layout-source-successor.ts";
 it("N01 pins the whole independent helper and fixed receipt without circular self-hash", () => {
-  expect(Buffer.byteLength(disk(helperPath))).toBe(6756);
-  expect(sha(disk(helperPath))).toBe("d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168");
-  expect(Buffer.byteLength(receiptText)).toBe(12174);
-  expect(sha(receiptText)).toBe("5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045");
+  expect(Buffer.byteLength(disk(helperPath))).toBe(11924);
+  expect(sha(disk(helperPath))).toBe("f81c22bdfdb5a43bbbbc753f97f646185756964528fa2413ace2daa63b146a84");
+  expect(Buffer.byteLength(receiptText)).toBe(18244);
+  expect(sha(receiptText)).toBe("3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0");
   assertIrNativeClassLayoutSourceReceiptStructure(receipt);
   expect(receipt.current).toHaveLength(34);
   expect(receipt.anchors).toHaveLength(8);

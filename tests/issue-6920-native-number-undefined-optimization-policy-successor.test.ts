@@ -15,6 +15,7 @@ import {
   nativeNumberUndefinedOptimizationPolicyReceiptPath as receiptPath,
   type OptimizationPolicyReceipt,
 } from "./helpers/ir-native-number-undefined-optimization-policy-successor.js";
+import { createIrNativeNumberUndefinedSourceEpochView } from "./helpers/ir-native-number-undefined-source-successor.js";
 import {
   createIrNativeNumberUndefinedInventoryReader as inventoryReader,
   captureIrNativeNumberUndefinedInventoryPredecessorPolicy as inventoryData,
@@ -77,12 +78,12 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 it("O01 pins the complete new helper and fixed receipt externally, retaining the 2016 authority", () => {
   expect(
     Buffer.byteLength(actualDisk("tests/helpers/ir-native-number-undefined-optimization-policy-successor.ts")),
-  ).toBe(9381);
+  ).toBe(17427);
   expect(hash(actualDisk("tests/helpers/ir-native-number-undefined-optimization-policy-successor.ts"))).toBe(
-    "162669f6670fbe663f9ded632952eb196694b4cb51ece4bad534aa8d79d96f64",
+    "77f416ff5e61a9991149acc5f88d3c840f11a0d2b3ab0ff01ce0ecb1feef255a",
   );
-  expect(Buffer.byteLength(receiptText)).toBe(11533);
-  expect(hash(receiptText)).toBe("470dafcb58a1feed449cb1594702a085c9ca4d01656aa9cb85ded10751d5fcf5");
+  expect(Buffer.byteLength(receiptText)).toBe(49903);
+  expect(hash(receiptText)).toBe("bd98c1cf03d0cfa702ca395a917f7bcbd73dd16dd898671023422f75eaad0ddd");
   structure(receipt);
   expect(receipt.before.source.bytes).toBe(637204);
   expect(receipt.before.source.sha256).toBe("f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88");
@@ -293,8 +294,11 @@ it.each([receiptPath, ...receipt.callers.map((r) => r.path)])(
 it("O13 retains the actual unchanged 95-source closure rather than certifying historical output as current", async () => {
   const sourceReceipt = JSON.parse(actualDisk("tests/helpers/ir-native-number-undefined-source-successor.json"));
   expect(sourceReceipt.sources).toHaveLength(95);
+  // #6920: the source record's closure is pinned at its own epoch; its
+  // successor epoch replays the two sources main has since moved.
+  const sourceEpoch = createIrNativeNumberUndefinedSourceEpochView(actualDisk);
   for (const row of sourceReceipt.sources) {
-    const current = actualDisk(row.path);
+    const current = sourceEpoch(row.path);
     expect(Buffer.byteLength(current)).toBe(row.bytes);
     expect(hash(current)).toBe(row.sha256);
     expect(blob(current)).toBe(row.gitBlob);

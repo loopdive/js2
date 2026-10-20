@@ -57,9 +57,9 @@ export interface OptimizationPolicyReceipt {
   readonly transforms: readonly Transform[];
   readonly successor?: SuccessorEpoch;
 }
-const receiptBytes = 40310;
-const receiptHash = "11df801b78a5e232a67c6d00707d3909f22391c3ec6df131c494c922eeb17541";
-const receiptDataHash = "a9150c544cfa4a5e6665a443475c588e42935da39c73189086f40de44b73634c";
+const receiptBytes = 49903;
+const receiptHash = "bd98c1cf03d0cfa702ca395a917f7bcbd73dd16dd898671023422f75eaad0ddd";
+const receiptDataHash = "2dd47d8d89506d19815fabe1b3229d2b5b20e17e6023521e53425116af0741c8";
 function fail(detail: string): never {
   throw Error(`native optimization policy successor: ${detail}`);
 }
@@ -136,6 +136,13 @@ function replace(text: string, edits: readonly Edit[], inverse: boolean): string
   }
   return bytes.toString("utf8");
 }
+/**
+ * Content-keyed memo of pure verifications (#6920): identical bytes verify
+ * identically, so a text already verified against the same profile is not
+ * re-hashed; changed bytes never hit. Nothing approved is shared — every hit
+ * re-parses its own text, and the memo holds verdicts, not approvals of paths.
+ */
+const verifiedProfiles = new Set<string>();
 function profile(raw: string, expected: Profile): Record<string, unknown> & { files: Record<string, unknown>[] } {
   if (typeof raw !== "string") fail("primitive raw policy required");
   let parsed: Record<string, unknown> & { files: Record<string, unknown>[] };
@@ -143,6 +150,17 @@ function profile(raw: string, expected: Profile): Record<string, unknown> & { fi
     parsed = JSON.parse(raw) as typeof parsed;
   } catch {
     fail("complete policy profile mismatch");
+  }
+  const verdict = `${hash(raw)}:${expected.data}:${expected.files}:${expected.nonFiles}:${expected.count}`;
+  if (verifiedProfiles.has(verdict)) {
+    const actual = pin(raw);
+    if (
+      actual.bytes !== expected.source.bytes ||
+      actual.sha256 !== expected.source.sha256 ||
+      actual.gitBlob !== expected.source.gitBlob
+    )
+      fail("complete raw source profile mismatch");
+    return parsed;
   }
   if (
     !parsed ||
@@ -163,33 +181,54 @@ function profile(raw: string, expected: Profile): Record<string, unknown> & { fi
     actual.gitBlob !== expected.source.gitBlob
   )
     fail("complete raw source profile mismatch");
+  verifiedProfiles.add(verdict);
   return parsed;
 }
 /**
- * (#6920) A successor epoch maps the live tree back to this record's fixed
- * epoch before that epoch is replayed: every transform is authenticated and
- * replayed both ways, and the policy's inserted rows are inverted and
- * replayed as whole DATA. The fixed epoch's data is never edited.
+ * (#6920) Reads through the successor epoch, lazily, in the caller's own read
+ * order: a path the successor transforms is authenticated against its live
+ * pin and replayed back to this record's fixed epoch (both directions), or
+ * accepted as already at the epoch when an outer reader replayed it first.
+ * `live`-mode paths (helper code and data) keep their live text and are
+ * re-pinned by the successor; the fixed epoch's data is never edited.
  */
-function applySuccessor(
+/** Live-text → verified epoch text, content-keyed like `verifiedProfiles`. */
+const successorReplays = new Map<string, string>();
+/** Pinned-receipt transform replays (receipt hash + path + current pin → verified before text). */
+const epochReplays = new Map<string, string>();
+function successorReader(
   receipt: { readonly successor?: SuccessorEpoch },
   actualRead: (path: string) => string,
-  captured: Map<string, string>,
-): ReadonlyMap<string, Pin> {
-  const overrides = new Map<string, Pin>();
-  const successor = receipt.successor;
-  if (!successor) return overrides;
-  for (const transform of successor.transforms) {
-    const live = actualRead(transform.path);
-    authenticate(live, transform.current, "live " + transform.path);
+): (path: string) => { readonly text: string; readonly pin?: Pin; readonly epoch: string } {
+  const transforms = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));
+  const policy = receipt.successor?.policy;
+  return (path) => {
+    const live = actualRead(path);
+    const transform = transforms.get(path);
+    if (!transform) return { text: live, epoch: live };
+    if (typeof live !== "string") fail(`non-string source ${path}`);
+    const actual = pin(live);
+    if (
+      actual.bytes === transform.before.bytes &&
+      actual.sha256 === transform.before.sha256 &&
+      actual.gitBlob === transform.before.gitBlob
+    )
+      return { text: live, pin: transform.before, epoch: live };
+    authenticate(live, transform.current, path);
+    const memo = `${transform.before.sha256}:${actual.sha256}`;
+    const replayed = successorReplays.get(memo);
+    if (replayed !== undefined)
+      return transform.mode === "live"
+        ? { text: live, pin: transform.current, epoch: replayed }
+        : { text: replayed, pin: transform.before, epoch: replayed };
     const epoch = replace(live, transform.edits, true);
-    authenticate(epoch, transform.before, "epoch " + transform.path);
+    authenticate(epoch, transform.before, "epoch " + path);
     if (replace(epoch, transform.edits, false) !== live) fail("complete successor forward replay");
-    if (transform.path === "scripts/compiler-boundaries.json" && successor.policy) {
-      const liveData = profile(live, successor.policy.current);
-      const epochData = profile(epoch, successor.policy.before);
+    if (path === "scripts/compiler-boundaries.json" && policy) {
+      const liveData = profile(live, policy.current);
+      const epochData = profile(epoch, policy.before);
       const inverseFiles = [...liveData.files];
-      for (const inserted of [...successor.policy.inserted].reverse()) {
+      for (const inserted of [...policy.inserted].reverse()) {
         if (JSON.stringify(inverseFiles[inserted.index]) !== JSON.stringify(inserted.row))
           fail("successor inserted row coordinates");
         inverseFiles.splice(inserted.index, 1);
@@ -197,16 +236,15 @@ function applySuccessor(
       if (JSON.stringify({ ...liveData, files: inverseFiles }) !== JSON.stringify(epochData))
         fail("successor whole DATA inverse");
       const forwardFiles = [...epochData.files];
-      for (const inserted of successor.policy.inserted) forwardFiles.splice(inserted.index, 0, inserted.row);
+      for (const inserted of policy.inserted) forwardFiles.splice(inserted.index, 0, inserted.row);
       if (JSON.stringify({ ...epochData, files: forwardFiles }) !== JSON.stringify(liveData))
         fail("successor whole DATA forward");
     }
-    if (transform.mode === "live") {
-      overrides.set(transform.path, transform.current);
-      captured.set(transform.path, live);
-    } else captured.set(transform.path, epoch);
-  }
-  return overrides;
+    successorReplays.set(memo, epoch);
+    return transform.mode === "live"
+      ? { text: live, pin: transform.current, epoch }
+      : { text: epoch, pin: transform.before, epoch };
+  };
 }
 /** Each operation captures fresh physical inputs once; no shared authentication cache. */
 export function createIrNativeNumberUndefinedOptimizationPolicyReader(
@@ -219,25 +257,78 @@ export function createIrNativeNumberUndefinedOptimizationPolicyReader(
     hash(rawReceipt) !== receiptHash
   )
     fail("complete receipt pin");
-  const receipt: unknown = JSON.parse(rawReceipt);
-  assertNativeNumberUndefinedOptimizationPolicyReceipt(receipt);
-  const captured = new Map<string, string>([[nativeNumberUndefinedOptimizationPolicyReceiptPath, rawReceipt]]);
-  const overrides = applySuccessor(receipt, actualRead, captured);
-  const rawPolicy = captured.get("scripts/compiler-boundaries.json") ?? actualRead("scripts/compiler-boundaries.json");
+  if (parsedReceipt === undefined) {
+    const parsed: unknown = JSON.parse(rawReceipt);
+    assertNativeNumberUndefinedOptimizationPolicyReceipt(parsed);
+    parsedReceipt = parsed;
+  }
+  const receipt = parsedReceipt;
+  const live = new Map<string, unknown>();
+  for (const path of [
+    "scripts/compiler-boundaries.json",
+    ...[...receipt.callers, ...receipt.anchors].map((row) => row.path),
+  ])
+    if (!live.has(path)) live.set(path, actualRead(path));
+  const operands = [...live.values()];
+  const captureKey = operands.every((text): text is string => typeof text === "string")
+    ? [receiptHash, ...operands].join("\0")
+    : undefined;
+  const verified = captureKey === undefined ? undefined : verifiedCaptures.get(captureKey);
+  const captured = verified
+    ? new Map(verified)
+    : new Map<string, string>([[nativeNumberUndefinedOptimizationPolicyReceiptPath, rawReceipt]]);
+  if (!verified) verify(receipt, (path) => (live.has(path) ? live.get(path) : actualRead(path)) as string, captured);
+  if (!verified && captureKey !== undefined) verifiedCaptures.set(captureKey, new Map(captured));
+  return (path: string): string => {
+    if (typeof path !== "string" || !path) fail("primitive nonempty path required");
+    if (captured.has(path)) return captured.get(path)!;
+    const text = actualRead(path);
+    if (typeof text !== "string") fail("nonprimitive passthrough " + path);
+    captured.set(path, text);
+    return text;
+  };
+}
+/**
+ * Whole-capture memo (#6920): an operation whose receipt and every required
+ * operand are byte-identical to an already verified operation reuses that
+ * verification's captured texts (as a fresh map). The key is the operands' exact
+ * bytes, not a digest, so a hit is byte equality. Every operand is still read
+ * by every operation; a changed or nonprimitive operand misses and
+ * takes the full verification with its original refusal.
+ */
+const verifiedCaptures = new Map<string, ReadonlyMap<string, string>>();
+/** The receipt is pinned by hash above, so its parse and structure are pure facts of that hash; it is never mutated. */
+let parsedReceipt: OptimizationPolicyReceipt | undefined;
+function verify(
+  receipt: OptimizationPolicyReceipt,
+  actualRead: (path: string) => string,
+  captured: Map<string, string>,
+): void {
+  // A `live`-mode path that this record's own epoch also transforms is
+  // replayed from its successor epoch text, never from the live text.
+  const epochs = new Map<string, string>();
+  const read = successorReader(receipt, actualRead);
+  const rawPolicy = read("scripts/compiler-boundaries.json").text;
   const currentData = profile(rawPolicy, receipt.current);
   captured.set("scripts/compiler-boundaries.json", rawPolicy);
   for (const row of [...receipt.callers, ...receipt.anchors]) {
-    const text = captured.get(row.path) ?? actualRead(row.path);
-    authenticate(text, overrides.get(row.path) ?? row, row.path);
+    const { text, pin: successorPin, epoch } = read(row.path);
+    authenticate(text, successorPin ?? row, row.path);
     captured.set(row.path, text);
+    epochs.set(row.path, epoch);
   }
   for (const transform of receipt.transforms) {
-    const current = captured.get(transform.path);
+    const current = epochs.get(transform.path) ?? captured.get(transform.path);
     if (current === undefined) fail("missing transform owner");
     authenticate(current, transform.current, transform.path);
-    const before = replace(current, transform.edits, true);
-    authenticate(before, transform.before, "historical " + transform.path);
-    if (replace(before, transform.edits, false) !== current) fail("complete forward replay");
+    const memo = `${receiptHash}:${transform.path}:${transform.current.sha256}`;
+    let before = epochReplays.get(memo);
+    if (before === undefined) {
+      before = replace(current, transform.edits, true);
+      authenticate(before, transform.before, "historical " + transform.path);
+      if (replace(before, transform.edits, false) !== current) fail("complete forward replay");
+      epochReplays.set(memo, before);
+    }
     captured.set(transform.path, before);
   }
   const beforeData = profile(captured.get("scripts/compiler-boundaries.json")!, receipt.before);
@@ -252,14 +343,6 @@ export function createIrNativeNumberUndefinedOptimizationPolicyReader(
   for (const inserted of receipt.inserted) forwardFiles.splice(inserted.index, 0, inserted.row);
   if (JSON.stringify({ ...beforeData, files: forwardFiles }) !== JSON.stringify(currentData))
     fail("whole DATA forward");
-  return (path: string): string => {
-    if (typeof path !== "string" || !path) fail("primitive nonempty path required");
-    if (captured.has(path)) return captured.get(path)!;
-    const text = actualRead(path);
-    if (typeof text !== "string") fail("nonprimitive passthrough " + path);
-    captured.set(path, text);
-    return text;
-  };
 }
 
 /** One default API operation; malformed inputs can refuse before any physical read. */
@@ -275,12 +358,15 @@ export function createLazyIrNativeNumberUndefinedOptimizationPolicyReader(
 }
 
 /**
- * (#6920) The live tree seen at this record's fixed epoch: successor
- * epoch-mode paths are authenticated and replayed back, every other path is
- * the live text. B's suites compare their own replay against this view.
+ * (#6920) The live tree seen at this record's fixed epoch. `"epoch"` (the
+ * default) replays every successor-transformed path back, so the record's own
+ * epoch edits apply to it; `"reader"` is what the reader captures — `live`-mode
+ * helper code and data stay live, only epoch-mode paths are replayed. Every
+ * other path is the live text. B's suites compare their own replay against it.
  */
 export function createIrNativeNumberUndefinedOptimizationPolicyEpochView(
   actualRead: (path: string) => string,
+  view: "epoch" | "reader" = "epoch",
 ): (path: string) => string {
   const rawReceipt = actualRead(nativeNumberUndefinedOptimizationPolicyReceiptPath);
   if (
@@ -291,14 +377,6 @@ export function createIrNativeNumberUndefinedOptimizationPolicyEpochView(
     fail("complete receipt pin");
   const receipt: unknown = JSON.parse(rawReceipt);
   assertNativeNumberUndefinedOptimizationPolicyReceipt(receipt);
-  const epochPaths = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));
-  return (path: string): string => {
-    const transform = epochPaths.get(path);
-    const live = actualRead(path);
-    if (!transform || transform.mode !== "epoch") return live;
-    authenticate(live, transform.current, "live " + path);
-    const epoch = replace(live, transform.edits, true);
-    authenticate(epoch, transform.before, "epoch " + path);
-    return epoch;
-  };
+  const read = successorReader(receipt, actualRead);
+  return (path: string): string => (view === "epoch" ? read(path).epoch : read(path).text);
 }

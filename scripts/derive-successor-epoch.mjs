@@ -16,7 +16,7 @@
 // (live → pinned epoch), then the record's original epoch unchanged, and
 // replays both directions. The original epoch's data is never edited.
 //
-//   node scripts/derive-successor-epoch.mjs tests/helpers/<record>.json --base <rev> [--head <label>]
+//   node scripts/derive-successor-epoch.mjs tests/helpers/<record>.json --base <rev> [--head <label>] [--force]
 //
 // It rewrites the record (prettier-formatted) and the receipt constants in the
 // sibling helper (.ts). Records that pin each other must be derived in
@@ -178,7 +178,11 @@ function main(argv) {
   const head = flag("--head") ?? execFileSync("git", ["-C", REPO, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   const helperPath = recordPath.replace(/\.json$/, ".ts");
   const record = JSON.parse(read(recordPath));
-  if (record.successor) throw new Error("record already carries a successor epoch; chain a new record instead");
+  if (record.successor) {
+    if (!argv.includes("--force"))
+      throw new Error("record already carries a successor epoch; pass --force to re-derive it");
+    delete record.successor;
+  }
   const transforms = [];
   let policy;
   for (const [path, pinned] of pinnedPaths(record)) {

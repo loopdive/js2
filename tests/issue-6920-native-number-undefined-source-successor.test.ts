@@ -7,6 +7,7 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import ts from "typescript";
 import {
+  createIrNativeNumberUndefinedSourceEpochView,
   createIrNativeNumberUndefinedSourceReader as capture,
   assertIrNativeNumberUndefinedSourceReceiptStructure as structure,
   irNativeNumberUndefinedSourceReceiptPath as receiptPath,
@@ -61,10 +62,10 @@ const reader =
 const allocations = "src/ir/program/allocations.ts";
 const helper = "tests/helpers/ir-native-number-undefined-source-successor.ts";
 it("R01 independently pins the complete helper and fixed receipt on the frozen actual 2016 source policy", () => {
-  expect(Buffer.byteLength(disk(helper))).toBe(6768);
-  expect(sha(disk(helper))).toBe("f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122");
-  expect(Buffer.byteLength(text)).toBe(32537);
-  expect(sha(text)).toBe("660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750");
+  expect(Buffer.byteLength(disk(helper))).toBe(11970);
+  expect(sha(disk(helper))).toBe("68e95fcc134aeae405be82987c2b3067d6c9158d6c97e9ccfcad22c06b8965f8");
+  expect(Buffer.byteLength(text)).toBe(58470);
+  expect(sha(text)).toBe("7fe3ab4bb0462990c5ad66e80e19abccc93791640e70c1165200c44fcb23bfdf");
   structure(receipt);
   expect(receipt.sources).toHaveLength(95);
   expect(receipt.anchors).toHaveLength(10);
@@ -85,9 +86,12 @@ it("R02 captures exactly 109 physical operands once and delivers mapped historic
 });
 it("R03 independently proves all four complete raw inverses and reciprocal forwards", () => {
   const captured = capture(disk);
+  // #6920: the record's edits apply at its own epoch; the successor epoch
+  // replays the sources main has since moved.
+  const sourceEpoch = createIrNativeNumberUndefinedSourceEpochView(disk);
   expect(receipt.transforms).toHaveLength(4);
   for (const transform of receipt.transforms) {
-    const current = Buffer.from(disk(transform.path)),
+    const current = Buffer.from(sourceEpoch(transform.path)),
       pieces: Buffer[] = [];
     let cursor = 0;
     for (const edit of transform.edits) {
