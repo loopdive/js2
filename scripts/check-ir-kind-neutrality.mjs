@@ -786,6 +786,19 @@ const VERDICTS = {
     why: "ECMAScript [[Set]] by dynamic key, with spec evaluation order.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "delegates the actual" }],
   },
+  // (#7104) The two kinds the void-return mirror added.
+  "dyn.undefined": {
+    verdict: "js",
+    why: "The ECMAScript `undefined` value materialised in the boxed-any carrier (§6.1.1) — a JS value, not a neutral null.",
+    evidence: [
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "SAME `undefined` representation legacy uses on each lane" },
+    ],
+  },
+  "dyn.typeof": {
+    verdict: "js",
+    why: "ECMAScript `typeof` over every partition of a boxed-any carrier (§13.5.3), one typeof engine shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `typeof` (§13.5.3) over EVERY partition" }],
+  },
   "iter.new": {
     verdict: "js",
     why: "GetIterator — the @@iterator protocol (§7.4.2).",

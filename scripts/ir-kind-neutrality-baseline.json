@@ -1,17 +1,17 @@
 {
-  "generated": "2026-09-03",
+  "generated": "2026-10-20",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
     "jsInCore": 0
   },
   "counts": {
-    "total": 85,
+    "total": 87,
     "neutral": 55,
-    "js": 27,
+    "js": 29,
     "unresolved": 3,
     "core": 58,
-    "dialect": 27,
+    "dialect": 29,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -208,6 +208,20 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynTruthy",
       "why": "ECMAScript ToBoolean over a dynamically-tagged value (§7.1.2).",
       "evidence": ["src/ir/core/dialect/js.ts#4e9352fb7e1e"]
+    },
+    "dyn.typeof": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynTypeof",
+      "why": "ECMAScript `typeof` over every partition of a boxed-any carrier (§13.5.3), one typeof engine shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#b1f2372b1974"]
+    },
+    "dyn.undefined": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynUndefined",
+      "why": "The ECMAScript `undefined` value materialised in the boxed-any carrier (§6.1.1) — a JS value, not a neutral null.",
+      "evidence": ["src/ir/core/dialect/js.ts#acd261c2d058"]
     },
     "early.return": {
       "verdict": "neutral",
