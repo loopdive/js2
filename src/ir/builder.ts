@@ -632,6 +632,20 @@ export class IrFunctionBuilder {
    * `IrDynamicLowering.emitToBoolean` → `coercion-engine.emitToBoolean`
    * (`__any_unbox_bool` gc / `__is_truthy` host) — one ToBoolean engine (D4).
    */
+  /**
+   * Emit `dyn.undefined` — the JS `undefined` value on the boxed-any carrier
+   * (#7104). Result is `dynamic` refined to the Undefined partition; lowering
+   * routes to the lane's canonical `undefined` representation via
+   * `IrDynamicLowering.emitUndefined`.
+   */
+  emitDynUndefined(tag?: TagId): IrValueId {
+    const resultType = irDynamic(tag);
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.undefined", result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

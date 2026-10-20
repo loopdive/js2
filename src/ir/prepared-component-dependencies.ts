@@ -610,6 +610,7 @@ function implicitSupportRequirement(
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.undefined":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":

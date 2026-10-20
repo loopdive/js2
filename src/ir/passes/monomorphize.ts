@@ -787,6 +787,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
       walk(instr.else);
       return out;
     }
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":

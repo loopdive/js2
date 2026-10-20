@@ -122,6 +122,8 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
         whenTrue: resolve(instr.whenTrue),
         whenFalse: resolve(instr.whenFalse),
       };
+    case "dyn.undefined":
+      return instr;
     case "box":
     case "unbox":
     case "tag.test":

@@ -709,6 +709,7 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       return { ...inst, value: v };
     }
     case "string.const":
+    case "dyn.undefined":
       return inst;
     case "dyn.eq":
     case "string.concat":

@@ -1305,6 +1305,7 @@ export function assessIrImplicitConstructorSubject(
   forInitLeakedNames = new Set<string>();
   currentFnIsGenerator = false;
   currentFnIsVoidReturn = false;
+  currentFnIsDynamicReturn = false;
   currentFnIsAsync = false;
   if (SHAPE_DIAG_ON) shapeRejectDetail = null;
   const accepted = constructorFieldInitializersAreIrSafe(owner, new Set(["this"]), localClasses);
@@ -1355,6 +1356,10 @@ let earlyReturnLoopDepth = 0;
 let earlyReturnBarrierDepth = 0;
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
+// #7104 — true when the return position resolved `dynamic`: bare `return;`,
+// `return undefined` and an `if`-without-else tail are claimable (the lowerer
+// returns the carrier's undefined, exactly legacy's value for the slot).
+let currentFnIsDynamicReturn = false;
 // (#1373b C-1) True while walking the body of an async fn the C-1 gate
 // accepted — arms the `AwaitExpression` case in `isPhase1Expr`. Reset per
 // function walk (and false for the module-init assessment).
@@ -1991,6 +1996,7 @@ function whyNotIrClaimable(
   forInitLeakedNames = new Set();
   currentFnIsGenerator = isGenerator;
   currentFnIsVoidReturn = isVoidReturn;
+  currentFnIsDynamicReturn = isDynamicReturn;
   currentFnIsAsync = isAsyncFn; // (#1373b C-1) arms the isPhase1Expr await arm
   // #1370 Phase A: constructor bodies don't have a return-statement tail —
   // the legacy lowerer (and Phase C) synthesise the implicit `return this;`.
@@ -3684,6 +3690,9 @@ function isPhase1StatementListInScope(
   // (the lowerer synthesizes the implicit empty-values return).
   isVoidReturn: boolean = false,
 ): boolean {
+  // #7104 — an empty body is a complete void / dynamic function (`{}` returns
+  // undefined); the lowerer emits the implicit return.
+  if (stmts.length < 1 && (isVoidReturn || currentFnIsDynamicReturn)) return true;
   if (stmts.length < 1)
     return shapeNo("stmt-list-empty", stmts.length ? stmts[0]! : ({ kind: ts.SyntaxKind.Block } as ts.Node));
   for (let i = 0; i < stmts.length - 1; i++) {
@@ -5297,8 +5306,9 @@ function isPhase1BodyStatement(
       return shapeNo("body-return-context", stmt);
     }
     if (!stmt.expression) {
-      return currentFnIsVoidReturn ? true : shapeNo("body-return-bare-nonvoid", stmt);
+      return currentFnIsVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("body-return-bare-nonvoid", stmt);
     }
+    if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
     return isPhase1Expr(stmt.expression, scope, localClasses);
   }
   return shapeNo("body-unhandled-stmt", stmt);
@@ -5319,7 +5329,10 @@ function isPhase1Tail(
     //
     // Slice 14 (#1228): bare `return;` is also allowed in void-returning
     // functions. The lowerer's void branch terminates with empty values.
-    if (!stmt.expression) return isGenerator || isVoidReturn ? true : shapeNo("tail-bare-return-nonvoid", stmt);
+    if (!stmt.expression)
+      return isGenerator || isVoidReturn || currentFnIsDynamicReturn ? true : shapeNo("tail-bare-return-nonvoid", stmt);
+    // #7104 — `return undefined` in a dynamic-return function.
+    if (currentFnIsDynamicReturn && isUnshadowedUndefinedIdentifier(stmt.expression, scope)) return true;
     return isPhase1Expr(stmt.expression, scope, localClasses);
   }
   if (ts.isBlock(stmt)) {
@@ -5330,8 +5343,16 @@ function isPhase1Tail(
       // A void function may end in a statement-position guard and then fall
       // through to its implicit empty return. The builder emits `if.stmt`
       // followed by `return []`; non-void functions still require both tails.
-      if (!isVoidReturn) return shapeNo("tail-if-noelse", stmt);
+      if (!isVoidReturn && !currentFnIsDynamicReturn) return shapeNo("tail-if-noelse", stmt);
       if (!isPhase1ConditionExpr(stmt.expression, scope, localClasses)) return false;
+      // #7104 — `if (c) { …; return x; }` as the tail: the then-arm is itself a
+      // tail and the fall-through is the implicit return (the lowerer emits
+      // both arms like an if/else whose else is that implicit return).
+      if (thenArmTerminates(stmt.thenStatement)) {
+        return withProjectionEvidenceScope(() =>
+          isPhase1Tail(stmt.thenStatement, new Set(scope), localClasses, isGenerator, isVoidReturn),
+        );
+      }
       return withProjectionEvidenceScope(() =>
         isPhase1BodyStatement(stmt.thenStatement, new Set(scope), localClasses, /* inLoop */ false),
       );

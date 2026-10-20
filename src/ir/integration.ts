@@ -60,7 +60,9 @@ import {
   ensureExternLooseEqHelper,
   ensureExternStrictEqHelper,
   resolveIrDynamicCarrierType,
-} from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic
+  undefinedAnyValueInstrs,
+  undefinedExternInstrs,
+} from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic; (#7104) dyn.undefined
 import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
@@ -8871,6 +8873,8 @@ function isDynamicOp(instr: IrInstr): boolean {
   // #2949 S5.1 — dyn.truthy always consumes the boxed-any carrier, so its
   // presence requires the dynamic backing (ensureAnyHelpers / addUnionImports).
   if (instr.kind === "dyn.truthy") return true;
+  // #7104 — dyn.undefined produces the carrier's undefined value.
+  if (instr.kind === "dyn.undefined") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9090,6 +9094,9 @@ function preregisterDynamicSupport(
   // before any Phase-3 body bakes a funcIdx — exactly like the union family.
   let usesNativeMapAdapters = false;
   let usesNativeExternIsUndefined = false;
+  // (#7104) `dyn.undefined` on the host externref carrier needs the
+  // `__get_undefined` import reserved BEFORE Phase 3 bakes funcIdxs.
+  let usesDynUndefined = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9097,6 +9104,7 @@ function preregisterDynamicSupport(
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (i) => {
           if (isDynamicOp(i)) usesDynamicOps = true;
+          if (i.kind === "dyn.undefined") usesDynUndefined = true;
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9245,6 +9253,13 @@ function preregisterDynamicSupport(
     ensureObjectRuntime(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
+  }
+  if (usesDynUndefined && !ctx.fast && !ctx.nativeStrings) {
+    // Host externref carrier: the same `__get_undefined` import legacy's
+    // `emitUndefined` calls, registered now so no Phase-3 body drives a
+    // late-import index shift.
+    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, null);
   }
   if (usesNativeMapAdapters) {
     ensureIrNativeMapAdapters(ctx);
@@ -9434,6 +9449,11 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         }
         return shim.body;
       },
+      emitUndefined(): readonly Instr[] {
+        // (#7104) The `$undefined` tag-1 singleton: the reserved global where
+        // `ensureAnyValueType` reserved one, else the same initializer inline.
+        return undefinedAnyValueInstrs(ctx);
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9550,6 +9570,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
     tagFieldIdx: -1,
     payloadFieldIdx(tag: JsTag): number {
       throw new Error(`ir/integration: host dynamic carrier has no payload fields (asked for ${JsTag[tag]})`);
+    },
+    emitUndefined(): readonly Instr[] {
+      // (#7104) Exactly legacy's `emitUndefined` on the externref carrier:
+      // standalone / native strings push the extern-wrapped singleton (or
+      // `ref.null.extern`); the host lane calls the pre-registered import.
+      if (ctx.nativeStrings) return undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+      return [callImport("__get_undefined")];
     },
     emitBox(from: ValType, hint?: JsTag): readonly Instr[] {
       switch (from.kind) {
