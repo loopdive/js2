@@ -62,9 +62,9 @@ export interface FinalizationPolicyReceipt {
   readonly transforms: readonly Transform[];
   readonly successor?: SuccessorEpoch;
 }
-const receiptBytes = 160617;
-const receiptHash = "34fa7b401486ca2b4b1b4920d752bbe8b585ceb19762bd1235e5e5c51fe72296";
-const receiptDataHash = "52f1c11bfecd94bc3613f6b0932493b4e4ae7c80846bfe8226c7c60a1f5f1b05";
+const receiptBytes = 161574;
+const receiptHash = "9379097960a05a32179751acc294eef9be6f6d80d79e60a8ff6641e19866548e";
+const receiptDataHash = "887611b6b6f6c57d9dc95506db023c73386fe8089eebdc4fd18e739ba9c8512d";
 function fail(detail: string): never {
   throw Error(`native finalization policy successor: ${detail}`);
 }

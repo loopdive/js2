@@ -309,9 +309,9 @@
           "gitBlob": "8f367782333e8ef6c7f6d27d2afb52f0f35ff9ac"
         },
         "current": {
-          "bytes": 654000,
-          "sha256": "f51cecdf06959e0ec5d86a514fd2b249115f8adcb28fc1bf82c1bf09f7b1878b",
-          "gitBlob": "192e6a95fd54caa909c008f227547ed1132976ee"
+          "bytes": 654301,
+          "sha256": "414e9d1b2c492f7cd60a7ddfd9c73e8dcd6f21fda49dbf5bfc4bdc7b3ddcedeb",
+          "gitBlob": "508106eafcb04d651297137ba79e768c1ab65bc6"
         },
         "edits": [
           {
@@ -411,51 +411,59 @@
             "currentText": "    {\n      \"path\": \"src/codegen/object-model/closed-dispatch-rest-arm.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/array/ta-int-elem-coercion.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
           },
           {
+            "beforeStart": 442893,
+            "beforeEnd": 442893,
+            "beforeText": "",
+            "currentStart": 451125,
+            "currentEnd": 451426,
+            "currentText": "    {\n      \"path\": \"src/shared/binding-writes.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"ir-core\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate pure IR contracts from frontend inventory and physical/backend dependencies.\"\n    },\n"
+          },
+          {
             "beforeStart": 531092,
             "beforeEnd": 531092,
             "beforeText": "",
-            "currentStart": 539324,
-            "currentEnd": 539462,
+            "currentStart": 539625,
+            "currentEnd": 539763,
             "currentText": "    {\n      \"path\": \"src/runtime/wasmgc/promise/with-resolvers-bodies.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"native-runtime\"\n    },\n"
           },
           {
             "beforeStart": 563889,
             "beforeEnd": 563889,
             "beforeText": "",
-            "currentStart": 572259,
-            "currentEnd": 572598,
+            "currentStart": 572560,
+            "currentEnd": 572899,
             "currentText": "    {\n      \"path\": \"src/codegen/declarations/string-replacement-callbacks.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
           },
           {
             "beforeStart": 586209,
             "beforeEnd": 586209,
             "beforeText": "",
-            "currentStart": 594918,
-            "currentEnd": 595294,
+            "currentStart": 595219,
+            "currentEnd": 595595,
             "currentText": "    {\n      \"path\": \"src/runtime/platform-arg-marshal.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n    {\n      \"path\": \"src/runtime/regexp-host-accelerator.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n    {\n      \"path\": \"src/runtime/intl-host-accelerator.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n"
           },
           {
             "beforeStart": 587539,
             "beforeEnd": 587539,
             "beforeText": "",
-            "currentStart": 596624,
-            "currentEnd": 596946,
+            "currentStart": 596925,
+            "currentEnd": 597247,
             "currentText": "    {\n      \"path\": \"src/codegen/analysis/async-loop-head.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
           },
           {
             "beforeStart": 597700,
             "beforeEnd": 597700,
             "beforeText": "",
-            "currentStart": 607107,
-            "currentEnd": 609088,
+            "currentStart": 607408,
+            "currentEnd": 609389,
             "currentText": "    {\n      \"path\": \"src/codegen/array/array-shift-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/classes/runtime-proto-install-demand.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/callable-result-unbox.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/disposable-any-receiver-two-arm.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/element-compound-any-add.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/base64-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n"
           },
           {
             "beforeStart": 639278,
             "beforeEnd": 639278,
             "beforeText": "",
-            "currentStart": 650666,
-            "currentEnd": 653988,
+            "currentStart": 650967,
+            "currentEnd": 654289,
             "currentText": "    },\n    {\n      \"path\": \"src/codegen/helpers/return-tail-funnel.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/classes/class-symbol-to-primitive-operand.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/loose-eq-object-identity.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/helpers/anyvalue-to-number.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/codegen/expressions/import-meta-url-native.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Separate AST/context-driven generation, physical resources and generated native runtime.\"\n    },\n    {\n      \"path\": \"src/runtime/native-microtask-checkpoint.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"legacy-host\"\n    },\n    {\n      \"path\": \"src/ir/class-overrides.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST class-override scan feeding the IR selector and builder (#7000); retire with the IR virtual-dispatch intent or move behind the frontend-ts boundary.\"\n    },\n    {\n      \"path\": \"src/ir/closure-signature-flow.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST callable-slot flow scan feeding the IR selector (#7003); retire with an arity-adapting IR closure call or move behind the frontend-ts boundary.\"\n    },\n    {\n      \"path\": \"src/ir/const-binding-writes.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST write-to-const scan feeding the IR lowerer's legacy demotion (#7014 wave 15); move behind the frontend-ts boundary with the mutation pre-pass.\"\n    },\n    {\n      \"path\": \"src/ir/logical-assignment-name-targets.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"3518-coordinator\",\n      \"nextBoundary\": \"Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass.\"\n"
           }
         ]
@@ -851,13 +859,13 @@
       },
       "current": {
         "source": {
-          "bytes": 654000,
-          "sha256": "f51cecdf06959e0ec5d86a514fd2b249115f8adcb28fc1bf82c1bf09f7b1878b",
-          "gitBlob": "192e6a95fd54caa909c008f227547ed1132976ee"
+          "bytes": 654301,
+          "sha256": "414e9d1b2c492f7cd60a7ddfd9c73e8dcd6f21fda49dbf5bfc4bdc7b3ddcedeb",
+          "gitBlob": "508106eafcb04d651297137ba79e768c1ab65bc6"
         },
-        "count": 2067,
-        "data": "3ffac2626826d95f512289945b2657198e63f992e433b1b71640aed3f020ba97",
-        "files": "5f2a80da74b16f3ef28208df5bc0d2a358adfbd894a86e5b75e40b8aae76b060",
+        "count": 2068,
+        "data": "9d4b6d10e50672113180d91030b6169c075a79beb3a6404cb2c03fc4bc06da6b",
+        "files": "a042932f7a95473a330e3ad8655a23a6f1583e8e02c99b6382d552717890d863",
         "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
       },
       "inserted": [
@@ -1137,7 +1145,18 @@
           }
         },
         {
-          "index": 1569,
+          "index": 1256,
+          "row": {
+            "path": "src/shared/binding-writes.ts",
+            "state": "unmigrated",
+            "layer": "mixed-needs-split",
+            "destination": "ir-core",
+            "owner": "3518-coordinator",
+            "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+          }
+        },
+        {
+          "index": 1570,
           "row": {
             "path": "src/runtime/wasmgc/promise/with-resolvers-bodies.ts",
             "state": "clean",
@@ -1145,7 +1164,7 @@
           }
         },
         {
-          "index": 1736,
+          "index": 1737,
           "row": {
             "path": "src/codegen/declarations/string-replacement-callbacks.ts",
             "state": "unmigrated",
@@ -1156,7 +1175,7 @@
           }
         },
         {
-          "index": 1807,
+          "index": 1808,
           "row": {
             "path": "src/runtime/platform-arg-marshal.ts",
             "state": "unmigrated",
@@ -1164,7 +1183,7 @@
           }
         },
         {
-          "index": 1808,
+          "index": 1809,
           "row": {
             "path": "src/runtime/regexp-host-accelerator.ts",
             "state": "unmigrated",
@@ -1172,7 +1191,7 @@
           }
         },
         {
-          "index": 1809,
+          "index": 1810,
           "row": {
             "path": "src/runtime/intl-host-accelerator.ts",
             "state": "unmigrated",
@@ -1180,7 +1199,7 @@
           }
         },
         {
-          "index": 1814,
+          "index": 1815,
           "row": {
             "path": "src/codegen/analysis/async-loop-head.ts",
             "state": "unmigrated",
@@ -1191,7 +1210,7 @@
           }
         },
         {
-          "index": 1857,
+          "index": 1858,
           "row": {
             "path": "src/codegen/array/array-shift-native.ts",
             "state": "unmigrated",
@@ -1202,7 +1221,7 @@
           }
         },
         {
-          "index": 1858,
+          "index": 1859,
           "row": {
             "path": "src/codegen/classes/runtime-proto-install-demand.ts",
             "state": "unmigrated",
@@ -1213,7 +1232,7 @@
           }
         },
         {
-          "index": 1859,
+          "index": 1860,
           "row": {
             "path": "src/codegen/expressions/callable-result-unbox.ts",
             "state": "unmigrated",
@@ -1224,7 +1243,7 @@
           }
         },
         {
-          "index": 1860,
+          "index": 1861,
           "row": {
             "path": "src/codegen/expressions/disposable-any-receiver-two-arm.ts",
             "state": "unmigrated",
@@ -1235,7 +1254,7 @@
           }
         },
         {
-          "index": 1861,
+          "index": 1862,
           "row": {
             "path": "src/codegen/expressions/element-compound-any-add.ts",
             "state": "unmigrated",
@@ -1246,7 +1265,7 @@
           }
         },
         {
-          "index": 1862,
+          "index": 1863,
           "row": {
             "path": "src/codegen/helpers/base64-native.ts",
             "state": "unmigrated",
@@ -1257,7 +1276,7 @@
           }
         },
         {
-          "index": 2057,
+          "index": 2058,
           "row": {
             "path": "src/codegen/helpers/return-tail-funnel.ts",
             "state": "unmigrated",
@@ -1268,7 +1287,7 @@
           }
         },
         {
-          "index": 2058,
+          "index": 2059,
           "row": {
             "path": "src/codegen/classes/class-symbol-to-primitive-operand.ts",
             "state": "unmigrated",
@@ -1279,7 +1298,7 @@
           }
         },
         {
-          "index": 2059,
+          "index": 2060,
           "row": {
             "path": "src/codegen/helpers/loose-eq-object-identity.ts",
             "state": "unmigrated",
@@ -1290,7 +1309,7 @@
           }
         },
         {
-          "index": 2060,
+          "index": 2061,
           "row": {
             "path": "src/codegen/helpers/anyvalue-to-number.ts",
             "state": "unmigrated",
@@ -1301,7 +1320,7 @@
           }
         },
         {
-          "index": 2061,
+          "index": 2062,
           "row": {
             "path": "src/codegen/expressions/import-meta-url-native.ts",
             "state": "unmigrated",
@@ -1312,7 +1331,7 @@
           }
         },
         {
-          "index": 2062,
+          "index": 2063,
           "row": {
             "path": "src/runtime/native-microtask-checkpoint.ts",
             "state": "unmigrated",
@@ -1320,7 +1339,7 @@
           }
         },
         {
-          "index": 2063,
+          "index": 2064,
           "row": {
             "path": "src/ir/class-overrides.ts",
             "state": "unmigrated",
@@ -1331,7 +1350,7 @@
           }
         },
         {
-          "index": 2064,
+          "index": 2065,
           "row": {
             "path": "src/ir/closure-signature-flow.ts",
             "state": "unmigrated",
@@ -1342,7 +1361,7 @@
           }
         },
         {
-          "index": 2065,
+          "index": 2066,
           "row": {
             "path": "src/ir/const-binding-writes.ts",
             "state": "unmigrated",
@@ -1353,7 +1372,7 @@
           }
         },
         {
-          "index": 2066,
+          "index": 2067,
           "row": {
             "path": "src/ir/logical-assignment-name-targets.ts",
             "state": "unmigrated",

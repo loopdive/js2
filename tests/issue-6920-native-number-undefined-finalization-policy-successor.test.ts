@@ -70,10 +70,10 @@ it("F01 externally pins the new helper and receipt without modifying six old aut
     18093,
   );
   expect(sha(physical("tests/helpers/ir-native-number-undefined-finalization-policy-successor.ts"))).toBe(
-    "fd3c165bb7262e6358526e9eb40218c36de67b3c0cb08499441e3ce001879d03",
+    "fc275e23cc73cbb769b4ec7ee321885870fa57ea6f5dee19bf594b291eacf8e5",
   );
-  expect(Buffer.byteLength(receiptText)).toBe(160617);
-  expect(sha(receiptText)).toBe("34fa7b401486ca2b4b1b4920d752bbe8b585ceb19762bd1235e5e5c51fe72296");
+  expect(Buffer.byteLength(receiptText)).toBe(161574);
+  expect(sha(receiptText)).toBe("9379097960a05a32179751acc294eef9be6f6d80d79e60a8ff6641e19866548e");
   structure(receipt);
   expect(receipt.anchors).toHaveLength(6);
   expect(receipt.callers).toHaveLength(4);
