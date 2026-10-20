@@ -1884,3 +1884,71 @@ source/public admission, live foreign boundary references (no graph copies),
 first-class undefined, both no-host targets and all architecture/retirement/
 custody/conformance acceptance remain required. This is a work-so-far handoff,
 not migration completion or a merge-ready claim. No GitHub issue/comment.
+
+### S7-ak: real ToObject catalog consumers and closed prior verification
+
+The previously active S7-aj jobs now finish clean: corrected native68/68
+(50 runtime +18 owner) and older175/175 across four files, zero skips, both
+terminal exit zero. All175 full case identity/status/error records and all12
+component binaries match their exact retained populations, with positive floors.
+The [native ToObject audit](../audit/6979-native-to-object-20261020.json) records
+the original and terminal evidence without erasing earlier failed controls.
+
+Implement actual Object.getPrototypeOf, Object.prototype.valueOf and the
+retained __proto__ getter as fixed genuine realm algorithm/guarded Call slots.
+All consume the actual ToObject owner; successful mixed prototype status1 is
+the only returned prototype result. Keep private native completion distinct
+from full realm population/source/public admission and live foreign references.
+New helper/catalog verification is separate from the now-proven S7-aj source.
+Full migration and both no-host targets remain in scope and unfinished.
+
+The larger new catalog fixture now uses fourteen exactly counted bounded
+preparation hooks, retaining every actual fill/audit/emission and old fixture/
+case/RPC deadlines; its total setup is split, not claimed to keep the old
+single120-second total. Corrected full-file verification runs separately while
+the original run and older243-case run are retained. No complete new cohort
+result is yet claimed. Typecheck/lint/format of the correction pass.
+
+A fresh named host-import-policy recheck with Node's required exnref feature
+passes33/33 compiled probes,437 adapter imports, zero unknown/regime-gap
+imports, with regexp4/date1/intl4 selected accelerator imports. Retain the
+initial no-feature invocation's validation refusal separately. This default
+compiler-route probe suite is not full IR/source-admission or semantic
+conformance proof. Runtime.ts10230 lines remains above its8000 target;
+resolveImport1371/7 is below its2000-line bar. The arm gate's reductions do
+not establish zero arms or field retirement. Full acceptance remains open.
+
+S7-ak intermediate native verification is now terminal47/54,7 failures/zero
+skips:38/40 runtime cases pass, with two negative controls incorrectly invoking
+another genuine callee through stored transport, plus five owner test-control/
+deadline failures. Corrected tests call the intended lifted entry directly for
+negative self checks and positively retain legitimate supplied-callee dispatch.
+Receipt-valid kernel and guard-error dependency substitutions pass in a separate
+live execution, proving independent canonical checks beyond fill receipts.
+Compile-time positive authentication and interrupted-fill preparation are
+explicit bounded setup, retaining all checks and old case/RPC deadlines.
+The full current56-case run is active; older243-case verification is still
+active too. No clean full current cohort, full source admission or completed
+migration is claimed. Exact revisions/failures are retained in
+[the catalog ToObject audit](../audit/6979-native-to-object-catalog-20261020.json).
+
+#### S7-ak verified private catalog checkpoint
+
+The final corrected execution now passes**56/56** (40 runtime +16 owner), zero
+skips and exit zero. Separate older preservation passes**243/243** in five
+files; full original case/error records and all14 component witnesses match
+their retained evidence with positive floors. These are separate runs, not one
+299-case run. Earlier9/54,47/54 and54/56 failures remain preserved in
+[the exact catalog audit](../audit/6979-native-to-object-catalog-20261020.json).
+
+The three real catalog consumers and six owned algorithm/Call slots are verified
+without any production guard change, host semantic import or graph copy. This
+remains private native completion, not full realm members/constructors or actual
+source/public admission. Publish to the existing draft migration PR with the
+**S7-ak verified catalog checkpoint and next producer handoff** in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Next implement genuine mixed Get/Call and remaining catalog/population owners;
+do not bless source bodies or foreign refs through layout/count/receipt claims.
+All runtime/arm/three-gap, Linear/WASI, architecture/strict-retirement/custody/
+conformance/interop and stacked-PR conflict obligations remain open. Both issues
+and the full migration stay in progress; no GitHub issue/comment was created.

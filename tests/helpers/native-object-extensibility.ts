@@ -56,6 +56,11 @@ import {
   fillNativeToObjectKernel,
   requireCompletedNativeToObjectKernel,
 } from "../../src/backend/wasmgc/resources/native-to-object.js";
+import {
+  reserveNativeObjectToObjectAlgorithms,
+  fillNativeObjectToObjectAlgorithms,
+  requireCompletedNativeObjectToObjectAlgorithms,
+} from "../../src/backend/wasmgc/resources/native-object-to-object-algorithms.js";
 
 export function objectExtensibilityFixture(
   displaced = false,
@@ -65,6 +70,7 @@ export function objectExtensibilityFixture(
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
   includeToObject = false,
+  includeToObjectAlgorithms = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -151,6 +157,13 @@ export function objectExtensibilityFixture(
       }
     : undefined;
   const toObject = includeToObject ? reserveNativeToObjectKernel(tx, toObjectDependencies!) : undefined;
+  if (includeToObjectAlgorithms && !toObject) throw Error("catalog fixture requires genuine ToObject kernel");
+  const toObjectAlgorithmsDependencies = toObject
+    ? { toObject, toObjectDependencies: toObjectDependencies! }
+    : undefined;
+  const toObjectAlgorithms = includeToObjectAlgorithms
+    ? reserveNativeObjectToObjectAlgorithms(tx, toObjectAlgorithmsDependencies!)
+    : undefined;
   return {
     ...r,
     mixed,
@@ -172,6 +185,8 @@ export function objectExtensibilityFixture(
     primitivePrototypes,
     toObjectDependencies,
     toObject,
+    toObjectAlgorithmsDependencies,
+    toObjectAlgorithms,
   };
 }
 export function fillObjectExtensibilityDependencies(r: ReturnType<typeof objectExtensibilityFixture>) {
@@ -199,6 +214,7 @@ export function objectExtensibilityRuntime(
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
   includeToObject = false,
+  includeToObjectAlgorithms = false,
 ) {
   const steps = objectExtensibilityRuntimeSteps(
     displaced,
@@ -208,6 +224,7 @@ export function objectExtensibilityRuntime(
     includePrototypeSetter,
     includePrimitivePrototypes,
     includeToObject,
+    includeToObjectAlgorithms,
   );
   let step = steps.next();
   while (!step.done) step = steps.next();
@@ -225,6 +242,7 @@ export async function objectExtensibilityRuntimeAsync(
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
   includeToObject = false,
+  includeToObjectAlgorithms = false,
 ) {
   const steps = objectExtensibilityRuntimeSteps(
     displaced,
@@ -234,6 +252,7 @@ export async function objectExtensibilityRuntimeAsync(
     includePrototypeSetter,
     includePrimitivePrototypes,
     includeToObject,
+    includeToObjectAlgorithms,
   );
   const synchronousPhaseMs: number[] = [];
   for (;;) {
@@ -250,6 +269,7 @@ export async function objectExtensibilityRuntimeAsync(
           includePrototypeSetter,
           includePrimitivePrototypes,
           includeToObject,
+          includeToObjectAlgorithms,
           synchronousPhaseMs,
         }),
       );
@@ -259,7 +279,10 @@ export async function objectExtensibilityRuntimeAsync(
   }
 }
 
-function* objectExtensibilityRuntimeSteps(
+/** Test-only preparation phases; all callers execute the same actual fills,
+ * canonical audits, positive reachability checks and final emission.
+ */
+export function* objectExtensibilityRuntimeSteps(
   displaced = false,
   decoded = false,
   mode: "interned" | "allocating" = "interned",
@@ -267,6 +290,7 @@ function* objectExtensibilityRuntimeSteps(
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
   includeToObject = false,
+  includeToObjectAlgorithms = false,
 ) {
   const r = objectExtensibilityFixture(
       displaced,
@@ -276,15 +300,29 @@ function* objectExtensibilityRuntimeSteps(
       includePrototypeSetter,
       includePrimitivePrototypes,
       includeToObject,
+      includeToObjectAlgorithms,
     ),
     { tx, f } = r;
   const selectedEntries = [
     ...r.algorithms.entries,
     ...(r.prototypeAlgorithm?.entries ?? []),
     ...(r.prototypeSetter?.entries ?? []),
+    ...(r.toObjectAlgorithms?.entries ?? []),
   ];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
+    ...Object.fromEntries(
+      (r.toObjectAlgorithms?.entries ?? []).flatMap((_, index) => [
+        [
+          "stored" + (selectedEntries.length - 3 + index),
+          {
+            params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }],
+            results: [ext],
+          },
+        ],
+        ["coercionNative" + index, { params: [i32, i32], results: [ext] }],
+      ]),
+    ),
     ...(includeToObject
       ? {
           toObjectText: { params: [], results: [ext] },
@@ -389,6 +427,12 @@ function* objectExtensibilityRuntimeSteps(
     fillNativeToObjectKernel(tx, r.toObject);
     yield;
     requireCompletedNativeToObjectKernel(tx, r.toObject, r.toObjectDependencies!);
+    yield;
+  }
+  if (r.toObjectAlgorithms) {
+    fillNativeObjectToObjectAlgorithms(tx, r.toObjectAlgorithms);
+    yield;
+    requireCompletedNativeObjectToObjectAlgorithms(tx, r.toObjectAlgorithms, r.toObjectAlgorithmsDependencies!);
     yield;
   }
   // Exercise the real prevention algorithm's false branch with the genuine
@@ -669,6 +713,8 @@ function* objectExtensibilityRuntimeSteps(
   for (const [entry, control] of [
     ...(r.prototypeAlgorithm ? [[r.prototypeAlgorithm.entries[0]!, controls.native2!] as const] : []),
     ...(r.prototypeSetter ? [[r.prototypeSetter.entries[0]!, controls.native3!] as const] : []),
+    ...(r.toObjectAlgorithms?.entries.map((entry, index) => [entry, controls["coercionNative" + index]!] as const) ??
+      []),
   ]) {
     tx.fillFunction(control, {
       locals: [],
@@ -720,12 +766,7 @@ function* objectExtensibilityRuntimeSteps(
     locals: [],
     body: [...as(0, r.errors.type.typeIndex), { op: "struct.get", typeIdx: r.errors.type.typeIndex, fieldIdx: 0 }],
   });
-  for (const [index, key] of (includePrototypeSetter
-    ? ["stored0", "stored1", "stored2", "stored3"]
-    : includeSetPrototype
-      ? ["stored0", "stored1", "stored2"]
-      : ["stored0", "stored1"]
-  ).entries())
+  for (const [index, key] of selectedEntries.map((_, index) => "stored" + index).entries())
     tx.fillFunction(controls[key]!, {
       locals: [],
       body: [

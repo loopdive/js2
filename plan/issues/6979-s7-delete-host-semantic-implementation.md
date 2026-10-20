@@ -5747,3 +5747,336 @@ Next maintainer actions, in order:
    Linear/WASI, architecture, custody, conformance and strict retirement proof
    obligations. Existing cycle/unknown-import failures are not waived. Do not
    mark this issue or the migration complete based on this checkpoint.
+
+### S7-ak actual ToObject catalog consumers (2026-10-20, Codex)
+
+Continue from signed `f431957fe97dc194076e6032f86ee375e21d9795`. Prior turn
+made progress by publishing the native wrapping kernel and explicit handoff.
+Corrected native and older preservation sessions4700/83531 are freshly confirmed
+live; observe those same jobs while implementing, without changing their shared
+fixture until they finish.
+
+Compose the real reserved Object.getPrototypeOf, Object.prototype.valueOf and
+retained Object.prototype.__proto__ getter slots. The getter uses the same
+ToObject/GetPrototypeOf steps as the static method but reads this instead of
+argv[0]; valueOf returns ToObject(this). Derive fixed entries/arity/metadata
+from the genuine realm catalog, authenticate the exact ToObject owner and its
+dependency identity, and re-derive algorithm plus guarded lifted Call bodies.
+Only success status1 from mixed GetPrototypeOf is a public prototype result;
+all unsupported/unready internal statuses trap. Canonically authenticate the
+guard's actual error message too. Partial fills remain terminal; no raw
+handle/body callback or caller-selected catalog subset is allowed.
+
+Exercise actual native Wasm at ordinary and displaced/decoded coordinates:
+fresh primitive wrappers and exact payloads/prototypes, object and callable
+identity, nullish TypeError/argument ordering, stored guarded calls, stale and
+foreign/counterfeit refs, generation changes and receipt-valid substitutions.
+Old defaults/order/binaries must remain unchanged. Full realm population,
+mixed getter invocation, foreign live boundary ownership, source/public
+admission, Linear/WASI and full migration acceptance remain required.
+
+#### S7-aj terminal results collected during S7-ak
+
+Both previously live jobs are now terminal exit zero. Corrected ToObject passes
+**68/68** (50 runtime +18 owner); four older files pass **175/175** (63
+extensibility +38 setPrototypeOf +38 retained setter +36 prototype identities),
+zero skips. Full file/case identity/status/error records equal the retained
+old139 in S7-ai's combined report plus prototype36 in its clean final report.
+The initially attempted combined comparison wrongly selected the earlier
+failed prototype controls too; select the exact named populations, not whichever
+duplicate a unique filter retains. No test result or error string is normalized.
+All12 retained binary witnesses match coordinates/mode, bytes/SHA256, imports
+and live/dead counts, with explicit4/3/3/2 floors. A first jq comparison used a
+range number as its document; corrected root binding compares the actual audits.
+The [ToObject audit](../audit/6979-native-to-object-20261020.json) now retains
+terminal exits and exact report/log hashes. These results verify the published
+S7-aj source, not the subsequent S7-ak helper/catalog changes; new executions
+are separate evidence. Earlier failed runs remain recorded.
+
+#### S7-ak implementation and live verification
+
+`native-object-to-object-algorithms.ts` borrows exactly the three existing
+catalog entries and their six algorithm/lifted slots. Its only inputs are the
+genuine ToObject pack and that pack's original dependency object. Fixed
+declarations/signatures, actual ToObject prerequisites, the long guard-error
+initializer and every executed algorithm/guard are independently authenticated.
+`native-object-to-object-bodies.ts` implements the native Call transports and
+checks mixed prototype status1 exactly. Both new modules are classified in the
+existing backend-wasmgc/native-runtime layers, without allowance changes.
+
+The eighth opt-in fixture flag defaults false; original modes/order remain.
+Actual new catalog verification is session74069, report/log
+`.tmp/s7ak-native.json` and `.tmp/s7ak-native.log`. Separate five-file older
+preservation (expected243 cases =175 older +68 kernel) is session20842,
+`.tmp/s7ak-preserved.json` and `.tmp/s7ak-preserved.log`. Both are confirmed
+live; do not restart or kill on an observation timeout. New source tests cover
+primitive payloads/prototypes/freshness, real objects/callables and live parent
+state, this/argument ordering, nullish errors, guarded stored identity, hostile/
+foreign/stale refs, receipt-valid substitutions and partial fills.
+
+The normal new component has emitted real zero-import Wasm:47499 bytes,
+SHA256 `4fd674c1b019f2f3e4c31ca714d923ed8f683b06bee151d91d75256f743fcb4d`,
+live114/dead snapshot95, wholeRealmCompleted=false. This is **not** a passing
+test cohort. The fourteen measured synchronous component phases total above
+the new whole-component120-second setup hook; its stdout appears under the
+next group's context. Inspect the original terminal hook/case errors before
+attributing failures. If confirmed, partition only this larger new fixture into
+explicitly counted bounded setup phases rather than increasing case/RPC/old
+fixture deadlines or weakening canonical audits. Preserve the first execution.
+Its test SHA256 is
+`da5cd86f4f52026ef017d583725ec10bfeb40838b6b1f733adeec731c87bbc30`;
+helper SHA256 `047c9820f1ff9c6e637bbd087092b49c162cf06f20a324b3a32b01fb33bee495`.
+
+Typecheck/lint/format, source/function/coercion/oracle, layering/flat and standard
+fallback checks are terminal exit zero. Whole PR386 source files/net -15559
+LOC, same two existing grants. Inventory valid1988 modules (1986 tracked, two
+new untracked), zero errors, architectureComplete=false, policy hash
+`e888dd4fc651053bd9e579571b786199dbfc9183be7287b387442f92183123ff`.
+Cycle check is exit one with current metrics exactly equal S7-aj; same four
+directions remain red. Preservation-only6/6 full+6/6 cut passes, strict closure
+still fails two unknown imports and retirement is not certified. No Test262,
+historical custody or broader compiler-control rerun is implied. New catalog
+changes remain uncommitted pending runtime evidence; published head stays
+`f431957fe97dc194076e6032f86ee375e21d9795` and the migration remains unfinished.
+
+#### S7-ak bounded component preparation and program-level recheck
+
+Both original jobs remain active. The measured larger catalog component
+exceeds the original single120-second setup hook; preserve that original
+report and inspect its exact terminal errors rather than treating emitted
+Wasm as executed assertions. The new test now advances the same lazy generator
+through fourteen named120-second hooks. Each hook asserts the exact expected
+done state, including a mandatory final completion: early/late/empty setup
+cannot pass. Every actual fill, canonical audit, reachability check and emission
+is retained. Old fixture/case/RPC deadlines are unchanged; the new larger
+component's **total** setup is explicitly split, not claimed to retain the
+original120-second total budget. Its positive-owner fill also belongs in
+bounded setup before the separate canonical completion assertions. No
+production body/check changed. An initial duplicate-hook lint refusal was
+fixed by constructing only the lazy iterator during collection; no work runs
+outside the bounded next() hooks and no lint rule was suppressed.
+
+Corrected full-file verification is session5862, report/log
+`.tmp/s7ak-native-corrected.json` / `.tmp/s7ak-native-corrected.log`, distinct
+from original74069 and older243-case20842; all continue, none was killed.
+These per-execution fork-limit-one jobs overlap, so no performance/concurrency
+causal claim is made. Corrected test SHA256
+`2d73c21b0c4b58d325e8eecd14497d799a7d6afd9818ef73143580054d52810b`;
+helper SHA256 `51f986495bbbbb04b0917dc2f4ba0f8a3db6c7c9cfa69069f5e6adc5ead7a4d7`.
+The only helper change since original243-case start is exporting the existing
+generator plus its comment; emitted instruction-building code is unchanged.
+Inspect actual retained binaries and all original case/error fields before
+claiming preservation of this helper revision. Typecheck/lint/format for the
+corrected test setup pass; the original failed lint log was retained.
+
+The full migration is not reduced to catalog tests. A fresh program-level
+read still finds src/runtime.ts10230 lines versus the8000-line acceptance bar;
+the standalone-arm gate reports improved ceilings (codegen653→632,
+expressions157→155), not zero remaining arms. The named host-import-policy
+command initially exits one because this Node24.4.1 invocation lacks required
+Wasm exnref support (`Invalid opcode 0x1f`); retain
+`.tmp/s7ak-host-import-policy.log`. Rerun the same script with the Node feature
+flag, not changed compiler options/assertions, in
+`.tmp/s7ak-host-import-policy-exnref.log`. Neither compilation refusal nor an
+unobserved rerun certifies the import gate, full native IR/source admission,
+broader conformance or the remaining program-level criteria.
+
+The feature-enabled host-import-policy rerun is now terminal exit zero:
+**33/33 named probes compile**,437 total imports, zero regime-gap/unknown
+imports; selected accelerator counts are regexp4/date1/intl4. Positive jq
+checks require33 actual named rows,33 reported probes and all per-row gap/
+unknown counts zero. Three separate named-gap inventories remain nonempty:
+eager-generator-buffer5, shared-array-buffer1, temporal-strings2. The script
+checks their explicit name ceilings and nonempty inventories but does **not**
+assert result.success there, so this result proves neither their successful
+compilation nor a verified compilation refusal. Those imports are not part of
+the33 positive-probe total. Closing the three native semantic gaps remains in
+scope; do not delete their controls or relabel them to certify retirement.
+This is the script's default compiler-route preservation check, not
+proof of completed IR/source/public ownership or execution of all feature
+semantics. Measured resolveImport1371 lines/7 cases is below its2000-line bar;
+runtime.ts10230 is still above8000. Log SHA256
+`502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861`;
+the initial no-feature refusal's SHA256 is
+`b38fee9483a3d3c4d793192a12f9eced418ec7a44b687d80c5284ea1307cde8d`.
+No import allowance, runtime metric ceiling, baseline or compiler setting was
+repinned to obtain this result.
+
+#### S7-ak original terminal failures and independent dependency controls
+
+Original74069 is now terminal exit one: **9 pass,5 fail,40 skipped /54**.
+Both120000ms component hooks time out, so none of its40 runtime assertions
+execute. The positive catalog and interrupted partial-fill cases hit35000ms
+deadlines. Three post-mutation controls correctly encounter allocator refusal
+earlier than their expected semantic-owner errors: `altered function descriptor`,
+`altered completed function`, `altered completed global`. All six independently
+receipt-valid catalog algorithm/lifted substitution controls pass. The JSON
+timeout rows contain STACK_TRACE_ERROR; retain the full original log's real
+timeout diagnostics, not a normalized replacement. JSON SHA256
+`d238f92513cd761924ce2f0e2b9230247b4d3c174b0918348016ea1533060ebb`;
+log SHA256 `183f8026acd2eb8639fd5414b1682975894d4cc46a08163525d6e7687a81db5e`.
+
+Assert those exact stronger mutation refusals plus failed ledger state. Add
+two **additional** receipt-valid dependency controls: intercept the original
+kernel body fill and the original long guard-error initializer fill, assert
+their actual completion receipts, then require the downstream catalog owner
+to independently refuse their noncanonical definitions. These differ from
+post-fill mutations; neither substitutes for the other. Partial-fill setup now
+performs the actual interruption under a bounded hook and verifies the first
+real algorithm/lifted receipts; the case still requires terminal retry and
+completion refusal. No production code, canonical check, old deadline or
+runtime expectation was changed. Typecheck/lint/format pass.
+
+New full-file authenticated-control verification uses
+`.tmp/s7ak-native-authenticated.json` / `.tmp/s7ak-native-authenticated.log`.
+Expected source count56 =40 runtime +16 owner, not a measured passing count.
+It is separate from still-live intermediate5862 and older243-case20842; no job
+was killed. Current test SHA256
+`018212d4906bbca3dbe00e0fdfa61bf8416f60b39582380c94ba3da66d1f8f26`.
+The [catalog ToObject audit](../audit/6979-native-to-object-catalog-20261020.json)
+retains exact source versions, failures, actual component witnesses and all
+program-level limits. Neither new full source admission nor goal completion
+is implied by these private kernels or by the33 compiled import probes.
+
+#### S7-ak exact callee versus stored transport control
+
+The live authenticated-control execution now reports all40 runtime rows:
+**38 pass,2 fail**,19/20 in each coordinate, not a terminal full56 result.
+Both failures are the same misrouted test control. `storedN` deliberately reads
+the supplied self's function pointer and calls it through the shared catalog
+ABI. The first supposed wrong-self candidate is the genuine Object.isExtensible
+singleton, so the observer correctly calls Object.isExtensible and returns a
+Boolean rather than throwing. It never calls the intended getPrototypeOf/
+valueOf/getter target's guard. Do not break legitimate dynamic dispatch in the
+production implementation to satisfy that invalid negative control.
+
+Correct the negative controls to call each **actual exported lifted target**
+with the wrong self. Add a positive control that the shared Call signatures
+match and the stored observer still invokes the supplied genuine builtin,
+returning its real extensibility result. Retain stale direct and stored calls
+for all three old singletons after reinitialization. All prior wrong-self/
+metadata/realm candidates remain; production guards/bodies are unchanged.
+Typecheck/lint/format pass; current test SHA256
+`b19c8be3604e9f68e898b0c79c9e6d8f9ae6ea725d96156feee82964516c8dcb`.
+This correction still needs a separate full56-case rerun after one existing
+job finishes; do not restart/kill the active older/intermediate jobs or count
+their older test sources as verification of this revision.
+
+#### S7-ak intermediate terminal evidence and current full run
+
+Intermediate5862 now exits one: **47/54 pass,7 fail,zero skips**. All40 runtime
+rows execute (38 pass,2 misrouted-callee controls); owner14 is9 pass/5 fail.
+Its failures retain the three weaker post-mutation expectations and two35000ms
+compile-time audit/partial-fill case deadlines. There are no remaining setup
+hook timeouts in that revision. JSON SHA256
+`e501705e97148739199837a2f4047302b5f4e87208de274d2ac633f265449def`;
+log SHA256 `5edbb663aae2ae8b6ac14c86737712006df4bfd0ae692940c5b7d36809b4f7e1`.
+Both new receipt-valid kernel and guard-error dependency controls also pass in
+the separate still-live47932 execution; no complete56-case result is inferred.
+
+The positive owner's compile-time completion audit now executes under bounded
+preparation as well as its fill, with a cooperative yield between them. The
+case still checks the actual returned owner identity, duplicate refusal and
+incomplete full-realm authority. A failed canonical audit fails preparation;
+none of its work is bypassed, cached into authority or made optional. The new
+setup deadline is120000ms per phase; old35000ms cases/RPC/older hooks remain.
+Together with the direct-target callee checks and actual partial-fill setup,
+current source hash is
+`da84ccc7b0044449b720f2c92b3ae7c00817ee13dde56df4f5de5ec8be015e52`.
+Typecheck/lint/format pass. Full current56-case verification is session78956,
+`.tmp/s7ak-native-callee.json` / `.tmp/s7ak-native-callee.log`, started only
+after intermediate5862 terminated. Older20842 and prior47932 remain active;
+observe those same jobs and preserve actual failures. No production body or
+canonical guard changed, and no passing full current cohort is yet claimed.
+
+Current78956 now reports **40/40 runtime assertions passing**,20 normal and20
+displaced/decoded/allocating, including direct-target negative self guards,
+positive supplied-callee stored transport and all stale direct/stored cases.
+Both components still match original bytes/hashes exactly. This is partial
+live evidence: the16 ownership controls and whole runner exit remain pending,
+as does full older243-case/14-binary preservation. Do not promote the draft,
+certify full source/public admission or close the migration from these40 rows.
+
+Prior dependency-control run47932 is now terminal exit one: **54/56 pass,2
+fail,zero skips**. Both failures are exactly the known stored-callee negative
+control mistake. **All16 ownership controls pass**, including both independently
+receipt-valid dependency substitutions, all six catalog-body substitutions,
+genuine completion, terminal partial fill and stronger physical mutation
+refusal. JSON SHA256
+`aed3b0f2dc4e320cc7d24d0a798fb81b64a06307ba925c842b81b7a6d5a4107b`;
+log SHA256 `dd1cf26f7c171adedd5d3bc92ad85e26a2846c07928e0ca4726b67b4b64ee33d`.
+Do not combine its16 with the separate current40 runtime passes and call that
+one clean56-case run; current78956 must finish independently. Source gates are
+being refreshed for the eventual signed checkpoint; no new publication yet.
+
+#### S7-ak complete older-case and binary preservation
+
+Older20842 is terminal exit zero: **243/243 pass across five files**, zero
+skips (63 extensibility,38 setPrototypeOf,38 retained setter,36 prototype
+identities,68 ToObject kernel). Full file name/status/message and case
+fullName/title/ancestorTitles/status/failureMessages exactly equal the clean
+S7-aj175-case report plus its separate68-case report, with positive five-file/
+243-row floors. No error/case normalization or expectation update.
+
+All**14** older component witnesses match their retained audits exactly for
+coordinates/mode, bytes/SHA256, imports and live/dead counts. Positive family
+floors4/3/3/2/2 and empty-import/incomplete-realm controls pass. Only field
+names mode/booleans and reachable/reachableFunctions are mapped for comparison;
+no executed data are normalized. This also checks the export-only helper
+revision against actual emitted binaries, not just a source-equivalence claim.
+JSON SHA256 `4c96ca75ca768c5b40ab32161661d3d685fff32d230d1599728df8fca8df971e`;
+log SHA256 `8926d7a56b52312b60dc7109177ef1cb4fb497a14673840e665d3c1b8f997c5c`.
+Current78956 still needs its terminal full56 result before publication. Do not
+use this older-case proof to certify new source/public admission or retirement.
+
+#### S7-ak verified catalog checkpoint and next producer handoff
+
+Current78956 is now **56/56 pass**,40 runtime +16 owner, one file, zero skips,
+all case failureMessages empty and runner exit zero. Five-file older preservation
+is separately **243/243 pass**, all14 exact component witnesses unchanged as
+above. These are **two clean executions**, not one299-case execution. Final
+native JSON SHA256
+`05b8f6d5ea8676b45cfa0d8ff80be016dc4534a055c3d3a46870323958aec277`;
+log SHA256 `04073bbbe1a5a29af682c5d38564afd26d13e4f0260892e3f6b244bdc2b23ea0`.
+Both final catalog components match the original emitted bytes/hashes and
+all metadata exactly, with a positive two-row floor. Production source did
+not change during the instrumentation corrections. Earlier9/54,47/54 and
+54/56 failures remain separately recorded with their actual sources/errors.
+
+The actual Object.getPrototypeOf, Object.prototype.valueOf and retained
+__proto__ getter algorithm/guarded Call slots are now implemented and verified
+in the private native domain. Genuine same-family ToObject and long guard-error
+dependencies are independently re-derived; all six receipt-valid slot
+substitutions, both receipt-valid dependency substitutions, real partial fills,
+post-fill mutations, callee identity and actual payload/prototype behavior are
+covered. Real ledgers remain filling/unsealed/incomplete. No public constructor,
+host semantic import, graph copying or whole-realm/source-provider completion.
+
+Refreshed typecheck/lint/format, size/function/coercion/oracle, layering/flat and
+source preservation checks pass within their stated scopes. Strict closure
+still fails the two unknown dynamic imports, architecture remains incomplete
+with the same four red cycle directions, and retirement is not certified.
+The33-probe default-route import gate passes but leaves three separately
+named native-gap inventories and does not prove completed IR/source admission.
+Runtime10230 still exceeds8000. No broader Test262/custody/compiler-control
+cohort is silently certified by these component tests.
+
+Publish this checkpoint to existing draftPR6762 with this handoff and
+[exact catalog audit](../audit/6979-native-to-object-catalog-20261020.json).
+Prerequisite [refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+is freshly OPEN/unmerged; latest PR readback still needs to be checked before
+describing conflicts or mergeability. Do not mark ready or merge this unfinished
+stack from private catalog completion alone. No GitHub issue/comment.
+
+Next actual work is the genuine mixed Get/Call graph and remaining catalog
+member/constructor algorithms, followed by the real initializer/descriptor
+population and atomic authenticated source/public publication. Respect the
+existing mixed.get reservation's pending invocation owner: no raw getter/call
+handle binder, arbitrary source body or wholeRealmReady/count/receipt shortcut.
+Source closures need actual prepared body custody; foreign JS objects/callables
+must use live per-instance identity-backed boundary refs, without recursively
+copying graphs or restoring a JS semantic engine. Keep first-class undefined,
+Linear/WASI, the three named gaps, remaining runtime/arm retirement, architecture/
+strict closure, custody/conformance/npm-compat/accelerators and PR conflict
+resolution in full scope. Both Markdown issues stay in progress and the full
+migration goal stays active.
