@@ -944,3 +944,48 @@ New leaves registered in `scripts/compiler-boundaries.json`.
 
 `status` stays `in-progress`: the S6 residual rows and the probe gaps are
 unmet criteria, not recorded-and-accepted ones.
+
+## 2026-10-20 continuation — shared Symbol prototype seeder demand
+
+The human-approved 930-byte patch changes only the shared native-prototype
+seeder demand gate: an actually materialized Symbol prototype may demand its
+normal seeder without the generic reflective-read flag. Dependency parking,
+flush ordering, and descriptors retain their normal paths. No AST predicate,
+provider, corpus, oracle, or policy change is included. Product postimage:
+`src/codegen/native-proto.ts` SHA-256
+`52fade0eb615b40e80e6edebbd34539e2d469b7e1de758178e8244f7a099896e`.
+
+Actual paired qualification at clean-main base
+`5bf8e9ec6c1ebb9b1ffb8fa4435deeb3541961d8` established a narrow result:
+
+- Both authored descriptor-only nullish Symbol numeric cases changed from red
+  to green, including emitted seeder/valueOf/toString name checks. The five
+  targeted cases passed; their helpers, literal sources, assertions, options,
+  and 90s timeouts are preserved in the proposed maintained shipping subset.
+- The unchanged seven-case diagnostic comparison settled **5 PASS / 2 FAIL**.
+  Both TypedArray controls still returned 4 against assertion 7, matching their
+  real baseline failures. Their full fixture and evidence are retained; neither
+  assertion is weakened, claimed repaired, or relabelled green.
+- The four unchanged original Test262 files remained **1 PASS / 3 FAIL** in
+  both BASE and PATCH. Each completeness check covered **4/4**, with **0
+  exclusions** and **6 compiler attempts**. The whole Symbol wrapper original
+  still misses its expected numeric TypeError. Further diagnosis remains open;
+  the authored subset does not establish a canonical flip.
+
+Measurement labels remain separate. Original Test262 requested legacy with
+configured hybrid compilation, standalone target, honest oracle, auto semantic
+providers, and oracle15; the actual execution-route ownership is **UNKNOWN**.
+Authored tests use the DEFAULT direct compile API with standalone, allowJs,
+skipSemanticDiagnostics, and deferTopLevelInit, without an explicit
+experimentalIR/compiler-path selection. Neither result certifies complete IR.
+
+All six required v8 source-contract commands exited 0: LOC, function budget,
+coercion-site guard, oracle ratchet, dead-export preservation-v1, and format
+check. Strict graph closure remains open and is not certified by the
+preservation-v1 result. Final qualification of the exact five-case maintained
+file on `319fc0a667e37710be11d6de0cc1477bdfd3b5bf` settled **5 PASS / 0 FAIL /
+0 SKIP / 0 TODO**; format and the maintained TypeScript 7 typecheck each exited
+0. All three children closed naturally with complete raw capture and unchanged
+source/dependency guards. Normal hooks, CI, and the protected full-suite floor
+remain **PENDING**. This continuation does not close #6770, waive either TA failure,
+claim original oracle14/full11778 success, or provide census conformance credit.
