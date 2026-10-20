@@ -173,6 +173,36 @@ describe("#7106 S1 — String(<dynamic>) through dyn.to_string", () => {
     expect(await call(result.binary, "ok")).toBe(7);
   });
 
+  it("S1c: Object.prototype.toString.call(<dynamic>) through the standalone classifier", async () => {
+    const result = await compileStandalone(
+      `
+        function tag(v: any): string { return Object.prototype.toString.call(v); }
+        export function ok(): number {
+          let n = 0;
+          if (tag(1) === "[object Number]") n += 1;
+          if (tag("s") === "[object String]") n += 2;
+          if (tag(true) === "[object Boolean]") n += 4;
+          return n;
+        }
+      `,
+      "issue-7106-s1c-object-tag.ts",
+    );
+    expect(result.irCompiledFuncs ?? [], JSON.stringify(result.irOutcomes, null, 2)).toContain("tag");
+    expect(await call(result.binary, "ok")).toBe(7);
+  });
+
+  it("S1c: try/catch with a rethrow inside a dynamic function ships an IR body", async () => {
+    const result = await compileStandalone(
+      `
+        function safe(value: any): string { try { return String(value); } catch (err) { throw err; } }
+        export function ok(): number { return safe(5) === "5" && safe("x") === "x" ? 1 : 0; }
+      `,
+      "issue-7106-s1c-try.ts",
+    );
+    expect(result.irCompiledFuncs ?? [], JSON.stringify(result.irOutcomes, null, 2)).toContain("safe");
+    expect(await call(result.binary, "ok")).toBe(1);
+  });
+
   it("S1b: a shadowing JSON parameter is not the ambient namespace and does not fold", async () => {
     // Folding `typeof JSON` here would read "object" and take the wrong arm.
     const result = await compileStandalone(

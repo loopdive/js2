@@ -93,6 +93,7 @@ import {
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
+import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
   ensureIrNativeMapAdapters,
@@ -8881,6 +8882,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   // #7106 S1 — dyn.to_string consumes the carrier and calls `__extern_toString`.
   if (instr.kind === "dyn.to_string") return true;
   if (instr.kind === "dyn.json_stringify") return true;
+  if (instr.kind === "dyn.object_tag") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9109,6 +9111,8 @@ function preregisterDynamicSupport(
   let usesDynToString = false;
   // (#7106 S1b) `dyn.json_stringify` calls the native codec root.
   let usesDynJsonStringify = false;
+  // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
+  let usesDynObjectTag = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9119,6 +9123,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.undefined") usesDynUndefined = true;
           if (i.kind === "dyn.to_string") usesDynToString = true;
           if (i.kind === "dyn.json_stringify") usesDynJsonStringify = true;
+          if (i.kind === "dyn.object_tag") usesDynObjectTag = true;
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9267,6 +9272,11 @@ function preregisterDynamicSupport(
     ensureObjectRuntime(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
+  }
+  if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    ensureObjectProtoToStringRuntimeHelper(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, "__object_proto_to_string_runtime");
   }
   if (usesDynJsonStringify && ctx.nativeStrings && !ctx.fast) {
     // The native codec (`__json_stringify_value` + its 1-arg root) is a DEFINED
@@ -9503,6 +9513,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
           "ir/integration: dyn.json_stringify is not lowerable on the fast $AnyValue carrier (#7106 S1b)",
         );
       },
+      emitObjectToStringTag(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.object_tag is not lowerable on the fast $AnyValue carrier (#7106 S1c)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9653,6 +9666,24 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.json_stringify needs the native JSON codec (native strings) (#7106 S1b)");
       }
       return [{ op: "any.convert_extern" } as Instr, callImport("__json_stringify_root")];
+    },
+    emitObjectToStringTag(scratch: () => number): readonly Instr[] {
+      // (#7106 S1c) Exactly legacy's standalone `.call` arm: an unused null
+      // self slot beneath the value, then the runtime classifier; its externref
+      // result is re-tagged into the native string carrier like `emitTypeof`.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.object_tag needs the standalone runtime classifier (#7106 S1c)");
+      }
+      const s = scratch();
+      return [
+        { op: "local.set", index: s } as Instr,
+        { op: "ref.null.extern" } as Instr,
+        { op: "local.get", index: s } as Instr,
+        callImport("__object_proto_to_string_runtime"),
+        ...(ctx.nativeStrings && ctx.anyStrTypeIdx >= 0
+          ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr]
+          : []),
+      ];
     },
     emitUndefined(): readonly Instr[] {
       // (#7104) Exactly legacy's `emitUndefined` on the externref carrier:

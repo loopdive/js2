@@ -46,6 +46,7 @@ export type {
   IrInstrDynTypeof,
   IrInstrDynToString,
   IrInstrDynJsonStringify,
+  IrInstrDynObjectTag,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

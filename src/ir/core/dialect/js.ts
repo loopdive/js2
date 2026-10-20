@@ -191,6 +191,20 @@ export interface IrInstrDynJsonStringify extends IrInstrBase {
 }
 
 /**
+ * `dyn.object_tag{value}` — `Object.prototype.toString.call(value)` (§20.1.3.6,
+ * the `[object Tag]` classifier) over a boxed-any carrier (#7106 S1c). `value`
+ * MUST be `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`.
+ * Lowering calls the SAME standalone runtime classifier legacy's `.call` arm
+ * does (`__object_proto_to_string_runtime(unusedSelf, value)`), re-tagged into
+ * the lane's string carrier. Admitted only where the
+ * `native-object-tostring-tag` backend capability holds.
+ */
+export interface IrInstrDynObjectTag extends IrInstrBase {
+  readonly kind: "dyn.object_tag";
+  readonly value: IrValueId;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

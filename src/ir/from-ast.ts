@@ -9245,6 +9245,30 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   );
   if (consoleResult !== undefined) return consoleResult;
 
+  // (#7106 S1c) `Object.prototype.toString.call(v)` on the ambient `Object`:
+  // the operand must already be the dynamic carrier (the selector admits no
+  // statically primitive operand); the classifier runs in the lane's runtime.
+  if (
+    methodName === "call" &&
+    ts.isPropertyAccessExpression(expr.expression.expression) &&
+    expr.expression.expression.name.text === "toString" &&
+    ts.isPropertyAccessExpression(expr.expression.expression.expression) &&
+    expr.expression.expression.expression.name.text === "prototype" &&
+    ts.isIdentifier(expr.expression.expression.expression.expression) &&
+    expr.expression.expression.expression.expression.text === "Object" &&
+    expr.arguments.length === 1 &&
+    !ts.isSpreadElement(expr.arguments[0]!) &&
+    cx.scope.get("Object") === undefined &&
+    cx.resolver?.isAmbientBinding?.(expr.expression.expression.expression.expression) !== false
+  ) {
+    const raw = lowerExpr(expr.arguments[0]!, cx, irDynamic());
+    const rawType = cx.builder.typeOf(raw);
+    if (rawType.kind === "dynamic") return cx.builder.emitDynObjectTag(raw);
+    demoteToLegacy(
+      "method-call-unsupported",
+      `ir/from-ast: Object.prototype.toString.call of ${describeIrType(rawType)} operand is deferred (${cx.funcName})`,
+    );
+  }
   // (#7106 S1b) One-argument `JSON.stringify(v)` on the ambient namespace:
   // the operand is boxed into the dynamic carrier (a primitive) or already is
   // one, then serialised through the native codec root legacy calls.

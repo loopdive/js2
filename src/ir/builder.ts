@@ -700,6 +700,23 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /**
+   * Emit `dyn.object_tag{value}` — `Object.prototype.toString.call(value)` over
+   * the boxed-any carrier (#7106 S1c); result is `string`.
+   */
+  emitDynObjectTag(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynObjectTag operand ${value} is not dynamic (#7106 S1c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.object_tag", value, result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

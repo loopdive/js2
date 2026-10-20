@@ -641,7 +641,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "primitive-wrapper-loose-equality"
       | "legacy-numeric-array-global"
       | "number-to-string"
-      | "native-json-codec",
+      | "native-json-codec"
+      | "native-object-tostring-tag",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -2887,6 +2888,13 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn) return false;
         if (isDynShaped(jsonStringifyArg)) return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, true);
         return currentDynamicRuntimeBuildable && scanExpr(jsonStringifyArg, false);
+      }
+      // (#7106 S1c) `Object.prototype.toString.call(<dynamic>)` → `dyn.object_tag`.
+      const objectTagArg = dynNames.has("Object") ? null : ambientObjectToStringTagCall(e);
+      if (objectTagArg !== null) {
+        if (expectDyn) return false;
+        if (isDynShaped(objectTagArg)) return currentDynamicRuntimeBuildable && scanExpr(objectTagArg, true);
+        return currentDynamicRuntimeBuildable && scanExpr(objectTagArg, false);
       }
       const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
       if (receiverFirstMethod !== undefined) {
@@ -7386,6 +7394,32 @@ function ambientJsonStringifyCall(expr: ts.CallExpression): ts.Expression | null
 }
 
 /**
+ * (#7106 S1c) `Object.prototype.toString.call(<arg>)` against the ambient
+ * `Object`, exactly one non-spread argument the checker cannot pin to a
+ * primitive, on a lane with the standalone runtime classifier. Returns the
+ * argument, else null.
+ */
+function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | null {
+  const callee = expr.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "call" || expr.arguments.length !== 1) return null;
+  const method = callee.expression;
+  if (!ts.isPropertyAccessExpression(method) || method.name.text !== "toString") return null;
+  const proto = method.expression;
+  if (!ts.isPropertyAccessExpression(proto) || proto.name.text !== "prototype") return null;
+  const root = proto.expression;
+  if (!ts.isIdentifier(root) || root.text !== "Object") return null;
+  const arg = expr.arguments[0]!;
+  if (ts.isSpreadElement(arg)) return null;
+  if (!selectorSeesAmbientBinding(root)) return null;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-object-tostring-tag") !== true) return null;
+  const family = currentSelectionOptions?.classifyPrimitiveExpression?.(arg);
+  if (family === "string" || family === "number" || family === "boolean") return null;
+  if (ts.isStringLiteralLike(arg) || ts.isNumericLiteral(arg)) return null;
+  if (arg.kind === ts.SyntaxKind.TrueKeyword || arg.kind === ts.SyntaxKind.FalseKeyword) return null;
+  return arg;
+}
+
+/**
  * (#7106 S1b) `typeof <ambient global>` folds to a constant tag when the
  * identifier is the UNSHADOWED ambient binding (`typeof JSON !== "undefined"`
  * in assert.js). Shadowing is settled by the checker-backed ambient predicate
@@ -10186,6 +10220,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (#7106 S1b) `JSON.stringify(v)`: one argument, native codec lanes only.
       const jsonStringifyArg = scope.has("JSON") ? null : ambientJsonStringifyCall(expr);
       if (jsonStringifyArg !== null) return isPhase1Expr(jsonStringifyArg, scope, localClasses);
+      // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
+      const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
+      if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
       // here and accept it; the lowerer in from-ast.ts emits a plain unary
@@ -11393,6 +11430,12 @@ export function buildLocalCallGraph(
           const jsonStringifyArg = ambientJsonStringifyCall(node);
           if (jsonStringifyArg !== null) {
             visit(jsonStringifyArg);
+            return;
+          }
+          // (#7106 S1c) …as is `Object.prototype.toString.call(v)`.
+          const objectTagArg = ambientObjectToStringTagCall(node);
+          if (objectTagArg !== null) {
+            visit(objectTagArg);
             return;
           }
           // (#1371) Special case: `Math.<whitelisted>(arg)` lowers to a

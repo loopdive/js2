@@ -804,6 +804,13 @@ const VERDICTS = {
     why: "ECMAScript ToString over every partition of a boxed-any carrier (§7.1.17), one ToString engine shared with legacy.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `ToString` (§7.1.17) over EVERY partition" }],
   },
+  "dyn.object_tag": {
+    verdict: "js",
+    why: "ECMAScript Object.prototype.toString (§20.1.3.6) `[object Tag]` classification of a boxed-any carrier, through the standalone runtime classifier shared with legacy.",
+    evidence: [
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "the `[object Tag]` classifier) over a boxed-any carrier" },
+    ],
+  },
   "dyn.json_stringify": {
     verdict: "js",
     why: "ECMAScript JSON.stringify (§25.5.2) over a boxed-any carrier, through the native codec root shared with legacy.",

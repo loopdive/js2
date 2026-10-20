@@ -344,6 +344,15 @@ export interface IrDynamicLowering {
    */
   emitJsonStringify(): readonly Instr[];
   /**
+   * (#7106 S1c) Carrier on the stack → the lane's string carrier holding
+   * `Object.prototype.toString.call(value)`, through the SAME standalone
+   * runtime classifier legacy calls (`__object_proto_to_string_runtime
+   * (unusedSelf, value)`); `scratch` lends the externref local that lets the
+   * null self slot be pushed beneath the value. Throws where the
+   * `native-object-tostring-tag` capability does not hold.
+   */
+  emitObjectToStringTag(scratch: () => number): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

@@ -23,7 +23,7 @@ assignee: "ttraenkler/claude-c"
 # the same shape as the object-runtime and any-helpers edges already there;
 # one more two-way ir→codegen edge, no new SCC member.
 import-cycles-allow:
-  - ir->codegen: 75 # 2026-10-20 (#7106): integration.ts pre-registers the native JSON codec root
+  - ir->codegen: 76 # 2026-10-20 (#7106): integration.ts pre-registers the native JSON codec root and the Object.prototype.toString classifier
 func-budget-allow:
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree

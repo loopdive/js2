@@ -125,6 +125,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.typeof":
     case "dyn.to_string":
     case "dyn.json_stringify":
+    case "dyn.object_tag":
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":
