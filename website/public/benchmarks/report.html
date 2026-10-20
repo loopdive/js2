@@ -721,14 +721,14 @@
       }
       if (IR_SELECTED) {
         irProvenance.hidden = false;
-        irProvenance.textContent = "IR conformance is unmeasured until verified IR data is available.";
+        irProvenance.textContent = "IR conformance is unmeasured until a completed IR measurement is available.";
         document.getElementById("app").textContent = "IR conformance is unmeasured. Loading its separate status…";
       }
       const showIrUnavailable = (container, mode) => {
         const message = el(
           "div",
           { className: "no-data", role: "status" },
-          `IR ${mode} conformance is unmeasured. No verified IR results are available.`,
+          `IR ${mode} conformance is unmeasured. No completed IR measurement is available.`,
         );
         container.appendChild(message);
         irProvenance.textContent = `IR · ${mode} · unmeasured`;
@@ -2616,6 +2616,11 @@
               : activeMode === "standalone" && standaloneView
                 ? standaloneView
                 : hostView;
+            if (!IR_SELECTED) {
+              irProvenance.hidden = activeMode !== "host";
+              if (activeMode === "host")
+                irProvenance.textContent = window.t262ViewState.historicalHostLabel(view.report);
+            }
             if (IR_SELECTED) {
               window.t262ViewState.write({ mode: activeMode });
               overviewLink.href = window.t262ViewState.linkTo(`${BASE_PATH || ""}/#goals`, {
@@ -2627,7 +2632,8 @@
                 return;
               }
               const filename = activeMode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-              irProvenance.textContent = `IR · ${activeMode} · results/${filename}`;
+              irProvenance.textContent =
+                window.t262ViewState.irMeasurementLabel(view.report, activeMode) + ` · results/${filename}`;
             }
             renderConformance(view, conformanceHost, preservedState);
           };

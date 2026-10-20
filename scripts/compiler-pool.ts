@@ -14,6 +14,24 @@
  */
 import { fork, type ChildProcess } from "child_process";
 import { join } from "path";
+import {
+  capturePreparedJobRequest,
+  refusePreparedArtifactPaths,
+  validatePreparedJobResponse,
+  validatePreparedExecutionJobResponse,
+} from "./test262-prepared-request.mjs";
+
+const validatedPreparedResults = new WeakMap<object, Readonly<Record<string, unknown>>>();
+const deliveredCompilerResults = new WeakMap<object, Readonly<Record<string, unknown>>>();
+/** Reporting only: foreign/cloned result packets cannot mint validated execution identity. */
+export function test262CompilerResultMetadata(result: object): Readonly<Record<string, unknown>> {
+  return deliveredCompilerResults.get(result) ?? Object.freeze({ compilerAttempts: 0 });
+}
+
+export interface PreparedPoolOptions {
+  wholeProgram?: { readonly kind: "prepared-program-required"; readonly version: 1 };
+  backend?: "wasmgc" | "linear";
+}
 
 export interface PoolCompileResult {
   ok: true;
@@ -22,6 +40,7 @@ export interface PoolCompileResult {
   imports: any[];
   sourceMap: string | null;
   compileMs: number;
+  preparedReport?: Readonly<Record<string, unknown>>;
 }
 
 export interface PoolCompileError {
@@ -83,17 +102,22 @@ interface ChildLifetime {
 type QueueItem = {
   id: number;
   msg: Record<string, any>;
+  preparedRequest?: NonNullable<ReturnType<typeof capturePreparedJobRequest>>;
   /** Timeout ceiling in ms — applied from dispatch time, not enqueue time (#1227). */
   timeoutMs: number;
   label?: string;
   /** Number of times an unexpectedly-dead worker has retried this job. */
   workerCrashRetries?: number;
+  compilerAttempts?: number;
   resolve: (r: any) => void;
 };
 
 const MAX_WORKER_CRASH_RETRIES = 1;
 
 export class CompilerPool {
+  readonly #preparedBuiltinPath: string | undefined;
+  readonly #preparedUnified: boolean;
+  readonly #preparedChildren = new WeakSet<ChildProcess>();
   private forks: ForkState[] = [];
   private pending = new Map<number, PendingJob>();
   private queue: QueueItem[] = [];
@@ -116,6 +140,8 @@ export class CompilerPool {
   ) {
     const workerFile = workerType === "unified" ? "test262-worker.mjs" : "compiler-fork-worker.mjs";
     this.workerPath = workerPathOverride ?? join(import.meta.dirname ?? __dirname, workerFile);
+    this.#preparedBuiltinPath = workerPathOverride === undefined ? this.workerPath : undefined;
+    this.#preparedUnified = workerType === "unified" && workerPathOverride === undefined;
     for (let i = 0; i < size; i++) {
       this.forks.push(this.createFork());
     }
@@ -129,7 +155,8 @@ export class CompilerPool {
 
   private forkProcess(): ChildProcess {
     const maxOldSpaceSize = process.env.TEST262_WORKER_MAX_OLD_SPACE_SIZE ?? "512";
-    const proc = fork(this.workerPath, [], {
+    const workerPath = this.workerPath;
+    const proc = fork(workerPath, [], {
       // (#5353) stderr is INHERITED, not piped. Everything a fork writes there
       // is provenance or a fatal: the runtime-eval tier announcement (#2928 E7,
       // which was written to be recoverable from a run log and never was), the
@@ -146,6 +173,7 @@ export class CompilerPool {
       // diagnostic override.
       env: { ...process.env, TZ: process.env.TEST262_TZ ?? "UTC" },
     });
+    if (workerPath === this.#preparedBuiltinPath) this.#preparedChildren.add(proc);
     // Own this exact generation before any job handler or signal can see it.
     const lifetime: ChildLifetime = { identity: ++this.nextChildIdentity, errors: [], signals: [] };
     this.outstandingChildren.set(proc, lifetime);
@@ -174,11 +202,65 @@ export class CompilerPool {
         return;
       }
 
+      const active = state.active;
+      if (!active || active.job.id !== msg.id) return;
       // Binary arrives as base64 over IPC — decode it (compile-only mode)
       if (msg.ok && msg.binary && typeof msg.binary === "string") {
         msg.binary = new Uint8Array(Buffer.from(msg.binary, "base64"));
       }
 
+      if (active.job.preparedRequest) {
+        // Retirement is a lifecycle request from this exact active builtin child,
+        // independent of whether its attempted ownership report is admissible.
+        const retirement =
+          this.#preparedChildren.has(proc) && msg.recycle === true
+            ? { recycle: true, recycleReason: typeof msg.recycleReason === "string" ? msg.recycleReason : undefined }
+            : undefined;
+        try {
+          if (!this.#preparedChildren.has(proc)) throw new Error("PREPARED_TRANSPORT_INVALID: non-builtin worker");
+          if (active.job.msg.execute === true)
+            validatePreparedExecutionJobResponse(
+              msg,
+              active.job.preparedRequest,
+              active.job.msg.source,
+              active.job.id,
+              proc.pid,
+            );
+          else if (msg.ok === true)
+            validatePreparedJobResponse(
+              msg,
+              active.job.preparedRequest,
+              active.job.msg.source,
+              active.job.id,
+              proc.pid,
+            );
+          else if (msg.ok !== false || typeof msg.error !== "string" || msg.error.trim().length === 0)
+            throw new Error("PREPARED_TRANSPORT_INVALID: unknown strict response");
+          if (active.job.msg.execute === true)
+            validatedPreparedResults.set(
+              msg,
+              Object.freeze({
+                compilerPathVerified: true,
+                executionCompilerPath: "ir",
+                preparedExecutionReport: Object.freeze({ ...msg.preparedExecutionReport }),
+              }),
+            );
+        } catch (error) {
+          msg = {
+            id: active.job.id,
+            ...(active.job.msg.execute === true ? { status: "compile_error" } : { ok: false }),
+            error:
+              active.job.msg.execute === true && typeof msg.error === "string" && msg.error.length > 0
+                ? `${msg.error}; ${error instanceof Error ? error.message : String(error)}`
+                : error instanceof Error
+                  ? error.message
+                  : String(error),
+            compileMs: msg.compileMs ?? 0,
+            compilerPathFailureKind: msg.compilerPathFailureKind ?? "transport",
+            ...retirement,
+          };
+        }
+      }
       const job = this.pending.get(msg.id);
       if (job) {
         this.pending.delete(msg.id);
@@ -230,7 +312,12 @@ export class CompilerPool {
     target?: "gc" | "linear" | "wasi" | "standalone",
     // (#2119) false ⇒ keep mapped arguments for script tests; see runTest.
     inferModuleStrictArguments?: boolean,
+    requestOptions?: PreparedPoolOptions,
   ): Promise<PoolResult> {
+    const prepared = capturePreparedJobRequest(requestOptions, target);
+    refusePreparedArtifactPaths(prepared, wasmPath, metaPath);
+    if (prepared && !this.#preparedBuiltinPath)
+      throw new Error("PREPARED_TRANSPORT_INVALID: strict compile requires the builtin compiler fork");
     return this.enqueue(
       {
         source,
@@ -239,6 +326,9 @@ export class CompilerPool {
         metaPath,
         target,
         inferModuleStrictArguments,
+        ...(prepared
+          ? { wholeProgram: prepared.wholeProgram, backend: prepared.backend, target: prepared.target }
+          : {}),
         execute: false,
       },
       timeoutMs,
@@ -250,6 +340,8 @@ export class CompilerPool {
   runTest(
     source: string,
     opts: {
+      wholeProgram?: PreparedPoolOptions["wholeProgram"];
+      backend?: PreparedPoolOptions["backend"];
       isNegative?: boolean;
       isRuntimeNegative?: boolean;
       expectedErrorType?: string;
@@ -304,6 +396,11 @@ export class CompilerPool {
     } = {},
     timeoutMs = 30_000,
   ): Promise<TestResult> {
+    const prepared = capturePreparedJobRequest(opts);
+    const forwarded = { wholeProgram: prepared?.wholeProgram, backend: prepared?.backend, target: prepared?.target };
+    refusePreparedArtifactPaths(prepared, opts.wasmPath, opts.metaPath);
+    if (prepared && !this.#preparedUnified)
+      throw new Error("PREPARED_TRANSPORT_INVALID: strict execution requires the builtin unified worker");
     return this.enqueue(
       {
         source,
@@ -318,7 +415,9 @@ export class CompilerPool {
         requiresEntrySelfImportGraph: opts.requiresEntrySelfImportGraph,
         wasmPath: opts.wasmPath,
         metaPath: opts.metaPath,
-        target: opts.target,
+        target: forwarded.target ?? opts.target,
+        wholeProgram: forwarded.wholeProgram,
+        backend: forwarded.backend,
         inferModuleStrictArguments: opts.inferModuleStrictArguments,
         scriptGoal: opts.scriptGoal,
         // (#3461) forwarded only in fast native-harness mode; undefined ⇒ the
@@ -347,7 +446,26 @@ export class CompilerPool {
       // otherwise queue-wait time on a saturated pool gets counted against
       // the user's timeout, producing false `compile_timeout` results for
       // tests that compile in <1 s in isolation.
-      this.queue.push({ id, msg, timeoutMs, label, resolve });
+      const job: QueueItem = {
+        id,
+        msg,
+        preparedRequest: capturePreparedJobRequest(msg),
+        timeoutMs,
+        label,
+        resolve: (result) => {
+          if (result && typeof result === "object")
+            deliveredCompilerResults.set(
+              result,
+              Object.freeze({
+                compilerAttempts: job.compilerAttempts ?? 0,
+                ...(validatedPreparedResults.get(result) ?? {}),
+                ...(result.compilerPathFailureKind ? { compilerPathFailureKind: result.compilerPathFailureKind } : {}),
+              }),
+            );
+          resolve(result);
+        },
+      };
+      this.queue.push(job);
       this.dispatch();
     });
   }
@@ -359,6 +477,14 @@ export class CompilerPool {
       if (!free) break;
 
       const job = this.queue.shift()!;
+      if (job.preparedRequest && !this.#preparedChildren.has(free.proc)) {
+        job.resolve({
+          ok: false,
+          error: "PREPARED_TRANSPORT_INVALID: selected child is not the builtin compiler fork",
+          compileMs: 0,
+        });
+        continue;
+      }
       free.busy = true;
 
       // #1227: start the timeout timer now, after the fork has accepted the
@@ -404,6 +530,7 @@ export class CompilerPool {
         },
       });
 
+      job.compilerAttempts = (job.compilerAttempts ?? 0) + 1;
       free.proc.send({ id: job.id, ...job.msg });
     }
   }
