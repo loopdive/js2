@@ -64,6 +64,10 @@ export function requireValidImportedCallTarget(plan: IrImportedCallLoweringPlan)
 }
 
 export interface IrTopLevelFunctionValueLoweringPlan {
+  /** Prepared canonical lazy accessor; absent only for historical plans. */
+  readonly accessor?: IrFuncRef;
+  /** This exact identifier is certified as a function-object property receiver. */
+  readonly objectReceiver?: boolean;
   readonly ownerUnitId: IrUnitId;
   readonly ownerName: string;
   /** Exact source-unit function whose value is being materialized. */

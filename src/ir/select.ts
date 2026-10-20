@@ -89,7 +89,14 @@ import {
 } from "./nodes.js";
 import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 import { programCallablePhase1Verdict, visitProgramCallableUse } from "./program-callable-selection.js";
-import { isAffineThreeDeepElementAccess, unwrapTypeErasedExpression } from "./select-expression-structure.js";
+import {
+  isAffineThreeDeepElementAccess,
+  unwrapTypeErasedExpression,
+  identifierIsValueReference,
+  isFunctionObjectReceiver,
+  functionObjectMemberCallIsBuildable,
+  superMethodCallIsBuildable,
+} from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
@@ -356,6 +363,8 @@ export interface IrModuleInitAssessment {
 }
 
 export interface IrSelectionOptions extends IrAsyncSelectionOptions {
+  /** Exact stable same-source function bindings, only at property receiver sites. */
+  readonly functionObjectValues?: IrImportedFunctionResolver;
   readonly experimentalIR?: boolean;
   /**
    * Exact shared #3518 proof for a counted string append loop. When omitted,
@@ -1587,40 +1596,6 @@ export function configureIrStructuralSelectorPredicates(
   currentModuleBindingResolver = options?.resolveModuleBinding ?? null;
   currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
   currentDynamicRuntimeBuildable = options?.dynamicRuntimeBuildable ?? true;
-}
-
-function identifierIsValueReference(node: ts.Identifier): boolean {
-  const parent = node.parent;
-  if (!parent) return true;
-  if (
-    (ts.isVariableDeclaration(parent) ||
-      ts.isParameter(parent) ||
-      ts.isBindingElement(parent) ||
-      ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isPropertySignature(parent) ||
-      ts.isMethodSignature(parent)) &&
-    parent.name === node
-  ) {
-    return false;
-  }
-  if (
-    (ts.isPropertyAccessExpression(parent) ||
-      ts.isPropertyAssignment(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent)) &&
-    parent.name === node
-  ) {
-    return false;
-  }
-  if (ts.isLabeledStatement(parent) && parent.label === node) return false;
-  if ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === node) return false;
-  return true;
 }
 
 function collectDirectOnlyFunctionDeclarations(
@@ -9390,6 +9365,23 @@ function phase1NewExpression(
   return true;
 }
 
+/** Preserve the existing exact indirect-eval source proof at the call gate. */
+function phase1IndirectEvalStatementVerdict(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const indirectEvalStatement = exactIndirectEvalStatement(expr);
+  if (indirectEvalStatement) {
+    const certified = certifiedHostIndirectEval(expr, scope);
+    if (!certified) {
+      return capabilityNo("call-resolution-unsupported", "expr-indirect-eval-host-statement", expr);
+    }
+    return isPhase1Expr(certified.source, scope, localClasses);
+  }
+  return undefined;
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -9522,6 +9514,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
+    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.
@@ -9810,14 +9803,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       (spread) => shapeNo("expr-program-callable-spread", spread),
     );
     if (programCallableVerdict !== undefined) return programCallableVerdict;
-    const indirectEvalStatement = exactIndirectEvalStatement(expr);
-    if (indirectEvalStatement) {
-      const certified = certifiedHostIndirectEval(expr, scope);
-      if (!certified) {
-        return capabilityNo("call-resolution-unsupported", "expr-indirect-eval-host-statement", expr);
-      }
-      return isPhase1Expr(certified.source, scope, localClasses);
-    }
+    const indirectEvalVerdict = phase1IndirectEvalStatementVerdict(expr, scope, localClasses);
+    if (indirectEvalVerdict !== undefined) return indirectEvalVerdict;
     // #3000-E: `super(args)` — a derived ctor chaining to its parent. `super` is
     // a keyword, not an identifier/property-access the generic receiver checks
     // below handle, so recognise the shape here. Args must be Phase-1 exprs; the
@@ -9844,28 +9831,21 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // The receiver is the `super` keyword; recognise it before the generic
     // property-access receiver check (which would reject `super` as a non-Phase-1
     // receiver). Method name must be a plain identifier; args Phase-1 exprs.
-    if (
-      ts.isPropertyAccessExpression(expr.expression) &&
-      expr.expression.expression.kind === ts.SyntaxKind.SuperKeyword
-    ) {
-      if (!ts.isIdentifier(expr.expression.name)) return shapeNo("super-method-computed", expr);
-      const parentClass = superParentClassName();
-      if (parentClass === null || localClassHasKnownProjectionGap(parentClass)) {
-        return capabilityNo("class-projection-unsupported", "super-method-parent-shape", expr);
-      }
-      const projection = classMethodProjection(parentClass, expr.expression.name.text, false);
-      if (projection.status !== "projected" || projection.arity === undefined) {
-        return capabilityNo("class-member-unsupported", "super-method-member", expr);
-      }
-      if (expr.arguments.length !== projection.arity) {
-        return capabilityNo("call-arity-unsupported", "super-method-arity", expr);
-      }
-      for (const arg of expr.arguments) {
-        if (ts.isSpreadElement(arg)) return shapeNo("super-method-spread", arg);
-        if (!isPhase1Expr(arg, scope, localClasses)) return false;
-      }
-      return true;
-    }
+    const superMethodVerdict = superMethodCallIsBuildable(expr, {
+      superParentClassName,
+      localClassHasKnownProjectionGap,
+      classMethodProjection,
+      shapeNo,
+      capabilityNo,
+      isExpressionBuildable: (argument) => isPhase1Expr(argument, scope, localClasses),
+    });
+    if (superMethodVerdict !== undefined) return superMethodVerdict;
+    const functionObjectCall = functionObjectMemberCallIsBuildable(
+      expr,
+      currentSelectionOptions?.functionObjectValues,
+      (expression) => isPhase1Expr(expression, scope, localClasses),
+    );
+    if (functionObjectCall !== undefined) return functionObjectCall;
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer
     // enforces that the receiver is a class instance whose shape carries

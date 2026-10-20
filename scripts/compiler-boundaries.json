@@ -1978,6 +1978,19 @@
   ],
   "files": [
     {
+      "path": "src/ir/function-object-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Frontend source-node/callback-driven lowering into symbolic IR; separate source admission from representation-neutral call construction."
+    },
+    {
+      "path": "src/ir/program/function-value-dependency.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-string-own-keys.ts",
       "state": "clean",
       "layer": "backend-wasmgc"

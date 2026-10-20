@@ -31,6 +31,7 @@ import {
 import type { PreparedComponentModuleCallableAliasDescriptor } from "./prepared-component-publication.js";
 import type { FuncHandle, Import, ValType } from "./types.js";
 import { readEnv } from "../env.js";
+import type { PreparedDynamicBoxObserver } from "./prepared-dynamic-support.js";
 
 interface CompilerTimerShimEntry extends PreparedComponentArtifactEntry {
   readonly fn: IrFunction;
@@ -57,10 +58,6 @@ export interface CompilerTimerShimLoweringBoundary<Entry extends { readonly term
   prepare(entry: Entry): boolean;
 }
 
-// (#5297) The IR layer must not grow a NEW `src/ir/ -> src/codegen/` edge
-// (`scripts/check-ir-layering.mjs`, #3113 S1). This file already holds that
-// edge for the dynamic-support vocabulary, so `prepared-dynamic-support.ts`
-// consumes both symbols THROUGH it rather than opening a second edge.
 export { resolveIrDynamicCarrierType };
 export type { CodegenContext };
 
@@ -308,6 +305,7 @@ function prepareCompilerTimerShimDynamicInstructionSupport(
 
 export function prepareCompilerTimerShimLateSealTransaction<Entry extends CompilerTimerShimEntry>(input: {
   readonly ctx: CodegenContext;
+  readonly observeDynamicBoxHelpers?: PreparedDynamicBoxObserver;
   readonly entries: readonly Entry[];
   readonly inventory: IrUnitInventory;
   readonly atomicTerminalPopulation?: boolean;

@@ -67,14 +67,8 @@ import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js";
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
-  IR_DYN_ADD_FN,
-  IR_DYN_GE_FN,
-  IR_DYN_GT_FN,
-  IR_DYN_LE_FN,
-  IR_DYN_LT_FN,
-  IR_DYN_METHOD_CALL_0_FN,
-  IR_DYN_METHOD_CALL_1_FN,
-  IR_DYN_STRING_REPLACE_FN,
+  irDynamicRuntimeNeedForSymbol,
+  observeIrFunctionObjectCallProviders,
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
@@ -121,7 +115,7 @@ import {
 import { boxToAny } from "../codegen/value-tags.js"; // (#2949 slice 3) THE canonical boxing entry point (D4)
 // (#2949 S5.1) THE canonical ToBoolean engine — one truthiness path for legacy and IR (D4).
 import { emitToBoolean as emitCoercionToBoolean } from "../codegen/coercion-engine.js";
-import { JsTag, jsTagUnboxKind } from "./js-tag.js";
+import { JsTag, jsTagUnboxKind, jsTagToStaticType } from "./js-tag.js";
 import {
   ensureHoleyArrayNew,
   ensureVecElemSet,
@@ -1019,6 +1013,7 @@ function prepareClosureTransaction(input: {
   const classAccessorWritebacks = prepareClassAccessorWritebackEvidence(input.ctx, input.entries, input.inventory);
   const timerTransaction = prepareCompilerTimerShimLateSealTransaction({
     ctx: input.ctx,
+    observeDynamicBoxHelpers: (from, hint) => observePreparedDynamicBoxHelpers(input.ctx, from, hint),
     entries: input.entries,
     inventory: input.inventory,
     ...(input.atomicTerminalPopulation ? { atomicTerminalPopulation: true } : {}),
@@ -8926,29 +8921,6 @@ function usesDynEq(instr: IrInstr): boolean {
  * exactly, so an unrefined box is behavior-identical to legacy's unbranded
  * `any` coercion.
  */
-function jsTagToStaticType(
-  hint: JsTag | undefined,
-): "null" | "undefined" | "boolean" | "number" | "string" | "object" | "function" | "unknown" {
-  switch (hint) {
-    case JsTag.Null:
-      return "null";
-    case JsTag.Undefined:
-      return "undefined";
-    case JsTag.Boolean:
-      return "boolean";
-    case JsTag.NumberI32:
-    case JsTag.NumberF64:
-      return "number";
-    case JsTag.String:
-      return "string";
-    case JsTag.Object:
-      return "object";
-    case JsTag.Function:
-      return "function";
-    default:
-      return "unknown";
-  }
-}
 
 /**
  * #2949 slice 3 — pre-register everything `makeDynamicLowering`'s emit
@@ -9154,7 +9126,10 @@ function preregisterDynamicSupport(
             else admitAttachedHostCallbackMaker(i, hostCallbackWrapArm);
           }
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
-            switch (i.target.binding.symbol) {
+            const symbol = i.target.binding.symbol;
+            const dynamicNeed = irDynamicRuntimeNeedForSymbol(symbol);
+            if (dynamicNeed !== undefined) dynamicRuntimeNeeds.add(dynamicNeed);
+            switch (symbol) {
               case "__new_plain_object":
               case "__extern_set":
               case "__to_primitive":
@@ -9185,30 +9160,6 @@ function preregisterDynamicSupport(
                 break;
               case "__new_String":
                 primitiveWrapperConstructors.add("String");
-                break;
-              case IR_DYN_ADD_FN:
-                dynamicRuntimeNeeds.add("add");
-                break;
-              case IR_DYN_LT_FN:
-                dynamicRuntimeNeeds.add("lt");
-                break;
-              case IR_DYN_LE_FN:
-                dynamicRuntimeNeeds.add("le");
-                break;
-              case IR_DYN_GT_FN:
-                dynamicRuntimeNeeds.add("gt");
-                break;
-              case IR_DYN_GE_FN:
-                dynamicRuntimeNeeds.add("ge");
-                break;
-              case IR_DYN_METHOD_CALL_0_FN:
-                dynamicRuntimeNeeds.add("method-call-0");
-                break;
-              case IR_DYN_METHOD_CALL_1_FN:
-                dynamicRuntimeNeeds.add("method-call-1");
-                break;
-              case IR_DYN_STRING_REPLACE_FN:
-                dynamicRuntimeNeeds.add("string-replace");
                 break;
             }
           }
@@ -9298,6 +9249,8 @@ function preregisterDynamicSupport(
   if (dynamicRuntimeNeeds.size > 0) {
     addUnionImports(ctx);
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
+    if (dynamicRuntimeNeeds.has("member-call"))
+      observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
   if (!usesDynamicOps) return;
   if (usesToNumber && ctx.standalone) {
@@ -10374,4 +10327,23 @@ class ClassRegistry {
     this.cache.set(classId, lowering);
     return lowering;
   }
+}
+
+function observePreparedDynamicBoxHelpers(
+  ctx: CodegenContext,
+  from: ValType,
+  hint: Parameters<typeof boxToAny>[3],
+): readonly IrFuncRef[] | undefined {
+  const frame = { body: [] as import("./types.js").Instr[] } as unknown as FunctionContext;
+  if (!boxToAny(ctx, frame, from, hint)) return undefined;
+  const refs: IrFuncRef[] = [];
+  for (const instruction of frame.body) {
+    if (instruction.op !== "call") continue;
+    const fn = definedFuncAt(ctx, instruction.funcIdx);
+    if (!fn || ctx.funcMap.get(fn.name) !== instruction.funcIdx) return undefined;
+    const ref = irRuntimeFuncRef(fn.name);
+    ctx.programAbiCallableProviders?.observe(ref, instruction.funcIdx);
+    refs.push(ref);
+  }
+  return refs;
 }

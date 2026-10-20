@@ -45,7 +45,7 @@ import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
-import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
+import { promoteTrampolineTailCalls, ensureFuncClosureSingletonAccessor } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { funnelRepeatedReturnTails } from "./helpers/return-tail-funnel.js";
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
@@ -155,10 +155,10 @@ import {
   type IrUnitKind,
   type IrUnitId,
 } from "../ir/identity.js";
-import { planIrNestedClassFieldCalls } from "../ir/class-field-call-planning.js";
 import {
   buildIrPlanningIdentityContext,
   requireIrPlanningSourceId,
+  requireIrPlanningOwnerUnitId,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import { makeIrPromiseDelayResolver } from "../ir/promise-delay.js";
@@ -214,7 +214,12 @@ import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-s
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
-import { planIrImportedCalls, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
+import {
+  planIrImportedCalls,
+  recordIrOverlayPreparationFailure,
+  planIrFunctionValueResolverState,
+  prepareTopLevelFunctionValueTargetSupport,
+} from "./ir-imported-call-planning.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,
@@ -280,7 +285,6 @@ import {
   buildMultiIrGraphSafety,
   collectMultiIrFunctionNameCollisions,
   type EarlyMultiPreparedScalarLeafState,
-  type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
 import { assertMultiPreparedArrayLeafRouteCurrent } from "./multi-prepared-array-leaf.js";
@@ -495,7 +499,7 @@ import {
   repairStructTypeMismatches,
 } from "./fixups.js";
 import { emitInlineMathFunctions } from "./math-helpers.js";
-import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
+import { finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
 import { instrArraySharing } from "./call-arg-producers.js";
 import { repairCrossHierarchyOperands } from "./cross-hierarchy-operands.js"; // (#4157 park 6)
@@ -2595,88 +2599,6 @@ function withdrawChunkedModuleInitFromIrSelection(
   safeSelection.moduleInit = undefined;
 }
 
-/**
- * Allocate and freeze direct function-value singleton support before a target
- * body can seal through Prepared IR. A direct caller may still materialize the
- * value later, but it must reuse these exact allocator objects rather than
- * adding ABI drafts to an already sealed target component.
- */
-function prepareTopLevelFunctionValueTargetSupport(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  plan: IrOverlayPlan,
-  selectedLegacyNames: ReadonlySet<string>,
-): ReadonlyMap<IrUnitId, MultiPreparedFunctionValueSupportReceipt> {
-  const receipts = new Map<IrUnitId, MultiPreparedFunctionValueSupportReceipt>();
-  const selectedUnitIds = new Set(
-    [...selectedLegacyNames].map((legacyName) =>
-      irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
-    ),
-  );
-  const valueTargetUnitIds = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
-  for (const unitId of valueTargetUnitIds) {
-    if (!selectedUnitIds.has(unitId)) continue;
-    const claim = plan.functionClaimsByUnitId.get(unitId);
-    const funcIdx = claim ? ctx.programAbiSourceCallables?.handleForUnit(unitId) : undefined;
-    const target = claim ? irUnitFuncRef({ unitId, name: claim.legacyName }) : undefined;
-    if (claim === undefined || funcIdx === undefined || target === undefined) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} has no exact allocated source callable`,
-      );
-    }
-    const singleton = ensureFuncClosureSingleton(ctx, claim.legacyName, funcIdx, false);
-    const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
-    const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
-    if (!singleton || !trampoline || !cache) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} could not allocate its exact singleton support`,
-      );
-    }
-    const functionValuePlan = {
-      target,
-      trampoline: irSupportFuncRef(unitId, "function-value-trampoline", trampoline.name),
-      cacheGlobal: irSupportGlobalRef(unitId, "function-value-cache", cache.name),
-    };
-    if (!planProgramAbiFunctionValue(ctx, functionValuePlan, trampoline, cache)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} could not freeze its singleton Program ABI`,
-      );
-    }
-    if (
-      functionValuePlan.trampoline.binding.kind !== "support" ||
-      functionValuePlan.cacheGlobal.binding.kind !== "support"
-    ) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} lost its exact support binding identities`,
-      );
-    }
-    receipts.set(
-      unitId,
-      Object.freeze({
-        targetFunction: ctx.programAbiSourceCallables!.functionForUnit(unitId)!,
-        targetHandle: funcIdx,
-        trampolineFunction: trampoline,
-        trampolineHandle: singleton.trampolineFuncIdx,
-        trampolineRef: functionValuePlan.trampoline,
-        trampolineBindingId: functionValuePlan.trampoline.binding.bindingId,
-        cacheGlobal: cache,
-        cacheGlobalHandle: singleton.cacheGlobalIdx,
-        cacheGlobalRef: functionValuePlan.cacheGlobal,
-        cacheGlobalBindingId: functionValuePlan.cacheGlobal.binding.bindingId,
-      }),
-    );
-  }
-  return receipts;
-}
-
 function recordWholeSourceFailure(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -2991,22 +2913,16 @@ function planIrOverlay(
   identityContext: IrPlanningIdentityContext,
   options: IrOverlayPlanningOptions = {},
 ): IrOverlayPlan {
-  const identityImportedFunctions = options.importedFunctions;
-  const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
-  // (#3522 F2/F4) ONE exact resolver per source, constructed before identity
-  // selection and reused by direct-call projection and the field-call proof.
-  const identityResolver = makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions);
-  // (#3522 F4) Validate the complete dormant F3 proof and derive the single
-  // immutable admitted-class marker BEFORE local class-expression resolution
-  // and identity selection. Every downstream consumer carries this object; none
-  // recomputes it.
-  const nestedClassFieldCallProofs = planIrNestedClassFieldCalls({ identityContext, resolver: identityResolver });
-  const nestedClassFieldCallAdmission: IrNestedClassFieldCallAdmission =
-    irOverlayIdentity.computeIrNestedClassFieldCallAdmission({
-      identityContext,
-      resolver: identityResolver,
-      proofs: nestedClassFieldCallProofs,
-    });
+  const {
+    identityImportedFunctions,
+    legacyImportedFunctions,
+    identityResolver,
+    functionObjectValues,
+    nestedClassFieldCallProofs,
+    nestedClassFieldCallAdmission,
+  } = planIrFunctionValueResolverState(ctx, identityContext, options, () =>
+    makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
+  );
   const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
   const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
@@ -3279,6 +3195,9 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
+      ...(functionObjectValues
+        ? { functionObjectValues: irOverlayIdentity.projectIrOverlayImportedResolver(functionObjectValues) }
+        : {}),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
       // carrier, which is already externref and can feed the shared
@@ -3607,8 +3526,10 @@ function planIrOverlay(
   const { importedCalls, topLevelFunctionValues } = planIrImportedCalls({
     ctx,
     identityPlan,
+    sourceOwnerUnitId: (node) => requireIrPlanningOwnerUnitId(identityContext, node),
     preparationFailuresByUnitId,
     ...(hostExternSurface && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+    ...(functionObjectValues ? { functionObjectValues } : {}),
     ...(timerShim ? { resolvePreparedTimerShim: timerShim } : {}),
     ...(resolveAmbientClassCall ? { resolveAmbientClassCall } : {}),
     classShapeSidecar,
@@ -4065,10 +3986,17 @@ function prepareMultiIrImportedLowering(
       blocked.add(valuePlan.ownerUnitId);
       continue;
     }
-    const singleton = ensureFuncClosureSingleton(ctx, valuePlan.target.name, funcIdx, false);
+    const access = ensureFuncClosureSingletonAccessor(ctx, valuePlan.target.name, funcIdx);
+    const singleton = access?.singleton;
+    const accessor = access ? definedFuncAt(ctx, access.accessorFuncIdx) : undefined;
     const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
     const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
-    if (!trampoline || !cache || !planProgramAbiFunctionValue(ctx, valuePlan, trampoline, cache)) {
+    if (
+      !trampoline ||
+      !cache ||
+      !accessor ||
+      !planProgramAbiFunctionValue(ctx, valuePlan, trampoline, cache, accessor)
+    ) {
       blocked.add(valuePlan.ownerUnitId);
     }
   }
@@ -4875,6 +4803,7 @@ function planIrFirstBodyRouting(
   const preliminaryOwnerPopulation = freeNames
     ? selectR2PreparedOwnerComponents({
         ctx,
+        topLevelFunctionValues: plan.topLevelFunctionValues,
         sourceFile,
         selectedLegacyNames: freeNames,
         baselineLegacyNames: new Set(),
@@ -5033,7 +4962,9 @@ function planIrFirstBodyRouting(
           },
           selection,
         );
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, preparedFreeFunctionNames);
+      prepareTopLevelFunctionValueTargetSupport(ctx, plan, preparedFreeFunctionNames, () =>
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      );
       const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,
@@ -10654,7 +10585,9 @@ function planMultiPreparedProgramRoutes(
         irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
       ),
     prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+      prepareTopLevelFunctionValueTargetSupport(ctx, plan, new Set([legacyName]), () =>
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      ).get(unitId),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     moduleInit: {
       selectExactLexicalModuleInit: (sourceFile, selection, planning) =>

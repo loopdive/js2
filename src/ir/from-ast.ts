@@ -35,6 +35,8 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import * as functionObjects from "./function-object-lowering.js";
+import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -59,6 +61,9 @@ import {
   IR_DYN_LE_FN,
   IR_DYN_LT_FN,
   IR_DYN_METHOD_CALL_0_FN,
+  IR_DYN_CALL_VALUE_FN,
+  IR_DYN_CALL_BOX_FN,
+  IR_DYN_CALL_ARGUMENT_FN,
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
@@ -3206,37 +3211,6 @@ function sameScopeStorage(a: StringEncodingScopeBinding, b: ScopeBinding | undef
 }
 
 /**
- * (#3214 B1) Read/create the canonical cached wrapper for one exact bare
- * top-level function-value site.  The codegen planning phase has already
- * materialized the matching symbolic trampoline/global declarations through
- * `ensureFuncClosureSingleton`; IR owns only the lazy access sequence.
- */
-function lowerTopLevelFunctionValue(plan: IrTopLevelFunctionValueLoweringPlan, cx: LowerCtx): IrValueId {
-  requireMatchingLoweringPlanOwner("top-level function value", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
-  if (plan.target.binding.kind !== "unit") {
-    // invariant (producer-promise): identity resolution promised an exact unit — #4502.
-    throw new Error(`ir/from-ast: top-level function value target ${plan.target.name} is not an exact unit`);
-  }
-  if (plan.trampoline.binding.kind !== "support") {
-    // invariant (producer-promise): the prepared trampoline plan promised a compiler-support binding — #4502.
-    throw new Error(`ir/from-ast: function-value trampoline ${plan.trampoline.name} is not compiler support`);
-  }
-  const cache = plan.cacheGlobal;
-  const cached = cx.builder.emitGlobalGet(cache, irVal({ kind: "externref" }));
-  const isNull = cx.builder.emitRefIsNull(cached);
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    const closure = cx.builder.emitClosureNew(plan.trampoline, plan.signature, [], []);
-    const external = cx.builder.emitCoerceToExternref(closure);
-    cx.builder.emitGlobalSet(cache, external);
-  });
-  cx.builder.emitIfStmt({ cond: isNull, then: thenBody, else: [] });
-  // `callable<S>` is the source boundary type and lowers to the exact same
-  // externref global carrier. Retagging the final read avoids an unsound
-  // externref→closure cast while preserving singleton identity.
-  return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
-}
-
-/**
  * Join optional encoding evidence at a control-flow merge. Absence is the
  * conservative top fact: one unproven predecessor invalidates a narrower
  * claim. Proven predecessors use the existing encoding lattice.
@@ -4938,14 +4912,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // decides the value representation, so the asserted type cannot change the
   // emitted bytes. Paired with the matching `isPhase1Expr` arm in select.ts:
   // selector claim ⇔ lowering parity.
-  if (
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    return lowerExpr(expr.expression, cx, hint);
-  }
+  const typeErasedOperand = unwrapTypeErasedExpression(expr);
+  if (typeErasedOperand) return lowerExpr(typeErasedOperand, cx, hint);
   if (ts.isAwaitExpression(expr)) {
     return lowerAwaitExpression(expr, cx, hint);
   }
@@ -5053,7 +5021,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   }
   if (ts.isIdentifier(expr)) {
     const topLevelFunction = cx.topLevelFunctionValues?.get(expr);
-    if (topLevelFunction) return lowerTopLevelFunctionValue(topLevelFunction, cx);
+    if (topLevelFunction)
+      return functionObjects.lowerTopLevelFunctionValue(topLevelFunction, functionObjectLoweringHost(cx));
     const p = cx.scope.get(expr.text);
     // (#2856) Host ambient global (`document`, `window`, …): not a scope
     // binding — resolves through the legacy declared-globals registry to the
@@ -7519,6 +7488,19 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
   return result;
 }
 
+function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjectLoweringHost {
+  return {
+    builder: cx.builder,
+    ownerUnitId: cx.ownerUnitId,
+    funcName: cx.funcName,
+    requireOwner: (ownerUnitId) =>
+      requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
+    lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
+    boxConcrete: (value, type, source) => boxConcreteToDynamic(value, type, source, cx),
+    symbols: { IR_DYN_CALL_BOX_FN, IR_DYN_CALL_VALUE_FN, IR_DYN_CALL_ARGUMENT_FN },
+  };
+}
+
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7633,6 +7615,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
+  const functionAccess = expr.expression;
+  if (functionObjects.isPreparedFunctionObjectAccess(functionAccess, cx.topLevelFunctionValues)) {
+    return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
+  }
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -8896,6 +8882,11 @@ function lowerMethodCallWithSourcePlan(
     return withNodeSourceSite(cx, expr, () => lowerMethodCallWithSourcePlan(expr, cx, statementPosition));
   if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
+  }
+  // Statement/discarded calls enter here directly instead of lowerCall.
+  // Keep the same exact receiver certificate on every call entry path.
+  if (functionObjects.isPreparedFunctionObjectAccess(expr.expression, cx.topLevelFunctionValues)) {
+    return functionObjects.lowerFunctionObjectMemberCall(expr, expr.expression, functionObjectLoweringHost(cx));
   }
   const closureInvocation = cx.resolver?.sourceClosureInvocation?.(expr);
   if (closureInvocation)
@@ -10239,6 +10230,11 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
+
+  if (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) {
+    functionObjects.lowerFunctionObjectPropertyWrite(recv, fieldName, expr.right, functionObjectLoweringHost(cx));
+    return;
+  }
 
   if (recvType.kind === "class") {
     const field = recvType.shape.fields.find((f) => f.name === fieldName);
@@ -15654,33 +15650,6 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   // here — demote rather than risk a wrong tag. S5.P can refine with the
   // checker (isProvablyBoolean) when it opens the scan.
   return null;
-}
-
-function expressionIsDefinitelyBoolean(expression: ts.Expression): boolean {
-  const candidate = peelParensExpr(expression);
-  if (candidate.kind === ts.SyntaxKind.TrueKeyword || candidate.kind === ts.SyntaxKind.FalseKeyword) return true;
-  if (ts.isPrefixUnaryExpression(candidate) && candidate.operator === ts.SyntaxKind.ExclamationToken) return true;
-  if (ts.isBinaryExpression(candidate)) {
-    const op = candidate.operatorToken.kind;
-    return (
-      op === ts.SyntaxKind.LessThanToken ||
-      op === ts.SyntaxKind.LessThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanToken ||
-      op === ts.SyntaxKind.GreaterThanEqualsToken ||
-      op === ts.SyntaxKind.EqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsToken ||
-      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-      op === ts.SyntaxKind.InstanceOfKeyword ||
-      op === ts.SyntaxKind.InKeyword ||
-      op === ts.SyntaxKind.AmpersandAmpersandToken ||
-      op === ts.SyntaxKind.BarBarToken
-    );
-  }
-  if (ts.isConditionalExpression(candidate)) {
-    return expressionIsDefinitelyBoolean(candidate.whenTrue) && expressionIsDefinitelyBoolean(candidate.whenFalse);
-  }
-  return false;
 }
 
 /**
