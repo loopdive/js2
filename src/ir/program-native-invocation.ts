@@ -38,7 +38,7 @@ import {
   requireNativeRealmSourceClosureCallables,
   type NativeRealmSourceClosureCallables,
 } from "../backend/wasmgc/resources/native-source-closure-callables.js";
-import type { Instr, ValType } from "../wasm/model/instructions.js";
+import type { Instr, LocalDef, ValType } from "../wasm/model/instructions.js";
 import { lowerIrFunctionBody } from "./lower-generic.js";
 import { wasmValueTypeConverter } from "./backend/wasm-lowering.js";
 import type { IrLowerResolver } from "./backend/lower-contracts.js";
@@ -51,12 +51,20 @@ export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
   readonly types: NativeSourceClosureTypes;
 }
+/** Actual lifted-body custody only; never source allocation or realm population authority. */
+export interface NativeRealmSourceClosureBodyCustody {
+  readonly source: NativeSourceClosureEmission;
+  readonly callables: NativeRealmSourceClosureCallables;
+  readonly completionScope: "realm-source-body-custody";
+}
 interface SourceOwner {
   readonly tx: PhysicalModuleReservations;
   readonly units: Map<IrUnitId, { readonly fn: IrFunction; readonly slot: FunctionReservation }>;
-  readonly completed: Set<IrUnitId>;
+  readonly completed: Map<IrUnitId, { readonly locals: LocalDef[]; readonly body: Instr[] }>;
+  readonly attempted: Set<IrUnitId>;
   callables?: NativeSourceClosureCallables;
   realmCallables?: NativeRealmSourceClosureCallables;
+  realmBodyCustody?: NativeRealmSourceClosureBodyCustody;
   bound: boolean;
   readonly builtins: NativeBuiltinFunctionRequestIssuer | undefined;
 }
@@ -92,7 +100,7 @@ export function beginNativeSourceClosureEmission(
   assertNativeSourceClosureRequirementsCurrent(requirements);
   const types = reserveNativeSourceClosureTypes(tx, requirements, carriers, builtins);
   const pack = Object.freeze({ requirements, types });
-  owners.set(pack, { tx, units: new Map(), completed: new Set(), bound: false, builtins });
+  owners.set(pack, { tx, units: new Map(), completed: new Map(), attempted: new Set(), bound: false, builtins });
   return pack;
 }
 
@@ -168,6 +176,38 @@ export function nativeRealmSourceClosureCallableBindings(
   return requireNativeRealmSourceClosureCallables(tx, owner.realmCallables, pack.types, realm);
 }
 
+/** Only the genuine prepared-body producer can issue this full source-unit custody. */
+export function completeNativeRealmSourceClosureBodyCustody(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceClosureBodyCustody {
+  const owner = requireOwner(tx, source);
+  requireCompletedNativeSourceClosures(tx, source);
+  const callables = nativeRealmSourceClosureCallableBindings(tx, source, realm);
+  owner.realmBodyCustody ??= Object.freeze({
+    source,
+    callables,
+    completionScope: "realm-source-body-custody" as const,
+  });
+  return requireNativeRealmSourceClosureBodyCustody(tx, owner.realmBodyCustody, source, realm);
+}
+
+/** Recheck real bodies and original associations on every use, not merely issuance. */
+export function requireNativeRealmSourceClosureBodyCustody(
+  tx: PhysicalModuleReservations,
+  custody: NativeRealmSourceClosureBodyCustody,
+  source: NativeSourceClosureEmission,
+  realm: NativeRealmRequirements,
+): NativeRealmSourceClosureBodyCustody {
+  const owner = requireOwner(tx, source);
+  if (owner.realmBodyCustody !== custody || custody.source !== source || custody.callables !== owner.realmCallables)
+    fail("foreign, copied or substituted source-body custody");
+  requireCompletedNativeSourceClosures(tx, source);
+  requireNativeRealmSourceClosureCallables(tx, custody.callables, source.types, realm);
+  return custody;
+}
+
 export function nativeSourceClosureValueType(
   tx: PhysicalModuleReservations,
   pack: NativeSourceClosureEmission,
@@ -231,7 +271,7 @@ export function fillPreparedPrimaryUnit(
 ): void {
   const owner = source ? requireOwner(tx, source) : undefined;
   const association = owner?.units.get(fn.unitId);
-  if (association && (association.fn !== fn || association.slot !== slot || owner!.completed.has(fn.unitId)))
+  if (association && (association.fn !== fn || association.slot !== slot || owner!.attempted.has(fn.unitId)))
     fail("source canonical lowering uses a changed function/slot or repeats completion");
   if (fn.closureSubtype && source && !association) fail("unbound source closure body");
   const emitter = backend === "wasmgc" ? new WasmGcEmitter(resolver) : new LinearEmitter();
@@ -245,7 +285,7 @@ export function fillPreparedPrimaryUnit(
   const results = lowered.results.flatMap((result) => [...result]);
   if (!sameValTypes(params, signature.params) || !sameValTypes(results, signature.results))
     fail(`body ${fn.unitId} lowered to a signature different from its original ABI slot`);
-  tx.fillFunction(slot, {
+  const definition = {
     locals: lowered.locals.flatMap((local) =>
       local.slots.map((type, index) => ({
         name: index === 0 ? local.name : `${local.name}$${index}`,
@@ -253,8 +293,13 @@ export function fillPreparedPrimaryUnit(
       })),
     ),
     body: lowered.body,
-  });
-  if (association) owner!.completed.add(fn.unitId);
+  };
+  // Clone BEFORE the ledger sees the definition: its receipt may faithfully
+  // describe an intercepted/substituted fill rather than the actual IR output.
+  const canonical = association ? structuredClone(definition) : undefined;
+  if (association) owner!.attempted.add(fn.unitId);
+  tx.fillFunction(slot, definition);
+  if (canonical) owner!.completed.set(fn.unitId, canonical);
 }
 
 export function requireCompletedNativeSourceClosures(
@@ -266,8 +311,9 @@ export function requireCompletedNativeSourceClosures(
     fail("source canonical lowering is incomplete");
   requireCompletedNativeSourceClosureState(tx, pack.types);
   for (const [unitId, row] of owner.units) {
-    if (!owner.completed.has(unitId)) fail("source unit did not pass canonical lowering");
-    tx.assertCompletedReservation(row.slot);
+    const canonical = owner.completed.get(unitId);
+    if (!canonical) fail("source unit did not pass canonical lowering");
+    tx.assertCanonicalFunctionDefinition(row.slot, canonical);
   }
   return pack;
 }

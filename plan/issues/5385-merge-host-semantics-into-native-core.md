@@ -1952,3 +1952,26 @@ do not bless source bodies or foreign refs through layout/count/receipt claims.
 All runtime/arm/three-gap, Linear/WASI, architecture/strict-retirement/custody/
 conformance/interop and stacked-PR conflict obligations remain open. Both issues
 and the full migration stay in progress; no GitHub issue/comment was created.
+
+#### S7-al actual source-body custody, not mixed Call admission
+
+The original prepared source emission now retains independently cloned actual
+IR-lowerer definitions before ledger fill and compares the original locals/body
+at completion, rather than trusting a fill receipt. Interrupted source fills
+remain terminal. A separately issued, rechecked `realm-source-body-custody`
+capability binds the genuine full source-unit/realm association and ledger;
+it does not certify resolver/ABI/dependency bindings, allocation, mixed Get/Call,
+full realm population or public/boundary admission.
+
+Focused verification is **18/18 pass**, zero skips and exit zero, including eight
+receipt-valid substituted definitions and four before/after-ledger interruptions.
+The original14/16 opaque-matcher failures remain in
+[the exact source-body custody audit](../audit/6979-native-source-body-custody-20261020.json).
+Five-file source/invocation/getter/realm/mixed preservation is still live on
+session64251: resume the actual handle, do not restart from silent JSON output.
+No clean broader cohort is claimed. The detailed **S7-al source-body custody for
+the pending mixed Call join** handoff lives in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Full mixed invocation and remaining catalog/population, live boundary refs,
+Linear/WASI, runtime retirement, architecture/closure/conformance and PR conflicts
+remain open. Both issues and the full migration remain in progress.

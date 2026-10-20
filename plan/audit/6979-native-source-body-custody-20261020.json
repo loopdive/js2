@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-al actual prepared source-body custody",
+  "parentCommit": "7e56dd71e9ed9961cd9601e9fa030d4b12f71257",
+  "sourceHashes": {
+    "src/ir/program-native-invocation.ts": "db8676df3c26daeba363df260615a85368c19449b988f6ad3825fdc9720e18bf",
+    "tests/issue-6979-native-source-body-custody.test.ts": "d868338f8b12bf43915c2e050f50ef493155576586491abb7a4ba13142accfba"
+  },
+  "scope": {
+    "completionScope": "realm-source-body-custody",
+    "producer": "Actual lowerIrFunctionBody output for the original prepared source units and original bound slots; independently cloned BEFORE the ledger sees each definition",
+    "completion": "Every source unit must have passed the actual lowerer. Compare each original private locals/body snapshot with the actual completed slot, independently of its fill receipt. Recheck on every custody use.",
+    "interruption": "An attempted source fill remains terminal, whether interrupted before or after ledger acceptance. An incomplete population cannot issue custody.",
+    "identity": "One frozen capability per genuine emission, exact original full realm-callable association and owning ledger; no raw definition/handle binder or caller-selected subset",
+    "resolverAuthority": "Captures the real lowerer output with the existing resolver. This is not a separate proof of all resolver/ABI/dependency bindings; the eventual mixed graph must authenticate those owners too.",
+    "sourceAllocationCompleted": false,
+    "mixedGetCallCompleted": false,
+    "fullRealmPopulationCompleted": false,
+    "sourceOrPublicProviderAdmissionCompleted": false,
+    "foreignBoundaryReferenceOwnerCompleted": false,
+    "runtimeObjectGraphCopyingAdded": false,
+    "hostSemanticImportsAdded": false,
+    "linearWasiVerified": false,
+    "migrationComplete": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "config": "vitest.config.ts with temporary local-only --experimental-wasm-exnref fork flag",
+    "forkLimitEnvironmentPerExecution": { "VITEST_MAX_FORKS": 1 },
+    "distinctExecutionsOverlap": true,
+    "performanceOrConcurrencyCausalityClaimed": false,
+    "caseTimeoutMs": 35000,
+    "deadlinesRaised": false
+  },
+  "tests": {
+    "initial": {
+      "report": ".tmp/s7al-source-custody.json",
+      "log": ".tmp/s7al-source-custody.log",
+      "session": 32271,
+      "runnerExit": 1,
+      "cases": 16,
+      "passed": 14,
+      "failed": 2,
+      "skipped": 0,
+      "jsonSha256": "79201fc780d34f42de4f1e7338a05f1d42aee09d42cd020b220d24ca345e81fe",
+      "logSha256": "bca853be225467b60641c541ac506efe81bfc01ea45163c11f15d14caeb835b2",
+      "failure": "The two positive execution cases stop at expect(a).not.toBe(b): Vitest's matcher introspects opaque WasmGC objects and throws TypeError: WebAssembly objects are opaque. Later assertions in those cases were not executed. All eight receipt-valid substitutions pass. Retained independently, not normalized into a clean cohort.",
+      "testRevision": "Initial 16-case test variant; its source hash was not captured before correction. Production source is unchanged from sourceHashes."
+    },
+    "corrected": {
+      "report": ".tmp/s7al-source-custody-corrected.json",
+      "log": ".tmp/s7al-source-custody-corrected.log",
+      "session": 20529,
+      "runnerExit": 0,
+      "cases": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "jsonSha256": "c1adef48ac8d97a6eef3c613e2017e34ffa0a4ab31b1eae23fd416b332c91029",
+      "logSha256": "2af79b115b23d1dbed8c0ca8a1b30969bf559597f53de513f7226d195c9b9573",
+      "positiveFloorsVerified": "Exactly one file, 18 assertion records, all passed, all failureMessages empty, zero skipped, and terminal runner exit zero",
+      "coverage": "Normal and displaced+decoded prepared programs. Actual zero-import Wasm execution, two lifted units (captured and empty), two independent instances, repeated calls and independent captures; capability identity, copied emission/capability, foreign ledger/realm, incomplete/raw-receipt populations, duplicate lowering, eight receipt-valid body/local substitutions (replacement and in-place), four terminal interruptions before/after ledger acceptance, and post-issuance mutation.",
+      "correction": "Object.is identity observation replaces the opaque-object matcher; add foreign-ledger and after-ledger interruption controls. No production code or deadline changed."
+    },
+    "sourcePreservation": {
+      "report": ".tmp/s7al-source-preservation.json",
+      "log": ".tmp/s7al-source-preservation.log",
+      "session": 64251,
+      "status": "live at this audit draft; no result claimed",
+      "files": [
+        "tests/issue-3518-native-source-closure-consumer.test.ts",
+        "tests/issue-3518-native-invocation-consumer.test.ts",
+        "tests/issue-3518-native-getter-invocation.test.ts",
+        "tests/issue-3518-native-object-realm-declarations.test.ts",
+        "tests/issue-3518-native-mixed-object-access.test.ts"
+      ]
+    }
+  },
+  "gates": {
+    "typecheckLintFormat": "Terminal exit zero after final test correction; no suppression",
+    "sourceRatchets": "LOC/function/coercion/oracle, source-preservation-only, IR-layering and flat-directory chain terminal exit zero",
+    "wholePrSourceFiles": 387,
+    "wholePrNetSourceLoc": -15513,
+    "existingFunctionGrantsOnly": [
+      "src/codegen/expressions/assignment.ts::compilePropertyAssignment",
+      "src/codegen/generators-native.ts::nonWasmGcProviderGeneratorUsesAreSafe"
+    ],
+    "inventory": {
+      "report": ".tmp/s7al-inventory.json",
+      "runnerExit": 0,
+      "inventoryValid": true,
+      "modules": 1988,
+      "errors": [],
+      "architectureComplete": false,
+      "jsonSha256": "d40ac343454d49eb28674599736b5d123b4b9dc18e037a6f8e1476f9a63f5d4d"
+    },
+    "cycles": {
+      "report": ".tmp/s7al-cycles.json",
+      "runnerExit": 1,
+      "allCurrentMetricsEqualS7ak": true,
+      "largestSccSize": 712,
+      "sccCountOver1": 4,
+      "unresolvedRegressedDirections": ["backend->ir", "codegen->ir", "ir->codegen", "ir->frontend"],
+      "jsonSha256": "e3724c469d5c50b5648d23fb7073d6aa2612c9f9f86f66c2964f216b851835b1"
+    },
+    "retirement": "NOT CERTIFIED: preservation-only 6/6 full plus 6/6 cut witnesses pass, but strict modeled closure still fails unknown nonliteral import targets at src/optimize.ts#getBinaryenModule:412 and src/runtime/platform-capability-adapter.ts#resolvePlatformCapabilityImport:151",
+    "newRootFloorEdgeAllowanceBaselineOrWaiver": false,
+    "issueIndexer": "4955 issues indexed; no GitHub issue or comment created"
+  },
+  "notRerun": "Prior catalog 56-case and older 243-case runs, full Test262, historical custody, broader previously known-failing cohorts, host import-policy probes and Linear/WASI conformance are not rerun or certified by this body-custody checkpoint.",
+  "next": "Join this body custody with genuine original ABI/dependency/allocation owners into the real mixed invocation graph. Authenticate source function identity and realm, complete remaining catalog/member/constructor algorithms and initializer/population, then atomic source/public publication. Live identity-backed foreign boundary refs, first-class undefined, Linear/WASI, three named gaps, runtime/arm retirement, architecture/strict closure, conformance/npm compatibility/accelerators and PR conflicts remain in full scope."
+}

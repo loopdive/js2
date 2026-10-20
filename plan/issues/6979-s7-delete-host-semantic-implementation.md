@@ -6080,3 +6080,72 @@ Linear/WASI, the three named gaps, remaining runtime/arm retirement, architectur
 strict closure, custody/conformance/npm-compat/accelerators and PR conflict
 resolution in full scope. Both Markdown issues stay in progress and the full
 migration goal stays active.
+
+#### S7-al source-body custody for the pending mixed Call join (in progress)
+
+Fresh tracing confirms that mixed Get already has a shared algorithm builder,
+but its reservation remains deliberately unfilled until genuine mixed invocation
+joins. The source-callable association authenticates original prepared units,
+shapes and slots, not their canonical lowered bodies. The actual source emission
+owner runs the IR lowerer, but its completion currently remembers only unit IDs
+and accepts allocator fill receipts. A receipt-valid substituted definition
+during that fill must not become future mixed Call authority.
+
+Retain private, independently cloned definitions from the actual prepared-body
+lowering before handing them to the ledger. Compare those original definitions
+at completion, make interrupted source fills terminal, and issue a separate
+realm-source body-custody capability only after every genuine source unit passes
+that comparison. It must bind the exact source emission, original full realm
+association and same ledger; no raw body/handle binder or caller-selected subset.
+This is body custody, not canonical source allocation, whole-realm population,
+mixed Get/Call completion or foreign boundary admission. Add positive actual-IR
+execution and receipt-valid substitution/interruption controls before relying on
+the capability. Linear/WASI and the rest of the full migration stay in scope.
+
+The implementation now retains those actual lowered definitions before ledger
+fill and compares their locals/body independently of the allocator's accepted
+receipt. A real attempted source fill is terminal even when an interceptor
+throws before invoking the ledger, or after the ledger accepted the definition.
+The separately issued `realm-source-body-custody` capability binds the genuine
+emission, full original realm-callable association and ledger, and rechecks
+completion/identity on every use. Existing association-only APIs retain their
+original limited scope. This does **not** certify all resolver/ABI/dependency
+bindings: the mixed graph must authenticate those owners separately too.
+
+Current focused verification is **18/18 pass**, one file, zero skips and
+terminal runner exit zero (session20529). Normal and displaced+decoded variants
+execute actual zero-import Wasm with independent captured/empty source closures
+and repeated calls in two instances. Eight receipt-valid replacement/in-place
+body/local substitutions are accepted by the ledger and independently refused
+by source completion. Other controls cover incomplete/raw-receipt populations,
+copies and foreign ledgers/realms, duplicate lowering, four actual interrupted
+fills before/after ledger acceptance and post-issuance mutation. The original
+16-case run remains separately **14/16**, two positive cases stopping at Vitest's
+opaque-object matcher; use Object.is for those exact identity observations.
+Two new after-ledger interruption cases bring the corrected population to18.
+No production change or deadline increase was used to correct that instrument.
+
+Exact source/report hashes and limits are in
+[the source-body custody audit](../audit/6979-native-source-body-custody-20261020.json).
+The five-file source/invocation/getter/realm/mixed preservation run is **still
+live**, confirmed via actual session64251; its stdout is intentionally silent
+under the JSON reporter. Resume that same handle, do not restart from silence
+or treat this checkpoint as a clean broader cohort. The audit records its exact
+file population. The earlier catalog56/older243 cases were not rerun this turn.
+
+Final typecheck/lint/format and source ratchets pass. Inventory is valid for1988
+modules/zero errors but architectureComplete=false. All current cycle metrics
+exactly equal S7-ak; the same four red directions versus main remain unwaived.
+Preservation-only6/6 full+6/6 cut witnesses pass, but strict modeled closure still
+fails the two previously named unknown nonliteral import targets. Retirement is
+not certified. No new floor/root/edge allowance/baseline/grant or host import.
+
+Next consume this genuine body custody alongside the actual ABI/dependency and
+allocation owners in the mixed invocation graph; validate exact source function
+identity/realm, not shape or signature alone. Then complete remaining catalog,
+constructors, descriptors/population and atomic public/source admission. Keep
+live per-instance foreign boundary references, first-class undefined, Linear/WASI,
+the three named gaps, runtime/arm retirement, architecture/strict closure and
+custody/conformance/npm-compat/accelerators plus PR conflicts in the full scope.
+Both issues and the full migration remain in progress; do not mark ready/merge
+from body custody alone. No GitHub issue/comment is created.
