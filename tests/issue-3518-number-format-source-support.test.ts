@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ts } from "../src/ts-api.js";
 import { buildSelfHostedIrBody } from "../src/frontend/builtins/build-ir.js";
 import { prepareNumberFormatRuntimeSupport } from "../src/frontend/builtins/prepare-number-format.js";
-import { numToStringRadixDef } from "../src/stdlib/number-format.js";
+import { numToStringRadixDefForVersion } from "../src/stdlib/number-format.js";
 import { numberFormatRadixSupportDeclarations } from "../src/ir/program/formatter-support.js";
 import {
   assertIrRuntimeSupport,
@@ -40,7 +40,7 @@ function kernel() {
       order: 0,
     }),
   );
-  const definition = numToStringRadixDef(declarations.scratch.type);
+  const definition = numToStringRadixDefForVersion(declarations.scratch.type, 1);
   const input = {
     definition,
     ownerUnitId: declarations.ownerUnitId,

@@ -33,6 +33,7 @@
 
 import type { SelfHostedFuncDef } from "../frontend/builtins/contracts.js";
 import { irVal, type IrType } from "../ir/core/types.js";
+import { NATIVE_RADIX_SOURCES, type NativeRadixSourceVersion } from "../runtime/contracts/number-format-sources.js";
 
 const F64: IrType = irVal({ kind: "f64" });
 const STR: IrType = { kind: "string" };
@@ -48,95 +49,19 @@ type Sig = { params: readonly IrType[]; returnType: IrType | null };
  * fractional digits (digit = floor(frac·r)), stopping when the remainder is
  * exhausted. Digit codes: '0'+d below 10, 'a'−10+d from 10 (codes 48/87).
  */
-const TOSTRING_RADIX_SOURCE = `
-export function __sh_num_toString_radix(value: number, radix: number): string {
-  if (value !== value) { return "NaN"; }
-  if (value > 1.7976931348623157e308) { return "Infinity"; }
-  if (value < -1.7976931348623157e308) { return "-Infinity"; }
-  let neg: boolean = value < 0;
-  let abs: number = value;
-  if (neg) { abs = 0 - value; }
-  let r: number = Math.floor(radix);
-  if (abs === 0) { return "0"; }
-  let intPart: number = Math.floor(abs);
-  let frac: number = abs - intPart;
-  if (intPart > 9007199254740991) { __num_fmt_trap(); }
-  if (frac === 0) {
-    let len: number = 0;
-    let t: number = intPart;
-    while (t > 0) {
-      t = Math.floor(t / r);
-      len = len + 1;
-    }
-    if (neg) { len = len + 1; }
-    let ibuf = __nfd_new(len);
-    let p: number = len - 1;
-    let m: number = intPart;
-    while (m > 0) {
-      let iq: number = Math.floor(m / r);
-      let idigit: number = m - iq * r;
-      let icode: number = 48 + idigit;
-      if (idigit >= 10) { icode = 87 + idigit; }
-      __nfd_set(ibuf, p, icode);
-      p = p - 1;
-      m = iq;
-    }
-    if (neg) { __nfd_set(ibuf, 0, 45); }
-    return __nfd_fin(ibuf, len);
-  }
-  let buf = __nfd_new(256);
-  let pos: number = 0;
-  let n: number = intPart;
-  while (n > 0) {
-    let q: number = Math.floor(n / r);
-    let digit: number = n - q * r;
-    let code: number = 48 + digit;
-    if (digit >= 10) { code = 87 + digit; }
-    __nfd_set(buf, pos, code);
-    pos = pos + 1;
-    n = q;
-  }
-  if (pos === 0) {
-    __nfd_set(buf, pos, 48);
-    pos = pos + 1;
-  }
-  if (neg) {
-    __nfd_set(buf, pos, 45);
-    pos = pos + 1;
-  }
-  let i: number = 0;
-  let j: number = pos - 1;
-  while (i < j) {
-    let t: number = __nfd_get(buf, i);
-    __nfd_set(buf, i, __nfd_get(buf, j));
-    __nfd_set(buf, j, t);
-    i = i + 1;
-    j = j - 1;
-  }
-  if (frac > 0) {
-    __nfd_set(buf, pos, 46);
-    pos = pos + 1;
-    let k: number = 0;
-    while (frac > 0 && k < 100) {
-      frac = frac * r;
-      let fdigit: number = Math.floor(frac);
-      frac = frac - fdigit;
-      let fcode: number = 48 + fdigit;
-      if (fdigit >= 10) { fcode = 87 + fdigit; }
-      __nfd_set(buf, pos, fcode);
-      pos = pos + 1;
-      k = k + 1;
-    }
-  }
-  return __nfd_fin(buf, pos);
-}
-`;
 
 /**
  * Build the toString(radix) def against the live ctx's buffer array type
  * (`bufRef` = `(ref null $__str_data)` — ctx-bound, hence no memoKey).
  */
 export function numToStringRadixDef(bufRef: IrType): SelfHostedFuncDef {
+  return numToStringRadixDefForVersion(bufRef, 2);
+}
+
+/** Explicit historical/successor build; the existing default definition remains byte-identical. */
+export function numToStringRadixDefForVersion(bufRef: IrType, version: NativeRadixSourceVersion): SelfHostedFuncDef {
+  const selected = NATIVE_RADIX_SOURCES[version];
+  if (!selected) throw Error("unsupported native radix source version");
   const calleeTypes = new Map<string, Sig>([
     ["__nfd_new", { params: [F64], returnType: bufRef }],
     ["__nfd_get", { params: [bufRef, F64], returnType: F64 }],
@@ -146,7 +71,7 @@ export function numToStringRadixDef(bufRef: IrType): SelfHostedFuncDef {
   ]);
   return {
     name: "__sh_num_toString_radix",
-    source: TOSTRING_RADIX_SOURCE,
+    source: selected.source,
     paramTypes: [F64, F64],
     returnType: STR,
     calleeTypes,

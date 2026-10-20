@@ -13,10 +13,13 @@ import type { IrFuncRef } from "../src/ir/core/value-references.js";
 import { numberFormatRadixSupportDeclarations } from "../src/ir/program/formatter-support.js";
 import { createIrSourceId } from "../src/ir/identity.js";
 import { prepareIrRuntimeManifest } from "../src/ir/intrinsic-support.js";
-import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
+import { prepareIrProgramSources, captureTypedIrProgramInput } from "../src/ir/program-source.js";
+import { prepareTypedIrProgram } from "../src/ir/program-prepare-ir.js";
+import { prepareNumberFormatRuntimeSupport } from "../src/frontend/builtins/prepare-number-format.js";
+import type { NativeRadixSourceVersion } from "../src/runtime/contracts/number-format-sources.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
 import { assertPreparedIrProgram } from "../src/ir/program-validation.js";
-import { sourceInput, requireProgram } from "./helpers/typed-program-fixtures.js";
+import { sourceInput, requireProgram, typedOptions } from "./helpers/typed-program-fixtures.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "../src/ir/lower.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import { buildInlineNativeStringLiteral } from "../src/runtime/wasmgc/values/string-literal-bodies.js";
@@ -145,7 +148,7 @@ describe("complete formatter resource ownership", () => {
 
 // This observes the real source-produced support body and resource closure,
 // not whole-program consumer execution (the complete async join is separate).
-function genuineProgram() {
+function genuineProgram(version: NativeRadixSourceVersion = 2) {
   const original = readFileSync(new URL("../website/playground/examples/js/async.ts", import.meta.url), "utf8");
   const policy = {
     backend: "wasmgc",
@@ -153,17 +156,24 @@ function genuineProgram() {
     stringConst: { storage: "native" },
     stringConcat: { concat: "native" },
   } as const;
+  const source = prepareIrProgramSources({
+    ...sourceInput({ "./entry.ts": original }),
+    policy,
+    promiseDelayProjection: "standalone-native",
+    asyncFamilyProjection: "standalone-native",
+  });
+  if (source.kind !== "prepared") throw Error(source.detail);
+  const support = prepareNumberFormatRuntimeSupport(source, policy, version);
   return requireProgram(
-    prepareWholeIrProgram({
-      ...sourceInput({ "./entry.ts": original }),
+    prepareTypedIrProgram(captureTypedIrProgramInput(source, support), {
+      ...typedOptions,
       policy,
-      promiseDelayProjection: "standalone-native",
-      asyncFamilyProjection: "standalone-native",
+      runtimePolicies: [policy],
     }),
   );
 }
-function genuineSupport(decoded: boolean) {
-  const originalProgram = genuineProgram();
+function genuineSupport(decoded: boolean, version: NativeRadixSourceVersion = 2) {
+  const originalProgram = genuineProgram(version);
   const source = decoded ? decodePreparedIrProgram(encodePreparedIrProgram(originalProgram)) : originalProgram;
   assertPreparedIrProgram(source);
   const support = source.runtimeSupport;
@@ -289,82 +299,88 @@ function executable(batch: IrNumberFormatRadixSupport, integerBeforeScratch: boo
 }
 
 describe("genuine D1 support resource execution", () => {
-  for (const decoded of [false, true])
-    it.each([false, true])(`executes canonical formatting decoded=${decoded}, integerBeforeScratch=%s`, (fast) => {
-      const module = executable(genuineSupport(decoded), fast);
-      expect(WebAssembly.Module.imports(module)).toEqual([]);
-      for (let instanceIndex = 0; instanceIndex < 2; instanceIndex++) {
-        const api = new WebAssembly.Instance(module).exports as unknown as {
-          decimal(value: number): unknown;
-          radix(value: number, radix: number): unknown;
-          length(value: unknown): number;
-          char(value: unknown, index: number): number;
-        };
-        const read = (value: unknown) =>
-          Array.from({ length: api.length(value) }, (_, index) => String.fromCharCode(api.char(value, index))).join("");
-        for (const value of [
-          -0,
-          NaN,
-          Infinity,
-          -Infinity,
-          70,
-          3e9,
-          0.1 + 0.2,
-          1 / 3,
-          1e20,
-          1e21,
-          1e-6,
-          1e-7,
-          Number.MIN_VALUE,
-          2 ** -1022,
-          Number.MAX_VALUE,
-          Number.MAX_SAFE_INTEGER,
-        ]) {
-          expect(read(api.decimal(value))).toBe(String(value));
-          expect(read(api.decimal(value))).toBe(String(value));
-        }
-        for (let radix = 2; radix <= 36; radix++) {
-          for (const value of [0, -0, 1, -1, 255, 70, 3e9])
-            expect(read(api.radix(value, radix))).toBe(value.toString(radix));
-          expect(() => api.radix(Number.MAX_SAFE_INTEGER + 1, radix)).toThrow(WebAssembly.RuntimeError);
-        }
-        // The unchanged issue3305 exact matrix, separate from inherited fraction debt.
-        const radixCases = [
-          [255, 16],
-          [255, 2],
-          [-255, 16],
-          [0, 2],
-          [1, 36],
-          [35, 36],
-          [1e15, 36],
-          [0.5, 2],
-          [3.75, 2],
-          [-10.625, 16],
-          [123.456, 8],
-          [1234567, 10],
-          [NaN, 16],
-          [Infinity, 2],
-          [-Infinity, 36],
-          [-0, 8],
-          [-0.25, 2],
-          [4095.9375, 16],
-          [255.5, 16],
-          [1048575, 32],
-          [777, 8],
-        ] as const;
-        expect(radixCases).toHaveLength(21);
-        for (const [value, radix] of radixCases) expect(read(api.radix(value, radix))).toBe(value.toString(radix));
-        const bits = new DataView(new ArrayBuffer(8));
-        issue1537Corpus((value) => expect(read(api.decimal(value))).toBe(String(value)));
-        let state = 0x15373305n;
-        for (let index = 0; index < 20000; index++) {
-          state = BigInt.asUintN(64, state * 6364136223846793005n + 1442695040888963407n);
-          bits.setBigUint64(0, state, true);
-          const value = bits.getFloat64(0, true);
-          expect(read(api.decimal(value)), `raw bits ${state.toString(16)}`).toBe(String(value));
-        }
-      }
-    });
+  for (const version of [1, 2] as const)
+    for (const decoded of [false, true])
+      it.each([false, true])(
+        `executes canonical formatting version=${version}, decoded=${decoded}, integerBeforeScratch=%s`,
+        (fast) => {
+          const module = executable(genuineSupport(decoded, version), fast);
+          expect(WebAssembly.Module.imports(module)).toEqual([]);
+          for (let instanceIndex = 0; instanceIndex < 2; instanceIndex++) {
+            const api = new WebAssembly.Instance(module).exports as unknown as {
+              decimal(value: number): unknown;
+              radix(value: number, radix: number): unknown;
+              length(value: unknown): number;
+              char(value: unknown, index: number): number;
+            };
+            const read = (value: unknown) =>
+              Array.from({ length: api.length(value) }, (_, index) => String.fromCharCode(api.char(value, index))).join(
+                "",
+              );
+            for (const value of [
+              -0,
+              NaN,
+              Infinity,
+              -Infinity,
+              70,
+              3e9,
+              0.1 + 0.2,
+              1 / 3,
+              1e20,
+              1e21,
+              1e-6,
+              1e-7,
+              Number.MIN_VALUE,
+              2 ** -1022,
+              Number.MAX_VALUE,
+              Number.MAX_SAFE_INTEGER,
+            ]) {
+              expect(read(api.decimal(value))).toBe(String(value));
+              expect(read(api.decimal(value))).toBe(String(value));
+            }
+            for (let radix = 2; radix <= 36; radix++) {
+              for (const value of [0, -0, 1, -1, 255, 70, 3e9])
+                expect(read(api.radix(value, radix))).toBe(value.toString(radix));
+              expect(() => api.radix(Number.MAX_SAFE_INTEGER + 1, radix)).toThrow(WebAssembly.RuntimeError);
+            }
+            // The unchanged issue3305 exact matrix, separate from inherited fraction debt.
+            const radixCases = [
+              [255, 16],
+              [255, 2],
+              [-255, 16],
+              [0, 2],
+              [1, 36],
+              [35, 36],
+              [1e15, 36],
+              [0.5, 2],
+              [3.75, 2],
+              [-10.625, 16],
+              [123.456, 8],
+              [1234567, 10],
+              [NaN, 16],
+              [Infinity, 2],
+              [-Infinity, 36],
+              [-0, 8],
+              [-0.25, 2],
+              [4095.9375, 16],
+              [255.5, 16],
+              [1048575, 32],
+              [777, 8],
+            ] as const;
+            expect(radixCases).toHaveLength(21);
+            for (const [value, radix] of radixCases) expect(read(api.radix(value, radix))).toBe(value.toString(radix));
+            const bits = new DataView(new ArrayBuffer(8));
+            issue1537Corpus((value) => expect(read(api.decimal(value))).toBe(String(value)));
+            let state = 0x15373305n;
+            for (let index = 0; index < 20000; index++) {
+              state = BigInt.asUintN(64, state * 6364136223846793005n + 1442695040888963407n);
+              bits.setBigUint64(0, state, true);
+              const value = bits.getFloat64(0, true);
+              expect(read(api.decimal(value)), `raw bits ${state.toString(16)}`).toBe(String(value));
+            }
+          }
+        },
+      );
 });
 
 it("executes the same support resource harness after guarded fresh-process codec replay", async () => {

@@ -519,7 +519,8 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     const batches = requireArray(support.batches, "program.runtimeSupport.batches");
     if (batches.length !== 1) return invalid("runtime support must contain exactly one radix batch");
     const batch = requireRecord(batches[0], "program.runtimeSupport.batches[0]");
-    if (batch.kind !== "number-format-radix-v1") return invalid("unsupported runtime support batch");
+    if (batch.kind !== "number-format-radix-v1" && batch.kind !== "number-format-radix-v2")
+      return invalid("unsupported runtime support batch");
     const implementation = requireRecord(batch.implementation, "runtime support implementation");
     const body = requireRecord(implementation.body, "runtime support body");
     requireArray(body.blocks, "runtime support body.blocks");

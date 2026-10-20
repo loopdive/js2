@@ -228,6 +228,8 @@
         "src/ir/program/native-string-value-demands.ts",
         "src/ir/program/runtime-support.ts",
         "src/ir/program/formatter-support.ts",
+        "src/ir/program/formatter-body-identity.ts",
+        "src/ir/program/formatter-canonical-bodies.generated.ts",
         "src/ir/program/native-number-format-requirements.ts",
         "src/ir/program/async-frame-setup.ts",
         "src/ir/program/prepared-async-frame-plan.ts",
@@ -278,6 +280,7 @@
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/closure-call-abi.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
+        "src/runtime/contracts/number-format-sources.ts",
         "src/runtime/contracts/well-known-symbols.ts"
       ],
       "minModules": 10
@@ -14133,6 +14136,16 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/formatter-body-identity.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/formatter-canonical-bodies.generated.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/core/type-references.ts",
       "state": "clean",
       "layer": "ir-core"
@@ -16219,6 +16232,11 @@
     },
     {
       "path": "src/runtime/contracts/native-realm-catalog.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/contracts/number-format-sources.ts",
       "state": "clean",
       "layer": "runtime-contracts"
     },

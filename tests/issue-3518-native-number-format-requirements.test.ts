@@ -329,7 +329,12 @@ describe("complete prepared formatter demand joins", () => {
       expect(requirements.calls.map((row) => row.instruction)).toEqual(expected.map((row) => row.instruction));
       expect(new Set(requirements.calls.map((row) => row.view))).toEqual(new Set(["program", "projection"]));
       expect(requirements.batch).toBe(program.runtimeSupport!.batches[0]);
-      expect(requirements.supportBuffers).toHaveLength(31);
+      expect(requirements.batch.kind).toBe("number-format-radix-v2");
+      expect(requirements.batch.source).toMatchObject({
+        utf8Bytes: 2226,
+        sha256: "1a09c01c1bd3577b05db730d518995b3ff5317e82decdd64901dcd242601232d",
+      });
+      expect(requirements.supportBuffers).toHaveLength(43);
       expect(requirements.literals).toHaveLength(requirements.batch.literals.length);
       expect(
         requirements.literals.map((row) => [row.bufferIndex, row.instructionIndex, row.instruction.value]),

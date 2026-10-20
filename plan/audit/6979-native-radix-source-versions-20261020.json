@@ -1,0 +1,438 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-aq explicit native formatter source successor and full transported-body comparison",
+  "parentCommit": "6fd443ee9f0de22542e2acb900d06b5fcc554ae7",
+  "status": "verified formatter checkpoint; full migration incomplete",
+  "sourceHashes": {
+    "src/runtime/contracts/number-format-sources.ts": "7cee852881ed9ca51f35ac624f70bdeb717abe6a471c260f69f891c276b9acd5",
+    "src/stdlib/number-format.ts": "d0df80caa33856436c6c1058f3154ecfcf5a6b7e70803f0a99679531a06fe2a4",
+    "src/frontend/builtins/prepare-number-format.ts": "df8030c08050b059eaf012952d1e9f066c45cdfaad330eb707d791d975acc13a",
+    "src/ir/program/runtime-support.ts": "ba0f64045214d588da70b3abe0948d775f67cc1b59a09bd8dc1b408bd86b3303",
+    "src/ir/program/formatter-body-identity.ts": "d30d0b84f4270a69bf8e241a784b6950cbac0dc32b37daf64d9cd0d9d4e5322a",
+    "src/ir/program/formatter-canonical-bodies.generated.ts": "ffef9e0b5b69f3d723d3104e4083b68a64fb1c3c5fa0fa02b41263f8c3b49c51",
+    "src/ir/program-codec.ts": "2b814e50e39fe0a18e522525fadabfdf786169016ca408f0032cb4deac861134",
+    "scripts/generate-native-radix-canonical-bodies.mts": "ae56f107f907fd45a476ebdf2f227c627c042bfc4cd083a99c9f9a430bc0c1a1",
+    "scripts/compiler-boundaries.json": "fbdc34b1d8098d64369f8517a54ddb5cf7cf76a547b3635c35a8889af7ca9864",
+    "tests/issue-6979-native-radix-source-versions.test.ts": "c057b9cb517b01ef2296ddc1276b779f7336bb3b19d1b73e2beb39aa761ca1ea",
+    "tests/issue-3518-native-number-format-requirements.test.ts": "86e8a83255ebc2697b44f1b04b6359475ba4dec87c658920fcf509c24efa758f",
+    "tests/issue-3518-native-number-format-resources.test.ts": "f98d4e4990cf35f176b36d45a8c9115f7a4d5f3299dcc49a2c75f79eec111d8c",
+    "tests/issue-3518-number-format-source-support.test.ts": "09343755c69761836677fedcfbcb126b84596a8247b57420e3be3e7bd23f4bfc",
+    "tests/issue-3518-symbolic-support-ref.test.ts": "17c703cd300a3a0feadae1d6db16b47f22b2914a00a890088ab1c6574a729519"
+  },
+  "tests": {
+    "s7aq-first-versioned": {
+      "report": ".tmp/s7aq-first-versioned.json",
+      "log": ".tmp/s7aq-first-versioned.log",
+      "jsonSha256": "fd6522bcfbb517fa03954ce507fc140aec2194b28bf9bf12cb0f59e11abe5eaa",
+      "logSha256": "79f6facb44698437e220c63090fbc2168fccc0513509e2c95afa29967bcb1a48",
+      "jsonSuccess": true,
+      "total": 39,
+      "passed": 39,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-number-format-requirements.test.ts",
+          "cases": 29
+        },
+        {
+          "file": "issue-3518-number-format-source-support.test.ts",
+          "cases": 10
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    },
+    "s7aq-custody-first": {
+      "report": ".tmp/s7aq-custody-first.json",
+      "log": ".tmp/s7aq-custody-first.log",
+      "jsonSha256": "5450660bc6be797d624cf116324e48817fddb07f1d7aef9af142f9b7e70af1c5",
+      "logSha256": "1151149c3c25b3c07af99563816293843d0d7840a0e87417163272bf8acca6c9",
+      "jsonSuccess": false,
+      "total": 39,
+      "passed": 34,
+      "failed": 5,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-symbolic-support-ref.test.ts",
+          "cases": 20
+        },
+        {
+          "file": "issue-6979-native-radix-source-versions.test.ts",
+          "cases": 19
+        }
+      ],
+      "failures": [
+        {
+          "title": "nominal index-free support references retains the exact old factory identity and complete two-body relocation receipt",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a body relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a extra relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a route relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a export relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        }
+      ],
+      "closed": true,
+      "runnerExit": 1
+    },
+    "s7aq-runtime-both": {
+      "report": ".tmp/s7aq-runtime-both.json",
+      "log": ".tmp/s7aq-runtime-both.log",
+      "jsonSha256": "03c0db28d9f883a0774f396326cfcca888763005f8d1c6041742e8ebef5f38cb",
+      "logSha256": "2030f95a57a2eacfa4e370b1478785e9f58e498523b22278b4ef52c2d5f8ce6f",
+      "jsonSuccess": true,
+      "total": 26,
+      "passed": 26,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-number-format-resources.test.ts",
+          "cases": 26
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    },
+    "s7aq-table-custody": {
+      "report": ".tmp/s7aq-table-custody.json",
+      "log": ".tmp/s7aq-table-custody.log",
+      "jsonSha256": "beabad7f64f5aa45985d2ca9c83943f43ff979290a284ab662889b2b6a019427",
+      "logSha256": "5d6423fdd11036e3f767ea89d25da1a487fd1ce9bdb8d186b9dfabaf71d79c99",
+      "jsonSuccess": true,
+      "total": 19,
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-6979-native-radix-source-versions.test.ts",
+          "cases": 19
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    },
+    "s7aq-parent-symbolic-control": {
+      "report": ".tmp/s7aq-parent-symbolic-control.json",
+      "log": ".tmp/s7aq-parent-symbolic-control.log",
+      "jsonSha256": "fcb30beeb6198d504e5669ffffc20e7c2e2cb5341fb952f6c70bc00667fd9945",
+      "logSha256": "f7bc479055e7d488419f5e4cec42a20e24d0ad829ae8b5b9d753a6353b374515",
+      "jsonSuccess": false,
+      "total": 20,
+      "passed": 0,
+      "failed": 5,
+      "skipped": 15,
+      "files": [
+        {
+          "file": "s7aq-parent-symbolic-control.test.ts",
+          "cases": 20
+        }
+      ],
+      "failures": [
+        {
+          "title": "nominal index-free support references retains the exact old factory identity and complete two-body relocation receipt",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a body relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a extra relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a route relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        },
+        {
+          "title": "nominal index-free support references rejects a export relocation mutation after the original positive",
+          "message": "AssertionError: expected '32421c36a56ab3483c3838e7465524cd767ae…' to be '9324caf316c596019beab1007c7e602263ae2…' // Object.is equality"
+        }
+      ],
+      "closed": true,
+      "runnerExit": 1
+    },
+    "s7aq-guard-removed": {
+      "report": ".tmp/s7aq-guard-removed.json",
+      "log": ".tmp/s7aq-guard-removed.log",
+      "jsonSha256": "22b7d8884a5558812c3216575e8fc54de69e27a12d721305feac8115551b9379",
+      "logSha256": "f74c205744583a8169a422068fccb0ce9da5946fddf61d964ffc7d8c97ce67f4",
+      "jsonSuccess": false,
+      "total": 19,
+      "passed": 5,
+      "failed": 14,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-6979-native-radix-source-versions.test.ts",
+          "cases": 19
+        }
+      ],
+      "failures": [
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version1 constant corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version1 branch corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version1 call-argument corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version1 literal corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version1 allocation-sharing corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version1 own-undefined-field corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses coherent version1 body relabeling with the other valid source digest",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version2 constant corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version2 branch corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version2 call-argument corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version2 literal corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version2 allocation-sharing corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses version2 own-undefined-field corruption even after refreshing the caller's receipts",
+          "message": "AssertionError: expected [Function] to throw an error"
+        },
+        {
+          "title": "explicit historical and integer-fast-path native radix source versions refuses coherent version2 body relabeling with the other valid source digest",
+          "message": "AssertionError: expected [Function] to throw an error"
+        }
+      ],
+      "closed": true,
+      "runnerExit": 1
+    },
+    "s7aq-final-formatter-consumers": {
+      "report": ".tmp/s7aq-final-formatter-consumers.json",
+      "log": ".tmp/s7aq-final-formatter-consumers.log",
+      "jsonSha256": "a4526a5e8b15d6d7b1f73493ebb20071aa02b369080f1730288230490887a6fc",
+      "logSha256": "d99b5580e7bcd075ebe17b4e3cbfaadeabbb960e200e78dd9901cedf9e6de40a",
+      "jsonSuccess": true,
+      "total": 108,
+      "passed": 108,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        {
+          "file": "issue-3518-native-number-format-requirements.test.ts",
+          "cases": 29
+        },
+        {
+          "file": "issue-3518-native-number-format-resources.test.ts",
+          "cases": 26
+        },
+        {
+          "file": "issue-3518-native-string-output-consumer.test.ts",
+          "cases": 24
+        },
+        {
+          "file": "issue-3518-number-format-source-support.test.ts",
+          "cases": 10
+        },
+        {
+          "file": "issue-6979-native-radix-source-versions.test.ts",
+          "cases": 19
+        }
+      ],
+      "failures": [],
+      "closed": true,
+      "runnerExit": 0
+    }
+  },
+  "gates": {
+    "typecheck": {
+      "log": ".tmp/s7aq-final-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "chainExit": 0
+    },
+    "lint": {
+      "log": ".tmp/s7aq-final-lint.log",
+      "sha256": "a9fb4e8d82a5592900ce329f6a9ff836d519093ff1d648b597a8af8d41aceddf",
+      "chainExit": 0
+    },
+    "loc": {
+      "log": ".tmp/s7aq-final-loc.log",
+      "sha256": "b40385a28a039b7e41cb82d0d5234b8b17f765569306f3a887df9e7c842c8d50",
+      "chainExit": 0
+    },
+    "functions": {
+      "log": ".tmp/s7aq-final-functions.log",
+      "sha256": "9c254dada0a0937cad0c922f6cdfce876a159d439cee39f216debe3909b82f8e",
+      "chainExit": 0
+    },
+    "coercion": {
+      "log": ".tmp/s7aq-final-coercion.log",
+      "sha256": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+      "chainExit": 0
+    },
+    "oracle": {
+      "log": ".tmp/s7aq-final-oracle.log",
+      "sha256": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a",
+      "chainExit": 0
+    },
+    "preservation": {
+      "log": ".tmp/s7aq-final-preservation.log",
+      "sha256": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02",
+      "chainExit": 0
+    },
+    "layering": {
+      "log": ".tmp/s7aq-final-layering.log",
+      "sha256": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9",
+      "chainExit": 0
+    },
+    "flat": {
+      "log": ".tmp/s7aq-final-flat.log",
+      "sha256": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f",
+      "chainExit": 0
+    }
+  },
+  "evidence": {
+    "s7aq-table-lossless": {
+      "path": ".tmp/s7aq-table-lossless.json",
+      "sha256": "c6fdac9d6e1a42d740d50d55942ab2f72c18a4344b09b5a619e06ed3c9204ae8"
+    },
+    "s7aq-template-check": {
+      "path": ".tmp/s7aq-template-check.json",
+      "sha256": "a380304b6c45ed4e53faad6d52b0ddd6e5f685bf906298eaeca53a7d1040a589"
+    },
+    "s7aq-final-inventory": {
+      "path": ".tmp/s7aq-final-inventory.json",
+      "sha256": "288dcf48d075bec25b4247a29f85283cc0c6299a121fe69310e4fc1a72b13db1"
+    },
+    "s7aq-final-cycles": {
+      "path": ".tmp/s7aq-final-cycles.json",
+      "sha256": "12d5db68bf4580c4f7e98a9372bb49746d7872c8b893d977dbcc56d0b9a65934"
+    }
+  },
+  "pins": {
+    "src/runtime/wasmgc/values/closure-layouts.ts": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+    "tests/fixtures/issue-3518-closure-state-preservation/receipt.json": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e",
+    "src/ir/abi-bindings.ts": "e13e7e5b6fdfb9ed487c4e6cf9b8fcfbde95ef4d6472a3d274621a80b768aadb",
+    "src/ir/core/type-references.ts": "fc86cce3079cf606e0ab0e24814cc7b9b009bbd8450d638938d29cb59ac4bef4"
+  },
+  "sourceVersions": {
+    "1": {
+      "kind": "number-format-radix-v1",
+      "utf8Bytes": 1618,
+      "sha256": "7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6",
+      "sourceOriginCommit": "6128dd8244b65028ea89a48eb7259efebd3c8fba",
+      "buffers": 31,
+      "historicalPinsUnchanged": true
+    },
+    "2": {
+      "kind": "number-format-radix-v2",
+      "utf8Bytes": 2226,
+      "sha256": "1a09c01c1bd3577b05db730d518995b3ff5317e82decdd64901dcd242601232d",
+      "integerFastPathOriginCommit": "a3b61eddb0aef9e7458e81cac40bc782c7841166",
+      "buffers": 43,
+      "newPreparationDefault": true,
+      "numericAlgorithmChanged": false
+    }
+  },
+  "scope": {
+    "stdlib": "The existing default factory returns the exact unchanged current version2 definition. Explicit historical selection uses the exact retained original1618-byte text; existing old-source assertions keep their pins and select version1 explicitly.",
+    "codec": "Outer schema stays ir-runtime-support-v1. Closed batch kind/source pairs admit genuine V1 and V2. Unknown kinds and mislabeled body/version pairs fail closed; prior bad V2-body/V1-metadata packets are NOT silently upgraded.",
+    "body": "Independent full post-hygiene source-derived graph comparison covers all SSA operands/defs, blocks, slots, arithmetic, branches, call arguments, literals, source sites, own field presence including undefined, and allocation-sharing relations. Only genuine declaration identity substitution and raw allocation-ID alpha-renaming are parameters, never arbitrary body data or caller digests.",
+    "authority": "Descriptive support/source-body verification only. Existing live allocation, provider, manifest and ABI checks remain separate obligations; this is NOT a new raw body/realm/public emission capability.",
+    "storage": "824 private lossless data cells reconstruct fresh comparison data only, never emitter instructions. Exact two-version data equality with the expanded original snapshot passes. Maintained check command recompiles both source versions and verifies source bytes/hash plus body without writes.",
+    "fullAsyncConsumerExecution": false,
+    "fullRealmPopulationAndInitializer": false,
+    "fullRealmSourcePublicAdmission": false,
+    "semanticMixedCallGet": false,
+    "liveForeignBoundaryOwner": false,
+    "firstClassUndefinedMigration": false,
+    "linearWasiMigrationComplete": false,
+    "hostImportsAdded": false,
+    "runtimeGraphCopyingAdded": false,
+    "migrationComplete": false
+  },
+  "controls": {
+    "guardRemoval": "Remove ONLY final independent body comparison from runtime-support.ts; keep valid source version metadata, refreshed occurrence receipts and existing allocation/declaration checks. New19-case suite changes from19/19 to5/19: all14 semantic corruption/wrong-version refusal cases fail; five positives remain passing. Restore exact guard, verify sourceSHA ba0f64045214d588da70b3abe0948d775f67cc1b59a09bd8dc1b408bd86b3303, then final108/108 clean.",
+    "tableLosslessness": "Before/after full retained data comparison for versions1 and2 returns no mismatch. Preserve own undefined and numeric identity; data storage changed, no expected-body weakening.",
+    "historicalReceipt": "Five symbolic type-reference relocation tests fail on inverse source hash32421… versus9324…. Exact parent test-source control selects these5 (15 unselected) and reproduces all5 on abi-bindings/type-references files whose bytes exactly equal parent6fd443ee9f. Different test-path stack locations are retained, not normalized into an exact error equality claim. This is not a full parent checkout comparison and those failures remain unresolved.",
+    "caseAndRpcDeadlinesIncreased": false,
+    "sourceOrHistoricalPinsRepinned": false,
+    "newSizeOrDependencyAllowance": false
+  },
+  "runtimeEvidence": "Final five-file108/108 clean includes29 requirements,26 resource/runtime,24 actual string-output consumer,10 original source-kernel and19 version/body tests. Both source versions execute original/replayed, two integerBeforeScratch options, two zero-import instances per matrix case, inherited exact radix/decimal corpus and20000 raw-bit decimal values per instance. Guarded fresh-process resource replay passes. Component formatting is not full async/realm publication.",
+  "intermediateFailures": {
+    "generation": "Missing shared createIrSourceId export, then legitimate own alloc:undefined mistaken for a missing numeric renaming; also a missing generated-module bootstrap import. All failed loudly; final source fixes identity anchor/import and preserves undefined, with no temporary placeholder left.",
+    "loc": "Initial5147-line expanded data snapshot failed1500-line gate. Lossless824-cell table now998 lines passes unchanged gate. No allowance or baseline edit.",
+    "historicalTests": "34/39 initial mixed cohort retains5 symbolic historical receipt failures; all19 new source/body cases pass. Not called a clean historical suite."
+  },
+  "gateLimits": {
+    "wholePrBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+    "changedSourceFiles": 406,
+    "netLoc": -13418,
+    "inventoryModules": 1995,
+    "inventoryErrors": 0,
+    "architectureComplete": false,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cyclesExit": 1,
+    "remainingDirectionDebts": {
+      "backend->ir": [115, 117],
+      "codegen->ir": [298, 301],
+      "ir->codegen": [74, 75],
+      "ir->frontend": [7, 10]
+    },
+    "preservationOnly": "6/6 full+6/6 cut pass; strict modeled closure still red on unknown nonliteral imports in optimize.ts and platform-capability-adapter.ts. Retirement/deletion NOT certified.",
+    "fullHistoricalGcByteComparisonClaimed": false,
+    "fullTest262OrNpmCompatibilityNewlyCertified": false
+  },
+  "publication": {
+    "pullRequest": "https://github.com/loopdive/js2/pull/6762",
+    "branch": "codex/6979-s7c-ir-arms",
+    "draft": true,
+    "prerequisite": "https://github.com/loopdive/js2/pull/6701",
+    "prerequisiteState": "OPEN/unmerged at fresh pre-publication read",
+    "latestPrePublicationMergeability": "UNKNOWN; prior read conflicting, not certified resolved",
+    "githubIssuesOrCommentsCreated": false
+  },
+  "next": "Actual public realm catalog population/initializer and original source/code/allocation resource join in the genuine consumer; semantic arguments/receiver/results and mixed builtin/bound/source/live-foreign Call/Get; identity-backed boundary without graph copying, undefined, Linear/WASI, remaining catalog/named gaps, runtime/host-arm retirement, all strict architecture/historical/Test262/npm/accelerator acceptance and prerequisite/conflict resolution. Keep both Markdown migration issues and full goal in progress."
+}

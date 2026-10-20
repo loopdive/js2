@@ -31,7 +31,7 @@ import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { createStringDataType } from "../src/runtime/wasmgc/values/string-layouts.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
-import { numToStringRadixDef } from "../src/stdlib/number-format.js";
+import { numToStringRadixDefForVersion } from "../src/stdlib/number-format.js";
 // Mandatory joined R+F test. No fallback/skip when the source kernel is absent
 // from an uncomposed R checkout; validation must use the composed production.
 import { buildSelfHostedIrBody } from "../src/frontend/builtins/build-ir.js";
@@ -283,7 +283,7 @@ describe("nominal index-free support references", () => {
   });
   it("lowers the unchanged original radix through the genuine frontend kernel (mandatory R+F join)", () => {
     const radixType = irSupportRef(irSupportTypeRef(sourceId, "number-format-radix:scratch", "__nfd_buffer"), true);
-    const definition = numToStringRadixDef(radixType),
+    const definition = numToStringRadixDefForVersion(radixType, 1),
       allocRegistry = new AllocSiteRegistry();
     expect(Buffer.byteLength(definition.source, "utf8")).toBe(1618);
     expect(hash(definition.source)).toBe("7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6");

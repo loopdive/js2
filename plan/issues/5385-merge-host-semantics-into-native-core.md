@@ -2115,3 +2115,42 @@ separate executions, not one combined cohort. All current handles are closed.
 [The S7-ap audit](../audit/6979-native-object-demand-scopes-20261020.json) records
 source/report hashes, the still-red75/77 consumer run and the concrete formatter
 successor work. Preserve both no-host targets and the full migration scope.
+
+#### S7-aq explicit formatter successor and real transported-body verification
+
+The formatter no longer stamps old-source provenance onto the current algorithm.
+New preparation selects radix-v2 with its verified2226-byte/hash source; genuine
+historical1618-byte radix-v1 remains available and decodable. The default stdlib
+factory still returns the unchanged current definition. Incorrect newer bodies
+mislabeled as v1 are refused, not silently upgraded. No historical pin changed.
+
+Transported support now independently matches its complete source-derived IR
+body, not just a caller digest or refreshed receipts. Only genuine declaration
+identities and allocation-ID renaming vary; all arithmetic/control/data fields
+and allocation-sharing relations stay exact. A lossless824-cell retained table
+passes the unmodified size gate; no allowance was added. Both pinned sources and
+their exact bodies are checked by the maintained generator without rewriting data.
+
+Intermediate version/source tests39/39 and table custody19/19 are clean. Removing
+only the new body comparison changes19/19 to5/19, with14 corruption refusals lost;
+the exact guard is restored. Separate runtime component/resource execution26/26
+covers both versions, codec replay, options, independent zero-import instances
+and decimal/radix corpora. Five older symbolic-reference source-receipt failures
+remain and reproduce under the exact parent test-source control on unchanged
+parent-equal files; no repin or clean historical-suite claim. Details and final
+stable-revision results belong under **S7-aq explicit formatter source successor
+and transported-body custody** in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Full realm population/initializer/source admission, semantic mixed Call/Get and
+boundary identity, undefined, Linear/WASI and all earlier retirement/conformance/
+architecture acceptance remain required. Both issues and the full goal stay active.
+
+Final S7-aq five-file verification is **108/108, zero skips/exit0**, including
+both source-version runtime matrices after lossless-table conversion and exact
+guard restoration. The two formatter failures are resolved by verified v2 source
+selection; no original pin changed. The five historical symbolic receipt failures
+remain separate and unwaived. All current handles are closed. See
+[the exact S7-aq audit](../audit/6979-native-radix-source-versions-20261020.json).
+The full public realm population/initializer and actual consumer source join are
+next, not certified by these formatter/component results. Both issues remain in
+progress; keep the open prerequisite/draft PR and every full acceptance obligation.

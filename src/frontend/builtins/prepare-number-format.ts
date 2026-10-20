@@ -9,13 +9,15 @@ import {
   irRuntimeSupportOccurrences,
   type IrRuntimeSupport,
 } from "../../ir/program/runtime-support.js";
-import { numToStringRadixDef } from "../../stdlib/number-format.js";
+import { numToStringRadixDefForVersion } from "../../stdlib/number-format.js";
+import { NATIVE_RADIX_SOURCES, type NativeRadixSourceVersion } from "../../runtime/contracts/number-format-sources.js";
 import { buildSelfHostedIrBody } from "./build-ir.js";
 
 /** Build the genuine radix body once, against the source preparation's allocation owner. */
 export function prepareNumberFormatRuntimeSupport(
   source: IrProgramSourcePreparation,
   policy: RuntimeManifestPolicy,
+  version: NativeRadixSourceVersion = 2,
 ): IrRuntimeSupport | undefined {
   const demandOwners = irNumberFormatDemandOwners(source.ir.functions);
   if (demandOwners.length === 0) return undefined;
@@ -34,7 +36,9 @@ export function prepareNumberFormatRuntimeSupport(
   if (source.allocations === undefined)
     throw new Error("number-format support requires the source allocation registry");
   const declarations = numberFormatRadixSupportDeclarations(sourceId);
-  const definition = numToStringRadixDef(declarations.scratch.type);
+  const definition = numToStringRadixDefForVersion(declarations.scratch.type, version);
+  if (definition.source !== NATIVE_RADIX_SOURCES[version].source)
+    throw Error("native radix definition differs from selected canonical source");
   const body = buildSelfHostedIrBody({
     definition,
     ownerUnitId: declarations.ownerUnitId,
@@ -54,15 +58,11 @@ export function prepareNumberFormatRuntimeSupport(
     schema: "ir-runtime-support-v1",
     batches: [
       {
-        kind: "number-format-radix-v1",
+        ...(version === 1
+          ? { kind: "number-format-radix-v1" as const, source: NATIVE_RADIX_SOURCES[1].provenance }
+          : { kind: "number-format-radix-v2" as const, source: NATIVE_RADIX_SOURCES[2].provenance }),
         sourceId,
         demandOwners,
-        source: {
-          definition: "numToStringRadixDef",
-          functionName: "__sh_num_toString_radix",
-          utf8Bytes: 1618,
-          sha256: "7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6",
-        },
         scratch: declarations.scratch,
         kernels: declarations.kernels,
         implementation: { declaration: declarations.implementation, body },

@@ -6656,3 +6656,121 @@ retain all successful and failed runs, the full formatter finding and next work.
 Publish this actual prerequisite repair to the existing unfinished draft PR,
 leave both migration issues/full goal active, then implement the explicit
 formatter successor and genuine realm population/source transaction join.
+
+#### S7-aq explicit formatter source successor and transported-body custody (in progress)
+
+Keep the exact1618-byte v1 source/hash and decoding as historical controls; do
+not restamp2226 bytes as v1 or repin receipts. Make source versions explicit:
+new preparation selects the unchanged integer-fast-path source as radix-v2,
+with its actual2226-byte/hash provenance. The shared stdlib factory must retain
+the same current definition/source output for existing callers. Move exact source
+texts into a versioned index-free contract, expose an explicit historical factory
+for the existing v1 tests, and verify the real selected source text before building.
+
+Metadata alone is insufficient: a caller could retain a valid digest while
+changing arithmetic and refreshing its own occurrence receipts. Retain canonical
+post-hygiene IR data generated independently from each exact source. Validation
+must compare the entire transported body without importing a parser/backend.
+Only original source/support binding identities and allocation-ID renaming are
+parameters; preserve every instruction, SSA use/definition, block, slot, branch,
+literal, call, source site and allocation-sharing relation. Reject copied digest
+or version substitution, stale/unknown source, changed constants/control flow,
+coherently refreshed occurrence receipts and missing/collapsed allocation IDs.
+The existing live-allocation/type/provider/manifest checks remain necessary.
+
+Readers/mutators: prepare-number-format builds the support; capture remaps its
+allocation IDs; runtime-support validates it during preparation, codec replay and
+consumer admission; native-number-format requirements/physical planning consume
+its exact selected body. Version source selection and full-body verification
+belong before those consumers, not as a caller-selected emission shortcut.
+Preserve old-version decoding and unchanged canonical old-source tests. Verify
+both versions through real frontend build, codec/cross-source allocation offsets,
+mutation refusals and actual native formatting outputs. Current43-buffer assertions
+may change only alongside this explicit verified version selection, never alone.
+Keep full realm/source population, semantic mixed boundary interop, undefined,
+Linear/WASI and every remaining migration/retirement/conformance gate in scope.
+
+S7-aq implementation now selects `number-format-radix-v2` with the actual
+integer-fast-path2226-byte source/hash. The exact v1 source1618-byte/hash remains
+in the versioned index-free source contract and an explicit historical factory;
+the existing default factory still returns the exact v2 definition. Old genuine
+v1 packets decode/revalidate; incorrect newer bodies mislabeled as v1 now fail
+closed rather than being guessed/upgraded. No historical source/receipt pin or
+numeric algorithm was changed. The two current buffer-count assertions select
+v2 explicitly and its verified source identity before expecting43; v1 remains31.
+
+The complete post-hygiene body is checked independently of caller digests and
+refreshed occurrence receipts. The only parameters are the genuine declaration
+source/binding identities and instruction allocation-ID renaming with sharing
+preserved. SSA operands/definitions, slots, constants, branches, calls, literals,
+source sites, field presence (including own undefined), block order and all other
+data remain exact. This describes data, not a new emission/realm capability;
+live allocation/provider/manifest/ABI checks still apply separately.
+
+Initial canonical generation exposed two real tool defects: using a nonexistent
+shared source-ID export, then treating legitimate own `alloc:undefined` as a
+missing numeric renaming. Both failed loudly and were corrected without erasing
+field presence. A missing generated-module bootstrap dependency also failed;
+the temporary placeholder threw unconditionally and is absent from final code.
+The initial5147-line expanded snapshot failed the existing1500-line LOC gate.
+It was replaced by an824-cell lossless table, not a source-size allowance or
+weakened graph. Exact before/after data comparison for both versions passes,
+including own undefined/numeric identity. The maintained generator/checker
+`scripts/generate-native-radix-canonical-bodies.mts` recompiles both pinned
+sources and verifies their source hashes and full retained bodies without writing
+anything; `--print` is explicit inspection, never automatic rebaselining.
+
+Early two-file versioned producer/requirements run3840 is closed at39/39,
+zero skips/exit0. Expanded custody/symbolic run62673 closes at34/39, zero skips/
+exit1: all19 new version/custody cases pass; five existing symbolic type-reference
+relocation receipt cases fail on inverse source SHA32421… versus9324…. They
+read unchanged abi-bindings/type-references source. Exact parent test-source
+control33055 selects those five cases (15 unselected) and reproduces all five
+failures; both source files are byte-equal to parent6fd443ee9f. Keep this narrow
+source-receipt control distinct from a full parent checkout or normalized-error
+comparison. Do not repin or claim those five historical failures fixed.
+
+Lossless-table custody97949 closes cleanly at19/19. Removing ONLY the final
+independent body comparison in runtime-support, while keeping versions/source
+hashes/receipts/allocation checks unchanged, gives5494 at5/19:14 corruptions or
+coherent wrong-version labels are no longer refused. All five source/codec/data
+positive controls still pass. The exact body-comparison block is restored and
+its original SHA verified before final tests. No production bypass option remains.
+
+Runtime run98267 closes cleanly at26/26: both actual source versions, original
+and codec-replayed, fast-path options false/true, two zero-import instances per
+matrix case, the inherited exact radix/decimal corpus and20000 raw-bit decimal
+values per instance, plus fresh-process replay with its forbidden-import guard.
+This is actual formatter component/resource execution, **not** successful full
+async-family consumer execution or full realm publication. Table-format changes
+are separately proved lossless; final stable-revision execution must be reported
+from its own terminal handle, never inferred from these intermediate results.
+
+Final stable-revision17966 is now **closed,108/108 across five files, zero skips,
+explicit shell exit0**:29 formatter requirements,26 resource/runtime,24 string
+output consumer,10 source-kernel and19 successor/custody cases. The entire two
+previously red formatter cases now pass as verified v2 selection, not a blind
+count update. Historical v1 source/hash assertions remain unchanged and use the
+explicit old source. The final execution reruns both runtime versions after the
+lossless-table change and exact guard restoration. All current test handles are
+closed; five symbolic source-receipt failures remain separately recorded.
+
+Final typecheck/lint/format and source ratchets pass:406 changed source files,
+net−13418 LOC, no new grant/waiver or baseline edit. Inventory is valid1995 modules,
+zero errors/architectureComplete=false. Cycle metrics remain exactly the previous
+four red directions, largest SCC712/four nontrivial SCCs; strict modeled closure
+and retirement remain unproved. The prerequisite PR is still open/unmerged;
+latest PR mergeability reads UNKNOWN after an earlier conflict report, not
+certified resolved. Keep this an unfinished draft, not ready/merged.
+
+[Exact S7-aq source/report/gate hashes and retained controls](../audit/6979-native-radix-source-versions-20261020.json)
+contain the failed generation/size/test stages, lossless data check, body-guard
+removal experiment, historical receipt control and final108-case execution.
+Next implement the genuine public catalog population/initializer and original
+source/code/allocation join in program-consumer, then semantic argument/receiver/
+result adaptation and mixed builtin/bound/source/live-foreign Call/Get. Do not
+substitute the bootstrap realm, immutable wholeRealmReady=0, counts/receipts or
+typed f64 witnesses for complete realm/source/public admission. Preserve boundary
+identity without copying, undefined, Linear/WASI, remaining catalog/named gaps,
+runtime/host-arm retirement and all architecture/historical/Test262/npm/accelerator/
+merge acceptance. Both issues and the full migration goal remain in progress.

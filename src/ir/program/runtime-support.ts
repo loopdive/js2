@@ -10,6 +10,9 @@ import { preparedIrDataMismatch } from "./data.js";
 import { irCallableBindingKey } from "../core/callable-bindings.js";
 import { numberFormatRadixSupportDeclarations } from "./formatter-support.js";
 import type { TypedIrProgramInput } from "./input-contracts.js";
+import { NATIVE_RADIX_SOURCES } from "../../runtime/contracts/number-format-sources.js";
+import { describeNativeRadixBody } from "./formatter-body-identity.js";
+import { canonicalNativeRadixBody } from "./formatter-canonical-bodies.generated.js";
 
 export type IrFormatterKernelRole = "new" | "get" | "set" | "fin" | "trap";
 
@@ -32,16 +35,9 @@ export interface IrRuntimeSupportLiteralOccurrence {
 }
 
 /** Fully built semantic IR, never source text or a deferred compiler callback. */
-export interface IrNumberFormatRadixSupport {
-  readonly kind: "number-format-radix-v1";
+interface IrNumberFormatRadixSupportBody {
   readonly sourceId: IrSourceId;
   readonly demandOwners: readonly IrUnitId[];
-  readonly source: {
-    readonly definition: "numToStringRadixDef";
-    readonly functionName: "__sh_num_toString_radix";
-    readonly utf8Bytes: 1618;
-    readonly sha256: "7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6";
-  };
   readonly scratch: {
     readonly type: IrSupportRefType;
     readonly storage: { readonly kind: "array"; readonly element: "i16"; readonly mutable: true };
@@ -62,6 +58,13 @@ export interface IrNumberFormatRadixSupport {
   readonly calls: readonly IrRuntimeSupportCallOccurrence[];
   readonly literals: readonly IrRuntimeSupportLiteralOccurrence[];
 }
+
+/** Version and provenance are a closed pair, never an arbitrary caller digest. */
+export type IrNumberFormatRadixSupport = IrNumberFormatRadixSupportBody &
+  (
+    | { readonly kind: "number-format-radix-v1"; readonly source: (typeof NATIVE_RADIX_SOURCES)[1]["provenance"] }
+    | { readonly kind: "number-format-radix-v2"; readonly source: (typeof NATIVE_RADIX_SOURCES)[2]["provenance"] }
+  );
 
 export interface IrRuntimeSupport {
   readonly schema: "ir-runtime-support-v1";
@@ -184,24 +187,21 @@ export function assertIrRuntimeSupport(
     "radix batch",
   );
   const entries = input.inventory.sources.filter((source) => source.kind === "entry");
-  if (entries.length !== 1 || !batch || batch.sourceId !== entries[0]!.id || batch.kind !== "number-format-radix-v1")
+  if (
+    entries.length !== 1 ||
+    !batch ||
+    batch.sourceId !== entries[0]!.id ||
+    (batch.kind !== "number-format-radix-v1" && batch.kind !== "number-format-radix-v2")
+  )
     invalidSupport("invalid radix source anchor");
+  const version = batch.kind === "number-format-radix-v1" ? 1 : 2;
   sameSupport(batch.demandOwners, demanded, "stale primary demand owners");
   for (const owner of demanded) {
     const records = [...input.inventory.allUnits, ...input.derivedUnits].filter((record) => record.id === owner);
     if (records.length !== 1 || !input.inventory.sources.some((source) => source.id === records[0]!.sourceId))
       invalidSupport("formatter demand has no exact source owner");
   }
-  sameSupport(
-    batch.source,
-    {
-      definition: "numToStringRadixDef",
-      functionName: "__sh_num_toString_radix",
-      utf8Bytes: 1618,
-      sha256: "7b13099fbed0a87079f92e9bddbf75959065ed28daf66d5ad344e0b240037dc6",
-    },
-    "changed radix source provenance",
-  );
+  sameSupport(batch.source, NATIVE_RADIX_SOURCES[version].provenance, "changed radix source provenance");
   const declared = numberFormatRadixSupportDeclarations(batch.sourceId);
   sameSupport(batch.scratch, declared.scratch, "changed scratch contract");
   sameSupport(batch.kernels, declared.kernels, "changed kernel declarations");
@@ -267,6 +267,11 @@ export function assertIrRuntimeSupport(
       }
     }
   });
+  sameSupport(
+    describeNativeRadixBody(body, batch.sourceId),
+    canonicalNativeRadixBody(version),
+    "noncanonical radix body for source version",
+  );
 }
 
 /**
