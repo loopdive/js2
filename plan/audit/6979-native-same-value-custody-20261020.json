@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-av: executed SameValue dependency custody",
+  "parent": "c3a7ea96ec8417ce91b89ad8dd8638369301a2f3",
+  "scope": "Re-derive the actual native SameValue function before accepting completion. Existing Object.is and native descriptor consumers share the guard. No new catalog algorithm, public source admission or foreign-value admission is claimed.",
+  "sourceSha256": {
+    "src/backend/wasmgc/resources/native-object-same-value.ts": "06c10095110c75b7c07786886dab1582be608999e15215ca628de55df7755b58",
+    "tests/issue-6979-native-same-value-custody.test.ts": "62a66de74bbd014f1b10c053b8afb7bfbc0f2c51cc7d179046cde171fb6543a9"
+  },
+  "reports": {
+    "s7av-first": {
+      "sha256": "59de3ef0cb15915571a87353551be6261ff3ebd068e068143185d75d73f13a44",
+      "total": 5,
+      "passed": 1,
+      "failed": 4,
+      "pending": 0,
+      "exit": 1,
+      "meaning": "Observer exports were attempted in reservation phase. Moved them to the required filling phase; no production change to accommodate the test."
+    },
+    "s7av-second": {
+      "sha256": "cb061d4909876d58413ad87da4596b1872eb472d7829d71be3957c1ff99029a5",
+      "total": 5,
+      "passed": 1,
+      "failed": 4,
+      "pending": 0,
+      "exit": 1,
+      "meaning": "First mismatch correctly terminally failed its ledger. Later consumer checks saw failed state, not the intended independent mismatch. Split three consumers into independent fixtures."
+    },
+    "s7av-third": {
+      "sha256": "04845ead5c79e5e4f61d3945c52d5d0c197fb0f9a3aee071f5daaf5d9b9434b0",
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "pending": 0,
+      "exit": 0
+    },
+    "s7av-guard-removal": {
+      "sha256": "897696c712a262205b6ce636d0c7123b07adb4a296807832737af13dad779784",
+      "total": 13,
+      "passed": 1,
+      "failed": 12,
+      "pending": 0,
+      "exit": 1,
+      "meaning": "Only the new assertCanonicalFunctionDefinition call removed. All twelve receipt-valid alternate-body rejection assertions fail because the bodies are accepted; genuine Object.is execution still passes."
+    },
+    "s7av-final": {
+      "sha256": "e9731ed88edd6c3b692a6e948e4233a8b2841fce8c77229535e9300bc45b5a3b",
+      "closed": true,
+      "total": 184,
+      "passed": 184,
+      "failed": 0,
+      "pending": 0,
+      "exit": 0,
+      "perFile": {
+        "tests/issue-3518-native-object-descriptor-resources.test.ts": 75,
+        "tests/issue-6979-native-object-is-algorithm.test.ts": 56,
+        "tests/issue-6979-native-same-value-custody.test.ts": 13,
+        "tests/issue-6979-native-same-value-nan.test.ts": 40
+      },
+      "meaning": "Unfiltered four-file stable run after exact restoration,109.92s. Thirteen new cases plus171 preservation cases; no skips."
+    },
+    "s7av-linear-preservation": {
+      "sha256": "bde6f371b4c72e4fff69a00cedadab89db9a58b413fc7990bc24e73f4cb97021",
+      "closed": true,
+      "total": 17,
+      "passed": 17,
+      "failed": 0,
+      "pending": 0,
+      "exit": 0,
+      "meaning": "Separate full prepared Linear early-return file,44.28s. Preservation only, not complete Linear/WASI migration or new Linear SameValue implementation."
+    }
+  },
+  "executedAlteration": {
+    "cases": 12,
+    "axes": "original/decoded paired with undisplaced/displaced; constant false/true bodies; SameValue/descriptor/Object.is independent consumers",
+    "genericLedgerAccepts": true,
+    "actualExecutableWrongAnswerObserved": true,
+    "observerImports": 0,
+    "onlySnapshotDeadBodiesStubbed": true,
+    "semanticOwnerRefuses": true,
+    "ledgerStateAfterRefusal": "failed",
+    "productionRealmSealed": false,
+    "limits": "Checks this exact algorithm body, not every transitive primitive helper's semantics. Unsupported raw JS values do not become admitted boundary values."
+  },
+  "componentByteComparison": {
+    "parentSourceVerifiedExactByGitDiff": true,
+    "parentReportSha256": "f94f3b5c4d069894effb4fdd86963cf039181ce54378be44743897c578f1e12b",
+    "candidateReportSha256": "f94f3b5c4d069894effb4fdd86963cf039181ce54378be44743897c578f1e12b",
+    "equal": 4,
+    "total": 4,
+    "rows": [
+      {
+        "decoded": false,
+        "displaced": false,
+        "mode": "interned",
+        "bytes": 18175,
+        "sha256": "b7c77d99c60a13fefcb341a76db8266cb94c91603f8c6cc80c4c078299e4b0fe"
+      },
+      {
+        "decoded": false,
+        "displaced": false,
+        "mode": "allocating",
+        "bytes": 18150,
+        "sha256": "11772b31026d3170dbcf87d98d7be483952370016e48de7aa40c136eb42e9a79"
+      },
+      {
+        "decoded": true,
+        "displaced": true,
+        "mode": "interned",
+        "bytes": 18660,
+        "sha256": "07052b0c126832b9d2b7cdea2cb11168ec397e24566f83b9fb33a2e6bb3866a5"
+      },
+      {
+        "decoded": true,
+        "displaced": true,
+        "mode": "allocating",
+        "bytes": 18635,
+        "sha256": "b715723cb86e2ba51ea812244fc1085d7db3b2606d01953a0fe40dee3bcffd3e"
+      }
+    ],
+    "limits": "Actual zero-import Object.is components and genuine NaN/signed-zero execution controls. Not full historical emitted-GC byte equivalence."
+  },
+  "publicSourceProbe": {
+    "sha256": "c5272fdfe3652cbb2a36cafc0469ed226af3ab632076e5aa716c3cd0e5418216",
+    "backend": "wasmgc",
+    "target": "standalone",
+    "control": { "source": "export function run(): number { return Number(4); }", "result": 4, "imports": 0 },
+    "refused": [
+      "export function run(): number { return Object.is(0, -0) ? 1 : 0; }",
+      "export function run(): number { const a = {}; return Object.is(a, a) ? 1 : 0; }"
+    ],
+    "diagnostic": "unsupported: ir/from-ast: identifier \"Object\" is not in scope in run",
+    "meaning": "Existing internal Object.is/catalog algorithm is not actual public source admission. Next integration must preserve original bindings/realm/values, not add another private algorithm or pretend this probe covers Linear."
+  },
+  "gateSha256": {
+    ".tmp/s7av-final-typecheck.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7av-final-lint.log": "d0d2e946d0d2d92f62f6bea09541e4403237d82ed06e6875ab972816f47518b6",
+    ".tmp/s7av-final-format.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    ".tmp/s7av-final-loc.log": "c6bdd2b0c9a81e27bce2d3767eb35ba6987014a70f819e382c0dfbb7f643664d",
+    ".tmp/s7av-final-functions.log": "aa311cf23ed9c90430ee117f04099299a28e88921ed09e01298997ac8923bbfb",
+    ".tmp/s7av-final-coercion.log": "f2467c0fff402c0f13810ec9a0954efdae80ec3e5b50fb2d8b3f06ce231d7c4c",
+    ".tmp/s7av-final-oracle.log": "031546c532af36cd91146eb9710a7fb4c994c737a2a2a9ae9e60ae36d14212b7",
+    ".tmp/s7av-inventory.json": "55e34d663793498f7de648b274b1d45ea5af41a3a7fb9d0370f1136104c18deb",
+    ".tmp/s7av-layering.log": "cbbdbd4d531f68c7e942601605aa7d692a9f4eea68d5811a2da3339a4c1998df",
+    ".tmp/s7av-flat.log": "79049ac96f5154b630c1549f619889ba8acd810b409837617b82fe92aa04a719",
+    ".tmp/s7av-import-cycles.json": "db0d3e70b850cb1acb402133cba25989594486535c5f5066ee68e842300aca9d",
+    ".tmp/s7av-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7av-import-policy.log": "b38fee9483a3d3c4d793192a12f9eced418ec7a44b687d80c5284ea1307cde8d",
+    ".tmp/s7av-import-policy-final.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7av-preservation-only.log": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2"
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "ceiling": 452,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "approvedIncreaseApplied": false
+  },
+  "instrumentFailure": "First import-policy attempt lacked this Node24 build's experimental-wasm-exnref flag, and refused before measuring the probes. Final same command with that runtime flag passes; no policy edit.",
+  "architecture": {
+    "modules": 1998,
+    "inventoryValid": true,
+    "errors": 0,
+    "architectureComplete": false,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cycleGateExit": 1,
+    "waiverAdded": false
+  },
+  "remaining": [
+    "Actual public source builtin binding and full catalog/population consumption, original source/realm/code/body/allocation joins",
+    "General arguments/receiver/results, undefined/defaults, bound/live-foreign mixed Call/Get and per-instance live boundary identity without recursive copying",
+    "Complete Linear/WASI migration, named generator-buffer/SharedArrayBuffer/Temporal gaps and host-semantic runtime retirement",
+    "Same four red cycle directions and strict closure's two nonliteral imports; preservation-only6/6 full+6/6 cut is not retirement certification",
+    "Prior historical storage188/202 with14 failures and five separate symbolic receipt failures not rerun or waived here; no source-receipt repin",
+    "Full historical GC-byte/Test262/npm/accelerator acceptance and reviewed prerequisite/conflict integration"
+  ],
+  "fullGoalComplete": false
+}

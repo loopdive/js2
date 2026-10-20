@@ -158,22 +158,23 @@ export function fillNativeObjectSameValueResources(
     d = owner.dependencies;
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
   requireCompletedDependencies(tx, d);
-  tx.fillFunction(
-    pack.sameValue,
-    buildNativeObjectSameValueDefinition({
-      typeofNumIdx: d.values.functions.isNumber.handle,
-      typeofBoolIdx: d.booleans.isBoolean.handle,
-      typeofBigIdx: d.bigints.isBigInt.handle,
-      unboxNumIdx: d.values.functions.unboxNumber.handle,
-      unboxBoolIdx: d.booleans.unboxBoolean.handle,
-      // Both actual brands pass first; exact carrier equality includes all wide limbs.
-      bigint: { kind: "carrier", equalIdx: d.bigints.equal.handle },
-      anyStrTypeIdx: d.strings.layout.anyStrTypeIdx,
-      strFlattenIdx: d.flatten.flatten.handle,
-      strEqualsIdx: d.equality.equals.handle,
-    }),
-  );
+  tx.fillFunction(pack.sameValue, canonicalDefinition(d));
   owner.filled = true;
+}
+
+function canonicalDefinition(d: NativeObjectSameValueDependencies) {
+  return buildNativeObjectSameValueDefinition({
+    typeofNumIdx: d.values.functions.isNumber.handle,
+    typeofBoolIdx: d.booleans.isBoolean.handle,
+    typeofBigIdx: d.bigints.isBigInt.handle,
+    unboxNumIdx: d.values.functions.unboxNumber.handle,
+    unboxBoolIdx: d.booleans.unboxBoolean.handle,
+    // Both actual brands pass first; exact carrier equality includes all wide limbs.
+    bigint: { kind: "carrier", equalIdx: d.bigints.equal.handle },
+    anyStrTypeIdx: d.strings.layout.anyStrTypeIdx,
+    strFlattenIdx: d.flatten.flatten.handle,
+    strEqualsIdx: d.equality.equals.handle,
+  });
 }
 
 export function requireCompletedNativeObjectSameValue(
@@ -186,6 +187,7 @@ export function requireCompletedNativeObjectSameValue(
   if (!owner.filled) fail("missing canonical fill");
   requireCompletedDependencies(tx, owner.dependencies);
   tx.assertCompletedReservation(pack.sameValue);
+  tx.assertCanonicalFunctionDefinition(pack.sameValue, canonicalDefinition(owner.dependencies));
   return pack;
 }
 

@@ -7257,3 +7257,72 @@ Resume at genuine full catalog algorithms/population consumption and original
 source/realm/code/body/allocation joins, general value/default/undefined handling,
 bound/live-foreign mixed Call/Get and complete Linear/WASI; do not substitute this
 typed argument progress for those requirements. Both issues remain in progress.
+
+#### S7-av executed SameValue dependency custody (in progress)
+
+Fresh inspection corrected the initial hypothesis: `%Object.is%` already has an
+algorithm owner and is joined by native-object-realm. Do not duplicate it or
+claim it as a newly implemented catalog algorithm. The actual gap is that
+requireCompletedNativeObjectSameValue checks a receipt without independently
+re-deriving its executable body. Object.is and native descriptors both consume
+that guard; a receipt-valid alternate algorithm must not become their semantic
+authority. Share the existing definition builder between fill and the completion
+check, retaining the exact old emitted instructions.
+
+Verify an actual receipt-valid substituted SameValue definition is accepted by
+the generic ledger but refused by this owner and by both downstream consumers.
+Use genuine restored body/independent passing controls, isolated removal of only
+the new semantic comparison, and existing native numeric/value/descriptor/catalog
+execution. Keep original/decoded/displaced coverage where the existing consumers
+provide it. This fixes custody of an actual shared algorithm, not full public
+realm/source/foreign integration, generic raw-host admission, complete Linear/WASI
+or runtime retirement. All original migration requirements remain open.
+
+S7-av implements an independently re-derived SameValue definition at the shared
+completion check, using exactly the existing fill builder and dependency handles.
+The real consumers are native Object.is and descriptor installation; no parallel
+algorithm/closure owner or runtime graph copying was added. Twelve independent
+fixtures cover original/decoded with undisplaced/displaced coordinates, actual
+constant-false/constant-true substituted bodies and all three consumer checks.
+The generic ledger receipts those bodies; a clone-only zero-import observer
+executes them and observes a wrong Number equality result. Each genuine semantic
+consumer now refuses the body before its own fill. That refusal terminally fails
+the ledger, so subsequent consumers are tested on independent fixtures. This
+checks the exact SameValue body, not every transitive primitive helper's meaning.
+
+Intermediate instrument failures remain in the audit: export creation in the
+wrong phase, then attempting later checks on the already-failed ledger. Neither
+was hidden by changing production phases/errors. After correcting the observer,
+13/13 new cases pass. Removing only the new canonical comparison produces
+**1/13 passes,12 failures**, with genuine Object.is execution still passing.
+Exact source restoration precedes final verification. Parent-source Object.is
+components and candidate match **4/4 complete binaries**, across both boxing
+policies and original/decoded-displaced fixtures, with zero imports and real
+NaN/signed-zero controls; not full historical GC-byte equivalence.
+
+Final unfiltered four-file run passes **184/184,zero skips,exit0**,109.92s:
+75 descriptor-resource cases,56 existing Object.is cases,13 new custody cases
+and40 native NaN cases. A separate prepared Linear early-return file passes
+**17/17,zero skips,exit0**,44.28s (preservation only). All scoped runners are
+closed. Restored typecheck/lint/format, LOC/function/coercion/oracle and
+inventory/layering/flat-directory checks pass within scope. Whole PR417 source
+files,net−12454 LOC,only two existing function grants. Inventory1998 is valid,
+architectureComplete=false. Imports remain437/452 across33 unchanged probes;
+no reviewed increase was needed. First import-policy run lacked the local Node
+Wasm exception flag and measured nothing; the flagged final run passes unchanged
+policy. Same four red cycle directions,SCC712/four components and strict
+closure's two nonliteral imports remain unwaived. Preservation-only6/6 full+6/6
+cut still does not certify retirement. Other historical storage/symbolic receipt
+failures and full Test262/npm/accelerator acceptance remain unresolved/unverified.
+[Exact S7-av source/report/gate hashes and retained limits](../audit/6979-native-same-value-custody-20261020.json).
+
+Fresh actual public-source probe identifies the next integration work:
+`return Number(4)` executes as4 with zero imports, but both numeric and object
+identity `Object.is` sources refuse in preparation with `identifier "Object" is
+not in scope in run`. Do not add another private Object.is algorithm or treat
+its existing catalog slot as public source admission. Wire genuine builtin
+bindings/realm/population and original source/realm/code/body/allocation owners
+into actual public consumers, then verify both no-host backends. General values,
+undefined/defaults,bound/live-foreign mixed Call/Get,live per-instance boundary
+identity without copying,all remaining algorithms/constructors,complete
+Linear/WASI,named gaps,retirement and reviewed integration all remain required.

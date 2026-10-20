@@ -2280,3 +2280,28 @@ No full realm/source/foreign boundary, undefined/default or complete Linear/WASI
 admission is inferred. Both migration issues remain in progress and the full
 retirement/historical/conformance/architecture and reviewed-integration scope is
 unchanged.
+
+### S7-av executed native SameValue custody (2026-10-20)
+
+The existing Object.is and native descriptor consumers now independently check
+the actual SameValue definition, rather than treating a fill receipt as semantic
+authority. Twelve receipt-valid alternate bodies execute a wrong equality result
+in zero-import clone-only observers and are refused by three independent real
+consumer checks. Removing only the new comparison gives1/13 passes,12 failures;
+the genuine Object.is control still passes. Exact source restoration precedes
+the final **184/184 four-file run**,zero skips/exit0,plus separate **17/17 Linear
+preservation** cases. Parent and candidate Object.is components match4/4 complete
+binaries; this is not full historical GC-byte certification. No new host imports,
+ceiling increase,baseline edits or source receipt repins.
+
+Fresh public WasmGC source evidence is still incomplete: Number(4) executes as4
+with zero imports, while both numeric/object Object.is programs fail preparation
+because Object is not in scope. The private algorithm already exists; next work
+must join actual public builtin bindings and original realm/source/code/body/
+allocation owners, not duplicate a private algorithm. The exact S7-av audit and
+handoff are under
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Both issues remain in progress. Full catalog/population,values/undefined/defaults,
+bound/live-foreign identity-preserving Call/Get,both no-host backends,named gaps,
+retirement,architecture/historical/conformance acceptance and reviewed integration
+all remain required.
