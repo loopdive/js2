@@ -197,7 +197,11 @@ function immutableCopy(
   if (prototype !== Object.prototype && prototype !== null) {
     invalidPreparedData(`prepared data contains unsupported mutable ${prototype?.constructor?.name ?? "object"}`);
   }
-  const copy = Object.create(null) as Record<PropertyKey, unknown>;
+  // Only this actual ordinary allocation supplies a permanent negative slot brand.
+  // Caller arrays/map species and prototype appearance supply no such authority.
+  const { apply, create, set, cache } = nativeCollectionBrand;
+  const copy = apply(create, undefined, [null]) as Record<PropertyKey, unknown>;
+  apply(set, cache, [copy, false]);
   activeCopies.set(value, copy);
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -221,18 +225,92 @@ export function freezePreparedIrValue(value: unknown): unknown {
 
 // Internal collection slots cannot change on an existing object. Only that
 // brand is cached: prototypes, descriptors, values and entries stay live data.
+let cacheGetInstalled = false;
+
 const nativeCollectionBrand = Object.freeze({
   cache: new WeakMap<object, boolean>(),
   get: WeakMap.prototype.get,
   set: WeakMap.prototype.set,
   apply: Reflect.apply,
+  isArray: Array.isArray,
+  create: Object.create,
   probes: Object.freeze([Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]),
 });
 
+/** Allocate an actual ordinary record; only its permanent slot brand is preknown. */
+export function createPreparedIrDataRecord(): Record<string, unknown> {
+  const { apply, create, set, cache } = nativeCollectionBrand;
+  const record = apply(create, undefined, [null]) as Record<string, unknown>;
+  apply(set, cache, [record, false]);
+  return record;
+}
+
+const ordinaryDataConstruction = Object.freeze({
+  prototype: Object.prototype,
+  getPrototypeOf: Reflect.getPrototypeOf,
+  ownKeys: Reflect.ownKeys,
+  getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor,
+  defineProperty: Reflect.defineProperty,
+  hasOwn: Object.hasOwn,
+});
+
+const nativeCollectionCacheGetDescriptor = {
+  __proto__: null,
+  value: nativeCollectionBrand.get,
+  writable: false,
+  enumerable: false,
+  configurable: false,
+};
+if (!ordinaryDataConstruction.defineProperty(nativeCollectionBrand.cache, "get", nativeCollectionCacheGetDescriptor))
+  invalidPreparedData("native collection cache get installation failed");
+cacheGetInstalled = true;
+
+/** Allocate an ordinary object; only its permanent collection-slot brand is preknown. */
+export function createPreparedIrDataObject(): Record<string, unknown> {
+  const object = {};
+  const { apply, set, cache } = nativeCollectionBrand;
+  apply(set, cache, [object, false]);
+  return object;
+}
+
+/** Copy own enumerable DATA into a fresh ordinary object, without branding the input. */
+export function copyPreparedIrDataObject(initializer: object): Record<PropertyKey, unknown> {
+  const { prototype, getPrototypeOf, ownKeys, getOwnPropertyDescriptor, defineProperty, hasOwn } =
+    ordinaryDataConstruction;
+  if (initializer === null || typeof initializer !== "object" || getPrototypeOf(initializer) !== prototype)
+    invalidPreparedData("ordinary DATA initializer requires the actual ordinary prototype");
+  const result: Record<PropertyKey, unknown> = {};
+  const keys = ownKeys(initializer);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const descriptor = getOwnPropertyDescriptor(initializer, key);
+    if (!descriptor) invalidPreparedData("ordinary DATA initializer lost an own property");
+    if (!descriptor.enumerable) continue;
+    if (!hasOwn(descriptor, "value")) invalidPreparedData("ordinary DATA initializer must not contain accessors");
+    const ownDescriptor = {
+      __proto__: null,
+      value: descriptor.value,
+      writable: descriptor.writable,
+      enumerable: descriptor.enumerable,
+      configurable: descriptor.configurable,
+    };
+    if (!defineProperty(result, key, ownDescriptor)) invalidPreparedData("ordinary DATA property definition failed");
+  }
+  const { apply, set, cache } = nativeCollectionBrand;
+  apply(set, cache, [result, false]);
+  return result;
+}
+
 function hasNativeCollectionState(value: object): boolean {
-  const { cache, get, set, apply, probes } = nativeCollectionBrand;
-  const cached = apply(get, cache, [value]) as boolean | undefined;
+  const { cache, get, set, apply, probes, isArray } = nativeCollectionBrand;
+  const cached = (cacheGetInstalled ? cache.get(value) : apply(get, cache, [value])) as boolean | undefined;
   if (cached !== undefined) return cached;
+  // An authenticated array internal brand cannot also have native collection slots.
+  // Capture the intrinsic so a later global patch cannot poison this brand cache.
+  if (isArray(value)) {
+    apply(set, cache, [value, false]);
+    return false;
+  }
   let hasSlots = false;
   for (let index = 0; index < probes.length; index++) {
     try {

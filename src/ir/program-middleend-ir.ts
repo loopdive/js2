@@ -1,3 +1,5 @@
+import { analyzeNativeJsClass } from "./analysis/allocation-evidence/native-js-class-producer.js";
+import type { NativeJsClassEvidenceDomain } from "./analysis/allocation-evidence/native-js-class-effects.js";
 import { analyzeNativeNumberUndefined } from "./analysis/allocation-evidence/native-number-undefined-producer.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
@@ -57,6 +59,7 @@ export function optimizePreparedIrProgramIr(
   allocations: AllocSiteRegistry,
   controls: IrPreparationControls,
   counters: GvnCounters,
+  nativeJsClasses?: NativeJsClassEvidenceDomain,
 ): IrProgramOptimizationResult {
   assertPreparedIrProgramPopulation(input);
   const validate = (fn: IrFunction): IrFunction => {
@@ -133,5 +136,7 @@ export function optimizePreparedIrProgramIr(
     }
   }
   if (!isLegacyHostIrPolicy(input.policy)) analyzeNativeNumberUndefined(ir, allocations, true);
+  if (nativeJsClasses !== undefined)
+    analyzeNativeJsClass(ir, allocations, { ...nativeJsClasses, unitIds: ir.functions.map((fn) => fn.unitId) });
   return { ir, derivedUnits };
 }

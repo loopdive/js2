@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { prepareIrJsClassStartup } from "./source-js-class-definition.js";
+import type { IrJsClassDefinition } from "./js-class-contracts.js";
 import { ts } from "../ts-api.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
@@ -55,6 +57,7 @@ export class IrModuleInitPlanInvariantError extends Error {
 }
 
 export interface BuildIrModuleInitPlanInput {
+  readonly jsClassDefinitions?: readonly IrJsClassDefinition[];
   readonly sourceFile: ts.SourceFile;
   readonly checker: ts.TypeChecker;
   readonly identityContext: IrPlanningIdentityContext;
@@ -435,8 +438,12 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     );
   }
 
-  const executable = liveSeeds.length > 0 || evaluations.length > 0;
   const unitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) ?? null;
+  const jsClassStartup =
+    input.jsClassDefinitions === undefined
+      ? undefined
+      : prepareIrJsClassStartup(sourceFile, sourceId, unitId, input.jsClassDefinitions);
+  const executable = liveSeeds.length > 0 || evaluations.length > 0 || (jsClassStartup?.definitions.length ?? 0) > 0;
   if (executable && unitId === null) {
     gaps.push(
       frozen({
@@ -448,6 +455,7 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     );
   }
   const plan = frozen({
+    ...(jsClassStartup === undefined ? {} : { jsClassStartup }),
     sourceId,
     unitId,
     executable,
@@ -501,7 +509,10 @@ export function verifyIrModuleInitPlan(plan: IrModuleInitPlan, sourceFile: ts.So
     }
     evaluationKeys.add(entry.key);
   }
-  if (plan.executable !== (plan.liveSeeds.length > 0 || plan.evaluations.length > 0)) {
+  if (
+    plan.executable !==
+    (plan.liveSeeds.length > 0 || plan.evaluations.length > 0 || (plan.jsClassStartup?.definitions.length ?? 0) > 0)
+  ) {
     throw new IrModuleInitPlanInvariantError("invalid-invocation", "executable flag disagrees with planned entries");
   }
   if (

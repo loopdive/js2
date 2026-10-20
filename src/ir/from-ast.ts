@@ -35,6 +35,8 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import * as sourceCompletions from "./source-function-completions.js";
+
 import {
   emitNativeNumberUndefinedRead,
   emitNativeNumberUndefinedJoin,
@@ -189,6 +191,8 @@ import {
   emptyArrayInferenceDiagnostic,
   inferEmptyArrayElementTypes,
   inferClassInitializerArrayTypes,
+  inferNativeModuleInitializerArrayTypes,
+  assertNativeModuleInitializerArrayTypesCurrent,
 } from "./array-element-inference.js";
 import {
   annotatedArrayElementValType,
@@ -277,6 +281,17 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
+import { irSupportRef } from "./core/types.js";
+import {
+  originalNativeJsClassBody,
+  lowerNativeJsClassExpression,
+  lowerNativeJsClassDeclaration,
+  nativeJsClassStoredValue,
+  refuseNativeJsClassSource,
+  type NativeJsClassSourceContext,
+} from "./source-js-class-lowering.js";
+import { assertSourceJsClassDefinitionsCurrent, type SourceJsClassDefinitions } from "./source-js-class-definition.js";
+import { irJsClassDefinitionBindingId } from "./program/js-class-definition.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -1121,6 +1136,7 @@ function withNodeSourceSite<T>(scope: FrontendSourceScope, node: ts.Node, run: (
 }
 
 export interface AstToIrOptions {
+  readonly nativeJsClassDefinitions?: SourceJsClassDefinitions;
   readonly sourceMap?: IrFunctionSourceMapContext;
   readonly exported?: boolean;
   /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
@@ -1191,6 +1207,8 @@ export interface AstToIrOptions {
   readonly returnTypeOverride?: IrType | null;
   /** Exact source candidate; caller audits every lowered return. Omission preserves legacy lowering. */
   readonly booleanReturnBoundary?: ts.FunctionDeclaration;
+  /** Original ordinary native-class source body whose actual JavaScript completion is retained. */
+  readonly nativeJsValueCompletion?: ts.FunctionDeclaration;
   /**
    * Map from callee function name to that callee's IR types (param +
    * return). Consulted when lowering a CallExpression whose callee is a
@@ -1544,6 +1562,280 @@ function numericProjectionOptions(options: Pick<AstToIrOptions, "stringNumericCo
   return { stringNumericCoercion: options.stringNumericCoercion, numericThrow: options.numericThrow };
 }
 
+/** Original class/method/property builders use original source nodes, never reconstructed function ASTs. */
+export function lowerNativeJsClassBodyToIr(
+  plans: SourceJsClassDefinitions,
+  unitId: IrUnitId,
+  options: AstToIrOptions,
+): LoweredFunctionResult {
+  const { plan, body, node } = originalNativeJsClassBody(plans, unitId);
+  if (unitId !== options.ownerUnitId || !options.checker || !options.allocRegistry)
+    return refuseNativeJsClassSource(node, "original body requires its exact owner, checker and allocation registry");
+  assertSourceJsClassDefinitionsCurrent(plans, options.checker, options.identityContext);
+  const builder = new IrFunctionBuilder(
+    { unitId, name: body.target.name },
+    body.result === null ? [] : [body.result],
+    false,
+    options.allocRegistry,
+    undefined,
+    options.sourceMap !== undefined,
+  );
+  const hiddenTypes = [
+    body.frame.environmentType,
+    body.frame.thisType,
+    body.frame.homeObjectType,
+    body.frame.newTargetType,
+  ];
+  const hidden = hiddenTypes.map((type, index) =>
+    builder.addParam(["__environment", "__this", "__homeObject", "__newTarget"][index]!, type),
+  );
+  const scope = new Map<string, ScopeBinding>();
+  scope.set("this", { kind: "local", value: hidden[1]!, type: body.frame.thisType });
+  const actualFunction = ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) ? node : undefined;
+  const parameters = actualFunction?.parameters ?? [];
+  if (parameters.length !== body.params.length)
+    return refuseNativeJsClassSource(node, "original USER parameter census differs");
+  const mutatedLets = actualFunction ? collectMutatedLetNames(actualFunction) : new Set<string>();
+  const pendingMutable: { name: string; type: IrType; value: IrValueId }[] = [];
+  parameters.forEach((parameter, index) => {
+    if (!ts.isIdentifier(parameter.name) || parameter.initializer || parameter.dotDotDotToken)
+      return refuseNativeJsClassSource(parameter, "original parameter defaults/rest/Undefined adaptation not prepared");
+    const type = body.params[index]!,
+      value = builder.addParam(parameter.name.text, type);
+    if (mutatedLets.has(parameter.name.text)) pendingMutable.push({ name: parameter.name.text, type, value });
+    else scope.set(parameter.name.text, { kind: "local", value, type });
+  });
+  const sourceScope: FrontendSourceScope | undefined = options.sourceMap
+    ? {
+        builder,
+        sourceMap: options.sourceMap,
+        sourceMapState: {
+          active: new WeakMap(),
+          causes: new WeakMap(),
+          generated: new Set(),
+          synthetic: new WeakMap(),
+          derived: [],
+        },
+        sourceMapBuilderUnitId: unitId,
+        sourceMapFunctionNode: node,
+      }
+    : undefined;
+  builder.openBlock();
+  const emitFrame = () =>
+    builder.emitJsClassInstruction(
+      {
+        kind: "js.class.frame.new",
+        definition: irJsClassDefinitionBindingId(plan.definition),
+        environment: hidden[0]!,
+        thisValue: hidden[1]!,
+        homeObject: hidden[2]!,
+        newTarget: hidden[3]!,
+      },
+      irSupportRef(body.frame.type, false),
+    );
+  const frame = sourceScope ? withNodeSourceSite(sourceScope, node, emitFrame) : emitFrame();
+  if (frame === null) throw new Error("original class frame was not produced");
+  const emptyArrayInference = actualFunction
+    ? inferEmptyArrayElementTypes(actualFunction, options.oracle ?? new TsCheckerOracle(options.checker))
+    : inferClassInitializerArrayTypes(
+        plan.declaration,
+        plan.declaration.members
+          .filter(ts.isPropertyDeclaration)
+          .filter((field) => !ts.getModifiers(field)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword))
+          .flatMap((field) => (field.initializer ? [field.initializer] : [])),
+      );
+  const cx: LowerCtx = {
+    ...sourceScope,
+    builder,
+    scope,
+    funcName: body.target.name,
+    ownerUnitId: unitId,
+    returnType: body.result,
+    ...numericProjectionOptions(options),
+    calleeTypes: options.calleeTypes,
+    directCalls: options.directCalls,
+    importedCalls: options.importedCalls,
+    resolver: options.resolver,
+    identityContext: options.identityContext,
+    lifted: [],
+    liftedUnitProvenance: [],
+    liftedCounter: { value: 0 },
+    mutatedLets,
+    dynamicStringLocals: new Set(),
+    i32PureNames: actualFunction ? computeI32PureNames(actualFunction) : new Set(),
+    ownedStringAppendSymbols: actualFunction?.body
+      ? collectOwnedStringAppendSymbols(actualFunction.body, options.checker)
+      : new Set(),
+    emptyArrayInference,
+    funcKind: "regular",
+    checker: options.checker,
+    oracle: options.oracle,
+    allocRegistry: options.allocRegistry,
+    consumedCountedStringAppends: [],
+    numericLocalScalarForDecl: options.numericLocalScalarForDecl,
+    nativeJsClass: { plans, checker: options.checker, builder, plan, body, frame },
+  };
+  for (const parameter of pendingMutable) {
+    const original = parameters.find((p) => ts.isIdentifier(p.name) && p.name.text === parameter.name)!;
+    if (sourceScope)
+      withGeneratedSourceSite(sourceScope, "binding-scaffold", original, () =>
+        lowerMutableParameterStorage(parameter, options, body.target.name, scope, builder),
+      );
+    else lowerMutableParameterStorage(parameter, options, body.target.name, scope, builder);
+  }
+  if (ts.isPropertyDeclaration(node)) {
+    if (!node.initializer || body.result === null || body.params.length)
+      return refuseNativeJsClassSource(node, "genuine initializer expression/zero USER contract missing");
+    const raw = lowerExpr(node.initializer, cx, body.result);
+    const box = () => nativeJsClassStoredValue(node.initializer!, builder, raw);
+    const value = sourceScope ? withNodeSourceSite(sourceScope, node.initializer, box) : box();
+    if (!irTypeAssignable(builder.typeOf(value), body.result))
+      return refuseNativeJsClassSource(node.initializer, "initializer return value contract differs");
+    const done = () => builder.terminate({ kind: "return", values: [value] });
+    if (sourceScope) withNodeSourceSite(sourceScope, node, done);
+    else done();
+  } else if (body.sourceBodyKind === "constructor") {
+    for (const statement of actualFunction?.body?.statements ?? []) lowerStmt(statement, cx);
+    const done = () => {
+      const value = builder.emitJsClassInstruction(
+        {
+          kind: "js.class.constructor.complete",
+          self: hidden[1]!,
+          completion: { kind: "normal" },
+          constructorKind: "base",
+        },
+        body.result,
+      );
+      if (value === null) throw new Error("class constructor completion missing");
+      builder.terminate({ kind: "return", values: [value] });
+    };
+    if (sourceScope) withNodeSourceSite(sourceScope, node, done);
+    else done();
+  } else {
+    if (!actualFunction?.body) return refuseNativeJsClassSource(node, "original method body missing");
+    for (const statement of actualFunction.body.statements) lowerStmt(statement, cx);
+    const done = () => {
+      const value = builder.emitConst({ kind: "undefined" }, irDynamic(JS_TAG_IDS.Undefined));
+      builder.terminate({ kind: "return", values: [value] });
+    };
+    if (sourceScope) withNodeSourceSite(sourceScope, node, done);
+    else done();
+  }
+  assertSourceJsClassDefinitionsCurrent(plans);
+  return {
+    main: {
+      ...builder.finish(),
+      sourceClassBody: {
+        classId: plan.definition.sourceClassId,
+        sourceBodyKind: body.sourceBodyKind,
+        lexicalOwnerId: body.lexicalOwnerId,
+        terminalOwnerId: body.terminalOwnerId,
+        ordinal: body.ordinal,
+      },
+    },
+    lifted: cx.lifted,
+    liftedUnitProvenance: cx.liftedUnitProvenance,
+    ...sourceMapResult(cx),
+  };
+}
+
+/** A genuine original SourceFile module has statements, never manufactured USER parameters or function AST. */
+export function lowerNativeJsClassModuleToIr(
+  source: ts.SourceFile,
+  plans: SourceJsClassDefinitions,
+  options: AstToIrOptions,
+): LoweredFunctionResult {
+  assertSourceJsClassDefinitionsCurrent(plans);
+  const identity = options.identityContext,
+    checker = options.checker;
+  const population = identity?.moduleInitPopulationBySourceFile.get(source);
+  if (
+    !identity ||
+    !checker ||
+    !options.allocRegistry ||
+    !population ||
+    identity.moduleInitUnitIdBySourceFile.get(source) !== options.ownerUnitId
+  )
+    return refuseNativeJsClassSource(source, "original module source/checker/owner/population/registry missing");
+  assertSourceJsClassDefinitionsCurrent(plans, checker, identity);
+  const emptyArrayInference = inferNativeModuleInitializerArrayTypes(source, population, checker);
+  for (const statement of population)
+    if (ts.isVariableStatement(statement))
+      for (const declaration of statement.declarationList.declarations)
+        if (
+          !declaration.initializer &&
+          ts.isIdentifier(declaration.name) &&
+          options.moduleBindings?.get(declaration.name.text)?.type.kind === "val"
+        )
+          return refuseNativeJsClassSource(
+            declaration,
+            "uninitialized module scalar needs its real Undefined-capable storage",
+          );
+  const builder = new IrFunctionBuilder(
+    { unitId: options.ownerUnitId, name: options.funcName ?? "<module-init>" },
+    [],
+    false,
+    options.allocRegistry,
+    undefined,
+    options.sourceMap !== undefined,
+  );
+  const sourceScope: FrontendSourceScope | undefined = options.sourceMap
+    ? {
+        builder,
+        sourceMap: options.sourceMap,
+        sourceMapState: {
+          active: new WeakMap(),
+          causes: new WeakMap(),
+          generated: new Set(),
+          synthetic: new WeakMap(),
+          derived: [],
+        },
+        sourceMapBuilderUnitId: options.ownerUnitId,
+      }
+    : undefined;
+  builder.openBlock();
+  const cx: LowerCtx = {
+    ...sourceScope,
+    builder,
+    scope: new Map(),
+    funcName: options.funcName ?? "<module-init>",
+    ownerUnitId: options.ownerUnitId,
+    returnType: null,
+    ...numericProjectionOptions(options),
+    calleeTypes: options.calleeTypes,
+    directCalls: options.directCalls,
+    importedCalls: options.importedCalls,
+    resolver: options.resolver,
+    identityContext: identity,
+    lifted: [],
+    liftedUnitProvenance: [],
+    liftedCounter: { value: 0 },
+    mutatedLets: new Set(),
+    dynamicStringLocals: new Set(),
+    i32PureNames: new Set(),
+    ownedStringAppendSymbols: new Set(),
+    emptyArrayInference,
+    funcKind: "regular",
+    checker,
+    oracle: options.oracle,
+    allocRegistry: options.allocRegistry,
+    consumedCountedStringAppends: [],
+    moduleBindings: options.moduleBindings,
+    numericLocalScalarForDecl: options.numericLocalScalarForDecl,
+    nativeJsClass: { plans, checker, builder },
+  };
+  for (const statement of population) lowerStmt(statement, cx);
+  terminateImplicitSourceReturn(cx, []);
+  assertNativeModuleInitializerArrayTypesCurrent(emptyArrayInference, source, population, checker);
+  assertSourceJsClassDefinitionsCurrent(plans);
+  return {
+    main: builder.finish(),
+    lifted: cx.lifted,
+    liftedUnitProvenance: cx.liftedUnitProvenance,
+    ...sourceMapResult(cx),
+  };
+}
+
 export function lowerFunctionAstToIr(
   fn:
     | ts.FunctionDeclaration
@@ -1619,6 +1911,7 @@ export function lowerFunctionAstToIr(
     !isCtor &&
     ts.isFunctionDeclaration(fn) &&
     !!fn.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+  const jsValueCompletion = sourceCompletions.classCompletionMode(fn, options);
   const declaredReturnTypeNode =
     ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isGetAccessorDeclaration(fn)
       ? effectiveIrReturnTypeNode(fn)
@@ -1641,6 +1934,7 @@ export function lowerFunctionAstToIr(
       : isVoidReturn
         ? null
         : resolveIrType(effectiveReturnTypeNode, options.returnTypeOverride ?? undefined, `return type of ${name}`);
+  const ordinaryCompletion = sourceCompletions.ordinaryCompletionMode(fn, returnType, options);
   // #1372 — binding-pattern params: synthesize a stable internal name
   // (`__pattern_param_<idx>`) so the IR `addParam` machinery has a regular
   // identifier to bind, then emit destructuring reads (object.get / vec.get
@@ -1810,7 +2104,7 @@ export function lowerFunctionAstToIr(
   // Constructors and synchronous zero-result bodies have valid empty
   // completion. Value-returning and async/generator contracts stay explicit.
   const emptyVoidBody = returnType === null && !isAsync && !isGenerator;
-  if (!isCtor && !emptyVoidBody && stmts.length < 1) {
+  if (!isCtor && !emptyVoidBody && !jsValueCompletion && stmts.length < 1) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: Phase 1 expects at least 1 statement in ${name}`);
   }
 
@@ -1827,8 +2121,13 @@ export function lowerFunctionAstToIr(
   );
   const cx: LowerCtx = {
     ...sourceScope,
+    ...(options.nativeJsClassDefinitions === undefined
+      ? {}
+      : { nativeJsClass: { plans: options.nativeJsClassDefinitions, checker: options.checker!, builder } }),
     builder,
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
+    jsValueCompletionBuilder: jsValueCompletion ? builder : undefined,
+    ordinaryCompletionBuilder: ordinaryCompletion ? builder : undefined,
     scope,
     funcName: name,
     ownerUnitId: options.ownerUnitId,
@@ -1920,7 +2219,12 @@ export function lowerFunctionAstToIr(
     return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
-  if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
+  if (jsValueCompletion || ordinaryCompletion) {
+    for (const statement of stmts) lowerStmt(statement, cx);
+    const done = () => sourceCompletions.implicitReturn(builder, returnType);
+    if (sourceScope) withGeneratedSourceSite(cx, "implicit-return", fn, done);
+    else done();
+  } else if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
   checkLogicalVectorConsumption(cx);
   const expectedCountedStringAppends = [...(options.countedStringAppends?.values() ?? [])].filter(
@@ -1937,6 +2241,7 @@ export function lowerFunctionAstToIr(
     );
   }
 
+  if (ordinaryCompletion) sourceCompletions.assertCurrent(fn, options);
   return {
     main: builder.finish(),
     ...sourceMapResult(cx),
@@ -2329,6 +2634,16 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
   // Slice 4 (#1169d): also accept `<obj>.<field> = <expr>;` — lowered
   // as `class.set` or `object.set` based on the receiver's IrType.
   if (ts.isExpressionStatement(s)) {
+    if (
+      cx.nativeJsClass &&
+      ((ts.isCallExpression(s.expression) && ts.isPropertyAccessExpression(s.expression.expression)) ||
+        (ts.isBinaryExpression(s.expression) &&
+          s.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(s.expression.left)))
+    ) {
+      lowerExpr(s.expression, cx, irDynamic());
+      return false;
+    }
     if (ts.isCallExpression(s.expression)) {
       if (cx.resolver?.preparedObjectCreateCall?.(s.expression) === "null") {
         void lowerCall(s.expression, cx, /* statementPosition */ true);
@@ -2708,6 +3023,11 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: Phase 1 return must have an expression in ${cx.funcName}`);
     }
     const v = lowerExpr(stmt.expression, cx, cx.returnType);
+    if (cx.nativeJsClass && !irTypeEquals(cx.builder.typeOf(v), cx.returnType))
+      refuseNativeJsClassSource(
+        stmt.expression,
+        "class return requires its genuine tagged value ABI, not an annotation-based unbox",
+      );
     const vCoerced = coerceReturnValue(v, cx, stmt.expression);
     cx.builder.terminate({ kind: "return", values: [vCoerced] });
     return;
@@ -2978,9 +3298,12 @@ interface NestedCapture {
 }
 
 interface LowerCtx extends FrontendSourceScope {
+  readonly nativeJsClass?: NativeJsClassSourceContext;
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
   readonly booleanReturnBuilder?: IrFunctionBuilder;
+  readonly jsValueCompletionBuilder?: IrFunctionBuilder;
+  readonly ordinaryCompletionBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
   readonly nativeNumberUndefinedSource?: NativeNumberUndefinedSource;
@@ -4904,7 +5227,49 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   return value;
 }
 
+/** Preserve the result and evaluation order of a captured module write in a class body. */
+function lowerNativeJsClassModuleAssignment(expr: ts.Expression, cx: LowerCtx): IrValueId | undefined {
+  if (
+    !cx.nativeJsClass?.plan ||
+    !cx.nativeJsClass.body ||
+    cx.nativeJsClass.frame === undefined ||
+    !ts.isBinaryExpression(expr) ||
+    expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isIdentifier(expr.left) ||
+    cx.scope.get(expr.left.text)
+  )
+    return undefined;
+  const readable = cx.resolver?.resolveModuleBinding?.(expr.left);
+  if (!readable) return undefined;
+  requireMatchingModuleBindingOwner(readable, cx.ownerUnitId, cx.funcName);
+  const writable = cx.resolver?.resolveModuleBinding?.(expr.left, expr.right);
+  if (!writable) {
+    demoteToLegacy(
+      "property-write-unsupported",
+      `ir/from-ast: assignment to readonly or representation-incompatible module binding "${expr.left.text}" in ${cx.funcName}`,
+    );
+  }
+  requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
+  const value = lowerExpr(expr.right, cx, writable.type);
+  const actual = cx.builder.typeOf(value);
+  if (!moduleStorageCompatible(actual, writable.type)) {
+    demoteToLegacy(
+      "property-write-unsupported",
+      `ir/from-ast: assignment to module binding "${expr.left.text}" (${describeIrType(writable.type)}) got ${describeIrType(actual)} in ${cx.funcName}`,
+    );
+  }
+  lowerResolvedModuleBindingTdzCheck(expr.left.text, writable, cx);
+  cx.builder.emitGlobalSet(writable.globalRef, value);
+  return value;
+}
+
 function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
+  const moduleAssignment = lowerNativeJsClassModuleAssignment(expr, cx);
+  if (moduleAssignment !== undefined) return moduleAssignment;
+  if (cx.nativeJsClass) {
+    const value = lowerNativeJsClassExpression(expr, cx.nativeJsClass, (node, type) => lowerExpr(node, cx, type));
+    if (value !== undefined) return value;
+  }
   if (cx.nativeNumberUndefinedSource?.values.has(expr)) hint = irDynamic();
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerExprUnchecked(expr, cx, hint));
@@ -5198,7 +5563,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // operand context demands a non-f64 result.
   if (ts.isVoidExpression(expr)) {
     lowerDiscardedExpression(expr.expression, cx);
-    return cx.builder.emitConst({ kind: "f64", value: NaN }, irVal({ kind: "f64" }));
+    return sourceCompletions.voidExpressionValue(cx.builder, cx.ordinaryCompletionBuilder);
   }
   demoteToLegacy(
     "body-shape-rejected",
@@ -12381,6 +12746,44 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
     withNodeSourceSite(cx, stmt, () => lowerStmt(stmt, cx));
     return;
   }
+  if (cx.nativeJsClass && ts.isClassDeclaration(stmt)) {
+    lowerNativeJsClassDeclaration(stmt, cx.nativeJsClass);
+    return;
+  }
+  if (cx.nativeJsClass && ts.isReturnStatement(stmt) && cx.nativeJsClass.body?.sourceBodyKind === "method") {
+    const value = stmt.expression
+      ? nativeJsClassStoredValue(stmt.expression, cx.builder, lowerExpr(stmt.expression, cx, irDynamic()))
+      : cx.builder.emitConst({ kind: "undefined" }, irDynamic(JS_TAG_IDS.Undefined));
+    cx.builder.emitEarlyReturn(value);
+    return;
+  }
+  if (cx.nativeJsClass && ts.isReturnStatement(stmt) && cx.nativeJsClass.body?.sourceBodyKind === "constructor") {
+    const native = cx.nativeJsClass,
+      self = cx.scope.get("this");
+    if (!self || self.kind !== "local")
+      throw new Error("native class constructor self is not its actual hidden parameter");
+    const completion = stmt.expression
+      ? { kind: "return" as const, value: lowerExpr(stmt.expression, cx, irDynamic()) }
+      : { kind: "normal" as const };
+    const result = cx.builder.emitJsClassInstruction(
+      { kind: "js.class.constructor.complete", self: self.value, completion, constructorKind: "base" },
+      native.body!.result,
+    );
+    if (result === null) throw new Error("native class constructor completion did not produce a value");
+    cx.builder.emitEarlyReturn(result);
+    return;
+  }
+  if (
+    cx.nativeJsClass &&
+    ts.isExpressionStatement(stmt) &&
+    ((ts.isCallExpression(stmt.expression) && ts.isPropertyAccessExpression(stmt.expression.expression)) ||
+      (ts.isBinaryExpression(stmt.expression) &&
+        stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isPropertyAccessExpression(stmt.expression.left)))
+  ) {
+    lowerExpr(stmt.expression, cx, irDynamic());
+    return;
+  }
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
     for (const s of stmt.statements) {
@@ -12916,6 +13319,19 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
       "return-type-legacy-coupling",
       `ir/from-ast: early return inside try/for-of-iter not in IR scope (${cx.funcName})`,
     );
+  }
+  if (cx.jsValueCompletionBuilder === cx.builder) {
+    const value = stmt.expression
+      ? nativeJsClassStoredValue(stmt.expression, cx.builder, lowerExpr(stmt.expression, cx, irDynamic()))
+      : cx.builder.emitConst({ kind: "undefined" }, irDynamic(JS_TAG_IDS.Undefined));
+    cx.builder.emitEarlyReturn(value);
+    return;
+  }
+  if (cx.ordinaryCompletionBuilder === cx.builder) {
+    const raw = stmt.expression ? lowerExpr(stmt.expression, cx, irDynamic()) : undefined;
+    const value = sourceCompletions.ordinaryCompletionValue(stmt, cx.builder, cx.returnType, raw);
+    cx.builder.emitEarlyReturn(value);
+    return;
   }
   if (cx.returnType === null) {
     if (stmt.expression) {
@@ -16730,6 +17146,11 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
   }
   if (!stmt.expression) {
     demoteToLegacy("throw-value-unsupported", `ir/from-ast: bare 'throw' not in slice 9 (${cx.funcName})`);
+  }
+  if ((cx.nativeJsClass?.plan && cx.nativeJsClass.body) || cx.jsValueCompletionBuilder === cx.builder) {
+    const tagged = nativeJsClassStoredValue(stmt.expression, cx.builder, lowerExpr(stmt.expression, cx, irDynamic()));
+    cx.builder.emitThrow(coerceIrValueToExternref(cx.builder, tagged));
+    return;
   }
   const value = lowerExpr(stmt.expression, cx, irVal({ kind: "externref" }));
   const valueType = cx.builder.typeOf(value);

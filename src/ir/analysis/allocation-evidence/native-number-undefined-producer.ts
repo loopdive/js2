@@ -7,6 +7,7 @@ import {
   type AllocSiteId,
 } from "../../core/nodes.js";
 import { ALLOC_NAMESPACES, type AllocSiteRegistry } from "../alloc-registry.js";
+import { analyzeOrdinaryNumberUndefined } from "./ordinary-number-undefined-producer.js";
 import { inspectNativeNumberUndefinedBodies } from "./native-number-undefined-body.js";
 
 /** Finite native annotation producer; source facts and generic analyses remain unchanged. */
@@ -15,7 +16,8 @@ export function analyzeNativeNumberUndefined(
   registry: AllocSiteRegistry,
   deriveEscape: boolean,
 ): boolean {
-  if (!inspectNativeNumberUndefinedBodies(module, registry.snapshot())) return false;
+  if (!inspectNativeNumberUndefinedBodies(module, registry.snapshot()))
+    return analyzeOrdinaryNumberUndefined(module, registry, deriveEscape);
   for (const fn of module.functions) {
     const roots = new Map<IrValueId, Set<AllocSiteId>>(),
       reads = new Set<AllocSiteId>(),

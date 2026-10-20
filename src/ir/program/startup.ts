@@ -79,6 +79,7 @@ export interface IrModuleInitPlanGap {
 
 /** Immutable, backend-neutral semantic inventory for one source module. */
 export interface IrModuleInitPlan {
+  readonly jsClassStartup?: import("../core/js-class-contracts.js").IrJsClassStartup;
   readonly sourceId: IrSourceId;
   readonly unitId: IrUnitId | null;
   readonly executable: boolean;

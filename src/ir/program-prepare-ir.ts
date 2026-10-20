@@ -1,6 +1,13 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { verifyNativeJsClassEvidence } from "./runtime/native-js-class-profile.js";
+import type { IrModule } from "./core/nodes.js";
+import type { AllocRegistrySnapshot } from "./analysis/contracts/allocations.js";
+import { prepareNativeClassValueEquations } from "./program/native-js-class-values.js";
+import { nativeJsClassEvidenceDomainFromProgram } from "./program/native-js-class-allocation-validation.js";
 import { appendNativeNumberUndefinedAbi } from "./program/native-number-undefined-abi.js";
 import { collectNativeNumberUndefinedRequirements } from "./program/native-number-undefined-requirements.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { verifyNativeNumberUndefinedEvidence } from "./runtime/native-number-undefined-profile.js";
+import { hasOrdinaryNumberUndefinedPopulation } from "./analysis/allocation-evidence/ordinary-number-undefined-body.js";
 
 import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program/input.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./program/input-contracts.js";
@@ -57,6 +64,30 @@ function assertCounters(counters: GvnCounters): void {
  * observation. Uses the internal input contract on TypedIrProgramInput; this
  * does not relax compiler handling of invalid or adversarial JavaScript source.
  */
+/** A full current class owner, never class presence, precedes ordinary NN dispatch. */
+function finalClassOwnsCarrier(
+  context: Parameters<typeof nativeJsClassEvidenceDomainFromProgram>[0],
+  module: IrModule,
+  allocations: AllocRegistrySnapshot,
+): boolean {
+  const domain = nativeJsClassEvidenceDomainFromProgram(context, module, "sealed");
+  const report = verifyNativeJsClassEvidence(module, allocations, domain);
+  if (report?.kind === "invalid")
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "final canonical class carrier replay " + report.code,
+    );
+  return report?.kind === "verified" && report.namespaces === "ownership-and-escape";
+}
+
+/** A finite optional annotation decline grants no native ABI or physical permission. */
+function optionalNumberUndefinedRequirements(module: IrModule, allocations: AllocRegistrySnapshot) {
+  const report = verifyNativeNumberUndefinedEvidence(module, allocations);
+  if (report?.kind === "not-covered" && hasOrdinaryNumberUndefinedPopulation(module)) return undefined;
+  // Invalid, vector/mixed, and verified views retain the strict existing collector.
+  return collectNativeNumberUndefinedRequirements(module, allocations);
+}
+
 export function prepareTypedIrProgram(
   input: TypedIrProgramInput,
   options: TypedIrProgramOptions,
@@ -100,17 +131,23 @@ export function prepareTypedIrProgram(
   const transformed = { ...source, ir: { ...source.ir, functions: async.functions }, derivedUnits: async.derivedUnits };
   const transformedRuntime = prepareIrProgramRuntimeCallables(transformed);
   if (transformedRuntime.kind !== "prepared") return transformedRuntime;
+  const transformedEntries = prepareIrProgramAbiEntries(transformed, transformedRuntime.declarations);
   const optimized = optimizePreparedIrProgramIr(
     {
       inventory: transformed.inventory,
       ir: transformed.ir,
       derivedUnits: transformed.derivedUnits,
-      abi: preparedIrDraftAbiLookup(prepareIrProgramAbiEntries(transformed, transformedRuntime.declarations)),
+      abi: preparedIrDraftAbiLookup(transformedEntries),
       policy: resolved.policy,
     },
     allocations,
     resolved.controls,
     counters,
+    nativeJsClassEvidenceDomainFromProgram(
+      { ...transformed, abi: { entries: transformedEntries } },
+      transformed.ir,
+      "source",
+    ),
   );
   const finalSource = { ...source, ...optimized };
   if (finalSource.runtimeSupport !== undefined) {
@@ -124,19 +161,22 @@ export function prepareTypedIrProgram(
   analyzeIrRuntimeSupportAllocations(finalSource.runtimeSupport, allocations, resolved.controls);
   const finalRuntime = prepareIrProgramRuntimeCallables(finalSource);
   if (finalRuntime.kind !== "prepared") return finalRuntime;
-  const numberUndefined = nativeVectors
-    ? collectNativeNumberUndefinedRequirements(finalSource.ir, allocations.snapshot())
-    : undefined;
-  const entries = appendNativeNumberUndefinedAbi(
-    prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations),
-    source.inventory,
-    numberUndefined,
-  );
+  const callableEntries = prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations);
   const supportBodies = irRuntimeSupportFunctions(finalSource.runtimeSupport);
   const completeFinalModule =
     supportBodies.length === 0
       ? finalSource.ir
       : { ...finalSource.ir, functions: [...finalSource.ir.functions, ...supportBodies] };
+  const classOwner = finalClassOwnsCarrier(
+    { ...finalSource, abi: { entries: callableEntries } },
+    completeFinalModule,
+    allocations.snapshot(),
+  );
+  const numberUndefined =
+    !classOwner && (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy))
+      ? optionalNumberUndefinedRequirements(finalSource.ir, allocations.snapshot())
+      : undefined;
+  const entries = appendNativeNumberUndefinedAbi(callableEntries, source.inventory, numberUndefined);
   if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {
     const failure = nativeVectorStoreFailure(completeFinalModule, () =>
       nativeModuleGlobalEvidence({ abi: { entries }, startup: source.startup }),
@@ -168,7 +208,12 @@ export function prepareTypedIrProgram(
   )
     ? {
         schema: "linear-allocation-facts-v1" as const,
-        facts: prepareLinearAllocationFacts(completeFinalModule, allocations, nativeVectors),
+        facts: prepareLinearAllocationFacts(
+          completeFinalModule,
+          allocations,
+          nativeVectors,
+          nativeJsClassEvidenceDomainFromProgram({ ...finalSource, abi: { entries } }, completeFinalModule, "source"),
+        ),
       }
     : undefined;
   // Freeze semantic data BEFORE runtime attachments authenticate exact identities.
@@ -199,6 +244,8 @@ export function prepareTypedIrProgram(
     ...frozenSemantic,
     allocations: frozenSemantic.linearAllocationFacts?.facts.registry ?? frozenSemantic.allocations,
   });
+  const classValuesFailure = prepareNativeClassValueEquations(semantic);
+  if (classValuesFailure) return classValuesFailure;
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
   const demands = new Map(semantic.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));
   for (const policy of resolved.runtimePolicies) {

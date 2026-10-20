@@ -93,6 +93,19 @@ export type BackendI32BitwiseOp = "i32.and" | "i32.or" | "i32.xor" | "i32.shl" |
  *    (§2a), its sites move from `pushRaw` to a typed primitive.
  */
 export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
+  /** Neutral representation evidence, never canonical runtime or physical resource permission. */
+  nativeJsClassLegality?(
+    fn: import("../core/nodes.js").IrFunction,
+  ): import("../analysis/allocation-evidence/native-js-class-legality.js").NativeJsClassLegalityUse | undefined;
+  /** Already-evaluated SSA operands; the actual backend owns live physical permission. */
+  emitNativeJsClass?(
+    fn: import("../core/nodes.js").IrFunction,
+    instruction: Extract<IrInstr, { kind: `js.class.${string}` | "box" }>,
+    operands: readonly (readonly Instr[])[],
+    scratch: (type: ValType) => number,
+    out: S,
+  ): void;
+
   /** Backend identity used by the IR legality verifier at the emit boundary. */
   readonly backend: IrBackendKind;
 

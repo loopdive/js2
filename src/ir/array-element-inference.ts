@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { collectNativeClassModuleInitPopulation } from "./module-init.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import type { TypeFact, TypeOracle } from "../checker/oracle.js";
 import { forEachChild, ts } from "../ts-api.js";
@@ -375,6 +376,152 @@ export function inferClassInitializerArrayTypes(
     if (field.initializer) visit(field.initializer);
   }
   return new EmptyArrayElementInference(new AliasGraph(), new Map(), []);
+}
+
+const nativeModuleAnalyses = new WeakMap<
+  EmptyArrayElementInference,
+  {
+    readonly source: ts.SourceFile;
+    readonly population: readonly ts.Statement[];
+    readonly checker: ts.TypeChecker;
+    readonly current: () => void;
+  }
+>();
+
+/** Owner-produced closed no-array proof for an original module, never a reconstructed function. */
+export function inferNativeModuleInitializerArrayTypes(
+  source: ts.SourceFile,
+  population: readonly ts.Statement[],
+  checker: ts.TypeChecker,
+): EmptyArrayElementInference {
+  const refuse = (detail: string): never => {
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
+      `native original module analysis: ${detail}`,
+    );
+  };
+  const expected = collectNativeClassModuleInitPopulation(source);
+  if (
+    population.length !== expected.length ||
+    population.some(
+      (node, index) => node !== expected[index] || node.parent !== source || node.getSourceFile() !== source,
+    )
+  )
+    refuse("foreign, omitted or reordered original module population");
+  const scalarFlags =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.Undefined |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Void |
+    ts.TypeFlags.Never;
+  const proveType = (type: ts.Type, node: ts.Node): void => {
+    if (type.isUnion()) {
+      for (const part of type.types) proveType(part, node);
+      return;
+    }
+    if (
+      checker.isArrayType(type) ||
+      checker.isTupleType(type) ||
+      type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)
+    )
+      refuse(`array-capable or unknown original value at ${node.getStart(source)}`);
+    if (type.flags & scalarFlags) return;
+    const declaration = type.symbol?.valueDeclaration;
+    if (
+      declaration &&
+      (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration) || ts.isFunctionDeclaration(declaration))
+    )
+      return;
+    refuse(`unresolved reference value at ${node.getStart(source)} requires its complete analysis owner`);
+  };
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isClassDeclaration(node) ||
+      ts.isClassExpression(node)
+    )
+      return;
+    if (ts.isArrayLiteralExpression(node) || ts.isArrayTypeNode(node) || ts.isTupleTypeNode(node))
+      refuse("array/tuple source requires its complete analysis owner");
+    if (ts.isVariableDeclaration(node)) proveType(checker.getTypeAtLocation(node), node);
+    if (
+      ts.isExpression(node) &&
+      !ts.isIdentifier(node.parent) &&
+      !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
+      !(ts.isVariableDeclaration(node.parent) && node.parent.name === node)
+    )
+      proveType(checker.getTypeAtLocation(node), node);
+    forEachChild(node, visit);
+  };
+  for (const statement of population) visit(statement);
+  const sourceText = source.text;
+  const snapshots = new Map<
+    ts.Node,
+    { children: readonly ts.Node[]; primitive: readonly unknown[]; parent: ts.Node | undefined }
+  >();
+  const observe = (node: ts.Node): void => {
+    const children: ts.Node[] = [];
+    forEachChild(node, (child) => {
+      children.push(child);
+      observe(child);
+    });
+    const leaf = node as ts.Node & { text?: string; escapedText?: string };
+    snapshots.set(node, {
+      children,
+      primitive: [node.kind, node.flags, node.pos, node.end, leaf.text, leaf.escapedText],
+      parent: node.parent,
+    });
+  };
+  observe(source);
+  const current = (): void => {
+    if (source.text !== sourceText) refuse("original source text changed");
+    for (const [node, snapshot] of snapshots) {
+      const children: ts.Node[] = [];
+      forEachChild(node, (child) => {
+        children.push(child);
+      });
+      const leaf = node as ts.Node & { text?: string; escapedText?: string };
+      const primitive = [node.kind, node.flags, node.pos, node.end, leaf.text, leaf.escapedText];
+      if (
+        node.parent !== snapshot.parent ||
+        children.length !== snapshot.children.length ||
+        children.some((child, index) => child !== snapshot.children[index]) ||
+        primitive.some((value, index) => value !== snapshot.primitive[index])
+      )
+        refuse("original module tree changed");
+    }
+  };
+  const inference = new EmptyArrayElementInference(new AliasGraph(), new Map(), []);
+  nativeModuleAnalyses.set(inference, { source, population: [...population], checker, current });
+  return inference;
+}
+
+export function assertNativeModuleInitializerArrayTypesCurrent(
+  inference: EmptyArrayElementInference,
+  source: ts.SourceFile,
+  population: readonly ts.Statement[],
+  checker: ts.TypeChecker,
+): void {
+  const owner = nativeModuleAnalyses.get(inference);
+  if (
+    !owner ||
+    owner.source !== source ||
+    owner.checker !== checker ||
+    owner.population.length !== population.length ||
+    owner.population.some((node, index) => node !== population[index])
+  )
+    throw new IrUnsupportedError(
+      "array-representation-unsupported",
+      "build",
+      "native original module analysis: untracked or foreign original source/checker/population",
+    );
+  owner.current();
 }
 
 export function emptyArrayInferenceDiagnostic(result: EmptyArrayInferenceResult, funcName: string): string {

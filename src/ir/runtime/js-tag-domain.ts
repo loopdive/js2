@@ -40,6 +40,7 @@
  */
 
 import { JsTag, jsTagUnboxKind } from "../../runtime/contracts/js-value-tags.js";
+import { JS_TAG_IDS } from "../core/js-value-tag-identities.js";
 import {
   asTagId,
   type TagCarrierKind,
@@ -59,16 +60,7 @@ type JsTagName = "Null" | "Undefined" | "NumberI32" | "NumberF64" | "Boolean" | 
  * when it proves a partition statically, e.g.
  * `irDynamic(JS_TAG_IDS.String)`. The IR core must not: it sees only `TagId`.
  */
-export const JS_TAG_IDS: Readonly<Record<JsTagName, TagId>> = {
-  Null: asTagId(JsTag.Null),
-  Undefined: asTagId(JsTag.Undefined),
-  NumberI32: asTagId(JsTag.NumberI32),
-  NumberF64: asTagId(JsTag.NumberF64),
-  Boolean: asTagId(JsTag.Boolean),
-  String: asTagId(JsTag.String),
-  Object: asTagId(JsTag.Object),
-  Function: asTagId(JsTag.Function),
-};
+export { JS_TAG_IDS } from "../core/js-value-tag-identities.js";
 
 /** Bridge INTO the domain: a `JsTag` as an opaque tag id. */
 export function tagIdOfJsTag(tag: JsTag): TagId {

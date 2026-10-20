@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { REFERENCE_ERROR_HOST_RECORD } from "../core/reference-error-contract.js";
+
 /**
  * The single closed authority for every R6 host-capability ABI record.
  *
@@ -446,7 +448,7 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   record("callback.wrap.getter", "__make_getter_callback", ["i32", "externref"], ["externref"]),
   // ---- end family 3 -------------------------------------------------------
   // Imported-global TDZ guards share this exact ABI with the native constructor.
-  record("error.reference.construct", "__new_ReferenceError", ["externref"], ["externref"]),
+  REFERENCE_ERROR_HOST_RECORD,
   // (#3526 F1-S4) The externref undefined probe. NOT a member of the
   // `addUnionImports` family: on the host lane `__extern_is_undefined` is a
   // standalone `ensureLateImport` registration, which is why the preregistration

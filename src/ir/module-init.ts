@@ -27,6 +27,17 @@ export function collectModuleInitPopulation(sourceFile: ts.SourceFile): ts.State
   return population;
 }
 
+/** Original native class definitions are executable module work, in their source positions. */
+export function collectNativeClassModuleInitPopulation(sourceFile: ts.SourceFile): ts.Statement[] {
+  const ordinary = new Set(collectModuleInitPopulation(sourceFile));
+  return sourceFile.statements.filter(
+    (statement) =>
+      ordinary.has(statement) ||
+      (ts.isClassDeclaration(statement) &&
+        !ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)),
+  );
+}
+
 /**
  * (#5332) The first `export default …` / `export = …` statement, which is
  * module-init WORK the direct front end performs but the population above

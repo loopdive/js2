@@ -43,6 +43,36 @@ function assertLiftedSourceBody(fn: IrFunction, unit: IrUnitRecord, units: Reado
     invalid(`body ${fn.unitId} lacks its exact original source provenance`);
 }
 
+function assertOriginalJsClassBody(fn: IrFunction, unit: IrUnitRecord, input: Population): void {
+  const own = fn.sourceClassBody;
+  const originalClass = input.inventory.classes.find((record) => record.id === own?.classId);
+  const kind =
+    unit.kind === "class-constructor" || unit.kind === "class-implicit-constructor"
+      ? "constructor"
+      : unit.kind === "class-instance-method" || unit.kind === "class-static-method"
+        ? "method"
+        : unit.kind === "class-instance-field-initializer"
+          ? "field-initializer"
+          : unit.kind === "class-static-field-initializer"
+            ? "static-initializer"
+            : undefined;
+  if (
+    !own ||
+    !kind ||
+    own.sourceBodyKind !== kind ||
+    !originalClass ||
+    originalClass.sourceId !== unit.sourceId ||
+    own.lexicalOwnerId !== originalClass.id ||
+    unit.lexicalOwnerId !== originalClass.id ||
+    own.terminalOwnerId !== unit.terminalOwnerId ||
+    own.ordinal !== unit.ordinal ||
+    fn.parentId !== undefined ||
+    fn.role !== undefined ||
+    fn.sourceUnit !== undefined
+  )
+    invalid(`body ${fn.unitId} lacks its exact original class provenance`);
+}
+
 /** The ABI is not yet present at the initial typed-input population boundary. */
 function assertLiftedSourceAbi(fn: IrFunction, abi: PreparedIrAbiSnapshot): void {
   const id = irUnitCallableBindingId(fn.unitId);
@@ -130,7 +160,11 @@ export function assertPreparedIrProgramPopulation(input: Population, abi?: Prepa
     const owner = units.get(fn.unitId) ?? derived.get(fn.unitId);
     if (!owner || owner.terminalOwnerId === null) invalid(`program body ${fn.unitId} has no original owner`);
     const original = units.get(fn.unitId);
-    if (original && !original.terminal) {
+    if (fn.sourceClassBody !== undefined) {
+      if (!original) invalid(`class body ${fn.unitId} is not an original unit`);
+      assertOriginalJsClassBody(fn, original!, input);
+      if (abi) assertLiftedSourceAbi(fn, abi);
+    } else if (original && !original.terminal) {
       assertLiftedSourceBody(fn, original, units);
       if (abi) assertLiftedSourceAbi(fn, abi);
     }

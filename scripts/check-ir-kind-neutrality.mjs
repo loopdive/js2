@@ -221,6 +221,159 @@ const CANONICAL_REFERENCES = {
 // site that shows none does. Quotes are verified against the file on every run.
 
 const VERDICTS = {
+  "js.class.define": {
+    verdict: "js",
+    why: "An original ECMAScript class definition creates fresh constructor/prototype/method identities.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "An original ECMAScript class definition creates fresh constructor/prototype/method identities.",
+      },
+    ],
+  },
+  "js.class.binding.new": {
+    verdict: "js",
+    why: "An ECMAScript lexical class cell starts uninitialized in the temporal dead zone.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "An ECMAScript lexical class cell starts uninitialized in the temporal dead zone.",
+      },
+    ],
+  },
+  "js.class.binding.init": {
+    verdict: "js",
+    why: "Initialize an ECMAScript class binding only after normal definition completion.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "Initialize an ECMAScript class binding only after normal definition completion.",
+      },
+    ],
+  },
+  "js.class.binding.read": {
+    verdict: "js",
+    why: "An ECMAScript class binding read throws ReferenceError while uninitialized.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "An ECMAScript class binding read throws ReferenceError while uninitialized.",
+      },
+    ],
+  },
+  "js.class.binding.write": {
+    verdict: "js",
+    why: "An ECMAScript class assignment checks temporal dead zone and binding mutability.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "An ECMAScript class assignment checks temporal dead zone and binding mutability.",
+      },
+    ],
+  },
+  "js.class.construct": {
+    verdict: "js",
+    why: "ECMAScript construction obtains the actual newTarget prototype and initializes fields before constructor parameters.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote:
+          "ECMAScript construction obtains the actual newTarget prototype and initializes fields before constructor parameters.",
+      },
+    ],
+  },
+  "js.class.property.get": {
+    verdict: "js",
+    why: "ECMAScript property lookup distinguishes own presence, undefined and prototype fallback.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "ECMAScript property lookup distinguishes own presence, undefined and prototype fallback.",
+      },
+    ],
+  },
+  "js.class.property.define": {
+    verdict: "js",
+    why: "ECMAScript DefineOwnProperty executes after its field initializer, preserving own-property attributes.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "ECMAScript DefineOwnProperty executes after its field initializer, preserving own-property attributes.",
+      },
+    ],
+  },
+  "js.class.property.set": {
+    verdict: "js",
+    why: "ECMAScript Set observes property descriptors and the prototype chain under source strictness.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "ECMAScript Set observes property descriptors and the prototype chain under source strictness.",
+      },
+    ],
+  },
+  "js.class.frame.get": {
+    verdict: "js",
+    why: "An ECMAScript class activation reads actual this, home object, newTarget or live captured binding.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "An ECMAScript class activation reads actual this, home object, newTarget or live captured binding.",
+      },
+    ],
+  },
+  "js.class.invoke": {
+    verdict: "js",
+    why: "ECMAScript method invocation uses the actual callable value and receiver; invoking a class without new throws TypeError.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote:
+          "ECMAScript method invocation uses the actual callable value and receiver; invoking a class without new throws TypeError.",
+      },
+    ],
+  },
+  "js.class.constructor.complete": {
+    verdict: "js",
+    why: "ECMAScript base constructor completion respects object replacement while ignoring primitive returns.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "ECMAScript base constructor completion respects object replacement while ignoring primitive returns.",
+      },
+    ],
+  },
+  "js.class.identity": {
+    verdict: "js",
+    why: "ECMAScript class values compare actual fresh managed identity rather than source ClassId.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "ECMAScript class values compare actual fresh managed identity rather than source ClassId.",
+      },
+    ],
+  },
+  "js.class.instanceof": {
+    verdict: "js",
+    why: "ECMAScript instanceof follows the actual prototype chain and rejects invalid right operands.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote: "ECMAScript instanceof follows the actual prototype chain and rejects invalid right operands.",
+      },
+    ],
+  },
+  "js.class.frame.new": {
+    verdict: "js",
+    why: "An ECMAScript class activation creates a fresh frame from actual environment, this, home object and newTarget roots.",
+    evidence: [
+      {
+        file: "src/ir/core/dialect/js.ts",
+        quote:
+          "An ECMAScript class activation creates a fresh frame from actual environment, this, home object and newTarget roots.",
+      },
+    ],
+  },
   // ── core: values, calls, arithmetic ──────────────────────────────────────
   const: {
     verdict: "neutral",

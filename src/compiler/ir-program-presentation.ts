@@ -1012,6 +1012,7 @@ function physicalTypes(
       if (slot?.space !== "type") return undefined;
       result.push({ kind: type.nullable ? "ref_null" : "ref", typeIdx: slot.index });
     } else if (
+      type.kind === "dynamic" ||
       type.kind === "vec" ||
       type.kind === "string" ||
       type.kind === "closure" ||

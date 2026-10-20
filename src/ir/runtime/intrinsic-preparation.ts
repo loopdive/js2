@@ -1,3 +1,7 @@
+import {
+  collectNativeJsClassErrorDemands,
+  nativeJsClassRealmErrorDeclarations,
+} from "./native-js-class-error-callables.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { PreparedIrRuntimeManifest } from "./contracts/prepared.js";
@@ -802,6 +806,10 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
   }> = [];
   const asyncPlans = new Map<IrFunction["unitId"], IrAsyncPlan>();
   const runtimeCallFeatures = new Set<RuntimeFeature>();
+  for (const declaration of nativeJsClassRealmErrorDeclarations(input.functions))
+    runtimeCallFeatures.add(declaration.feature);
+  for (const demand of collectNativeJsClassErrorDemands(input.functions))
+    runtimeCallFeatures.add(demand.declaration.feature);
   for (const fn of input.functions) {
     try {
       const sourceLocation = input.sourceLocationsByUnit?.get(fn.unitId);
@@ -828,6 +836,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
               if (
                 declaration &&
                 (declaration.feature === "error.reference.construct" ||
+                  declaration.feature === "error.type.construct" ||
                   declaration.feature === "js.number.from-value" ||
                   irOrdinaryObjectCallableDeclaration(declaration.ref) ||
                   irNumberRemainderCallableDeclaration(declaration.ref))

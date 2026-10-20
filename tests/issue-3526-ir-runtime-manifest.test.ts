@@ -11,7 +11,6 @@ import {
   intrinsicEffectEvidence,
   type IntrinsicId,
   type IntrinsicUse,
-  type RuntimeFeature,
 } from "../src/ir/intrinsics.js";
 import { asValueId, irVal, type IrInstr } from "../src/ir/nodes.js";
 import {
@@ -30,6 +29,7 @@ import {
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type RuntimeTarget,
+  type RuntimeFeature,
 } from "../src/ir/runtime-manifest.js";
 import { IR_MATH_METHOD_TABLE } from "../src/ir/select.js";
 
@@ -70,12 +70,12 @@ function policy(target: RuntimeTarget = "host", backend: RuntimeBackend = "wasmg
 }
 
 function addUses(builder: RuntimeManifestBuilder, ids: readonly IntrinsicId[]): void {
-  const lineById = new Map(PURE_MATH_INTRINSIC_IDS.map((id, index) => [id, index + 1]));
+  const lineById = new Map<IntrinsicId, number>(PURE_MATH_INTRINSIC_IDS.map((id, index) => [id, index + 1]));
   for (const id of ids) builder.addIntrinsicUse(intrinsicUse(id, lineById.get(id)!), PURE_EFFECTS);
 }
 
-function thrown(code: RuntimeManifestInvariantError["code"]): object {
-  return expect.objectContaining<RuntimeManifestInvariantError>({ code });
+function thrown(code: RuntimeManifestInvariantError["code"]) {
+  return expect.objectContaining({ code });
 }
 
 function providerWith(
@@ -205,7 +205,7 @@ describe("#3526 typed IR runtime manifest foundation", () => {
     const nativeVoid = build("standalone", [...ASYNC_RUNTIME_FEATURES, "value.undefined"]);
     const reversed = build(
       "standalone",
-      [...ASYNC_RUNTIME_FEATURES, "value.undefined"].reverse(),
+      ([...ASYNC_RUNTIME_FEATURES, "value.undefined"] satisfies AsyncRuntimeFeature[]).reverse(),
       [...ASYNC_RUNTIME_PROVIDERS].reverse(),
     );
 

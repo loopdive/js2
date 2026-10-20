@@ -14,7 +14,7 @@ import {
   describeNativeNumberUndefinedMemory,
   requireNativeNumberUndefinedBoxLayout,
   type NativeNumberUndefinedLinearBindings,
-} from "./native-number-undefined.js";
+} from "./native-number-undefined-layout.js";
 import {
   DEFAULT_ARENA_POLICY,
   planLinearMemoryFromFrozenFacts,
@@ -43,7 +43,7 @@ import {
   buildLinearNumericVectorAppendBody,
 } from "../../../wasm/physical/linear-vector-append.js";
 import { buildArrayForwardingResolverBody } from "../../../codegen-linear/runtime/arrays/forwarding-resolver.js";
-import type {
+import {
   FunctionReservation,
   GlobalReservation,
   MemoryReservation,
@@ -85,6 +85,45 @@ interface Pack {
   state: "reserved" | "bindings-ready" | "filled" | "verified" | "failed";
 }
 const packs = new WeakMap<PreparedLinearMemoryReservations, Pack>();
+const reservationPrototype = PhysicalModuleReservations.prototype;
+const canonicalReservationDescriptors = Object.getOwnPropertyDescriptors(reservationPrototype);
+const numericReservationMethods = {
+  assertReservationKeysAvailable: reservationPrototype.assertReservationKeysAvailable,
+  reserveMemory: reservationPrototype.reserveMemory,
+  reserveGlobal: reservationPrototype.reserveGlobal,
+  reserveDataSegment: reservationPrototype.reserveDataSegment,
+  reserveFunction: reservationPrototype.reserveFunction,
+};
+const reservationState = Object.getOwnPropertyDescriptor(reservationPrototype, "state")!.get!;
+function assertNumericReservationDispatch(tx: PhysicalModuleReservations): void {
+  // Canonical methods may call one another. Refuse every shadow before such dispatch.
+  for (const [key, descriptor] of Object.entries(canonicalReservationDescriptors)) {
+    const actual = Object.getOwnPropertyDescriptor(reservationPrototype, key);
+    if (
+      key !== "constructor" &&
+      (Object.hasOwn(tx, key) ||
+        !actual ||
+        actual.value !== descriptor.value ||
+        actual.get !== descriptor.get ||
+        actual.set !== descriptor.set)
+    )
+      invalid("shadowed reservation operation");
+  }
+}
+function numericReservationIssuer(tx: PhysicalModuleReservations): PhysicalModuleReservations {
+  assertNumericReservationDispatch(tx);
+  numericReservationMethods.assertReservationKeysAvailable.call(tx, []);
+  return tx;
+}
+const numericBindings = new WeakMap<NativeNumberUndefinedLinearBindings, PreparedLinearMemoryReservations>();
+export function requirePreparedLinearNumberUndefinedBindings(
+  tx: PhysicalModuleReservations,
+  bindings: NativeNumberUndefinedLinearBindings,
+): void {
+  const authority = numericBindings.get(bindings);
+  if (!authority) invalid("unissued numeric body bindings");
+  requirePreparedLinearNumberUndefinedSignatureCarrier(tx, authority);
+}
 export interface PreparedLinearBodyBindings {
   readonly supportFunctions: readonly FunctionReservation[];
   resolveVectorLayout(element: IrType, allocation?: AllocSiteId): LinearVecLowering;
@@ -315,12 +354,17 @@ export function reservePreparedLinearMemory(
   try {
     current(plan, record);
     assertEmissionActive();
-    if (tx.state !== "reserving") invalid("reserve requires reserving phase");
+    if (plan.numberUndefined) numericReservationIssuer(tx);
+    if ((plan.numberUndefined ? reservationState.call(tx) : tx.state) !== "reserving")
+      invalid("reserve requires reserving phase");
     if (plan.numberUndefined) {
       if (!assertSingletonPlacement) unsupported("numeric singleton requires the actual aggregate static-prefix audit");
       assertSingletonPlacement(undefined);
+      numericReservationIssuer(tx);
     }
-    tx.assertReservationKeysAvailable([
+    (plan.numberUndefined
+      ? numericReservationMethods.assertReservationKeysAvailable.bind(tx)
+      : tx.assertReservationKeysAvailable.bind(tx))([
       ...plan.functions.map((fn) => fn.key),
       ...(plan.memory ? [plan.memory.key] : []),
       ...(plan.heapPointer ? [plan.heapPointer.key] : []),
@@ -329,22 +373,44 @@ export function reservePreparedLinearMemory(
       ...plan.exports.map((exp) => exp.key),
     ]);
     const memory = plan.memory
-      ? tx.reserveMemory(plan.memory.key, { min: plan.memory.min, max: plan.memory.max })
+      ? (plan.numberUndefined ? numericReservationMethods.reserveMemory.bind(tx) : tx.reserveMemory.bind(tx))(
+          plan.memory.key,
+          { min: plan.memory.min, max: plan.memory.max },
+        )
       : undefined;
     const heap = plan.heapPointer
-      ? tx.reserveGlobal(plan.heapPointer.key, plan.heapPointer.name, { kind: "i32" }, true)
+      ? (plan.numberUndefined ? numericReservationMethods.reserveGlobal.bind(tx) : tx.reserveGlobal.bind(tx))(
+          plan.heapPointer.key,
+          plan.heapPointer.name,
+          { kind: "i32" },
+          true,
+        )
       : undefined;
     const numberUndefinedData = plan.numberUndefined
-      ? tx.reserveDataSegment(plan.numberUndefined.singleton.key, {
-          offset: plan.numberUndefined.singleton.offset,
-          bytes: new Uint8Array(plan.numberUndefined.singleton.bytes),
-        })
+      ? (plan.numberUndefined ? numericReservationMethods.reserveDataSegment.bind(tx) : tx.reserveDataSegment.bind(tx))(
+          plan.numberUndefined.singleton.key,
+          {
+            offset: plan.numberUndefined.singleton.offset,
+            bytes: new Uint8Array(plan.numberUndefined.singleton.bytes),
+          },
+        )
       : undefined;
     const numberUndefinedGlobal = plan.numberUndefined
-      ? tx.reserveGlobal(plan.numberUndefined.singleton.key + ":global", "__native_undefined", { kind: "i32" }, false)
+      ? (plan.numberUndefined ? numericReservationMethods.reserveGlobal.bind(tx) : tx.reserveGlobal.bind(tx))(
+          plan.numberUndefined.singleton.key + ":global",
+          "__native_undefined",
+          { kind: "i32" },
+          false,
+        )
       : undefined;
     const functions = Object.freeze(
-      plan.functions.map((fn) => tx.reserveFunction(fn.key, fn.name, { params: fn.params, results: fn.results })),
+      plan.functions.map((fn) =>
+        (plan.numberUndefined ? numericReservationMethods.reserveFunction.bind(tx) : tx.reserveFunction.bind(tx))(
+          fn.key,
+          fn.name,
+          { params: fn.params, results: fn.results },
+        ),
+      ),
     );
     const authority: PreparedLinearMemoryReservations = Object.freeze({ kind: "prepared-linear-memory-reservations" });
     packs.set(authority, {
@@ -434,6 +500,60 @@ function use<T>(
   }
 }
 
+function numericSingletonBytes(data: DataReservation): readonly number[] {
+  if (Object.getPrototypeOf(data.object) !== Object.prototype) invalid("noncanonical singleton record");
+  const descriptors = Object.getOwnPropertyDescriptors(data.object);
+  if (Reflect.ownKeys(descriptors).length !== 2 || !descriptors.bytes || !descriptors.offset)
+    invalid("singleton fields changed");
+  for (const field of Object.values(descriptors)) if (!("value" in field)) invalid("non-DATA singleton segment");
+  const bytes = descriptors.bytes?.value;
+  if (
+    !bytes ||
+    Object.getPrototypeOf(bytes) !== Uint8Array.prototype ||
+    Reflect.ownKeys(bytes).some((key) => typeof key !== "string" || !/^(0|[1-9][0-9]*)$/.test(key))
+  )
+    invalid("noncanonical singleton byte buffer");
+  return Array.from(Uint8Array.prototype.values.call(bytes));
+}
+
+/** The actual issued pointer pack, before indices are available or after full completion. */
+export function requirePreparedLinearNumberUndefinedSignatureCarrier(
+  tx: PhysicalModuleReservations,
+  authority: PreparedLinearMemoryReservations,
+): Readonly<import("../../../wasm/model/instructions.js").ValType> {
+  const pack = packs.get(authority);
+  if (!pack || pack.tx !== tx || pack.state === "failed") invalid("unissued or foreign numeric signature pack");
+  current(pack.plan, pack.issuance);
+  pack.assertEmissionActive();
+  if (
+    !pack.plan.numberUndefined ||
+    !pack.numberUndefinedData ||
+    !pack.numberUndefinedGlobal ||
+    !pack.memory ||
+    !pack.heap
+  )
+    invalid("numeric pointer pack is incomplete");
+  assertPreparedIrData([pack.functions, pack.memory, pack.heap, pack.numberUndefinedGlobal]);
+  assertNumericReservationDispatch(tx);
+  const bytes = numericSingletonBytes(pack.numberUndefinedData);
+  if (reservationState.call(tx) === "reserving") {
+    numericReservationIssuer(tx);
+    const description = pack.plan.numberUndefined.singleton;
+    if (
+      pack.state !== "reserved" ||
+      pack.numberUndefinedData.object.offset !== description.offset ||
+      preparedIrDataMismatch(bytes, description.bytes) !== undefined ||
+      pack.numberUndefinedGlobal.object.type.kind !== "i32" ||
+      pack.numberUndefinedGlobal.object.mutable ||
+      pack.numberUndefinedGlobal.object.init.length !== 0 ||
+      pack.heap.object.init.length !== 0
+    )
+      invalid("numeric reservation DATA changed");
+    pack.assertSingletonPlacement!(pack.numberUndefinedData);
+  } else requireCompletedPreparedLinearMemory(tx, authority);
+  return Object.freeze({ kind: "i32" });
+}
+
 /** The original pack token, after freeze, guarded by the same whole-attempt lifetime. */
 export function preparedLinearNumericAppendReservation(
   tx: PhysicalModuleReservations,
@@ -472,7 +592,7 @@ export function preparedLinearMemoryBindings(
         if (index < 0) invalid("unplanned runtime operation");
         return tx.physicalIndex(active.functions[index]!);
       });
-    return Object.freeze({
+    const result = Object.freeze({
       supportFunctions: pack.functions,
       resolveRuntimeOperation,
       ...(pack.plan.numberUndefined
@@ -565,6 +685,8 @@ export function preparedLinearMemoryBindings(
           });
         }),
     });
+    if (result.numberUndefined) numericBindings.set(result.numberUndefined, authority);
+    return result;
   });
 }
 

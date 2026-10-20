@@ -14,7 +14,7 @@ import type { IrPreparedSourceMap, IrSourceMapPoint } from "../src/shared/contra
 
 // These are genuine text programs. The expected coordinates are retained from
 // their original compiler-owned ASTs BEFORE invoking the producer under test.
-const fixtures = [
+const fixtures: { name: string; files: Record<string, string>; causes: string[] }[] = [
   {
     name: "numeric multi-source and exact diagnostic operations",
     files: {
@@ -63,7 +63,7 @@ const fixtures = [
     },
     causes: ["1", "value * 10", "value * 10 + 3"],
   },
-] satisfies { name: string; files: Record<string, string>; causes: string[] }[];
+];
 
 type Mapped = IrProgramSourcePreparation & { readonly sourceMap?: IrPreparedSourceMap };
 function original(files: Record<string, string>) {

@@ -1,17 +1,17 @@
 {
-  "generated": "2026-09-03",
+  "generated": "2026-10-14",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
     "jsInCore": 0
   },
   "counts": {
-    "total": 85,
+    "total": 100,
     "neutral": 55,
-    "js": 27,
+    "js": 42,
     "unresolved": 3,
     "core": 58,
-    "dialect": 27,
+    "dialect": 42,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -394,6 +394,111 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrIterValue",
       "why": "IteratorValue — reads `value` off a result object (§7.4.5).",
       "evidence": ["src/ir/core/dialect/js.ts#e4ba4c851d5d"]
+    },
+    "js.class.binding.init": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassBindingInit",
+      "why": "Initialize an ECMAScript class binding only after normal definition completion.",
+      "evidence": ["src/ir/core/dialect/js.ts#35ec6157a7da"]
+    },
+    "js.class.binding.new": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassBindingNew",
+      "why": "An ECMAScript lexical class cell starts uninitialized in the temporal dead zone.",
+      "evidence": ["src/ir/core/dialect/js.ts#0767f9cc3270"]
+    },
+    "js.class.binding.read": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassBindingRead",
+      "why": "An ECMAScript class binding read throws ReferenceError while uninitialized.",
+      "evidence": ["src/ir/core/dialect/js.ts#35305ca6cae0"]
+    },
+    "js.class.binding.write": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassBindingWrite",
+      "why": "An ECMAScript class assignment checks temporal dead zone and binding mutability.",
+      "evidence": ["src/ir/core/dialect/js.ts#2e81d351d144"]
+    },
+    "js.class.construct": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassConstruct",
+      "why": "ECMAScript construction obtains the actual newTarget prototype and initializes fields before constructor parameters.",
+      "evidence": ["src/ir/core/dialect/js.ts#3dbf177075a9"]
+    },
+    "js.class.constructor.complete": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassConstructorComplete",
+      "why": "ECMAScript base constructor completion respects object replacement while ignoring primitive returns.",
+      "evidence": ["src/ir/core/dialect/js.ts#249187b8c710"]
+    },
+    "js.class.define": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassDefine",
+      "why": "An original ECMAScript class definition creates fresh constructor/prototype/method identities.",
+      "evidence": ["src/ir/core/dialect/js.ts#7970da0aed95"]
+    },
+    "js.class.frame.get": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassFrameGet",
+      "why": "An ECMAScript class activation reads actual this, home object, newTarget or live captured binding.",
+      "evidence": ["src/ir/core/dialect/js.ts#aa927dff0712"]
+    },
+    "js.class.frame.new": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassFrameNew",
+      "why": "An ECMAScript class activation creates a fresh frame from actual environment, this, home object and newTarget roots.",
+      "evidence": ["src/ir/core/dialect/js.ts#9b609c430663"]
+    },
+    "js.class.identity": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassIdentity",
+      "why": "ECMAScript class values compare actual fresh managed identity rather than source ClassId.",
+      "evidence": ["src/ir/core/dialect/js.ts#be9e58f74a06"]
+    },
+    "js.class.instanceof": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassInstanceOf",
+      "why": "ECMAScript instanceof follows the actual prototype chain and rejects invalid right operands.",
+      "evidence": ["src/ir/core/dialect/js.ts#f05046a75c62"]
+    },
+    "js.class.invoke": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassInvoke",
+      "why": "ECMAScript method invocation uses the actual callable value and receiver; invoking a class without new throws TypeError.",
+      "evidence": ["src/ir/core/dialect/js.ts#25e8fd7d9433"]
+    },
+    "js.class.property.define": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassPropertyDefine",
+      "why": "ECMAScript DefineOwnProperty executes after its field initializer, preserving own-property attributes.",
+      "evidence": ["src/ir/core/dialect/js.ts#35808957c906"]
+    },
+    "js.class.property.get": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassPropertyGet",
+      "why": "ECMAScript property lookup distinguishes own presence, undefined and prototype fallback.",
+      "evidence": ["src/ir/core/dialect/js.ts#c930e4036609"]
+    },
+    "js.class.property.set": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrJsClassPropertySet",
+      "why": "ECMAScript Set observes property descriptors and the prototype chain under source strictness.",
+      "evidence": ["src/ir/core/dialect/js.ts#adfdc94a6559"]
     },
     "labeled.block": {
       "verdict": "neutral",

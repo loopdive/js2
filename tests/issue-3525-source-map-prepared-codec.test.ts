@@ -7,7 +7,7 @@ import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/prog
 
 // Exact genuine source fixtures retained from the independent frontend oracle
 // and the original codec experiment. No manually annotated origin is admitted.
-const fixtures = [
+const fixtures: { index: number; files: Record<string, string> }[] = [
   {
     index: 0,
     files: {
@@ -29,7 +29,7 @@ const fixtures = [
       "./entry.ts": "let value: number = 1; export function read(): number { return value; } value = value * 10 + 3;",
     },
   },
-] satisfies { index: number; files: Record<string, string> }[];
+];
 
 function source(files: Record<string, string>) {
   const ast = analyzeMultiSource(files, "./entry.ts");

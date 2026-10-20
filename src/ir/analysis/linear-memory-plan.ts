@@ -1,3 +1,5 @@
+import { analyzeNativeJsClass } from "./allocation-evidence/native-js-class-producer.js";
+import type { NativeJsClassEvidenceDomain } from "./allocation-evidence/native-js-class-effects.js";
 import { analyzeNativeNumberUndefined } from "./allocation-evidence/native-number-undefined-producer.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
@@ -103,6 +105,7 @@ export function prepareLinearAllocationFacts(
   module: IrModule,
   registry: AllocSiteRegistry,
   nativeVectorControl = false,
+  nativeJsClasses?: NativeJsClassEvidenceDomain,
 ): LinearPreparedAllocationFacts {
   for (const fn of module.functions) {
     analyzeEncoding(fn, registry);
@@ -113,6 +116,7 @@ export function prepareLinearAllocationFacts(
   }
 
   if (nativeVectorControl) analyzeNativeNumberUndefined(module, registry, true);
+  if (nativeJsClasses !== undefined) analyzeNativeJsClass(module, registry, nativeJsClasses);
   const registrySnapshot = registry.snapshot();
   const located = collectModuleAllocationInstructions(module);
   const allocations: LinearPreparedAllocationFact[] = [];

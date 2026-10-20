@@ -55,6 +55,131 @@ import type { IrType, irVal } from "../types.js";
 import type { IrStringEncoding } from "../string-types.js";
 import type { IrCountedStringAppendSiteId } from "../../../shared/contracts/ir-counted-string-identity.js";
 
+import type { IrBindingId } from "../../../shared/contracts/ir-identity.js";
+import type { IrJsClassBindingStorage, IrJsClassPropertyKey, IrJsClassFrameAccess } from "../js-class-contracts.js";
+
+/** An original ECMAScript class definition creates fresh constructor/prototype/method identities. */
+export interface IrInstrJsClassDefine extends IrInstrBase {
+  readonly kind: "js.class.define";
+  readonly definition: IrBindingId;
+  readonly captures: readonly IrValueId[];
+}
+
+/** An ECMAScript class activation creates a fresh frame from actual environment, this, home object and newTarget roots. */
+export interface IrInstrJsClassFrameNew extends IrInstrBase {
+  readonly kind: "js.class.frame.new";
+  readonly definition: IrBindingId;
+  readonly environment: IrValueId;
+  readonly thisValue: IrValueId;
+  readonly homeObject: IrValueId;
+  readonly newTarget: IrValueId;
+}
+
+/** An ECMAScript lexical class cell starts uninitialized in the temporal dead zone. */
+export interface IrInstrJsClassBindingNew extends IrInstrBase {
+  readonly kind: "js.class.binding.new";
+  readonly binding: IrBindingId;
+}
+
+/** Initialize an ECMAScript class binding only after normal definition completion. */
+export interface IrInstrJsClassBindingInit extends IrInstrBase {
+  readonly kind: "js.class.binding.init";
+  readonly storage: IrJsClassBindingStorage;
+  readonly value: IrValueId;
+}
+
+/** An ECMAScript class binding read throws ReferenceError while uninitialized. */
+export interface IrInstrJsClassBindingRead extends IrInstrBase {
+  readonly kind: "js.class.binding.read";
+  readonly storage: IrJsClassBindingStorage;
+}
+
+/** An ECMAScript class assignment checks temporal dead zone and binding mutability. */
+export interface IrInstrJsClassBindingWrite extends IrInstrBase {
+  readonly kind: "js.class.binding.write";
+  readonly storage: IrJsClassBindingStorage;
+  readonly value: IrValueId;
+}
+
+/** ECMAScript construction obtains the actual newTarget prototype and initializes fields before constructor parameters.
+ * args retain all actual tagged values in evaluation order. The real constructor
+ * adapter supplies issued Undefined to absent formals and discards extras only
+ * after their effects; annotations never supply scalar transport or fake args. */
+export interface IrInstrJsClassConstruct extends IrInstrBase {
+  readonly kind: "js.class.construct";
+  readonly constructor: IrValueId;
+  readonly newTarget: IrValueId;
+  readonly args: readonly IrValueId[];
+}
+
+/** ECMAScript property lookup distinguishes own presence, undefined and prototype fallback. */
+export interface IrInstrJsClassPropertyGet extends IrInstrBase {
+  readonly kind: "js.class.property.get";
+  readonly receiver: IrValueId;
+  readonly key: IrJsClassPropertyKey;
+}
+
+/** ECMAScript DefineOwnProperty executes after its field initializer, preserving own-property attributes. */
+export interface IrInstrJsClassPropertyDefine extends IrInstrBase {
+  readonly kind: "js.class.property.define";
+  readonly receiver: IrValueId;
+  readonly key: IrJsClassPropertyKey;
+  readonly value: IrValueId;
+  readonly attributes: { readonly writable: boolean; readonly enumerable: boolean; readonly configurable: boolean };
+}
+
+/** ECMAScript Set observes property descriptors and the prototype chain under source strictness. */
+export interface IrInstrJsClassPropertySet extends IrInstrBase {
+  readonly kind: "js.class.property.set";
+  readonly receiver: IrValueId;
+  readonly key: IrJsClassPropertyKey;
+  readonly value: IrValueId;
+  readonly strict: boolean;
+}
+
+/** An ECMAScript class activation reads actual this, home object, newTarget or live captured binding. */
+export interface IrInstrJsClassFrameGet extends IrInstrBase {
+  readonly kind: "js.class.frame.get";
+  readonly frame: IrValueId;
+  readonly access: IrJsClassFrameAccess;
+}
+
+/**
+ * ECMAScript method invocation uses the actual callable value and receiver; invoking a class without new throws TypeError.
+ * Invoke the captured tagged value after evaluating every actual argument, retaining this.
+ * Signature describes operand/completion transport, never the current target's nominal ABI.
+ * Callable validation occurs here; a noncallable or class invoked without new throws TypeError.
+ */
+export interface IrInstrJsClassInvoke extends IrInstrBase {
+  readonly kind: "js.class.invoke";
+  readonly callable: IrValueId;
+  readonly receiver: IrValueId;
+  readonly args: readonly IrValueId[];
+  readonly signature: { readonly params: readonly IrType[]; readonly result: IrType | null };
+}
+
+/** ECMAScript base constructor completion respects object replacement while ignoring primitive returns. */
+export interface IrInstrJsClassConstructorComplete extends IrInstrBase {
+  readonly kind: "js.class.constructor.complete";
+  readonly constructorKind: "base";
+  readonly self: IrValueId;
+  readonly completion: { readonly kind: "normal" } | { readonly kind: "return"; readonly value: IrValueId };
+}
+
+/** ECMAScript class values compare actual fresh managed identity rather than source ClassId. */
+export interface IrInstrJsClassIdentity extends IrInstrBase {
+  readonly kind: "js.class.identity";
+  readonly left: IrValueId;
+  readonly right: IrValueId;
+}
+
+/** ECMAScript instanceof follows the actual prototype chain and rejects invalid right operands. */
+export interface IrInstrJsClassInstanceOf extends IrInstrBase {
+  readonly kind: "js.class.instanceof";
+  readonly value: IrValueId;
+  readonly constructor: IrValueId;
+}
+
 /**
  * (#1373 Phase B) `await <expr>` — suspend the current async function until
  * `expr`'s Promise settles, then resume with the resolved value. The IR

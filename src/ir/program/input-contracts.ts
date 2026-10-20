@@ -33,6 +33,7 @@ export interface TypedIrProgramGlobal {
  * this input contract.
  */
 export interface TypedIrProgramInput {
+  readonly jsClassDefinitions?: readonly import("../core/js-class-contracts.js").IrJsClassDefinition[];
   readonly classes?: readonly import("./class-preparation.js").IrPreparedSourceClass[];
   readonly inventory: IrUnitInventory;
   readonly ir: IrModule;

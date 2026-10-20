@@ -593,6 +593,22 @@ function implicitSupportRequirement(
   exceptionSupportPrepared = false,
 ): string | null {
   switch (instr.kind) {
+    case "js.class.define":
+    case "js.class.binding.new":
+    case "js.class.binding.init":
+    case "js.class.binding.read":
+    case "js.class.binding.write":
+    case "js.class.construct":
+    case "js.class.property.get":
+    case "js.class.property.define":
+    case "js.class.property.set":
+    case "js.class.frame.get":
+    case "js.class.invoke":
+    case "js.class.constructor.complete":
+    case "js.class.identity":
+    case "js.class.instanceof":
+    case "js.class.frame.new":
+      return "native JavaScript class productive resources are not prepared";
     case "binary": {
       if (!instr.op.startsWith("js.")) return null;
       const concreteNumeric = (value: IrValueId): boolean => {

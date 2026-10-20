@@ -1,3 +1,24 @@
+import { type NativeStringValueReservations } from "../program/native-string-values.js";
+import { nativeStringTypeKeys } from "./native-string-literals.js";
+import { type NativeBuiltinFunctionRequests } from "./native-builtin-function-requests.js";
+import { reserveNativeStringEqualityResources } from "./native-string-equality.js";
+import { reserveNativeBooleanResources } from "./native-booleans.js";
+import { declareNativeBigIntResources, reserveNativeBigIntResources } from "./native-bigint.js";
+import { reserveNativeSymbolCarrierResources } from "./native-symbol-carrier.js";
+import { declareNativeObjectLayouts, reserveNativeObjectLayouts } from "./native-object-layouts.js";
+import { declareNativeObjectLookupResources } from "./native-object-access-declarations.js";
+import { reserveNativeObjectLookupResources } from "./native-object-access.js";
+import { declareNativeObjectStorageResources, reserveNativeObjectStorageResources } from "./native-object-storage.js";
+import {
+  declareNativeObjectSameValueResources,
+  reserveNativeObjectSameValueResources,
+} from "./native-object-same-value.js";
+import {
+  declareNativeObjectDescriptorResources,
+  reserveNativeObjectDescriptorResources,
+} from "./native-object-descriptors.js";
+import { reserveNativeBuiltinFunctionResources } from "./native-builtin-functions.js";
+import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type {
   PhysicalModuleReservations,
@@ -473,4 +494,113 @@ export function nativeObjectRealmDeclarationInventory(
     functions: owner.functions,
     completionScope: pack.completionScope,
   });
+}
+
+export function reserveNativeObjectRealmKernelResources(
+  tx: PhysicalModuleReservations,
+  pack: {
+    readonly strings: NativeStringValueReservations;
+    readonly requirements: NativeRealmRequirements;
+    readonly substrate: NativeInvocationSubstrateReservations;
+    readonly requests: NativeBuiltinFunctionRequests;
+  },
+  valuePlan: NativeValueResourcePlan | undefined,
+  population:
+    | { readonly closures: NativeClosureReservations; readonly closurePlan: NativeClosureDeclarationPlan }
+    | undefined,
+) {
+  const number = pack.strings.number;
+  if (!number || !valuePlan || !population)
+    throw Error("native realm composition: missing actual values or joined closure population");
+  const key = pack.requirements.description.key,
+    strings = pack.strings.strings,
+    flatten = number.flatten;
+  const equality = reserveNativeStringEqualityResources(tx, key + ":equality", flatten, true);
+  const booleans =
+    number.booleans ??
+    reserveNativeBooleanResources(tx, key + ":booleans", number.values, valuePlan, number.dependencies);
+  const bigintPlan = declareNativeBigIntResources(key + ":bigints"),
+    bigints = reserveNativeBigIntResources(tx, key + ":bigints", bigintPlan);
+  const symbols = reserveNativeSymbolCarrierResources(tx, key + ":symbols", strings);
+  const layoutRequirements = { key: key + ":objects" },
+    layoutPlan = declareNativeObjectLayouts(layoutRequirements);
+  const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
+  const lookupDependencies = { layouts, layoutPlan, strings, flatten, equality, symbols };
+  const lookup = reserveNativeObjectLookupResources(
+    tx,
+    key + ":lookup",
+    lookupDependencies,
+    declareNativeObjectLookupResources(key + ":lookup", {
+      object: layouts.object.key,
+      propEntry: layouts.propEntry.key,
+      nativeString: nativeStringTypeKeys(nativeStringLiteralReservationInventory(tx, strings).typePack.key).flat,
+    }),
+  );
+  const storageDependencies = { lookup, lookupDependencies };
+  const storage = reserveNativeObjectStorageResources(
+    tx,
+    key + ":storage",
+    storageDependencies,
+    declareNativeObjectStorageResources(key + ":storage", layouts.object.key),
+  );
+  const sameValueDependencies = {
+    values: number.values,
+    valuePlan,
+    valueDependencies: number.dependencies,
+    booleans,
+    bigints,
+    bigintPlan,
+    strings,
+    flatten,
+    equality,
+  };
+  const sameValue = reserveNativeObjectSameValueResources(
+    tx,
+    key + ":same-value",
+    sameValueDependencies,
+    declareNativeObjectSameValueResources(key + ":same-value"),
+  );
+  const descriptorDependencies = {
+    access: pack.requirements.access,
+    storage,
+    storageDependencies,
+    sameValue,
+    sameValueDependencies,
+    errors: pack.substrate.errors,
+    errorRequirements: pack.substrate.errorRequirements,
+    errorDependencies: pack.substrate.errorDependencies,
+    closures: population.closures,
+  };
+  const descriptors = reserveNativeObjectDescriptorResources(
+    tx,
+    key + ":descriptors",
+    descriptorDependencies,
+    declareNativeObjectDescriptorResources(key + ":descriptors"),
+  );
+  const kernelDependencies = {
+    requests: pack.requests,
+    closures: population.closures,
+    closurePlan: population.closurePlan,
+    descriptors,
+    descriptorDependencies,
+  };
+  const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
+  return {
+    equality,
+    booleans,
+    ownsBooleans: !number.booleans,
+    bigintPlan,
+    bigints,
+    symbols,
+    layoutPlan,
+    layouts,
+    lookup,
+    storage,
+    sameValue,
+    sameValueDependencies,
+    descriptors,
+    descriptorDependencies,
+    kernel,
+    kernelDependencies,
+  };
 }

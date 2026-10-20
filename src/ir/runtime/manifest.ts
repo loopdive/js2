@@ -1,3 +1,4 @@
+import { TYPE_ERROR_SIGNATURE } from "./native-js-class-error-callables.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
@@ -10,6 +11,7 @@
  * a request absent from the frozen plan is a typed invariant.
  */
 
+import { snapshotRuntimeProvider } from "./provider-snapshot.js";
 import {
   NUMBER_BOUNDARY_POLICY_DISABLED,
   BOOLEAN_BOUNDARY_POLICY_DISABLED,
@@ -104,6 +106,8 @@ import {
   HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS,
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
+  NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_FEATURES,
+  NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_PROVIDER_IDS,
   REFERENCE_ERROR_RUNTIME_FEATURES,
   REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
   VECTOR_CALLABLE_RUNTIME_FEATURES,
@@ -140,6 +144,7 @@ import {
   type HostCallbackWrapRuntimeProviderId,
   type FunctionPrototypeCallRuntimeFeature,
   type FunctionPrototypeCallRuntimeProviderId,
+  type NativeJsClassTypeErrorRuntimeFeature,
   type ReferenceErrorRuntimeFeature,
   type NativeAsyncCallableRuntimeFeature,
   type VectorCallableRuntimeFeature,
@@ -178,6 +183,8 @@ export {
   HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS,
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
+  NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_FEATURES,
+  NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_PROVIDER_IDS,
   REFERENCE_ERROR_RUNTIME_FEATURES,
   REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
 } from "./contracts/manifest.js";
@@ -367,6 +374,7 @@ const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone
 const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
 
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
+  "error.type.construct": TYPE_ERROR_SIGNATURE,
   "error.reference.construct": REFERENCE_ERROR_SIGNATURE,
   "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
@@ -1393,6 +1401,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...STRING_CONST_RUNTIME_FEATURES,
   ...HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
+  ...NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_FEATURES,
   ...REFERENCE_ERROR_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES,
@@ -1418,6 +1427,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...STRING_CONST_RUNTIME_PROVIDER_IDS,
   ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS,
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
+  ...NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_PROVIDER_IDS,
   ...REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDER_IDS,
@@ -1455,15 +1465,7 @@ function cloneProvider(value: RuntimeProviderDefinition): RuntimeProviderDefinit
         : signatureEquals(value.signature, F64_BINARY_INTRINSIC_SIGNATURE)
           ? F64_BINARY_INTRINSIC_SIGNATURE
           : value.signature;
-  return Object.freeze({
-    ...value,
-    ...(signature === undefined ? {} : { signature }),
-    dependencies: Object.freeze([...new Set(value.dependencies)].sort(compareStrings)),
-    hostCapabilities: Object.freeze([...new Set(value.hostCapabilities)].sort(compareStrings)),
-    supportedTargets: Object.freeze([...new Set(value.supportedTargets)].sort(compareStrings)),
-    supportedBackends: Object.freeze([...new Set(value.supportedBackends)].sort(compareStrings)),
-    implementation: Object.freeze({ ...value.implementation }),
-  });
+  return snapshotRuntimeProvider(value, signature, compareStrings);
 }
 
 function cycleKey(features: readonly RuntimeFeature[]): string {
@@ -1764,6 +1766,7 @@ export class RuntimeManifestBuilder {
   resolveProvider(feature: IntrinsicRuntimeFeature): RuntimeProviderPlan;
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: GeneratorNumberBoxRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: NativeJsClassTypeErrorRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: ReferenceErrorRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: NativeAsyncCallableRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: VectorCallableRuntimeFeature): RuntimeProviderDefinition;

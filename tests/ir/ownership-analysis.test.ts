@@ -17,6 +17,7 @@ import {
   analyzeOwnership,
   findStackAllocCandidates,
   irVal,
+  irSupportFuncRef,
   joinOwnership,
   ownershipLeq,
   type IrObjectShape,
@@ -137,7 +138,7 @@ describe("#1587 — analysis on IR fragments", () => {
     const { fn } = buildFn((b) => {
       const one = b.emitConst({ kind: "f64", value: 1 }, F64);
       const o = b.emitObjectNew(OBJ_SHAPE, [one]);
-      b.emitCall({ kind: "func", name: "sink" }, [o], null);
+      b.emitCall(irSupportFuncRef(identities.sourceId, "opaque-sink", "sink"), [o], null);
       return [];
     });
     const objInstr = fn.blocks[0]!.instrs.find((i) => i.kind === "object.new")!;
@@ -186,7 +187,7 @@ describe("#1587 — analysis on IR fragments", () => {
     });
 
     b.openReservedBlock(esc);
-    b.emitCall({ kind: "func", name: "sink" }, [o], null);
+    b.emitCall(irSupportFuncRef(identities.sourceId, "opaque-sink", "sink"), [o], null);
     b.terminate({ kind: "br", branch: { target: exit, args: [] } });
 
     b.openReservedBlock(noesc);
@@ -219,7 +220,7 @@ describe("#1587 — analysis on IR fragments", () => {
     b.openReservedBlock(loop);
     const one = b.emitConst({ kind: "f64", value: 1 }, F64);
     const o = b.emitObjectNew(OBJ_SHAPE, [one]);
-    b.emitCall({ kind: "func", name: "sink" }, [o], null);
+    b.emitCall(irSupportFuncRef(identities.sourceId, "opaque-sink", "sink"), [o], null);
     b.terminate({
       kind: "br_if",
       condition: c,

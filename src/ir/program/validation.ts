@@ -1,5 +1,8 @@
+import { assertNativeClassValueEquations } from "./native-js-class-values.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { assertPreparedIrJsClassStartup } from "./js-class-startup.js";
+import { preparedIrJsClassDefinitions, assertPreparedIrJsClassDefinitions } from "./js-class-definition.js";
 import { assertPreparedStartupInvocation } from "./startup-validation.js";
 import type { TypedIrProgramInput } from "./input-contracts.js";
 import type { IrModuleInitPlan, IrModuleInitBindingIntent } from "./startup.js";
@@ -27,7 +30,7 @@ import {
   preparedIrTypeKey,
 } from "./abi-signatures.js";
 import { assertPreparedIrProgramPopulation } from "./population.js";
-import { preparedIrDataMismatch } from "./data.js";
+import { assertPreparedIrData, preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { PreparedIrAbiEntry, PreparedIrProgram } from "./prepared-contracts.js";
 import {
@@ -220,10 +223,16 @@ function validatePreparedIrProgram(
   selectedProjection?: PreparedIrProgramRuntimeProjection,
   options?: IrVerificationOptions,
 ): PreparedLinearMemoryInput | undefined {
+  assertPreparedIrData(program);
   const attached = screenPreparedIrLinearAllocationEntry(program, requiredLinearEvidence);
   if (program.schema !== "prepared-ir-program-v1" || program.reconciliation !== "complete" || program.sealed !== true)
     invalid("program is not a complete prepared program");
   assertPreparedIrProgramPopulation(program);
+  const jsClasses = preparedIrJsClassDefinitions(program.abi.entries).map((row) => row.definition);
+  if (jsClasses.length || program.startup.some((plan) => Object.hasOwn(plan, "jsClassStartup"))) {
+    assertPreparedIrJsClassDefinitions(program.inventory, jsClasses, program.ir);
+    assertPreparedIrJsClassStartup(program.startup, jsClasses, program.inventory);
+  }
   assertPreparedSourceMap(program);
   if (Object.hasOwn(program, "runtimeSupport") && program.runtimeSupport === undefined)
     invalid("runtime support must be absent rather than own-property undefined");
@@ -420,6 +429,7 @@ function validatePreparedIrProgram(
         if (id !== null && entries.get(id)?.contract.kind !== "global")
           invalid(`startup source ${source.id} lacks declared storage ${id}`);
   }
+  assertNativeClassValueEquations(program, program.ir, "original");
   if (program.runtime.length === 0) invalid("program lacks an explicit runtime projection");
   const projections = new Set<string>();
   for (const projection of program.runtime) {
@@ -437,6 +447,7 @@ function validatePreparedIrProgram(
       ir: { functions: runtime.functions },
     });
     assertPreparedIrRuntimeProjection(program, projection);
+    assertNativeClassValueEquations(program, { functions: projection.prepared.functions }, "selected");
   }
   const storeFailure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));
   if (storeFailure) invalid(`${storeFailure.unitId}: ${storeFailure.detail}`);
@@ -701,17 +712,11 @@ function sourceMapStartupOccurrences(
   sourceMapArray(input.startup);
   const candidates: IrModuleInitPlan[] = [];
   for (const plan of input.startup) {
-    sourceMapFields(plan, [
-      "sourceId",
-      "unitId",
-      "executable",
-      "bindings",
-      "liveSeeds",
-      "evaluations",
-      "exports",
-      "invocation",
-      "gaps",
-    ]);
+    sourceMapFields(
+      plan,
+      ["sourceId", "unitId", "executable", "bindings", "liveSeeds", "evaluations", "exports", "invocation", "gaps"],
+      ["jsClassStartup"],
+    );
     if (plan.sourceId === point.sourceId || plan.unitId === point.donorUnitId) candidates.push(plan);
   }
   if (candidates.length !== 1) sourceMapInvalid("startup point lacks its unique source/unit plan");
@@ -726,7 +731,12 @@ function sourceMapStartupOccurrences(
     sourceMapInvalid("startup point contradicts its executable source/unit plan");
   const bindings = sourceMapStartupBindings(plan, length);
   const evaluations = sourceMapStartupEvaluations(plan, length, bindings);
-  const ranges = [...bindings.map((binding) => ({ start: binding.start, end: binding.end })), ...evaluations];
+  const classRanges = plan.jsClassStartup?.definitions.map((row) => sourceMapStartupRange(row.span, length)) ?? [];
+  const ranges = [
+    ...bindings.map((binding) => ({ start: binding.start, end: binding.end })),
+    ...evaluations,
+    ...classRanges,
+  ];
   joins.startupOccurrences.set(key, ranges);
   return ranges;
 }

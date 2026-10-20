@@ -240,7 +240,8 @@ describe("#3520 source callable Program ABI ownership", () => {
       target: "standalone",
       skipSemanticDiagnostics: true,
     });
-    const publication = publish.mock.instances.at(-1)?.publication;
+    const publishedResult = publish.mock.results.at(-1);
+    const publication = publishedResult?.type === "return" ? publishedResult.value : undefined;
     publish.mockRestore();
     expect(runtime.success, runtime.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(runtime.wat).toMatch(/__typed_this/);
@@ -465,9 +466,11 @@ describe("#3520 source callable Program ABI ownership", () => {
       [captureFree, captureFreeTrampoline],
       [capturing, capturingTrampoline],
     ] as const) {
-      const entry = entries.find((candidate) => candidate.id === ref.binding.bindingId);
+      if (ref.binding.kind !== "support") throw new Error("missing trampoline support reference");
+      const bindingId = ref.binding.bindingId;
+      const entry = entries.find((candidate) => candidate.id === bindingId);
       expect(entry).toMatchObject({
-        id: ref.binding.bindingId,
+        id: bindingId,
         slotPolicy: "required",
         slotSpace: "function",
         intent: {
@@ -476,9 +479,7 @@ describe("#3520 source callable Program ABI ownership", () => {
           unitId: unit.id,
         },
       });
-      expect(publication.abi.resolveFinalIndex(ref.binding.bindingId)).toEqual(
-        expect.objectContaining({ space: "function" }),
-      );
+      expect(publication.abi.resolveFinalIndex(bindingId)).toEqual(expect.objectContaining({ space: "function" }));
     }
 
     const cache = irSupportGlobalRef(captureFree.id, "function-value-cache", "diagnostic-capture-free-cache");

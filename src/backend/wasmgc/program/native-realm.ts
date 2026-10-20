@@ -1,35 +1,15 @@
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type {
-  PreparedIrProgram,
-  PreparedIrProgramRuntimeProjection,
-  PreparedIrProgramFailure,
-} from "../../../ir/program/prepared-contracts.js";
+import { reserveNativeObjectRealmKernelResources } from "../resources/native-object-realm.js";
+import { type NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
+import { type NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
+import { preparedIrDataMismatch } from "../../../shared/contracts/prepared-ir-data.js";
 import {
-  assertNativeRealmRequirementsCurrent,
-  type NativeRealmRequirements,
-} from "../../../ir/program/native-realm-requirements.js";
-import { collectNativeStringValueDemands } from "../../../ir/program/native-string-value-demands.js";
-import { deriveNativeStringOutputRequirements } from "../../../ir/program/native-string-output-requirements.js";
-import { deriveNativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
-import {
-  planNativeInvocationRequirements,
-  assertNativeInvocationRequirementsCurrent,
-  type NativeInvocationRequirements,
-} from "../../../ir/program/native-invocation-requirements.js";
-import {
-  deriveNativeVectorResourcePlan,
-  type NativeVectorResourcePlan,
-} from "../../../ir/program/native-vector-resources.js";
-import { preparedIrDataMismatch } from "../../../ir/program/data.js";
-import type {
-  PhysicalModuleReservations,
-  FunctionReservation,
-  TypeReservation,
-  GlobalReservation,
+  type PhysicalModuleReservations,
+  type FunctionReservation,
+  type TypeReservation,
+  type GlobalReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import {
   assertNativeStringValueReservationInput,
-  planNativeStringValuePhysical,
   reserveNativeStringValueResources,
   nativeStringValueReservationInventory,
   requireCompletedNativeStringValues,
@@ -44,7 +24,6 @@ import {
 } from "../resources/native-vectors.js";
 import {
   reserveNativeStringLiteralTypes,
-  nativeStringTypeKeys,
   nativeStringLiteralReservationInventory,
   type NativeStringLiteralRequirements,
 } from "../resources/native-string-literals.js";
@@ -71,107 +50,90 @@ import {
 } from "../resources/native-closures.js";
 import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "../resources/native-source-closures.js";
 import {
-  reserveNativeStringEqualityResources,
   fillNativeStringEqualityResources,
   nativeStringEqualityReservationInventory,
 } from "../resources/native-string-equality.js";
+import { fillNativeBooleanResources, requireNativeBooleanReservations } from "../resources/native-booleans.js";
+import { fillNativeBigIntResources, nativeBigIntReservationInventory } from "../resources/native-bigint.js";
 import {
-  reserveNativeBooleanResources,
-  fillNativeBooleanResources,
-  requireNativeBooleanReservations,
-} from "../resources/native-booleans.js";
-import {
-  declareNativeBigIntResources,
-  reserveNativeBigIntResources,
-  fillNativeBigIntResources,
-  nativeBigIntReservationInventory,
-} from "../resources/native-bigint.js";
-import {
-  reserveNativeSymbolCarrierResources,
   fillNativeSymbolCarrierResources,
   nativeSymbolCarrierReservationInventory,
 } from "../resources/native-symbol-carrier.js";
+import { nativeObjectLayoutReservationInventory } from "../resources/native-object-layouts.js";
 import {
-  declareNativeObjectLayouts,
-  reserveNativeObjectLayouts,
-  nativeObjectLayoutReservationInventory,
-} from "../resources/native-object-layouts.js";
-import { declareNativeObjectLookupResources } from "../resources/native-object-access-declarations.js";
-import {
-  reserveNativeObjectLookupResources,
   fillNativeObjectLookupResources,
   nativeObjectLookupReservationInventory,
 } from "../resources/native-object-access.js";
 import {
-  declareNativeObjectStorageResources,
-  reserveNativeObjectStorageResources,
   fillNativeObjectStorageResources,
   nativeObjectStorageReservationInventory,
 } from "../resources/native-object-storage.js";
 import {
-  declareNativeObjectSameValueResources,
-  reserveNativeObjectSameValueResources,
   fillNativeObjectSameValueResources,
   nativeObjectSameValueReservationInventory,
 } from "../resources/native-object-same-value.js";
 import {
-  declareNativeObjectDescriptorResources,
-  reserveNativeObjectDescriptorResources,
   fillNativeObjectDescriptorResources,
   nativeObjectDescriptorReservationInventory,
 } from "../resources/native-object-descriptors.js";
 import {
-  reserveNativeBuiltinFunctionResources,
   fillNativeBuiltinFunctionResources,
   requireCompletedNativeBuiltinFunctionKernel,
   nativeBuiltinFunctionReservationInventory,
 } from "../resources/native-builtin-functions.js";
+import {
+  assertNativeProgramRealmRequirements,
+  assertNativeProgramFoundationVectors,
+} from "../../../ir/program/native-program-resource-requirements.js";
+import { type IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import { type Instr } from "../../../wasm/model/instructions.js";
+import { PreparedIrProgramInvariantError } from "../../../shared/contracts/prepared-ir-invariant-error.js";
+import { nativeJsClassPhysicalBootstrapCall, type NativeJsClassPhysicalValues } from "./native-js-class-session.js";
+export {
+  reserveNativeJsClassPhysicalValues,
+  fillNativeJsClassPhysicalValues,
+  assertNativeJsClassPhysicalValuesCurrent,
+  nativeJsClassPhysicalRoleType,
+  nativeJsClassPhysicalValueType,
+  nativeJsClassPhysicalErrorConstructor,
+  reserveNativeJsClassPhysicalRealm,
+  fillNativeJsClassPhysicalRealm,
+  nativeJsClassPhysicalRealmBindings,
+  nativeJsClassPhysicalBootstrapCall,
+  reserveNativeJsClassPhysicalModuleBindings,
+  fillNativeJsClassPhysicalModuleBindings,
+  nativeJsClassPhysicalModuleBindings,
+  reserveNativeJsClassPhysicalFunctions,
+  nativeJsClassPhysicalFunctionSlots,
+  requireCompletedNativeJsClassPhysicalFunctions,
+  assertNativeJsClassPhysicalLowering,
+  nativeJsClassPhysicalLowering,
+  emitNativeJsClassPhysicalBox,
+  emitNativeJsClassPhysicalFrame,
+  emitNativeJsClassPhysicalDefinition,
+  emitNativeJsClassPhysicalModuleInitialization,
+  emitNativeJsClassPhysicalNormalCompletion,
+  assertNativeJsClassPhysicalDescription,
+  nativeJsClassPhysicalCallableBindings,
+  requireCompletedNativeJsClassPhysicalValues,
+  nativeJsClassPhysicalSupportFunctions,
+  nativeJsClassPhysicalFunctionPlan,
+  assertNativeJsClassPhysicalFunctionPlan,
+  nativeJsClassPhysicalSignatureConverter,
+} from "./native-js-class-session.js";
+export type {
+  NativeJsClassPhysicalValues,
+  NativeJsClassRealmBinding,
+  NativeJsClassFunctionSlot,
+} from "./native-js-class-session.js";
+
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 function fail(detail: string): never {
   throw Error("native realm composition: " + detail);
 }
 /** Existing source string selection plus its optional authenticated realm supplement. */
-export function prepareNativeProgramStringInput(
-  program: PreparedIrProgram,
-  projection: PreparedIrProgramRuntimeProjection,
-  options: { readonly utf8Storage?: boolean; readonly stringConcatEmptyIdentity?: boolean },
-  invocationRequirements?: NativeInvocationRequirements,
-  realmRequirements?: NativeRealmRequirements,
-): NativeStringValueReservationInput | PreparedIrProgramFailure | undefined {
-  const demands = collectNativeStringValueDemands(program, projection);
-  if (invocationRequirements !== undefined) assertNativeInvocationRequirementsCurrent(invocationRequirements);
-  const invocation =
-    invocationRequirements ??
-    (realmRequirements?.source
-      ? planNativeInvocationRequirements(realmRequirements.source, { utf8Storage: options.utf8Storage === true })
-      : undefined);
-  const native = planNativeStringValuePhysical(
-    demands,
-    {
-      representation: "native-string",
-      utf8Storage: options.utf8Storage === true,
-      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
-    },
-    invocation,
-    realmRequirements,
-  );
-  if (native.kind === "none") return undefined;
-  if (native.kind !== "planned") return native;
-  const outputRequirements = native.plan.output
-    ? deriveNativeStringOutputRequirements(demands, native.plan.output.options)
-    : undefined;
-  if (outputRequirements && "kind" in outputRequirements) return outputRequirements;
-  return Object.freeze({
-    demands,
-    plan: native.plan,
-    ...(native.invocationRequirements ? { invocationRequirements: native.invocationRequirements } : {}),
-    ...(realmRequirements ? { realmRequirements, realmLiterals: native.realmLiterals! } : {}),
-    ...(outputRequirements ? { outputRequirements } : {}),
-    ...(native.plan.mode !== "literals"
-      ? { valueRequirements: deriveNativeValueResourcePlan(program, projection, "native-string") }
-      : {}),
-  });
-}
+
 export interface NativeRealmReservations {
   readonly requirements: NativeRealmRequirements;
   readonly strings: NativeStringValueReservations;
@@ -192,27 +154,12 @@ interface Owner {
   readonly requirements: NativeRealmRequirements;
   readonly strings: NativeStringValueReservations;
   population?: Population;
-  kernel?: ReturnType<typeof reserveKernelResources>;
+  kernel?: ReturnType<typeof reserveNativeObjectRealmKernelResources>;
   phase: "foundation" | "reserving-kernel" | "reserved" | "filling" | "complete" | "failed";
 }
 const owners = new WeakMap<NativeRealmReservations, Owner>();
 /** A vector description is data; its association comes from the authenticated selected program. */
-function assertFoundationVectors(input: NativeStringValueReservationInput, plan: NativeVectorResourcePlan): void {
-  const { program, projection } = input.demands;
-  const anchor = program.inventory.sources.find((row) => row.kind === "entry");
-  if (!anchor) fail("missing vector entry anchor");
-  const expected = deriveNativeVectorResourcePlan({
-    anchor: anchor.id,
-    functions: program.ir.functions,
-    abiEntries: program.abi.entries,
-    policy: projection.prepared.manifest.policy,
-    providers: projection.prepared.manifest.providers,
-    backend: projection.backend,
-    target: projection.target,
-  });
-  if (preparedIrDataMismatch(plan, expected) !== undefined)
-    fail("vector plan differs from selected program/projection");
-}
+
 function sharedCarriers(owner: Owner) {
   const types = nativeStringLiteralReservationInventory(owner.tx, owner.strings.strings).typePack;
   return {
@@ -226,9 +173,9 @@ function current(tx: PhysicalModuleReservations, pack: NativeRealmReservations):
   if (!owner || owner.tx !== tx || owner.requirements !== pack.requirements || owner.strings !== pack.strings)
     fail("foreign or copied realm owner");
   if (owner.phase === "failed") fail("failed composition has no completion authority");
-  assertNativeRealmRequirementsCurrent(pack.requirements);
+  assertNativeProgramRealmRequirements(pack.requirements);
   assertNativeStringValueReservationInput(owner.input);
-  assertFoundationVectors(owner.input, owner.vectorPlan);
+  assertNativeProgramFoundationVectors(owner.input, owner.vectorPlan);
   if (owner.input.realmRequirements !== pack.requirements) fail("substituted realm input identity");
   requireNativeVectorTypeReservations(tx, owner.vectors, owner.vectorPlan);
   nativeStringValueReservationInventory(tx, pack.strings);
@@ -338,7 +285,7 @@ export function reserveNativeProgramFoundation(
 ) {
   if (input) {
     assertNativeStringValueReservationInput(input);
-    assertFoundationVectors(input, vectorPlan);
+    assertNativeProgramFoundationVectors(input, vectorPlan);
     if (!literals || preparedIrDataMismatch(literals, input.plan.literalRequirements) !== undefined)
       fail("string declaration differs from the retained input");
   }
@@ -350,103 +297,6 @@ export function reserveNativeProgramFoundation(
   return { vectorTypes, stringTypes, earlyStrings, realm };
 }
 
-function reserveKernelResources(tx: PhysicalModuleReservations, pack: NativeRealmReservations, owner: Owner) {
-  const number = pack.strings.number,
-    valuePlan = owner.input.valueRequirements,
-    population = owner.population;
-  if (!number || !valuePlan || !population) fail("missing actual values or joined closure population");
-  const key = pack.requirements.description.key,
-    strings = pack.strings.strings,
-    flatten = number.flatten;
-  const equality = reserveNativeStringEqualityResources(tx, key + ":equality", flatten, true);
-  const booleans =
-    number.booleans ??
-    reserveNativeBooleanResources(tx, key + ":booleans", number.values, valuePlan, number.dependencies);
-  const bigintPlan = declareNativeBigIntResources(key + ":bigints"),
-    bigints = reserveNativeBigIntResources(tx, key + ":bigints", bigintPlan);
-  const symbols = reserveNativeSymbolCarrierResources(tx, key + ":symbols", strings);
-  const layoutRequirements = { key: key + ":objects" },
-    layoutPlan = declareNativeObjectLayouts(layoutRequirements);
-  const layouts = reserveNativeObjectLayouts(tx, layoutRequirements, layoutPlan);
-  const lookupDependencies = { layouts, layoutPlan, strings, flatten, equality, symbols };
-  const lookup = reserveNativeObjectLookupResources(
-    tx,
-    key + ":lookup",
-    lookupDependencies,
-    declareNativeObjectLookupResources(key + ":lookup", {
-      object: layouts.object.key,
-      propEntry: layouts.propEntry.key,
-      nativeString: nativeStringTypeKeys(nativeStringLiteralReservationInventory(tx, strings).typePack.key).flat,
-    }),
-  );
-  const storageDependencies = { lookup, lookupDependencies };
-  const storage = reserveNativeObjectStorageResources(
-    tx,
-    key + ":storage",
-    storageDependencies,
-    declareNativeObjectStorageResources(key + ":storage", layouts.object.key),
-  );
-  const sameValueDependencies = {
-    values: number.values,
-    valuePlan,
-    valueDependencies: number.dependencies,
-    booleans,
-    bigints,
-    bigintPlan,
-    strings,
-    flatten,
-    equality,
-  };
-  const sameValue = reserveNativeObjectSameValueResources(
-    tx,
-    key + ":same-value",
-    sameValueDependencies,
-    declareNativeObjectSameValueResources(key + ":same-value"),
-  );
-  const descriptorDependencies = {
-    access: pack.requirements.access,
-    storage,
-    storageDependencies,
-    sameValue,
-    sameValueDependencies,
-    errors: pack.substrate.errors,
-    errorRequirements: pack.substrate.errorRequirements,
-    errorDependencies: pack.substrate.errorDependencies,
-    closures: population.closures,
-  };
-  const descriptors = reserveNativeObjectDescriptorResources(
-    tx,
-    key + ":descriptors",
-    descriptorDependencies,
-    declareNativeObjectDescriptorResources(key + ":descriptors"),
-  );
-  const kernelDependencies = {
-    requests: pack.requests,
-    closures: population.closures,
-    closurePlan: population.closurePlan,
-    descriptors,
-    descriptorDependencies,
-  };
-  const kernel = reserveNativeBuiltinFunctionResources(tx, kernelDependencies);
-  return {
-    equality,
-    booleans,
-    ownsBooleans: !number.booleans,
-    bigintPlan,
-    bigints,
-    symbols,
-    layoutPlan,
-    layouts,
-    lookup,
-    storage,
-    sameValue,
-    sameValueDependencies,
-    descriptors,
-    descriptorDependencies,
-    kernel,
-    kernelDependencies,
-  };
-}
 /** Consumer retains genuine source binding/lowering authority; no callback can attest its completion. */
 export function reserveNativeRealmKernel(
   tx: PhysicalModuleReservations,
@@ -466,7 +316,7 @@ export function reserveNativeRealmKernel(
   } else if (sourceTypes !== undefined) fail("unexpected source owner for no-source realm");
   owner.phase = "reserving-kernel";
   try {
-    owner.kernel = reserveKernelResources(tx, pack, owner);
+    owner.kernel = reserveNativeObjectRealmKernelResources(tx, pack, owner.input.valueRequirements, owner.population);
     owner.phase = "reserved";
     return owner.kernel.kernel;
   } catch (error) {
@@ -569,4 +419,47 @@ export function requireCompletedNativeRealmBootstrap(
   });
   requireCompletedNativeBuiltinFunctionKernel(tx, owner.kernel.kernel, owner.kernel.kernelDependencies);
   return pack;
+}
+
+export function fillNativeProgramStartupAdapter(
+  startAdapter: FunctionReservation | undefined,
+  plan: { readonly startup: { readonly units: readonly IrUnitId[]; readonly adapter: string } },
+  slots: ReadonlyMap<IrUnitId, FunctionReservation>,
+  reservations: PhysicalModuleReservations,
+  onceGuard?: GlobalReservation,
+  nativeJsClass?: NativeJsClassPhysicalValues,
+): void {
+  if (!startAdapter) return;
+  if (nativeJsClass && !onceGuard) classStartupFailed("class bootstrap lacks its genuine startup once guard");
+  const body = plan.startup.units.map((unitId): Instr => {
+    const target = slots.get(unitId);
+    if (!target) classStartupFailed(`startup unit ${unitId} has no reserved slot`);
+    return { op: "call", funcIdx: target.handle };
+  });
+  if (onceGuard) {
+    const index = reservations.physicalIndex(onceGuard);
+    reservations.fillGlobal(onceGuard, [{ op: "i32.const", value: 0 }]);
+    if (nativeJsClass) body.unshift(...nativeJsClassPhysicalBootstrapCall(nativeJsClass, plan.startup.units));
+    body.unshift(
+      { op: "global.get", index },
+      { op: "i32.const", value: 2 },
+      { op: "i32.eq" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }], else: [] },
+      { op: "global.get", index },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
+      { op: "i32.const", value: 1 },
+      { op: "global.set", index },
+    );
+    body.push({ op: "i32.const", value: 2 }, { op: "global.set", index });
+  }
+  reservations.fillFunction(startAdapter, { locals: [], body });
+  if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
+  else if (plan.startup.adapter === "deferred-export")
+    reservations.defineExport("publication:startup", "__module_init", startAdapter);
+  else if (plan.startup.adapter === "wasi-start-export")
+    reservations.defineExport("publication:startup", "_start", startAdapter);
+  else classStartupFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
+}
+function classStartupFailed(detail: string): never {
+  throw new PreparedIrProgramInvariantError("emission-failed", `program emission: ${detail}`);
 }

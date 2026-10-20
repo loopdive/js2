@@ -25,11 +25,12 @@
 // classification; Phase 1 only produces it (matching #1587's "annotation-only
 // demonstration consumer" discipline).
 
+import { directUses, forEachNestedBuffer } from "../core/nodes.js";
+import type { IrFunction, IrInstr, IrTerminator, IrValueId } from "../core/nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { allocationEvidenceRule } from "./allocation-evidence/effect-rules.js";
-import type { IrFunction, IrInstr, IrTerminator, IrValueId } from "../core/nodes.js";
-import { analyzeOwnership, type OwnershipResult } from "./ownership.js";
+import { type OwnershipResult, analyzeOwnership } from "./ownership.js";
 
 import type { EscapeClass, EscapeInfo } from "./contracts/allocations.js";
 export type { EscapeClass, EscapeInfo } from "./contracts/allocations.js";
@@ -172,6 +173,9 @@ export function analyzeEscape(
       case "await":
         raise(instr.operand, "opaque");
         break;
+      case "early.return":
+        if (instr.value !== null) raise(instr.value, "returned");
+        break;
       case "async.return":
         raise(instr.value, "returned");
         break;
@@ -181,23 +185,12 @@ export function analyzeEscape(
       case "throw":
         raise((instr as { value: IrValueId }).value, "opaque");
         break;
-      case "if":
-        for (const sub of instr.then) visitInstr(sub);
-        for (const sub of instr.else) visitInstr(sub);
-        break;
-      case "forof.vec":
-      case "forof.iter":
-      case "forof.string":
-        for (const sub of (instr as { body: readonly IrInstr[] }).body) visitInstr(sub);
-        break;
-      case "while.loop":
-      case "for.loop":
-      case "try":
-        for (const sub of nestedInstrs(instr)) visitInstr(sub);
-        break;
       default:
         break;
     }
+    forEachNestedBuffer(instr, (buffer) => {
+      for (const child of buffer) visitInstr(child);
+    });
   };
 
   const visitTerminator = (term: IrTerminator): void => {
@@ -224,7 +217,10 @@ export function analyzeEscape(
   const infos = new Map<IrValueId, EscapeInfo>();
   for (const [v, allocId] of allocs) {
     const classification = cls.get(v)!;
-    const info: EscapeInfo = { classification, stackAllocatable: classification === "local" };
+    const info: EscapeInfo = {
+      classification,
+      stackAllocatable: classification === "local",
+    };
     infos.set(v, info);
     if (registry) {
       registry.annotate(allocId as never, ALLOC_NAMESPACES.escape, {
@@ -253,48 +249,13 @@ function collectAllocs(fn: IrFunction, out: Map<IrValueId, number>): void {
   }
 }
 
-const REF_OPERAND_FIELDS = new Set([
-  "value",
-  "newValue",
-  "receiver",
-  "callee",
-  "cell",
-  "operand",
-  "reason",
-  "iterable",
-  "self",
-]);
-
+/** Exact direct SSA operands at the existing opaque extern boundary. */
 function* refOperands(instr: IrInstr): Iterable<IrValueId> {
-  for (const [key, value] of Object.entries(instr as unknown as Record<string, unknown>)) {
-    if (key === "result") continue;
-    if (typeof value === "number" && REF_OPERAND_FIELDS.has(key)) {
-      yield value as unknown as IrValueId;
-    } else if (Array.isArray(value)) {
-      for (const el of value) if (typeof el === "number") yield el as unknown as IrValueId;
-    }
-  }
+  yield* directUses(instr);
 }
 
 function* nestedInstrs(instr: IrInstr): Iterable<IrInstr> {
-  for (const value of Object.values(instr as unknown as Record<string, unknown>)) {
-    if (Array.isArray(value)) {
-      for (const el of value) if (isInstrLike(el)) yield el as IrInstr;
-    } else if (value !== null && typeof value === "object") {
-      for (const inner of Object.values(value as Record<string, unknown>)) {
-        if (Array.isArray(inner)) {
-          for (const el of inner) if (isInstrLike(el)) yield el as IrInstr;
-        }
-      }
-    }
-  }
-}
-
-function isInstrLike(v: unknown): boolean {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    typeof (v as { kind?: unknown }).kind === "string" &&
-    "result" in (v as object)
-  );
+  const buffers: (readonly IrInstr[])[] = [];
+  forEachNestedBuffer(instr, (buffer) => buffers.push(buffer));
+  for (const buffer of buffers) yield* buffer;
 }

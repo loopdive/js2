@@ -2,6 +2,37 @@
 import type { IrInstr, IrValueId } from "../core/nodes.js";
 export function collectIrUses(instr: IrInstr): readonly IrValueId[] {
   switch (instr.kind) {
+    case "js.class.define":
+      return instr.captures;
+    case "js.class.binding.new":
+      return [];
+    case "js.class.binding.read":
+      return instr.storage.kind === "cell" ? [instr.storage.cell] : [];
+    case "js.class.binding.init":
+    case "js.class.binding.write":
+      return instr.storage.kind === "cell" ? [instr.storage.cell, instr.value] : [instr.value];
+    case "js.class.construct":
+      return [instr.constructor, instr.newTarget, ...instr.args];
+    case "js.class.property.get":
+      return instr.key.kind === "computed" ? [instr.receiver, instr.key.value] : [instr.receiver];
+    case "js.class.property.define":
+    case "js.class.property.set":
+      return instr.key.kind === "computed"
+        ? [instr.receiver, instr.key.value, instr.value]
+        : [instr.receiver, instr.value];
+    case "js.class.frame.get":
+      return [instr.frame];
+    case "js.class.frame.new":
+      return [instr.environment, instr.thisValue, instr.homeObject, instr.newTarget];
+    case "js.class.invoke":
+      return [instr.callable, instr.receiver, ...instr.args];
+    case "js.class.constructor.complete":
+      return instr.completion.kind === "return" ? [instr.self, instr.completion.value] : [instr.self];
+    case "js.class.identity":
+      return [instr.left, instr.right];
+    case "js.class.instanceof":
+      return [instr.value, instr.constructor];
+
     case "const":
       return [];
     case "call":

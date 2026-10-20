@@ -1,3 +1,4 @@
+import { nativeJsClassInstructionIsAdmitted } from "./analysis/allocation-evidence/native-js-class-legality.js";
 import { collectIrUses } from "./backend/instruction-uses.js";
 import { emitNativeGlobalRead } from "./backend/native-global-read.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
@@ -87,7 +88,7 @@ import {
   type IrEffects,
 } from "./effects.js";
 import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag crossings at the frozen IrDynamicLowering contract
-import { IrInvariantError } from "./outcomes.js";
+import { IrInvariantError, IrUnsupportedError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { stackifyMovableNestedValues } from "./nested-stackification.js";
@@ -272,7 +273,14 @@ export function lowerIrFunctionBody<S, Slot>(
   }
   const nativeNumberUndefined = resolver.resolveNativeNumberUndefined?.(func);
   nativeNumberUndefined?.assertFunction(func);
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver, nativeNumberUndefined?.legality);
+  const nativeJsClass = emitter.nativeJsClassLegality?.(func);
+  const legalityErrors = verifyIrBackendLegality(
+    func,
+    emitter.backend,
+    resolver,
+    nativeNumberUndefined?.legality,
+    nativeJsClass,
+  );
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(
@@ -1203,6 +1211,36 @@ export function lowerIrFunctionBody<S, Slot>(
   const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
 
   const emitInstrTree = (instr: IrInstr, out: S): void => {
+    if (
+      nativeJsClass &&
+      (instr.kind.startsWith("js.class.") || instr.kind === "box") &&
+      nativeJsClassInstructionIsAdmitted(nativeJsClass, func, emitter.backend, instr)
+    ) {
+      const operands = collectIrUses(instr).map((value) => {
+        const sink = emitter.newSink();
+        emitValue(value, sink);
+        return requireInstrSink(sink);
+      });
+      const scratch = (type: ValType): number => {
+        const index = func.params.length + locals.length;
+        locals.push({ name: "$native_class_" + index, type, logicalType: { kind: "val", val: type } });
+        return index;
+      };
+      if (!emitter.emitNativeJsClass)
+        throw new IrUnsupportedError(
+          "class-member-unsupported",
+          "resolve",
+          "native class terminal emitter is unavailable",
+        );
+      emitter.emitNativeJsClass(
+        func,
+        instr as Extract<IrInstr, { kind: `js.class.${string}` | "box" }>,
+        operands,
+        scratch,
+        out,
+      );
+      return;
+    }
     if (nativeNumberUndefined?.owns(instr)) {
       const values =
         instr.kind === "box" || instr.kind === "tag.test" || instr.kind === "dyn.to_number"
@@ -1229,6 +1267,26 @@ export function lowerIrFunctionBody<S, Slot>(
       return;
     }
     switch (instr.kind) {
+      case "js.class.define":
+      case "js.class.binding.new":
+      case "js.class.binding.init":
+      case "js.class.binding.read":
+      case "js.class.binding.write":
+      case "js.class.construct":
+      case "js.class.property.get":
+      case "js.class.property.define":
+      case "js.class.property.set":
+      case "js.class.frame.get":
+      case "js.class.invoke":
+      case "js.class.constructor.complete":
+      case "js.class.identity":
+      case "js.class.instanceof":
+      case "js.class.frame.new":
+        throw new IrUnsupportedError(
+          "class-member-unsupported",
+          "resolve",
+          "native JavaScript class productive resources are not prepared",
+        );
       case "const": {
         // (#5166) `const null` carries a SEMANTIC result type, but every
         // backend's `emitNull` answers on a ValType. After Program-ABI

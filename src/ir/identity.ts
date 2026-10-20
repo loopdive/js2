@@ -39,7 +39,12 @@ import {
   isBoundedPreparedNestedOrdinaryClass,
   isNestedOrdinaryClassFieldCallInventoryCandidate,
 } from "./class-accessor-safety.js";
-import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import {
+  collectModuleInitPopulation,
+  collectNativeClassModuleInitPopulation,
+  moduleInitExportAssignment,
+  MODULE_INIT_UNIT_NAME,
+} from "./module-init.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import type {
@@ -543,6 +548,7 @@ export interface IrInventoryScannerMetadata {
   readonly sources: readonly {
     readonly sourceFile: ts.SourceFile;
     readonly record: IrSourceRecord;
+    readonly nativeModuleInitPopulation?: readonly ts.Statement[];
   }[];
   readonly units: readonly {
     readonly sourceFile: ts.SourceFile;
@@ -692,6 +698,7 @@ export function irPreparedNestedOrdinaryClassBindingName(
 }
 
 class SourceInventoryBuilder {
+  nativeModuleInitPopulation: readonly ts.Statement[] | undefined;
   readonly classes: IrClassRecord[] = [];
   readonly allUnits: IrUnitRecord[] = [];
   readonly terminalUnits: IrTerminalUnitRecord[] = [];
@@ -714,7 +721,10 @@ class SourceInventoryBuilder {
   ) {}
 
   build(): void {
-    const modulePopulation = collectModuleInitPopulation(this.sourceFile);
+    const modulePopulation = this.options.wholeProgramClassConstructors
+      ? collectNativeClassModuleInitPopulation(this.sourceFile)
+      : collectModuleInitPopulation(this.sourceFile);
+    if (this.options.wholeProgramClassConstructors) this.nativeModuleInitPopulation = Object.freeze(modulePopulation);
     let firstStaticInitialization: ts.Node | undefined;
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
 
@@ -793,7 +803,10 @@ class SourceInventoryBuilder {
             }
           : undefined,
       );
-      for (const statement of modulePopulation) this.scanNode(statement, terminal.id, terminal.id);
+      for (const statement of modulePopulation) {
+        if (this.options.wholeProgramClassConstructors && ts.isClassDeclaration(statement)) continue;
+        this.scanNode(statement, terminal.id, terminal.id);
+      }
       for (const scan of deferredModuleInitScans) scan(terminal.id);
     }
   }
@@ -1408,12 +1421,15 @@ export function buildIrUnitInventory(
   const classes: IrClassRecord[] = [];
   const allUnits: IrUnitRecord[] = [];
   const terminalUnits: IrTerminalUnitRecord[] = [];
+  const nativePopulations = new Map<ts.SourceFile, readonly ts.Statement[]>();
   const scannedUnits: IrInventoryScannerMetadata["units"][number][] = [];
   const scannedClasses: IrInventoryScannerMetadata["classes"][number][] = [];
   const pendingFieldCallCandidates: PendingIrNestedClassFieldCallInventoryCandidate[] = [];
   for (let index = 0; index < keyed.length; index++) {
     const builder = new SourceInventoryBuilder(keyed[index]!.sourceFile, sources[index]!, options);
     builder.build();
+    if (builder.nativeModuleInitPopulation)
+      nativePopulations.set(keyed[index]!.sourceFile, builder.nativeModuleInitPopulation);
     classes.push(...builder.classes);
     allUnits.push(...builder.allUnits);
     terminalUnits.push(...builder.terminalUnits);
@@ -1441,7 +1457,15 @@ export function buildIrUnitInventory(
     inventory,
     Object.freeze({
       sources: Object.freeze(
-        keyed.map(({ sourceFile }, index) => Object.freeze({ sourceFile, record: sources[index]! })),
+        keyed.map(({ sourceFile }, index) =>
+          Object.freeze({
+            sourceFile,
+            record: sources[index]!,
+            ...(nativePopulations.has(sourceFile)
+              ? { nativeModuleInitPopulation: nativePopulations.get(sourceFile)! }
+              : {}),
+          }),
+        ),
       ),
       units: Object.freeze(scannedUnits.map((entry) => Object.freeze(entry))),
       classes: Object.freeze(scannedClasses.map((entry) => Object.freeze(entry))),

@@ -1,0 +1,1333 @@
+{
+  "schema": "genuine-native-js-class-inline-transport-input-v1",
+  "sourceFiles": {
+    "./entry.ts": "class C{m(x:number){return x;}}function effect(){throw 7;}function run():void{const c=new C();c.m=undefined;c.m(effect());}"
+  },
+  "sourceVerifierErrors": [],
+  "expectedJSThrown": 7,
+  "sourcePacketSha256": "ddaa50a66daa29ec24d7f5a104ff9323fc730193d00db20d44d903f66c39b328",
+  "input": {
+    "inventory": {
+      "sources": [
+        {
+          "id": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "kind": "entry",
+          "order": 0,
+          "sourceKey": "entry.ts",
+          "displayName": "entry.ts",
+          "originalFileName": "entry.ts"
+        }
+      ],
+      "classes": [
+        {
+          "id": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "declarationKind": "declaration",
+          "ordinal": 0,
+          "displayName": "C",
+          "line": 1,
+          "column": 1,
+          "declarationStart": 0,
+          "declarationEnd": 31
+        }
+      ],
+      "allUnits": [
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+          "kind": "class-instance-method",
+          "ordinal": 0,
+          "displayName": "C_m",
+          "line": 1,
+          "column": 9,
+          "declarationStart": 8,
+          "declarationEnd": 30,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+          "observedKind": "class-member",
+          "legacyKey": "entry.ts::class-member::C_m#0",
+          "legacyMatchName": "C_m",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+          "kind": "class-implicit-constructor",
+          "ordinal": 0,
+          "displayName": "C_new",
+          "line": 1,
+          "column": 1,
+          "declarationStart": 0,
+          "declarationEnd": 31,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "observedKind": "class-member",
+          "legacyKey": "entry.ts::class-member::C_new#0",
+          "legacyMatchName": "C_new",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "kind": "top-level-function",
+          "ordinal": 0,
+          "displayName": "effect",
+          "line": 1,
+          "column": 32,
+          "declarationStart": 31,
+          "declarationEnd": 58,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "observedKind": "function",
+          "legacyKey": "entry.ts::function::effect#0",
+          "legacyMatchName": "effect",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "kind": "top-level-function",
+          "ordinal": 1,
+          "displayName": "run",
+          "line": 1,
+          "column": 59,
+          "declarationStart": 58,
+          "declarationEnd": 123,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+          "observedKind": "function",
+          "legacyKey": "entry.ts::function::run#0",
+          "legacyMatchName": "run",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "kind": "module-init",
+          "ordinal": 0,
+          "displayName": "<module-init>",
+          "line": 1,
+          "column": 1,
+          "declarationStart": 0,
+          "declarationEnd": 31,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+          "observedKind": "module-init",
+          "legacyKey": "entry.ts::module-init::<module-init>#0",
+          "legacyMatchName": "<module-init>",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        }
+      ],
+      "terminalUnits": [
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+          "kind": "class-instance-method",
+          "ordinal": 0,
+          "displayName": "C_m",
+          "line": 1,
+          "column": 9,
+          "declarationStart": 8,
+          "declarationEnd": 30,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+          "observedKind": "class-member",
+          "legacyKey": "entry.ts::class-member::C_m#0",
+          "legacyMatchName": "C_m",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+          "kind": "class-implicit-constructor",
+          "ordinal": 0,
+          "displayName": "C_new",
+          "line": 1,
+          "column": 1,
+          "declarationStart": 0,
+          "declarationEnd": 31,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "observedKind": "class-member",
+          "legacyKey": "entry.ts::class-member::C_new#0",
+          "legacyMatchName": "C_new",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "kind": "top-level-function",
+          "ordinal": 0,
+          "displayName": "effect",
+          "line": 1,
+          "column": 32,
+          "declarationStart": 31,
+          "declarationEnd": 58,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "observedKind": "function",
+          "legacyKey": "entry.ts::function::effect#0",
+          "legacyMatchName": "effect",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "kind": "top-level-function",
+          "ordinal": 1,
+          "displayName": "run",
+          "line": 1,
+          "column": 59,
+          "declarationStart": 58,
+          "declarationEnd": 123,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+          "observedKind": "function",
+          "legacyKey": "entry.ts::function::run#0",
+          "legacyMatchName": "run",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        },
+        {
+          "id": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+          "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+          "lexicalOwnerId": null,
+          "kind": "module-init",
+          "ordinal": 0,
+          "displayName": "<module-init>",
+          "line": 1,
+          "column": 1,
+          "declarationStart": 0,
+          "declarationEnd": 31,
+          "terminal": true,
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+          "observedKind": "module-init",
+          "legacyKey": "entry.ts::module-init::<module-init>#0",
+          "legacyMatchName": "<module-init>",
+          "legacyOrdinal": 0,
+          "staticClassMember": false,
+          "legacyBodyAvailable": true
+        }
+      ]
+    },
+    "ir": {
+      "functions": [
+        {
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "name": "C_new",
+          "params": [
+            {
+              "name": "__environment",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_environment",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aenvironment:0000000000000000"
+                  }
+                },
+                "nullable": false
+              },
+              "value": 0
+            },
+            {
+              "name": "__this",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_object",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                  }
+                },
+                "nullable": false
+              },
+              "value": 1
+            },
+            {
+              "name": "__homeObject",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_prototype",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aprototype:0000000000000000"
+                  }
+                },
+                "nullable": false
+              },
+              "value": 2
+            },
+            {
+              "name": "__newTarget",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_constructor",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                  }
+                },
+                "nullable": true
+              },
+              "value": 3
+            }
+          ],
+          "resultTypes": [
+            {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_object",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                }
+              },
+              "nullable": false
+            }
+          ],
+          "blocks": [
+            {
+              "id": 0,
+              "blockArgs": [],
+              "blockArgTypes": [],
+              "instrs": [
+                {
+                  "kind": "js.class.frame.new",
+                  "definition": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-definition-v1:0000000000000000",
+                  "environment": 0,
+                  "thisValue": 1,
+                  "homeObject": 2,
+                  "newTarget": 3,
+                  "result": 4,
+                  "resultType": {
+                    "kind": "support-ref",
+                    "ref": {
+                      "kind": "type",
+                      "name": "native_js_class_frame",
+                      "binding": {
+                        "kind": "support",
+                        "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+                      }
+                    },
+                    "nullable": false
+                  },
+                  "alloc": 0
+                },
+                {
+                  "kind": "js.class.constructor.complete",
+                  "self": 1,
+                  "completion": {
+                    "kind": "normal"
+                  },
+                  "constructorKind": "base",
+                  "result": 5,
+                  "resultType": {
+                    "kind": "support-ref",
+                    "ref": {
+                      "kind": "type",
+                      "name": "native_js_class_object",
+                      "binding": {
+                        "kind": "support",
+                        "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                      }
+                    },
+                    "nullable": false
+                  }
+                }
+              ],
+              "terminator": {
+                "kind": "return",
+                "values": [5]
+              }
+            }
+          ],
+          "exported": false,
+          "valueCount": 6,
+          "sourceClassBody": {
+            "classId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+            "sourceBodyKind": "constructor",
+            "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+            "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+            "ordinal": 0
+          }
+        },
+        {
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+          "name": "C_m",
+          "params": [
+            {
+              "name": "__environment",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_environment",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aenvironment:0000000000000000"
+                  }
+                },
+                "nullable": false
+              },
+              "value": 0
+            },
+            {
+              "name": "__this",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_object",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                  }
+                },
+                "nullable": false
+              },
+              "value": 1
+            },
+            {
+              "name": "__homeObject",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_prototype",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aprototype:0000000000000000"
+                  }
+                },
+                "nullable": false
+              },
+              "value": 2
+            },
+            {
+              "name": "__newTarget",
+              "type": {
+                "kind": "support-ref",
+                "ref": {
+                  "kind": "type",
+                  "name": "native_js_class_constructor",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                  }
+                },
+                "nullable": true
+              },
+              "value": 3
+            },
+            {
+              "name": "x",
+              "type": {
+                "kind": "dynamic"
+              },
+              "value": 4
+            }
+          ],
+          "resultTypes": [
+            {
+              "kind": "dynamic"
+            }
+          ],
+          "blocks": [
+            {
+              "id": 0,
+              "blockArgs": [],
+              "blockArgTypes": [],
+              "instrs": [
+                {
+                  "kind": "js.class.frame.new",
+                  "definition": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-definition-v1:0000000000000000",
+                  "environment": 0,
+                  "thisValue": 1,
+                  "homeObject": 2,
+                  "newTarget": 3,
+                  "result": 5,
+                  "resultType": {
+                    "kind": "support-ref",
+                    "ref": {
+                      "kind": "type",
+                      "name": "native_js_class_frame",
+                      "binding": {
+                        "kind": "support",
+                        "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+                      }
+                    },
+                    "nullable": false
+                  },
+                  "alloc": 1
+                },
+                {
+                  "kind": "early.return",
+                  "value": 4,
+                  "result": null,
+                  "resultType": null
+                },
+                {
+                  "kind": "const",
+                  "value": {
+                    "kind": "undefined"
+                  },
+                  "result": 6,
+                  "resultType": {
+                    "kind": "dynamic",
+                    "tag": 1
+                  }
+                }
+              ],
+              "terminator": {
+                "kind": "return",
+                "values": [6]
+              }
+            }
+          ],
+          "exported": false,
+          "valueCount": 7,
+          "sourceClassBody": {
+            "classId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+            "sourceBodyKind": "method",
+            "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+            "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+            "ordinal": 0
+          }
+        },
+        {
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+          "name": "effect",
+          "params": [],
+          "resultTypes": [
+            {
+              "kind": "dynamic"
+            }
+          ],
+          "blocks": [
+            {
+              "id": 0,
+              "blockArgs": [],
+              "blockArgTypes": [],
+              "instrs": [
+                {
+                  "kind": "const",
+                  "value": {
+                    "kind": "f64",
+                    "value": 7
+                  },
+                  "result": 0,
+                  "resultType": {
+                    "kind": "val",
+                    "val": {
+                      "kind": "f64"
+                    }
+                  }
+                },
+                {
+                  "kind": "box",
+                  "value": 0,
+                  "toType": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  },
+                  "result": 1,
+                  "resultType": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  },
+                  "alloc": 2
+                },
+                {
+                  "kind": "coerce.to_externref",
+                  "value": 1,
+                  "result": 2,
+                  "resultType": {
+                    "kind": "val",
+                    "val": {
+                      "kind": "externref"
+                    }
+                  }
+                },
+                {
+                  "kind": "throw",
+                  "value": 2,
+                  "result": null,
+                  "resultType": null
+                },
+                {
+                  "kind": "const",
+                  "value": {
+                    "kind": "undefined"
+                  },
+                  "result": 3,
+                  "resultType": {
+                    "kind": "dynamic",
+                    "tag": 1
+                  }
+                }
+              ],
+              "terminator": {
+                "kind": "return",
+                "values": [3]
+              }
+            }
+          ],
+          "exported": false,
+          "valueCount": 4
+        },
+        {
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001",
+          "name": "run",
+          "params": [],
+          "resultTypes": [
+            {
+              "kind": "dynamic"
+            }
+          ],
+          "blocks": [
+            {
+              "id": 0,
+              "blockArgs": [],
+              "blockArgTypes": [],
+              "instrs": [
+                {
+                  "kind": "js.class.binding.read",
+                  "storage": {
+                    "kind": "module",
+                    "bindingId": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Aouter:0000000000000000"
+                  },
+                  "result": 0,
+                  "resultType": {
+                    "kind": "support-ref",
+                    "ref": {
+                      "kind": "type",
+                      "name": "native_js_class_constructor",
+                      "binding": {
+                        "kind": "support",
+                        "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                      }
+                    },
+                    "nullable": false
+                  }
+                },
+                {
+                  "kind": "js.class.construct",
+                  "constructor": 0,
+                  "newTarget": 0,
+                  "args": [],
+                  "result": 1,
+                  "resultType": {
+                    "kind": "support-ref",
+                    "ref": {
+                      "kind": "type",
+                      "name": "native_js_class_object",
+                      "binding": {
+                        "kind": "support",
+                        "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                      }
+                    },
+                    "nullable": false
+                  },
+                  "alloc": 3
+                },
+                {
+                  "kind": "const",
+                  "value": {
+                    "kind": "undefined"
+                  },
+                  "result": 2,
+                  "resultType": {
+                    "kind": "dynamic",
+                    "tag": 1
+                  }
+                },
+                {
+                  "kind": "js.class.property.set",
+                  "receiver": 1,
+                  "key": {
+                    "kind": "string",
+                    "value": "m"
+                  },
+                  "value": 2,
+                  "strict": true,
+                  "result": null,
+                  "resultType": null
+                },
+                {
+                  "kind": "js.class.property.get",
+                  "receiver": 1,
+                  "key": {
+                    "kind": "string",
+                    "value": "m"
+                  },
+                  "result": 3,
+                  "resultType": {
+                    "kind": "dynamic"
+                  }
+                },
+                {
+                  "kind": "call",
+                  "target": {
+                    "kind": "func",
+                    "name": "effect",
+                    "binding": {
+                      "kind": "unit",
+                      "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000"
+                    }
+                  },
+                  "args": [],
+                  "result": 4,
+                  "resultType": {
+                    "kind": "dynamic"
+                  }
+                },
+                {
+                  "kind": "js.class.invoke",
+                  "callable": 3,
+                  "receiver": 1,
+                  "args": [4],
+                  "signature": {
+                    "params": [
+                      {
+                        "kind": "dynamic"
+                      }
+                    ],
+                    "result": {
+                      "kind": "dynamic"
+                    }
+                  },
+                  "result": 5,
+                  "resultType": {
+                    "kind": "dynamic"
+                  }
+                },
+                {
+                  "kind": "const",
+                  "value": {
+                    "kind": "undefined"
+                  },
+                  "result": 6,
+                  "resultType": {
+                    "kind": "dynamic",
+                    "tag": 1
+                  }
+                }
+              ],
+              "terminator": {
+                "kind": "return",
+                "values": [6]
+              }
+            }
+          ],
+          "exported": false,
+          "valueCount": 7
+        },
+        {
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+          "name": "<module-init>",
+          "params": [],
+          "resultTypes": [],
+          "blocks": [
+            {
+              "id": 0,
+              "blockArgs": [],
+              "blockArgTypes": [],
+              "instrs": [
+                {
+                  "kind": "js.class.define",
+                  "definition": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-definition-v1:0000000000000000",
+                  "captures": [],
+                  "result": 0,
+                  "resultType": {
+                    "kind": "support-ref",
+                    "ref": {
+                      "kind": "type",
+                      "name": "native_js_class_constructor",
+                      "binding": {
+                        "kind": "support",
+                        "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                      }
+                    },
+                    "nullable": false
+                  },
+                  "alloc": 4
+                },
+                {
+                  "kind": "js.class.binding.init",
+                  "storage": {
+                    "kind": "module",
+                    "bindingId": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Aouter:0000000000000000"
+                  },
+                  "value": 0,
+                  "result": null,
+                  "resultType": null
+                }
+              ],
+              "terminator": {
+                "kind": "return",
+                "values": []
+              }
+            }
+          ],
+          "exported": false,
+          "valueCount": 1
+        }
+      ]
+    },
+    "derivedUnits": [],
+    "startup": [
+      {
+        "jsClassStartup": {
+          "schema": "native-js-class-startup-v1",
+          "definitions": [
+            {
+              "definitionId": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-definition-v1:0000000000000000",
+              "sourceClassId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+              "statementOrdinal": 0,
+              "span": {
+                "start": 0,
+                "end": 31
+              }
+            }
+          ]
+        },
+        "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+        "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+        "executable": true,
+        "bindings": [],
+        "liveSeeds": [],
+        "evaluations": [],
+        "exports": [],
+        "invocation": {
+          "target": "standalone",
+          "kind": "wasm-start",
+          "deferTopLevelInit": false,
+          "exactlyOnce": true
+        },
+        "gaps": []
+      }
+    ],
+    "callables": [
+      {
+        "bindingId": "ir-binding:v1:callable:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000000:body:0000000000000000",
+        "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+        "declarationOrdinal": 1,
+        "bindingOrdinal": 1,
+        "kind": "source",
+        "localName": "effect",
+        "targetBindingId": "ir-binding:v1:callable:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000000:body:0000000000000000",
+        "canonicalBindingId": "ir-binding:v1:callable:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000000:body:0000000000000000",
+        "targetUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000"
+      },
+      {
+        "bindingId": "ir-binding:v1:callable:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:body:0000000000000000",
+        "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+        "declarationOrdinal": 2,
+        "bindingOrdinal": 2,
+        "kind": "source",
+        "localName": "run",
+        "targetBindingId": "ir-binding:v1:callable:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:body:0000000000000000",
+        "canonicalBindingId": "ir-binding:v1:callable:ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000001:body:0000000000000000",
+        "targetUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000001"
+      }
+    ],
+    "globals": [],
+    "allocations": {
+      "size": 5,
+      "entries": [
+        {
+          "state": "live",
+          "site": {
+            "id": 0,
+            "kind": "object",
+            "type": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_frame",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+                }
+              },
+              "nullable": false
+            }
+          }
+        },
+        {
+          "state": "live",
+          "site": {
+            "id": 1,
+            "kind": "object",
+            "type": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_frame",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+                }
+              },
+              "nullable": false
+            }
+          }
+        },
+        {
+          "state": "live",
+          "site": {
+            "id": 2,
+            "kind": "box",
+            "type": {
+              "kind": "dynamic",
+              "tag": 3
+            }
+          }
+        },
+        {
+          "state": "live",
+          "site": {
+            "id": 3,
+            "kind": "object",
+            "type": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_object",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                }
+              },
+              "nullable": false
+            }
+          }
+        },
+        {
+          "state": "live",
+          "site": {
+            "id": 4,
+            "kind": "object",
+            "type": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_constructor",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                }
+              },
+              "nullable": false
+            }
+          }
+        }
+      ],
+      "metadata": []
+    },
+    "jsClassDefinitions": [
+      {
+        "schema": "native-js-class-definition-v1",
+        "sourceClassId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+        "sourceId": "ir-source:v1:0000000000000000:entry:entry.ts",
+        "span": {
+          "start": 0,
+          "end": 31
+        },
+        "evaluationOwnerUnitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:module-init:0000000000000000",
+        "form": "declaration",
+        "name": "C",
+        "outerBinding": {
+          "id": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Aouter:0000000000000000",
+          "name": "C",
+          "storage": "module",
+          "mutable": true,
+          "valueType": {
+            "kind": "support-ref",
+            "ref": {
+              "kind": "type",
+              "name": "native_js_class_constructor",
+              "binding": {
+                "kind": "support",
+                "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+              }
+            },
+            "nullable": true
+          },
+          "valueGlobal": {
+            "kind": "global",
+            "name": "C",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:global:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Aouter%3Avalue:0000000000000000"
+            }
+          },
+          "tdzGlobal": {
+            "kind": "global",
+            "name": "C_tdz",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:global:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Aouter%3Atdz:0000000000000000"
+            }
+          }
+        },
+        "innerBinding": {
+          "id": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Ainner:0000000000000000",
+          "name": "C",
+          "storage": "cell",
+          "mutable": false,
+          "valueType": {
+            "kind": "support-ref",
+            "ref": {
+              "kind": "type",
+              "name": "native_js_class_constructor",
+              "binding": {
+                "kind": "support",
+                "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+              }
+            },
+            "nullable": true
+          },
+          "valueGlobal": null,
+          "tdzGlobal": null
+        },
+        "constructorKind": "base",
+        "constructor": {
+          "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "target": {
+            "kind": "func",
+            "name": "C_new",
+            "binding": {
+              "kind": "unit",
+              "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000"
+            }
+          },
+          "sourceBodyKind": "constructor",
+          "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+          "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-implicit-constructor:0000000000000000",
+          "ordinal": 0,
+          "span": {
+            "start": 0,
+            "end": 31
+          },
+          "frame": {
+            "type": {
+              "kind": "type",
+              "name": "native_js_class_frame",
+              "binding": {
+                "kind": "support",
+                "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+              }
+            },
+            "thisType": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_object",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                }
+              },
+              "nullable": false
+            },
+            "environmentType": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_environment",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aenvironment:0000000000000000"
+                }
+              },
+              "nullable": false
+            },
+            "homeObjectType": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_prototype",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aprototype:0000000000000000"
+                }
+              },
+              "nullable": false
+            },
+            "newTargetType": {
+              "kind": "support-ref",
+              "ref": {
+                "kind": "type",
+                "name": "native_js_class_constructor",
+                "binding": {
+                  "kind": "support",
+                  "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                }
+              },
+              "nullable": true
+            },
+            "captures": [
+              {
+                "bindingId": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Ainner:0000000000000000",
+                "mode": "live-cell",
+                "type": {
+                  "kind": "support-ref",
+                  "ref": {
+                    "kind": "type",
+                    "name": "native_js_class_constructor",
+                    "binding": {
+                      "kind": "support",
+                      "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                    }
+                  },
+                  "nullable": true
+                },
+                "valueGlobal": null,
+                "tdzGlobal": null
+              }
+            ]
+          },
+          "params": [],
+          "result": {
+            "kind": "support-ref",
+            "ref": {
+              "kind": "type",
+              "name": "native_js_class_object",
+              "binding": {
+                "kind": "support",
+                "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+              }
+            },
+            "nullable": false
+          }
+        },
+        "implicitConstructor": true,
+        "members": [
+          {
+            "sourceOrdinal": 0,
+            "name": "m",
+            "static": false,
+            "span": {
+              "start": 8,
+              "end": 30
+            },
+            "body": {
+              "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+              "target": {
+                "kind": "func",
+                "name": "C_m",
+                "binding": {
+                  "kind": "unit",
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000"
+                }
+              },
+              "sourceBodyKind": "method",
+              "lexicalOwnerId": "ir-class:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:declaration:0000000000000000",
+              "terminalOwnerId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:class-instance-method:0000000000000000",
+              "ordinal": 0,
+              "span": {
+                "start": 8,
+                "end": 30
+              },
+              "frame": {
+                "type": {
+                  "kind": "type",
+                  "name": "native_js_class_frame",
+                  "binding": {
+                    "kind": "support",
+                    "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+                  }
+                },
+                "thisType": {
+                  "kind": "support-ref",
+                  "ref": {
+                    "kind": "type",
+                    "name": "native_js_class_object",
+                    "binding": {
+                      "kind": "support",
+                      "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+                    }
+                  },
+                  "nullable": false
+                },
+                "environmentType": {
+                  "kind": "support-ref",
+                  "ref": {
+                    "kind": "type",
+                    "name": "native_js_class_environment",
+                    "binding": {
+                      "kind": "support",
+                      "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aenvironment:0000000000000000"
+                    }
+                  },
+                  "nullable": false
+                },
+                "homeObjectType": {
+                  "kind": "support-ref",
+                  "ref": {
+                    "kind": "type",
+                    "name": "native_js_class_prototype",
+                    "binding": {
+                      "kind": "support",
+                      "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aprototype:0000000000000000"
+                    }
+                  },
+                  "nullable": false
+                },
+                "newTargetType": {
+                  "kind": "support-ref",
+                  "ref": {
+                    "kind": "type",
+                    "name": "native_js_class_constructor",
+                    "binding": {
+                      "kind": "support",
+                      "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                    }
+                  },
+                  "nullable": true
+                },
+                "captures": [
+                  {
+                    "bindingId": "ir-binding:v1:support:ir-class%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Adeclaration%3A0000000000000000:native-js-class-binding%3Ainner:0000000000000000",
+                    "mode": "live-cell",
+                    "type": {
+                      "kind": "support-ref",
+                      "ref": {
+                        "kind": "type",
+                        "name": "native_js_class_constructor",
+                        "binding": {
+                          "kind": "support",
+                          "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+                        }
+                      },
+                      "nullable": true
+                    },
+                    "valueGlobal": null,
+                    "tdzGlobal": null
+                  }
+                ]
+              },
+              "params": [
+                {
+                  "kind": "dynamic"
+                }
+              ],
+              "result": {
+                "kind": "dynamic"
+              }
+            },
+            "attributes": {
+              "writable": true,
+              "enumerable": false,
+              "configurable": true
+            }
+          }
+        ],
+        "instanceElements": [],
+        "captures": [],
+        "roles": {
+          "object": {
+            "kind": "type",
+            "name": "native_js_class_object",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aobject:0000000000000000"
+            }
+          },
+          "constructor": {
+            "kind": "type",
+            "name": "native_js_class_constructor",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aconstructor:0000000000000000"
+            }
+          },
+          "prototype": {
+            "kind": "type",
+            "name": "native_js_class_prototype",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aprototype:0000000000000000"
+            }
+          },
+          "environment": {
+            "kind": "type",
+            "name": "native_js_class_environment",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aenvironment:0000000000000000"
+            }
+          },
+          "binding-cell": {
+            "kind": "type",
+            "name": "native_js_class_binding-cell",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Abinding-cell:0000000000000000"
+            }
+          },
+          "frame": {
+            "kind": "type",
+            "name": "native_js_class_frame",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Aframe:0000000000000000"
+            }
+          },
+          "method": {
+            "kind": "type",
+            "name": "native_js_class_method",
+            "binding": {
+              "kind": "support",
+              "bindingId": "ir-binding:v1:type:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-role%3Amethod:0000000000000000"
+            }
+          }
+        },
+        "realm": {
+          "objectPrototype": "ir-binding:v1:global:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-realm%3AObject.prototype:0000000000000000",
+          "functionPrototype": "ir-binding:v1:global:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-realm%3AFunction.prototype:0000000000000000",
+          "referenceError": "ir-binding:v1:global:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-realm%3AReferenceError:0000000000000000",
+          "typeError": "ir-binding:v1:global:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:native-js-class-realm%3ATypeError:0000000000000000"
+        }
+      }
+    ]
+  }
+}

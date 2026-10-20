@@ -229,21 +229,29 @@ export function fillPreparedPrimaryUnit(
   backend: IrBackendKind,
   source?: NativeSourceClosureEmission,
   resolveRuntimeOperation?: import("./backend/linear-emitter.js").LinearEmitterOptions["resolveRuntimeOperation"],
+  concrete?: {
+    readonly fn: IrFunction;
+    readonly emitter: import("./backend/emitter.js").BackendEmitter<Instr[]>;
+    readonly typeConverter: import("./backend/contract.js").TypeConverter<ValType>;
+    readonly resolver: IrLowerResolver;
+  },
 ): void {
   const owner = source ? requireOwner(tx, source) : undefined;
   const association = owner?.units.get(fn.unitId);
   if (association && (association.fn !== fn || association.slot !== slot || owner!.completed.has(fn.unitId)))
     fail("source canonical lowering uses a changed function/slot or repeats completion");
   if (fn.closureSubtype && source && !association) fail("unbound source closure body");
+  if (concrete && concrete.fn !== fn) fail("foreign concrete backend function plan");
   const emitter =
-    backend === "wasmgc"
+    concrete?.emitter ??
+    (backend === "wasmgc"
       ? new WasmGcEmitter(resolver)
-      : new LinearEmitter({ resolveRuntimeOperation, stringRuntime: resolver });
+      : new LinearEmitter({ resolveRuntimeOperation, stringRuntime: resolver }));
   const lowered = lowerIrFunctionBody<Instr[], ValType>(
     fn,
-    resolver,
+    concrete?.resolver ?? resolver,
     emitter,
-    wasmValueTypeConverter(backend, resolver, fn.name),
+    concrete?.typeConverter ?? wasmValueTypeConverter(backend, resolver, fn.name),
   );
   const params = lowered.params.flatMap((param) => [...param.slots]);
   const results = lowered.results.flatMap((result) => [...result]);

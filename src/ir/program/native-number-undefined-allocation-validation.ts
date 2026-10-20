@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { hasOrdinaryNumberUndefinedPopulation } from "../analysis/allocation-evidence/ordinary-number-undefined-body.js";
+import { IrUnsupportedError } from "../../shared/contracts/ir-preparation-errors.js";
 import type { PreparedIrProgram } from "./prepared-contracts.js";
 import { assertPreparedIrData } from "../../shared/contracts/prepared-ir-data.js";
 import { ALLOC_NAMESPACES } from "../analysis/contracts/allocations.js";
@@ -42,6 +44,32 @@ export function assertNativeNumberUndefinedGcAllocations(program: NativeNumberUn
   for (const row of program.allocations.metadata)
     for (const [namespace] of row.entries)
       if (!namespaces.has(namespace)) invalid(`unverifiable namespace ${namespace}`);
+  // A declined ordinary annotation is not native evidence. The unchanged
+  // canonical generic GC checker must still authenticate every required view.
+  if (!reports.some((report) => report?.kind === "verified")) {
+    let ordinary = false,
+      disjoint = true;
+    for (let index = 0; index < reports.length; index++) {
+      const report = reports[index];
+      if (report === undefined) continue;
+      if (report.kind !== "not-covered") {
+        disjoint = false;
+        break;
+      }
+      try {
+        if (!hasOrdinaryNumberUndefinedPopulation(views[index]!)) {
+          disjoint = false;
+          break;
+        }
+        ordinary = true;
+      } catch (error) {
+        if (!(error instanceof IrUnsupportedError)) throw error;
+        disjoint = false;
+        break;
+      }
+    }
+    if (ordinary && disjoint) return false;
+  }
   for (const report of reports)
     if (report?.kind !== "verified" || report.namespaces !== "ownership-and-escape")
       invalid("every original and selected GC body requires canonical complete ownership-and-escape evidence");

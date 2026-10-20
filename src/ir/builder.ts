@@ -56,6 +56,13 @@ import type { TagDomain, TagId } from "./tag-domain.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
 
+type JsClassInstruction = Extract<IrInstr, { readonly kind: `js.class.${string}` }>;
+type JsClassInstructionInput = JsClassInstruction extends infer T
+  ? T extends JsClassInstruction
+    ? Omit<T, "result" | "resultType" | "alloc" | "site">
+    : never
+  : never;
+
 type CapturedBuilderSite = Extract<IrSiteId, { readonly origin: IrSourceMapOrigin }>;
 
 interface OpenBlock {
@@ -1350,6 +1357,23 @@ export class IrFunctionBuilder {
       throw new Error(`IrFunctionBuilder: unknown value ${value} in func ${this.id.name}`);
     }
     return t;
+  }
+
+  /** Build a typed ECMAScript class operation at its genuine active source site. */
+  emitJsClassInstruction(input: JsClassInstructionInput, resultType: IrType | null): IrValueId | null {
+    const allocationKind =
+      input.kind === "js.class.binding.new"
+        ? "refcell"
+        : input.kind === "js.class.define" || input.kind === "js.class.construct" || input.kind === "js.class.frame.new"
+          ? "object"
+          : undefined;
+    if (allocationKind && (!this.allocRegistry || !resultType || resultType.kind !== "support-ref"))
+      throw new Error("IrFunctionBuilder: native class allocation requires a real registry and managed result");
+    const result = resultType === null ? null : this.allocator.fresh();
+    if (result !== null && resultType !== null) this.valueTypes.set(result, resultType);
+    const alloc = allocationKind ? this.allocId(allocationKind, resultType!) : undefined;
+    this.pushInstr({ ...input, result, resultType, ...(alloc === undefined ? {} : { alloc }) } as JsClassInstruction);
+    return result;
   }
 
   finish(closureSubtype?: NonNullable<IrFunction["closureSubtype"]>): IrFunction {

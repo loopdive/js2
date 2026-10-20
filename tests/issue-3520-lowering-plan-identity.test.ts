@@ -137,6 +137,7 @@ function importedCallFixture(): {
   const call = firstDescendant(declaration, ts.isCallExpression);
   const plan = (ownerUnitId: IrUnitId | undefined): IrImportedCallLoweringPlan =>
     ({
+      source: "module-import",
       ...planOwnerEvidence(ownerUnitId),
       ownerName: "owner",
       target: irUnitFuncRef({ unitId: TARGET_ID, name: "importedTarget" }),

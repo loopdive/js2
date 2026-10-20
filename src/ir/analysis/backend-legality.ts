@@ -16,8 +16,16 @@ import {
   assertNativeNumberUndefinedLegalityCurrent,
   nativeNumberUndefinedInstructionIsAdmitted,
   nativeNumberUndefinedTypeIsAdmitted,
+  nativeNumberUndefinedSignatureResultIsAdmitted,
   type NativeNumberUndefinedLegalityUse,
 } from "./allocation-evidence/native-number-undefined-legality.js";
+
+import {
+  assertNativeJsClassLegalityCurrent,
+  nativeJsClassInstructionIsAdmitted,
+  nativeJsClassTypeIsAdmitted,
+  type NativeJsClassLegalityUse,
+} from "./allocation-evidence/native-js-class-legality.js";
 
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
@@ -41,8 +49,10 @@ export function verifyIrBackendLegality(
   backend: IrBackendKind,
   fnctorResolver?: IrBackendFnctorResolver,
   nativeNumberUndefined?: NativeNumberUndefinedLegalityUse,
+  nativeJsClass?: NativeJsClassLegalityUse,
 ): IrBackendLegalityError[] {
   if (nativeNumberUndefined) assertNativeNumberUndefinedLegalityCurrent(nativeNumberUndefined, func, backend);
+  if (nativeJsClass) assertNativeJsClassLegalityCurrent(nativeJsClass, func, backend);
   const errors: IrBackendLegalityError[] = [];
   const checkedClassShapes = new Set<IrClassShape>();
   const checkType = (type: IrType, block: number | undefined, where: string, instr?: IrInstr): void => {
@@ -53,6 +63,7 @@ export function verifyIrBackendLegality(
       nativeNumberUndefinedTypeIsAdmitted(nativeNumberUndefined, func, backend, instr, type)
     )
       return;
+    if (nativeJsClass && nativeJsClassTypeIsAdmitted(nativeJsClass, func, backend, instr, type)) return;
     const fnctorHandle =
       type.kind === "fnctor" && backend === "wasmgc" ? fnctorResolver?.resolveFnctor?.(type.shape) : null;
     const fnctorResolved = fnctorHandle !== null && fnctorHandle !== undefined && fnctorHandle.supportsFieldGet;
@@ -62,7 +73,14 @@ export function verifyIrBackendLegality(
   };
 
   for (const p of func.params) checkType(p.type, undefined, `param ${p.name}`);
-  for (let i = 0; i < func.resultTypes.length; i++) checkType(func.resultTypes[i]!, undefined, `result ${i}`);
+  for (let i = 0; i < func.resultTypes.length; i++) {
+    if (
+      nativeNumberUndefined &&
+      nativeNumberUndefinedSignatureResultIsAdmitted(nativeNumberUndefined, func, backend, i, func.resultTypes[i]!)
+    )
+      continue;
+    checkType(func.resultTypes[i]!, undefined, `result ${i}`);
+  }
   for (const slot of func.slots ?? [])
     checkValType(backend, slot.type, errors, func.name, undefined, `slot ${slot.name}`);
 
@@ -70,7 +88,7 @@ export function verifyIrBackendLegality(
     const blockId = block.id as number;
     for (let i = 0; i < block.blockArgTypes.length; i++) checkType(block.blockArgTypes[i]!, blockId, `block arg ${i}`);
     for (const instr of block.instrs)
-      checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver, nativeNumberUndefined);
+      checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver, nativeNumberUndefined, nativeJsClass);
   }
   return errors;
 }
@@ -84,6 +102,7 @@ function checkInstr(
   checkType: (type: IrType, block: number | undefined, where: string, instr?: IrInstr) => void,
   fnctorResolver?: IrBackendFnctorResolver,
   nativeNumberUndefined?: NativeNumberUndefinedLegalityUse,
+  nativeJsClass?: NativeJsClassLegalityUse,
 ): void {
   const blockId = block.id as number;
   const reject = (reason: string): void => {
@@ -95,6 +114,11 @@ function checkInstr(
     });
   };
 
+  if (
+    instr.kind.startsWith("js.class.") &&
+    !(nativeJsClass && nativeJsClassInstructionIsAdmitted(nativeJsClass, func, backend, instr))
+  )
+    reject("native JavaScript class productive resources are not prepared");
   if (instr.resultType) checkType(instr.resultType, blockId, `${instr.kind} result`, instr);
 
   // A nominal fnctor type may cross this boundary only for WasmGC after a
@@ -116,7 +140,9 @@ function checkInstr(
 
   if (backend === "linear") {
     const reason =
-      nativeNumberUndefined && nativeNumberUndefinedInstructionIsAdmitted(nativeNumberUndefined, func, backend, instr)
+      (nativeNumberUndefined &&
+        nativeNumberUndefinedInstructionIsAdmitted(nativeNumberUndefined, func, backend, instr)) ||
+      (nativeJsClass && nativeJsClassInstructionIsAdmitted(nativeJsClass, func, backend, instr))
         ? null
         : linearInstrError(instr);
     if (reason) reject(reason);
@@ -131,7 +157,7 @@ function checkInstr(
   checkInstrEmbeddedTypes(instr, blockId, (type, block, where) => checkType(type, block, where, instr));
   for (const nested of nestedInstrBuffers(instr)) {
     for (const sub of nested)
-      checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver, nativeNumberUndefined);
+      checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver, nativeNumberUndefined, nativeJsClass);
   }
 }
 

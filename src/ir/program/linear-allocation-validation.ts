@@ -1,3 +1,4 @@
+import { nativeJsClassProgramEvidence } from "./native-js-class-allocation-validation.js";
 import { verifyNativeNumberUndefinedEvidence } from "../runtime/native-number-undefined-profile.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
@@ -230,6 +231,7 @@ export function validatePreparedIrLinearAllocationEvidence(
   const globals = nativeModuleGlobalEvidence(program);
   const reports = views.map(
     (module) =>
+      nativeJsClassProgramEvidence(program, module) ??
       verifyNativeNumberUndefinedEvidence(module, program.allocations) ??
       verifyNativeAllocationEvidence(module, program.allocations, globals),
   );

@@ -5,6 +5,7 @@ import { assertSourceClassPreparation } from "./class-preparation.js";
 import { AllocSiteRegistry, copyIrPreparationData } from "../analysis/alloc-registry.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
+import { assertPreparedIrJsClassDefinitions } from "./js-class-definition.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./input-contracts.js";
 import { assertPreparedSourceMap } from "./validation.js";
 import { assertIrRuntimeSupport } from "./runtime-support.js";
@@ -83,7 +84,7 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
   fields(
     captured,
     ["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"],
-    ["runtimeSupport", "sourceMap", "classes"],
+    ["runtimeSupport", "sourceMap", "classes", "jsClassDefinitions"],
   );
   fields(captured.inventory, ["sources", "classes", "allUnits", "terminalUnits"]);
   for (const values of [
@@ -113,6 +114,11 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
   if (Object.hasOwn(captured, "classes")) {
     dense(captured.classes!);
     assertSourceClassPreparation(captured.inventory, captured.classes!, captured.ir);
+  }
+  if (Object.hasOwn(captured, "jsClassDefinitions")) {
+    if (!captured.jsClassDefinitions) invalid("present native JS class definitions must contain complete DATA");
+    dense(captured.jsClassDefinitions);
+    assertPreparedIrJsClassDefinitions(captured.inventory, captured.jsClassDefinitions, captured.ir);
   }
   assertGlobalStorage(captured);
   if (Object.hasOwn(captured, "runtimeSupport")) {

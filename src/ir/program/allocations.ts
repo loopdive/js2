@@ -1,3 +1,7 @@
+import {
+  assertNativeJsClassAllocations,
+  type NativeJsClassAllocationContext,
+} from "./native-js-class-allocation-validation.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { assertNativeNumberUndefinedGcAllocations } from "./native-number-undefined-allocation-validation.js";
@@ -33,7 +37,7 @@ export function analyzeIrRuntimeSupportAllocations(
 /** Reconstruct the existing registry's read authority, then verify every final artifact. */
 export function assertPreparedIrProgramAllocations(
   program: Pick<PreparedIrProgram, "allocations" | "ir" | "runtimeSupport"> &
-    Partial<Pick<PreparedIrProgram, "runtime">>,
+    Partial<Pick<PreparedIrProgram, "runtime" | "abi" | "inventory" | "startup" | "derivedUnits">>,
 ): void {
   const snapshot = program.allocations;
   const invalid = (detail: string): never => {
@@ -98,6 +102,7 @@ export function assertPreparedIrProgramAllocations(
       requestedNamespaces.add(namespace);
     }
   }
+  if (assertNativeJsClassAllocations(program as NativeJsClassAllocationContext)) return;
   const analyze = (fn: IrFunction): void => {
     assertFinalAllocProvenance(fn, registry);
     analyzeEncoding(fn, registry);

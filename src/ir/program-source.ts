@@ -1,3 +1,9 @@
+import {
+  prepareSourceJsClassDefinitions,
+  assertSourceJsClassDefinitionsCurrent,
+  type SourceJsClassDefinitions,
+} from "./source-js-class-definition.js";
+import type { IrJsClassDefinition } from "./js-class-contracts.js";
 import { nativeNumberUndefinedSource } from "./native-number-undefined-source.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
@@ -12,7 +18,7 @@ import type { IrPreparedSourceClass } from "./program/class-preparation.js";
 import { nativeSynchronousVectorParameter, nativeSynchronousVectorResult } from "./program-sync-vectors.js";
 import { storageType } from "./native-module-vector-source.js";
 import { ts, assertCurrentProgramSources } from "../ts-api.js";
-import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
+import { sourceCompletionSignature } from "./source-function-completions.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import type { TypeOracle } from "../checker/oracle.js";
@@ -21,6 +27,8 @@ import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSourceGlobalRef 
 import { irUnitFuncRef, irUnitCallableBindingId } from "./callable-bindings.js";
 import {
   lowerFunctionAstToIr,
+  lowerNativeJsClassBodyToIr,
+  lowerNativeJsClassModuleToIr,
   typeNodeToIr,
   type IrFromAstResolver,
   type IrFunctionSourceMapContext,
@@ -244,6 +252,7 @@ function sourceMapStartupOccurrences(
       "exports",
       "invocation",
       "gaps",
+      ...(Object.hasOwn(plan, "jsClassStartup") ? ["jsClassStartup"] : []),
     ]);
     const file = identity.sourceFileBySourceId.get(plan.sourceId);
     const unitId = file && identity.moduleInitUnitIdBySourceFile.get(file);
@@ -257,6 +266,27 @@ function sourceMapStartupOccurrences(
     seenSources.add(plan.sourceId);
     if (unitId !== undefined) seenUnits.add(unitId);
     const population = new Set(identity.moduleInitPopulationBySourceFile.get(file));
+    if (plan.jsClassStartup) {
+      sourceMapCaptureFields(plan.jsClassStartup, ["schema", "definitions"]);
+      if (plan.jsClassStartup.schema !== "native-js-class-startup-v1")
+        sourceMapCaptureInvalid("unknown native class startup schema");
+      sourceMapCaptureArray(plan.jsClassStartup.definitions);
+      for (const row of plan.jsClassStartup.definitions) {
+        sourceMapCaptureFields(row, ["definitionId", "sourceClassId", "statementOrdinal", "span"]);
+        sourceMapCaptureFields(row.span, ["start", "end"]);
+        const node = identity.declarationByClassId.get(row.sourceClassId);
+        if (
+          !node ||
+          node.parent !== file ||
+          !population.has(node as ts.Statement) ||
+          file.statements[row.statementOrdinal] !== node ||
+          node.getStart(file) !== row.span.start ||
+          node.getEnd() !== row.span.end
+        )
+          sourceMapCaptureInvalid("native class startup differs from its actual original declaration occurrence");
+        occurrences.set(node, Object.freeze({ start: row.span.start, end: row.span.end }));
+      }
+    }
     const declarations = file.statements.flatMap((statement) =>
       ts.isVariableStatement(statement) ? [...statement.declarationList.declarations] : [],
     );
@@ -724,7 +754,38 @@ export function createPreparedSourceMapProjector(
   inventory: IrUnitInventory,
   request: IrSourceMapCaptureRequest,
 ): IrPreparedSourceMapProjector {
-  return createSourceMapProjector(inventory, buildPreparedSourceMapCatalog(sourceFiles, inventory, request));
+  const { sourceMap, project } = createSourceMapProjector(
+    inventory,
+    buildPreparedSourceMapCatalog(sourceFiles, inventory, request),
+  );
+  return Object.freeze({ sourceMap, project });
+}
+
+/** One original class node has distinct, independently indexed body and startup occurrences. */
+function sourceMapSnapshotForLoweringOwner(
+  node: ts.Node,
+  captured: SourceMapNodeSnapshot,
+  ownerUnitId: IrUnitId | undefined,
+  identity: ReturnType<typeof buildIrPlanningIdentityContext>,
+  occurrences: ReadonlyMap<ts.Node, IrSourceMapSpan> | undefined,
+): SourceMapNodeSnapshot {
+  if (ownerUnitId === undefined) return captured;
+  const owner = identity.unitByUnitId.get(ownerUnitId);
+  if (!owner) return sourceMapCaptureInvalid("lowering owner is absent from the authentic unit population");
+  const occurrence = occurrences?.get(node);
+  if (
+    owner.kind !== "module-init" ||
+    owner.sourceId !== captured.source.sourceId ||
+    identity.moduleInitUnitIdBySourceFile.get(captured.file) !== ownerUnitId ||
+    !ts.isClassDeclaration(node) ||
+    node.parent !== captured.file ||
+    !identity.moduleInitPopulationBySourceFile.get(captured.file)?.some((statement) => statement === node) ||
+    !occurrence ||
+    occurrence.start !== captured.span.start ||
+    occurrence.end !== captured.span.end
+  )
+    return captured;
+  return { ...captured, donorUnitId: ownerUnitId, donorSpan: occurrence };
 }
 
 /** Private real-preparation join; no caller-provided loose startup ranges. */
@@ -732,7 +793,9 @@ function createSourceMapProjector(
   inventory: IrUnitInventory,
   catalog: ReturnType<typeof buildPreparedSourceMapCatalog>,
   occurrences?: ReadonlyMap<ts.Node, IrSourceMapSpan>,
-): IrPreparedSourceMapProjector {
+): IrPreparedSourceMapProjector & {
+  projectForOwner(node: ts.Node, ownerUnitId: IrUnitId): IrSourceMapNodeProjection;
+} {
   const { sourceMap, identity } = catalog;
   const snapshots = new Map<ts.Node, SourceMapNodeSnapshot>();
   const seenDeclarations = new Set<ts.Node>();
@@ -827,32 +890,35 @@ function createSourceMapProjector(
       sourceMapCaptureInvalid("scanner class declaration is absent from actual source traversal");
   }
   sourceMapVerifyLexicalOwners(identity);
+  const project = (node: ts.Node, ownerUnitId?: IrUnitId): IrSourceMapNodeProjection => {
+    const captured = snapshots.get(node);
+    if (!captured) return sourceMapCaptureInvalid("foreign or synthetic node is not in the captured AST traversal");
+    if (
+      captured.file.text !== captured.source.projection.analyzedText ||
+      captured.file.fileName !== captured.source.originalFileName
+    )
+      return sourceMapCaptureInvalid("captured source text or filename changed");
+    for (let current: ts.Node | undefined = node; current; current = snapshots.get(current)?.parent) {
+      const snapshot = snapshots.get(current);
+      if (
+        !snapshot ||
+        current.pos !== snapshot.pos ||
+        current.end !== snapshot.end ||
+        current.kind !== snapshot.kind ||
+        current.parent !== snapshot.parent ||
+        (snapshot.parent !== undefined &&
+          ts.forEachChild(snapshot.parent, (child) => (child === current ? true : undefined)) !== true) ||
+        current.getStart(captured.file) !== snapshot.span.start
+      )
+        return sourceMapCaptureInvalid("captured node or lexical donor chain changed");
+    }
+    const selected = sourceMapSnapshotForLoweringOwner(node, captured, ownerUnitId, identity, occurrences);
+    return sourceMapProjectCapturedNode(node, selected, originalIndexes.get(captured.source.sourceId)!);
+  };
   return Object.freeze({
     sourceMap,
-    project(node: ts.Node): IrSourceMapNodeProjection {
-      const captured = snapshots.get(node);
-      if (!captured) return sourceMapCaptureInvalid("foreign or synthetic node is not in the captured AST traversal");
-      if (
-        captured.file.text !== captured.source.projection.analyzedText ||
-        captured.file.fileName !== captured.source.originalFileName
-      )
-        return sourceMapCaptureInvalid("captured source text or filename changed");
-      for (let current: ts.Node | undefined = node; current; current = snapshots.get(current)?.parent) {
-        const snapshot = snapshots.get(current);
-        if (
-          !snapshot ||
-          current.pos !== snapshot.pos ||
-          current.end !== snapshot.end ||
-          current.kind !== snapshot.kind ||
-          current.parent !== snapshot.parent ||
-          (snapshot.parent !== undefined &&
-            ts.forEachChild(snapshot.parent, (child) => (child === current ? true : undefined)) !== true) ||
-          current.getStart(captured.file) !== snapshot.span.start
-        )
-          return sourceMapCaptureInvalid("captured node or lexical donor chain changed");
-      }
-      return sourceMapProjectCapturedNode(node, captured, originalIndexes.get(captured.source.sourceId)!);
-    },
+    project: (node: ts.Node) => project(node),
+    projectForOwner: (node: ts.Node, ownerUnitId: IrUnitId) => project(node, ownerUnitId),
   });
 }
 
@@ -884,6 +950,7 @@ export interface IrProgramSourceInput {
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
 export interface IrProgramSourcePreparation {
+  readonly jsClassDefinitions?: readonly IrJsClassDefinition[];
   readonly classes?: readonly IrPreparedSourceClass[];
   readonly kind: "prepared";
   readonly sourceMap?: IrPreparedSourceMap;
@@ -908,6 +975,9 @@ export function captureTypedIrProgramInput(
   const startup = sourceDataField(source, "startup");
   const callables = sourceDataField(source, "callables");
   const sourceGlobals = sourceDataField(source, "globals");
+  const jsClassDefinitions = Object.hasOwn(source, "jsClassDefinitions")
+    ? sourceDataField(source, "jsClassDefinitions")
+    : undefined;
   const classes = Object.hasOwn(source, "classes") ? sourceDataField(source, "classes") : undefined;
   const sourceMap = Object.hasOwn(source, "sourceMap") ? sourceDataField(source, "sourceMap") : undefined;
   if (Object.hasOwn(source, "sourceMap") && sourceMap === undefined)
@@ -950,6 +1020,7 @@ export function captureTypedIrProgramInput(
     callables,
     globals,
     ...(classes === undefined ? {} : { classes }),
+    ...(jsClassDefinitions === undefined ? {} : { jsClassDefinitions }),
     ...(sourceMap === undefined ? {} : { sourceMap }),
     ...(runtimeSupport === undefined ? {} : { runtimeSupport }),
   });
@@ -962,6 +1033,7 @@ export function captureTypedIrProgramInput(
     globals: captured.data.globals,
     allocations: captured.allocations,
     ...(captured.data.classes === undefined ? {} : { classes: captured.data.classes }),
+    ...(captured.data.jsClassDefinitions === undefined ? {} : { jsClassDefinitions: captured.data.jsClassDefinitions }),
     ...(captured.data.sourceMap === undefined ? {} : { sourceMap: captured.data.sourceMap }),
     ...(captured.data.runtimeSupport === undefined ? {} : { runtimeSupport: captured.data.runtimeSupport }),
   };
@@ -1387,13 +1459,36 @@ function prepareSourceFunctionSignatures(
   nativeFamily: NativeAsyncSourceFamilies | undefined,
   signatures: Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>,
   bodyResults: Map<IrUnitId, IrType | null>,
+  jsCompletions: Set<IrUnitId>,
   diagnostic: SourceDiagnosticOwner,
   classes?: ReturnType<typeof prepareSourceClassPlans>,
+  jsClasses?: SourceJsClassDefinitions,
 ): void {
   for (const unit of inventory.terminalUnits) {
     diagnostic.active = unit.id;
     if (unit.kind === "module-init") continue;
     const declaration = identity.declarationByUnitId.get(unit.id);
+    const jsBody = jsClasses?.definitions
+      .flatMap((definition) => [
+        definition.constructor,
+        ...definition.members.map((member) => member.body),
+        ...definition.instanceElements.flatMap((field) => (field.initializer ? [field.initializer] : [])),
+      ])
+      .find((body) => body.unitId === unit.id);
+    if (jsBody) {
+      signatures.set(unit.id, {
+        params: [
+          jsBody.frame.environmentType,
+          jsBody.frame.thisType,
+          jsBody.frame.homeObjectType,
+          jsBody.frame.newTargetType,
+          ...jsBody.params,
+        ],
+        returnType: jsBody.result,
+      });
+      bodyResults.set(unit.id, jsBody.result);
+      continue;
+    }
     const classPlan = classes?.byUnit.get(unit.id);
     if (classPlan) {
       const shape = classPlan.data.shape;
@@ -1457,12 +1552,10 @@ function prepareSourceFunctionSignatures(
                     typeNodeToIr(returnNode, unit.displayName))
                   : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
                     (propagated ? lowerTypeToIrType(propagated.returnType) : null));
-    bodyResults.set(unit.id, result);
-    const callableResults = preparedIrProgramCallableResults({
-      funcKind: isAsync ? "async" : "regular",
-      resultTypes: result ? [result] : [],
-    });
-    signatures.set(unit.id, { params: params as IrType[], returnType: callableResults[0] ?? null });
+    const completion = sourceCompletionSignature(declaration, result, { checker, identity, policy }, jsClasses);
+    if (completion.classValueCompletion) jsCompletions.add(unit.id);
+    bodyResults.set(unit.id, completion.bodyResult);
+    signatures.set(unit.id, { params: params as IrType[], returnType: completion.callableResult });
   }
 }
 
@@ -1570,7 +1663,8 @@ function prepareStartupDirectCalls(
     diagnostic.active = plan.unitId;
     const ownerUnitId = plan.unitId;
     const visit = (node: ts.Node): void => {
-      if (ts.isFunctionLike(node)) return;
+      // Class bodies and deferred field initializers own their exact caller roots.
+      if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
       if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
         const target =
           callableResolver.resolveImportedFunctionTarget(node.expression) ??
@@ -1631,6 +1725,7 @@ export function prepareIrProgramSources(
   const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
+  const jsCompletions = new Set<IrUnitId>();
   const delayPlans: NativePromiseDelaySourcePlans = {
     promiseDelaysBySource: new Map(),
     promiseDelayPopulations: new Map(),
@@ -1639,9 +1734,40 @@ export function prepareIrProgramSources(
   };
   const { promiseDelaysBySource, certifiedDelays } = delayPlans;
   const diagnostic: SourceDiagnosticOwner = { active: undefined };
+  const nativeJsClasses = inventory.classes.length > 0 && input.policy.target !== "host";
+  const populateOriginalGlobals = () => {
+    for (const source of sourceFiles) {
+      for (const statement of source.statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
+          if (!ts.isIdentifier(declaration.name))
+            unsupported("whole-program binding pattern requires the existing destructuring producer");
+          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
+          if (inspected.kind !== "supported")
+            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
+          const global = inspected.identity;
+          diagnostic.active = global.storageOwnerUnitId;
+          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+          const binding: ModuleBindingGlobal = {
+            ownerUnitId: global.ownerUnitId,
+            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
+            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
+            globalName: declaration.name.text,
+            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
+            type: storageType(global, input.checker, unsupported),
+          };
+          const entry = { binding, identity: global };
+          globals.push(entry);
+          globalByDeclaration.set(declaration, entry);
+        }
+      }
+    }
+  };
+  let moduleResolver: ReturnType<typeof makeIrIdentityModuleBindingResolver>;
   try {
     const classes =
-      inventory.classes.length && input.policy.target !== "host"
+      !nativeJsClasses && inventory.classes.length && input.policy.target !== "host"
         ? prepareSourceClassPlans(input.checker, identity, (id) => {
             diagnostic.active = id;
           })
@@ -1658,7 +1784,7 @@ export function prepareIrProgramSources(
       sourceFiles,
       identityContext: identity,
     });
-    const moduleResolver = makeIrIdentityModuleBindingResolver(
+    moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
       {
         numberStorage: "f64",
@@ -1670,10 +1796,16 @@ export function prepareIrProgramSources(
       },
       identity,
     );
+    if (nativeJsClasses) populateOriginalGlobals();
+    if (nativeJsClasses) diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(input.entrySource);
+    const jsClasses = nativeJsClasses
+      ? prepareSourceJsClassDefinitions(input.checker, identity, globalByDeclaration)
+      : undefined;
     for (const sourceFile of sourceFiles) {
       diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFile);
       startup.push(
         buildIrModuleInitPlan({
+          ...(jsClasses ? { jsClassDefinitions: jsClasses.definitions } : {}),
           sourceFile,
           checker: input.checker,
           identityContext: identity,
@@ -1720,36 +1852,12 @@ export function prepareIrProgramSources(
       nativeFamily,
       signatures,
       bodyResults,
+      jsCompletions,
       diagnostic,
       classes,
+      jsClasses,
     );
-    for (const source of sourceFiles) {
-      for (const statement of source.statements) {
-        if (!ts.isVariableStatement(statement)) continue;
-        for (const declaration of statement.declarationList.declarations) {
-          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
-          if (!ts.isIdentifier(declaration.name))
-            unsupported("whole-program binding pattern requires the existing destructuring producer");
-          const inspected = moduleResolver.inspectDirectBinding(declaration.name);
-          if (inspected.kind !== "supported")
-            unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
-          const global = inspected.identity;
-          diagnostic.active = global.storageOwnerUnitId;
-          const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
-          const binding: ModuleBindingGlobal = {
-            ownerUnitId: global.ownerUnitId,
-            globalRef: irSourceGlobalRef(global.globalBindingId, declaration.name.text),
-            tdzGlobalRef: lexical ? irSourceGlobalRef(global.tdzBindingId, `${declaration.name.text}$tdz`) : null,
-            globalName: declaration.name.text,
-            tdzGlobalName: lexical ? `${declaration.name.text}$tdz` : null,
-            type: storageType(global, input.checker, unsupported),
-          };
-          const entry = { binding, identity: global };
-          globals.push(entry);
-          globalByDeclaration.set(declaration, entry);
-        }
-      }
-    }
+    if (!nativeJsClasses) populateOriginalGlobals();
     const closureInvocations = prepareSourceClosureInvocations(input.checker, sourceFiles);
     const closureCallableParameters = new Set(
       [...closureInvocations.values()].flatMap((plan) => plan.callbacks.map((row) => row.parameter.type)),
@@ -1769,29 +1877,64 @@ export function prepareIrProgramSources(
     populateSourceClassDirectCalls(classes, input.checker, identity, signatures, directCalls);
     prepareStartupDirectCalls(input.checker, sourceFiles, identity, startup, signatures, directCalls, diagnostic);
     const collectVectors = sourceVectorCollector(input.checker, directCalls, globals, nativeLinearVectors);
+    const resolveBindingFor = (
+      ownerUnitId: IrUnitId,
+      node: ts.Identifier,
+      writeValue?: ts.Expression,
+      allowPostStartupOmission = false,
+    ): ModuleBindingGlobal | undefined => {
+      let symbol = input.checker.getSymbolAtLocation(node);
+      if (!symbol) return undefined;
+      const imported = (symbol.flags & ts.SymbolFlags.Alias) !== 0;
+      if (imported) symbol = input.checker.getAliasedSymbol(symbol);
+      const declaration = symbol.valueDeclaration;
+      const global = declaration ? globalByDeclaration.get(declaration) : undefined;
+      if (!global) return undefined;
+      if (writeValue && (imported || !global.identity.mutable))
+        unsupported(`write to immutable module binding ${node.text}`);
+      return {
+        ...global.binding,
+        ownerUnitId: ownerUnitId,
+        ...(allowPostStartupOmission && postStartupUnits.has(ownerUnitId) && global.binding.type.kind !== "vec"
+          ? { omitTdzReadCheck: true as const }
+          : {}),
+      };
+    };
+    if (jsClasses)
+      for (const definition of jsClasses.definitions)
+        for (const body of [
+          definition.constructor,
+          ...definition.members.map((member) => member.body),
+          ...definition.instanceElements.flatMap((field) => (field.initializer ? [field.initializer] : [])),
+        ]) {
+          diagnostic.active = body.unitId;
+          const lowered = lowerNativeJsClassBodyToIr(jsClasses, body.unitId, {
+            ownerUnitId: body.unitId,
+            resolver: { resolveModuleBinding: (node, writeValue) => resolveBindingFor(body.unitId, node, writeValue) },
+            checker: input.checker,
+            oracle: input.oracle,
+            identityContext: identity,
+            allocRegistry: allocations,
+            directCalls,
+            ...(sourceMapProjector === undefined
+              ? {}
+              : {
+                  sourceMap: Object.freeze<IrFunctionSourceMapContext>({
+                    source: sourceMapSources!.get(definition.sourceId)!,
+                    donorUnitId: body.unitId,
+                    project: (node) => sourceMapProjector.projectForOwner(node, body.unitId),
+                  }),
+                }),
+          });
+          functions.push(lowered.main, ...lowered.lifted);
+        }
     for (const unit of inventory.terminalUnits) {
       diagnostic.active = unit.id;
       if (functions.some((fn) => fn.unitId === unit.id)) continue;
       const family = nativeFamily?.functions.get(unit.id);
       if (family) nativeFamily!.assertCurrent(unit.id);
-      const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
-        let symbol = input.checker.getSymbolAtLocation(node);
-        if (!symbol) return undefined;
-        const imported = (symbol.flags & ts.SymbolFlags.Alias) !== 0;
-        if (imported) symbol = input.checker.getAliasedSymbol(symbol);
-        const declaration = symbol.valueDeclaration;
-        const global = declaration ? globalByDeclaration.get(declaration) : undefined;
-        if (!global) return undefined;
-        if (writeValue && (imported || !global.identity.mutable))
-          unsupported(`write to immutable module binding ${node.text}`);
-        return {
-          ...global.binding,
-          ownerUnitId: unit.id,
-          ...(postStartupUnits.has(unit.id) && global.binding.type.kind !== "vec"
-            ? { omitTdzReadCheck: true as const }
-            : {}),
-        };
-      };
+      const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression) =>
+        resolveBindingFor(unit.id, node, writeValue, true);
       const resolver: IrFromAstResolver = {
         ...(classes ? { sourceClassShape: (node: ts.Expression) => classes.shapeAt(node) } : {}),
         sourceClosureInvocation: (expression) => closureInvocations.get(expression),
@@ -1835,6 +1978,38 @@ export function prepareIrProgramSources(
       }
       const source = identity.sourceFileBySourceId.get(unit.sourceId)!;
       const moduleInit = unit.kind === "module-init";
+      if (jsClasses && moduleInit) {
+        Object.assign(
+          resolver,
+          prepareSourceBuiltinResolvers(input, identity.moduleInitPopulationBySourceFile.get(source) ?? []),
+        );
+        const lowered = lowerNativeJsClassModuleToIr(source, jsClasses, {
+          ownerUnitId: unit.id,
+          funcName: unit.displayName,
+          checker: input.checker,
+          oracle: input.oracle,
+          identityContext: identity,
+          allocRegistry: allocations,
+          directCalls,
+          resolver,
+          moduleBindings: new Map(
+            globals
+              .filter((global) => global.identity.sourceId === unit.sourceId)
+              .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
+          ),
+          ...(sourceMapProjector === undefined
+            ? {}
+            : {
+                sourceMap: Object.freeze<IrFunctionSourceMapContext>({
+                  source: sourceMapSources!.get(unit.sourceId)!,
+                  donorUnitId: unit.id,
+                  project: (node) => sourceMapProjector.projectForOwner(node, unit.id),
+                }),
+              }),
+        });
+        functions.push(lowered.main, ...lowered.lifted);
+        continue;
+      }
       const declaration = moduleInit
         ? makeModuleInitSynthetic(identity.moduleInitPopulationBySourceFile.get(source) ?? [])
         : identity.declarationByUnitId.get(unit.id)!;
@@ -1853,6 +2028,8 @@ export function prepareIrProgramSources(
           ? nativeNumberUndefinedSource(input.checker, declaration, logicalVectorTypes, identity)
           : undefined;
       const lowered = lowerFunctionAstToIr(declaration, {
+        ...(jsClasses ? { nativeJsClassDefinitions: jsClasses } : {}),
+        ...(jsCompletions.has(unit.id) ? { nativeJsValueCompletion: declaration } : {}),
         ...(classes ? { classShapes: classes.lexicalShapes(declaration) } : {}),
         ...(numberUndefined === undefined ? {} : { nativeNumberUndefinedSource: numberUndefined }),
         booleanReturnBoundary: sourceBooleanAnyResult(input.checker, declaration) ? declaration : undefined,
@@ -1909,6 +2086,7 @@ export function prepareIrProgramSources(
       if (derivedSourceRows !== undefined) appendSourceMapDerivedRows(derivedSourceRows, lowered, identity, unit);
     }
     classes?.assertCurrent();
+    if (jsClasses) assertSourceJsClassDefinitionsCurrent(jsClasses, input.checker, identity);
     nativeFamily?.assertCurrent();
     if (nativeDelay)
       validateNativePromiseDelaySourceLowering(
@@ -1923,6 +2101,7 @@ export function prepareIrProgramSources(
         : finishSourceMapCatalog(sourceMapProjector, derivedSourceRows!, derivedUnits);
     const prepared: IrProgramSourcePreparation = {
       kind: "prepared",
+      ...(jsClasses ? { jsClassDefinitions: jsClasses.definitions } : {}),
       ...(classes ? { classes: classes.plans.map((row) => row.data) } : {}),
       ...(sourceMap === undefined ? {} : { sourceMap }),
       inventory,

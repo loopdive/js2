@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { verifyOrdinaryNumberUndefinedEvidence } from "./ordinary-number-undefined-profile.js";
 import type { IrModule } from "../core/nodes.js";
 import type { AllocRegistrySnapshot } from "../analysis/contracts/allocations.js";
 import type { AllocationEvidenceCheck } from "../analysis/allocation-evidence/contracts.js";
@@ -19,6 +20,8 @@ export function verifyNativeNumberUndefinedEvidence(
   module: IrModule,
   registry: AllocRegistrySnapshot,
 ): AllocationEvidenceCheck | undefined {
+  const ordinary = verifyOrdinaryNumberUndefinedEvidence(module, registry);
+  if (ordinary !== undefined) return ordinary;
   try {
     if (!hasNativeNumberUndefinedPopulation(module)) return undefined;
     assertNativeNumberUndefinedModulePrelude(module, registry);

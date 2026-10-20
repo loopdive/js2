@@ -1,10 +1,14 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  nativeNumberUndefinedPhysicalSignature,
+  type NativeNumberUndefinedSignatureUse,
+} from "./program-number-undefined-resources.js";
 import { buildNumberRemainderBody } from "../wasm/physical/number-remainder.js";
 import type { NativeNumberFormatResourceRow } from "../backend/wasmgc/resources/native-number-format.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { Instr, ValType, WasmFunction } from "./types.js";
 import type { PreparedLinearBodyBindings } from "../backend/linear/program/memory.js";
-import type { ProgramAbiMap } from "./program-abi.js";
+import { ProgramAbiMap } from "./program-abi.js";
 import type { IrBindingId } from "../shared/contracts/ir-identity.js";
 import type { IrUnitId } from "./identity.js";
 import type { IrFuncRef, IrGlobalRef } from "./nodes.js";
@@ -12,6 +16,13 @@ import type { IrLowerResolver } from "./lower.js";
 import { irCallableBindingKey } from "./callable-bindings.js";
 import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import type { IrType } from "./core/types.js";
+import type { NativeReconciliationContext } from "./program-consumer.js";
+
+import type { AsyncFrameSetup } from "./program/async-frame-setup.js";
+import type { PreparedIrProgram, PreparedIrAbiEntry } from "./program/prepared-contracts.js";
+import type { PhysicalExport } from "./program-physical-plan.js";
+import type { PhysicalImportedFunction } from "./program-physical-plan.js";
 import type { PhysicalSignatureType } from "./program-physical-plan.js";
 import { preparedIrDataMismatch } from "./program/data.js";
 import type { PhysicalSetupPlan } from "./program-physical-plan.js";
@@ -66,42 +77,6 @@ export function defaultInit(type: ValType): Instr[] {
 }
 
 /** Publish the already reserved startup adapter without allocating a new slot. */
-export function fillStartupAdapter(
-  startAdapter: FunctionReservation | undefined,
-  plan: PhysicalSetupPlan,
-  slots: ReadonlyMap<IrUnitId, FunctionReservation>,
-  reservations: PhysicalModuleReservations,
-  onceGuard?: GlobalReservation,
-): void {
-  if (!startAdapter) return;
-  const body = plan.startup.units.map((unitId): Instr => {
-    const target = slots.get(unitId);
-    if (!target) emissionFailed(`startup unit ${unitId} has no reserved slot`);
-    return { op: "call", funcIdx: target.handle };
-  });
-  if (onceGuard) {
-    const index = reservations.physicalIndex(onceGuard);
-    reservations.fillGlobal(onceGuard, [{ op: "i32.const", value: 0 }]);
-    body.unshift(
-      { op: "global.get", index },
-      { op: "i32.const", value: 2 },
-      { op: "i32.eq" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }], else: [] },
-      { op: "global.get", index },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }], else: [] },
-      { op: "i32.const", value: 1 },
-      { op: "global.set", index },
-    );
-    body.push({ op: "i32.const", value: 2 }, { op: "global.set", index });
-  }
-  reservations.fillFunction(startAdapter, { locals: [], body });
-  if (plan.startup.adapter === "wasm-start") reservations.defineStart(startAdapter);
-  else if (plan.startup.adapter === "deferred-export")
-    reservations.defineExport("publication:startup", "__module_init", startAdapter);
-  else if (plan.startup.adapter === "wasi-start-export")
-    reservations.defineExport("publication:startup", "_start", startAdapter);
-  else emissionFailed(`startup adapter ${plan.startup.adapter} has executable units but no materialization`);
-}
 
 /** Resolve body references only through this transaction's reserved resources. */
 export interface NativeVectorCarrierProducers {
@@ -280,13 +255,17 @@ export function physicalSignatureConverter(
   formatterScratch: NonNullable<PhysicalSetupPlan["nativeStrings"]>["formatterScratch"],
   reservations: PhysicalModuleReservations,
   sourceClosures?: NativeSourceClosureEmission,
+  numericSignature?: NativeNumberUndefinedSignatureUse,
 ) {
   const physicalSignature = (signature: {
     readonly params: readonly PhysicalSignatureType[];
     readonly results: readonly PhysicalSignatureType[];
   }) => {
+    const numeric = numericSignature && nativeNumberUndefinedPhysicalSignature(numericSignature, signature);
+    if (numeric) return numeric;
     const convert = (types: readonly PhysicalSignatureType[]): ValType[] =>
       types.map((type) => {
+        if (type.kind === "dynamic") emissionFailed("logical class dynamic signature has no issued current carrier");
         if (type.kind === "closure" || type.kind === "callable" || type.kind === "boxed") {
           const value = sourceClosures && nativeSourceClosureValueType(reservations, sourceClosures, type);
           if (!value) emissionFailed("logical callable signature has no accepted source type owner");
@@ -337,6 +316,19 @@ export function bindPhysicalAbi(
         space,
         index: reservations.physicalIndex(token),
       });
+    }
+  }
+  if (plan.nativeJsClass) {
+    for (const bindingId of plan.nativeJsClass.bindingIds) {
+      const token = resourcesByBinding.get(bindingId);
+      if (
+        token?.kind === "function" &&
+        plan.nativeJsClass.callableKeys.some((key) => functionsByKey.get(key) === token)
+      )
+        abi.bindFinalIndex(bindingId, { space: "function", index: reservations.physicalIndex(token) });
+      else if (token?.kind === "global" && plan.nativeJsClass.globalKeys.some((key) => globalsByKey.get(key) === token))
+        abi.bindFinalIndex(bindingId, { space: "global", index: reservations.physicalIndex(token) });
+      else emissionFailed("class ABI lost its exact issued physical resource");
     }
   }
   for (const imported of plan.importedFunctions) {
@@ -471,4 +463,160 @@ export function fillPhysicalScalarResources(
     if (!token || token.kind !== "function") emissionFailed("number remainder reservation vanished before fill");
     context.reservations.fillFunction(token, buildNumberRemainderBody(resource.earlyMagnitude));
   }
+}
+
+export function reserveNumberRemainders(
+  plan: PhysicalSetupPlan,
+  context: NativeReconciliationContext,
+  supportFunctions: Map<WasmFunction, FunctionReservation>,
+): void {
+  const { reservations, functionsByKey, resourcesByBinding } = context;
+  for (const resource of plan.numberRemainders) {
+    const token = reservations.reserveFunction(resource.bindingId, resource.symbol, {
+      params: [...resource.params],
+      results: [...resource.results],
+    });
+    if (functionsByKey.has(resource.referenceKey) || resourcesByBinding.has(resource.bindingId))
+      emissionFailed("number remainder has competing physical owners");
+    functionsByKey.set(resource.referenceKey, token);
+    resourcesByBinding.set(resource.bindingId, token);
+    supportFunctions.set(token.object, token);
+  }
+}
+
+export function appendPhysicalImports(
+  imports: readonly PhysicalImportedFunction[],
+  importedFunctions: PhysicalImportedFunction[],
+): void {
+  for (const imported of imports) {
+    const previous = importedFunctions.find((row) => row.referenceKey === imported.referenceKey);
+    if (previous) {
+      if (
+        previous.bindingId !== imported.bindingId ||
+        preparedIrDataMismatch(previous.params, imported.params) !== undefined ||
+        preparedIrDataMismatch(previous.results, imported.results) !== undefined
+      )
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          "canonical host import contradicts existing physical import",
+        );
+    } else
+      importedFunctions.push({
+        bindingId: imported.bindingId,
+        referenceKey: imported.referenceKey,
+        module: imported.module,
+        field: imported.field,
+        params: imported.params,
+        results: imported.results,
+      });
+  }
+}
+
+export function scalar(type: IrType): ValType | undefined {
+  return type.kind === "val" ? type.val : undefined;
+}
+
+export function numeric(type: ValType): boolean {
+  return type.kind === "i32" || type.kind === "i64" || type.kind === "f32" || type.kind === "f64";
+}
+
+export function typeLabel(type: IrType): string {
+  return type.kind === "val" ? type.val.kind : type.kind;
+}
+
+export function appendAsyncPhysicalResources(
+  asyncFrames: AsyncFrameSetup | undefined,
+  importedFunctions: PhysicalImportedFunction[],
+  exports: PhysicalExport[],
+): void {
+  for (const frame of asyncFrames?.frames ?? []) {
+    appendPhysicalImports(frame.imports, importedFunctions);
+    exports.push(
+      ...frame.callbacks.map((row) => ({
+        externalName: row.externalName,
+        targetBindingId: row.targetBindingId,
+        space: "function" as const,
+      })),
+    );
+  }
+}
+
+export function canonicalEntry(
+  entries: ReadonlyMap<IrBindingId, PreparedIrAbiEntry>,
+  id: IrBindingId,
+): PreparedIrAbiEntry | undefined {
+  const seen = new Set<IrBindingId>();
+  let current = entries.get(id);
+  while (current && current.plan.slotPolicy === "alias" && !seen.has(current.plan.id)) {
+    seen.add(current.plan.id);
+    current = entries.get(current.plan.aliasOf);
+  }
+  return current;
+}
+
+export function publishPhysicalExports(
+  plan: PhysicalSetupPlan,
+  abi: ProgramAbiMap,
+  context: NativeReconciliationContext,
+): void {
+  const { module, reservations, resourcesByBinding } = context;
+  const exportNames = new Set<string>(module.exports.map((entry) => entry.name));
+  for (const exported of plan.exports) {
+    const final = abi.resolveFinalIndex(exported.targetBindingId);
+    if (!final || final.space !== exported.space) {
+      emissionFailed(`export ${exported.externalName} does not resolve to a bound ${exported.space}`);
+    }
+    const reserved = resourcesByBinding.get(abi.canonicalId(exported.targetBindingId));
+    if (
+      !reserved ||
+      reserved.kind === "type" ||
+      reservations.physicalIndex(reserved) !== final.index ||
+      (reserved.kind === "function" || reserved.kind === "function-import" ? "function" : "global") !== final.space
+    ) {
+      emissionFailed(`export ${exported.externalName} contradicts its canonical physical reservation`);
+    }
+    if (exportNames.has(exported.externalName)) emissionFailed(`export ${exported.externalName} is declared twice`);
+    exportNames.add(exported.externalName);
+    reservations.defineExport(`publication:export:${exported.externalName}`, exported.externalName, reserved);
+  }
+}
+
+export function reconcileInvocationBindings(
+  plan: PhysicalSetupPlan,
+  functions: readonly FunctionReservation[],
+  { functionsByKey, resourcesByBinding }: NativeReconciliationContext,
+): void {
+  for (const binding of plan.nativeInvocation?.bindings ?? []) {
+    const token = functions.find((row) => row.key === binding.resourceKey);
+    if (
+      !token ||
+      functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
+      resourcesByBinding.has(binding.entry.id)
+    )
+      emissionFailed("invocation semantic binding lacks its unique actual resource");
+    functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
+    resourcesByBinding.set(binding.entry.id, token);
+  }
+}
+
+export function sealedPhysicalProgramAbi(program: PreparedIrProgram): ProgramAbiMap {
+  const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
+  for (const entry of program.abi.entries) abi.plan(entry.plan);
+  abi.sealPlan();
+  return abi;
+}
+
+export function activeEmissionResolver(resolver: IrLowerResolver, assertEmissionActive: () => void): IrLowerResolver {
+  assertEmissionActive();
+  return Object.fromEntries(
+    Object.entries(resolver).map(([key, value]) => [
+      key,
+      typeof value === "function"
+        ? (...args: unknown[]) => {
+            assertEmissionActive();
+            return Reflect.apply(value, resolver, args);
+          }
+        : value,
+    ]),
+  ) as IrLowerResolver;
 }

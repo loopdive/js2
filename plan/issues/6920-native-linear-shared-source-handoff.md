@@ -4,7 +4,7 @@ title: "Native Linear numeric-vector shared source handoff and integration plan"
 status: in-progress
 sprint: current
 created: 2026-10-08
-updated: 2026-10-14
+updated: 2026-10-15
 priority: high
 horizon: l
 feasibility: hard
@@ -19,6 +19,7 @@ loc-budget-allow:
   - src/ir/program-source.ts
   - src/ir/from-ast.ts
   - src/ir/identity.ts
+  - src/ir/runtime/verify.ts
 func-budget-allow:
   - src/ir/program-physical-plan.ts::planPhysicalSetup
   - src/ir/program-consumer.ts::materializePhysicalProgram
@@ -27,6 +28,8 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerExprUnchecked
   - src/ir/program-source.ts::prepareIrProgramSources
+  - src/ir/passes/rename-operands.ts::renameInstrOperands
+  - src/ir/runtime/verify.ts::verifyInstrTypeRules
 import-cycles-allow:
   - ir->backend: 28 # 2026-10-14 (#6920): three measured native Number/Undefined physical reserve/fill/completion recipe joins remain honest mixed IR/backend debt
 language_feature: arrays
@@ -5462,3 +5465,1185 @@ typing,264 public integration cases and final helper controls are actual separat
 proofs. Normal signed commit/push and exact held PR6662 readback remain the final
 publication steps. This does not establish class runtime, compiler retirement,
 full conformance or main delivery.
+
+
+## 2026-10-14 published finalizer and native class composition
+
+The 17-file finalizer checkpoint is signed and published as
+`a4d4c99ccc9cd4fe27bd6dba91180fc575616529` on the existing held PR6662.
+Normal commit and push hooks exit0; the seven changed root files pass
+152/562/72/62/52/35/53 cases, respectively (988 total). Exact fork/PR head,
+title/body, HOLD and null auto-merge readbacks are preserved. Independent
+public integration remains264/264 on the frozen2020-source checkpoint;
+this is not a validation claim for later class source changes.
+
+The user's shared-seam takeover is now concretely received for the additive
+original-SourceFile no-array analysis factory at
+`fdc28d49870a8ab2ba947cb7232ff1965ed351c5`, and the fifteen bounded class
+physical hooks, seven new production leaves and two tests at
+`ff96e62852f653fa521ce74584b2b2fcc2c2c24e`. Concurrent foreign claims,
+Session C vector representation and A default-routing/queue ownership
+remain held; all original allocator/constructor/vector/source algorithms
+and ordinary checks are retained. Three isolated agents implement original
+source/body/startup, independent allocation replay/topology, and both backend
+resource recipes in parallel.
+
+This receiving integration starts from the published finalizer and adopts
+exactly the frozen A20 API/typed-consumer dependencies and limited B12
+allocation component, with all32 preimages recorded. Actual joined typing
+passes2029 source files,19 explicit test roots,30 resolved tests/helpers and
+2308 total inputs with excludes[]. The limited allocation controls pass14/14
+with natural exit0 on those unchanged joined source bytes. These are hostile
+and absence controls, not positive class preparation or execution evidence.
+
+A's actual original body, module initializer, startup, explicit NumberF64/
+Boolean box sites and canonical global-domain realm bindings require a new
+sealed capsule before adoption. B's independent full original/selected/support
+ABI/inventory/startup replay and logical aggregate child/root/lifetime/alias
+contracts likewise require a successor seal. C must derive the complete finite
+literal-key domain from actual operation occurrences, preserve immutable
+property snapshots, and issue real populated realm/error/helper/table/memory
+resources from canonical reservations. No per-get allocation, caller report
+or invented allocation site can establish these obligations.
+
+The master acceptance audit retains all27 explicit requirements in the IR-only
+retirement, whole-program ownership and shared Linear program issues. Direct
+visitor call text remains in237 source files; this proves deletion incomplete
+without pretending text search proves dynamic reachability. The qualified
+inventory remains graph-incomplete and carries unmigrated work. Whole-program
+semantics, direct-handler/optimization retirement, complete conformance and
+verified upstream-main delivery remain required before migration completion.
+
+## 2026-10-14 original class source and allocation successors received
+
+The root receives the frozen original-source capsule7bb6 with34production
+paths and two tests. Exactly15production changes and two new tests enter
+the allocation and physical receivers after every receiving preimage and
+frozen incoming hash is verified. Their measured source counts are2030
+and2039; the physical receiver authenticates54read-only dependency paths.
+The original-capsule50/50 source/contract controls and full2025-source typing
+are source preparation evidence, not class PreparedIR or execution credit.
+
+The allocation successor3a4fd independently verifies original, selected and
+support ABI/inventory/startup domains and conservative root/child/lifetime
+topology. Its15/15 hostile/absence controls and2027-source typing pass.
+Real source Boolean branding, dynamic widening and direct class-unit call
+refusal still require bounded correction and genuine preparation probes.
+
+Root relocates all20portable binding factory declarations and13class DATA
+declarations to canonical core owners, with exact function bodies and schema.
+All22compatibility export bindings retain identity; nine type-import readers
+erase identically. Actual2031-source graph and typing pass19explicit roots,
+30resolved helpers,2310total inputs with empty exclusions. The graph remains
+incomplete with1637all-source debt modules; no migration completion claim.
+
+The source style successor9d755 has39exact paths,50/50 natural tests and full
+2025-source typing, format/lint/dialect/neutrality/whitespace exit0. All85old
+kind verdicts and ratchets remain exact DATA; precisely15new JS op rows are
+measured. Root captures the frozen capsule and adopts its17changed inputs
+while preserving canonical core import overlays. The formatted runtime
+verifier forwarding delta is+68 and awaits a bounded exact grant review.
+
+The new startup file currently mixes TypeScript SourceFile preparation and
+portable startup validation in an activated program owner. It must actually
+split at that ingress boundary; marking the mixed file clean is prohibited.
+The two other new source ingress leaves remain truthful unmigrated frontend
+debt. Later2034-source integration is not qualified by older2031results.
+
+Six older callable-fixture typing diagnostics are byte-equal on published2020
+and canonical2031. A finite two-test migration preserves default route, exact
+ownership/final slots and runtime expectations while adding the imported
+source discriminant, observing the real publish return and narrowing actual
+support bindings. Natural full-file tests and typing remain required.
+
+## 2026-10-14 bounded verifier and startup boundary
+
+This issue grants src/ir/runtime/verify.ts exactly68 additive lines: one
+pure class validator import,31 exhaustive operand uses for15 operations,
+15 checked status entries, one class support-reference permission arm and
+20 forwarding/error joins. Removing those68 additions reconstructs the
+entire original122476-byte verifier, SHA2562d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b.
+Full new class validation algorithms stay in the extracted runtime leaf;
+old verifier algorithms, unknown-kind refusal and catches remain exact.
+This is an exact owner-hook grant, not an increased shared baseline.
+
+Receiving record b81ba2f5b828dfd9507a558cb94c5c62bdc51f18 also bounds
+three startup split paths and one completed class-global presentation hook.
+The source startup producer and portable assertion retain exact bodies;
+only source ingress placement, caller import and canonical type imports
+change. Source preparation now lives in the existing mixed source leaf.
+Actual graph, typing and source controls must qualify the final split.
+The backend hook cannot permit a values-only pack, public dynamic export
+or unpopulated realm/error resources. No broader callable/type exemption
+is received. Earlier original/style/source tests remain separate epochs.
+
+## 2026-10-14 class startup split qualification
+
+The actual split passes50/50 source/contract controls and full2034-source
+typing with21explicit test roots,33resolved helpers and2316total inputs,
+empty exclusions. Independent syntax proof retains both relocated function
+bodies exactly, every old non-import source declaration, and erased planner
+code after its single import rewire. The graph first fails on one remaining
+startup DATA import: all90diagnostic paths share that same old compatibility
+edge. Its exact type-import amendment is received at
+7fce072ebc6db50af9cf4519ca27a6cd2d8f213c; no interface fields or emitted
+code change. The new full graph exits0 with2034classified source modules,
+zero errors/unclassified files and1639debt modules. Graph/architecture
+completion remains false. The canonical startup assertion is now clean
+ir-program; the source producer remains mixed frontend migration debt.
+
+The two legacy callable fixtures pass26/26 whole-file tests naturally with
+real runtime/ownership/slot checks intact. Their migrated2034-source typing
+plus2explicit roots passes2286resolved inputs with empty exclusions.
+No production routing option or scalar assertion changes. The final line
+wrapping affects one assertion only; formatting and Biome lint both exit0.
+
+## 2026-10-14 exact exhaustive forwarding function grants
+
+Independent current-body proof permits only the existing operand rename
+and type-check owner forwarding extensions. renameInstrOperands adds16raw
+lines enumerating all15class kinds and delegating to the isolated class
+operand helper. verifyInstrTypeRules adds20raw lines (20budget-counted against actual299-line base)
+for the same15kind dispatcher and pure class validator error join. Removing
+only these additions reproduces both complete original function bodies
+byte-exactly. This issue grants only those named forwarding functions;
+unknown-kind handling and old algorithms remain intact. The new326-line
+source preparation function receives no budget exception and must split
+into actual coherent helpers within its existing source owner.
+
+Allocation successor031986 is captured as12exact files; four changed inputs
+are adopted into root and the physical receiver after every previous hash
+is verified, preserving canonical type imports in root. Final30/30 owned
+controls, actual2030-source typing plus3roots/2281inputs, Biome and formatting
+pass. The80combined source/contract controls are a prior separate epoch.
+The30controls include genuine source-free GC codec/re-encode/replay and
+both standalone/WASI preparation projections. No class execution or Linear
+sealed preparation credit follows. The received implicit-error catalogue
+313740 remains a separate next epoch. Source-initializer conditional probes
+remain located refused; all failed source epochs are retained.
+
+## 2026-10-14 joined allocation/source checkpoint qualification
+
+After receiving031986, all five joined source, contract, allocation and
+legacy callable files pass106/106 naturally (handle1934), with no failures
+or unhandled errors. Full current2034-source typing and21explicit roots
+exit0 (handle7343), exclusions empty. Ten of eleven normal structural/style
+gates pass on pinned source/policy/test bytes; the function gate correctly
+refuses three new large source/replay functions (326/349/308 lines). These
+receive actual helper partition work, no blanket allowance. Existing old
+forwarding bodies remain exact after removing16/20new dispatcher lines.
+
+The C receiver independently prepares the original sealed control fixture
+on all four GC/Linear standalone/WASI projections under031986. This proves
+typed preparation only. A distinct empty-member/local-alias fixture has
+reference JS result1 but fails original source custody on all four profiles
+before C. Both packets remain separate. The actual source-owner defect is
+under investigation; no fixture refusal, nominal cast or runtime success
+is fabricated. Public class execution and implicit-error resources remain
+incomplete. Three parallel agents continue on source custody/invocation,
+logical error demand/replay, and C physical/realm/presentation resources.
+
+## 2026-10-14 B vector fixture receive requested by current source review
+
+The passive watcher discovers exact PR6583 comments6171434282/6172091507.
+The current C vector PR6666 head is independently read back as6ad26e48,
+branch claude/c-a1-vector-representation in loopdive/js2. Its genuine
+LinearVecLowering now requires the i32 pointer carrier field. Two B-owned
+fixture helpers omit it. Root prepares exactly those two field corrections
+in a fresh isolated contribution based on that frozen C head, preserving
+all source, cases, timers, spies and resets. Actual full runtime and explicit
+test-root typing are required;30declaration sites are not a measured44pass
+result. The separately reported five conflicts with native PR6662 are
+retained as composition work; this fixture contribution cannot qualify
+that source merge or remove HOLD. No new coordination comment is posted.
+
+## 2026-10-14 original source checker phase custody repair
+
+The authentic empty-member/localalias source failure is reproduced on all
+four profiles. Only the original alias Identifier and ConditionalExpression
+flags change:0to268435456, TypeScript NodeFlags.TypeCached. The local primary
+checker source confirms its lazy getTypeOfExpression cache write. The source
+owner now resolves original expression facts through the same genuine checker
+before all-fields/all-flags custody capture. No flags are masked, reset or
+permitted to change afterward; hostile Const/TypeCached changes still refuse.
+Frozen2-path successor2f58 has55/55 controls and full2025-source typing.
+Root captures it immutably and transfers exact raw bytes to both receivers
+after their live tests finish, with all54C dependencies reverified.
+
+Root independently moves the exact42livecapture statements into a coherent
+private helper in the existing source file. Removing the helper and replacing
+its one call reconstructs the entire previous source driver; all other
+imports/declarations/custody/checker code are exact. No source function
+budget grant is added. This extraction passes50/50 prior controls, full2034
+source typing with21roots, formatting and project lint. The exact two checker
+phase insertions then compose without touching the extraction or canonical
+startup producer. Actual joined111/111 across5full files and full2034-source
+21-root typing pass. This is logical/source preparation evidence, not native
+class execution. Both first-class alias and primitive constructor-return/store
+fixtures now sourceprepare on all4profiles; the old failure packets remain.
+
+### 2026-10-14: error/allocation checkpoint integrated; independent value replay received
+
+Received the frozen 18-file B logical class error/allocation successor
+`a8c5af5f588b614fb8b8f20c6d2dd8d5050c9c232a607737e0e94a18ae478a2b`.
+Root integration preserves canonical type imports, source custody, capture
+extraction and startup ownership. Exact joined controls pass 129/129 across
+five whole files; full TS7 covers 2,035 source files plus 21 explicit test
+roots (2,316 resolved inputs, no excludes), and all 11 static checks pass.
+The two previously overlong class verification functions now fit through
+coherent helper extraction; no blanket function allowance was added.
+Evidence: `.tmp/class-integration/b-error-successor-a8c5/root-qualification.json`.
+C adopted the same immutable successor at an acknowledged safe point; all
+60 dependency hashes match. Physical class/error execution is still pending.
+
+The user-authorized shared-seam takeover now receives bounded pure
+class value analysis and a separate independent equation checker, plus the
+existing native-only preparation/validation hooks. A owns the producer,
+shared types, sole test and orchestration; B owns the checker. Unknown
+domains remain unknown and do not authorize scalar public projection.
+Public bridges, ordinary caller ABI expansion, constructor defaults and
+mutable dynamic binding transport remain explicitly unresolved.
+Exact scope: `.tmp/class-value-domain-receive/exact-scope.json`.
+
+Published ready PR **test(ir): align vector fixtures with carrier and emitter
+contracts** [PR6671](https://github.com/loopdive/js2/pull/6671), exact signed
+head `ae5c99c1842650d14814efe6f23fc9f7b5060b86`, targeting C's existing
+vector feature branch, retaining HOLD. The two test fixtures and qualified
+evidence are the only changed files. 44/44 controls and the donor's full
+1,915-source typing census passed; normal push succeeded and the public
+head/base/HOLD state was read back. No production source changed in that PR.
+The five actual PR6662/PR6666 composition conflicts remain separate work.
+
+### 2026-10-14: evaluated-value invocation composed and full preparation measured
+
+Captured A's immutable seven-file invocation successor
+`2e9558b77d761275fc9d88ef1295745691572eb03fde672f4a65eb19cc483a1c`.
+Compose only its two actual method signature lines into the root source
+class owner; preserve the capture helper, source custody and startup body.
+The remaining files keep the canonical dialect type-import overlay.
+Root joined controls pass157/157 across five whole files, full source typing
+(2,035 source files,21 explicit roots,2,316 resolved inputs,exclude[]) and
+all11 static checks pass. Evidence:
+`.tmp/class-integration/a-invoke-successor-2e95/root-qualification.json`.
+
+The distinct genuine full-preparation/codec probe covers five invocation
+fixtures across four backend/target profiles.8/20 prepare and round-trip
+the exact codec: Boolean identity and actual Undefined completion.8/20
+addition/getter-snapshot cases return located invariant unknown-function-ref
+because `__ir_dyn_add` has no canonical native callable declaration; the
+actual source emits the existing runtime reference and its implementation
+still belongs to legacy CodegenContext generation in `src/codegen/dyn-ops.ts`
+and legacy `src/ir/integration.ts` resolution. A declaration by name alone
+cannot authorize this as a native prepared provider.4/20 throwing-argument
+cases raise the preserved `instruction intrinsic` class allocation-profile
+refusal. Their genuine numeric throw conversion/control must be analyzed
+without adding a blanket intrinsic/opcode admission. These12 cases remain
+required work; source-level positives and157 logical controls do not prove
+whole-class execution. No class runtime credit.
+
+C adopted the immutable seven-file successor at its safe point, preserving
+all60 dependency hashes and its own physical code. Its prior35 component
+controls are an earlier source epoch. A adopted the raw frozen B production17
+as read-only dependencies (omitting B's test) before new analysis hooks;
+B adopted only A's immutable7,238-byte types port, not producer code.
+The exact value-domain receipt is now published with normal hooks at
+`bbbf5e913afd0fd9da786abc7ca988c98d9c3505`; source indices unchanged.
+
+### 2026-10-14: received the unresolved dynamic signature reader
+
+C's current physical signature draft carries genuine logical support refs
+and dynamic values until authenticated reservation. Its full TS7 exposed
+one held reader: `src/compiler/ir-program-presentation.ts::physicalTypes`.
+Received exactly the additional unresolved `dynamic` alternative returning
+undefined, retaining every existing support lookup and scalar comparison;
+this grants no dynamic public export or callable admission. Whole original
+reader preimage70,868bytes/SHA74affb376216c95c435713a510df9377f985bdf4f4c0d99cb6d460016ef931f0.
+The signed receipt is published with normal hooks at
+`e7c517d1c4cc43b42fe1aa1b22b1709d1737f540`; fresh remote and unchanged
+source index verified. Concurrent unrelated issue reservations6980–6982
+are preserved. The first prepared receipt stopped on a fresh CAS check
+before push; its evidence is retained, then the same scope was rebuilt
+on the new parent. Root applies this reader only with the captured genuine
+physical signature union, since the old union has no dynamic member.
+Exact scope: `.tmp/class-dynamic-signature-reader-receive/exact-scope.json`.
+
+The numeric-throw trace additionally proves actual `js.number.box`v1 →
+externref followed by real throw and an unreachable terminator, despite
+an annotated f64 function result. The independent value-analysis type
+port now distinguishes empty normal completion from nonreturning functions
+with its single `normalCompletion:boolean` field; B adopted the immutable
+7,366byte port48a169 at an acknowledged safe point. This changes no PreparedIR
+schema, opcode or ABI. Its own least fixed-point replay remains unqualified.
+
+### 2026-10-14: canonical pure JS tag identities required by class analysis
+
+The new independently implemented value analyses currently import
+`JS_TAG_IDS` from ir-runtime. Actual policy forbids ir-analysis/core edges
+to ir-runtime or runtime-contracts. The existing JsTag enum/unbox-kind/ABI
+alias leaf is import-free and portable, so receive its whole unchanged body
+in shared foundation, and extract only the existing opaque JS_TAG_IDS table
+into the core JS dialect. Existing runtime paths forward the same singular
+objects/factories; all language coercion methods and generic TagId behavior
+remain unchanged. No dependency-edge allowance or copied numeric literals.
+Exact receiving proposal `.tmp/core-js-tag-identities-receive/exact-scope.json`.
+Both agents continue their algorithms on prior dependencies until immutable
+root qualification and safe-point adoption. Legacy reader/facade retirement
+remains full-migration work; inventory currently observes40source/32test
+readers of the earlier binding/class contract facades.
+
+### 2026-10-14: canonical tag dependencies qualified; startup seam received
+
+Final canonical placement is `src/shared/contracts/js-value-tags.ts` plus
+`src/ir/core/js-value-tag-identities.ts`. The original instruction-folder
+placement passed runtime controls and typing but failed the unchanged dialect
+gate; that failure is retained. Relocation to core data now passes173/173
+controls, full2037-source typing plus23 explicit roots (2320 resolved inputs,
+no excludes, no incremental reuse), and12/12 static gates with natural exit0.
+The final body proof preserves the whole ABI leaf, exact eight-entry table,
+and all11 remaining domain declarations. Immutable four-file dependency seal
+is5bc839326c620af14237948bcf313e5314d271cc1f0cc8e1a17c129c5cf8711c.
+A adopted at an acknowledged safe point. B cannot adopt while its accidentally
+broad Vitest33915 reads the original files; stopping that test requires the
+specific pending human answer under the saved no-test-killing preference.
+No duplicate run or inferred terminal result is credited.
+
+Normal signed ledger pushes published canonical relocation4e6a14b, corrected
+placement167b604, and actual startup seam09483fe. The latter receives only
+`fillStartupAdapter`'s optional authenticated class bootstrap before original
+module initialization inside the existing once guard. C preserves the exact
+1684-byte existing function preimage and unchanged no-pack emitted body;
+complete genuine realm/global/callable/resource custody remains mandatory.
+Root has not adopted C's moving physical source.
+
+A separate genuine constructor probe naturally exited0 with16 registered
+source preparations (four actual Boolean/missing/default/order fixtures by
+four profiles), zero prepared. Refusals remain located and explicit.
+Independent JS controls observe base field/default/body order and derived
+parameter/before-super/parent-field/parent-body/derived-field/after-super order.
+These are diagnostics, not native runtime wins. C also identified the seven
+LOCAL class logical role declarations requiring Wasm type slots as a Linear
+record-pointer mismatch; root is auditing exact readers before changing that
+contract. Full class execution, public source composition and all27 migration
+acceptance requirements remain outstanding.
+
+### 2026-10-14: logical class role ABI correction received; failed replay retained
+
+Receipt322db1602cff932e6ccb15ba1995f354f497aaf4 received exactly the
+seven logical role declarations and source domain extraction replay under the
+user-approved shared-seam takeover. Each now uses existing slotPolicy:none;
+canonical ref/type/key/shape remain required and public transport remains
+unavailable. ProgramAbiMap rejects assigning slotless physical indices.
+Fresh full2037-source/24-root TS7 and12 static checks exited0, and the13 new
+source-backed/forged-plan controls passed. The coupled six-file runtime epoch
+exited1 with169/186 passing:17 genuine existing evidence controls still hit
+runtime verifyProgramDomain's old required/type check. Preserve that failure
+and receive the exact third runtime reader before its source change; no
+qualified class ABI or execution claim yet. B's live33915 source files remain
+unchanged and its specific stop-consent question remains pending.
+
+### 2026-10-14: complete logical role ABI replay qualified; independent checker continuation
+
+The exact third reader receipt230eb5661fbcab26bde3262e36d74268b67e01bf
+published with normal hooks. Updating only verifyProgramDomain's seven-role
+policy check completes the declaration/extraction/runtime conjunction.
+Fresh six whole files pass186/186, including13 source-backed cases with real
+four-profile seven-role ABI planning and nine independently checked mutated
+role plans. Full2037-source plus24 explicit roots (2322 resolved inputs,
+no excludes/no incremental reuse) and12 static gates exit0. Exact undo of
+received edits reconstructs all three original production file bodies.
+Logical references/types and ordinary ABIMap behavior remain unchanged;
+real issued GC/Linear physical projection remains mandatory. No native class
+runtime/public readiness credit. Immutable seal3032bytes SHA
+2d8f36eb60f1ce21314a2e10f965dfb77232dbad38631b65fc9cba328b360bb9.
+
+A/C donor runtime files differ only by a prior erased TYPE facade import.
+Independently verified finite guard-only transplant preserves that donor
+coordinate: original34932/16b92f1f, expected34991/2d3d2001; undo reproduces
+whole donor. Their source and physical work continues after safe adoption.
+A's producer42/typing checkpoint remains descriptive draft: abrupt-only
+writes require a separate observed-world census without normal propagation.
+
+B proposed, and root dispatched, an isolated independent checker successor
+worktree from verified exact B HEAD and immutable current inputs. Original
+B worktree and mistaken live33915 remain unchanged. Only the already-received
+checker path becomes writable after a successor location receipt; all other
+sources stay owned/read-only dependencies. This permits continued corrections
+and exact four-probe qualification without requiring termination consent for
+the old test. The pending stop question now concerns only optional cleanup;
+no test is killed or falsely marked terminal. Full migration goal stays active.
+
+### 2026-10-14: isolated independent replay successor released
+
+Normal signed receiving485b57841647c48c58e56560d179d8129b2cd115
+publishes the existing checker execution location successor, branch
+codex/6920-b-class-value-replay-successor-20261014-01a12827, exact base
+df466f30d4ee27ab332debad823912ee9155c80c. Root independently hashed all
+16474 captured files against actual original/current/snapshot-02 bytes;
+all16477 census entries match, including3 empty gitlinks pinned to actual
+commits.361144398 bytes of actual repository/config/private-probe inputs
+are preserved. Provenance3415695bytes SHAeb4d83df7a26e7864ad6677356a582987c2d322085b952e104d8708f76c1ffc2.
+
+Only the already-received independent checker leaf is writable. Qualified
+canonical tags/types03/logical-role patches are read-only dependencies;
+A's algorithm, sole test and owner hooks stay separately owned. B can now
+implement and run exact singleton probes while original worktree and live
+33915 remain untouched. No test-stop answer is needed for continuation.
+Full migration completion is not established. C's observed JSON35/35 with
+natural1 is now attributed to an actual Vitest onTaskUpdate timeout UHE;
+those failures stay uncredited while unchanged source assertions receive
+appropriate event-loop yields and fresh whole-cohort terminal validation.
+
+### 2026-10-14: actual constructor USER value protocol received
+
+Receivingf23d85a359980469b1b767e080cf6c4fff4f3043 published with normal
+hooks. The exact five frontend seams and one existing source expectation
+will represent plain/TS-optional constructor USER parameters as actual
+unrefined JS values and retain the complete actual argument vector. This
+removes annotation/arity substitution while preserving all argument effects
+and their original left-to-right order. The existing class construct opcode
+and PreparedIR schema stay unchanged. Runtime verification must reject bare
+scalar actual operands; C must select the real constructor, initialize base
+fields before formal/default/body entry, use issued Undefined for absent
+formals and ignore extras only after their effects. Spread/rest/destructuring,
+parameter defaults/TDZ environment, arguments-object/derived classes and
+whole physical/public execution remain required later work; no fake padded
+source argument or new source unit is introduced.
+
+Original four-fixture constructor diagnostic remains0/16 prepared. A broader
+six-fixture/four-profile baseline is running before these source edits;
+new controls will cover Boolean-under-Number annotation, required missing,
+explicit Undefined, erased optional, extra effect order and argument/field/body
+order, using independent JS observations plus real source/typed/codec joins.
+No candidate qualification or runtime credit is claimed yet.
+
+## Session B captured module write and constructor actual arguments — 2026-10-14 continuation
+
+Human authority remains “Take over the blocking shared seams.” Root now preserves all actual constructor arguments as tagged values, erases optional/Number parameter assertions, and resolves captured mutable module assignment expressions through the genuine existing source owner, storage type and TDZ guard. RHS is evaluated once and returned after the real store; generic equals capability remains unchanged.
+
+The original six JS fixtures across four backend/target profiles improved from 0/24 baseline to 16/24 initial candidate to 24/24 source and typed preparation in candidate03, naturally exited 0. Full TS7 resolved2323 inputs including2037 source and25 explicit test roots, no diagnostics. No native class execution credit is claimed. Candidate01/02 field-access/key failures remain preserved. Ten real ABI forgery controls are added to the new test; the coupled220-control run is still active. Static05 has11/12 passes and one local test identifier lint error; correction must wait for the immutable live test epoch to end.
+
+Published receiving heads f23d85a359980469b1b767e080cf6c4fff4f3043,7cfa2eaa161cfab287aaf459614b1cb80523579b,7fae2f5b30bac044a392d825bfa13217af6dd982 cover exact constructor, captured-global replay and module assignment expression seams. Portable builtin-tag authority receiving head cf9e4af78bae5f3e6ab0e3b3260cd909371f91c3 is prepared; normal-hook push is still active, not yet credited as published. Original protected B test33915 remains untouched; A/B/C parallel work continues in isolated locations. All27 master requirements remain unproven.
+
+### Continuation qualification and remaining runtime work
+
+The coupled seven-file run naturally exited0 with220/220 tests, no pending or unhandled failures. The final34 constructor/ABI controls naturally pass after the test identifier correction and exact undefined frame-presence guard; final whole2038-source/26-root typing passes and all12 static checks pass. Immutable source/test capsule is `.tmp/class-source-global-receive/sealed.json`. This proves preparation and codec behavior, not native class execution.
+
+Portable builtin-tag authority normal-hook receiving head cf9e4af78bae5f3e6ab0e3b3260cd909371f91c3 is published. The whole11865-byte old contract is unchanged, oldpath reexports preserve all8 identities, with only one exact compatibility row and one foundation row classification delta. Its38/38 focused controls, full2038-source typing and12/12 static checks are sealed at `.tmp/builtin-tag-portable-authority-receive/sealed.json`; C received this immutable dependency to finish real Error ancestors. Pure value-domain contract receiving e6868d2aec76ba70554fd6556929c040234ed339 is also published, releasing A’s one new type-only leaf and unchanged facade, preserving all runtime statements.
+
+A/B retain measured ordinary annotated void source-completion loss as a separate source fidelity gap. Ordered startup input describes a conditional declared initialization sequence; it does not prove deferred/WASI invocation phase safety. Public scalar bridging must remain unissued until those source/phase obligations are met. Existing public PR heads/HOLDs remain unchanged; this turn published receiving records only. All27 master migration requirements remain unproven.
+
+## Genuine class-owned ordinary helper call sites — 2026-10-14
+
+The native class method/constructor/field producer receives the existing source-owned directCalls table, but the whole callable graph scans only original function declarations. Class-owned calls therefore stop with exact AST-site plan missing. Investigate genuine terminal class body/field caller roots while retaining ordinary fixed-target function/alias resolution, current owners, original syntax and caller accounting; no runtime name fallback, fake function declaration or annotation-based argument projection. Paired A/B value-domain replay and C real37 engine controls continue independently. Baseline fixtures and prospective scope are private under `.tmp/class-owned-helper-calls-receive`.
+
+### Class caller source qualification
+
+Original four helper fixtures across four profiles improved0/16→12/16→16/16 source/typed preparation. The remaining first-candidate field errors proved startup planning overwritten genuine field ownership. Actual inventory fields are original indexed support units (terminal=false), not fabricated terminal functions; the graph now scans their real initializer expression under that exact owner while excluding nested function bodies. Startup traversal stops at class bodies.
+
+Current20 new controls plus34 constructor/global regressions naturally54/54, separate existing fixed-target/alias/mutation/source-custody graph controls4/52selected naturally pass, full2038-source+27-root TS7 resolves2326inputs0, static12/12current unchanged0. Original legacy callable test/helper typing has28 identical diagnostics on both exactpreimage baseline and candidate; recorded separately, no broad all-test typing claim. Immutable capsule `.tmp/class-owned-helper-calls-receive/sealed.json`; startup producer entire inverse exact.
+
+Signed normal-hook receiving heads1b169ff7f048dee8a4ff3c322cf211ee2e3cd83b andb2898192b67f61916b129910b7a5d995b2ee308a also release A’s unchanged DATA custody kernel and B’s independent checker replay kernel under normal1500line gates. A/B first genuine36 comparison was4/36; actual environment/global/TDZ/retention and inherited setter obligations are being corrected independently, with all failed source/report snapshots preserved. C real Error ancestry37 controls now pass same oldJS1 oracle and twohopJS3, but class body/Linear/public joins remain incomplete. No source push/comment or goal completion credit.
+
+## Preserve actual class thrown JSValues — 2026-10-14
+
+Original numeric/Boolean throw statements remain source-refused even though actual tagged class field throws have a source conversion path. Investigate Number/Boolean/Undefined method throws, constructor Number throw and field JSValue throw on four profiles. Real conversion to externref must preserve managed allocation aliases, and thrown roots must escape; independent allocation replay must verify actual SSA/definition/type rather than accepting arbitrary externref values. Do not substitute TypeError or claim backend readiness before genuine execution. Exact receive/preimages/fixtures are under `.tmp/class-tagged-throw-receive`.
+
+
+## Session B canonical input kernel and tagged throw checkpoint (2026-10-14)
+
+The human approved taking over the blocking shared seams and keeping parallel
+subagents working. Exact producer input kernel receiving commit
+`7511c51b0ccc6ed09e87e20f2aa255bf2c9df866` is published with normal hooks and
+foreign owners preserved. Producer A71 is frozen after 71/71 owned controls and
+full 2,037-source typing with three test roots (2,289 resolved inputs). Independent
+checker B reproduced all equations and obligations for the same original 36
+captured source inputs: 36/36, natural exit 0, no source rerun. This establishes
+finite agreement, not native runtime or public class readiness. Final hostile
+opcode and typing checks remain separate.
+
+Root now preserves actual tagged Number/Boolean/Undefined/property exception
+values in native class bodies, requires actual dynamic-to-externref transport,
+and independently checks thrown allocation roots as opaque escapes. Genuine
+source-plus-typed preparation improved from 0/20 to 20/20 fixture/profile rows.
+After correcting a function-local SSA lookup error in the new test, all 270/270
+controls across ten complete files passed naturally. Full typing passed for all
+2,038 sources and 28 explicit test roots, exclusions empty, 2,327 resolved inputs.
+Twelve source/static checks passed with no production/policy drift; current
+new-test Prettier and ordinary repository Biome lint passed. A driver accidentally
+selected Biome check (including a different formatter/import organizer); its
+failure is preserved separately from the intended lint result. Original 266/270
+and 0/20 epochs remain intact. Immutable five-path snapshot/evidence:
+`.tmp/class-tagged-throw-receive/sealed.json`, 239,800 bytes, SHA256
+`ec2fe452edb07eba6d199ae013645f279ad38f6df248ff7d13a846882c9d5bf1`.
+No native emitted exception execution is claimed.
+
+C corrected full 38/38 physical component controls after the preserved 34/38
+epoch exposed stale nonnullable scratch expectations; genuine constructor
+hidden operands require nullable intermediate storage. A final erased scratch
+ValType annotation is awaiting typing. Its ordinary inventory still refuses
+21 unclassified modules and old canonical TYPE/startup dependencies; the private
+21-row candidate also fails (443 errors), preserved as evidence. Exact existing
+reader coordinates, one pure core binding dependency, and qualified startup
+split adoption are being received before the ordinary detector is rerun. No
+activation-root/rule/baseline waiver or clean-layer demotion is authorized.
+
+Public source heads and HOLDs stay unchanged; later class integration remains
+local. All 27 master migration requirements remain unproven and the goal active.
+
+C canonical dependency receiving commit
+`e63e807fa2bd9e1431781a208cd2acb1fd88213a` is now published and remotely
+verified after normal push hooks. Two concurrent foreign claim records were
+preserved; source index unchanged. C received GO at its confirmed no-live-qualifier
+safe point for nine exact existing preimages plus one pure core binding
+dependency. Scope excludes unrelated source, algorithm, policy-rule and root
+changes. Corrected 38/38 component execution and final typing are qualified
+predecessors; fresh dependency-adoption qualification remains required.
+
+
+## Canonical class value analysis receiving epoch (2026-10-14)
+
+Receiving commit `2022b3312f2abbce9b7e8d1ddf2eb5f74d243429` is published
+with normal hooks. Root is placing complete A73 producer/contracts/data/input
+and corrected B152 independent checker/kernel under the existing activated
+`ir/analysis/allocation-evidence/js-class-value-domains` subtree. Seven new
+paths include the unchanged producer test. Only import coordinates change;
+whole-file inverse reconstructs every donor. Six exact classification rows
+are appended, with no root/rule/allowance or previous-row change. Fresh full
+source typing, source36 reciprocal and hostile qualification remain required.
+
+A genuine cross-export static method mutation exposes an additional public
+entry-history gap in both models. Existing reports describe a single public
+entry after startup; they do not authorize arbitrary repeated public calls.
+Normal and transitive abrupt mutation histories must be closed before physical
+specialization. Source counterexamples, declaration-drift failures and both
+qualified conditional predecessors remain preserved. This receiving epoch
+does not add program hooks or public/native class readiness.
+
+
+Canonical value placement is now qualified in root: 112/112 across two complete
+files, natural exit 0, no unhandled errors. Full TS7 passes all 2,044 source
+inputs plus 30 explicit roots (2,335 resolved inputs), exclusions empty. All
+12 source/static checks pass; current updated test Prettier/lint pass. The
+13-module independent runtime closure imports no producer/data/input or
+frontend/backend/program/runtime implementation. All prior 2,038 source hashes
+remain byte-exact. Snapshot `.tmp/class-canonical-value-analysis-receive/sealed.json`,
+244,072 bytes, SHA256
+`b5f8bfde0456c5826409232070d884e395aa297da0298d6e4411c43efbd3759b`.
+
+Both failed root epochs are retained: a relocation script accidentally rewrote
+source fixture filenames alongside module imports (39/112, custody guards
+correctly refused); module-only TypeScript AST rewrites fixed this. Two donor
+source-refusal assertions then correctly exposed newly prepared root throw/helper
+capabilities (110/112). Genuine source probes establish abrupt/no-normal
+completion; those two expectations were updated without changing source fixture
+text or the other 71 test bodies. Source algorithm bodies remain unchanged.
+
+The conditional A73/B152 predecessor cannot authorize arbitrary public call
+histories. Both owners now implement separate startup/public fixed points with
+actual retained normal/abrupt histories, public-only projections and no shared
+callee-summary backfeed. New genuine source cases and independent comparison
+are still being qualified. Actual main class source execution has reached
+resource/ABI/helper ownership validation; each concrete blocker was fixed at
+exact structural ownership. Its latest live/codec callbacks exceeded the
+unchanged 35-second deadline and must naturally drain; no runtime success is
+claimed. Approved performance work removes duplicate full checks while retaining
+one complete canonical entry and post-emission replay and authentic membership.
+No deadline increase or import-cycle waiver is authorized. All 27 master
+requirements remain unproven; source/publication/HOLD states remain unchanged.
+
+## Public-history reason closure and actual program context (2026-10-14)
+
+A93 is frozen with 93/93 tests and complete 2,037-source typing. B's expanded
+110-case epoch has 106 passes and four failures: all 56 source value/call/body/
+global/heap/edge equations agree; the four transitive-abrupt cases differ only
+in obligations. The finite taxonomy decision preserves both applicable reasons:
+unresolved invoke requires unknown-callee plus opaque-effect; unsupported
+result-producing transfer requires unsupported-value plus opaque-effect. A is
+adding the missing labels; B keeps its strict comparison and adversarial label
+removal controls. No taint is deleted for agreement.
+
+Root is implementing a private program-owner normalization candidate under
+`.tmp/class-program-values-owner`, before production hooks. It reconstructs
+complete bodies, callable/global ABI, export aliases, original class owners,
+startup order and actual external-js parameters. Raw global exports are explicitly
+classified without granting scalar transport. Multiple results and async state
+buffers return explicit unrepresented outcomes instead of truncation. This is
+conditional analysis DATA: a caller-selected namespace is not an authenticated
+runtime projection or evidence that deferred/WASI startup has run. Production
+placement, complete owner hooks, successor A/B adoption and qualification are
+still required.
+
+C's fifth actual main execution epoch naturally terminated with one WASI codec
+execution passing and three runtime transactions exceeding the unchanged
+35-second deadline. Its additional hostile test encountered an actually frozen
+source frame, and is being corrected to assert that immutability and test stale
+mutable physical helpers separately. Bounded duplicate handle/type-reference
+validation removal preserves complete currentness checks on every resolve and
+pre/post emission. No test is killed and no deadline, gate allowance or fallback
+is changed. All 27 master migration requirements remain unproven.
+
+Program-owner receiving claim `a587415f5ffdab94740b6b129f56ce342176a7eb`
+is remotely verified with normal hooks (including 18/18 numeric-local parity
+controls). Concurrent foreign claims and the source index were preserved. The
+new conditional normalizer and its source-driven test are placed at
+`src/ir/program/native-js-class-values.ts` and
+`tests/issue-6920-native-js-class-value-context.test.ts`; only one exact clean
+ir-program classification row was added. Existing preparation/validation hooks
+remain untouched pending the final sealed A/B dependency.
+
+The independent owner review reproduced a concrete bad grant: appending one
+startup.liveSeeds row could label the actual realm Object.prototype global as
+an issued callable. The normalizer now checks canonical live-function identity
+and original same-source top-level-function ownership, then explicitly refuses
+native live-function initialization until an actual semantic storage protocol
+is present. Startup metadata grants no issued callable domain. The genuine
+counterexample is retained in A's normalizer-live-seed-counterexample artifacts.
+
+Root's first production context epoch has 13/14 passing; its extra host-class
+control assumed a prepared legacy class producer that does not exist. A direct
+source probe preserves the actual located type-resolution-unsupported result
+for class-implicit-constructor. That unsupported frontier is not a context
+positive control and was removed from this context denominator; no source
+fixture or production refusal changed. Final focused production epoch02 has
+13/13 passing, full2,045-source typing and ordinary scoped lint/format passing.
+All12 architecture/static checks pass at the same production source hashes;
+only the test was updated afterward with fresh style checks. Root now adds
+actual sealed/codec original and canonically validated selected-projection
+controls for all4 policies. No engine execution or hook qualification is
+claimed from context tests.
+
+A97 is frozen with97/97 tests and full2,037-source typing. B's exact genuine
+56 report equations now independently pass in full, including call/projection
+obligation ordering and every applicable taint. A/B additionally found concrete
+finite i64/js.bit/ref.is_null carrier contradictions at the pure-input seam;
+bounded guards and genuine mixed/raw/logical support-reference controls are
+being qualified independently. Full canonical verifyIrFunction remains a
+mandatory owner prerequisite; the solvers do not replace that verifier.
+
+C seventh full46 naturally terminated45/46; sole failure was standalone codec
+runtime exceeding unchanged35-second deadline. All38 component/resource cases
+and7/8 required main phases pass, with full typing0. This is not full runtime
+qualification. Its observational profiler config then accidentally selected a
+broad test corpus; exact run/process/log identity is preserved and no profile
+credit is claimed. Human consent to stop only that accidental run has been
+requested under MEMORY.md's explicit never-kill-tests rule; absent consent it
+continues. Old B33915 and all other qualifiers remain untouched. Other work
+continues without waiting for that answer. All27 master requirements remain
+unproven, with no main push or public HOLD change.
+
+Final context capsule `.tmp/class-program-values-owner/sealed.json` is236,071
+bytes, SHA256`5772cccb77b4179438d862cf806bd16814e885eb47e777697d84701564411a88`.
+Actual17/17 production cases pass, including live sealed and production codec
+original/selected contexts for all4 policies. Current full TS7 passes2,045
+production sources plus31 explicit roots,2,336 resolved inputs/exclusions empty;
+ordinary scoped source/test lint/format pass. All12 source/static checks pass
+at identical production source hashes; every prior2,044 production source hash
+is byte-exact. Owner hooks remain unwritten, and these context checks grant no
+engine execution, arbitrary host mutation closure or native class readiness.
+
+The genuine two-source re-export probe also passes: lib.ts precedes entry.ts,
+its3 actual bodies join the complete ABI, the empty entry source retains its
+startup row, and external run resolves to the actual dependency function with
+UNKNOWN external-js input. The durable reversed-startup negative refuses.
+Final context suite is18/18 (production-tests-04), full2,045-source typing and
+current ordinary lint/format0. The17-case capsule remains immutable; current
+18-case evidence is `.tmp/class-program-values-owner/sealed18.json`. This does
+not prove multi-module engine execution or native public transport.
+
+
+### 2026-10-15: authorized shared-seam takeover and parallel successors
+
+The human explicitly authorized taking over the blocking shared seams. Root
+received the independently qualified A117/B260 public-history successor in
+assignment commit77307fc82d4c1745c6b301e3e51ed5d0bd575246, adopted exactly
+four canonical solver/input files plus the durable test, and preserved every
+other2,041 source hash. Actual root qualification33900 naturally terminated0:
+194/194 tests, full2,045-source plus31 actually matched explicit roots typing0,
+and all12 architecture/static checks0, with input hashes unchanged. Source
+capability expectations retain all73 prior root test bodies; no refusal is
+restored to match an obsolete donor expectation. Evidence:
+`.tmp/class-public-history-successor/qualification-01.json`.
+
+Typing census correction: the earlier context17/18 configs declared31 root
+patterns but only30 actually matched because paired-root.test.ts was absent
+relative to that config. All2,045 production sources and context tests were
+typed; the one private paired test was outside that earlier typing census.
+The old sealed artifacts remain intact. Current successor config has31
+declared and31 matched roots; exact correction is recorded in
+`.tmp/class-public-history-successor/root-census-correction.json`.
+
+Parallel receiving work is finite and isolated: ordinary helper completion
+(source planner/from-AST plus new test); productive backend class resource
+ownership (the exact C manifest, no gate allowances); and the existing root
+program hooks. Before implementation, publish exact receiving scope/preimages.
+The bounded hook extension closes actual whole-entry DATA/getter access and
+native class instructions hidden only in async state buffers; it does not
+admit unrepresented async transport or add readiness/codec authority. Source
+solver A117/B260 checkpoints stay frozen. Old profiling inputs and protected
+B33915 are preserved; no consent to cancel any test is inferred.
+
+
+Exact receiving commit86005164c146f1284166db946db857c104ce007d is now
+published to issue-assignments with normal push hooks0,18/18 numeric parity,
+foreign ownership and original source index preserved. It adds exactly three
+finite records: helper-completions, class-resource-session, and program-values-
+entry-hooks. No source public PR head changes. Fresh helper successor copies
+2,045 sources/2,090 total inputs byte-exact (receipt6c644d6a...); fresh resource
+successor copies2,045 sources/2,063 inputs/70 dependencies byte-exact
+(receipt89146bcd...). Both reuse the populated dependency symlink.
+Implementation GO was sent to all three existing agents. Root edits only issue
+and private coordination files while the hook child exclusively owns the four
+received root source/test paths. A owns two source files plus one new helper
+test; C owns the exact11 modify/2 new/1 delete productive owner scope.
+
+Current combined194-case qualification is sealed independently at
+`.tmp/class-public-history-successor/qualified194-sealed.json` (356,462 bytes,
+SHA2569683dddbd106479b96c8eeb8e134fb5bb18ed89286b91cb07d4c61dcd70a01c4).
+All12 architecture/static results are actual natural0; no engine or full
+migration proof is inferred. A genuine ordinary async class-bearing source
+normalizes to explicit unrepresented in all4 profiles at the source context
+frontier; full typed preparation stops earlier at existing async-plan body-
+shape rejection, so no semantic/runtime state packet proof is claimed.
+
+
+A current-source completion audit re-derived all27 explicit acceptance items
+from the live three master issues (11/8/8); no full requirement is proven.
+`.tmp/ir-completion-audit/master-current-2045.json` pins the current issue
+bytes and scans all2,045 source modules using TypeScript AST nodes. It finds
+2,002 syntactic compileStatement/compileExpression calls in237 files. This
+coincides numerically with the prior237-file text census but has a different
+population: four comment-only text files leave and four actual Linear call
+files enter. Callee binding and production reachability remain separate
+authoritative graph obligations; no deletion follows from this syntax audit.
+The all-source dynamic-import census is10 expressions (two CLI, four Node
+platform imports, four optional compiler/backend loaders). The prior four
+loader count described that narrower subset, not all production source.
+Existing frozen audits remain unchanged.
+
+
+### 2026-10-15: actual owner hooks qualified; two exposed repairs
+
+The received four-path owner hooks are now qualified: actual joined202/202
+natural0/no unhandled errors, component26/26 natural0, full2,045-source
+plus31 actually matched-root TS7 natural0 (2,337 resolved), and all12 static
+checks0. Capsule `.tmp/class-value-hooks/epoch02/handoff/sealed.json` is26,911
+bytes/SHA256b4f40ad2e543f0ffcc0c2bd91216ee0ac22727f588383206a97285ab1e855255.
+Root verified each owned path/snapshot and every other2,042 production source
+hash against the194 predecessor. The earlier component UHE run stays failed
+and preserved; a standard afterEach event-loop yield resolved test starvation.
+
+The new helper source suite first ended41/57, preserving all16 failures.
+Boolean payload and comma-expression fixture dependencies are corrected
+after natural terminal. Genuine side-effect input66286/SHA4c86122f...
+exposes two producer omissions: unresolved direct calls mark local mayThrow
+false despite their opaque path, and unknown numeric operands omit actual
+unsafe-scalar-projection obligations. The independent checker is correct for
+this packet and must not be relaxed. Receive a finite producer.call/simple
+repair plus durable genuine source regression before writes. New typed/codec
+helper positives used the older consumer baseline; the new hooks correctly
+require this equation disagreement to be fixed before combined admission.
+
+Mapped class source also fails on the unchanged source baseline, while mapped
+class-free scalar prepares. One original ClassDeclaration node is both the
+implicit constructor donor and a real startup evaluation occurrence. Receive
+contextual selection from authenticated request-local candidates for the
+actual lowering owner, preserving public projector default behavior and all
+current membership/span/order guards; no class descendant donation, changed
+wire schema, validator waiver, or Unsupported substitution. Private proposal
+`.tmp/helper-completion/contextual-source-map-receive-proposal.json` in the
+helper successor pins exact source functions and five existing map test roots.
+The complete IR migration and class-free dishonest void erasure remain open.
+
+
+The productive class owner draft now has actual graph28 IR/backend edges,
+9 IR/runtime,109 reverse backend/IR and SCC704/4, with full source typing0.
+Its coherent whole owner grew native-realm to1,630 lines, exceeding the
+ordinary1,500 line limit. Preserve this measured failure and add no waiver.
+Receive two complete productive recipes into existing real owners: kernel
+resource construction into native-object-realm (concrete issued dependencies,
+no owner/verdict callbacks), and string physical planning into native-string-
+values (main already imports it). Private realm state/currentness/phase and
+all class authority remain in native-realm. The body-only1,490 projection is
+not qualification: formatted size, exact algorithms, graph, clean closure and
+actual component/engine oracles must pass after wiring.
+
+
+The obsolete void-argument refusal has a genuine source-positive replacement
+using ordinary run():void statement invocation: actual property get, tagged
+helper call result and class invoke preserve argument-before-callability order
+and JavaScript throws7. Canonical source verification passes. The original
+full typed probe is separately preserved as failed: after inlineSmall, the
+class verifier reports actual argument transport differs. No optimizer or
+engine success is inferred from source-only qualification. Trace the genuine
+pre/post-inline SSA type/signature relation before any held pass repair;
+never weaken verifier or disable inlining as an unmeasured workaround.
+
+
+Receive four bounded measured blockers under the explicit shared-seam takeover.
+B owns the two logical mapped-origin identity comparisons and genuine mapped
+allocation controls; exact DATA equality retains physical owner identity and
+currentness. A owns two type-only source-map fixture corrections, with erased
+JavaScript byte equality, and privately audits the stale validator receipt.
+C owns captured collection-brand intrinsics plus provably array/fresh ordinary
+copy negatives; no semantic cache. CPU evidence identifies native brand probes
+as dominant, but the unchanged 35-second runtime failures remain failures.
+An exact one-case original/candidate A/B must finish naturally and preserve
+hostile collection/accessor/currentness controls before performance claims.
+Root owns the inliner transport repair only after B's root epoch is terminal.
+The genuine source packet verifies before inlining; replacing an unrefined
+helper return with tagged Undefined changes actual SSA type but leaves class
+argument signature stale. Private genuine four-policy prepare/codec replay now
+passes with transport following the actual substitution. Production needs
+durable real-input, equal-numeric-ID substitution and rejection controls plus
+existing optimizer/provenance gates. No verifier waiver or optimizer disable.
+Exact finite scopes and preimages: .tmp/class-transport-foundation-receive/.
+These are component tasks; all full IR migration acceptance remains unproven.
+
+
+The formatted inliner candidate is1574 lines (old unformatted1399), a measured
+ordinary size-limit failure. Receive a whole pure operand-renamer owner move,
+with byte/token-exact algorithms and existing API re-export, rather than add
+any allowance. Transfer the existing function grant to its actual moved body.
+The historical source-map validator proof also stops before all12 callbacks
+at stale source pins. A measured20-source union has9 actual changed operands.
+Receive an independent current physical reader plus inverse/forward successor
+receipt, retaining historical helpers/receipts and all12 callback assertions.
+New explicit current controls must prove actual49504->historical45816->19448
+->19427 provenance; historical logs alone carry no current-source credit.
+Exact scopes: .tmp/class-current-reader-renamer-receive/.
+
++
++Root new inliner11 actual controls pass and full2046-source/34-root typing
++passes. Original optimizer10 suites give70/71. Sole old nested-buffer fixture
++expects a retained final WAT call; the independent actual original-optimizer
++replay reproduces the same failure (one observed original pass invocation).
++Retain that failure and investigate a direct pass-observation oracle before
++any old fixture reconciliation; do not weaken or skip its engine assertions.
++The new renamer's initial clean ir-passes inventory row also failed honestly:
++inactive layer plus mixed core/Wasm dependency debt. Correct only that new row
++to existing mixed-needs-split/ir-core destination, without new allowance or
++claim of complete architecture. JSON fixture format is corrected DATA-exact.
++
++
++Root final354 assertions all passed but the process ended1 with one worker
++onTaskUpdate reporting timeout. No clean combined credit. Preserve epoch03
++and receive only a standard afterEach event-loop yield in the long allocation
++suite, retaining all81 original bodies/RPC and test timeouts. Adopt qualified
++C foundation2path capsule (74+53 hostile controls/type/build/static0) at this
++terminal boundary before the next common qualification. Root original2856
++oracle reconciliation is received308246 and preserves all engine expectations.
++A actual4fixtures x4 policies also expose class-free void erasure: direct
++export JS4 becomes a prepared zero-result signature/body; used-return compares
++are located unsupported; discarded and barevoid controls stay distinct. No
++erasure-as-correct oracle or public dynamic transport claim. Follow-on needs
++coherent ordinary body/call/ABI and independent Number/Undefined evidence,
++physical boundary/presentation/DTS coverage; private proposal4f157c8f.
++
+
+Receive C common integration after all root qualifiers terminal: final15 donor
+paths plus8 actual predecessors, excluding already-adopted foundation2 and
+unused descriptive layout orphan. Preserve newer root25 logical operands and
+all early DATA/origin/throw/equation checks; retained ABI facade and NN branch
+stay authoritative. Six actual productive joins, one explicit presentation
+unsupported reader and one suite-only Linear descriptor are distinguished.
+C donor74/53/build/type/static successes remain donor-only until fresh common
+engine/codec/source-poison and logical/currentness checks pass. Root owns
+actual inventory classifications, with no budget expansion or readiness claim.
+Exact23 plus independent test-yield scopes: .tmp/class-common-integration-receive/.
+
+
+Commonphysical2053 typechecks fully but75actual tests end69/75: fourengine and
+two resource capsule cases exceed unchanged35s. No common runtime credit;
+retain exactinputs and profile a single actualcase after A10 adoption. Donor74
+remains a separate earlier epoch. Commonstatic11/12 fails only physical-plan
+format; authorizedformat is actual emittedJS byte-equal, all othergates0.
+Receive exactA10 with helper59/maps123/type/static0 and390=374/16ctorfailures.
+Read-only24constructor replay isolates14 stale construct-only arity obligations
+against explicit logical padding/evaluated-extra semantics, and2 speculative
+BOTTOM fieldwrites during initial no-normal summary. Private two-branch repair
+replays24 without disagreement; receive canonicalproducer.call+solemodeltest,
+keep independent checker strict and actualnormalUndefined/ordinaryarity cases.
+Current physical constructors/invokes still explicitly refuse unissued recipes;
+logical repair must not be reported as an implemented argument adapter.
+Exact scopes: .tmp/class-source-constructor-receive/.
+
+## Session B current common qualification and next measured blockers (2026-10-15)
+
+The explicit shared-seam takeover continues with parallel isolated work.
+Receiving commit816a849cbdd7c2e47562ef3ead543c02057c5931 published the exact
+A10 source/current-reader adoption and two-path constructor producer repair.
+Root copied all10 sealed donor paths after84 artifact pins and all preimages
+matched. Source census remains2,053. Production immutable24 post-middle-end
+constructor inputs and five strict controls pass; physical construction and
+invocation adapters remain unissued.
+
+Actual joined397 naturally exited1:391 pass, six source-phase model failures
+and one onTaskUpdate RPC unhandled error. Constructor34, helper-completion59,
+context26, source66 and paired59 all pass. Full2,053-source typing plus35/35
+matched test roots (2,349 resolved, exclude[]) and all12 normal static checks
+naturally pass. No combined397 success is claimed. Failed capsule:
+`.tmp/constructor-equation-repair/epoch01/failed-capsule/sealed.json`
+(10,206 bytes, SHA256edf37dbe2aab4a22729d81a970d5dc564e62399e56dcdb2b2db29e91b900c4b9).
+
+The six new model failures expose a separate independent replay defect.
+Actual canonical source-phase inputs from the immutable packet reproduce the
+four primary standalone failures without the test helper or source rebuild.
+Each pure mark call has producer/callee mayThrow=false, but independent.call
+inherits a preceding potentially throwing class binding read through the
+whole function context. Its local call row becomes true incorrectly; function
+throw propagation must remain true. WASI mark bodies have genuine throwing
+TDZ paths; post-middle-end standalone inlines mark. Receive a finite independent
+per-occurrence throw calculation and meaningful source/callee/opaque controls;
+do not remove the source assertions or copy producer verdicts. A standard
+model-suite event-loop yield is a separate test scheduling remedy, with no
+timeout or RPC change.
+
+One actual common codec/engine CPU profile naturally fails the unchanged35s
+limit: emission38.129s, sampled collection-brand SELF28.858s, engine0.710ms.
+The original case still executed JS1 with source reconstruction poison0.
+All2,053 source and policy/harness pins stayed exact. Observational capsule:
+`.tmp/class-common-cpu-profile-c/epoch-final/sealed.json` (8,782 bytes,
+SHA256cd4a5aa7dfe2f234687b62f892928b7b5c97b1ed346c8c74a9ff61b44c2f51cb).
+Samples are not invocation counts and overlapping inclusive times cannot be
+summed. Receiving5dabf9e82b3eaf4012c84fbd3298ee6929e9c00e authorizes exactly
+native-realm and one new guard test. The private candidate coalesces nested
+checks into a synchronous owner operation, retaining complete canonical and
+physical entry/post-effect replay. Caller-owned Wasm operand DATA is captured
+before scratch callbacks; no successful semantic verdict is cached. Generic
+fallback callbacks require post-effect replay. Existing runtime oracles,
+shared Error recipes,1500-line owner limit and35s timeout remain unchanged.
+Production adoption waits for genuine hostile guard and original75 evidence.
+
+The actual8 source-free consumer probe is also failed, not runtime credit.
+All8 decode/reencode exactly; six throw representability "unmapped result"
+and two Linear abrupt rows return located Unsupported for const undefined.
+The excluded result types are genuine val.externref in null/Error-call or
+throw-conversion paths, not absent resultType fields. Authentic provider and
+throw transport need investigation before a bounded admission decision; no
+blanket externref grant or cosmetic Unsupported replacement. Failed capsule:
+`.tmp/class-next-codec-consumer/failed-sealed.json` (2,861 bytes,
+SHA2564f5c32ec9543684fa2601b9dad6aa6bf9d838744feed9bd4c8f7ca57791b2a23).
+
+The ordinary class-free value-completion work stays private. Actual20 source
+rows are coherent and verifier-clean;14 typed/codec successes and six Linear
+ownership invariants are preserved, with eight unchanged control codecs.
+Source2 plus two private early.return handlers expose further real lifetime
+coverage gaps: nested if/labeled returns can be published owned despite a
+conservative analysis result, and switch can omit allocation/effect rows.
+Neither GC preparation nor two direct handlers proves safe returned-box
+lifetime. Close complete emitted-effect/alias coverage or refuse genuinely
+before broad source admission. Native allocation profiles, both-backend
+carriers, public result presentation and declarations remain separate work.
+No full requirement among the27 IR migration acceptance items is proven.
+
+
+### Session B finite emission DATA boundary and generic analysis continuation (2026-10-15)
+
+The shared-seam takeover continues with three isolated agents. The canonical ROOT remains 2,053 production sources, including the independent call-local throw-equation repair and its 157-case model suite. That repair has passed the actual 48 canonical source/post-middleend inputs, five strict negative controls and four new runtime controls. Its full common qualification is still pending the emission candidate; old failures remain preserved.
+
+The private emission candidate passed an earlier 75/75 physical cohort and one actual engine case, but subsequent procedure-boundary probes found three concrete DATA hazards: a later signature input getter could execute, a later signature fallback could mutate an earlier returned type into a getter, and a generic converter could return an array containing an executable getter. Each failed epoch remains separate evidence. The bounded correction screens and snapshots signature inputs and projected outputs, and screens/snapshots converter outputs after the full currentness check. The only line offset removes the module-initialization operand DATA assertion already dominated by the dispatcher deep DATA screen and immutable operand snapshot. Full entry and exit currentness, physical authority checks and the general opcode/type restrictions remain. A fresh actual 27-case guard census, source typing/static checks, unchanged 75-case cohort and one-case profile are required before ROOT adoption. Earlier timings are observational across different private paths/background load, not a controlled benchmark.
+
+The generic ownership/escape continuation is received in the public ownership ledger at `d9ef8a05b990977c135755895211c1d8caac30fb`. It owns only the two existing analysis files plus a new test and historical DATA fixture. It addresses the canonical typed child census, actual early-return effects and conservative missing-annotation writeback, while preserving CFG/worklist joins and alias fixpoints. Its first light runner accidentally merged a broad include; that epoch is frozen through natural termination and will receive no narrow-cohort credit. The corrected intended cohort and the three actual current-class source cases remain required.
+
+A separate reviewed exception-legality continuation is bounded to the existing neutral legality leaf and one new source-generated test. The measured eight codec inputs contain 52 raw exception transport results: 20 null messages, 20 actual ReferenceError call results, and 12 dynamic-box conversions. Proposed admission is limited to complete nonempty local producer/use chains ending in an actual throw; signatures, slots, globals, ordinary type mapping, provider validation and backend opcode restrictions stay closed. Historical codec inputs are diagnostic only; new tests generate real current source/type/codec inputs under all four policies. The bounded receiving record is published at `1daabc59d127c8084d036bb216f2fdd13d3800cd` with normal hooks and 18/18 numeric parity controls. Private implementation is authorized; ROOT adoption still requires its separate reviewed qualification boundary.
+
+No source PR head, main branch, HOLD or integration queue has changed in this continuation. All 27 full migration acceptance requirements remain unproven.
+
+
+### Session B emission adoption and exact fixture repair boundary (2026-10-15)
+
+The final emission candidate is sealed at SHA256 `fc69cfeda42f6915b06a165d8912adace603b9d3532c96831f2b339843f4ee97`: actual 27/27 guards before a two-token local test rename, 1/1 affected control afterward, 75/75 unchanged physical tests, and 1/1 engine/profile case. Full 2,053-source typing plus the owned test and all 12 normal scoped static checks passed. The profile observed 15.215 seconds of emission and 0.794 milliseconds of engine execution under uncontrolled background load. The ROOT exact-two-file adoption receipt is SHA256 `27e7adddcab537dc4ca52b940796af8e05d24a9b418ee7359559820347db44df`; all other 2,052 production sources, 13,472 existing test/script/plan files, and the index were preserved, including the newer independent replay repair. Common integration qualification remains pending.
+
+The expanded generic type check exposed six incomplete callable literals in unchanged ownership/escape test fixtures. The bounded fixture receiver is published at `30ffad1802da76e2aff5254f249e09d8a02bbc55`. It permits only two canonical support-reference imports and six target expressions under the existing synthetic test identities; no target body or source declaration is invented, and all 21 assertions/control paths stay intact. The generic candidate also preserves the actual dynamic-switch source refusal and adds a separate scalar-switch positive with a required actual nested-instruction census. The private final successor measured 52/52 passing cases with no skips or unhandled errors, and all 2,053 sources plus all three test roots passed typing. The sealed exact-six candidate is SHA256 `a2b9088f6de75ea3adebc96e0abf6750ab29f80e75e8f710dc6af0966be6a610`. ROOT adopted only those six files under receipt SHA256 `fbb9af42a03f7b6ef19a250b843faa1ea4300b5f4664b1b0ed46cf9fdeede5e4`, preserving the other 2,051 sources and the newer emission/replay fixes. Normal ROOT static gates, full combined typing and the common runtime cohort are the next qualification boundary. Earlier six-error typing, dynamic-switch failure and broad 703-case selection epoch remain separate records.
+
+The first private exception-legality runtime measured 36 cases and ended naturally with 6 passes and 30 test-preparation failures. All four genuine tagged-throw source/codec/owner controls and two WASI TDZ controls passed. The remaining carrier/copy preconditions are being corrected without changing the received production leaf; no full negative-matrix or ROOT adoption credit is claimed.
+
+Read-only physical tracing also confirms that class TDZ needs the actual issued exception tag threaded from the existing program consumer, and that the stored callable coordinate is a function index rather than a table slot. Constructor and invocation recipes remain unissued. All 27 migration acceptance requirements remain unproven.
+
+
+### Session B composed checkpoint and constructor receiving (2026-10-15)
+
+The composed 2,053-source CGA checkpoint is captured at SHA256 `ec089857627038bcae41ec59638fbc23451d457dfd44d0c11ac375d9074fde26`. Its unchanged physical cohort passed 75/75, full source typing passed with 39 explicit test roots and 2,353 resolved inputs, and all 12 normal scoped gates passed. The first common run passed all 480 assertions but ended with one worker `onTaskUpdate` RPC error; that failed epoch and all 2,075 input snapshots remain sealed at `265b0f5fc5f78574e7afecc89a6b7ea3e520f19e618adb5c3bf02854e0fec5b7`. The longest individual test was 6.386 seconds, below the unchanged 35-second deadline; the installed fork RPC uses a 60-second timer, and the affected task was not identified.
+
+A source-identical successor added only an ignored local setup hook yielding a real Node event-loop turn after each test. It measured the exact same 480 identities across ten files and ended naturally with 480 passes, no skips and no unhandled errors. All 2,077 input pins, including the original 2,075, were unchanged. Its seal is `504eb490a7955d7a9b78b7f26b2af1fc60198edf01638c350f889b42cfcc7d8c`. No source/test body, reporter, test deadline or RPC timeout was changed; this is a scheduling experiment, not proof of an individually attributed starvation site.
+
+The separate exception-legality candidate is sealed at `4c5354f5c1a4acf7e9b14a84bd34af00b4020b3f65ba5081e8c2cddcbbcf4b81`: 36/36 current-source/hostile controls and 8/8 source-free codec controls passed naturally, with exact round trips, no reconstruction calls and no unmapped-result invariants. All eight codec outcomes remain located unsupported physical/Linear recipes; no emission or engine credit is claimed. Exact two-file ROOT adoption and current-composition related qualification form the next boundary.
+
+The bounded constructor/tag receiving is published at `27c7f9bd66b5505b30a043d2a34fb1f5bb469731`, with normal hooks and 18/18 parity controls. It owns five existing production files, one productive class-session owner and two new test files. The planner shrinks by moving its complete class-specific preflight to the existing logical coordinator; the generic consumer keeps its measured function/file size while passing the actual reserved exception-tag token. Private work must preserve complete-root constructor/newTarget closure, exact original USER slots/signatures, original constructor home-object versus newTarget prototype, real instance/frame sites and argument effects. Existing partial no-tag kits retain their staging semantics; new error recipes and whole-program completion require the genuine tag. ReferenceError uses the canonical null externref message, and pre-start realm prototype/instanceof observation remains an explicit unproven frontier.
+
+Source PR heads, main, HOLDs and integration ownership are unchanged. All 27 migration acceptance requirements remain unproven.
+
+
+### Session B exception transport qualified and parallel source continuation (2026-10-15)
+
+The exact two-file closed exception-transport adoption is qualified on the current
+2,053-source integration composition. The six-root runtime suite registered and
+passed all **138/138** cases, exited naturally with zero unhandled errors, and kept
+all 7,847 source/test/policy/issue/configuration input pins unchanged. The ignored
+harness uses the already qualified global `afterEach(setImmediate)` yield; normal
+35-second test deadlines and the installed RPC timeout are unchanged. ROOT read
+the actual JSON records and verified all 21 artifacts and both adopted snapshots.
+
+Full source typing also passed with 40 explicit test roots, 2,354 resolved inputs,
+`exclude: []` and incremental mode disabled. All 12 normal static checks passed;
+ROOT verified their 26 artifacts and all 13,198 context pins. Compiler-boundary
+inventory success still does not establish architecture completion. Evidence is
+`.tmp/class-exception-current-qualified/sealed.json`, joining runtime seal
+`161eee8b8f18c7de0ef4384dde669d6fb097fc86261e74776e2ef43f4ef7d2cc` and
+typing/static seal `8dd2e40f93afe9f0923ab138326dc6670ca4b32143ef2dede573198527e3f8a2`.
+The clean 480-case predecessor and its failed default-harness RPC epoch remain
+separate preserved records; neither is attributed to this later source epoch.
+
+Constructor scope eight is privately implementing and qualifying under published
+ownership `27c7f9bd66b5505b30a043d2a34fb1f5bb469731`. ROOT review found that a final
+abstract prototype root alone cannot exclude same-site alias writes across
+repeated class allocations. The first constructor subset must establish actual
+operation/write closure before using the callee's current prototype as its
+original home object; a matching final heap cell is insufficient.
+
+Ordinary source completion scope four is privately implementing under ownership
+`2bd9653dc51147ebcd754a6640da39f2bce194d3`. The finite manifest is
+`.tmp/ordinary-completion-receive/manifest.json` (13,580 bytes,
+`6a83d54e34b33ad921d438a452c7e0efca3a0fa7b12029903c8613b10a171c0a`).
+Two source owners, one bounded mixed completion helper and one new test carrier
+must join actual signatures, calls, bodies and ABI before lowering. Original
+explicit-void own-return census and actual builder result contracts govern the
+new native path; no caller flag or annotation-derived value-family proof is
+permitted. Existing host, scalar, managed, constructor and throw contracts remain
+required regression controls. Private source-stage progress does not grant native
+carrier/public ABI/DTS readiness.
+
+Both private lanes may now run their own frozen-input qualification. A third lane
+is preparing a read-only bounded Number/Undefined ordinary transport proposal;
+returned boxes cannot borrow the old vector profile's owned/local proof. No
+candidate is ROOT-adopted without its exact sealed review, and no source PR head,
+HOLD, integration queue or main branch moved. All 27 master acceptance requirements
+remain unproven.
+
+
+### Session B ordinary numeric proof core receiving (2026-10-15)
+
+Ownership-only receipt `b34d0799d226b37f05cdbb9343447f4ac1522223` was published with
+normal hooks and all 18 numeric-local parity controls passing. The finite manifest
+`.tmp/ordinary-numeric-core-receive/manifest.json` is 10,444 bytes with SHA256
+`b635b757307b74d2c7abf2721450f761bc36f2d963c3396f76138ec1b9a8b0a2`.
+This private first phase owns eight non-constructor logical hooks, five new proof
+owners and two regression carriers. Constructor-held planner, body-resource and
+consumer signature joins remain read-only until the constructor successor is
+sealed, adopted and freshly received. Source PR heads, HOLDs and the integration
+queue remain unchanged.
+
+The private bootstrap copied and verified all 2,053 current sources and 15,561
+source/test/script/plan/configuration files before implementation. Ordinary
+Number/Undefined family, call, return, alias and lifetime proofs must be derived
+from complete actual bodies and independently replayed. The unchanged generic
+ownership and escape analyses supply real escaping/nonstack returned-box facts;
+the old vector profile's owned/local recipe cannot be reused for returned values.
+Exact type-field admission is distinct from ownership of the five existing
+physical carrier instructions. Unknown control, malformed data, missing current
+proof or unreceived physical signature joins cannot become successful defaults.
+
+Genuine new source/typed/codec qualification waits for the finally qualified
+ordinary-source dependency receipt. The first source lane's 132-case run passed
+all 64 source/JavaScript/ABI/lifetime rows and 130 total cases; two typed ordinary
+throw cases truthfully lacked Number-box provider support. That failed epoch is
+preserved separately from the next supported cohort. No planned source/engine
+population is credited to this new numeric proof core. Boolean, public dynamic
+ABI/DTS, globals/TDZ, closures and remaining class capabilities are still required
+future work. The full migration remains unproven on all 27 master requirements.
+
+### 2026-10-15 bounded shared-seam unblock continuation
+
+The human authorized taking over the blocking shared seams, following the earlier all-Session-B takeover. Three private isolated receivers remain active: ordinary source completions, ordinary Number/Undefined semantic proof, and constructor/TDZ/tag emission. ROOT remains at the qualified 2,053-source exception composition; none of these new production changes has been copied into ROOT or pushed to a source PR.
+
+The extra single GC allocation-reader ownership receipt was published as `f451b54c7d9fc55d0397bd0e34fe46654ac424df` with normal push hooks passing. It permits only disjoint ordinary not-covered cases to continue through the complete canonical generic GC validator, after provenance and invalid-view checks; it grants no native proof or physical permission. An actual existing class baseline then failed 2/2 selected cases (164 filtered, no unhandled errors) in numeric requirement collection. Its immutable failed capsule is retained in the numeric private workspace at `.tmp/class-baseline02-failed/sealed.json` (9,044 bytes, SHA256 `bf1fb7de518856d6f082950971fe2704f615439009e0d42b4c6e9616f747eb64`). B may repair dispatch only through the existing full canonical class verifier and the complete original/selected/support conjunction in its already-received preparation/resource paths. Class presence alone remains insufficient.
+
+The private constructor inventory failure was caused by ROOT classifying the new source-free physical session as mixed debt inside an active backend root. ROOT independently inspected its canonical imports and actual 155-module value closure: every member is already clean under the existing permitted backend/IR/runtime-contract layers. A candidate replacing only that new row with clean `backend-wasmgc` passes the official inventory checker with no errors. Separately, the five new numeric semantic modules pass the official inventory checker when classified as four clean `ir-analysis` modules and one clean `ir-runtime` module; their actual value closures contain 14/21/17/19/59 modules, all clean. Every previous row and every non-file policy field remains exact. These are private metadata candidates only, to be received after live qualifiers naturally finish. Both reports explicitly retain architecture-incomplete status. ROOT captures live under `.tmp/class-construction-receive/private-policy-reviewed` and `.tmp/ordinary-numeric-core-receive/private-policy-reviewed`.
+
+The latest source cohort measured 243/244 passing, with no unhandled errors; the remaining new assertion incorrectly required a scalar helper call that the optimizer legitimately inlined. The agent is preserving the failed epoch and tracing the actual decoded increment/write before correcting only the test. Constructor performance measurements and failures also remain retained: a genuine worker CPU profile identified repeated currentness/catalogue work, and the bounded repair moves only the newly introduced eager construction catalogue to its actual use boundaries while retaining unconditional canonical currentness and physical post-effect checks. Corrected mutation guards passed 3/3 with full typing; final constructor runtime qualification remains pending. No timeout, RPC limit, public source head, HOLD, or queue ownership has changed. All 27 master acceptance requirements remain unproven.
+
+Follow-up measurements: the corrected constructor boundary cohort naturally passed 15/15 evidence tests and 4/4 standalone phases, with full typing and 7,323 unchanged input pins. Its actual two engine cases measured 26.804/26.931 seconds at the same 35-second limit; heap/profile/overlap differences remain recorded, so this is not an isolated causal speedup claim. Numeric dispatch recovered the 2/2 genuine old-class typed/codec controls after using the existing verifier’s required sealed domain rather than a source-phase domain; malformed/mixed controls remain pending. The ordinary source trace additionally exposed a real semantic defect: `return void bump()` produces Number/NaN instead of Undefined. The effect-once oracle alone cannot qualify that completion. A bounded correction confined to the authenticated new ordinary builder is under review, with the legacy void partition and class behavior preserved.
+
+### 2026-10-15 qualified ordinary source receiver
+
+ROOT independently authenticated the final ordinary-source capsule (462,237 bytes, SHA256 `6244ede10634bee234dee3b5076cb04bb254bde8ff39b57d2a6dd88f6a80c765`): 309 artifacts, four snapshots, all 15,533 actual private inputs and 2,054 production pins, and the actual structured identities/results of all 252 tests. Independent AST comparison confirms only three changed top-level functions among 255 in `from-ast.ts` and one among 46 in `program-source.ts`; undoing the received void return expression reconstructs the entire old expression function. Final source capture has 64 genuine preparations, 36 typed/codec successes, 28 located refusals, and no invariant/thrown outcomes. Ten unchanged-contract baseline byte comparisons pass.
+
+The reviewed four files and exactly one source-owner inventory row are now adopted in ROOT (2,054 sources); every previous policy row/rule and the Git index were preserved. Receipt: `.tmp/ordinary-completion-receive/adoption/receipt.json`. The same exact production three files were supplied as read-only dependencies to the numeric private receiver, preserving its 16-file semantic component and every earlier private policy row (2,059 sources). Its current baseline must retain the final 36 typed/codec positives. ROOT joined typing, normal 12 checks and the selected source/regression cohort remain pending, so the private source qualification is not presented as whole-migration completion.
+
+The separate measured class DATA allocation extension was published as ownership-only receipt `6b3c827d6f1ecbea6af44b32f0d122ce6dc9e391`, with normal hooks and 18 parity tests passing. Its fixed fresh-record allocator and single pure-copy allocation replacement preserve all historical function bodies and pass the 16 new plus 25 existing foundation controls. The larger constructor fixture still times out after this first change; no performance readiness is claimed. Failed default/profile epochs, including RPC errors, remain retained. All 27 master requirements remain unproven.
+
+### 2026-10-15 joined qualification and parallel shared-seam receivers
+
+The adopted ordinary-source composition is now qualified in ROOT: 318/318 actual tests across six files passed naturally without unhandled errors, full typing covered 2,054 production sources plus 41 explicit roots (2,355 resolved inputs), and the final normal static cohort passed 12/12. Final seal: `.tmp/ordinary-completion-root/epoch02/sealed.json`, 3,356 bytes, SHA256 `20cc4e891d02830e48f18c2e841f39a21b43de03b36cc1838609704e934d457a`. An earlier 11/12 static failure is retained; after runtime finished, only policy whitespace changed. Parsed policy/order and every source/test byte remained exact when carrying typing/runtime credit into the final formatting epoch.
+
+B's final private semantic component has 14 production files and two tests, with 23/23 semantic controls and 141/141 source/legacy controls passing naturally. Its fresh 64-source cohort records 52 typed/codec successes and 12 Unsupported outcomes, retaining all 36 current source-baseline positives. Stored outcome rows do not retain source locations, so independent review does not credit those rows as location evidence. Final semantic seal: 25,495 bytes, SHA256 `80703b1bf09a781a01bb22c39a44eedbc036f3895d5e664b867f9223cb232547`. ROOT adoption waits for completed independent review. The planned joined ROOT cohort combines the previous 318 tests, B's 23 semantic tests, 77 old numeric controls, and 41 foundation controls; the expected 459 count is a floor to validate against actual collected identities, not a reported result. Constructor source and ordinary numeric engine wiring are outside this join.
+
+The human-approved blocking-seam takeover now has two further finite ownership receivers, published together in `b94c7bce1440e7fec378215536f1c25af5f26652` on the ownership ledger. Normal push hooks and all 18 parity tests passed; the source index and public source heads were preserved. C owns only the audited ordinary object factory/copy API, eight recorded independent-kernel allocation spans, and two new tests. Comparisons, validation, fixpoint logic, prototypes and original field evaluation remain unchanged. B owns only eight listed physical-transport paths in a fresh isolated successor, borrowing the frozen six-file constructor candidate as an explicitly experimental dependency. That dependency retains two argument engine timeouts and an RPC error; no ROOT adoption, passing argument result or public readiness is implied. The exact receiving manifests are `.tmp/class-kernel-record-receive/manifest.json` (17,153 bytes, SHA256 `f73f31e8518c5917e64e76e8973e801f82a5d0c63478ad83a91d60ac207ab48f`) and `.tmp/ordinary-numeric-transport-receive/manifest.json` (11,664 bytes, SHA256 `23e008310a265d51aed0d23de93a45000a173577010a1003ee8ec16efe09c380`). Both agents proceed in parallel, preserving their donors and each other's files. All 27 master requirements remain unproven.
+
+Independent typing census correction: the compiler also resolves `postcss.d.mts`. Counting every actual reported file gives 2,356 resolved inputs for the qualified ROOT ordinary-source epoch, rather than the earlier 2,355 ts/tsx-only count. Its 2,054 production sources, 41 explicit roots, and successful compiler terminal are unchanged. The prior seal is preserved; future censuses include declaration module extensions. B’s final semantic 2,310 resolved-input count already includes that file and remains correct.
+
+After independent review, ROOT adopted B's exact 16-file semantic component and the separately qualified three-file fresh null-record component together, yielding 2,059 production sources. Adoption receipt: `.tmp/ordinary-numeric-core-receive/joined-adoption/receipt.json`. All nine old B preimages and seven new path absences were verified before copying; the foundation/data preimages were independently reviewed. Exactly five clean numeric source-owner rows were appended after the existing ordinary source row. Every previous policy row and rule, every unrelated existing input, and the Git index remained exact. The constructor six-file candidate and the next eight-site ordinary-object allocation repair are not adopted. The new ordinary engine suite remains unexecuted while physical wiring is incomplete. A fresh joined collection/runtime and full typing/static epoch must qualify this composition independently; no prior private test result is promoted to joined credit.
+
+### 2026-10-15 joined semantic checkpoint and allocation-only follow-up
+
+The joined ROOT semantic/null-factory composition passed all 459 actual tests across 13 files, with natural exit 0, no unhandled errors, exact collected names/order, 13 verified Node 25.9/8192 workers, and 13,218 unchanged input pins. Full typing passed with 2,059 production sources, 44 explicit roots and 2,364 actual compiler-listed files. After all qualifiers naturally ended, only inventory JSON whitespace changed; ordered JSON pairs/arrays and all other 13,217 pins stayed exact. Final static passed 12/12. Final seal: `.tmp/ordinary-semantic-factory-root/epoch02/sealed.json` (5,902 bytes, SHA256 `eaea4e156feb83834c56951e8080d4ba75c0d8ec48893d5f1aff87bf1b9b6a5d`). The prior 11/12 failure remains retained. Its formatting preparation mistake was a zero-exit formatter skipping an ignored temporary file; the corrected candidate used the canonical stdin filepath and proved idempotence.
+
+ROOT then adopted the separately reviewed four-file ordinary allocation component, preserving all other inputs and policy/index bytes. Independent review authenticated 56 artifacts, all four snapshots/current files, 70 actual LIST/runtime identities (41 byte-identical old controls, 25 API controls, four genuine source/replay controls), and exact whole-module inverses. Removing only the added declarations restores the foundation; reversing exactly eight allocations and the import restores the independent kernel. Existing validators, the null factory, all fixpoint statements and equation indexed assignment remain exact. Receipt: `.tmp/class-kernel-record-receive/final-review/receipt.json` (9,060 bytes, SHA256 `fe1901b210856e771f96fd3ab693c9055499fb83f3a2e30f8dd087ec23ad4c05`). The private constructor argument cohort remains failed at 3/4: decoded execution exceeds 35 seconds; no unhandled error. The constructor six-file candidate is still not ROOT-adopted.
+
+The next ROOT allocation qualification targets the affected class/resource/emission/exception controls, the new allocation controls, and genuine source analysis, with a prospective 249-test floor across ten files; actual collection will determine the records. Full typing includes all 2,059 sources and 46 explicit roots. The unrelated 200 ordinary helper/completion runtime cases are not repeated for this exact allocation-only delta. B's separate physical transport draft has preliminary engine success but still has official file/function budget failures and unfinished hostile controls. A provisional review also found an inherited GC carrier getter read before authentication; B owns its bounded ordering correction. No draft result is promoted to ROOT or whole-migration completion. All 27 master requirements remain unproven.
+
+### 2026-10-15 qualified allocation checkpoint and copier integration
+
+The ROOT allocation-only composition passed all 249 actual tests across ten files, natural exit 0 without unhandled errors, with exact LIST names/order and all 13,235 frozen input pins unchanged. Full typing passed with 2,059 production sources, 46 explicit roots and 2,366 compiler-listed files; all 12 static checks passed. Seal: `.tmp/class-kernel-allocation-root/epoch01/runtime-sealed.json` (5,645 bytes, SHA256 `9d74b5d40982cce56e6cb9862e95d7c220e6b46f4e3d42930ffc4579879b5678`). This remains distinct from the prior 459-test semantic checkpoint and grants no constructor-six or physical-draft adoption.
+
+The next ownership-only copier receiver was published as `f13bd1663b165b45919c0229b63e1861e1507d4f`, normal hooks and 18 parity tests passing with source index preserved. Independent review authenticated 59 artifacts and the two exact source/test snapshots. The entire original `alloc-registry.ts` is reconstructed by reversing only the canonical allocator import and nonarray output allocation expression. Every input probe, Date/native collection check, descriptor write, alias/cycle, array and extensibility operation remains exact. The 17 new controls pass; required typing covers all 2,054 private sources and ten owned roots, and all 12 static checks plus style pass. Broader runtime remains 216/224: a fresh isolated baseline differing only by the restored copier reproduces all eight failure identities and payloads exactly after workspace-prefix normalization. The optional foreign-root typing failure for an existing undeclared helper remains separate. Final review: `.tmp/preparation-copy-record-receive/final-review/receipt.json` (6,872 bytes, SHA256 `1b9f6f630f0320a37e096e0d2fbe100ec0ad54fb0ffb0fd9f2605bd84c6a3d20`). ROOT adopted this two-file allocation-only delta with all other source/policy/index bytes preserved; its focused integration qualification has a prospective 183-test floor and 47 explicit typing roots.
+
+The private constructor standalone argument cohort passed 4/4 on the copier source, including live and decoded execution; decoded execution took 34.774 seconds at the unchanged 35-second limit, leaving roughly 225.551 milliseconds. No performance-causality or broad readiness claim follows. The remaining actual cohort collected 28, not the historical prospective 27: 12 construction phases plus 16 evidence controls. It passed 26/28; combined with the separately authenticated four same-source standalone argument cases, there are 30 passing and two failing unique cases out of 32. Both failures are WASI argument build refusals before emission: an unissued `throw` effect in the original constructor prototype/environment analysis. They are not timeouts, and grant no WASI argument engine/recipe credit. Read-only actual IR/tag/provider tracing precedes any correction. All empty-constructor phases for standalone and WASI pass. C6 remains unadopted in ROOT.
+
+B's physical transport had an immutable 114/114 predecessor with explicit three-edge architecture growth. Two relocation-only edges were removed without grants; a bounded existing-emitter/new-layout receiver was then published as `9605121e5ed5eca5e2bda7f8278043213084427a`, again with normal hooks and source index preserved. The new physical draft has 2,061 sources and truthful mixed layout ownership; actual official inventory is valid with no errors while architecture remains incomplete. Refreshed graph counts exactly match the before-composition baseline in both directions and cyclic groups. The final 114-test successor and immutable review remain pending. No public source head, HOLD or queue ownership has changed. All 27 master requirements remain unproven.
+
+### 2026-10-15 qualified copier checkpoint and final transport review
+
+ROOT's copier composition completed naturally with 183/183 actual tests across seven files, no unhandled errors, all 13,246 input pins exact, and seven actual Node 25.9 workers. Full typing passed with all 2,059 production sources, 47 explicit roots and 2,367 actual compiler-listed files; all 12 static checks passed. Seal: `.tmp/preparation-copy-root/epoch01/runtime-sealed.json` (4,696 bytes, SHA256 `ca8b4a05e2e77165c3b9b392828c920e7f327276368f0da87c2d61b655034aaa`). Constructor C6 and ordinary physical transport remain outside this qualified ROOT checkpoint.
+
+B froze the final ten-path physical transport capsule at its private workspace `.tmp/ordinary-physical-final10-handoff/sealed.json` (113,687 bytes, SHA256 `c9e0a74efa715a018c64be4658d3433281ae3157707401a647be84656dac9ace`). ROOT independently verified 248 copied artifacts, ten current snapshots, nine preimages, four read-only constructor dependency snapshots, all 15,561 current input pins and the exact 2,061-source set. Its final architecture source epoch passed 114/114 tests naturally; after inserting only a fourth permanent execution fixture, the affected execution file passed 4/4 naturally. Final collection contains 115 identities with the previous 114 names and per-file order preserved; there was no single combined 115-test run. The four actual scenarios cover 32 binaries, 16 live/decoded byte pairs and 160 JavaScript-value comparisons across all four profiles. Original and all-selected dynamic-call floors and zero source/legacy-generator spies are recorded. Full typing and scoped style passed. Official inventory remains valid with no errors and explicit architectural debt; refreshed import-edge counts and cyclic groups remain exact. Independent semantic/security review is underway. ROOT byte receipt: `.tmp/ordinary-numeric-transport-receive/final10-byte-receipt/receipt.json`.
+
+The constructor blocker is now traced to authentic generated WASI lexical-binding TDZ checks: an `i32` TDZ global read, equality test, and conditional canonical ReferenceError construction followed by throw. Actual original and selected WASI argument bodies each contain four such throws; standalone arguments and empty WASI controls contain none. Both original and selected ownership/escape reports verify. The existing constructor guard rejects the runtime call as opaque and then overwrites the gap with the throw refusal, so merely allowing throw cannot fix it. A bounded authenticated call-and-throw proposal remains pending; no constructor source edit or ROOT adoption is credited. No public source head, HOLD, or queue ownership changed. All 27 master requirements remain unproven.
+
+The bounded constructor TDZ ownership receiver was published as `0371da0fd35a1eeb1d57fc1eef367d8d2dfe736c`, normal push checks passing and source index preserved. Exact scope is one existing resource coordinator and one new focused test in a separately verified private successor; old C6/CW, numeric BP and qualified ROOT inputs stay intact. Receiving manifest: `.tmp/constructor-tdz-guard-receive/manifest.json` (4,152 bytes, SHA256 `f581a1eccedf633331842c6f70548abb8b9692ae18f305b206addacc627dac9b`). Independent review supports the finite graph-nonreplacement approach only with a unique canonical startup source scalar/TDZ pair, exact ABI ownership/mutability/types and canonical structural IDs, actual lexical SSA dominance, and fresh per-view actual call/throw object membership. The general validator's merely resolving global IDs is insufficient. All unmatched operations remain refused; no pre-bootstrap Error prototype/instanceof claim is granted. Implementation is authorized in the private successor; no new outcome is credited before natural qualification.
+
+### 2026-10-15 TDZ graph-screen component and deeper constructor refusal
+
+The first isolated TDZ draft passed intended full source/owned-root typing and actual repository lint, but the focused sixteen-test epoch naturally failed 1/16. The initial diagnosis of an unmatched WASI guard was disproved by an actual copied-helper observation: the matcher recognizes six call/throw objects in `bump` and two in `run`, independently in original and selected views. The public catalogue then reaches a separate unchanged guard: constructor/newTarget candidate closure unknown or containing an unhandled root. Fresh normalization, class-domain producer and independent replay complete with empty replay mismatch list, while both WASI construction rows have UNKNOWN callee/receiver/normal domains, no targets and opaque-effect/unknown-callee obligations. This is a truthful deeper refusal, not constructor readiness. No WASI argument emission/engine credit is granted.
+
+An independent first-source audit reconstructs the entire original coordinator exactly (28,945 bytes, SHA256 `200c7154e7d78e72c0d2086c104ad6b38c30dc1139ce9994f76839cb716ee773`) by reversing only the imports, private matcher and constructor-operation-gap handling. Every other declaration is byte-exact. Audit: `.tmp/constructor-tdz-guard-receive/first-candidate-review/review.json` (5,772 bytes, SHA256 `185a066f99a32935eb25b954de0d153e1b8abbf25496c8e8fcf575bd7caa20ff`). It found no unsafe widening in that frozen source; it does not qualify the predecessor tests or the later formatted source. Tests are being narrowed to graph-gap disappearance and actual remaining candidate refusal. Earlier JSON-cloned provider data could fail at canonical validation first, so those negatives supply no claimed local matcher coverage. The typed provider-preserving clone epoch is separate. A read-only wrong-workdir typecheck failed naturally; its source read failed before any attempted production write, and its result supplies no successor qualification. Current ROOT/class proof, independent kernel, input/contracts and startup/profile owners compare byte-exact to the private logical owners, so simply updating those ROOT dependencies cannot be credited as resolving UNKNOWN.
+
+In parallel, the twelve residual ordinary source refusals were separated by actual fixture features and static code guards, without attributing them solely by error text. The smallest proposed next logical seam is a labeled-block envelope containing no `br.label`: two existing ordinary producer/independent proof files and one new focused test, with no generic SSA/ownership/escape, schema, physical carrier or allocator changes. Fresh source/typed/codec and hostile controls are required; no engine test is hidden or skipped. Exact receiving manifest: `.tmp/ordinary-labeled-completion-receive/manifest.json` (10,210 bytes, SHA256 `87730bdf05caa39e9ef9c8ca9d54ec3daac0f2f056cb90db644fb69f9e43f405`). Its isolated sibling is prepared separately from the preserved B10/BW and qualified ROOT checkpoints. The final B10 independent review passed without an additional concrete code gap: `.tmp/ordinary-numeric-transport-receive/final-review/receipt.json` (24,104 bytes, SHA256 `5441508eaeba55cc80b285d99f486e8d692b8e30e8b37ed5c5b35cc646e03d03`). B10 remains unadopted pending the exact constructor dependency and joined qualification. All 27 master requirements remain unproven; no public source head, HOLD or queue ownership changed.
+
+The isolated TDZ graph-screen component subsequently passed 16/16 focused tests, full 2,054-source/owned-root typing, scoped style and all 12 ordinary checks. These tests explicitly retain UNKNOWN constructor candidate refusal; the graph-screen result is not WASI constructor engine credit. BP comparison confirms the relevant producer/independent/input/normalizer are also byte-identical. Static attribution identifies the actual runtime ReferenceError call as absent from unit-call targets: producer unknown-callee/opaque effects taint globals and heap and contribute a public terminal world; independent analysis mirrors taint and abrupt worlds. Omitting abrupt history or assuming WASI exports are post-start is not an authorized fix. A further proof-effect change requires its own finite receiving proposal. A genuine pre-start shared-tag/opaque-payload test is authorized only within the received focused test; it grants no pre-bootstrap JS prototype/instanceof or construction closure claim.
+
+The separate labeled-completion receiver is now published as `0cd0ddfcd012947feb8c61e82a7f5f49a9d471a2`, normal hooks passing with source index preserved. Its fresh sibling source census is exactly the pinned current ROOT 2,059-source set; two production preimages are exact and the sole new test is absent. Implementation may proceed in that sibling only, preserving original B10/BW/C/ROOT and both existing ordinary test files. Engine overlap is avoided while performance-sensitive constructor checks run. No source push or public-head/HOLD/queue change is authorized by these ownership-only receipts.
+
+Source-epoch correction: the final TDZ source (35,756 bytes, SHA256 `52b150241a10c9b0dab0de8dcf1053d48d93dd187d1320a2982127cce81208ed`) differs from the first reviewed source by an exact source-binding DATA equality check, not formatting; the earlier formatting characterization was an unverified assumption. The component16 seal preserves both epochs, actual 16/16 runtime, full typing/style/12 checks, whole original module inverse and all 15,539 unchanged donor regular files. It grants graph-screen credit only. Final two-path independent review remains distinct.
+
+### 2026-10-15 sealed logical labels and bounded experimental physical join
+
+The labeled logical sibling passed its genuine new 30 cases and the complete joined 194-case/seven-file cohort naturally with zero skips or unhandled errors and 15,538 exact runtime inputs. A fresh 64-source cohort measures 54 typed/codec positives and ten located refusals, with every previous 52 positive retained; the two new rows are precisely the labeled fixture on Linear standalone and WASI. Full typing with actual compiler listing records 2,309 files including one `.mts`, all 2,059 production sources and the new explicit root; style, portable checks, inventory and cycle checks pass. Final immutable handoff: B sibling `.tmp/labeled-final-handoff/sealed.json` (38,841 bytes, SHA256 `608e83579b5ddf17fee740cf29cf9f865ee03ad2e222431bbd64ec2b8dce229c`). No engine or physical-readiness credit is granted; ROOT adoption of that logical delta remains separate.
+
+The exact C/TDZ successor is sealed at its `.tmp/tdz/final/sealed/sealed.json` (87,768 bytes, SHA256 `0a9f9f4c08e4178fe54c40bd26a12c6d43a2c1e3db4551fca5debbcf3986df50`). The final 32-case constructor cohort naturally records 30 pass and two failures, no unhandled errors and all frozen inputs exact; both remaining WASI argument cases stop before emission at UNKNOWN candidate closure. Actual standalone argument engines take 32.121 and 30.967 seconds at the unchanged 35-second limit. The separately qualified pre-start four phases have no construct operation and observe the shared tag, opaque payload and run7/bump8/second-start/run8 behavior. Together with the separately authenticated focused16 epoch, these are 50 passing of 52 unique identities across preserved epochs, not one combined 52-run claim.
+
+An ownership-only parent aggregation receipt was published as `5d855f8548e083d9ed7b7b3c54bc28085d3d3cb7`, normal hooks passing and source index preserved. Manifest: `.tmp/ordinary-class-physical-join-receive/manifest.json` (7,853 bytes, SHA256 `f4743f52219b080f5c98d9b2c31fb23a4a589af7249cc8660d5ac559147531de`). It permits only the twelve exact frozen production endpoints, two existing B test replacements, three new constructor tests and two appended inventory rows in the parent private integration worktree. Current 2,059-source qualification is preserved through exact preimages and prior seals before the conditional 2,061-source experimental join. The two required WASI failures remain explicit; no assertion is waived and no whole-composition success is inferred. Fresh typing covers 54 explicit roots, related runtime spans 18 files, one existing vector live/codec case is added, and the constructor files run separately. Actual collection governs denominators.
+
+The actual C6 extraction adds one backend-to-IR value edge, `native-js-class-session` to `ir/program/native-program-resource-requirements`, while native-realm retains its old edge. The existing clean backend-to-ir-program policy permits this currentness/DATA consumption; no waiver is added. Combined ROOT must report 110 to 111 backend-to-IR edges rather than incorrectly presenting B10's unchanged-versus-C6 baseline as whole-ROOT no growth. All 27 master requirements remain unproven. The new canonical ReferenceError effect proposal still requires its cohesive shared contract and exact raw context receiver before source edits; it is not part of this physical join. No public source head, HOLD, queue or main changes.
+
+### 2026-10-15 combined qualification findings and bounded successor
+
+Fresh combined collection registers 647 related tests across 18 files and 52 constructor tests across three files. The original vector selector collected zero and is preserved as an instrument failure; correcting its quoted parameterized title collects exactly one existing vector test. No empty execution is credited. Full 2,061-source typing with all 54 explicit roots records 2,376 actual compiler inputs, including one `.mts`, and reports three stale API diagnostics in `issue-2856-inline-small-buffer-caller.test.ts`. Eleven of twelve static checks pass; the remaining check reports constructor-test formatting. Actual graph measurements are 28 IR-to-backend, 111 backend-to-IR and four cyclic components with largest size704. Inventory is valid with no errors; architecture completion remains false.
+
+The reviewed two-test repair removes the absent `trackFallbacks` option, copies the produced binary into an owned ArrayBuffer view and forwards the four actual import namespace objects while preserving lifecycle calls and assertions. The constructor candidate changes indentation only, with identical recursive TypeScript AST over 4,173 nodes. Neither repair is applied during a live qualification freeze. A fresh epoch must type, collect and execute the actual repaired composition, preserving this epoch's diagnostics and results.
+
+The canonical ReferenceError effect successor is bounded to eight existing production files, one pure core contract and one focused test, plus a single measured inventory row. It relocates the sole canonical host record, signature and two-provider data rather than adding a semantic authority table. Producer and independent analysis must derive actual lexical fixed null-message calls separately from complete raw original/runtime context; the result stays UNKNOWN, mayThrow and normal/abrupt/public histories remain. Generic unknown calls retain conservative taint. The early runtime-free preparation check remains conservative; complete original and every selected view must be freshly proved at existing final validation. File and function limits remain, with only the whole constant classifier moved into its existing independent kernel to provide headroom. Current two WASI argument constructor refusals remain until authentic new proof and engine results close them. No master acceptance requirement, public source head, HOLD or queue state is changed by receiving preparation.
+
+The actual related cohort subsequently completed naturally: all 647 tests across 18 files passed, no skips or unhandled errors, maximum case13.596seconds, and all13,262 context plus2,376 compiler input pins remained exact. Epoch01 seal: `.tmp/ordinary-class-composition-root/epoch01/sealed.json` (13,438 bytes, SHA256 `7eb96c0099c5c4a3747eded02b90261a8c4a90bd980e1523a3fff5d1e1110d5a`). Its typing and formatting failures remain preserved. B explicitly released its source freeze only after all owner processes naturally terminated.
+
+Both exact receiving records are published at `3ff9b5636a7a1cfc56cb28b64c97c18b7470bca5`, normal push hooks passing, remote readback exact and source index preserved. The two reviewed test repairs were then applied with all other13,260 context inputs unchanged, including all2,061 production sources and policy. C has a verified fresh2,061-source/16,523-file private successor and bounded implementation GO; its proof change is not in ROOT. Fresh full typing/static and actual affected fixture, vector and constructor runs remain to be completed. The earlier647 runtime will remain separately identified, with no combined or repeated-run claim.

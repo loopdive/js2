@@ -1,0 +1,763 @@
+{
+  "schema": "ir-source-map-validator-current-successor-v1",
+  "coordinateUnit": "utf8-byte",
+  "sources": [
+    {
+      "path": "src/compiler/define-substitution.ts",
+      "before": {
+        "bytes": 3901,
+        "sha256": "4fb03b0ec93fe23c5f8feabcf8be4810dd417bc436637b003693e84a0d336f75"
+      },
+      "current": {
+        "bytes": 3901,
+        "sha256": "4fb03b0ec93fe23c5f8feabcf8be4810dd417bc436637b003693e84a0d336f75"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/core/async-plan.ts",
+      "before": {
+        "bytes": 5278,
+        "sha256": "d840b1eac116e6e4b8ea61d2019f3117013e2a15e88436fe9ff562a54010f173"
+      },
+      "current": {
+        "bytes": 5278,
+        "sha256": "d840b1eac116e6e4b8ea61d2019f3117013e2a15e88436fe9ff562a54010f173"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/core/nodes.ts",
+      "before": {
+        "bytes": 96440,
+        "sha256": "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd"
+      },
+      "current": {
+        "bytes": 100132,
+        "sha256": "544ee159f8cf5b53c06fb4770b8e2a2c54704dff2f7beb098e4e0722844dfed1"
+      },
+      "spans": [
+        {
+          "beforeStart": 1756,
+          "beforeEnd": 1756,
+          "currentStart": 1756,
+          "currentEnd": 2180,
+          "beforeText": "",
+          "currentText": "  IrInstrJsClassDefine,\n  IrInstrJsClassBindingNew,\n  IrInstrJsClassBindingInit,\n  IrInstrJsClassBindingRead,\n  IrInstrJsClassBindingWrite,\n  IrInstrJsClassConstruct,\n  IrInstrJsClassPropertyGet,\n  IrInstrJsClassPropertyDefine,\n  IrInstrJsClassPropertySet,\n  IrInstrJsClassFrameGet,\n  IrInstrJsClassInvoke,\n  IrInstrJsClassConstructorComplete,\n  IrInstrJsClassIdentity,\n  IrInstrJsClassInstanceOf,\n  IrInstrJsClassFrameNew,\n"
+        },
+        {
+          "beforeStart": 69453,
+          "beforeEnd": 69453,
+          "currentStart": 69877,
+          "currentEnd": 70301,
+          "beforeText": "",
+          "currentText": "  IrInstrJsClassDefine,\n  IrInstrJsClassBindingNew,\n  IrInstrJsClassBindingInit,\n  IrInstrJsClassBindingRead,\n  IrInstrJsClassBindingWrite,\n  IrInstrJsClassConstruct,\n  IrInstrJsClassPropertyGet,\n  IrInstrJsClassPropertyDefine,\n  IrInstrJsClassPropertySet,\n  IrInstrJsClassFrameGet,\n  IrInstrJsClassInvoke,\n  IrInstrJsClassConstructorComplete,\n  IrInstrJsClassIdentity,\n  IrInstrJsClassInstanceOf,\n  IrInstrJsClassFrameNew,\n"
+        },
+        {
+          "beforeStart": 69502,
+          "beforeEnd": 69502,
+          "currentStart": 70350,
+          "currentEnd": 70789,
+          "beforeText": "",
+          "currentText": "  | IrInstrJsClassDefine\n  | IrInstrJsClassBindingNew\n  | IrInstrJsClassBindingInit\n  | IrInstrJsClassBindingRead\n  | IrInstrJsClassBindingWrite\n  | IrInstrJsClassConstruct\n  | IrInstrJsClassPropertyGet\n  | IrInstrJsClassPropertyDefine\n  | IrInstrJsClassPropertySet\n  | IrInstrJsClassFrameGet\n  | IrInstrJsClassInvoke\n  | IrInstrJsClassConstructorComplete\n  | IrInstrJsClassIdentity\n  | IrInstrJsClassInstanceOf\n  | IrInstrJsClassFrameNew\n"
+        },
+        {
+          "beforeStart": 81385,
+          "beforeEnd": 81385,
+          "currentStart": 82672,
+          "currentEnd": 83181,
+          "beforeText": "",
+          "currentText": "    case \"js.class.define\":\n    case \"js.class.binding.new\":\n    case \"js.class.binding.init\":\n    case \"js.class.binding.read\":\n    case \"js.class.binding.write\":\n    case \"js.class.construct\":\n    case \"js.class.property.get\":\n    case \"js.class.property.define\":\n    case \"js.class.property.set\":\n    case \"js.class.frame.get\":\n    case \"js.class.invoke\":\n    case \"js.class.constructor.complete\":\n    case \"js.class.identity\":\n    case \"js.class.instanceof\":\n    case \"js.class.frame.new\":\n      return;\n\n"
+        },
+        {
+          "beforeStart": 85739,
+          "beforeEnd": 85739,
+          "currentStart": 87535,
+          "currentEnd": 88050,
+          "beforeText": "",
+          "currentText": "    case \"js.class.define\":\n    case \"js.class.binding.new\":\n    case \"js.class.binding.init\":\n    case \"js.class.binding.read\":\n    case \"js.class.binding.write\":\n    case \"js.class.construct\":\n    case \"js.class.property.get\":\n    case \"js.class.property.define\":\n    case \"js.class.property.set\":\n    case \"js.class.frame.get\":\n    case \"js.class.invoke\":\n    case \"js.class.constructor.complete\":\n    case \"js.class.identity\":\n    case \"js.class.instanceof\":\n    case \"js.class.frame.new\":\n      return instr;\n\n"
+        },
+        {
+          "beforeStart": 90886,
+          "beforeEnd": 90886,
+          "currentStart": 93197,
+          "currentEnd": 94578,
+          "beforeText": "",
+          "currentText": "    case \"js.class.define\":\n      return instr.captures;\n    case \"js.class.binding.new\":\n      return [];\n    case \"js.class.binding.read\":\n      return instr.storage.kind === \"cell\" ? [instr.storage.cell] : [];\n    case \"js.class.binding.init\":\n    case \"js.class.binding.write\":\n      return instr.storage.kind === \"cell\" ? [instr.storage.cell, instr.value] : [instr.value];\n    case \"js.class.construct\":\n      return [instr.constructor, instr.newTarget, ...instr.args];\n    case \"js.class.property.get\":\n      return instr.key.kind === \"computed\" ? [instr.receiver, instr.key.value] : [instr.receiver];\n    case \"js.class.property.define\":\n    case \"js.class.property.set\":\n      return instr.key.kind === \"computed\"\n        ? [instr.receiver, instr.key.value, instr.value]\n        : [instr.receiver, instr.value];\n    case \"js.class.frame.get\":\n      return [instr.frame];\n    case \"js.class.frame.new\":\n      return [instr.environment, instr.thisValue, instr.homeObject, instr.newTarget];\n    case \"js.class.invoke\":\n      return [instr.callable, instr.receiver, ...instr.args];\n    case \"js.class.constructor.complete\":\n      return instr.completion.kind === \"return\" ? [instr.self, instr.completion.value] : [instr.self];\n    case \"js.class.identity\":\n      return [instr.left, instr.right];\n    case \"js.class.instanceof\":\n      return [instr.value, instr.constructor];\n\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program-codec.ts",
+      "before": {
+        "bytes": 30714,
+        "sha256": "69c988fa6366e8627d24abb6de4c5d8855856567e8294a471e53e852b4766062"
+      },
+      "current": {
+        "bytes": 33891,
+        "sha256": "1fdccf0576ab4ebc71bd2e2230b1bef55fca00d21eb8df7d60504ca4f46efcf9"
+      },
+      "spans": [
+        {
+          "beforeStart": 1830,
+          "beforeEnd": 1830,
+          "currentStart": 1830,
+          "currentEnd": 2080,
+          "beforeText": "",
+          "currentText": "import { verifyLinearPreparedAllocationFacts } from \"./analysis/linear/allocation-facts.js\";\nimport { irRuntimeSupportFunctions } from \"./program/runtime-support.js\";\nimport { assertPreparedStartupInvocation } from \"./program/startup-validation.js\";\n"
+        },
+        {
+          "beforeStart": 2451,
+          "beforeEnd": 2451,
+          "currentStart": 2701,
+          "currentEnd": 2800,
+          "beforeText": "",
+          "currentText": "import { screenPreparedIrLinearAllocationEntry } from \"./program/linear-allocation-validation.js\";\n"
+        },
+        {
+          "beforeStart": 2535,
+          "beforeEnd": 2535,
+          "currentStart": 2884,
+          "currentEnd": 3055,
+          "beforeText": "",
+          "currentText": "import { nativeVectorStoreFailure } from \"./program/native-vector-store-proof.js\";\nimport { nativeModuleGlobalEvidence } from \"./program/native-module-vector-context.js\";\n"
+        },
+        {
+          "beforeStart": 9308,
+          "beforeEnd": 9308,
+          "currentStart": 9828,
+          "currentEnd": 10362,
+          "beforeText": "",
+          "currentText": "  const attached = screenPreparedIrLinearAllocationEntry(program, false);\n  if (attached) assertPreparedIrProgram(program);\n  assertPreparedIrProgramShape(program);\n  const failure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));\n  if (failure) invalid(`${failure.unitId}: ${failure.detail}`);\n  return encodePreparedIrProgramData(program);\n}\n\n/** Byte normalization alone does not accept decoded runtime identity clones. */\nfunction encodePreparedIrProgramData(program: PreparedIrProgram): string {\n"
+        },
+        {
+          "beforeStart": 17621,
+          "beforeEnd": 17675,
+          "currentStart": 18675,
+          "currentEnd": 18733,
+          "beforeText": "  const reencoded = encodePreparedIrProgram(decoded);\n",
+          "currentText": "  const reencoded = encodePreparedIrProgramData(decoded);\n"
+        },
+        {
+          "beforeStart": 18535,
+          "beforeEnd": 18535,
+          "currentStart": 19593,
+          "currentEnd": 19669,
+          "beforeText": "",
+          "currentText": "  const attached = screenPreparedIrLinearAllocationEntry(persisted, false);\n"
+        },
+        {
+          "beforeStart": 20353,
+          "beforeEnd": 20353,
+          "currentStart": 21487,
+          "currentEnd": 21573,
+          "beforeText": "",
+          "currentText": "    ...(attached ? { linearAllocationFacts: persisted.linearAllocationFacts! } : {}),\n"
+        },
+        {
+          "beforeStart": 22338,
+          "beforeEnd": 22338,
+          "currentStart": 23558,
+          "currentEnd": 25397,
+          "beforeText": "",
+          "currentText": "/** Validate only persisted attachment DATA and body joins; this issues no preparation or layout authority. */\nfunction assertCodecLinearAllocationFacts(program: PreparedIrProgram): void {\n  if (!Object.hasOwn(program, \"linearAllocationFacts\")) return;\n  const attachment = requireRecord(program.linearAllocationFacts, \"program.linearAllocationFacts\");\n  if (\n    !Object.hasOwn(attachment, \"schema\") ||\n    !Object.hasOwn(attachment, \"facts\") ||\n    Reflect.ownKeys(attachment).length !== 2 ||\n    attachment.schema !== \"linear-allocation-facts-v1\"\n  )\n    invalid(\"linear allocation facts have unknown schema or fields\");\n  const facts = requireRecord(attachment.facts, \"program.linearAllocationFacts.facts\");\n  if (Reflect.ownKeys(facts).length !== 2 || !Object.hasOwn(facts, \"registry\") || !Object.hasOwn(facts, \"allocations\"))\n    invalid(\"linear allocation facts have missing or unknown fields\");\n  requireArray(facts.allocations, \"program.linearAllocationFacts.facts.allocations\");\n  const mismatch = preparedIrDataMismatch(program.allocations, facts.registry);\n  if (mismatch !== undefined) invalid(`linear allocation facts registry differs from final registry at ${mismatch}`);\n  const support = irRuntimeSupportFunctions(program.runtimeSupport);\n  const bodies = [\n    program.ir.functions,\n    ...program.runtime\n      .filter((projection) => projection.backend === \"linear\")\n      .map((projection) => projection.prepared.functions),\n  ];\n  for (const functions of bodies) {\n    try {\n      verifyLinearPreparedAllocationFacts(\n        { ...program.ir, functions: [...functions, ...support] },\n        program.linearAllocationFacts!.facts,\n      );\n    } catch (error) {\n      invalid(\n        `linear allocation population or evidence differs: ${error instanceof Error ? error.message : String(error)}`,\n      );\n    }\n  }\n}\n\n"
+        },
+        {
+          "beforeStart": 22836,
+          "beforeEnd": 22836,
+          "currentStart": 25895,
+          "currentEnd": 26024,
+          "beforeText": "",
+          "currentText": "  if (value !== null && typeof value === \"object\")\n    screenPreparedIrLinearAllocationEntry(value as PreparedIrProgram, false);\n"
+        },
+        {
+          "beforeStart": 28852,
+          "beforeEnd": 28972,
+          "currentStart": 32040,
+          "currentEnd": 32085,
+          "beforeText": "    if (typeof record.executable !== \"boolean\") return invalid(`program.startup[${index}].executable must be boolean`);\n",
+          "currentText": "    assertPreparedStartupInvocation(record);\n"
+        },
+        {
+          "beforeStart": 30616,
+          "beforeEnd": 30616,
+          "currentStart": 33729,
+          "currentEnd": 33793,
+          "beforeText": "",
+          "currentText": "  assertCodecLinearAllocationFacts(value as PreparedIrProgram);\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program-prepare-ir.ts",
+      "before": {
+        "bytes": 6832,
+        "sha256": "211ca16d6c0c3b0378c8347bb0eedc074d237d90aee8f4a45073cbd6cfa480dd"
+      },
+      "current": {
+        "bytes": 11532,
+        "sha256": "0806a9a8379b73c541d4e788e6c4f920079d3f07bc2a533442e03b57ccd505be"
+      },
+      "spans": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "currentStart": 0,
+          "currentEnd": 398,
+          "beforeText": "",
+          "currentText": "import { prepareNativeClassValueEquations } from \"./program/native-js-class-values.js\";\nimport { nativeJsClassEvidenceDomainFromProgram } from \"./program/native-js-class-allocation-validation.js\";\nimport { appendNativeNumberUndefinedAbi } from \"./program/native-number-undefined-abi.js\";\nimport { collectNativeNumberUndefinedRequirements } from \"./program/native-number-undefined-requirements.js\";\n"
+        },
+        {
+          "beforeStart": 862,
+          "beforeEnd": 1028,
+          "currentStart": 1260,
+          "currentEnd": 1772,
+          "beforeText": "import { assertPreparedIrProgram } from \"./program-validation.js\";\nimport { assertIrRuntimeSupport, irNumberFormatDemandOwners } from \"./program/runtime-support.js\";\n",
+          "currentText": "import { assertPreparedIrProgram, assertPreparedIrProgramLinearAllocationEvidence } from \"./program-validation.js\";\nimport { assertNativeIrPolicy, isLegacyHostIrPolicy } from \"./runtime/target-admission.js\";\nimport { prepareLinearAllocationFacts } from \"./analysis/linear-memory-plan.js\";\nimport { preparedLinearAllocationOutcome } from \"./program/linear-allocation-outcome.js\";\nimport {\n  assertIrRuntimeSupport,\n  irNumberFormatDemandOwners,\n  irRuntimeSupportFunctions,\n} from \"./program/runtime-support.js\";\n"
+        },
+        {
+          "beforeStart": 1290,
+          "beforeEnd": 1290,
+          "currentStart": 2034,
+          "currentEnd": 2205,
+          "beforeText": "",
+          "currentText": "import { nativeVectorStoreFailure } from \"./program/native-vector-store-proof.js\";\nimport { nativeModuleGlobalEvidence } from \"./program/native-module-vector-context.js\";\n"
+        },
+        {
+          "beforeStart": 2739,
+          "beforeEnd": 2739,
+          "currentStart": 3654,
+          "currentEnd": 4204,
+          "beforeText": "",
+          "currentText": "  // Restored canonical allocation types, not a caller's source-target label,\n  // distinguish the new layout-free native vector capability from legacy DATA.\n  const nativeVectors = source.allocations.entries.some(\n    (entry) => entry.state === \"live\" && entry.site.type.kind === \"vec\" && !entry.site.type.layout,\n  );\n  if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {\n    assertNativeIrPolicy(resolved.policy);\n    for (const policy of resolved.runtimePolicies) assertNativeIrPolicy(policy);\n  }\n"
+        },
+        {
+          "beforeStart": 3935,
+          "beforeEnd": 3935,
+          "currentStart": 5400,
+          "currentEnd": 5503,
+          "beforeText": "",
+          "currentText": "  const transformedEntries = prepareIrProgramAbiEntries(transformed, transformedRuntime.declarations);\n"
+        },
+        {
+          "beforeStart": 4102,
+          "beforeEnd": 4213,
+          "currentStart": 5670,
+          "currentEnd": 5727,
+          "beforeText": "      abi: preparedIrDraftAbiLookup(prepareIrProgramAbiEntries(transformed, transformedRuntime.declarations)),\n",
+          "currentText": "      abi: preparedIrDraftAbiLookup(transformedEntries),\n"
+        },
+        {
+          "beforeStart": 4305,
+          "beforeEnd": 4305,
+          "currentStart": 5819,
+          "currentEnd": 5972,
+          "beforeText": "",
+          "currentText": "    nativeJsClassEvidenceDomainFromProgram(\n      { ...transformed, abi: { entries: transformedEntries } },\n      transformed.ir,\n      \"source\",\n    ),\n"
+        },
+        {
+          "beforeStart": 5009,
+          "beforeEnd": 5095,
+          "currentStart": 6676,
+          "currentEnd": 8800,
+          "beforeText": "  const entries = prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations);\n",
+          "currentText": "  const numberUndefined = nativeVectors\n    ? collectNativeNumberUndefinedRequirements(finalSource.ir, allocations.snapshot())\n    : undefined;\n  const entries = appendNativeNumberUndefinedAbi(\n    prepareIrProgramAbiEntries(finalSource, finalRuntime.declarations),\n    source.inventory,\n    numberUndefined,\n  );\n  const supportBodies = irRuntimeSupportFunctions(finalSource.runtimeSupport);\n  const completeFinalModule =\n    supportBodies.length === 0\n      ? finalSource.ir\n      : { ...finalSource.ir, functions: [...finalSource.ir.functions, ...supportBodies] };\n  if (nativeVectors || ![resolved.policy, ...resolved.runtimePolicies].every(isLegacyHostIrPolicy)) {\n    const failure = nativeVectorStoreFailure(completeFinalModule, () =>\n      nativeModuleGlobalEvidence({ abi: { entries }, startup: source.startup }),\n    );\n    if (failure) {\n      const owner = source.inventory.allUnits.find((unit) => unit.id === failure.unitId);\n      const record = source.inventory.sources.find((item) => item.id === owner?.sourceId);\n      if (!owner || !record)\n        throw new PreparedIrProgramInvariantError(\"invalid-prepared-data\", \"store proof lacks its actual source owner\");\n      return {\n        kind: \"unsupported\",\n        code: \"element-store-unsupported\",\n        stage: \"resolve\",\n        detail: failure.detail,\n        unitId: owner.id,\n        sourceFile: record.originalFileName,\n        location: {\n          sourceId: owner.sourceId,\n          line: owner.line,\n          column: owner.column,\n          declarationStart: owner.declarationStart,\n          declarationEnd: owner.declarationEnd,\n        },\n      };\n    }\n  }\n  const linearAllocationFacts = resolved.runtimePolicies.some(\n    (policy) => policy.backend === \"linear\" && policy.target !== \"host\",\n  )\n    ? {\n        schema: \"linear-allocation-facts-v1\" as const,\n        facts: prepareLinearAllocationFacts(\n          completeFinalModule,\n          allocations,\n          nativeVectors,\n          nativeJsClassEvidenceDomainFromProgram({ ...finalSource, abi: { entries } }, completeFinalModule, \"source\"),\n        ),\n      }\n    : undefined;\n"
+        },
+        {
+          "beforeStart": 5244,
+          "beforeEnd": 5287,
+          "currentStart": 8949,
+          "currentEnd": 8998,
+          "beforeText": "  const semantic = freezePreparedIrValue({\n",
+          "currentText": "  const frozenSemantic = freezePreparedIrValue({\n"
+        },
+        {
+          "beforeStart": 5574,
+          "beforeEnd": 5615,
+          "currentStart": 9285,
+          "currentEnd": 9446,
+          "beforeText": "    allocations: allocations.snapshot(),\n",
+          "currentText": "    allocations: linearAllocationFacts?.facts.registry ?? allocations.snapshot(),\n    ...(linearAllocationFacts === undefined ? {} : { linearAllocationFacts }),\n"
+        },
+        {
+          "beforeStart": 5652,
+          "beforeEnd": 5761,
+          "currentStart": 9483,
+          "currentEnd": 9652,
+          "beforeText": "    \"inventory\" | \"ir\" | \"derivedUnits\" | \"abi\" | \"startup\" | \"allocations\" | \"runtimeSupport\" | \"sourceMap\"\n",
+          "currentText": "    | \"inventory\"\n    | \"ir\"\n    | \"derivedUnits\"\n    | \"abi\"\n    | \"startup\"\n    | \"allocations\"\n    | \"runtimeSupport\"\n    | \"sourceMap\"\n    | \"linearAllocationFacts\"\n"
+        },
+        {
+          "beforeStart": 5766,
+          "beforeEnd": 5766,
+          "currentStart": 9657,
+          "currentEnd": 10030,
+          "beforeText": "",
+          "currentText": "  // Rejoin the completed frozen snapshot before runtime identity authentication.\n  const semantic = Object.freeze({\n    ...frozenSemantic,\n    allocations: frozenSemantic.linearAllocationFacts?.facts.registry ?? frozenSemantic.allocations,\n  });\n  const classValuesFailure = prepareNativeClassValueEquations(semantic);\n  if (classValuesFailure) return classValuesFailure;\n"
+        },
+        {
+          "beforeStart": 6688,
+          "beforeEnd": 6790,
+          "currentStart": 10952,
+          "currentEnd": 11490,
+          "beforeText": "  assertPreparedIrProgram(program, { verifyDominanceNaive: resolved.controls.verifyDominanceNaive });\n",
+          "currentText": "  const verification = { verifyDominanceNaive: resolved.controls.verifyDominanceNaive };\n  assertPreparedIrProgram(program, verification);\n  // Every exact native Linear view must meet the current complete-context contract.\n  for (const projection of program.runtime) {\n    if (projection.backend !== \"linear\" || projection.target === \"host\") continue;\n    try {\n      assertPreparedIrProgramLinearAllocationEvidence(program, projection, verification);\n    } catch (error) {\n      return preparedLinearAllocationOutcome(error);\n    }\n  }\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "before": {
+        "bytes": 2440,
+        "sha256": "db4965e7dbd76eb88bb9c9ccbe848d3a7c3a11e3af26032a1751684d086048f8"
+      },
+      "current": {
+        "bytes": 2632,
+        "sha256": "1db6049817841fba134627188a89e02c1da4e75fa6b34169b16bdd6dc480e124"
+      },
+      "spans": [
+        {
+          "beforeStart": 1813,
+          "beforeEnd": 1813,
+          "currentStart": 1813,
+          "currentEnd": 2005,
+          "beforeText": "",
+          "currentText": "  readonly jsClassDefinitions?: readonly import(\"../core/js-class-contracts.js\").IrJsClassDefinition[];\n  readonly classes?: readonly import(\"./class-preparation.js\").IrPreparedSourceClass[];\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/input.ts",
+      "before": {
+        "bytes": 6872,
+        "sha256": "66f7f3c1b233f889d9e578bbe6532ce2265b4a52feb72d0edf5bb7d417ef5520"
+      },
+      "current": {
+        "bytes": 7534,
+        "sha256": "cf6021ec9dbcfd97565364a9bd527ad358158234e4c1eca76db9a1aa5f89f8b7"
+      },
+      "spans": [
+        {
+          "beforeStart": 84,
+          "beforeEnd": 84,
+          "currentStart": 84,
+          "currentEnd": 156,
+          "beforeText": "",
+          "currentText": "\nimport { assertSourceClassPreparation } from \"./class-preparation.js\";\n"
+        },
+        {
+          "beforeStart": 290,
+          "beforeEnd": 290,
+          "currentStart": 362,
+          "currentEnd": 441,
+          "beforeText": "",
+          "currentText": "import { assertPreparedIrJsClassDefinitions } from \"./js-class-definition.js\";\n"
+        },
+        {
+          "beforeStart": 4114,
+          "beforeEnd": 4151,
+          "currentStart": 4265,
+          "currentEnd": 4335,
+          "beforeText": "    [\"runtimeSupport\", \"sourceMap\"],\n",
+          "currentText": "    [\"runtimeSupport\", \"sourceMap\", \"classes\", \"jsClassDefinitions\"],\n"
+        },
+        {
+          "beforeStart": 5221,
+          "beforeEnd": 5221,
+          "currentStart": 5405,
+          "currentEnd": 5883,
+          "beforeText": "",
+          "currentText": "  }\n  if (Object.hasOwn(captured, \"classes\")) {\n    dense(captured.classes!);\n    assertSourceClassPreparation(captured.inventory, captured.classes!, captured.ir);\n  }\n  if (Object.hasOwn(captured, \"jsClassDefinitions\")) {\n    if (!captured.jsClassDefinitions) invalid(\"present native JS class definitions must contain complete DATA\");\n    dense(captured.jsClassDefinitions);\n    assertPreparedIrJsClassDefinitions(captured.inventory, captured.jsClassDefinitions, captured.ir);\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "before": {
+        "bytes": 4915,
+        "sha256": "252ad6fb99453fc4bf5a5b8107a9947a338638d51b8016dc75a2c262b0d659d6"
+      },
+      "current": {
+        "bytes": 5472,
+        "sha256": "5a7510a092b8a3d8d6e013d1bfedcdec9774c27a6cda7cac9587afe17f344de0"
+      },
+      "spans": [
+        {
+          "beforeStart": 910,
+          "beforeEnd": 910,
+          "currentStart": 910,
+          "currentEnd": 1013,
+          "beforeText": "",
+          "currentText": "import type { LinearPreparedAllocationFacts } from \"../analysis/linear/contracts/allocation-facts.js\";\n"
+        },
+        {
+          "beforeStart": 1705,
+          "beforeEnd": 1791,
+          "currentStart": 1808,
+          "currentEnd": 2002,
+          "beforeText": "  | { readonly kind: \"class\"; readonly ref: IrTypeRef; readonly shape: IrClassShape }\n",
+          "currentText": "  | {\n      readonly kind: \"class\";\n      readonly ref: IrTypeRef;\n      readonly shape: IrClassShape;\n      readonly preparation?: import(\"./class-preparation.js\").IrPreparedSourceClass;\n    }\n"
+        },
+        {
+          "beforeStart": 1886,
+          "beforeEnd": 1943,
+          "currentStart": 2097,
+          "currentEnd": 2273,
+          "beforeText": "  | { readonly kind: \"support\"; readonly role: string };\n",
+          "currentText": "  | {\n      readonly kind: \"support\";\n      readonly role: string;\n      readonly nativeJsClassDefinition?: import(\"../core/js-class-contracts.js\").IrJsClassDefinition;\n    };\n"
+        },
+        {
+          "beforeStart": 4193,
+          "beforeEnd": 4193,
+          "currentStart": 4523,
+          "currentEnd": 4750,
+          "beforeText": "",
+          "currentText": "  /** Final DATA evidence; every acquisition re-establishes its semantic truth. */\n  readonly linearAllocationFacts?: {\n    readonly schema: \"linear-allocation-facts-v1\";\n    readonly facts: LinearPreparedAllocationFacts;\n  };\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/program/validation.ts",
+      "before": {
+        "bytes": 45816,
+        "sha256": "33cba90b606278805766b4eb739214c31dd84babafb873773f3e92f60c470231"
+      },
+      "current": {
+        "bytes": 49504,
+        "sha256": "c5bfa68dc9fceaf0d47d7dddd6c90b7c129e1b382fad6da575e4417f347a36ce"
+      },
+      "spans": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "currentStart": 0,
+          "currentEnd": 79,
+          "beforeText": "",
+          "currentText": "import { assertNativeClassValueEquations } from \"./native-js-class-values.js\";\n"
+        },
+        {
+          "beforeStart": 85,
+          "beforeEnd": 85,
+          "currentStart": 164,
+          "currentEnd": 420,
+          "beforeText": "",
+          "currentText": "import { assertPreparedIrJsClassStartup } from \"./js-class-startup.js\";\nimport { preparedIrJsClassDefinitions, assertPreparedIrJsClassDefinitions } from \"./js-class-definition.js\";\nimport { assertPreparedStartupInvocation } from \"./startup-validation.js\";\n"
+        },
+        {
+          "beforeStart": 1274,
+          "beforeEnd": 1326,
+          "currentStart": 1609,
+          "currentEnd": 1683,
+          "beforeText": "import { preparedIrDataMismatch } from \"./data.js\";\n",
+          "currentText": "import { assertPreparedIrData, preparedIrDataMismatch } from \"./data.js\";\n"
+        },
+        {
+          "beforeStart": 2279,
+          "beforeEnd": 2279,
+          "currentStart": 2636,
+          "currentEnd": 3048,
+          "beforeText": "",
+          "currentText": "import {\n  screenPreparedIrLinearAllocationEntry,\n  validatePreparedIrLinearAllocationEvidence,\n  type PreparedLinearMemoryInput,\n} from \"./linear-allocation-validation.js\";\nimport type { PreparedIrProgramRuntimeProjection } from \"./prepared-contracts.js\";\nimport { nativeVectorStoreFailure } from \"./native-vector-store-proof.js\";\nimport { nativeModuleGlobalEvidence } from \"./native-module-vector-context.js\";\n"
+        },
+        {
+          "beforeStart": 9814,
+          "beforeEnd": 9814,
+          "currentStart": 10583,
+          "currentEnd": 11403,
+          "beforeText": "",
+          "currentText": "  validatePreparedIrProgram(program, false, undefined, options);\n}\n\n/** Required native entry shares every canonical context check with generic validation. */\nexport function assertPreparedIrProgramLinearAllocationEvidence(\n  program: PreparedIrProgram,\n  projection?: PreparedIrProgramRuntimeProjection,\n  options?: IrVerificationOptions,\n): PreparedLinearMemoryInput | undefined {\n  return validatePreparedIrProgram(program, true, projection, options);\n}\n\nfunction validatePreparedIrProgram(\n  program: PreparedIrProgram,\n  requiredLinearEvidence: boolean,\n  selectedProjection?: PreparedIrProgramRuntimeProjection,\n  options?: IrVerificationOptions,\n): PreparedLinearMemoryInput | undefined {\n  assertPreparedIrData(program);\n  const attached = screenPreparedIrLinearAllocationEntry(program, requiredLinearEvidence);\n"
+        },
+        {
+          "beforeStart": 10038,
+          "beforeEnd": 10038,
+          "currentStart": 11627,
+          "currentEnd": 11995,
+          "beforeText": "",
+          "currentText": "  const jsClasses = preparedIrJsClassDefinitions(program.abi.entries).map((row) => row.definition);\n  if (jsClasses.length || program.startup.some((plan) => Object.hasOwn(plan, \"jsClassStartup\"))) {\n    assertPreparedIrJsClassDefinitions(program.inventory, jsClasses, program.ir);\n    assertPreparedIrJsClassStartup(program.startup, jsClasses, program.inventory);\n  }\n"
+        },
+        {
+          "beforeStart": 10357,
+          "beforeEnd": 10404,
+          "currentStart": 12314,
+          "currentEnd": 12403,
+          "beforeText": "  assertPreparedIrProgramAllocations(program);\n",
+          "currentText": "  if (!attached && !requiredLinearEvidence) assertPreparedIrProgramAllocations(program);\n"
+        },
+        {
+          "beforeStart": 15424,
+          "beforeEnd": 15424,
+          "currentStart": 17423,
+          "currentEnd": 18065,
+          "beforeText": "",
+          "currentText": "  // Pass tables remain partial, but every supplied row must agree with the\n  // complete ABI authority. Preserve their absence in the checked module.\n  if (attached || requiredLinearEvidence) {\n    for (const [key, signature] of program.ir.declaredSignatures ?? [])\n      if (preparedIrDataMismatch(signature, declaredSignatures.get(key)) !== undefined)\n        invalid(`declared signature ${key} contradicts complete ABI`);\n    for (const [key, type] of program.ir.declaredGlobals ?? [])\n      if (preparedIrDataMismatch(type, declaredGlobals.get(key)) !== undefined)\n        invalid(`declared global ${key} contradicts complete ABI`);\n  }\n"
+        },
+        {
+          "beforeStart": 16963,
+          "beforeEnd": 16963,
+          "currentStart": 19604,
+          "currentEnd": 19970,
+          "beforeText": "",
+          "currentText": "          if (\n            (instruction.kind === \"class.new\" ||\n              instruction.kind === \"class.call\" ||\n              instruction.kind === \"class.static_call\") &&\n            (!instruction.target || !calls.has(irCallableBindingKey(instruction.target.binding)))\n          )\n            invalid(`body ${fn.unitId} references an undeclared class callable`);\n"
+        },
+        {
+          "beforeStart": 17852,
+          "beforeEnd": 17852,
+          "currentStart": 20859,
+          "currentEnd": 20902,
+          "beforeText": "",
+          "currentText": "    assertPreparedStartupInvocation(plan);\n"
+        },
+        {
+          "beforeStart": 18869,
+          "beforeEnd": 18869,
+          "currentStart": 21919,
+          "currentEnd": 21987,
+          "beforeText": "",
+          "currentText": "  assertNativeClassValueEquations(program, program.ir, \"original\");\n"
+        },
+        {
+          "beforeStart": 19894,
+          "beforeEnd": 19894,
+          "currentStart": 23012,
+          "currentEnd": 23116,
+          "beforeText": "",
+          "currentText": "    assertNativeClassValueEquations(program, { functions: projection.prepared.functions }, \"selected\");\n"
+        },
+        {
+          "beforeStart": 19898,
+          "beforeEnd": 19898,
+          "currentStart": 23120,
+          "currentEnd": 23453,
+          "beforeText": "",
+          "currentText": "  const storeFailure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));\n  if (storeFailure) invalid(`${storeFailure.unitId}: ${storeFailure.detail}`);\n  if (attached || requiredLinearEvidence)\n    return validatePreparedIrLinearAllocationEvidence(program, requiredLinearEvidence, selectedProjection);\n"
+        },
+        {
+          "beforeStart": 30243,
+          "beforeEnd": 30442,
+          "currentStart": 33798,
+          "currentEnd": 33981,
+          "beforeText": "    sourceMapFields(plan, [\n      \"sourceId\",\n      \"unitId\",\n      \"executable\",\n      \"bindings\",\n      \"liveSeeds\",\n      \"evaluations\",\n      \"exports\",\n      \"invocation\",\n      \"gaps\",\n    ]);\n",
+          "currentText": "    sourceMapFields(\n      plan,\n      [\"sourceId\", \"unitId\", \"executable\", \"bindings\", \"liveSeeds\", \"evaluations\", \"exports\", \"invocation\", \"gaps\"],\n      [\"jsClassStartup\"],\n    );\n"
+        },
+        {
+          "beforeStart": 31070,
+          "beforeEnd": 31181,
+          "currentStart": 34609,
+          "currentEnd": 34869,
+          "beforeText": "  const ranges = [...bindings.map((binding) => ({ start: binding.start, end: binding.end })), ...evaluations];\n",
+          "currentText": "  const classRanges = plan.jsClassStartup?.definitions.map((row) => sourceMapStartupRange(row.span, length)) ?? [];\n  const ranges = [\n    ...bindings.map((binding) => ({ start: binding.start, end: binding.end })),\n    ...evaluations,\n    ...classRanges,\n  ];\n"
+        }
+      ]
+    },
+    {
+      "path": "src/position-map.ts",
+      "before": {
+        "bytes": 8649,
+        "sha256": "aed06dbcabad1d12cfd4d228c25f30dca5d0ff0006ced9e467b26bf84485b8f9"
+      },
+      "current": {
+        "bytes": 8649,
+        "sha256": "aed06dbcabad1d12cfd4d228c25f30dca5d0ff0006ced9e467b26bf84485b8f9"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "before": {
+        "bytes": 8077,
+        "sha256": "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83"
+      },
+      "current": {
+        "bytes": 8077,
+        "sha256": "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program-runtime-demands.ts",
+      "before": {
+        "bytes": 474,
+        "sha256": "6af11b258faefd71a5602a021cdb8524f6d7bd804764e6ec7914440575f4fc39"
+      },
+      "current": {
+        "bytes": 474,
+        "sha256": "6af11b258faefd71a5602a021cdb8524f6d7bd804764e6ec7914440575f4fc39"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program/runtime-demands.ts",
+      "before": {
+        "bytes": 13467,
+        "sha256": "74bfbc2fa49f6ce33fc5b4970a7dd0a5def4a6a17b009032321fce13cdfabf85"
+      },
+      "current": {
+        "bytes": 13467,
+        "sha256": "74bfbc2fa49f6ce33fc5b4970a7dd0a5def4a6a17b009032321fce13cdfabf85"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program-runtime-abi.ts",
+      "before": {
+        "bytes": 363,
+        "sha256": "cec827cc20299610d6351e050cce5e9d3bd5198c9b334eb95253b96372ed7247"
+      },
+      "current": {
+        "bytes": 363,
+        "sha256": "cec827cc20299610d6351e050cce5e9d3bd5198c9b334eb95253b96372ed7247"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program/runtime-abi.ts",
+      "before": {
+        "bytes": 4522,
+        "sha256": "65fcb7d226b260f30f517ae0f0a55117f5f5f99dcaef2c83219a466ee79cad4e"
+      },
+      "current": {
+        "bytes": 5143,
+        "sha256": "8a18f6765489434fedb5f0cb030c026f7978b31ba609b69cd26ee6ae4c006333"
+      },
+      "spans": [
+        {
+          "beforeStart": 786,
+          "beforeEnd": 786,
+          "currentStart": 786,
+          "currentEnd": 926,
+          "beforeText": "",
+          "currentText": "import {\n  collectNativeJsClassErrorDemands,\n  nativeJsClassRealmErrorDeclarations,\n} from \"../runtime/native-js-class-error-callables.js\";\n"
+        },
+        {
+          "beforeStart": 2088,
+          "beforeEnd": 2088,
+          "currentStart": 2228,
+          "currentEnd": 2709,
+          "beforeText": "",
+          "currentText": "  for (const declaration of nativeJsClassRealmErrorDeclarations(input.ir.functions)) {\n    assertPreparedIrRuntimeCallableDeclaration(declaration);\n    declarations.set(irCallableBindingKey(declaration.ref.binding), declaration);\n  }\n  for (const demand of collectNativeJsClassErrorDemands(input.ir.functions)) {\n    assertPreparedIrRuntimeCallableDeclaration(demand.declaration);\n    declarations.set(irCallableBindingKey(demand.declaration.ref.binding), demand.declaration);\n  }\n"
+        }
+      ]
+    },
+    {
+      "path": "src/ir/runtime-program-manifest.ts",
+      "before": {
+        "bytes": 450,
+        "sha256": "9d6a11bb96ce4dde466d92baf2945ca2c9a877ee5124a93ebaccac5118e44c56"
+      },
+      "current": {
+        "bytes": 450,
+        "sha256": "9d6a11bb96ce4dde466d92baf2945ca2c9a877ee5124a93ebaccac5118e44c56"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program/runtime-manifest.ts",
+      "before": {
+        "bytes": 12179,
+        "sha256": "069795708c8134e2bf69f17ed9f546a2f63c9f3494889213e6c26b211388f470"
+      },
+      "current": {
+        "bytes": 12179,
+        "sha256": "069795708c8134e2bf69f17ed9f546a2f63c9f3494889213e6c26b211388f470"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program-runtime-validation.ts",
+      "before": {
+        "bytes": 302,
+        "sha256": "8dbc664c29166cade8867d58f5bddb3af3e12d9e98c25aea2a9f8ce9c7ac7e9b"
+      },
+      "current": {
+        "bytes": 302,
+        "sha256": "8dbc664c29166cade8867d58f5bddb3af3e12d9e98c25aea2a9f8ce9c7ac7e9b"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program/runtime-validation.ts",
+      "before": {
+        "bytes": 8248,
+        "sha256": "1aa7bc3520b1c88483821d96fa41c633bb02e9082c6e6993605847ef296cd13f"
+      },
+      "current": {
+        "bytes": 8248,
+        "sha256": "1aa7bc3520b1c88483821d96fa41c633bb02e9082c6e6993605847ef296cd13f"
+      },
+      "spans": []
+    },
+    {
+      "path": "src/ir/program-validation.ts",
+      "before": {
+        "bytes": 236,
+        "sha256": "b64454a7c97179e8efdab677049fb0f231ba3b6ce731bff602b231406d2dd098"
+      },
+      "current": {
+        "bytes": 285,
+        "sha256": "152afa515e9ce7962782f78143013f0a53ad5fb79b6257fb75ef02cc64cf6d2c"
+      },
+      "spans": [
+        {
+          "beforeStart": 169,
+          "beforeEnd": 236,
+          "currentStart": 169,
+          "currentEnd": 285,
+          "beforeText": "export { assertPreparedIrProgram } from \"./program/validation.js\";\n",
+          "currentText": "export { assertPreparedIrProgram, assertPreparedIrProgramLinearAllocationEvidence } from \"./program/validation.js\";\n"
+        }
+      ]
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-program-validator-relocation.ts",
+      "current": {
+        "bytes": 46642,
+        "sha256": "6e32ca208775e8eeae765bf3345cdd3cb1e0f40a1784f684afd9c4dff3a4cfe0"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-source-map-schema-source-epoch.json",
+      "current": {
+        "bytes": 49534,
+        "sha256": "7dda716408c18981a48dc6fba90834aa0e7fb95f3f8900b7c4c16e1545f38f3c"
+      }
+    },
+    {
+      "path": "tests/helpers/ir-program-validator-relocation.json",
+      "current": {
+        "bytes": 27069,
+        "sha256": "816848c32744e8ec3e2c414a27420b4a0339e35d815b5002db4754f11104ff92"
+      }
+    }
+  ],
+  "caller": {
+    "path": "tests/issue-3525-source-map-validator-proof.test.ts",
+    "before": {
+      "bytes": 13408,
+      "sha256": "447e36da40ea03643d69ebd4b0314c40731e7a24e096548b375cf88eefa17436"
+    },
+    "current": {
+      "bytes": 13648,
+      "sha256": "a0857b16ec7e1fdc69e571b3a3c569823b1fa41ce4090a7d27f8809ca0abc3a7"
+    },
+    "spans": [
+      {
+        "beforeStart": 517,
+        "beforeEnd": 517,
+        "currentStart": 517,
+        "currentEnd": 638,
+        "beforeText": "",
+        "currentText": "import { createSourceMapValidatorCurrentSuccessorReader } from \"./helpers/ir-source-map-validator-current-successor.js\";\n"
+      },
+      {
+        "beforeStart": 2284,
+        "beforeEnd": 2370,
+        "currentStart": 2405,
+        "currentEnd": 2610,
+        "beforeText": "const physical = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\n",
+        "currentText": "const actualPhysical = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\nconst physical = (path: string): string => createSourceMapValidatorCurrentSuccessorReader(actualPhysical)(path);\n"
+      }
+    ]
+  }
+}

@@ -12,6 +12,7 @@ import {
   IrFunctionBuilder,
   analyzeEscape,
   irVal,
+  irSupportFuncRef,
   type IrObjectShape,
   type IrType,
   type IrValueId,
@@ -86,7 +87,7 @@ describe("#747 — escape analysis", () => {
     const { fn } = buildFn((b) => {
       const one = b.emitConst({ kind: "f64", value: 1 }, F64);
       const o = b.emitObjectNew(OBJ_SHAPE, [one]);
-      b.emitCall({ kind: "func", name: "sink" }, [o], null);
+      b.emitCall(irSupportFuncRef(identities.sourceId, "opaque-sink", "sink"), [o], null);
       return [];
     });
     const obj = fn.blocks[0]!.instrs.find((i) => i.kind === "object.new")!;
@@ -99,7 +100,7 @@ describe("#747 — escape analysis", () => {
       const one = b.emitConst({ kind: "f64", value: 1 }, F64);
       const o = b.emitObjectNew(OBJ_SHAPE, [one]);
       const sig = { params: [] as readonly IrType[], returnType: F64 };
-      b.emitClosureNew({ kind: "func", name: "lifted" }, sig, [OBJ_TYPE], [o]);
+      b.emitClosureNew(irSupportFuncRef(identities.sourceId, "captured-lifted", "lifted"), sig, [OBJ_TYPE], [o]);
       return [];
     });
     const obj = fn.blocks[0]!.instrs.find((i) => i.kind === "object.new")!;
@@ -118,7 +119,7 @@ describe("#747 — escape analysis", () => {
         const inner = b.emitObjectNew(OBJ_SHAPE, [one]);
         b.emitObjectSet(outer, "x", inner);
         // also pass inner to an opaque call → opaque outranks stored
-        b.emitCall({ kind: "func", name: "sink" }, [inner], null);
+        b.emitCall(irSupportFuncRef(identities.sourceId, "opaque-sink", "sink"), [inner], null);
         return [outer];
       },
       { resultTypes: [OBJ_TYPE] },

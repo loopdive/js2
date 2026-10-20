@@ -27,6 +27,14 @@ export interface IrFunctionIdentity {
   readonly ordinal?: number;
   /** An original nested source body must carry the complete lifted provenance. */
   readonly sourceUnit?: true;
+  /** Exact original class body provenance; a ClassId is never a fabricated parent UnitId. */
+  readonly sourceClassBody?: {
+    readonly classId: IrClassId;
+    readonly sourceBodyKind: "constructor" | "method" | "field-initializer" | "static-initializer";
+    readonly lexicalOwnerId: IrLexicalOwnerId;
+    readonly terminalOwnerId: IrUnitId;
+    readonly ordinal: number;
+  };
 }
 
 export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {

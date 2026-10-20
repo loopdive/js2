@@ -9,6 +9,10 @@ import { PreparedIrProgramInvariantError } from "./errors.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./prepared-contracts.js";
 import { irRuntimeCallableDeclaration, type IrRuntimeCallableDeclaration } from "../runtime/callable-declarations.js";
 import { collectNativeAsyncCallableDemands, IrNativeAsyncCallableError } from "../runtime/native-async-callables.js";
+import {
+  collectNativeJsClassErrorDemands,
+  nativeJsClassRealmErrorDeclarations,
+} from "../runtime/native-js-class-error-callables.js";
 import { collectVectorCallableDemands, IrVectorCallableError } from "../runtime/vector-callables.js";
 
 type RuntimeCallableInput = Pick<PreparedIrProgramProducerInput, "inventory" | "ir" | "derivedUnits">;
@@ -33,6 +37,14 @@ export function prepareIrProgramRuntimeCallables(
   | PreparedIrProgramFailure {
   assertPreparedIrProgramPopulation(input);
   const declarations = new Map<string, IrRuntimeCallableDeclaration>();
+  for (const declaration of nativeJsClassRealmErrorDeclarations(input.ir.functions)) {
+    assertPreparedIrRuntimeCallableDeclaration(declaration);
+    declarations.set(irCallableBindingKey(declaration.ref.binding), declaration);
+  }
+  for (const demand of collectNativeJsClassErrorDemands(input.ir.functions)) {
+    assertPreparedIrRuntimeCallableDeclaration(demand.declaration);
+    declarations.set(irCallableBindingKey(demand.declaration.ref.binding), demand.declaration);
+  }
   for (const fn of input.ir.functions) {
     try {
       collectNativeAsyncCallableDemands([fn]);

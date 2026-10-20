@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { preparedIrClassLayoutKey, preparedIrTypeKey, preparedIrCallableSignature } from "./program/abi-signatures.js";
+import { prepareIrJsClassAbiEntries } from "./program/js-class-abi.js";
 export {
   preparedIrTypeKey,
   preparedIrDataKey,
@@ -35,6 +36,7 @@ import {
 export { preparedIrDraftAbiLookup } from "./program/draft-abi-lookup.js";
 
 export interface PrepareIrProgramAbiInput {
+  readonly jsClassDefinitions?: readonly import("./core/js-class-contracts.js").IrJsClassDefinition[];
   readonly classes?: readonly import("./program/class-preparation.js").IrPreparedSourceClass[];
   readonly inventory: IrUnitInventory;
   readonly ir: IrModule;
@@ -64,6 +66,7 @@ export function prepareIrProgramAbiEntries(
     nextOrder.set(sourceId, declarationOrder + 1);
     return { sourceOrder, declarationOrder };
   };
+  entries.push(...prepareIrJsClassAbiEntries(input.jsClassDefinitions ?? [], input.inventory, order));
   const sourceOf = (unitId: IrUnitId): IrSourceId => {
     const record =
       input.inventory.allUnits.find((unit) => unit.id === unitId) ??

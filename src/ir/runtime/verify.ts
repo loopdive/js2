@@ -44,6 +44,7 @@ import type { ValType } from "../../wasm/model/instructions.js";
 // belongs to another producer.
 import { defaultTagDomain } from "./producer.js";
 import type { TagDomain } from "../core/tag-domain.js";
+import { verifyIrJsClassInstruction } from "./js-class-verify.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-verification.js";
 import { verifyIrAsyncPlan } from "../analysis/async-plan.js";
 import { irFnctorShapeEquals, validateIrFnctorShape } from "../core/fnctor-abi.js";
@@ -1225,6 +1226,37 @@ function verifyBlock(
 
 function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
   switch (instr.kind) {
+    case "js.class.define":
+      return instr.captures;
+    case "js.class.binding.new":
+      return [];
+    case "js.class.binding.read":
+      return instr.storage.kind === "cell" ? [instr.storage.cell] : [];
+    case "js.class.binding.init":
+    case "js.class.binding.write":
+      return instr.storage.kind === "cell" ? [instr.storage.cell, instr.value] : [instr.value];
+    case "js.class.construct":
+      return [instr.constructor, instr.newTarget, ...instr.args];
+    case "js.class.property.get":
+      return instr.key.kind === "computed" ? [instr.receiver, instr.key.value] : [instr.receiver];
+    case "js.class.property.define":
+    case "js.class.property.set":
+      return instr.key.kind === "computed"
+        ? [instr.receiver, instr.key.value, instr.value]
+        : [instr.receiver, instr.value];
+    case "js.class.frame.get":
+      return [instr.frame];
+    case "js.class.frame.new":
+      return [instr.environment, instr.thisValue, instr.homeObject, instr.newTarget];
+    case "js.class.invoke":
+      return [instr.callable, instr.receiver, ...instr.args];
+    case "js.class.constructor.complete":
+      return instr.completion.kind === "return" ? [instr.self, instr.completion.value] : [instr.self];
+    case "js.class.identity":
+      return [instr.left, instr.right];
+    case "js.class.instanceof":
+      return [instr.value, instr.constructor];
+
     case "const":
       return [];
     case "call":
@@ -1809,6 +1841,21 @@ export function typeRuleCategoryOf(status: TypeRuleStatus): TypeRuleCategory | n
 }
 
 export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
+  "js.class.define": "checked",
+  "js.class.binding.new": "checked",
+  "js.class.binding.init": "checked",
+  "js.class.binding.read": "checked",
+  "js.class.binding.write": "checked",
+  "js.class.construct": "checked",
+  "js.class.property.get": "checked",
+  "js.class.property.define": "checked",
+  "js.class.property.set": "checked",
+  "js.class.frame.get": "checked",
+  "js.class.invoke": "checked",
+  "js.class.constructor.complete": "checked",
+  "js.class.identity": "checked",
+  "js.class.instanceof": "checked",
+  "js.class.frame.new": "checked",
   // --- checked here (33 — 16 from #4523, +16 from #4603, + repeat) --------
   binary: "checked",
   intrinsic: "checked",
@@ -2550,6 +2597,7 @@ function checkSupportRefFlow(instr: IrInstr, blockId: number, ctx: RoadmapRuleCt
   const supportResult = instr.resultType?.kind === "support-ref";
   if (supportOperand || supportResult) {
     const permitted =
+      instr.kind.startsWith("js.class.") ||
       instr.kind === "call" ||
       instr.kind === "if" ||
       instr.kind === "select" ||
@@ -2604,6 +2652,26 @@ function verifyInstrTypeRules(
   const checkInstr = (instr: IrInstr, blockId: number): void => {
     checkSupportRefFlow(instr, blockId, roadmap);
     if (checkRoadmapRule(instr, blockId, roadmap)) return;
+    switch (instr.kind) {
+      case "js.class.define":
+      case "js.class.binding.new":
+      case "js.class.binding.init":
+      case "js.class.binding.read":
+      case "js.class.binding.write":
+      case "js.class.construct":
+      case "js.class.property.get":
+      case "js.class.property.define":
+      case "js.class.property.set":
+      case "js.class.frame.get":
+      case "js.class.invoke":
+      case "js.class.constructor.complete":
+      case "js.class.identity":
+      case "js.class.instanceof":
+      case "js.class.frame.new":
+        for (const message of verifyIrJsClassInstruction(instr, typeOf))
+          errors.push({ message, func: func.name, block: blockId });
+        return;
+    }
     switch (instr.kind) {
       case "intrinsic": {
         for (const message of verifyIrIntrinsicInstruction(instr, typeOf)) {

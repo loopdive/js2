@@ -22,6 +22,7 @@
 // This issue adds the hooks only. No analysis is performed here; the namespace
 // table below is reserved by convention for the follow-up issues.
 
+import { createPreparedIrDataObject, createPreparedIrDataRecord } from "../../shared/contracts/prepared-ir-data.js";
 import { asAllocSiteId, type AllocKind, type AllocSiteId, type IrSiteId } from "../core/nodes.js";
 import { IR_CLASS_SHAPE_CELL, type IrType } from "../core/types.js";
 import type {
@@ -92,7 +93,11 @@ export function copyIrPreparationData<T>(value: T): T {
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)
       invalid("unsupported object instance");
     const descriptors = Object.getOwnPropertyDescriptors(value);
-    const copy = array ? new Array(descriptors.length!.value) : Object.create(prototype);
+    const copy = array
+      ? new Array(descriptors.length!.value)
+      : prototype === null
+        ? createPreparedIrDataRecord()
+        : createPreparedIrDataObject();
     copies.set(value, copy);
     for (const key of Reflect.ownKeys(value)) {
       const descriptor = Object.getOwnPropertyDescriptor(value, key)!;

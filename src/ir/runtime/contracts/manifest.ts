@@ -42,7 +42,8 @@ export type RuntimeFeature =
   | OrdinaryObjectRuntimeFeature
   | NumberRemainderRuntimeFeature
   | "js.number.from-value"
-  | ReferenceErrorRuntimeFeature;
+  | ReferenceErrorRuntimeFeature
+  | NativeJsClassTypeErrorRuntimeFeature;
 
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
@@ -373,6 +374,11 @@ export const REFERENCE_ERROR_RUNTIME_PROVIDER_IDS = Object.freeze([
 
 export type ReferenceErrorRuntimeProviderId = (typeof REFERENCE_ERROR_RUNTIME_PROVIDER_IDS)[number];
 
+export const NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_FEATURES = Object.freeze(["error.type.construct"] as const);
+export type NativeJsClassTypeErrorRuntimeFeature = (typeof NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_FEATURES)[number];
+export const NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_PROVIDER_IDS = Object.freeze(["native.error.type.construct"] as const);
+export type NativeJsClassTypeErrorRuntimeProviderId = (typeof NATIVE_JS_CLASS_TYPE_ERROR_RUNTIME_PROVIDER_IDS)[number];
+
 /** Whole-program builtin demands; deliberately not async frame runtime intents. */
 export const NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES = Object.freeze([
   "async.native.delay",
@@ -458,6 +464,7 @@ export type RuntimeProviderId =
   | StringConstRuntimeProviderId
   | HostCallbackWrapRuntimeProviderId
   | FunctionPrototypeCallRuntimeProviderId
+  | NativeJsClassTypeErrorRuntimeProviderId
   | ReferenceErrorRuntimeProviderId
   | NativeAsyncCallableRuntimeProviderId
   | OrdinaryObjectRuntimeProviderId

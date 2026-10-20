@@ -34,6 +34,12 @@ import {
   irOrdinaryObjectCallableDeclaration,
 } from "./ordinary-object-callables.js";
 
+import {
+  nativeJsClassTypeErrorDeclaration,
+  nativeJsClassTypeErrorProviderMismatch,
+  TYPE_ERROR_RUNTIME_PROVIDERS,
+} from "./native-js-class-error-callables.js";
+
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 
 /** Policy-independent callable contracts; physical providers are selected by the manifest. */
@@ -51,7 +57,8 @@ export { REFERENCE_ERROR_SIGNATURE, REFERENCE_ERROR_RUNTIME_PROVIDERS } from "./
 export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
   return ref.binding.kind === "runtime" && ref.binding.symbol === "__new_ReferenceError"
     ? REFERENCE_ERROR_DECLARATION
-    : (irNativeAsyncCallableDeclaration(ref) ??
+    : (nativeJsClassTypeErrorDeclaration(ref) ??
+        irNativeAsyncCallableDeclaration(ref) ??
         irVectorCallableDeclaration(ref) ??
         irOrdinaryObjectCallableDeclaration(ref) ??
         irNumberConversionCallableDeclaration(ref) ??
@@ -61,6 +68,7 @@ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableD
 
 /** Canonical symbolic callable families; physical materialization remains a separate obligation. */
 export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  ...TYPE_ERROR_RUNTIME_PROVIDERS,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
   ...NUMERIC_APPEND_RUNTIME_PROVIDERS,
@@ -70,6 +78,7 @@ export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefini
 
 export function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
   return (
+    nativeJsClassTypeErrorProviderMismatch(provider) ??
     referenceErrorProviderMismatch(provider) ??
     nativeAsyncProviderMismatch(provider) ??
     vectorProviderMismatch(provider) ??

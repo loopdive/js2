@@ -109,6 +109,28 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     }
   };
   switch (instr.kind) {
+    case "js.class.define":
+    case "js.class.binding.new":
+    case "js.class.binding.init":
+    case "js.class.binding.read":
+    case "js.class.binding.write":
+    case "js.class.construct":
+    case "js.class.property.get":
+    case "js.class.property.define":
+    case "js.class.property.set":
+    case "js.class.frame.get":
+    case "js.class.invoke":
+    case "js.class.constructor.complete":
+
+    case "js.class.instanceof":
+    case "js.class.frame.new":
+      fx.readsHeap = true;
+      fx.writesHeap = true;
+      fx.control = true;
+      break;
+    case "js.class.identity":
+      break;
+
     // Pure: constants, arithmetic, allocation of fresh objects, immutable
     // string content ops. Re-ordering these is unobservable.
     case "const":
@@ -456,6 +478,7 @@ export function verifyEmissionSchedule(
  * - `global.set` — writes observable state.
  */
 export function isSideEffecting(i: IrInstr): boolean {
+  if (i.kind.startsWith("js.class.")) return i.kind !== "js.class.identity";
   return (
     i.kind === "raw.wasm" ||
     i.kind === "call" ||

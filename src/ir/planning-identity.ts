@@ -496,7 +496,8 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
     }
     sourceIdBySourceFile.set(scannedSource.sourceFile, source.id);
     sourceFileBySourceId.set(source.id, scannedSource.sourceFile);
-    const moduleInitPopulation = collectModuleInitPopulation(scannedSource.sourceFile);
+    const moduleInitPopulation =
+      scannedSource.nativeModuleInitPopulation ?? collectModuleInitPopulation(scannedSource.sourceFile);
     for (const statement of moduleInitPopulation) {
       if (statement.parent !== scannedSource.sourceFile || statement.getSourceFile() !== scannedSource.sourceFile) {
         return planningIdentityInvariant(

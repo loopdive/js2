@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { inspectOrdinaryNumberUndefinedBodies } from "../analysis/allocation-evidence/ordinary-number-undefined-body.js";
 import type { IrModule } from "../core/nodes.js";
 import type { AllocRegistrySnapshot } from "../analysis/contracts/allocations.js";
 import {
@@ -31,7 +32,12 @@ export function collectNativeNumberUndefinedRequirements(
       "build",
       "native Number/Undefined runtime validation",
     );
-  const requirements = report ? inspectNativeNumberUndefinedBodies(module, registry) : undefined;
+  const requirements =
+    report?.kind === "verified" && report.profile === "native-ordinary-number-undefined-v1"
+      ? inspectOrdinaryNumberUndefinedBodies(module, registry)?.requirements
+      : report
+        ? inspectNativeNumberUndefinedBodies(module, registry)
+        : undefined;
   if (requirements) issued.set(requirements, copyIrPreparationData({ module, registry }));
   return requirements;
 }

@@ -1,3 +1,11 @@
+import {
+  type PreparedIrProgram,
+  type PreparedIrProgramRuntimeProjection,
+} from "../../../ir/program/prepared-contracts.js";
+import {
+  collectNativeProgramStringSemantics,
+  completeNativeProgramStringSemantics,
+} from "../../../ir/program/native-program-resource-requirements.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type {
   NativePrimitiveBoundaryAbiInput,
@@ -654,4 +662,48 @@ export function emitPreparedNativeStringConcat(
   });
   if (!admitted) fail("concat occurrence is outside the closed owner projection");
   return [{ op: "call", funcIdx: pack.output.concat.handle }];
+}
+
+export function prepareNativeProgramStringInput(
+  program: PreparedIrProgram,
+  projection: PreparedIrProgramRuntimeProjection,
+  options: { readonly utf8Storage?: boolean; readonly stringConcatEmptyIdentity?: boolean },
+  invocationRequirements?: NativeInvocationRequirements,
+  realmRequirements?: NativeRealmRequirements,
+): NativeStringValueReservationInput | PreparedIrProgramFailure | undefined {
+  const semantic = collectNativeProgramStringSemantics(
+    program,
+    projection,
+    options,
+    invocationRequirements,
+    realmRequirements,
+  );
+  const { demands, invocation } = semantic;
+  const native = planNativeStringValuePhysical(
+    demands,
+    {
+      representation: "native-string",
+      utf8Storage: options.utf8Storage === true,
+      stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true,
+    },
+    invocation,
+    realmRequirements,
+  );
+  if (native.kind === "none") return undefined;
+  if (native.kind !== "planned") return native;
+  const logical = completeNativeProgramStringSemantics(
+    semantic,
+    native.plan.output?.options,
+    native.plan.mode !== "literals",
+  );
+  if ("kind" in logical) return logical;
+  const { outputRequirements, valueRequirements } = logical;
+  return Object.freeze({
+    demands,
+    plan: native.plan,
+    ...(native.invocationRequirements ? { invocationRequirements: native.invocationRequirements } : {}),
+    ...(realmRequirements ? { realmRequirements, realmLiterals: native.realmLiterals! } : {}),
+    ...(outputRequirements ? { outputRequirements } : {}),
+    ...(valueRequirements ? { valueRequirements } : {}),
+  });
 }

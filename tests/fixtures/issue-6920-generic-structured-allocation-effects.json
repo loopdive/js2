@@ -1,0 +1,3907 @@
+{
+  "schema": "generic-structured-allocation-effects-historical-v1",
+  "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+  "provenance": {
+    "capsuleSha256": "b5e78dbd93d87d9709c4a138f545ceab5b0c5b957a5b68e592c393f7f8b6106c",
+    "packetSha256": "1b4569fcd1002d722fa2c149780bea650e3aba40c7d74f2b944e91de31784b27",
+    "packetBytes": 150213,
+    "sourceTestSha256": "7fe465393b962b234f9715b28d785abb22b3cfe3f565d0a989aa9136ac15163a",
+    "meaning": "Exact historical generic IR from an explicitly private ordinary-completion diagnostic. Not current frontend admission, native proof, ABI transport or engine evidence."
+  },
+  "census": {
+    "rows": 8,
+    "sourceViews": 8,
+    "preparedOriginalViews": 6,
+    "selectedViews": 6,
+    "wholeFunctionViews": 20,
+    "boxSitesPerView": 2,
+    "boxSitesAcrossViews": 40,
+    "ownUndefinedProperties": 40
+  },
+  "payload": {
+    "rows": [
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 20,
+        "sourceText": "export function run(flag:boolean):void{if(flag){return 4 as never;}return 5 as never;}",
+        "args": [[true], [false]],
+        "policy": {
+          "backend": "wasmgc",
+          "target": "standalone"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "if.stmt",
+                        "cond": 0,
+                        "then": [
+                          {
+                            "kind": "const",
+                            "value": {
+                              "kind": "f64",
+                              "value": 4
+                            },
+                            "result": 1,
+                            "resultType": {
+                              "kind": "val",
+                              "val": {
+                                "kind": "f64"
+                              }
+                            }
+                          },
+                          {
+                            "kind": "box",
+                            "value": 1,
+                            "toType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "result": 2,
+                            "resultType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "alloc": 0
+                          },
+                          {
+                            "kind": "early.return",
+                            "value": 2,
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "else": [],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "if.stmt",
+                        "cond": 0,
+                        "then": [
+                          {
+                            "kind": "const",
+                            "value": {
+                              "kind": "f64",
+                              "value": 4
+                            },
+                            "result": 1,
+                            "resultType": {
+                              "kind": "val",
+                              "val": {
+                                "kind": "f64"
+                              }
+                            }
+                          },
+                          {
+                            "kind": "box",
+                            "value": 1,
+                            "toType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "result": 2,
+                            "resultType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "alloc": 0
+                          },
+                          {
+                            "kind": "early.return",
+                            "value": 2,
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "else": [],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": [
+              {
+                "id": 0,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "owned",
+                      "ops": []
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "opaque",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              },
+              {
+                "id": 1,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "escaped",
+                      "ops": ["escape"]
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "returned",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        },
+        "selected": [
+          {
+            "backend": "wasmgc",
+            "target": "standalone",
+            "ir": {
+              "functions": [
+                {
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                  "name": "run",
+                  "params": [
+                    {
+                      "name": "flag",
+                      "type": {
+                        "kind": "val",
+                        "val": {
+                          "kind": "i32",
+                          "boolean": true
+                        }
+                      },
+                      "value": 0
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "dynamic"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "id": 0,
+                      "blockArgs": [],
+                      "blockArgTypes": [],
+                      "instrs": [
+                        {
+                          "kind": "if.stmt",
+                          "cond": 0,
+                          "then": [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          "else": [],
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "f64",
+                            "value": 5
+                          },
+                          "result": 3,
+                          "resultType": {
+                            "kind": "val",
+                            "val": {
+                              "kind": "f64"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "box",
+                          "value": 3,
+                          "toType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "result": 4,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "alloc": 1
+                        },
+                        {
+                          "kind": "early.return",
+                          "value": 4,
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "undefined"
+                          },
+                          "result": 5,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 1
+                          }
+                        }
+                      ],
+                      "terminator": {
+                        "kind": "return",
+                        "values": [5]
+                      }
+                    }
+                  ],
+                  "exported": true,
+                  "valueCount": 6
+                }
+              ]
+            },
+            "allocations": {
+              "size": 2,
+              "entries": [
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 0,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                },
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 1,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                }
+              ],
+              "metadata": [
+                {
+                  "id": 0,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "owned",
+                        "ops": []
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "opaque",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "id": 1,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "escaped",
+                        "ops": ["escape"]
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "returned",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 21,
+        "sourceText": "export function run(flag:boolean):void{if(flag){return 4 as never;}return 5 as never;}",
+        "args": [[true], [false]],
+        "policy": {
+          "backend": "wasmgc",
+          "target": "wasi"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "if.stmt",
+                        "cond": 0,
+                        "then": [
+                          {
+                            "kind": "const",
+                            "value": {
+                              "kind": "f64",
+                              "value": 4
+                            },
+                            "result": 1,
+                            "resultType": {
+                              "kind": "val",
+                              "val": {
+                                "kind": "f64"
+                              }
+                            }
+                          },
+                          {
+                            "kind": "box",
+                            "value": 1,
+                            "toType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "result": 2,
+                            "resultType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "alloc": 0
+                          },
+                          {
+                            "kind": "early.return",
+                            "value": 2,
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "else": [],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "if.stmt",
+                        "cond": 0,
+                        "then": [
+                          {
+                            "kind": "const",
+                            "value": {
+                              "kind": "f64",
+                              "value": 4
+                            },
+                            "result": 1,
+                            "resultType": {
+                              "kind": "val",
+                              "val": {
+                                "kind": "f64"
+                              }
+                            }
+                          },
+                          {
+                            "kind": "box",
+                            "value": 1,
+                            "toType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "result": 2,
+                            "resultType": {
+                              "kind": "dynamic",
+                              "tag": 3
+                            },
+                            "alloc": 0
+                          },
+                          {
+                            "kind": "early.return",
+                            "value": 2,
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "else": [],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": [
+              {
+                "id": 0,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "owned",
+                      "ops": []
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "opaque",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              },
+              {
+                "id": 1,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "escaped",
+                      "ops": ["escape"]
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "returned",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        },
+        "selected": [
+          {
+            "backend": "wasmgc",
+            "target": "wasi",
+            "ir": {
+              "functions": [
+                {
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                  "name": "run",
+                  "params": [
+                    {
+                      "name": "flag",
+                      "type": {
+                        "kind": "val",
+                        "val": {
+                          "kind": "i32",
+                          "boolean": true
+                        }
+                      },
+                      "value": 0
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "dynamic"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "id": 0,
+                      "blockArgs": [],
+                      "blockArgTypes": [],
+                      "instrs": [
+                        {
+                          "kind": "if.stmt",
+                          "cond": 0,
+                          "then": [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          "else": [],
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "f64",
+                            "value": 5
+                          },
+                          "result": 3,
+                          "resultType": {
+                            "kind": "val",
+                            "val": {
+                              "kind": "f64"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "box",
+                          "value": 3,
+                          "toType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "result": 4,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "alloc": 1
+                        },
+                        {
+                          "kind": "early.return",
+                          "value": 4,
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "undefined"
+                          },
+                          "result": 5,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 1
+                          }
+                        }
+                      ],
+                      "terminator": {
+                        "kind": "return",
+                        "values": [5]
+                      }
+                    }
+                  ],
+                  "exported": true,
+                  "valueCount": 6
+                }
+              ]
+            },
+            "allocations": {
+              "size": 2,
+              "entries": [
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 0,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                },
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 1,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                }
+              ],
+              "metadata": [
+                {
+                  "id": 0,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "owned",
+                        "ops": []
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "opaque",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "id": 1,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "escaped",
+                        "ops": ["escape"]
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "returned",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 44,
+        "sourceText": "export function run(flag:boolean):void{label:{if(flag){return 4 as never;}}return 5 as never;}",
+        "args": [[true], [false]],
+        "policy": {
+          "backend": "wasmgc",
+          "target": "standalone"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "labeled.block",
+                        "label": 0,
+                        "body": [
+                          {
+                            "kind": "if.stmt",
+                            "cond": 0,
+                            "then": [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 4
+                                },
+                                "result": 1,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 1,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 2,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 0
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 2,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ],
+                            "else": [],
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "labeled.block",
+                        "label": 0,
+                        "body": [
+                          {
+                            "kind": "if.stmt",
+                            "cond": 0,
+                            "then": [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 4
+                                },
+                                "result": 1,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 1,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 2,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 0
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 2,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ],
+                            "else": [],
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": [
+              {
+                "id": 0,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "owned",
+                      "ops": []
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "opaque",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              },
+              {
+                "id": 1,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "escaped",
+                      "ops": ["escape"]
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "returned",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        },
+        "selected": [
+          {
+            "backend": "wasmgc",
+            "target": "standalone",
+            "ir": {
+              "functions": [
+                {
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                  "name": "run",
+                  "params": [
+                    {
+                      "name": "flag",
+                      "type": {
+                        "kind": "val",
+                        "val": {
+                          "kind": "i32",
+                          "boolean": true
+                        }
+                      },
+                      "value": 0
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "dynamic"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "id": 0,
+                      "blockArgs": [],
+                      "blockArgTypes": [],
+                      "instrs": [
+                        {
+                          "kind": "labeled.block",
+                          "label": 0,
+                          "body": [
+                            {
+                              "kind": "if.stmt",
+                              "cond": 0,
+                              "then": [
+                                {
+                                  "kind": "const",
+                                  "value": {
+                                    "kind": "f64",
+                                    "value": 4
+                                  },
+                                  "result": 1,
+                                  "resultType": {
+                                    "kind": "val",
+                                    "val": {
+                                      "kind": "f64"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "box",
+                                  "value": 1,
+                                  "toType": {
+                                    "kind": "dynamic",
+                                    "tag": 3
+                                  },
+                                  "result": 2,
+                                  "resultType": {
+                                    "kind": "dynamic",
+                                    "tag": 3
+                                  },
+                                  "alloc": 0
+                                },
+                                {
+                                  "kind": "early.return",
+                                  "value": 2,
+                                  "result": null,
+                                  "resultType": null
+                                }
+                              ],
+                              "else": [],
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "f64",
+                            "value": 5
+                          },
+                          "result": 3,
+                          "resultType": {
+                            "kind": "val",
+                            "val": {
+                              "kind": "f64"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "box",
+                          "value": 3,
+                          "toType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "result": 4,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "alloc": 1
+                        },
+                        {
+                          "kind": "early.return",
+                          "value": 4,
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "undefined"
+                          },
+                          "result": 5,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 1
+                          }
+                        }
+                      ],
+                      "terminator": {
+                        "kind": "return",
+                        "values": [5]
+                      }
+                    }
+                  ],
+                  "exported": true,
+                  "valueCount": 6
+                }
+              ]
+            },
+            "allocations": {
+              "size": 2,
+              "entries": [
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 0,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                },
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 1,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                }
+              ],
+              "metadata": [
+                {
+                  "id": 0,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "owned",
+                        "ops": []
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "opaque",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "id": 1,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "escaped",
+                        "ops": ["escape"]
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "returned",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 45,
+        "sourceText": "export function run(flag:boolean):void{label:{if(flag){return 4 as never;}}return 5 as never;}",
+        "args": [[true], [false]],
+        "policy": {
+          "backend": "wasmgc",
+          "target": "wasi"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "labeled.block",
+                        "label": 0,
+                        "body": [
+                          {
+                            "kind": "if.stmt",
+                            "cond": 0,
+                            "then": [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 4
+                                },
+                                "result": 1,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 1,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 2,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 0
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 2,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ],
+                            "else": [],
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "flag",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "i32",
+                        "boolean": true
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "labeled.block",
+                        "label": 0,
+                        "body": [
+                          {
+                            "kind": "if.stmt",
+                            "cond": 0,
+                            "then": [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 4
+                                },
+                                "result": 1,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 1,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 2,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 0
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 2,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ],
+                            "else": [],
+                            "result": null,
+                            "resultType": null
+                          }
+                        ],
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "f64",
+                          "value": 5
+                        },
+                        "result": 3,
+                        "resultType": {
+                          "kind": "val",
+                          "val": {
+                            "kind": "f64"
+                          }
+                        }
+                      },
+                      {
+                        "kind": "box",
+                        "value": 3,
+                        "toType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "result": 4,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 3
+                        },
+                        "alloc": 1
+                      },
+                      {
+                        "kind": "early.return",
+                        "value": 4,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": [
+              {
+                "id": 0,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "owned",
+                      "ops": []
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "opaque",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              },
+              {
+                "id": 1,
+                "entries": [
+                  [
+                    "ownership",
+                    {
+                      "state": "escaped",
+                      "ops": ["escape"]
+                    }
+                  ],
+                  [
+                    "escape",
+                    {
+                      "classification": "returned",
+                      "stackAllocatable": false
+                    }
+                  ]
+                ]
+              }
+            ]
+          }
+        },
+        "selected": [
+          {
+            "backend": "wasmgc",
+            "target": "wasi",
+            "ir": {
+              "functions": [
+                {
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                  "name": "run",
+                  "params": [
+                    {
+                      "name": "flag",
+                      "type": {
+                        "kind": "val",
+                        "val": {
+                          "kind": "i32",
+                          "boolean": true
+                        }
+                      },
+                      "value": 0
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "dynamic"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "id": 0,
+                      "blockArgs": [],
+                      "blockArgTypes": [],
+                      "instrs": [
+                        {
+                          "kind": "labeled.block",
+                          "label": 0,
+                          "body": [
+                            {
+                              "kind": "if.stmt",
+                              "cond": 0,
+                              "then": [
+                                {
+                                  "kind": "const",
+                                  "value": {
+                                    "kind": "f64",
+                                    "value": 4
+                                  },
+                                  "result": 1,
+                                  "resultType": {
+                                    "kind": "val",
+                                    "val": {
+                                      "kind": "f64"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "box",
+                                  "value": 1,
+                                  "toType": {
+                                    "kind": "dynamic",
+                                    "tag": 3
+                                  },
+                                  "result": 2,
+                                  "resultType": {
+                                    "kind": "dynamic",
+                                    "tag": 3
+                                  },
+                                  "alloc": 0
+                                },
+                                {
+                                  "kind": "early.return",
+                                  "value": 2,
+                                  "result": null,
+                                  "resultType": null
+                                }
+                              ],
+                              "else": [],
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "f64",
+                            "value": 5
+                          },
+                          "result": 3,
+                          "resultType": {
+                            "kind": "val",
+                            "val": {
+                              "kind": "f64"
+                            }
+                          }
+                        },
+                        {
+                          "kind": "box",
+                          "value": 3,
+                          "toType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "result": 4,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 3
+                          },
+                          "alloc": 1
+                        },
+                        {
+                          "kind": "early.return",
+                          "value": 4,
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "undefined"
+                          },
+                          "result": 5,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 1
+                          }
+                        }
+                      ],
+                      "terminator": {
+                        "kind": "return",
+                        "values": [5]
+                      }
+                    }
+                  ],
+                  "exported": true,
+                  "valueCount": 6
+                }
+              ]
+            },
+            "allocations": {
+              "size": 2,
+              "entries": [
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 0,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                },
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 1,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                }
+              ],
+              "metadata": [
+                {
+                  "id": 0,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "owned",
+                        "ops": []
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "opaque",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                },
+                {
+                  "id": 1,
+                  "entries": [
+                    [
+                      "ownership",
+                      {
+                        "state": "escaped",
+                        "ops": ["escape"]
+                      }
+                    ],
+                    [
+                      "escape",
+                      {
+                        "classification": "returned",
+                        "stackAllocatable": false
+                      }
+                    ]
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 48,
+        "sourceText": "export function run(n:number):void{switch(n){case 1:return 4 as never;default:return 5 as never;}}",
+        "args": [[1], [0]],
+        "policy": {
+          "backend": "wasmgc",
+          "target": "standalone"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "f64"
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "switch",
+                        "disc": 0,
+                        "discSlot": 0,
+                        "tests": [1, null],
+                        "bodies": [
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 5
+                              },
+                              "result": 3,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 3,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 4,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 1
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 4,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ]
+                        ],
+                        "breakLabel": 0,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6,
+                "slots": [
+                  {
+                    "index": 0,
+                    "name": "__switch_disc",
+                    "type": {
+                      "kind": "f64"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "f64"
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "switch",
+                        "disc": 0,
+                        "discSlot": 0,
+                        "tests": [1, null],
+                        "bodies": [
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 5
+                              },
+                              "result": 3,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 3,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 4,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 1
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 4,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ]
+                        ],
+                        "breakLabel": 0,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6,
+                "slots": [
+                  {
+                    "index": 0,
+                    "name": "__switch_disc",
+                    "type": {
+                      "kind": "f64"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "selected": [
+          {
+            "backend": "wasmgc",
+            "target": "standalone",
+            "ir": {
+              "functions": [
+                {
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                  "name": "run",
+                  "params": [
+                    {
+                      "name": "n",
+                      "type": {
+                        "kind": "val",
+                        "val": {
+                          "kind": "f64"
+                        }
+                      },
+                      "value": 0
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "dynamic"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "id": 0,
+                      "blockArgs": [],
+                      "blockArgTypes": [],
+                      "instrs": [
+                        {
+                          "kind": "switch",
+                          "disc": 0,
+                          "discSlot": 0,
+                          "tests": [1, null],
+                          "bodies": [
+                            [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 4
+                                },
+                                "result": 1,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 1,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 2,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 0
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 2,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ],
+                            [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 5
+                                },
+                                "result": 3,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 3,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 4,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 1
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 4,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ]
+                          ],
+                          "breakLabel": 0,
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "undefined"
+                          },
+                          "result": 5,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 1
+                          }
+                        }
+                      ],
+                      "terminator": {
+                        "kind": "return",
+                        "values": [5]
+                      }
+                    }
+                  ],
+                  "exported": true,
+                  "valueCount": 6,
+                  "slots": [
+                    {
+                      "index": 0,
+                      "name": "__switch_disc",
+                      "type": {
+                        "kind": "f64"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "allocations": {
+              "size": 2,
+              "entries": [
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 0,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                },
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 1,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                }
+              ],
+              "metadata": []
+            }
+          }
+        ]
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 49,
+        "sourceText": "export function run(n:number):void{switch(n){case 1:return 4 as never;default:return 5 as never;}}",
+        "args": [[1], [0]],
+        "policy": {
+          "backend": "wasmgc",
+          "target": "wasi"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "f64"
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "switch",
+                        "disc": 0,
+                        "discSlot": 0,
+                        "tests": [1, null],
+                        "bodies": [
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 5
+                              },
+                              "result": 3,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 3,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 4,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 1
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 4,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ]
+                        ],
+                        "breakLabel": 0,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6,
+                "slots": [
+                  {
+                    "index": 0,
+                    "name": "__switch_disc",
+                    "type": {
+                      "kind": "f64"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "f64"
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "switch",
+                        "disc": 0,
+                        "discSlot": 0,
+                        "tests": [1, null],
+                        "bodies": [
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 5
+                              },
+                              "result": 3,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 3,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 4,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 1
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 4,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ]
+                        ],
+                        "breakLabel": 0,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6,
+                "slots": [
+                  {
+                    "index": 0,
+                    "name": "__switch_disc",
+                    "type": {
+                      "kind": "f64"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "selected": [
+          {
+            "backend": "wasmgc",
+            "target": "wasi",
+            "ir": {
+              "functions": [
+                {
+                  "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                  "name": "run",
+                  "params": [
+                    {
+                      "name": "n",
+                      "type": {
+                        "kind": "val",
+                        "val": {
+                          "kind": "f64"
+                        }
+                      },
+                      "value": 0
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "dynamic"
+                    }
+                  ],
+                  "blocks": [
+                    {
+                      "id": 0,
+                      "blockArgs": [],
+                      "blockArgTypes": [],
+                      "instrs": [
+                        {
+                          "kind": "switch",
+                          "disc": 0,
+                          "discSlot": 0,
+                          "tests": [1, null],
+                          "bodies": [
+                            [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 4
+                                },
+                                "result": 1,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 1,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 2,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 0
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 2,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ],
+                            [
+                              {
+                                "kind": "const",
+                                "value": {
+                                  "kind": "f64",
+                                  "value": 5
+                                },
+                                "result": 3,
+                                "resultType": {
+                                  "kind": "val",
+                                  "val": {
+                                    "kind": "f64"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "box",
+                                "value": 3,
+                                "toType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "result": 4,
+                                "resultType": {
+                                  "kind": "dynamic",
+                                  "tag": 3
+                                },
+                                "alloc": 1
+                              },
+                              {
+                                "kind": "early.return",
+                                "value": 4,
+                                "result": null,
+                                "resultType": null
+                              }
+                            ]
+                          ],
+                          "breakLabel": 0,
+                          "result": null,
+                          "resultType": null
+                        },
+                        {
+                          "kind": "const",
+                          "value": {
+                            "kind": "undefined"
+                          },
+                          "result": 5,
+                          "resultType": {
+                            "kind": "dynamic",
+                            "tag": 1
+                          }
+                        }
+                      ],
+                      "terminator": {
+                        "kind": "return",
+                        "values": [5]
+                      }
+                    }
+                  ],
+                  "exported": true,
+                  "valueCount": 6,
+                  "slots": [
+                    {
+                      "index": 0,
+                      "name": "__switch_disc",
+                      "type": {
+                        "kind": "f64"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "allocations": {
+              "size": 2,
+              "entries": [
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 0,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                },
+                {
+                  "state": "live",
+                  "site": {
+                    "id": 1,
+                    "kind": "box",
+                    "type": {
+                      "kind": "dynamic",
+                      "tag": 3
+                    }
+                  }
+                }
+              ],
+              "metadata": []
+            }
+          }
+        ]
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 50,
+        "sourceText": "export function run(n:number):void{switch(n){case 1:return 4 as never;default:return 5 as never;}}",
+        "args": [[1], [0]],
+        "policy": {
+          "backend": "linear",
+          "target": "standalone"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "f64"
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "switch",
+                        "disc": 0,
+                        "discSlot": 0,
+                        "tests": [1, null],
+                        "bodies": [
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 5
+                              },
+                              "result": 3,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 3,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 4,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 1
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 4,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ]
+                        ],
+                        "breakLabel": 0,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6,
+                "slots": [
+                  {
+                    "index": 0,
+                    "name": "__switch_disc",
+                    "type": {
+                      "kind": "f64"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": null,
+        "selected": []
+      },
+      {
+        "namespace": "historical-private-ordinary-completion-diagnostic-v1",
+        "id": 51,
+        "sourceText": "export function run(n:number):void{switch(n){case 1:return 4 as never;default:return 5 as never;}}",
+        "args": [[1], [0]],
+        "policy": {
+          "backend": "linear",
+          "target": "wasi"
+        },
+        "oracle": [
+          {
+            "kind": "return",
+            "value": 4
+          },
+          {
+            "kind": "return",
+            "value": 5
+          }
+        ],
+        "source": {
+          "ir": {
+            "functions": [
+              {
+                "unitId": "ir-unit:v1:ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:root:top-level-function:0000000000000000",
+                "name": "run",
+                "params": [
+                  {
+                    "name": "n",
+                    "type": {
+                      "kind": "val",
+                      "val": {
+                        "kind": "f64"
+                      }
+                    },
+                    "value": 0
+                  }
+                ],
+                "resultTypes": [
+                  {
+                    "kind": "dynamic"
+                  }
+                ],
+                "blocks": [
+                  {
+                    "id": 0,
+                    "blockArgs": [],
+                    "blockArgTypes": [],
+                    "instrs": [
+                      {
+                        "kind": "switch",
+                        "disc": 0,
+                        "discSlot": 0,
+                        "tests": [1, null],
+                        "bodies": [
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 4
+                              },
+                              "result": 1,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 1,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 2,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 0
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 2,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ],
+                          [
+                            {
+                              "kind": "const",
+                              "value": {
+                                "kind": "f64",
+                                "value": 5
+                              },
+                              "result": 3,
+                              "resultType": {
+                                "kind": "val",
+                                "val": {
+                                  "kind": "f64"
+                                }
+                              }
+                            },
+                            {
+                              "kind": "box",
+                              "value": 3,
+                              "toType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "result": 4,
+                              "resultType": {
+                                "kind": "dynamic",
+                                "tag": 3
+                              },
+                              "alloc": 1
+                            },
+                            {
+                              "kind": "early.return",
+                              "value": 4,
+                              "result": null,
+                              "resultType": null
+                            }
+                          ]
+                        ],
+                        "breakLabel": 0,
+                        "result": null,
+                        "resultType": null
+                      },
+                      {
+                        "kind": "const",
+                        "value": {
+                          "kind": "undefined"
+                        },
+                        "result": 5,
+                        "resultType": {
+                          "kind": "dynamic",
+                          "tag": 1
+                        }
+                      }
+                    ],
+                    "terminator": {
+                      "kind": "return",
+                      "values": [5]
+                    }
+                  }
+                ],
+                "exported": true,
+                "valueCount": 6,
+                "slots": [
+                  {
+                    "index": 0,
+                    "name": "__switch_disc",
+                    "type": {
+                      "kind": "f64"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "allocations": {
+            "size": 2,
+            "entries": [
+              {
+                "state": "live",
+                "site": {
+                  "id": 0,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              },
+              {
+                "state": "live",
+                "site": {
+                  "id": 1,
+                  "kind": "box",
+                  "type": {
+                    "kind": "dynamic",
+                    "tag": 3
+                  }
+                }
+              }
+            ],
+            "metadata": []
+          }
+        },
+        "original": null,
+        "selected": []
+      }
+    ]
+  },
+  "ownUndefinedPaths": [
+    ["rows", "0", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "0", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "0", "original", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "0", "original", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "0", "selected", "0", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "0", "selected", "0", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "1", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "1", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "1", "original", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "1", "original", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "1", "selected", "0", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "1", "selected", "0", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "2", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "2", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "2", "original", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "2", "original", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "2", "selected", "0", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "2", "selected", "0", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "3", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "3", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "3", "original", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "3", "original", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "3", "selected", "0", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "3", "selected", "0", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "4", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "4", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "4", "original", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "4", "original", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "4", "selected", "0", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "4", "selected", "0", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "5", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "5", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "5", "original", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "5", "original", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "5", "selected", "0", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "5", "selected", "0", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "6", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "6", "source", "allocations", "entries", "1", "site", "origin"],
+    ["rows", "7", "source", "allocations", "entries", "0", "site", "origin"],
+    ["rows", "7", "source", "allocations", "entries", "1", "site", "origin"]
+  ]
+}

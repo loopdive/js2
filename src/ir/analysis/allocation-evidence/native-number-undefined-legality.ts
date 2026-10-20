@@ -1,4 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  issueOrdinaryNumberUndefinedRepresentability,
+  assertOrdinaryNumberUndefinedLegalityCurrent,
+  ordinaryNumberUndefinedSignatureResultIsAdmitted,
+  ordinaryNumberUndefinedInstructionTypeIsAdmitted,
+  ordinaryNumberUndefinedCarrierInstructionIsAdmitted,
+  isIssuedOrdinaryNumberUndefinedProof,
+  type OrdinaryNumberUndefinedRepresentability,
+} from "./ordinary-number-undefined-legality.js";
 import { forEachNestedBuffer, type IrFunction, type IrInstr, type IrModule } from "../../core/nodes.js";
 import type { IrType } from "../../core/types.js";
 import type { AllocRegistrySnapshot } from "../contracts/allocations.js";
@@ -13,9 +22,12 @@ import { PreparedIrProgramInvariantError } from "../../../shared/contracts/prepa
 import { IrUnsupportedError } from "../../../shared/contracts/ir-preparation-errors.js";
 
 /** Representability of two closed partitions; never canonical JS or physical authority. */
-export interface NativeNumberUndefinedRepresentability {
+interface VectorNumberUndefinedRepresentability {
   readonly kind: "native-number-undefined-representability";
 }
+export type NativeNumberUndefinedRepresentability =
+  | VectorNumberUndefinedRepresentability
+  | OrdinaryNumberUndefinedRepresentability;
 export interface NativeNumberUndefinedLogicalContext {
   readonly original: IrModule;
   readonly selected: IrModule;
@@ -36,7 +48,7 @@ interface Issued {
   readonly instructions: ReadonlySet<IrInstr>;
   readonly identities: readonly object[];
 }
-const issued = new WeakMap<NativeNumberUndefinedRepresentability, Issued>();
+const issued = new WeakMap<VectorNumberUndefinedRepresentability, Issued>();
 function invalid(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", "native representation proof: " + detail);
 }
@@ -133,6 +145,8 @@ export function issueNativeNumberUndefinedRepresentability(
   context: NativeNumberUndefinedLogicalContext,
 ): NativeNumberUndefinedRepresentability | undefined {
   checkContext(context);
+  const ordinary = issueOrdinaryNumberUndefinedRepresentability(context);
+  if (ordinary) return ordinary;
   const census = inspect(context);
   if (!census) return undefined;
   const proof = Object.freeze({ kind: "native-number-undefined-representability" } as const);
@@ -154,7 +168,7 @@ function own(value: unknown, name: string): unknown {
 }
 function current(use: NativeNumberUndefinedLegalityUse, fn: IrFunction, backend: string): Issued {
   const proof = own(use, "proof") as NativeNumberUndefinedRepresentability;
-  const record = issued.get(proof);
+  const record = issued.get(proof as VectorNumberUndefinedRepresentability);
   if (!record) invalid("unissued or copied proof");
   const context = own(use, "context") as NativeNumberUndefinedLogicalContext;
   checkContext(context);
@@ -194,6 +208,16 @@ export function assertNativeNumberUndefinedLegalityCurrent(
   fn: IrFunction,
   backend: string,
 ): void {
+  const proof = own(use, "proof");
+  if (isIssuedOrdinaryNumberUndefinedProof(proof)) {
+    assertOrdinaryNumberUndefinedLegalityCurrent(
+      proof,
+      own(use, "context") as NativeNumberUndefinedLogicalContext,
+      fn,
+      backend,
+    );
+    return;
+  }
   current(use, fn, backend);
 }
 export function nativeNumberUndefinedInstructionIsAdmitted(
@@ -202,6 +226,15 @@ export function nativeNumberUndefinedInstructionIsAdmitted(
   backend: string,
   instr: IrInstr,
 ): instr is NativeInstruction {
+  const proof = own(use, "proof");
+  if (isIssuedOrdinaryNumberUndefinedProof(proof))
+    return ordinaryNumberUndefinedCarrierInstructionIsAdmitted(
+      proof,
+      own(use, "context") as NativeNumberUndefinedLogicalContext,
+      fn,
+      backend,
+      instr,
+    );
   const record = current(use, fn, backend);
   return record.census.occurrences.some((at) => at.unitId === fn.unitId && at.instr === instr);
 }
@@ -213,6 +246,16 @@ export function nativeNumberUndefinedTypeIsAdmitted(
   instr: IrInstr,
   type: IrType,
 ): boolean {
+  const proof = own(use, "proof");
+  if (isIssuedOrdinaryNumberUndefinedProof(proof))
+    return ordinaryNumberUndefinedInstructionTypeIsAdmitted(
+      proof,
+      own(use, "context") as NativeNumberUndefinedLogicalContext,
+      fn,
+      backend,
+      instr,
+      type,
+    );
   const record = current(use, fn, backend);
   if (!record.instructions.has(instr)) return false;
   const field =
@@ -221,4 +264,26 @@ export function nativeNumberUndefinedTypeIsAdmitted(
       : (instr.kind === "const" || instr.kind === "if") && type === instr.resultType;
   // Outsider values are opaque until strict identity proves an actual current DATA field.
   return field && type !== null && type !== undefined && type.kind === "dynamic";
+}
+
+/** Only an issued ordinary proof can represent this actual internal result slot. */
+export function nativeNumberUndefinedSignatureResultIsAdmitted(
+  use: NativeNumberUndefinedLegalityUse,
+  fn: IrFunction,
+  backend: string,
+  index: number,
+  type: IrType,
+): boolean {
+  const proof = own(use, "proof");
+  if (isIssuedOrdinaryNumberUndefinedProof(proof))
+    return ordinaryNumberUndefinedSignatureResultIsAdmitted(
+      proof,
+      own(use, "context") as NativeNumberUndefinedLogicalContext,
+      fn,
+      backend,
+      index,
+      type,
+    );
+  current(use, fn, backend);
+  return false;
 }

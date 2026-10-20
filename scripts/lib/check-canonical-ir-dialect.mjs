@@ -6,6 +6,21 @@ import ts from "typescript";
 
 export const DIALECT_NAMES = Object.freeze(
   [
+    "IrInstrJsClassDefine",
+    "IrInstrJsClassBindingNew",
+    "IrInstrJsClassBindingInit",
+    "IrInstrJsClassBindingRead",
+    "IrInstrJsClassBindingWrite",
+    "IrInstrJsClassConstruct",
+    "IrInstrJsClassPropertyGet",
+    "IrInstrJsClassPropertyDefine",
+    "IrInstrJsClassPropertySet",
+    "IrInstrJsClassFrameGet",
+    "IrInstrJsClassInvoke",
+    "IrInstrJsClassConstructorComplete",
+    "IrInstrJsClassIdentity",
+    "IrInstrJsClassInstanceOf",
+    "IrInstrJsClassFrameNew",
     "IrInstrAsyncReturn",
     "IrInstrAsyncThrow",
     "IrInstrAwait",
@@ -101,12 +116,12 @@ export function checkCanonicalIrDialect(sourceRoot) {
     )
     .map((statement) => statement.name.text)
     .sort();
-  if (!sameNames(declared)) fail(canonical, null, "requires exactly the 27 reviewed dialect interfaces");
+  if (!sameNames(declared)) fail(canonical, null, "requires exactly the 42 reviewed dialect interfaces");
   if (!sameNames(typeExports(files.get(host), canonical)))
     fail(host, null, "does not explicitly type-re-export every canonical dialect declaration exactly once");
   const legacySource = files.get(legacy);
   if (legacySource?.statements.length !== 1 || !sameNames(typeExports(legacySource, canonical)))
-    fail(legacy, null, "must be the exact 27-name type-only compatibility forwarder, with no implementation");
+    fail(legacy, null, "must be the exact 42-name type-only compatibility forwarder, with no implementation");
 
   const dialectDirectories = [path.dirname(canonical), path.dirname(legacy)];
   for (const [file, sf] of files) {

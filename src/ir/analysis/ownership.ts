@@ -31,17 +31,26 @@
 // strictly UP the (finite-height) lattice, the analysis is monotone and
 // terminates.
 
+import {
+  type IrBlock,
+  type IrBlockId,
+  type IrFunction,
+  type IrInstr,
+  type IrTerminator,
+  type IrValueId,
+  directUses,
+  forEachNestedBuffer,
+} from "../core/nodes.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { ALLOC_NAMESPACES } from "./alloc-registry.js";
-import { allocationEvidenceRule, allocationEvidenceOperand } from "./allocation-evidence/effect-rules.js";
-import type { IrBlock, IrBlockId, IrFunction, IrInstr, IrTerminator, IrValueId } from "../core/nodes.js";
+import { allocationEvidenceOperand, allocationEvidenceRule } from "./allocation-evidence/effect-rules.js";
 import {
-  AccessSet,
-  joinAnnotations,
   type AccessOp,
-  type OwnershipAnnotation,
+  AccessSet,
   type Ownership,
+  type OwnershipAnnotation,
   annotationsEqual,
+  joinAnnotations,
   topAnnotation,
 } from "./lattice.js";
 
@@ -108,7 +117,10 @@ export function analyzeOwnership(fn: IrFunction, registry?: AllocSiteRegistry): 
   // Allocations are seeded lazily in the transfer (they start at BOTTOM).
   const entryState: State = new Map();
   for (const p of fn.params) {
-    entryState.set(p.value, { ownership: "shared", access: AccessSet.of("read") });
+    entryState.set(p.value, {
+      ownership: "shared",
+      access: AccessSet.of("read"),
+    });
   }
 
   const blockEntry: State[] = blocks.map(() => new Map());
@@ -179,7 +191,7 @@ export function analyzeOwnership(fn: IrFunction, registry?: AllocSiteRegistry): 
   // Write-back to the registry ownership namespace for allocated values.
   if (registry) {
     for (const [value, allocId] of allocOf) {
-      const annot = finalAnnots.get(value) ?? { ownership: "owned", access: AccessSet.empty() };
+      const annot = finalAnnots.get(value) ?? topAnnotation();
       registry.annotate(allocId as never, ALLOC_NAMESPACES.ownership, {
         state: annot.ownership,
         ops: annot.access.toArray(),
@@ -204,7 +216,10 @@ function runBlock(
   for (const instr of block.instrs) {
     // An allocation result is seeded at BOTTOM (owned / {}) when first seen.
     if (instr.result !== null && instr.alloc !== undefined && !state.has(instr.result)) {
-      state.set(instr.result, { ownership: "owned", access: AccessSet.empty() });
+      state.set(instr.result, {
+        ownership: "owned",
+        access: AccessSet.empty(),
+      });
     }
     applyInstrEffect(instr, state, allocOf, aliasDerived);
   }
@@ -239,6 +254,11 @@ function applyInstrEffect(
   allocOf: Map<IrValueId, number>,
   aliasDerived: ReadonlySet<IrValueId>,
 ): void {
+  // Nested allocations enter through this visitor as well as runBlock.
+  // Never reset an already-widened state on a loop/alias revisit.
+  if (instr.result !== null && instr.alloc !== undefined && !state.has(instr.result)) {
+    state.set(instr.result, { ownership: "owned", access: AccessSet.empty() });
+  }
   if (instr.result !== null && aliasDerived.has(instr.result) && !state.has(instr.result)) {
     state.set(instr.result, { ownership: "owned", access: AccessSet.empty() });
   }
@@ -367,6 +387,9 @@ function applyInstrEffect(
     case "await":
       markEscaped(state, instr.operand, allocOf);
       break;
+    case "early.return":
+      if (instr.value !== null) markEscaped(state, instr.value, allocOf);
+      break;
     case "async.return":
       markEscaped(state, instr.value, allocOf);
       break;
@@ -377,33 +400,16 @@ function applyInstrEffect(
       markEscaped(state, (instr as { value: IrValueId }).value, allocOf);
       break;
 
-    // Control-flow-bearing instrs carry nested bodies; recurse into them so
-    // effects inside arms / loop bodies are observed. The nested instrs
-    // reference the same function-level SSA values, so a shared `state` is
-    // correct for an intra-procedural may-escape result.
-    case "if":
-      for (const sub of instr.then) applyInstrEffect(sub, state, allocOf, aliasDerived);
-      for (const sub of instr.else) applyInstrEffect(sub, state, allocOf, aliasDerived);
-      break;
-    case "forof.vec":
-    case "forof.iter":
-    case "forof.string":
-      for (const sub of (instr as { body: readonly IrInstr[] }).body)
-        applyInstrEffect(sub, state, allocOf, aliasDerived);
-      break;
-    case "while.loop":
-    case "for.loop":
-    case "try":
-      for (const sub of nestedInstrArrays(instr)) applyInstrEffect(sub, state, allocOf, aliasDerived);
-      break;
-
     default:
       // Pure / structural instrs (const, select, box, unbox, tag.test,
       // string.const, string.concat, slot.read/write, global.get, unary,
       // closure.cap, gen.*, raw.wasm, …) impose no ownership effect on their
-      // operands in Phase 1.
+      // operands in Phase 1. Child buffers are still visited below.
       break;
   }
+  forEachNestedBuffer(instr, (buffer) => {
+    for (const child of buffer) applyInstrEffect(child, state, allocOf, aliasDerived);
+  });
 }
 
 function applyTerminatorEffect(term: IrTerminator, state: State, allocOf: Map<IrValueId, number>): void {
@@ -579,68 +585,12 @@ function aliasBottom(
 
 /** Yield every nested instr carried by control-flow-bearing instrs. */
 function* nestedInstrArrays(instr: IrInstr): Iterable<IrInstr> {
-  for (const value of Object.values(instr as unknown as Record<string, unknown>)) {
-    if (Array.isArray(value)) {
-      for (const el of value) if (isInstrLike(el)) yield el as IrInstr;
-    } else if (value !== null && typeof value === "object") {
-      for (const inner of Object.values(value as Record<string, unknown>)) {
-        if (Array.isArray(inner)) {
-          for (const el of inner) if (isInstrLike(el)) yield el as IrInstr;
-        }
-      }
-    }
-  }
+  const buffers: (readonly IrInstr[])[] = [];
+  forEachNestedBuffer(instr, (buffer) => buffers.push(buffer));
+  for (const buffer of buffers) yield* buffer;
 }
 
-function isInstrLike(v: unknown): boolean {
-  return (
-    v !== null &&
-    typeof v === "object" &&
-    typeof (v as { kind?: unknown }).kind === "string" &&
-    "result" in (v as object)
-  );
-}
-
-/** Best-effort: yield every IrValueId-typed operand of an instr (for extern ops). */
+/** Exact direct SSA operands at the existing opaque extern boundary. */
 function* operandsOf(instr: IrInstr): Iterable<IrValueId> {
-  for (const [key, value] of Object.entries(instr as unknown as Record<string, unknown>)) {
-    if (key === "result") continue;
-    if (typeof value === "number" && looksLikeValueId(instr, key)) {
-      yield value as unknown as IrValueId;
-    } else if (Array.isArray(value)) {
-      for (const el of value) {
-        if (typeof el === "number") yield el as unknown as IrValueId;
-      }
-    }
-  }
-}
-
-// Operand fields that hold IrValueIds across the instr union. Used to keep the
-// generic `operandsOf` from mistaking structural numbers (slot indices, capture
-// counts) for value ids.
-const VALUE_OPERAND_FIELDS = new Set([
-  "value",
-  "newValue",
-  "lhs",
-  "rhs",
-  "rand",
-  "cond",
-  "condition",
-  "callee",
-  "receiver",
-  "cell",
-  "vec",
-  "index",
-  "operand",
-  "reason",
-  "iterable",
-  "iter",
-  "resultObj",
-  "self",
-  "whenTrue",
-  "whenFalse",
-]);
-
-function looksLikeValueId(_instr: IrInstr, key: string): boolean {
-  return VALUE_OPERAND_FIELDS.has(key);
+  yield* directUses(instr);
 }

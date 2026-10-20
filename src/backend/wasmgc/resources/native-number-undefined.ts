@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { Instr, ValType } from "../../../wasm/model/instructions.js";
-import type {
+import {
   GlobalReservation,
   PhysicalModuleReservations,
   TypeReservation,
@@ -8,6 +8,11 @@ import type {
 import { buildAnyValueType, buildUndefinedInitializer } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import { JS_TAG_IDS } from "../../../ir/runtime/js-tag-domain.js";
 import type { IrInstr } from "../../../ir/core/nodes.js";
+import {
+  assertPreparedIrData,
+  preparedIrDataMismatch,
+  freezePreparedIrValue,
+} from "../../../shared/contracts/prepared-ir-data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 
 type NativeNumberUndefinedInstruction = Extract<
@@ -19,7 +24,21 @@ export interface NativeNumberUndefinedGcReservations {
   readonly carrier: TypeReservation;
   readonly singleton: GlobalReservation;
 }
-const owners = new WeakMap<NativeNumberUndefinedGcReservations, PhysicalModuleReservations>();
+const prototype = PhysicalModuleReservations.prototype;
+const reserveType = prototype.reserveType,
+  reserveGlobal = prototype.reserveGlobal;
+const auditReserved = prototype.assertReservationKeysAvailable;
+const indexOf = prototype.physicalIndex,
+  completed = prototype.assertCompletedReservation;
+const stateOf = Object.getOwnPropertyDescriptor(prototype, "state")!.get!;
+interface Owner {
+  readonly tx: PhysicalModuleReservations;
+  readonly carrier: TypeReservation;
+  readonly singleton: GlobalReservation;
+  readonly empty: readonly Instr[];
+  readonly definition: unknown;
+}
+const owners = new WeakMap<NativeNumberUndefinedGcReservations, Owner>();
 
 function fail(detail: string): never {
   throw new PreparedIrProgramInvariantError("emission-failed", "native Number/Undefined GC: " + detail);
@@ -29,25 +48,70 @@ export function reserveNativeNumberUndefinedGc(
   tx: PhysicalModuleReservations,
   key: string,
 ): NativeNumberUndefinedGcReservations {
-  const carrier = tx.reserveType(key + ":carrier", buildAnyValueType());
-  const singleton = tx.reserveGlobal(
+  if (typeof key !== "string" || !key) fail("empty resource key");
+  const carrier = reserveType.call(tx, key + ":carrier", buildAnyValueType());
+  const singleton = reserveGlobal.call(
+    tx,
     key + ":undefined",
     "__native_undefined",
     { kind: "ref", typeIdx: carrier.typeIndex },
     false,
   );
   const pack = Object.freeze({ carrier, singleton });
-  owners.set(pack, tx);
+  owners.set(pack, {
+    tx,
+    carrier,
+    singleton,
+    empty: singleton.object.init,
+    definition: freezePreparedIrValue(carrier.object),
+  });
   return pack;
 }
 
 function current(tx: PhysicalModuleReservations, pack: NativeNumberUndefinedGcReservations): number {
-  if (owners.get(pack) !== tx || tx.state !== "filling") fail("foreign pack or inactive reservation phase");
-  tx.physicalIndex(pack.carrier);
-  tx.physicalIndex(pack.singleton);
+  const owner = owned(tx, pack);
+  if (stateOf.call(tx) !== "filling") fail("foreign pack or inactive reservation phase");
+  indexOf.call(tx, owner.carrier);
+  indexOf.call(tx, owner.singleton);
   if (pack.singleton.object.type.kind !== "ref" || pack.singleton.object.type.typeIdx !== pack.carrier.typeIndex)
     fail("singleton carrier changed");
   return pack.carrier.typeIndex;
+}
+
+function owned(tx: PhysicalModuleReservations, pack: NativeNumberUndefinedGcReservations): Owner {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("unissued/copied/foreign pack");
+  assertPreparedIrData(pack);
+  if (preparedIrDataMismatch(owner.definition, pack.carrier.object) !== undefined) fail("altered type descriptor");
+  if (
+    pack.carrier !== owner.carrier ||
+    pack.singleton !== owner.singleton ||
+    pack.singleton.object.name !== "__native_undefined" ||
+    pack.singleton.object.mutable ||
+    preparedIrDataMismatch(pack.singleton.object.type, { kind: "ref", typeIdx: pack.carrier.typeIndex }) !== undefined
+  )
+    fail("issued carrier DATA changed");
+  return owner;
+}
+
+/** Signature authority during genuine reservation; completion remains a separate contract. */
+export function requireNativeNumberUndefinedGcSignatureCarrier(
+  tx: PhysicalModuleReservations,
+  pack: NativeNumberUndefinedGcReservations,
+): Readonly<ValType> {
+  const owner = owned(tx, pack);
+  if (stateOf.call(tx) === "reserving") {
+    auditReserved.call(tx, []);
+    if (pack.singleton.object.init !== owner.empty || owner.empty.length !== 0) fail("premature singleton initializer");
+  } else {
+    requireCompletedNativeNumberUndefinedGc(tx, pack);
+    if (
+      preparedIrDataMismatch(pack.singleton.object.init, buildUndefinedInitializer(pack.carrier.typeIndex)) !==
+      undefined
+    )
+      fail("noncanonical Undefined initializer");
+  }
+  return Object.freeze({ kind: "ref_null", typeIdx: pack.carrier.typeIndex });
 }
 
 export function fillNativeNumberUndefinedGc(
@@ -63,7 +127,7 @@ export function requireCompletedNativeNumberUndefinedGc(
   pack: NativeNumberUndefinedGcReservations,
 ): void {
   current(tx, pack);
-  tx.assertCompletedReservation(pack.singleton);
+  completed.call(tx, pack.singleton);
 }
 
 /** Pure physical operations after the complete program checker has authorized this occurrence. */
@@ -75,7 +139,7 @@ export function emitNativeNumberUndefinedGc(
   scratch: (type: ValType) => number,
 ): readonly Instr[] {
   const typeIdx = current(tx, pack);
-  tx.assertCompletedReservation(pack.singleton);
+  completed.call(tx, pack.singleton);
   const carrier: ValType = { kind: "ref_null", typeIdx };
   const tag = (local: number): Instr[] => [
     { op: "local.get", index: local },

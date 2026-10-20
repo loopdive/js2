@@ -37,7 +37,11 @@ export type PreparedIrAbiContract =
       readonly preparation?: import("./class-preparation.js").IrPreparedSourceClass;
     }
   | { readonly kind: "export"; readonly externalName: string; readonly targetId: IrBindingId }
-  | { readonly kind: "support"; readonly role: string };
+  | {
+      readonly kind: "support";
+      readonly role: string;
+      readonly nativeJsClassDefinition?: import("../core/js-class-contracts.js").IrJsClassDefinition;
+    };
 
 export interface PreparedIrAbiEntry {
   readonly plan: ProgramAbiPlanEntry;

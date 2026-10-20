@@ -4,6 +4,8 @@ import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-pol
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { IrFunction } from "../core/nodes.js";
 import type { PreparedIrProgram } from "./prepared-contracts.js";
+import { preparedIrJsClassDefinitions } from "./js-class-definition.js";
+import { assertNativeJsClassAllocations } from "./native-js-class-allocation-validation.js";
 
 export interface PhysicalStartup {
   /** Executable startup bodies in semantic module-evaluation order. */
@@ -62,7 +64,16 @@ export function planPhysicalStartup(
     ({ contract }) =>
       contract.kind === "global" && contract.ref.binding.kind === "source" && contract.type.kind === "vec",
   );
-  return { units: startupUnits, adapter, ...(onceGuard ? { onceGuard: true as const } : {}) };
+  const classes = target === "standalone" || target === "wasi" ? preparedIrJsClassDefinitions(program.abi.entries) : [];
+  const classOnceGuard = classes.some(({ definition }) =>
+    [definition.outerBinding, definition.innerBinding].some((binding) => binding?.storage === "module"),
+  );
+  // Module class initialization mutates its constructor/TDZ pair once. A
+  // deferred or WASI adapter must not recreate that identity on a second call.
+  // Declaration presence alone supplies no canonical class proof.
+  if (classOnceGuard && !assertNativeJsClassAllocations(program))
+    throw Error("native class startup lacks complete original/selected evidence");
+  return { units: startupUnits, adapter, ...(onceGuard || classOnceGuard ? { onceGuard: true as const } : {}) };
 }
 
 /** Exact materialization guard after canonical native bindings have been authenticated. */

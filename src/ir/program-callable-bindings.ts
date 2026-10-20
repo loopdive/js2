@@ -794,7 +794,11 @@ function collectCallableGraphUses(
   const sourceOrder = new Map<IrSourceId, number>(
     identityContext.inventory.sources.map((source, index) => [source.id, index]),
   );
-  const visitCalls = (root: SourceCallable): void => {
+  const visitCalls = (root: {
+    readonly sourceId: IrSourceId;
+    readonly unitId: IrUnitId;
+    readonly declaration: ts.Node;
+  }): void => {
     const visit = (node: ts.Node): void => {
       if (node !== root.declaration && ts.isFunctionLike(node)) return;
       if (ts.isCallExpression(node)) {
@@ -816,7 +820,11 @@ function collectCallableGraphUses(
       }
       ts.forEachChild(node, visit);
     };
-    visit(root.declaration);
+    // Field name evaluation belongs to class definition, while its initializer
+    // is the actual separate indexed body. Nested function bodies stay separate.
+    if (ts.isPropertyDeclaration(root.declaration)) {
+      if (root.declaration.initializer) visit(root.declaration.initializer);
+    } else visit(root.declaration);
   };
 
   for (const source of identityContext.inventory.sources) {
@@ -828,6 +836,20 @@ function collectCallableGraphUses(
           b.declaration.getStart(maps.sourceFileBySourceId.get(source.id)!),
       );
     for (const callable of callables) visitCalls(callable);
+    // Initializer bodies retain their real indexed support-unit identity.
+    for (const unit of identityContext.inventory.allUnits) {
+      if (unit.sourceId !== source.id || !unit.kind.startsWith("class-")) continue;
+      const declaration = identityContext.declarationByUnitId.get(unit.id);
+      if (
+        declaration &&
+        (ts.isConstructorDeclaration(declaration) ||
+          ts.isMethodDeclaration(declaration) ||
+          ts.isGetAccessorDeclaration(declaration) ||
+          ts.isSetAccessorDeclaration(declaration) ||
+          ts.isPropertyDeclaration(declaration))
+      )
+        visitCalls({ sourceId: source.id, unitId: unit.id, declaration });
+    }
   }
   uses.sort((a, b) => {
     const sourceDelta = (sourceOrder.get(a.sourceId) ?? 0) - (sourceOrder.get(b.sourceId) ?? 0);

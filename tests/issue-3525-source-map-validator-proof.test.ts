@@ -9,6 +9,7 @@ import {
   captureSourceMapProgramValidatorRelocation,
   captureSourceMapSchemaSourceEpoch,
 } from "./helpers/ir-program-validator-relocation.js";
+import { createSourceMapValidatorCurrentSuccessorReader } from "./helpers/ir-source-map-validator-current-successor.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const epochPath = "tests/helpers/ir-source-map-schema-source-epoch.json";
@@ -38,7 +39,8 @@ const currentPaths = [
   validatorPath,
 ];
 const requests = [epochPath, helperPath, receiptPath, ...currentPaths];
-const physical = (path: string): string => readFileSync(resolve(root, path), "utf8");
+const actualPhysical = (path: string): string => readFileSync(resolve(root, path), "utf8");
+const physical = (path: string): string => createSourceMapValidatorCurrentSuccessorReader(actualPhysical)(path);
 const sha = (text: string | Buffer): string => createHash("sha256").update(text).digest("hex");
 function pin(text: string, expected: { bytes: number; sha256: string }): void {
   expect(typeof text).toBe("string");

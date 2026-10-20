@@ -1,3 +1,4 @@
+import { nativeProgramClassLegality } from "./program/native-program-resource-requirements.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #3518 package C — the backend consumer of the production `PreparedIrProgram`
@@ -37,7 +38,6 @@ import {
   type NativeRealmRequirements,
 } from "./program/native-realm-requirements.js";
 import {
-  prepareNativeProgramStringInput,
   reserveNativeProgramFoundation,
   reserveNativeRealmKernel,
   nativeRealmReservationInventory,
@@ -58,6 +58,7 @@ import {
 } from "../backend/wasmgc/resources/prepared-async-frame.js";
 import { sameValTypes } from "../wasm/physical/function-types.js";
 import {
+  prepareNativeProgramStringInput,
   planNativeStringValuePhysical,
   reserveNativeStringValueResources,
   nativeStringValueReservationInventory,
@@ -170,8 +171,12 @@ import {
   reserveStartupAdapter,
   physicalBodyResolver,
   physicalSignatureConverter,
+  reserveNumberRemainders,
+  publishPhysicalExports,
+  reconcileInvocationBindings,
+  sealedPhysicalProgramAbi,
+  activeEmissionResolver,
   bindPhysicalAbi,
-  fillStartupAdapter,
   fillPhysicalScalarResources,
   indexSupportFunctions,
   completedStartupGuardIndex,
@@ -190,14 +195,39 @@ import {
 import {
   planPreparedLinearMemory,
   linearMemoryOptionsUnsupported,
-  reservePreparedLinearMemory,
   preparedLinearMemoryBindings,
   preparedLinearNumericAppendReservation,
+  reservePreparedLinearMemory,
   fillPreparedLinearMemory,
   requireCompletedPreparedLinearMemory,
 } from "../backend/linear/program/memory.js";
 import type { PreparedLinearMemoryPlan } from "../backend/linear/program/contracts.js";
-import { nativeNumberUndefinedLegality, nativeNumberUndefinedLowering } from "./program-number-undefined-resources.js";
+import {
+  reserveNativeJsClassPhysicalValues,
+  reserveNativeJsClassPhysicalRealm,
+  reserveNativeJsClassPhysicalModuleBindings,
+  reserveNativeJsClassPhysicalFunctions,
+  nativeJsClassPhysicalFunctionSlots,
+  nativeJsClassPhysicalRealmBindings,
+  nativeJsClassPhysicalModuleBindings,
+  nativeJsClassPhysicalCallableBindings,
+  nativeJsClassPhysicalSupportFunctions,
+  fillNativeJsClassPhysicalValues,
+  fillNativeJsClassPhysicalRealm,
+  fillNativeJsClassPhysicalModuleBindings,
+  requireCompletedNativeJsClassPhysicalValues,
+  assertNativeJsClassPhysicalDescription,
+  nativeJsClassPhysicalFunctionPlan,
+  assertNativeJsClassPhysicalFunctionPlan,
+  nativeJsClassPhysicalSignatureConverter,
+  fillNativeProgramStartupAdapter,
+  type NativeJsClassPhysicalValues,
+} from "../backend/wasmgc/program/native-realm.js";
+import {
+  nativeNumberUndefinedLegality,
+  nativeNumberUndefinedLowering,
+  issueNativeNumberUndefinedSignatureUse,
+} from "./program-number-undefined-resources.js";
 import {
   reserveNativeNumberUndefinedGc,
   fillNativeNumberUndefinedGc,
@@ -420,6 +450,7 @@ export function acceptPreparedIrProgram(
       options.backend,
       undefined,
       nativeNumberUndefinedLegality(program, runtime, fn),
+      nativeProgramClassLegality(program, runtime, fn),
     );
     if (errors.length > 0) {
       return locate(program, fn.unitId, {
@@ -648,20 +679,6 @@ export function emitAcceptedIrProgram(accepted: AcceptedPreparedIrProgram): Emit
 }
 
 /** Captured emission-local callables lose authority when the entire attempt ends. */
-function activeEmissionResolver(resolver: IrLowerResolver, assertEmissionActive: () => void): IrLowerResolver {
-  assertEmissionActive();
-  return Object.fromEntries(
-    Object.entries(resolver).map(([key, value]) => [
-      key,
-      typeof value === "function"
-        ? (...args: unknown[]) => {
-            assertEmissionActive();
-            return Reflect.apply(value, resolver, args);
-          }
-        : value,
-    ]),
-  ) as IrLowerResolver;
-}
 
 /** Authenticate accepted native inputs and seal their ABI before any allocation. */
 function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: PhysicalSetupPlan) {
@@ -828,7 +845,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
 }
 
 type ConsumerReservation = CallableReservation | GlobalReservation | GlobalImportReservation | TypeReservation;
-interface NativeReconciliationContext {
+export interface NativeReconciliationContext {
   readonly module: ReturnType<typeof createEmptyModule>;
   readonly reservations: PhysicalModuleReservations;
   readonly functionsByKey: Map<string, CallableReservation>;
@@ -1064,6 +1081,63 @@ function fillFormatterSupport(
   });
 }
 
+/** Preserve the actual placement audit for the same once-reserved Linear pack. */
+
+function reserveProgramSignatureResources(
+  plan: PhysicalSetupPlan,
+  program: PreparedIrProgram,
+  runtime: PreparedIrProgramRuntimeProjection,
+  linearMemory: PreparedLinearMemoryPlan | undefined,
+  context: NativeReconciliationContext,
+  inputs: Parameters<typeof physicalSignatureConverter>,
+  nativeClass: NativeJsClassPhysicalValues | undefined,
+  numberUndefinedGc: ReturnType<typeof reserveNativeNumberUndefinedGc> | undefined,
+  assertEmissionActive: () => void,
+) {
+  const { module, reservations, functionsByKey, globalsByKey, resourcesByBinding } = context;
+  let basePhysicalSignature = physicalSignatureConverter(...inputs);
+  let physicalSignature = nativeClass
+    ? nativeJsClassPhysicalSignatureConverter(nativeClass, basePhysicalSignature)
+    : basePhysicalSignature;
+
+  reservePhysicalImports(plan, reservations, physicalSignature, {
+    functionsByKey,
+    globalsByKey,
+    resourcesByBinding,
+  });
+
+  const earlyLinearPack =
+    plan.numberUndefined &&
+    plan.backend === "linear" &&
+    plan.functions.some((slot) => slot.results.some((type) => type.kind === "dynamic"))
+      ? reserveProgramLinearMemory(reservations, linearMemory, assertEmissionActive, module)
+      : undefined;
+  const numericSignature = plan.numberUndefined
+    ? issueNativeNumberUndefinedSignatureUse(
+        program,
+        runtime,
+        plan.functions,
+        reservations,
+        numberUndefinedGc,
+        earlyLinearPack,
+      )
+    : undefined;
+  if (numericSignature) {
+    basePhysicalSignature = physicalSignatureConverter(
+      inputs[0],
+      inputs[1],
+      inputs[2],
+      inputs[3],
+      inputs[4],
+      inputs[5],
+      numericSignature,
+    );
+    physicalSignature = basePhysicalSignature;
+  }
+
+  return { physicalSignature, earlyLinearPack };
+}
+
 /** Lower one actual primary owner without extending its resolver authority. */
 function fillPrimaryBody(
   accepted: AcceptedPreparedIrProgram,
@@ -1077,6 +1151,7 @@ function fillPrimaryBody(
   assertEmissionActive: () => void,
   sourceClosures?: NativeSourceClosureEmission,
   linearBindings?: PreparedLinearBodyBindings,
+  nativeClass?: NativeJsClassPhysicalValues,
 ): void {
   const { backend, target } = accepted.options;
   try {
@@ -1109,16 +1184,29 @@ function fillPrimaryBody(
             emitPreparedNativeStringLiteral(reservations, nativePack, fn.unitId, value, alloc, storage, materializer),
         }
       : scopedResolver;
+    const active = activeEmissionResolver(ownerResolver, assertEmissionActive);
+    const concrete = nativeClass
+      ? nativeJsClassPhysicalFunctionPlan(
+          nativeClass,
+          fn,
+          active,
+          new WasmGcEmitter(active),
+          wasmValueTypeConverter(backend, active, fn.name),
+        )
+      : undefined;
+    if (concrete) assertNativeJsClassPhysicalFunctionPlan(concrete, fn);
     fillPreparedPrimaryUnit(
       reservations,
       fn,
       reserved,
       physicalSignature(declared),
-      activeEmissionResolver(ownerResolver, assertEmissionActive),
+      active,
       backend,
       sourceClosures,
       linearBindings?.resolveRuntimeOperation,
+      concrete,
     );
+    if (concrete) assertNativeJsClassPhysicalFunctionPlan(concrete, fn);
   } catch (error) {
     emissionFailed(
       `${backend}:${target} accepted body ${declared.unitId} and then failed to lower it: ${
@@ -1129,109 +1217,18 @@ function fillPrimaryBody(
 }
 
 /** Bind the already sealed ABI to the exact reservations of this transaction. */
-function reserveNumberRemainders(
-  plan: PhysicalSetupPlan,
-  context: NativeReconciliationContext,
-  supportFunctions: Map<WasmFunction, FunctionReservation>,
-): void {
-  const { reservations, functionsByKey, resourcesByBinding } = context;
-  for (const resource of plan.numberRemainders) {
-    const token = reservations.reserveFunction(resource.bindingId, resource.symbol, {
-      params: [...resource.params],
-      results: [...resource.results],
-    });
-    if (functionsByKey.has(resource.referenceKey) || resourcesByBinding.has(resource.bindingId))
-      emissionFailed("number remainder has competing physical owners");
-    functionsByKey.set(resource.referenceKey, token);
-    resourcesByBinding.set(resource.bindingId, token);
-    supportFunctions.set(token.object, token);
-  }
-}
 
 /** No observation or reusable capability escapes the physical transaction. */
 
 /** Preserve global-before-unit reservation in the consumer's sole slot allocator. */
-function reservePhysicalProgramSlots(
-  plan: PhysicalSetupPlan,
-  context: NativeReconciliationContext,
-  physicalSignature: ReturnType<typeof physicalSignatureConverter>,
-) {
-  const { reservations, globalsByKey, resourcesByBinding, functionsByKey } = context;
-  for (const global of plan.definedGlobals) {
-    const type = physicalSignature({ params: [global.type], results: [] }).params[0]!;
-    const reserved = reservations.reserveGlobal(global.bindingId, global.name, type, global.mutable);
-    globalsByKey.set(global.referenceKey, reserved);
-    resourcesByBinding.set(global.bindingId, reserved);
-  }
-
-  const slots = new Map<IrUnitId, FunctionReservation>();
-  const slotOwners = new Map<WasmFunction, IrUnitId>();
-  for (const declared of plan.functions) {
-    const reserved = reservations.reserveFunction(declared.bindingId, declared.name, physicalSignature(declared));
-    slots.set(declared.unitId, reserved);
-    slotOwners.set(reserved.object, declared.unitId);
-    functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
-    resourcesByBinding.set(declared.bindingId, reserved);
-  }
-  return { slots, slotOwners };
-}
 
 /** Publish only the exact canonical reservations after their physical bodies are filled. */
-function publishPhysicalExports(
-  plan: PhysicalSetupPlan,
-  abi: ProgramAbiMap,
-  context: NativeReconciliationContext,
-): void {
-  const { module, reservations, resourcesByBinding } = context;
-  const exportNames = new Set<string>(module.exports.map((entry) => entry.name));
-  for (const exported of plan.exports) {
-    const final = abi.resolveFinalIndex(exported.targetBindingId);
-    if (!final || final.space !== exported.space) {
-      emissionFailed(`export ${exported.externalName} does not resolve to a bound ${exported.space}`);
-    }
-    const reserved = resourcesByBinding.get(abi.canonicalId(exported.targetBindingId));
-    if (
-      !reserved ||
-      reserved.kind === "type" ||
-      reservations.physicalIndex(reserved) !== final.index ||
-      (reserved.kind === "function" || reserved.kind === "function-import" ? "function" : "global") !== final.space
-    ) {
-      emissionFailed(`export ${exported.externalName} contradicts its canonical physical reservation`);
-    }
-    if (exportNames.has(exported.externalName)) emissionFailed(`export ${exported.externalName} is declared twice`);
-    exportNames.add(exported.externalName);
-    reservations.defineExport(`publication:export:${exported.externalName}`, exported.externalName, reserved);
-  }
-}
 
 /** Fill the reserved globals only after the physical index space is frozen. */
 
 /** Bind selected invocation entry points to their exact, uniquely owned resources. */
-function reconcileInvocationBindings(
-  plan: PhysicalSetupPlan,
-  functions: readonly FunctionReservation[],
-  { functionsByKey, resourcesByBinding }: NativeReconciliationContext,
-): void {
-  for (const binding of plan.nativeInvocation?.bindings ?? []) {
-    const token = functions.find((row) => row.key === binding.resourceKey);
-    if (
-      !token ||
-      functionsByKey.has(irCallableBindingKey(binding.reference.binding)) ||
-      resourcesByBinding.has(binding.entry.id)
-    )
-      emissionFailed("invocation semantic binding lacks its unique actual resource");
-    functionsByKey.set(irCallableBindingKey(binding.reference.binding), token);
-    resourcesByBinding.set(binding.entry.id, token);
-  }
-}
 
 /** Seal the original program ABI when no native supplemental entries were planned. */
-function sealedPhysicalProgramAbi(program: PreparedIrProgram): ProgramAbiMap {
-  const abi = new ProgramAbiMap(program.inventory, program.derivedUnits);
-  for (const entry of program.abi.entries) abi.plan(entry.plan);
-  abi.sealPlan();
-  return abi;
-}
 
 /** Pass exact canonical producers at this attempt's existing reservation phase. */
 function physicalVectorCarrierProducers() {
@@ -1310,20 +1307,42 @@ function materializePhysicalProgram(
     resourcesByBinding.set(plan.numberUndefined.singletonBindingId, numberUndefinedGc.singleton);
     globalsByKey.set(irGlobalBindingKey(plan.numberUndefined.singletonRef.binding), numberUndefinedGc.singleton);
   }
-  const physicalSignature = physicalSignatureConverter(
-    vectorProducers,
-    vectorTypes,
-    stringTypes,
-    native?.formatterScratch,
-    reservations,
-    sourceClosures,
+  if (plan.nativeJsClass) assertNativeJsClassPhysicalDescription(plan.nativeJsClass, program, runtime);
+  const nativeClass = plan.nativeJsClass
+    ? reserveNativeJsClassPhysicalValues(reservations, program, runtime, exceptionTag)
+    : undefined;
+  if (plan.nativeJsClass && !nativeClass) emissionFailed("accepted class source owner vanished");
+  if (nativeClass) {
+    reserveNativeJsClassPhysicalFunctions(nativeClass);
+    reserveNativeJsClassPhysicalRealm(nativeClass);
+    reserveNativeJsClassPhysicalModuleBindings(nativeClass);
+    for (const row of [
+      ...nativeJsClassPhysicalRealmBindings(nativeClass),
+      ...nativeJsClassPhysicalModuleBindings(nativeClass),
+    ]) {
+      if (resourcesByBinding.has(row.bindingId) || globalsByKey.has(row.referenceKey))
+        emissionFailed("class global has competing physical owners");
+      resourcesByBinding.set(row.bindingId, row.reservation);
+      globalsByKey.set(row.referenceKey, row.reservation);
+    }
+    for (const row of nativeJsClassPhysicalCallableBindings(nativeClass)) {
+      if (resourcesByBinding.has(row.bindingId) || functionsByKey.has(row.referenceKey))
+        emissionFailed("class callable has competing physical owners");
+      resourcesByBinding.set(row.bindingId, row.reservation);
+      functionsByKey.set(row.referenceKey, row.reservation);
+    }
+  }
+  const { physicalSignature, earlyLinearPack } = reserveProgramSignatureResources(
+    plan,
+    program,
+    runtime,
+    record.linearMemory,
+    { module, reservations, functionsByKey, globalsByKey, resourcesByBinding, typesByKey },
+    [vectorProducers, vectorTypes, stringTypes, native?.formatterScratch, reservations, sourceClosures],
+    nativeClass,
+    numberUndefinedGc,
+    assertEmissionActive,
   );
-
-  reservePhysicalImports(plan, reservations, physicalSignature, {
-    functionsByKey,
-    globalsByKey,
-    resourcesByBinding,
-  });
 
   const nativePack =
     earlyStrings ??
@@ -1367,7 +1386,7 @@ function materializePhysicalProgram(
       nativeFunctions.add(fn);
     }
   }
-  const { slots, slotOwners } = reservePhysicalProgramSlots(plan, reconciliation, physicalSignature);
+  const { slots, slotOwners } = reservePhysicalProgramSlots(plan, reconciliation, physicalSignature, nativeClass);
   const invocationPack =
     record.nativeInvocation && sourceClosures && nativePack?.number && record.nativeStrings?.valueRequirements
       ? reserveNativeInvocationResources(reservations, record.nativeInvocation, {
@@ -1394,6 +1413,11 @@ function materializePhysicalProgram(
   reconcileInvocationBindings(plan, invocationFunctions, reconciliation);
   const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
+  for (const token of nativeClass ? nativeJsClassPhysicalSupportFunctions(nativeClass) : []) {
+    if (supportFunctions.has(token.object) || slotOwners.has(token.object) || nativeFunctions.has(token.object))
+      emissionFailed("class private helper has competing function owners");
+    supportFunctions.set(token.object, token);
+  }
   for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
   for (const frame of plan.asyncFrames?.frames ?? []) {
     const entry = slots.get(frame.owner);
@@ -1427,19 +1451,8 @@ function materializePhysicalProgram(
     ? reservations.reserveGlobal("physical:startup-once", "__startup_once", { kind: "i32" }, true)
     : undefined;
 
-  const linearPack = record.linearMemory
-    ? reservePreparedLinearMemory(reservations, record.linearMemory, assertEmissionActive, (singleton) => {
-        assertEmissionActive();
-        if (
-          module.dataSegments.length !== (singleton ? 1 : 0) ||
-          (singleton && module.dataSegments[0] !== singleton.object)
-        )
-          throw new PreparedIrProgramInvariantError(
-            "emission-failed",
-            "native numeric singleton has an unknown aggregate static prefix",
-          );
-      })
-    : undefined;
+  const linearPack =
+    earlyLinearPack ?? reserveProgramLinearMemory(reservations, record.linearMemory, assertEmissionActive, module);
 
   // 2. Freeze the index space: nothing below may add an import or a slot.
   reservations.freezeReservations();
@@ -1463,6 +1476,11 @@ function materializePhysicalProgram(
   if (referenceError) fillPhysicalReferenceError(reservations, referenceError);
   if (linearPack) fillPreparedLinearMemory(reservations, linearPack);
   if (numberUndefinedGc) fillNativeNumberUndefinedGc(reservations, numberUndefinedGc);
+  if (nativeClass) {
+    fillNativeJsClassPhysicalValues(nativeClass);
+    fillNativeJsClassPhysicalRealm(nativeClass);
+    fillNativeJsClassPhysicalModuleBindings(nativeClass);
+  }
   if (nativePack) fillNativeStringValueResources(reservations, nativePack);
   else if (strings) fillNativeStringLiteralResources(reservations, strings);
   if (realm) fillNativeRealmResources(reservations, realm);
@@ -1547,11 +1565,12 @@ function materializePhysicalProgram(
         assertEmissionActive,
         sourceClosures,
         linearBindings,
+        nativeClass,
       );
   }
 
   // 5. Startup adapter and ABI export aliases (by their planned index space).
-  fillStartupAdapter(startAdapter, plan, slots, reservations, startupGuard);
+  fillNativeProgramStartupAdapter(startAdapter, plan, slots, reservations, startupGuard, nativeClass);
   publishPhysicalExports(plan, abi, reconciliation);
 
   if (nativePack?.output) publishNativeStringValueOutput(reservations, nativePack);
@@ -1559,6 +1578,7 @@ function materializePhysicalProgram(
   if (linearPack) requireCompletedPreparedLinearMemory(reservations, linearPack);
   if (numberUndefinedGc) requireCompletedNativeNumberUndefinedGc(reservations, numberUndefinedGc);
   vectorEmission.complete();
+  if (nativeClass) requireCompletedNativeJsClassPhysicalValues(nativeClass);
   const referenceErrorReceipt = referenceError
     ? completedPhysicalReferenceErrorReceipt(reservations, referenceError, module)
     : undefined;
@@ -1598,4 +1618,57 @@ function materializePhysicalProgram(
     startupGuard,
   );
   return result;
+}
+
+function reservePhysicalProgramSlots(
+  plan: PhysicalSetupPlan,
+  context: NativeReconciliationContext,
+  physicalSignature: ReturnType<typeof physicalSignatureConverter>,
+  nativeClass?: NativeJsClassPhysicalValues,
+) {
+  const { reservations, globalsByKey, resourcesByBinding, functionsByKey } = context;
+  for (const global of plan.definedGlobals) {
+    const type = physicalSignature({ params: [global.type], results: [] }).params[0]!;
+    const reserved = reservations.reserveGlobal(global.bindingId, global.name, type, global.mutable);
+    globalsByKey.set(global.referenceKey, reserved);
+    resourcesByBinding.set(global.bindingId, reserved);
+  }
+
+  const slots = new Map<IrUnitId, FunctionReservation>();
+  const slotOwners = new Map<WasmFunction, IrUnitId>();
+  for (const declared of plan.functions) {
+    const owned =
+      nativeClass && nativeJsClassPhysicalFunctionSlots(nativeClass).find((row) => row.fn.unitId === declared.unitId);
+    if (owned && owned.bindingId !== declared.bindingId)
+      emissionFailed("class source slot contradicts actual unit binding");
+    const reserved =
+      owned?.reservation ??
+      reservations.reserveFunction(declared.bindingId, declared.name, physicalSignature(declared));
+    slots.set(declared.unitId, reserved);
+    slotOwners.set(reserved.object, declared.unitId);
+    functionsByKey.set(irCallableBindingKey({ kind: "unit", unitId: declared.unitId }), reserved);
+    resourcesByBinding.set(declared.bindingId, reserved);
+  }
+  return { slots, slotOwners };
+}
+
+function reserveProgramLinearMemory(
+  reservations: PhysicalModuleReservations,
+  linearMemory: Parameters<typeof reservePreparedLinearMemory>[1] | undefined,
+  assertEmissionActive: () => void,
+  module: ConstructorParameters<typeof PhysicalModuleReservations>[0],
+) {
+  return linearMemory
+    ? reservePreparedLinearMemory(reservations, linearMemory, assertEmissionActive, (singleton) => {
+        assertEmissionActive();
+        if (
+          module.dataSegments.length !== (singleton ? 1 : 0) ||
+          (singleton && module.dataSegments[0] !== singleton.object)
+        )
+          throw new PreparedIrProgramInvariantError(
+            "emission-failed",
+            "native numeric singleton has an unknown aggregate static prefix",
+          );
+      })
+    : undefined;
 }
