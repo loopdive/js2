@@ -7043,3 +7043,24 @@ substitute for the20 owner cases. Existing S7-ar188/202 storage receipt failures
 and earlier five symbolic receipt failures remain unwaived, not rerun by this
 cohort. Public/foreign/source/Linear admission and the full migration are unfinished;
 the existing PR stays an incomplete draft, not a merge-ready implementation.
+
+S7-as final catalog result: **70/70 passed, zero skips, exit0**, unfiltered file,
+1479.91s. This includes all50 runtime and20 owner cases, including each actual
+receipt-valid substituted algorithm/lifted body, both Boolean dependency
+substitutions and interrupted-fill refusal. Exact final report SHA256
+7570f8ae4ca1acd0050782ebc524b4b7125ecdd5a9b7d5d70ae50e28604784e8.
+The separate wrapping/prototype preservation cohort is still pending at this
+update; the70 cases do not substitute for it or full migration acceptance.
+
+Resume the existing preservation runner rather than restarting it: tool session
+79497 runs `tests/issue-6979-native-to-object.test.ts` and
+`tests/issue-6979-native-primitive-prototype-identities.test.ts`, single fork,
+default+JSON reporters, `.tmp/s7as-wrapping-preservation.json` and its matching
+`.log`. Revalidate this handle/log and its terminal exit; do not infer success
+from the two zero-import components already emitted. The local uncommitted
+`vitest.config.ts` exnref flag is test-runner support only and must not be staged;
+restore its exact original execArgv after this run and the pre-push tests finish.
+Working branch `codex/6979-s7c-ir-arms`, worktree
+`/Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/worktrees/codex-6979-s7c-ir-arms`.
+The implementation checkpoint is signed commit2dfb8edd492c959fe141e51fa6d4f9d9933c8389;
+this verification update follows it without rewriting history.

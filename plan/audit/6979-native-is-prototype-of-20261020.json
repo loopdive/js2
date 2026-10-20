@@ -43,9 +43,15 @@
     },
     "finalCatalog": {
       "report": ".tmp/s7as-final-catalog.json",
-      "closed": false,
-      "runnerExit": null,
-      "status": "Running; no final result claimed."
+      "sha256": "7570f8ae4ca1acd0050782ebc524b4b7125ecdd5a9b7d5d70ae50e28604784e8",
+      "closed": true,
+      "runnerExit": 0,
+      "success": true,
+      "total": 70,
+      "passed": 70,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "durationSeconds": 1479.91
     },
     "wrappingPreservation": {
       "report": ".tmp/s7as-wrapping-preservation.json",
