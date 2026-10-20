@@ -528,12 +528,11 @@ export interface CompileOptions {
   preserveDebugNames?: boolean;
   /** Source map URL to embed in the wasm binary (default: "module.wasm.map") */
   sourceMapUrl?: string;
-  /** Compilation target: "gc" (WasmGC, default), "linear" (linear memory),
-   *  "wasi" (WASI-compatible GC), or "standalone" (pure WasmGC, no JS host
-   *  and no WASI runtime — #1470). `target: "standalone"` implies
-   *  `nativeStrings: true` and refuses to emit any `wasm:js-string` or
-   *  `env` JS-host string imports. */
+  /** Execution environment; standalone requires native strings and refuses JS-host imports.
+   * Backend is independently selected; defaults preserve the existing target projection. */
   target?: "gc" | "linear" | "wasi" | "standalone";
+  /** Explicit Wasm backend, independent of the execution environment. */
+  backend?: import("./shared/contracts/compile-target-policy.js").CompileBackend;
   /**
    * Import the canonical realm-global object for a linked standalone runtime.
    *

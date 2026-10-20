@@ -5,6 +5,7 @@ import { forEachInstrDeep, type IrFunction, type IrValueId, type IrInstr } from 
 import type { IrType } from "../core/types.js";
 import type { IrFuncRef } from "../core/value-references.js";
 import { irVecElemSetSymbol } from "../core/vector-runtime.js";
+import { irNumericAppendCallableDeclaration, numericAppendCallablePolicyMismatch } from "./numeric-vector-callables.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 import type { IrRuntimeCallableDeclaration } from "./callable-declarations.js";
@@ -31,7 +32,9 @@ export const VECTOR_CALLABLE_DECLARATION: IrRuntimeCallableDeclaration = Object.
 });
 
 export function irVectorCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
-  return ref.binding.kind === "intrinsic" && ref.binding.symbol === SYMBOL ? VECTOR_CALLABLE_DECLARATION : undefined;
+  return ref.binding.kind === "intrinsic" && ref.binding.symbol === SYMBOL
+    ? VECTOR_CALLABLE_DECLARATION
+    : irNumericAppendCallableDeclaration(ref);
 }
 
 /** Symbolic resolver obligation only; physical vector/growth resources remain backend-owned. */
@@ -64,7 +67,7 @@ export function vectorCallablePolicyMismatch(
   feature: RuntimeFeature,
   policy: RuntimeManifestPolicy,
 ): string | undefined {
-  if (feature !== VECTOR_CALLABLE_DECLARATION.feature) return undefined;
+  if (feature !== VECTOR_CALLABLE_DECLARATION.feature) return numericAppendCallablePolicyMismatch(feature, policy);
   return policy.backend === "wasmgc" && policy.target === "standalone"
     ? undefined
     : `${feature} requires standalone WasmGC`;

@@ -196,6 +196,11 @@ describe("lowering cycle separation", () => {
     const graph = valueClosure();
     // Exact 549b value graph plus the frozen D1 legality analysis owner.
     // Compatibility forwards preserve identities; pin every edge occurrence.
+    // #6920 A-C1 successor of the 33-module / 13-generic-out-edge pin: + type-only leaf vector-representation.ts.
+    // #6920 (#6662 reconciled, 38 modules / 17 generic out-edges): + three type-only leaf helpers extracted from
+    // lower-generic (instruction-uses, native-global-read, vector-element-access) and the one-symbol leaf
+    // ir-class-shape-marker re-exported by core/types. The native Number/Undefined admission the verifier
+    // consults is injected (IrBackendNativeAdmission), so the allocation-evidence modules stay out.
     expect(graph.modules).toEqual([
       "src/backend/wasmgc/lowering/dynamic-scratch.ts",
       "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
@@ -203,7 +208,11 @@ describe("lowering cycle separation", () => {
       "src/ir/analysis/backend-legality.ts",
       "src/ir/analysis/effects.ts",
       "src/ir/analysis/nested-stackification.ts",
+      "src/ir/backend/instruction-uses.ts",
       "src/ir/backend/legality.ts",
+      "src/ir/backend/native-global-read.ts",
+      "src/ir/backend/vector-element-access.ts",
+      "src/ir/backend/vector-representation.ts",
       "src/ir/backend/wasm-int32-coercion.ts",
       "src/ir/backend/wasm-math-minmax.ts",
       "src/ir/callable-bindings.ts",
@@ -229,15 +238,22 @@ describe("lowering cycle separation", () => {
       "src/ir/string-runtime.ts",
       "src/runtime/contracts/js-value-tags.ts",
       "src/shared/contracts/identity-values.ts",
+      "src/shared/contracts/ir-class-shape-marker.ts",
       "src/shared/contracts/ir-preparation-errors.ts",
     ]);
     expect(graph.edges).toEqual([
+      "src/ir/lower-generic.ts -> src/ir/backend/instruction-uses.ts",
+      "src/ir/lower-generic.ts -> src/ir/backend/native-global-read.ts",
       "src/ir/lower-generic.ts -> src/ir/lowering/string-operations.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/legality.ts",
       "src/ir/backend/legality.ts -> src/ir/analysis/backend-legality.ts",
       "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
+      "src/ir/core/types.ts -> src/shared/contracts/ir-class-shape-marker.ts",
       "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
       "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
+      "src/ir/core/types.ts -> src/shared/contracts/ir-class-shape-marker.ts",
+      "src/ir/lower-generic.ts -> src/ir/backend/vector-representation.ts",
+      "src/ir/lower-generic.ts -> src/ir/backend/vector-element-access.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
       "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
@@ -271,7 +287,7 @@ describe("lowering cycle separation", () => {
       "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
     ]);
     expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
+    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(17);
   });
 
   it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {

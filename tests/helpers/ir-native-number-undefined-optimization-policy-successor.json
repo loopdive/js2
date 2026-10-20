@@ -1,0 +1,353 @@
+{
+  "schema": 1,
+  "kind": "native-number-undefined-optimization-policy-successor",
+  "before": {
+    "source": {
+      "bytes": 637204,
+      "sha256": "f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88",
+      "gitBlob": "70cc261bdce82ee1437e9beb571677069c49a0e4"
+    },
+    "count": 2016,
+    "data": "e56493e2ba1670320248acc370b04c48e19ed82d651985e91c23349b8d0b58f0",
+    "files": "e2ab5e0103848e548c08aa4ab20af8df745205d8588d503adb87d502ced67a0c",
+    "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+  },
+  "current": {
+    "source": {
+      "bytes": 638010,
+      "sha256": "c147c9a37950d784905920d5a226584b1ed8e823246964f89791d4e8f2769f8f",
+      "gitBlob": "54507344864a2a5689cee487d939b2b1b744b981"
+    },
+    "count": 2018,
+    "data": "f0294d7feb674268aa21e35f2bd75303d4964ecd8b83d2b9c88cc7226193bcf0",
+    "files": "fb82fdc26872841c6770c63c649dd16a7d2c28913c0312b44bd5cc9f0f80ae20",
+    "nonFiles": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf"
+  },
+  "inserted": [
+    {
+      "index": 2016,
+      "row": {
+        "path": "src/compiler/ir-native-number-undefined-optimization.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows."
+      }
+    },
+    {
+      "index": 2017,
+      "row": {
+        "path": "src/wasm/physical/native-number-undefined-binary.ts",
+        "state": "clean",
+        "layer": "wasm-physical"
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-native-number-undefined-source-successor.ts",
+      "bytes": 6768,
+      "sha256": "f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122",
+      "gitBlob": "e48e4c20e3cad8c1ea3767792f154111edc3662e"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-source-successor.json",
+      "bytes": 32537,
+      "sha256": "660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750",
+      "gitBlob": "9f2fe0044fc5a5e0254ba77da8c2ff1f76acd9e9"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-inventory-successor.ts",
+      "bytes": 30399,
+      "sha256": "52d31a9c7fd7ce39e0cc66c6c17ac0d52c62bdba5021eabb11878c621179233d",
+      "gitBlob": "94e07d85645514c7ae7d674aa86a44089c3370e8"
+    },
+    {
+      "path": "tests/helpers/ir-native-number-undefined-inventory-successor.json",
+      "bytes": 21476,
+      "sha256": "def88ffa87ea3fc238d83127d79eb540668f83bee12a424547a9d140720f1e5c",
+      "gitBlob": "d6f2750367b1b4f6a59c7627bd0f0859ee63c609"
+    }
+  ],
+  "callers": [
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "bytes": 24382,
+      "sha256": "9f96fe707dc956d4150e730cdab2407506326eaa02ee64cef6d40402849014d0",
+      "gitBlob": "7eb2261ef05c3a45f5c918d96fe049ab71aadfba"
+    },
+    {
+      "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+      "bytes": 27959,
+      "sha256": "f9055ab6ea02f1b7a9723d13f2eca03b831e65dd794f135f5935eb6b2fb766a2",
+      "gitBlob": "3de673b3d0cadfeb2b8a7b829471e1ea67d1c212"
+    },
+    {
+      "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+      "bytes": 360647,
+      "sha256": "d776170cb1ba69e74aeab25d41d73095bf7dab5dd14a4fc530b9a0cc023bb924",
+      "gitBlob": "685d904d277fe196f349479a1b96b923f8b47fa8"
+    }
+  ],
+  "transforms": [
+    {
+      "path": "scripts/compiler-boundaries.json",
+      "before": {
+        "bytes": 637204,
+        "sha256": "f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88",
+        "gitBlob": "70cc261bdce82ee1437e9beb571677069c49a0e4"
+      },
+      "current": {
+        "bytes": 638010,
+        "sha256": "c147c9a37950d784905920d5a226584b1ed8e823246964f89791d4e8f2769f8f",
+        "gitBlob": "54507344864a2a5689cee487d939b2b1b744b981"
+      },
+      "edits": [
+        {
+          "beforeStart": 637197,
+          "beforeEnd": 637197,
+          "beforeText": "",
+          "currentStart": 637197,
+          "currentEnd": 638003,
+          "currentText": ",\n    {\n      \"path\": \"src/compiler/ir-native-number-undefined-optimization.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate actual finalized-artifact production/custody and optimizer orchestration from compiler frontend and legacy transitive consumers, retaining private constructor-only provenance, exact currentness and atomic actual candidate acceptance. The compiler-private authority cycle and actual 1932-file closure/1564 debt remain explicit migration work; no clean compiler activation or general dynamic ABI follows.\"\n    },\n    {\n      \"path\": \"src/wasm/physical/native-number-undefined-binary.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"wasm-physical\"\n    }"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-native-number-undefined-source-successor.test.ts",
+      "before": {
+        "bytes": 24019,
+        "sha256": "ab9600075c70d54c094887c2d06cf4b93b5b65a32bc422c04d4a26b51a7ea095",
+        "gitBlob": "13ceaad4b9fe3bc86fa3bf0b32a793f445900d53"
+      },
+      "current": {
+        "bytes": 24382,
+        "sha256": "9f96fe707dc956d4150e730cdab2407506326eaa02ee64cef6d40402849014d0",
+        "gitBlob": "7eb2261ef05c3a45f5c918d96fe049ab71aadfba"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "beforeText": "",
+          "currentStart": 0,
+          "currentEnd": 143,
+          "currentText": "import { createIrNativeNumberUndefinedOptimizationPolicyReader } from \"./helpers/ir-native-number-undefined-optimization-policy-successor.js\";\n"
+        },
+        {
+          "beforeStart": 1721,
+          "beforeEnd": 1822,
+          "beforeText": "const disk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\n",
+          "currentStart": 1864,
+          "currentEnd": 2083,
+          "currentText": "const actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\nconst disk = (path: string): string => createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk)(path);\n"
+        },
+        {
+          "beforeStart": 2318,
+          "beforeEnd": 2415,
+          "beforeText": "const snapshot = (): Map<string, string> => new Map(required.map((path) => [path, disk(path)]));\n",
+          "currentStart": 2579,
+          "currentEnd": 2778,
+          "currentText": "const snapshot = (): Map<string, string> => {\n  const current = createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk);\n  return new Map(required.map((path) => [path, current(path)]));\n};\n"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-3525-native-number-undefined-inventory-successor.test.ts",
+      "before": {
+        "bytes": 27091,
+        "sha256": "235e885680e334b9bc194d88059766930f0ce88688cf8ddffbffa6be0af29163",
+        "gitBlob": "b9e0988aa71f172d6a5059f2ef9dbb0c924baf61"
+      },
+      "current": {
+        "bytes": 27959,
+        "sha256": "f9055ab6ea02f1b7a9723d13f2eca03b831e65dd794f135f5935eb6b2fb766a2",
+        "gitBlob": "3de673b3d0cadfeb2b8a7b829471e1ea67d1c212"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "beforeText": "",
+          "currentStart": 0,
+          "currentEnd": 207,
+          "currentText": "import {\n  createIrNativeNumberUndefinedOptimizationPolicyReader,\n  createLazyIrNativeNumberUndefinedOptimizationPolicyReader,\n} from \"./helpers/ir-native-number-undefined-optimization-policy-successor.js\";\n"
+        },
+        {
+          "beforeStart": 443,
+          "beforeEnd": 660,
+          "beforeText": "  createIrNativeNumberUndefinedInventoryReader as createReader,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicy as beforeData,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicySource as beforeRaw,\n",
+          "currentStart": 650,
+          "currentEnd": 891,
+          "currentText": "  createIrNativeNumberUndefinedInventoryReader as originalCreateReader,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicy as originalBeforeData,\n  captureIrNativeNumberUndefinedInventoryPredecessorPolicySource as originalBeforeRaw,\n"
+        },
+        {
+          "beforeStart": 14775,
+          "beforeEnd": 14857,
+          "beforeText": "const disk = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\n",
+          "currentStart": 15006,
+          "currentEnd": 15719,
+          "currentText": "const actualDisk = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\nconst disk = (path: string): string => createIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk)(path);\ntype Reader = (path: string) => string;\nconst defaultInput = (supplied: Reader | undefined): Reader =>\n  supplied === undefined ? createLazyIrNativeNumberUndefinedOptimizationPolicyReader(actualDisk) : supplied;\nconst createReader = (supplied?: Reader) => originalCreateReader(defaultInput(supplied));\nconst beforeData = (value: unknown, supplied?: Reader) => originalBeforeData(value, defaultInput(supplied));\nconst beforeRaw = (raw: string, supplied?: Reader) => originalBeforeRaw(raw, defaultInput(supplied));\n"
+        },
+        {
+          "beforeStart": 21786,
+          "beforeEnd": 21817,
+          "beforeText": "        original = disk(path);\n",
+          "currentStart": 22648,
+          "currentEnd": 22685,
+          "currentText": "        original = actualDisk(path);\n"
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+      "before": {
+        "bytes": 360428,
+        "sha256": "529e1d9d98cf7a97c0418350547beae8c9d598ca98dc93cc786d14abeeb23e28",
+        "gitBlob": "dee50f79c3770585d18c7323024fc48be9a5597a"
+      },
+      "current": {
+        "bytes": 360647,
+        "sha256": "d776170cb1ba69e74aeab25d41d73095bf7dab5dd14a4fc530b9a0cc023bb924",
+        "gitBlob": "685d904d277fe196f349479a1b96b923f8b47fa8"
+      },
+      "edits": [
+        {
+          "beforeStart": 0,
+          "beforeEnd": 0,
+          "beforeText": "",
+          "currentStart": 0,
+          "currentEnd": 143,
+          "currentText": "import { createIrNativeNumberUndefinedOptimizationPolicyReader } from \"./helpers/ir-native-number-undefined-optimization-policy-successor.js\";\n"
+        },
+        {
+          "beforeStart": 296053,
+          "beforeEnd": 296174,
+          "beforeText": "  createIrNativeNumberUndefinedInventoryReader((currentPath) => readFileSync(resolve(root, currentPath), \"utf8\"))(path);\n",
+          "currentStart": 296196,
+          "currentEnd": 296393,
+          "currentText": "  createIrNativeNumberUndefinedInventoryReader(\n    createIrNativeNumberUndefinedOptimizationPolicyReader((currentPath) =>\n      readFileSync(resolve(root, currentPath), \"utf8\"),\n    ),\n  )(path);\n"
+        }
+      ]
+    }
+  ],
+  "successor": {
+    "base": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+    "head": "3e16e53585",
+    "transforms": [
+      {
+        "path": "tests/helpers/ir-native-number-undefined-source-successor.ts",
+        "mode": "live",
+        "before": {
+          "bytes": 6768,
+          "sha256": "f5ee7cf91cb521c643c1a2c41cfd801b547de0fa1440c85edf551ba388ae4122",
+          "gitBlob": "e48e4c20e3cad8c1ea3767792f154111edc3662e"
+        },
+        "current": {
+          "bytes": 11970,
+          "sha256": "68e95fcc134aeae405be82987c2b3067d6c9158d6c97e9ccfcad22c06b8965f8",
+          "gitBlob": "882cd18e9e1092cdad1d08eaed3ef29a92bfcf33"
+        },
+        "edits": [
+          {
+            "beforeStart": 792,
+            "beforeEnd": 792,
+            "beforeText": "",
+            "currentStart": 792,
+            "currentEnd": 1152,
+            "currentText": "interface SuccessorTransform extends Transform {\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\n  readonly mode: \"epoch\" | \"live\";\n}\ninterface SuccessorEpoch {\n  readonly base: string;\n  readonly head: string;\n  readonly transforms: readonly SuccessorTransform[];\n}\n"
+          },
+          {
+            "beforeStart": 1178,
+            "beforeEnd": 1178,
+            "beforeText": "",
+            "currentStart": 1538,
+            "currentEnd": 1577,
+            "currentText": "  readonly successor?: SuccessorEpoch;\n"
+          },
+          {
+            "beforeStart": 1180,
+            "beforeEnd": 1397,
+            "beforeText": "const receiptBytes = 32537;\nconst receiptSha256 = \"660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750\";\nconst canonicalReceiptSha256 = \"577978d510d8938ec6def95c29e863b84be43ad61caabd0a6912211a016aae85\";\n",
+            "currentStart": 1579,
+            "currentEnd": 1796,
+            "currentText": "const receiptBytes = 58470;\nconst receiptSha256 = \"7fe3ab4bb0462990c5ad66e80e19abccc93791640e70c1165200c44fcb23bfdf\";\nconst canonicalReceiptSha256 = \"db0027b5d35fe8b22409c5d42ea871914c082bfa019b847a88cdee42eb260971\";\n"
+          },
+          {
+            "beforeStart": 5064,
+            "beforeEnd": 5064,
+            "beforeText": "",
+            "currentStart": 5463,
+            "currentEnd": 7151,
+            "currentText": "/**\n * (#6920) Reads through the successor epoch, lazily, in the caller's own read\n * order: a path the successor transforms is authenticated against its live\n * pin and replayed back to this record's fixed epoch (both directions), or\n * accepted as already at the epoch when an outer reader replayed it first.\n * `live`-mode paths (helper code and data) keep their live text and are\n * re-pinned by the successor; the fixed epoch's data is never edited.\n */\nfunction successorReader(\n  receipt: { readonly successor?: SuccessorEpoch },\n  actualRead: (path: string) => string,\n): (path: string) => { readonly text: string; readonly pin?: Pin; readonly epoch: string } {\n  const transforms = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\n\n  return (path) => {\n    const live = actualRead(path);\n    const transform = transforms.get(path);\n    if (!transform) return { text: live, epoch: live };\n    if (typeof live !== \"string\") fail(`non-string source ${path}`);\n    const actual = pin(live);\n    if (\n      actual.bytes === transform.before.bytes &&\n      actual.sha256 === transform.before.sha256 &&\n      actual.gitBlob === transform.before.gitBlob\n    )\n      return { text: live, pin: transform.before, epoch: live };\n    authenticate(live, transform.current, path);\n    const epoch = replaceRanges(live, transform.edits, true);\n    authenticate(epoch, transform.before, \"epoch \" + path);\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\"complete successor forward replay\");\n    return transform.mode === \"live\"\n      ? { text: live, pin: transform.current, epoch }\n      : { text: epoch, pin: transform.before, epoch };\n  };\n}\n"
+          },
+          {
+            "beforeStart": 5530,
+            "beforeEnd": 5749,
+            "beforeText": "  const receipt: unknown = JSON.parse(receiptText);\n  assertIrNativeNumberUndefinedSourceReceiptStructure(receipt);\n  const captured = new Map<string, string>([[irNativeNumberUndefinedSourceReceiptPath, receiptText]]);\n",
+            "currentStart": 7617,
+            "currentEnd": 10045,
+            "currentText": "  if (parsedReceipt === undefined) {\n    const parsed: unknown = JSON.parse(receiptText);\n    assertIrNativeNumberUndefinedSourceReceiptStructure(parsed);\n    parsedReceipt = parsed;\n  }\n  const receipt = parsedReceipt;\n  const live = new Map<string, unknown>();\n  for (const row of [...receipt.sources, ...receipt.anchors, ...receipt.callers])\n    if (!live.has(row.path)) live.set(row.path, actualReader(row.path));\n  const operands = [...live.values()];\n  const captureKey = operands.every((text): text is string => typeof text === \"string\")\n    ? [receiptSha256, ...operands].join(\"\\0\")\n    : undefined;\n  const verified = captureKey === undefined ? undefined : verifiedCaptures.get(captureKey);\n  const captured = verified\n    ? new Map(verified)\n    : new Map<string, string>([[irNativeNumberUndefinedSourceReceiptPath, receiptText]]);\n  if (!verified) verify(receipt, (path) => (live.has(path) ? live.get(path) : actualReader(path)) as string, captured);\n  if (!verified && captureKey !== undefined) verifiedCaptures.set(captureKey, new Map(captured));\n  return (path: string): string => {\n    const known = captured.get(path);\n    if (known !== undefined) return known;\n    const text = actualReader(path);\n    if (typeof text !== \"string\") fail(\"non-string passthrough \" + path);\n    captured.set(path, text);\n    return text;\n  };\n}\n/**\n * Whole-capture memo (#6920): an operation whose receipt and every required\n * operand are byte-identical to an already verified operation reuses that\n * verification's captured texts (as a fresh map). The key is the operands' exact\n * bytes, not a digest, so a hit is byte equality. Every operand is still read\n * by every operation; a changed or nonprimitive operand misses and\n * takes the full verification with its original refusal.\n */\nconst verifiedCaptures = new Map<string, ReadonlyMap<string, string>>();\n/** The receipt is pinned by hash above, so its parse and structure are pure facts of that hash; it is never mutated. */\nlet parsedReceipt: IrNativeNumberUndefinedSourceReceipt | undefined;\nfunction verify(\n  receipt: IrNativeNumberUndefinedSourceReceipt,\n  actualReader: Reader,\n  captured: Map<string, string>,\n): void {\n  // A `live`-mode path that this record's own epoch also transforms is\n  // replayed from its successor epoch text, never from the live text.\n  const epochs = new Map<string, string>();\n  const read = successorReader(receipt, actualReader);\n"
+          },
+          {
+            "beforeStart": 5833,
+            "beforeEnd": 5913,
+            "beforeText": "    const text = actualReader(row.path);\n    authenticate(text, row, row.path);\n",
+            "currentStart": 10129,
+            "currentEnd": 10247,
+            "currentText": "    const { text, pin: successorPin, epoch } = read(row.path);\n    authenticate(text, successorPin ?? row, row.path);\n"
+          },
+          {
+            "beforeStart": 5947,
+            "beforeEnd": 5947,
+            "beforeText": "",
+            "currentStart": 10281,
+            "currentEnd": 10314,
+            "currentText": "    epochs.set(row.path, epoch);\n"
+          },
+          {
+            "beforeStart": 5999,
+            "beforeEnd": 6049,
+            "beforeText": "    const current = captured.get(transform.path);\n",
+            "currentStart": 10366,
+            "currentEnd": 10446,
+            "currentText": "    const current = epochs.get(transform.path) ?? captured.get(transform.path);\n"
+          },
+          {
+            "beforeStart": 6485,
+            "beforeEnd": 6766,
+            "beforeText": "  return (path: string): string => {\n    const known = captured.get(path);\n    if (known !== undefined) return known;\n    const text = actualReader(path);\n    if (typeof text !== \"string\") fail(\"non-string passthrough \" + path);\n    captured.set(path, text);\n    return text;\n  };\n",
+            "currentStart": 10882,
+            "currentEnd": 11968,
+            "currentText": "}\n\n/**\n * (#6920) The live tree seen at this record's fixed epoch. `\"epoch\"` (the\n * default) replays every successor-transformed path back, so the record's own\n * epoch edits apply to it; `\"reader\"` is what the reader captures — `live`-mode\n * helper code and data stay live, only epoch-mode paths are replayed. Every\n * other path is the live text. B's suites compare their own replay against it.\n */\nexport function createIrNativeNumberUndefinedSourceEpochView(\n  actualRead: (path: string) => string,\n  view: \"epoch\" | \"reader\" = \"epoch\",\n): (path: string) => string {\n  const rawReceipt = actualRead(irNativeNumberUndefinedSourceReceiptPath);\n  if (\n    typeof rawReceipt !== \"string\" ||\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\n    hash(rawReceipt) !== receiptSha256\n  )\n    fail(\"complete receipt pin\");\n  const receipt: unknown = JSON.parse(rawReceipt);\n  assertIrNativeNumberUndefinedSourceReceiptStructure(receipt);\n  const read = successorReader(receipt, actualRead);\n  return (path: string): string => (view === \"epoch\" ? read(path).epoch : read(path).text);\n"
+          }
+        ]
+      },
+      {
+        "path": "tests/helpers/ir-native-number-undefined-source-successor.json",
+        "mode": "live",
+        "before": {
+          "bytes": 32537,
+          "sha256": "660b59f167026c48f33f8b34e9ef785d54874a4abdb2f3348b761458a228e750",
+          "gitBlob": "9f2fe0044fc5a5e0254ba77da8c2ff1f76acd9e9"
+        },
+        "current": {
+          "bytes": 58470,
+          "sha256": "7fe3ab4bb0462990c5ad66e80e19abccc93791640e70c1165200c44fcb23bfdf",
+          "gitBlob": "dbcb1de54734f9f18d3f4c7e209e011edd370ff3"
+        },
+        "edits": [
+          {
+            "beforeStart": 32531,
+            "beforeEnd": 32535,
+            "beforeText": "  ]\n",
+            "currentStart": 32531,
+            "currentEnd": 58468,
+            "currentText": "  ],\n  \"successor\": {\n    \"base\": \"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\",\n    \"head\": \"3e16e53585\",\n    \"transforms\": [\n      {\n        \"path\": \"src/ir/runtime/verify.ts\",\n        \"mode\": \"epoch\",\n        \"before\": {\n          \"bytes\": 122476,\n          \"sha256\": \"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\",\n          \"gitBlob\": \"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\"\n        },\n        \"current\": {\n          \"bytes\": 124703,\n          \"sha256\": \"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\",\n          \"gitBlob\": \"0232eb2216e508c4cce5036a2433780bd87e7597\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 1270,\n            \"beforeEnd\": 1372,\n            \"beforeText\": \"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\",\n            \"currentStart\": 1270,\n            \"currentEnd\": 1390,\n            \"currentText\": \"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\"../core/nodes.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 1453,\n            \"beforeEnd\": 1501,\n            \"beforeText\": \"import type { IrType } from \\\"../core/types.js\\\";\\n\",\n            \"currentStart\": 1471,\n            \"currentEnd\": 1533,\n            \"currentText\": \"import type { IrClassShape, IrType } from \\\"../core/types.js\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 15279,\n            \"beforeEnd\": 15279,\n            \"beforeText\": \"\",\n            \"currentStart\": 15311,\n            \"currentEnd\": 15651,\n            \"currentText\": \"  /**\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\n   * `string` result non-assignable (native strings lower to\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\n   */\\n  readonly stringIsExternref?: boolean;\\n\"\n          },\n          {\n            \"beforeStart\": 23246,\n            \"beforeEnd\": 23299,\n            \"beforeText\": \"      if (!returnTypeAssignable(actual, declared)) {\\n\",\n            \"currentStart\": 23618,\n            \"currentEnd\": 23699,\n            \"currentText\": \"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 24737,\n            \"beforeEnd\": 24804,\n            \"beforeText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\n\",\n            \"currentStart\": 25137,\n            \"currentEnd\": 25232,\n            \"currentText\": \"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\n\"\n          },\n          {\n            \"beforeStart\": 25815,\n            \"beforeEnd\": 25890,\n            \"beforeText\": \"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\n\",\n            \"currentStart\": 26243,\n            \"currentEnd\": 26347,\n            \"currentText\": \"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\n\"\n          },\n          {\n            \"beforeStart\": 28284,\n            \"beforeEnd\": 28284,\n            \"beforeText\": \"\",\n            \"currentStart\": 28741,\n            \"currentEnd\": 29136,\n            \"currentText\": \"  // (#7001) A dynamic/externref value into a native-string result: string\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\n  if (\\n    declared.kind === \\\"string\\\" &&\\n    stringIsExternref === false &&\\n    (actual.kind === \\\"dynamic\\\" || a?.kind === \\\"externref\\\")\\n  ) {\\n    return false;\\n  }\\n\"\n          },\n          {\n            \"beforeStart\": 82195,\n            \"beforeEnd\": 82304,\n            \"beforeText\": \"  \\\"class.call\\\": { skip: \\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\" },\\n\",\n            \"currentStart\": 83047,\n            \"currentEnd\": 83151,\n            \"currentText\": \"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\n  \\\"class.call\\\": \\\"checked\\\",\\n\"\n          },\n          {\n            \"beforeStart\": 89889,\n            \"beforeEnd\": 89889,\n            \"beforeText\": \"\",\n            \"currentStart\": 90736,\n            \"currentEnd\": 90827,\n            \"currentText\": \"    case \\\"class.call\\\":\\n      checkClassCallTarget(instr, blockId, ctx);\\n      return true;\\n\"\n          },\n          {\n            \"beforeStart\": 89929,\n            \"beforeEnd\": 89929,\n            \"beforeText\": \"\",\n            \"currentStart\": 90867,\n            \"currentEnd\": 92156,\n            \"currentText\": \"/**\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\n * must be that member's own target: one bound to any other class's member is a\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\n * resolver-typed and is not judged here.\\n */\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\n  const receiver = ctx.typeOf.get(instr.receiver);\\n  if (!instr.target || receiver?.kind !== \\\"class\\\") return;\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\n    const member = shape.methods.find(\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\"method\\\") === instr.memberKind,\\n    );\\n    if (!member) continue;\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\n    const got = bindingKey(instr.target.binding);\\n    if (want !== null && got !== null && want !== got)\\n      roadmapError(\\n        ctx,\\n        blockId,\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\n      );\\n    return;\\n  }\\n}\\n\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"src/shared/contracts/ir-preparation-failure.ts\",\n        \"mode\": \"epoch\",\n        \"before\": {\n          \"bytes\": 12413,\n          \"sha256\": \"5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7\",\n          \"gitBlob\": \"0633ed29be3ce62ffed15c28f14142ff5e8ecd38\"\n        },\n        \"current\": {\n          \"bytes\": 13155,\n          \"sha256\": \"ca1686a9f6d91abfad93e4ba5540700f333dfaaaba2703bfc90a0dfe671f33e6\",\n          \"gitBlob\": \"4bccbdc9abd1c26f3e170ce718dbb6409d94e1af\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 3164,\n            \"beforeEnd\": 3164,\n            \"beforeText\": \"\",\n            \"currentStart\": 3164,\n            \"currentEnd\": 3906,\n            \"currentText\": \"  // (#7000) An instance method/accessor reached through a base-typed receiver\\n  // that a subclass overrides. The IR binds `class.call` statically to the\\n  // declared class's member and has no `__tag` virtual dispatch yet (#1299 is\\n  // legacy-only), so the unit keeps its legacy body until it does.\\n  | \\\"class-method-virtual\\\"\\n  // (#7003) A function-typed parameter that a caller may fill with a function\\n  // of a different Wasm signature (extra default/optional params, fewer\\n  // params, a value result in a `void` slot, or an untraceable value). IR\\n  // `closure.call` casts to the annotation's exact func type and would trap;\\n  // legacy's arity cascade handles it, so the unit keeps its legacy body.\\n  | \\\"closure-signature-mismatch\\\"\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"tests/helpers/ir-native-class-layout-source-successor.ts\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 6756,\n          \"sha256\": \"d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168\",\n          \"gitBlob\": \"d79ef4d53983fc9402f7911c5413fa64ce89d886\"\n        },\n        \"current\": {\n          \"bytes\": 11924,\n          \"sha256\": \"f81c22bdfdb5a43bbbbc753f97f646185756964528fa2413ace2daa63b146a84\",\n          \"gitBlob\": \"50f97e37d14ffbb4447e0485367a85e5cca583f7\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 729,\n            \"beforeEnd\": 729,\n            \"beforeText\": \"\",\n            \"currentStart\": 729,\n            \"currentEnd\": 1089,\n            \"currentText\": \"interface SuccessorTransform extends Transform {\\n  /** `epoch`: replay the live file back to the fixed epoch; `live`: keep the live text and re-pin it, with the edits as the audit trail. */\\n  readonly mode: \\\"epoch\\\" | \\\"live\\\";\\n}\\ninterface SuccessorEpoch {\\n  readonly base: string;\\n  readonly head: string;\\n  readonly transforms: readonly SuccessorTransform[];\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 1115,\n            \"beforeEnd\": 1115,\n            \"beforeText\": \"\",\n            \"currentStart\": 1475,\n            \"currentEnd\": 1514,\n            \"currentText\": \"  readonly successor?: SuccessorEpoch;\\n\"\n          },\n          {\n            \"beforeStart\": 1117,\n            \"beforeEnd\": 1334,\n            \"beforeText\": \"const receiptBytes = 12174;\\nconst receiptSha256 = \\\"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\\\";\\nconst canonicalReceiptSha256 = \\\"f897d27f9f03813b894b06efde96da04dab6f746ae8424ff12835bbc33136997\\\";\\n\",\n            \"currentStart\": 1516,\n            \"currentEnd\": 1733,\n            \"currentText\": \"const receiptBytes = 18244;\\nconst receiptSha256 = \\\"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\\\";\\nconst canonicalReceiptSha256 = \\\"e0fe9bd8bf1f389a18cd96337d4a212e7a96654b3221a6478138dfe0e2db757c\\\";\\n\"\n          },\n          {\n            \"beforeStart\": 4982,\n            \"beforeEnd\": 4982,\n            \"beforeText\": \"\",\n            \"currentStart\": 5381,\n            \"currentEnd\": 7069,\n            \"currentText\": \"/**\\n * (#6920) Reads through the successor epoch, lazily, in the caller's own read\\n * order: a path the successor transforms is authenticated against its live\\n * pin and replayed back to this record's fixed epoch (both directions), or\\n * accepted as already at the epoch when an outer reader replayed it first.\\n * `live`-mode paths (helper code and data) keep their live text and are\\n * re-pinned by the successor; the fixed epoch's data is never edited.\\n */\\nfunction successorReader(\\n  receipt: { readonly successor?: SuccessorEpoch },\\n  actualRead: (path: string) => string,\\n): (path: string) => { readonly text: string; readonly pin?: Pin; readonly epoch: string } {\\n  const transforms = new Map((receipt.successor?.transforms ?? []).map((t) => [t.path, t] as const));\\n\\n  return (path) => {\\n    const live = actualRead(path);\\n    const transform = transforms.get(path);\\n    if (!transform) return { text: live, epoch: live };\\n    if (typeof live !== \\\"string\\\") fail(`non-string source ${path}`);\\n    const actual = pin(live);\\n    if (\\n      actual.bytes === transform.before.bytes &&\\n      actual.sha256 === transform.before.sha256 &&\\n      actual.gitBlob === transform.before.gitBlob\\n    )\\n      return { text: live, pin: transform.before, epoch: live };\\n    authenticate(live, transform.current, path);\\n    const epoch = replaceRanges(live, transform.edits, true);\\n    authenticate(epoch, transform.before, \\\"epoch \\\" + path);\\n    if (replaceRanges(epoch, transform.edits, false) !== live) fail(\\\"complete successor forward replay\\\");\\n    return transform.mode === \\\"live\\\"\\n      ? { text: live, pin: transform.current, epoch }\\n      : { text: epoch, pin: transform.before, epoch };\\n  };\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 5436,\n            \"beforeEnd\": 5825,\n            \"beforeText\": \"  const receipt: unknown = JSON.parse(receiptText);\\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\\n  const captured = new Map<string, string>([[irNativeClassLayoutSourceReceiptPath, receiptText]]);\\n  for (const row of [...receipt.current, ...receipt.anchors]) {\\n    const text = actualReader(row.path);\\n    authenticate(text, row, row.path);\\n    captured.set(row.path, text);\\n\",\n            \"currentStart\": 7523,\n            \"currentEnd\": 7702,\n            \"currentText\": \"  if (parsedReceipt === undefined) {\\n    const parsed: unknown = JSON.parse(receiptText);\\n    assertIrNativeClassLayoutSourceReceiptStructure(parsed);\\n    parsedReceipt = parsed;\\n\"\n          },\n          {\n            \"beforeStart\": 5829,\n            \"beforeEnd\": 6209,\n            \"beforeText\": \"  const current = captured.get(irNativeClassLayoutSourcePath)!;\\n  const before = replaceRanges(current, receipt.edits, true);\\n  authenticate(before, receipt.before, \\\"historical class layouts\\\");\\n  const forward = replaceRanges(before, receipt.edits, false);\\n  if (forward !== current) fail(\\\"complete forward reconstruction\\\");\\n  captured.set(irNativeClassLayoutSourcePath, before);\\n\",\n            \"currentStart\": 7706,\n            \"currentEnd\": 8555,\n            \"currentText\": \"  const receipt = parsedReceipt;\\n  const live = new Map<string, unknown>();\\n  for (const row of [...receipt.current, ...receipt.anchors])\\n    if (!live.has(row.path)) live.set(row.path, actualReader(row.path));\\n  const operands = [...live.values()];\\n  const captureKey = operands.every((text): text is string => typeof text === \\\"string\\\")\\n    ? [receiptSha256, ...operands].join(\\\"\\\\0\\\")\\n    : undefined;\\n  const verified = captureKey === undefined ? undefined : verifiedCaptures.get(captureKey);\\n  const captured = verified\\n    ? new Map(verified)\\n    : new Map<string, string>([[irNativeClassLayoutSourceReceiptPath, receiptText]]);\\n  if (!verified) verify(receipt, (path) => (live.has(path) ? live.get(path) : actualReader(path)) as string, captured);\\n  if (!verified && captureKey !== undefined) verifiedCaptures.set(captureKey, new Map(captured));\\n\"\n          },\n          {\n            \"beforeStart\": 6500,\n            \"beforeEnd\": 6500,\n            \"beforeText\": \"\",\n            \"currentStart\": 8846,\n            \"currentEnd\": 10594,\n            \"currentText\": \"/**\\n * Whole-capture memo (#6920): an operation whose receipt and every required\\n * operand are byte-identical to an already verified operation reuses that\\n * verification's captured texts (as a fresh map). The key is the operands' exact\\n * bytes, not a digest, so a hit is byte equality. Every operand is still read\\n * by every operation; a changed or nonprimitive operand misses and\\n * takes the full verification with its original refusal.\\n */\\nconst verifiedCaptures = new Map<string, ReadonlyMap<string, string>>();\\n/** The receipt is pinned by hash above, so its parse and structure are pure facts of that hash; it is never mutated. */\\nlet parsedReceipt: IrNativeClassLayoutSourceReceipt | undefined;\\nfunction verify(receipt: IrNativeClassLayoutSourceReceipt, actualReader: Reader, captured: Map<string, string>): void {\\n  // A `live`-mode path that this record's own epoch also transforms is\\n  // replayed from its successor epoch text, never from the live text.\\n  const epochs = new Map<string, string>();\\n  const read = successorReader(receipt, actualReader);\\n  for (const row of [...receipt.current, ...receipt.anchors]) {\\n    const { text, pin: successorPin, epoch } = read(row.path);\\n    authenticate(text, successorPin ?? row, row.path);\\n    captured.set(row.path, text);\\n    epochs.set(row.path, epoch);\\n  }\\n  const current = epochs.get(irNativeClassLayoutSourcePath) ?? captured.get(irNativeClassLayoutSourcePath)!;\\n  const before = replaceRanges(current, receipt.edits, true);\\n  authenticate(before, receipt.before, \\\"historical class layouts\\\");\\n  const forward = replaceRanges(before, receipt.edits, false);\\n  if (forward !== current) fail(\\\"complete forward reconstruction\\\");\\n  captured.set(irNativeClassLayoutSourcePath, before);\\n}\\n\"\n          },\n          {\n            \"beforeStart\": 6756,\n            \"beforeEnd\": 6756,\n            \"beforeText\": \"\",\n            \"currentStart\": 10850,\n            \"currentEnd\": 11924,\n            \"currentText\": \"\\n/**\\n * (#6920) The live tree seen at this record's fixed epoch. `\\\"epoch\\\"` (the\\n * default) replays every successor-transformed path back, so the record's own\\n * epoch edits apply to it; `\\\"reader\\\"` is what the reader captures — `live`-mode\\n * helper code and data stay live, only epoch-mode paths are replayed. Every\\n * other path is the live text. B's suites compare their own replay against it.\\n */\\nexport function createIrNativeClassLayoutSourceEpochView(\\n  actualRead: (path: string) => string,\\n  view: \\\"epoch\\\" | \\\"reader\\\" = \\\"epoch\\\",\\n): (path: string) => string {\\n  const rawReceipt = actualRead(irNativeClassLayoutSourceReceiptPath);\\n  if (\\n    typeof rawReceipt !== \\\"string\\\" ||\\n    Buffer.byteLength(rawReceipt) !== receiptBytes ||\\n    hash(rawReceipt) !== receiptSha256\\n  )\\n    fail(\\\"complete receipt pin\\\");\\n  const receipt: unknown = JSON.parse(rawReceipt);\\n  assertIrNativeClassLayoutSourceReceiptStructure(receipt);\\n  const read = successorReader(receipt, actualRead);\\n  return (path: string): string => (view === \\\"epoch\\\" ? read(path).epoch : read(path).text);\\n}\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"tests/helpers/ir-native-class-layout-source-successor.json\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 12174,\n          \"sha256\": \"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\",\n          \"gitBlob\": \"ed2339f103426372d227ea9355899dbbfecfad09\"\n        },\n        \"current\": {\n          \"bytes\": 18244,\n          \"sha256\": \"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\",\n          \"gitBlob\": \"3dc827cccb7b35baedabd09af8bfb92e86660ad8\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 12168,\n            \"beforeEnd\": 12172,\n            \"beforeText\": \"  ]\\n\",\n            \"currentStart\": 12168,\n            \"currentEnd\": 18242,\n            \"currentText\": \"  ],\\n  \\\"successor\\\": {\\n    \\\"base\\\": \\\"a4d4c99ccc9cd4fe27bd6dba91180fc575616529\\\",\\n    \\\"head\\\": \\\"3e16e53585\\\",\\n    \\\"transforms\\\": [\\n      {\\n        \\\"path\\\": \\\"src/ir/runtime/verify.ts\\\",\\n        \\\"mode\\\": \\\"epoch\\\",\\n        \\\"before\\\": {\\n          \\\"bytes\\\": 122476,\\n          \\\"sha256\\\": \\\"2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b\\\",\\n          \\\"gitBlob\\\": \\\"95fae5703c947c68feb3d29c8ae6703a59bcb0c3\\\"\\n        },\\n        \\\"current\\\": {\\n          \\\"bytes\\\": 124703,\\n          \\\"sha256\\\": \\\"acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad\\\",\\n          \\\"gitBlob\\\": \\\"0232eb2216e508c4cce5036a2433780bd87e7597\\\"\\n        },\\n        \\\"edits\\\": [\\n          {\\n            \\\"beforeStart\\\": 1270,\\n            \\\"beforeEnd\\\": 1372,\\n            \\\"beforeText\\\": \\\"import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\"../core/nodes.js\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1270,\\n            \\\"currentEnd\\\": 1390,\\n            \\\"currentText\\\": \\\"import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \\\\\\\"../core/nodes.js\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 1453,\\n            \\\"beforeEnd\\\": 1501,\\n            \\\"beforeText\\\": \\\"import type { IrType } from \\\\\\\"../core/types.js\\\\\\\";\\\\n\\\",\\n            \\\"currentStart\\\": 1471,\\n            \\\"currentEnd\\\": 1533,\\n            \\\"currentText\\\": \\\"import type { IrClassShape, IrType } from \\\\\\\"../core/types.js\\\\\\\";\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 15279,\\n            \\\"beforeEnd\\\": 15279,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 15311,\\n            \\\"currentEnd\\\": 15651,\\n            \\\"currentText\\\": \\\"  /**\\\\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\\\\n   * strings)? `false` makes a dynamic/externref value returned into a declared\\\\n   * `string` result non-assignable (native strings lower to\\\\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\\\\n   */\\\\n  readonly stringIsExternref?: boolean;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 23246,\\n            \\\"beforeEnd\\\": 23299,\\n            \\\"beforeText\\\": \\\"      if (!returnTypeAssignable(actual, declared)) {\\\\n\\\",\\n            \\\"currentStart\\\": 23618,\\n            \\\"currentEnd\\\": 23699,\\n            \\\"currentText\\\": \\\"      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 24737,\\n            \\\"beforeEnd\\\": 24804,\\n            \\\"beforeText\\\": \\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\\\\n\\\",\\n            \\\"currentStart\\\": 25137,\\n            \\\"currentEnd\\\": 25232,\\n            \\\"currentText\\\": \\\"        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 25815,\\n            \\\"beforeEnd\\\": 25890,\\n            \\\"beforeText\\\": \\\"function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\\\\n\\\",\\n            \\\"currentStart\\\": 26243,\\n            \\\"currentEnd\\\": 26347,\\n            \\\"currentText\\\": \\\"function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 28284,\\n            \\\"beforeEnd\\\": 28284,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 28741,\\n            \\\"currentEnd\\\": 29136,\\n            \\\"currentText\\\": \\\"  // (#7001) A dynamic/externref value into a native-string result: string\\\\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\\\\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\\\\n  if (\\\\n    declared.kind === \\\\\\\"string\\\\\\\" &&\\\\n    stringIsExternref === false &&\\\\n    (actual.kind === \\\\\\\"dynamic\\\\\\\" || a?.kind === \\\\\\\"externref\\\\\\\")\\\\n  ) {\\\\n    return false;\\\\n  }\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 82195,\\n            \\\"beforeEnd\\\": 82304,\\n            \\\"beforeText\\\": \\\"  \\\\\\\"class.call\\\\\\\": { skip: \\\\\\\"resolver-typed: method signature resolved from the receiver's shape at lowering\\\\\\\" },\\\\n\\\",\\n            \\\"currentStart\\\": 83047,\\n            \\\"currentEnd\\\": 83151,\\n            \\\"currentText\\\": \\\"  // (#7000) Target identity is checked; the signature stays resolver-typed.\\\\n  \\\\\\\"class.call\\\\\\\": \\\\\\\"checked\\\\\\\",\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 89889,\\n            \\\"beforeEnd\\\": 89889,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 90736,\\n            \\\"currentEnd\\\": 90827,\\n            \\\"currentText\\\": \\\"    case \\\\\\\"class.call\\\\\\\":\\\\n      checkClassCallTarget(instr, blockId, ctx);\\\\n      return true;\\\\n\\\"\\n          },\\n          {\\n            \\\"beforeStart\\\": 89929,\\n            \\\"beforeEnd\\\": 89929,\\n            \\\"beforeText\\\": \\\"\\\",\\n            \\\"currentStart\\\": 90867,\\n            \\\"currentEnd\\\": 92156,\\n            \\\"currentText\\\": \\\"/**\\\\n * (#7000) `class.call` is a STATIC call of the member resolved on the\\\\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\\\\n * must be that member's own target: one bound to any other class's member is a\\\\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\\\\n * receiver that is not class-shaped, or a member the walk cannot see, stays\\\\n * resolver-typed and is not judged here.\\\\n */\\\\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\\\\n  const receiver = ctx.typeOf.get(instr.receiver);\\\\n  if (!instr.target || receiver?.kind !== \\\\\\\"class\\\\\\\") return;\\\\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\\\\n    const member = shape.methods.find(\\\\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \\\\\\\"method\\\\\\\") === instr.memberKind,\\\\n    );\\\\n    if (!member) continue;\\\\n    const want = member.target ? bindingKey(member.target.binding) : null;\\\\n    const got = bindingKey(instr.target.binding);\\\\n    if (want !== null && got !== null && want !== got)\\\\n      roadmapError(\\\\n        ctx,\\\\n        blockId,\\\\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\\\\n      );\\\\n    return;\\\\n  }\\\\n}\\\\n\\\\n\\\"\\n          }\\n        ]\\n      }\\n    ]\\n  }\\n\"\n          }\n        ]\n      },\n      {\n        \"path\": \"tests/issue-6920-native-class-layout-source-successor.test.ts\",\n        \"mode\": \"live\",\n        \"before\": {\n          \"bytes\": 22794,\n          \"sha256\": \"81ee32076343ed3ae69ba45527a151e813eacb29157e20b0779a92bc52e7863f\",\n          \"gitBlob\": \"456f531bc52be0df5b8feb6e7fee56e2d662a6e7\"\n        },\n        \"current\": {\n          \"bytes\": 22795,\n          \"sha256\": \"8d987a17da1bc72295195a4c94465c6279a45026c52b1963ab1ae2d4606cdaaa\",\n          \"gitBlob\": \"c12ad7887c607e9815239126a8e022e4e20160b3\"\n        },\n        \"edits\": [\n          {\n            \"beforeStart\": 3944,\n            \"beforeEnd\": 4263,\n            \"beforeText\": \"  expect(Buffer.byteLength(disk(helperPath))).toBe(6756);\\n  expect(sha(disk(helperPath))).toBe(\\\"d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168\\\");\\n  expect(Buffer.byteLength(receiptText)).toBe(12174);\\n  expect(sha(receiptText)).toBe(\\\"5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045\\\");\\n\",\n            \"currentStart\": 3944,\n            \"currentEnd\": 4264,\n            \"currentText\": \"  expect(Buffer.byteLength(disk(helperPath))).toBe(11924);\\n  expect(sha(disk(helperPath))).toBe(\\\"f81c22bdfdb5a43bbbbc753f97f646185756964528fa2413ace2daa63b146a84\\\");\\n  expect(Buffer.byteLength(receiptText)).toBe(18244);\\n  expect(sha(receiptText)).toBe(\\\"3d00bc1b954591e47c6ae29da36d9356b57ae1358d26b8f35317fc4d733b7fa0\\\");\\n\"\n          }\n        ]\n      }\n    ]\n  }\n"
+          }
+        ]
+      }
+    ]
+  }
+}

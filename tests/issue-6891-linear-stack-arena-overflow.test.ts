@@ -146,9 +146,8 @@ describe("issue 6891: real Linear stack runtime", () => {
     expect(stack.mark()).toBe(BASE);
     expect(stack.alloc(8)).toBe(BASE);
     expect(state(stack)).toEqual({ base: BASE, pointer: 1032 });
-    // The ordinary heap allocator has separate unchecked arithmetic. Never
-    // dereference this huge result or reuse this instance for another huge case.
-    expect.soft(stack.alloc(-16)).toBe(END);
+    // The checked ordinary allocator refuses the huge request before publishing.
+    expect.soft(() => stack.alloc(-16)).toThrow(WebAssembly.RuntimeError);
     expect.soft(state(stack)).toEqual({ base: BASE, pointer: 1032 });
     expect.soft(stack.alloc(8)).toBe(1032);
     expect.soft(state(stack)).toEqual({ base: BASE, pointer: 1040 });
@@ -158,8 +157,10 @@ describe("issue 6891: real Linear stack runtime", () => {
     const stack = await buildRealRuntime();
     expect(stack.mark()).toBe(BASE);
     // BASE + size is 0xffffffff: only the alignment padding overflows.
-    expect.soft(stack.alloc(0xfffffbff)).toBe(END);
+    expect.soft(() => stack.alloc(0xfffffbff)).toThrow(WebAssembly.RuntimeError);
     expect.soft(state(stack)).toEqual({ base: BASE, pointer: BASE });
+    expect.soft(stack.alloc(8)).toBe(BASE);
+    expect.soft(state(stack)).toEqual({ base: BASE, pointer: BASE + 8 });
   });
 
   it("restores an inner frame after fallback while preserving outer bytes", async () => {

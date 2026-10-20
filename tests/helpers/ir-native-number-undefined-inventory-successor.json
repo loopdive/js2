@@ -1,0 +1,430 @@
+{
+  "schema": "fixed-native-number-undefined-inventory-successor-v1",
+  "coordinateUnit": "utf8-byte",
+  "base": "39c255ea0fb8ae364124c087acce7335285cbc33",
+  "before": {
+    "source": {
+      "bytes": 633127,
+      "sha256": "60bfda84dda819fc45e60ebb370e06d6007001f5885f2a934f24c3c5c1757dc7",
+      "gitBlob": "9e3ef20082947f200844fb79f4f5476c83653e5c"
+    },
+    "fileCount": 2001,
+    "dataSha256": "168eeef9253d3bdb6b8b6880adfafbf4ceb1e73f755e5121be336da06eae064c",
+    "filesSha256": "a9032453c2cf3b3357c640c637e856b863184d0434d45792dd4f4128fb425cc9",
+    "nonFilesSha256": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ]
+  },
+  "current": {
+    "source": {
+      "bytes": 637204,
+      "sha256": "f1934c0f22726ed604b009bc764ac3110f251f2aefb2533fa0dca7c13f874d88",
+      "gitBlob": "70cc261bdce82ee1437e9beb571677069c49a0e4"
+    },
+    "fileCount": 2016,
+    "dataSha256": "e56493e2ba1670320248acc370b04c48e19ed82d651985e91c23349b8d0b58f0",
+    "filesSha256": "e2ab5e0103848e548c08aa4ab20af8df745205d8588d503adb87d502ced67a0c",
+    "nonFilesSha256": "55a72bc549a5ebc2351631c574fe518c1457a48fd36f57550f13a3dc74917faf",
+    "topLevelKeys": [
+      "schema",
+      "description",
+      "sourceRoot",
+      "tsconfig",
+      "requireGitProvenance",
+      "externalAssets",
+      "frontendWrapper",
+      "moduleExtensions",
+      "layers",
+      "allowedEdges",
+      "externalPackages",
+      "activationHistory",
+      "nonModules",
+      "moves",
+      "evidence",
+      "files"
+    ]
+  },
+  "addedRows": [
+    {
+      "index": 2001,
+      "row": {
+        "path": "src/ir/native-number-undefined-source.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "frontend-ts",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Original checker-symbol/local dense-vector source and complete incoming/prototype-effect census remains frontend authority; migrate with source preparation, without serializing capabilities or inferring runtime absence from numeric types."
+      },
+      "previous": {
+        "path": "src/ir/native-vector-undefined-provenance.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "frontend-ts",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Checker-symbol native numeric defined-value provenance retains TypeScript AST authority; migrate with source lowering, never infer runtime absence from unboxed carriers."
+      },
+      "next": {
+        "path": "src/ir/core/native-number-undefined-lowering.ts",
+        "state": "clean",
+        "layer": "ir-core"
+      }
+    },
+    {
+      "index": 2002,
+      "row": {
+        "path": "src/ir/core/native-number-undefined-lowering.ts",
+        "state": "clean",
+        "layer": "ir-core"
+      },
+      "previous": {
+        "path": "src/ir/native-number-undefined-source.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "frontend-ts",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Original checker-symbol/local dense-vector source and complete incoming/prototype-effect census remains frontend authority; migrate with source preparation, without serializing capabilities or inferring runtime absence from numeric types."
+      },
+      "next": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-body.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      }
+    },
+    {
+      "index": 2003,
+      "row": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-body.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "previous": {
+        "path": "src/ir/core/native-number-undefined-lowering.ts",
+        "state": "clean",
+        "layer": "ir-core"
+      },
+      "next": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      }
+    },
+    {
+      "index": 2004,
+      "row": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "previous": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-body.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "next": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      }
+    },
+    {
+      "index": 2005,
+      "row": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "previous": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "next": {
+        "path": "src/ir/program/native-number-undefined-requirements.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      }
+    },
+    {
+      "index": 2006,
+      "row": {
+        "path": "src/ir/program/native-number-undefined-requirements.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "previous": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "next": {
+        "path": "src/ir/program/native-number-undefined-abi.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      }
+    },
+    {
+      "index": 2007,
+      "row": {
+        "path": "src/ir/program/native-number-undefined-abi.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "previous": {
+        "path": "src/ir/program/native-number-undefined-requirements.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "next": {
+        "path": "src/ir/runtime/native-number-undefined-profile.ts",
+        "state": "clean",
+        "layer": "ir-runtime"
+      }
+    },
+    {
+      "index": 2008,
+      "row": {
+        "path": "src/ir/runtime/native-number-undefined-profile.ts",
+        "state": "clean",
+        "layer": "ir-runtime"
+      },
+      "previous": {
+        "path": "src/ir/program/native-number-undefined-abi.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "next": {
+        "path": "src/ir/backend/native-number-undefined.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "ir-core",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate portable IR binding/proof contracts from concrete ValType/Instr carrier emission, scratch-local and memory-offset descriptors before core activation; all-import closure purity alone does not certify semantic core ownership."
+      }
+    },
+    {
+      "index": 2009,
+      "row": {
+        "path": "src/ir/backend/native-number-undefined.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "ir-core",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate portable IR binding/proof contracts from concrete ValType/Instr carrier emission, scratch-local and memory-offset descriptors before core activation; all-import closure purity alone does not certify semantic core ownership."
+      },
+      "previous": {
+        "path": "src/ir/runtime/native-number-undefined-profile.ts",
+        "state": "clean",
+        "layer": "ir-runtime"
+      },
+      "next": {
+        "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+        "state": "clean",
+        "layer": "backend-wasmgc"
+      }
+    },
+    {
+      "index": 2010,
+      "row": {
+        "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+        "state": "clean",
+        "layer": "backend-wasmgc"
+      },
+      "previous": {
+        "path": "src/ir/backend/native-number-undefined.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "ir-core",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate portable IR binding/proof contracts from concrete ValType/Instr carrier emission, scratch-local and memory-offset descriptors before core activation; all-import closure purity alone does not certify semantic core ownership."
+      },
+      "next": {
+        "path": "src/backend/linear/program/native-number-undefined.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "wasm-physical",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate target-specific IR tags/errors/checker types from reusable physical record operations before activation; the current source-free recipe preserves exact existing allocation geometry and requires the issued Linear pack, without asserting a clean Wasm foundation boundary."
+      }
+    },
+    {
+      "index": 2011,
+      "row": {
+        "path": "src/backend/linear/program/native-number-undefined.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "wasm-physical",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate target-specific IR tags/errors/checker types from reusable physical record operations before activation; the current source-free recipe preserves exact existing allocation geometry and requires the issued Linear pack, without asserting a clean Wasm foundation boundary."
+      },
+      "previous": {
+        "path": "src/backend/wasmgc/resources/native-number-undefined.ts",
+        "state": "clean",
+        "layer": "backend-wasmgc"
+      },
+      "next": {
+        "path": "src/ir/program-number-undefined-resources.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Retain complete independent logical/source evidence and exact whole-attempt checks while consuming genuine target-specific reservations; split physical emission orchestration from portable independently issued proof after the separate proof receiving scope. No clean ir-program activation is inferred from a source-free closure."
+      }
+    },
+    {
+      "index": 2012,
+      "row": {
+        "path": "src/ir/program-number-undefined-resources.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Retain complete independent logical/source evidence and exact whole-attempt checks while consuming genuine target-specific reservations; split physical emission orchestration from portable independently issued proof after the separate proof receiving scope. No clean ir-program activation is inferred from a source-free closure."
+      },
+      "previous": {
+        "path": "src/backend/linear/program/native-number-undefined.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "wasm-physical",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate target-specific IR tags/errors/checker types from reusable physical record operations before activation; the current source-free recipe preserves exact existing allocation geometry and requires the issued Linear pack, without asserting a clean Wasm foundation boundary."
+      },
+      "next": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      }
+    },
+    {
+      "index": 2013,
+      "row": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "previous": {
+        "path": "src/ir/program-number-undefined-resources.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "backend-wasmgc",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Retain complete independent logical/source evidence and exact whole-attempt checks while consuming genuine target-specific reservations; split physical emission orchestration from portable independently issued proof after the separate proof receiving scope. No clean ir-program activation is inferred from a source-free closure."
+      },
+      "next": {
+        "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      }
+    },
+    {
+      "index": 2014,
+      "row": {
+        "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "previous": {
+        "path": "src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts",
+        "state": "clean",
+        "layer": "ir-analysis"
+      },
+      "next": {
+        "path": "src/compiler/ir-native-number-undefined-presentation.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate completed native support-singleton authentication and concrete GC/Linear carrier/type/initializer/data joins from portable program presentation, retaining complete original/selected semantic evidence and opaque emission currentness. No clean compiler activation or general public dynamic ABI is inferred."
+      }
+    },
+    {
+      "index": 2015,
+      "row": {
+        "path": "src/compiler/ir-native-number-undefined-presentation.ts",
+        "state": "unmigrated",
+        "layer": "mixed-needs-split",
+        "destination": "compiler",
+        "owner": "6920-session-b-native-takeover",
+        "nextBoundary": "Separate completed native support-singleton authentication and concrete GC/Linear carrier/type/initializer/data joins from portable program presentation, retaining complete original/selected semantic evidence and opaque emission currentness. No clean compiler activation or general public dynamic ABI is inferred."
+      },
+      "previous": {
+        "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+        "state": "clean",
+        "layer": "ir-program"
+      },
+      "next": null
+    }
+  ],
+  "rawSpans": [
+    {
+      "beforeOffset": 633115,
+      "afterOffset": 633115,
+      "before": "",
+      "after": "    },\n    {\n      \"path\": \"src/ir/native-number-undefined-source.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"frontend-ts\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Original checker-symbol/local dense-vector source and complete incoming/prototype-effect census remains frontend authority; migrate with source preparation, without serializing capabilities or inferring runtime absence from numeric types.\"\n    },\n    {\n      \"path\": \"src/ir/core/native-number-undefined-lowering.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-core\"\n    },\n    {\n      \"path\": \"src/ir/analysis/allocation-evidence/native-number-undefined-body.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-analysis\"\n    },\n    {\n      \"path\": \"src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-analysis\"\n    },\n    {\n      \"path\": \"src/ir/analysis/allocation-evidence/native-number-undefined-producer.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-analysis\"\n    },\n    {\n      \"path\": \"src/ir/program/native-number-undefined-requirements.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-program\"\n    },\n    {\n      \"path\": \"src/ir/program/native-number-undefined-abi.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-program\"\n    },\n    {\n      \"path\": \"src/ir/runtime/native-number-undefined-profile.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-runtime\"\n    },\n    {\n      \"path\": \"src/ir/backend/native-number-undefined.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"ir-core\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate portable IR binding/proof contracts from concrete ValType/Instr carrier emission, scratch-local and memory-offset descriptors before core activation; all-import closure purity alone does not certify semantic core ownership.\"\n    },\n    {\n      \"path\": \"src/backend/wasmgc/resources/native-number-undefined.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"backend-wasmgc\"\n    },\n    {\n      \"path\": \"src/backend/linear/program/native-number-undefined.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"wasm-physical\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate target-specific IR tags/errors/checker types from reusable physical record operations before activation; the current source-free recipe preserves exact existing allocation geometry and requires the issued Linear pack, without asserting a clean Wasm foundation boundary.\"\n    },\n    {\n      \"path\": \"src/ir/program-number-undefined-resources.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"backend-wasmgc\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Retain complete independent logical/source evidence and exact whole-attempt checks while consuming genuine target-specific reservations; split physical emission orchestration from portable independently issued proof after the separate proof receiving scope. No clean ir-program activation is inferred from a source-free closure.\"\n    },\n    {\n      \"path\": \"src/ir/analysis/allocation-evidence/native-number-undefined-legality.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-analysis\"\n    },\n    {\n      \"path\": \"src/ir/program/native-number-undefined-allocation-validation.ts\",\n      \"state\": \"clean\",\n      \"layer\": \"ir-program\"\n    },\n    {\n      \"path\": \"src/compiler/ir-native-number-undefined-presentation.ts\",\n      \"state\": \"unmigrated\",\n      \"layer\": \"mixed-needs-split\",\n      \"destination\": \"compiler\",\n      \"owner\": \"6920-session-b-native-takeover\",\n      \"nextBoundary\": \"Separate completed native support-singleton authentication and concrete GC/Linear carrier/type/initializer/data joins from portable program presentation, retaining complete original/selected semantic evidence and opaque emission currentness. No clean compiler activation or general public dynamic ABI is inferred.\"\n"
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-deno-post-position-main-successor.ts",
+      "bytes": 289068,
+      "sha256": "700deb486f038201c233fbefa03abc544959ce59a2f99b7a1f876355604af2e7",
+      "gitBlob": "5fa90eddf3b2f44a71e77480639a0ccd18ca7765"
+    },
+    {
+      "path": "tests/helpers/ir-deno-post-position-main-successor.json",
+      "bytes": 285722,
+      "sha256": "307877cb7bfcf9b8f9469aafb7f78a076154fee03af5856fe6eac36616f239df",
+      "gitBlob": "2618d43704ed2eeeaf5da3d778b6ff31d8682afb"
+    }
+  ],
+  "caller": {
+    "path": "tests/issue-4376-post-position-main-inventory-successor.test.ts",
+    "before": {
+      "bytes": 360226,
+      "sha256": "82ef54078b5eca0363b43a28e844564b758a682aaac57f179301396985ec9d34",
+      "gitBlob": "7be3a33dd8edf93caa5912bfc8bc2ef5312a37c1"
+    },
+    "current": {
+      "bytes": 360428,
+      "sha256": "529e1d9d98cf7a97c0418350547beae8c9d598ca98dc93cc786d14abeeb23e28",
+      "gitBlob": "dee50f79c3770585d18c7323024fc48be9a5597a"
+    },
+    "rawSpans": [
+      {
+        "beforeOffset": 0,
+        "afterOffset": 0,
+        "before": "",
+        "after": "import { createIrNativeNumberUndefinedInventoryReader } from \"./helpers/ir-native-number-undefined-inventory-successor.js\";\n"
+      },
+      {
+        "beforeOffset": 295890,
+        "afterOffset": 296014,
+        "before": "const read = (path: string): string => readFileSync(resolve(root, path), \"utf8\");\n",
+        "after": "const read = (path: string): string =>\n  createIrNativeNumberUndefinedInventoryReader((currentPath) => readFileSync(resolve(root, currentPath), \"utf8\"))(path);\n"
+      }
+    ]
+  },
+  "physicalReadsPerOperation": 5,
+  "fixedCapturePaths": [
+    "tests/helpers/ir-native-number-undefined-inventory-successor.json",
+    "scripts/compiler-boundaries.json",
+    "tests/helpers/ir-deno-post-position-main-successor.ts",
+    "tests/helpers/ir-deno-post-position-main-successor.json",
+    "tests/issue-4376-post-position-main-inventory-successor.test.ts"
+  ]
+}

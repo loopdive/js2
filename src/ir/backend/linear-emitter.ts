@@ -16,8 +16,6 @@
 //
 // What REMAINS `notImplemented` on LinearEmitter is only the genuinely
 // representation-divergent families, each annotated with the covering issue:
-//   - exceptions (emitThrow/emitRethrow/emitTry) — WasmGC EH; linear has no
-//     exception lowering yet (#2956)
 //   - typed-funcref call (emitCallRef) — `call_ref` over a reference-typed
 //     funcref; the linear backend dispatches through a table, not a GC
 //     funcref (#2956, closures)
@@ -48,6 +46,8 @@
 // selected by which emitter `lower.ts` was handed. That is the proof.
 
 import { emitConstInstr } from "./wasm-constants.js";
+import type { IrType } from "../core/types.js";
+import { emitLinearTry } from "./linear-exceptions.js";
 import type { IrLowerResolver } from "./lower-contracts.js";
 import type {
   AllocSiteId,
@@ -157,14 +157,8 @@ function notImplemented(method: string): never {
  */
 export class LinearEmitter implements BackendEmitter<Instr[]> {
   readonly backend = "linear" as const;
-  private readonly vecScratchLocals = new Set<number>();
 
   constructor(private readonly options: LinearEmitterOptions = {}) {}
-
-  /** Absolute local indices whose GC-shaped scratch must become an i32 pointer. */
-  getVecScratchLocalIndices(): readonly number[] {
-    return [...this.vecScratchLocals];
-  }
 
   // #1584: sink = Instr[], same as WasmGc (the linear backend also lowers to
   // the shared `Instr` union). Factory + raw escape hatch are array ops.
@@ -346,8 +340,7 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     const vecNewFuncIdx = resolveRuntimeOperation(linear.linearMemory.allocate);
     const vecInitF64FuncIdx = resolveRuntimeOperation(linear.linearMemory.initializeElement);
 
-    this.vecScratchLocals.add(dataScratchLocal);
-
+    // `dataScratchLocal` was declared i32 by generic lowering (#6920).
     // Stack before: e0 ... eN. Stack after local.set: e0 ... eN, with ptr saved.
     out.push({ op: "i32.const", value: Math.max(capacity, linear.linearMemory.layout.minimumCapacity) });
     out.push({ op: "call", funcIdx: vecNewFuncIdx });
@@ -379,6 +372,11 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
   // layout, boxing, strings, closures) — see the `notImplemented` block below.
 
   emitConst(instr: Extract<IrInstr, { kind: "const" }>, funcName: string, out: Instr[]): void {
+    if (instr.value.kind === "null") {
+      if (!instr.resultType) throw new Error(`LinearEmitter: const null requires a result type (${funcName})`);
+      this.emitNull(instr.resultType, out);
+      return;
+    }
     // Delegate to the shared free function (same as WasmGcEmitter): the numeric
     // / bool literal path is core Wasm (`f64.const` / `i32.const`). Argument
     // order mirrors WasmGcEmitter — the trait's `(instr, funcName, out)` maps to
@@ -483,8 +481,10 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
 
   // ref-coercion / null family — nullable references and externref tagging need
   // the linear value representation planned by #2956. Never leak WasmGC casts.
-  emitNull(): void {
-    notImplemented("emitNull");
+  emitNull(irType: IrType, out: Instr[]): void {
+    if (irType.kind !== "val" || irType.val.kind !== "externref")
+      throw new Error(`LinearEmitter: cannot materialize null for IrType '${irType.kind}'`);
+    out.push({ op: "ref.null.extern" });
   }
   emitToExternref(): void {
     notImplemented("emitToExternref");
@@ -550,16 +550,21 @@ export class LinearEmitter implements BackendEmitter<Instr[]> {
     emitLinearFieldSet(asLinearObject(layout).linearMemory.field(name), out);
   }
 
-  // try-throw family — WasmGC exception handling (`throw`/`try`/`rethrow`); the
-  // linear backend has no exception lowering yet (#2956).
-  emitThrow(): void {
-    notImplemented("emitThrow");
+  // The shared exception ABI carries opaque externref values on either backend.
+  emitThrow(tagIdx: number, out: Instr[]): void {
+    out.push({ op: "throw", tagIdx });
   }
-  emitRethrow(): void {
-    notImplemented("emitRethrow");
+  emitRethrow(depth: number, out: Instr[]): void {
+    out.push({ op: "rethrow", depth });
   }
-  emitTry(): void {
-    notImplemented("emitTry");
+  emitTry(
+    blockType: BlockType,
+    body: Instr[],
+    catches: { tagIdx: number; body: Instr[] }[],
+    catchAll: Instr[] | undefined,
+    out: Instr[],
+  ): void {
+    out.push(emitLinearTry(this.options.stringRuntime, blockType, body, catches, catchAll));
   }
 
   // ref-cell family — the same header + 8-byte field layout as a one-field

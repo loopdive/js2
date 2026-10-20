@@ -1,0 +1,818 @@
+{
+  "schema": 1,
+  "kind": "native-number-undefined-source-successor",
+  "qualifiedClassHead": "edd9b6cc9b3b935a1fdfa1b0d24abdd8a96a902f",
+  "finalComposition": "frozen-source-policy-sha256:de4745435f8b47edd04f70569d30db6520780ea12548e4d78a31438c20f4d77f",
+  "sources": [
+    {
+      "path": "src/ir/analysis/lattice.ts",
+      "bytes": 5207,
+      "sha256": "d59cd168f935f4fa35ef21cdaade663b4e56138e08aa358a6611fc60efb3782f",
+      "gitBlob": "888709c116419d3c3f0dde61346e9dcb11150942"
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "bytes": 24007,
+      "sha256": "78d75f3f4327db958731a5387fc349aea11ef912f94cb274a8833b6c68f72998",
+      "gitBlob": "c95cb81c9158b417f3ec9634297b8ea59c84e1a9"
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "bytes": 10639,
+      "sha256": "1eb7e5ea51c0e54ed105eac8f35e340a0dc0fa25c50cf776a824959fed072b73",
+      "gitBlob": "abdf6e8c932981e2acfcc5a8a376ca362c63daf5"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "bytes": 10915,
+      "sha256": "393ef2faebf148ac7616cd0daf12e86a5de5669be27a1c45f50368da11caedca",
+      "gitBlob": "dba40d40f3c4104fbd8faf2f54c07c9403f262e1"
+    },
+    {
+      "path": "src/ir/analysis/dominance.ts",
+      "bytes": 13734,
+      "sha256": "f005d9447e65170b0b968839d3bde44a0ffeb9752a46fab0e34a572191989fdc",
+      "gitBlob": "315b38575a0701b1fe971710651070234539730d"
+    },
+    {
+      "path": "src/ir/verify-alloc.ts",
+      "bytes": 1061,
+      "sha256": "f6fc9383748867ca1ab5204f40830aa23f92152931ea1933ea55ba70730c9179",
+      "gitBlob": "0040069742d6e0ea78b6b5df40876abe3e611256"
+    },
+    {
+      "path": "src/ir/verify.ts",
+      "bytes": 487,
+      "sha256": "af70e5c4d53566c2a2238cbbb6b20799ee9f8fa8bfc0937a3e697a457ba3c3e0",
+      "gitBlob": "0b410820b8232bef843887096ae208a5be9c1d12"
+    },
+    {
+      "path": "src/ir/program-allocations.ts",
+      "bytes": 200,
+      "sha256": "65374da4eff469fb8dfcd9a7fadad5f3ae6b94740ca2b9855de1d2b523c094c8",
+      "gitBlob": "d72726bad0e6f2fb643d2b22c29befb172d275b3"
+    },
+    {
+      "path": "src/ir/program-class-layouts.ts",
+      "bytes": 160,
+      "sha256": "4e2a9f622b78f3cb8cafd2cf77888521c8b70a15d797fc0811824ae9d013e0ca",
+      "gitBlob": "7cfc4a1d44a4c49661793d55ebceafed2117c1a4"
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "bytes": 6525,
+      "sha256": "5a0e389a0694ed087154974b17be8e3edbd14c9781f01a97acb18b0dc2260238",
+      "gitBlob": "c24ba307c38da67f75ec8df5b271afcdb054dcb9"
+    },
+    {
+      "path": "src/ir/runtime/verify.ts",
+      "bytes": 122476,
+      "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+      "gitBlob": "95fae5703c947c68feb3d29c8ae6703a59bcb0c3"
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "bytes": 5864,
+      "sha256": "8289267472ecee7e17ac0de1de1b2918ad70d7a94a5b84ad2014e3c5d2273037",
+      "gitBlob": "ed0cde44a91482de7042a8d730611640bf8813b6"
+    },
+    {
+      "path": "src/ir/program/class-layouts.ts",
+      "bytes": 3736,
+      "sha256": "253de813d5c6feca176eeff158b5f267e487e325df61c711c622b6b50752363c",
+      "gitBlob": "378bc39407eaf23dc5035be7bd51c18e4f672f68"
+    },
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "bytes": 3351,
+      "sha256": "291f33563bf9db37fec8063cd02e4253ef626976b6ac4bce211d2a08831cf051",
+      "gitBlob": "3598a7438774dda6c053fc9cfc2cb346bf1eed47"
+    },
+    {
+      "path": "src/ir/analysis/alloc-registry.ts",
+      "bytes": 16450,
+      "sha256": "33a611e89ae5a9b54fefd59167da726c31bfd38a1b2d7ebc1ef82062396299a5",
+      "gitBlob": "6cbd570322cb8433a947601768bf5390726ce278"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "bytes": 8002,
+      "sha256": "56a0a59536d0d12760fc7dc93fae032669b87eb4a741d089847d00d26f30b18d",
+      "gitBlob": "4f5a86f92145c1ac1deab3c8e7b2498798726de8"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "bytes": 10151,
+      "sha256": "fe5f001a13c82b4bbecc6c17143a102ba0f0d90202f9a1fcd44d0cebe8d2774f",
+      "gitBlob": "084972dc79d8f5705ce7d60fac26a0d2fbc2904c"
+    },
+    {
+      "path": "src/ir/program/allocation-body-validation.ts",
+      "bytes": 1864,
+      "sha256": "d48bf8cec3edbdb89759df63dbb5a8e3f455b7d739b1e990d669a1eceb69430a",
+      "gitBlob": "1b7c3e14c934cc118d4c6a85da9adb77204df284"
+    },
+    {
+      "path": "src/ir/program/errors.ts",
+      "bytes": 232,
+      "sha256": "1e8dcef3c20b33bdcaffdc593470cd38e197858a135eb86ff4870bb80c3cb399",
+      "gitBlob": "7b28c9cc899d8ddb789577d84df6bb29be430e7c"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-invariant-error.ts",
+      "bytes": 1117,
+      "sha256": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+      "gitBlob": "079dbd626af8dcc207201552095501ba0fd622f1"
+    },
+    {
+      "path": "src/ir/program/abi-signatures.ts",
+      "bytes": 2483,
+      "sha256": "a97e4f44f8c972321120690f7e37ab9c10b000ae814829ef06aeb8c4a62ce183",
+      "gitBlob": "3bd721f7c91aa9aa3c9b8c9faa5ea5ea1a885735"
+    },
+    {
+      "path": "src/ir/core/type-key.ts",
+      "bytes": 3644,
+      "sha256": "f21e457aa4b6a500fc47960c4c4ab363f82c4961b4145e29527ba473775922df",
+      "gitBlob": "20fa37f2eb72b31a18b7d41ae0f9c6313fe0717f"
+    },
+    {
+      "path": "src/ir/program/class-preparation.ts",
+      "bytes": 7239,
+      "sha256": "d8a57c5ca18d97d4685eeaeedc1f9619565fb9742e154b2b85a7922403665259",
+      "gitBlob": "4684e35ea693cd1ac3852aba83c79c926028d3f4"
+    },
+    {
+      "path": "src/ir/program/data.ts",
+      "bytes": 302,
+      "sha256": "caf3bef5ff034d4d83f33226cd909ddb1704f68824d4957c0a03a7bf4eccac71",
+      "gitBlob": "3b93b17cac0e6c52b3957eb9341b9bdca2a8e988"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-data.ts",
+      "bytes": 12546,
+      "sha256": "914529ca30ad166b591f495cf6be96b089f87a0b6672dd7f6ef8986661234094",
+      "gitBlob": "4dd2c5cdde434381de1417a7f24ea9db0ede39ea"
+    },
+    {
+      "path": "src/shared/contracts/ir-class-shape-marker.ts",
+      "bytes": 166,
+      "sha256": "31d207c57bfa9e20615966baf2835a7cf32b77cb578a72bb52059865a1b2aeae",
+      "gitBlob": "569b6a3cb6dd674fabd1d0cc60567da82e175b08"
+    },
+    {
+      "path": "src/shared/contracts/identity-values.ts",
+      "bytes": 1208,
+      "sha256": "df20402d646264c0341a16a0c49bac2db4bdb38b5ac3e3b1e7ab7ef5a17f2412",
+      "gitBlob": "b5dcede80a8be81b35e1442f2229a849cb785931"
+    },
+    {
+      "path": "src/ir/core/types.ts",
+      "bytes": 32389,
+      "sha256": "5564dc04fea76d50761ec6521bd6fbe9b4a9c35194a5caaf03a1543a23951888",
+      "gitBlob": "e7cd341029d51186e928eb2cb77755d5470bd767"
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "bytes": 5353,
+      "sha256": "1b2c050b18d611d0b45316aaed268acb6705d64a4e3299d987bf58320752eae1",
+      "gitBlob": "0f189c79a0bf9221c0e367787e370ae191aa553d"
+    },
+    {
+      "path": "src/ir/program/abi.ts",
+      "bytes": 32535,
+      "sha256": "29591c6feab869c6780144aabcc413afafa38e4adbc8c3f8d5b7bcdc7e9c833d",
+      "gitBlob": "c9240ad8bc83c36774a7def20db27425252f459a"
+    },
+    {
+      "path": "src/ir/core/fnctor-shapes.ts",
+      "bytes": 1758,
+      "sha256": "72a6ebe66e064906582f7f4bc5fbad6850e02d94b1bd00c8a4bb916329d70cf6",
+      "gitBlob": "f56d385b7b01008222034b0a58e200b9a8f90c17"
+    },
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "bytes": 2741,
+      "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+      "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "bytes": 8077,
+      "sha256": "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83",
+      "gitBlob": "180df8e4f8b7aa3eabac4cb88b54dc6b04a642bb"
+    },
+    {
+      "path": "src/ir/core/nodes.ts",
+      "bytes": 96440,
+      "sha256": "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd",
+      "gitBlob": "2f26e8acb8f2c68b97a71d41c1176dd79da2bd40"
+    },
+    {
+      "path": "src/ir/program/native-number-undefined-allocation-validation.ts",
+      "bytes": 3062,
+      "sha256": "f842afbde7fc315cc40e45e1afa25b03716e7e25c0a8dfa0331abf29739aee86",
+      "gitBlob": "eb3ac5f57db4c6da01ade57576bf1d14e09ab3a9"
+    },
+    {
+      "path": "src/ir/analysis/allocations/snapshot.ts",
+      "bytes": 7410,
+      "sha256": "e1e20c2a9996749660818cfbe20fe37793aafdaea0255c813dfc97621960361d",
+      "gitBlob": "916baa073ed82306d4e1b9355de2e3a62e085dab"
+    },
+    {
+      "path": "src/shared/contracts/ir-preparation-errors.ts",
+      "bytes": 3391,
+      "sha256": "b19a1971c578cf72d73e6d26d78f02e6e946b670bdcb69399b870543e14cbbf7",
+      "gitBlob": "0673767d18df9bcae3b17fa0ec1d32fc84f566d9"
+    },
+    {
+      "path": "src/ir/core/tag-refinement.ts",
+      "bytes": 1169,
+      "sha256": "715cb4e87f7563adc13ca9da1280b468a36b5af8ba2f8f249da6eb8275f9d97a",
+      "gitBlob": "1e9facc37909092c4be1b5b5a09ef874159401eb"
+    },
+    {
+      "path": "src/ir/core/binding-key-primitives.ts",
+      "bytes": 1497,
+      "sha256": "9b5715139c147146b4ed29d972e5ffad677e4fe496c95868b9ecc8935e57fa24",
+      "gitBlob": "76364db86fb07972f66a78a886d66197e2355f6a"
+    },
+    {
+      "path": "src/ir/program/runtime-support.ts",
+      "bytes": 14807,
+      "sha256": "da7e458acb00449fc57e2e6cace2eea5bcd9f781bc63c93baa29e810d537b1f9",
+      "gitBlob": "f92a1ef2653a66dedb9430371ce83d506a32befb"
+    },
+    {
+      "path": "src/ir/runtime/native-async-callables.ts",
+      "bytes": 14710,
+      "sha256": "31b3cb6ab351fe33e543d2b95a1b8bac24d920f788b460153decfc8b750d5d27",
+      "gitBlob": "1694f8ed5c46459814b52e93b5bc59d157757449"
+    },
+    {
+      "path": "src/ir/core/async-callables.ts",
+      "bytes": 608,
+      "sha256": "147ae75a6c8a58f25344d96958ef8261af7b06589e4e499d43aa47a9dc98ba95",
+      "gitBlob": "1716b9018db4094e01772327e6c561f9868b1db2"
+    },
+    {
+      "path": "src/ir/core/callable-bindings.ts",
+      "bytes": 7084,
+      "sha256": "29286dba9a146eeae2a9f95626a507383bc82b0b01026a4910297afeb890cf6f",
+      "gitBlob": "37a75b3a9315e552a98cdd7eb0b94f862781db7d"
+    },
+    {
+      "path": "src/ir/runtime/contracts/manifest.ts",
+      "bytes": 29050,
+      "sha256": "4cc6b04db45530e4df01901cf90977ce31642c29c1c255d2e858d08a9c75e804",
+      "gitBlob": "993bec953d7003acebd6ba82cbf6bdca3af67be1"
+    },
+    {
+      "path": "src/ir/program/formatter-support.ts",
+      "bytes": 2489,
+      "sha256": "e6528c00040027687b3fb3cb887500535f789e14b7914599c168f6a73fc600bf",
+      "gitBlob": "112d4fb48c4556d1e87b9afe6c1ec95709e114e7"
+    },
+    {
+      "path": "src/ir/core/type-references.ts",
+      "bytes": 1301,
+      "sha256": "fc86cce3079cf606e0ab0e24814cc7b9b009bbd8450d638938d29cb59ac4bef4",
+      "gitBlob": "50d6e5a9d2e6a6289ec6d89f6d7c1d98eff1598b"
+    },
+    {
+      "path": "src/ir/runtime/native-number-undefined-profile.ts",
+      "bytes": 2698,
+      "sha256": "f57d40dece53aa3de34e1fbe0c54c2ff8b55a844606ea24fe3c444024fb1bdec",
+      "gitBlob": "72e1c98d9d70ef5be284f75ead8aced01765a76d"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-body.ts",
+      "bytes": 22891,
+      "sha256": "d4f4a0eba67064ed5e29b7c756a567b90407aa912fa1501bad6133af32fa4824",
+      "gitBlob": "22186057ea0d776ea679d7b57cd7bb7d0a433c3e"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/native-number-undefined-profile.ts",
+      "bytes": 4975,
+      "sha256": "5268849f20234ba6d19329238e8bf79983711befac72fef97eb022b655ad1378",
+      "gitBlob": "8bfdd3d6315fdfe4476b0434a3349ba809e5728d"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/metadata.ts",
+      "bytes": 8933,
+      "sha256": "0d665676cc97be3e0cace51755b47c0bc12a9c296483e95a6d4d6fae23c7d8cf",
+      "gitBlob": "7755e450f05b5e8da9b84ebd9c6769388443d45c"
+    },
+    {
+      "path": "src/ir/core/declared-types.ts",
+      "bytes": 7078,
+      "sha256": "f167423631f7e856102a532db9392f6d3d3538b68c8c4be5d1e123518353bbcc",
+      "gitBlob": "9f8b8c1e26f546d370a822136c5ab05fd98361dc"
+    },
+    {
+      "path": "src/ir/runtime/producer.ts",
+      "bytes": 2648,
+      "sha256": "3cee19f99b1d64d4c355841b95434135d9fa3e0633fc51129e6e49ee202c5d90",
+      "gitBlob": "b820def25b21e0716b090057c32ac39425857b19"
+    },
+    {
+      "path": "src/ir/runtime/js-tag-domain.ts",
+      "bytes": 13605,
+      "sha256": "638c06163bcab51c2982103d869c199feccc438e5e5cddfc6b2ef2503ec60a5c",
+      "gitBlob": "a6e804504790c0eb80ec04bab78be9672e3989ed"
+    },
+    {
+      "path": "src/runtime/contracts/js-value-tags.ts",
+      "bytes": 2089,
+      "sha256": "cbbd38f292ab040fbd0de08832ce11e415146384a2bac3384089b4bd0810fddb",
+      "gitBlob": "28993437771ce662e7e1145472d94395d0c04cc0"
+    },
+    {
+      "path": "src/ir/core/tag-domain.ts",
+      "bytes": 11303,
+      "sha256": "479aeeaacd739699cd66137b21335cae7205db01b9950b8eeaaac65b07634e20",
+      "gitBlob": "5b446c95b5475e621dc9b0da3b58265ca881cb74"
+    },
+    {
+      "path": "src/ir/runtime/intrinsic-verification.ts",
+      "bytes": 4860,
+      "sha256": "2fbc05033b8f62c71f0053ac439590b7f3183701bf855a621027b4ff818bdfbd",
+      "gitBlob": "c91ec8e7e0c088030359fe5ddf696e2a3ee25a3b"
+    },
+    {
+      "path": "src/ir/analysis/intrinsics.ts",
+      "bytes": 4751,
+      "sha256": "57af60dfaf3f4b8fe5845b053442aab3863383519db48bc705e6dfb89caeba5d",
+      "gitBlob": "1a86a55e9ac08764d0105c288a68147915b4a786"
+    },
+    {
+      "path": "src/ir/core/intrinsics.ts",
+      "bytes": 11038,
+      "sha256": "96b3368af4b8777f19abd9a0aa7ebf0a25f102075c1ca0db6504a8ec81aa569f",
+      "gitBlob": "a8d550388b00f810017a5e28213480063c70f014"
+    },
+    {
+      "path": "src/ir/core/intrinsic-vocabulary.ts",
+      "bytes": 3446,
+      "sha256": "2aa5c040d09473d683daace9007c4d483cfc76f45eef707b50c7205c7c86854d",
+      "gitBlob": "6e837f8b8b19626a71b13df0f0401921fac073ae"
+    },
+    {
+      "path": "src/ir/analysis/effects.ts",
+      "bytes": 26395,
+      "sha256": "cdcd241b4bdd43958d27825ad74b16f0c86aef8e121ac4aa01e93a5db3e65a5c",
+      "gitBlob": "950fb68342bd22e490a06becdf0055f0be03a156"
+    },
+    {
+      "path": "src/ir/runtime/host-capabilities.ts",
+      "bytes": 46206,
+      "sha256": "68b4cb798181bfefccf63a3ac301d5e008157414ef740f41339ba873e85d7b14",
+      "gitBlob": "3c1cb5c5a5a265443c034807b0d84b8d68be1c4d"
+    },
+    {
+      "path": "src/runtime/contracts/host-capability-schema.ts",
+      "bytes": 16626,
+      "sha256": "132ecd9d326571d37b56f64fc74f7bf5d6878bf5874416b2aa900ace9851e390",
+      "gitBlob": "b6806719418d8e17e3b0498070502e231549eb05"
+    },
+    {
+      "path": "src/ir/runtime/manifest.ts",
+      "bytes": 104454,
+      "sha256": "1c10a56e7255e1db7897d184c7460ad07454252dd0a80176b211dc96918e54e9",
+      "gitBlob": "f76280d31ba32f6ad30abb2f7ed22397ddb6fd06"
+    },
+    {
+      "path": "src/runtime/contracts/provider-policy.ts",
+      "bytes": 21289,
+      "sha256": "886c4898fe21558eac4a743cf478a7b9e7ab8edcf460436954dd1f9fda8faa56",
+      "gitBlob": "9e117958237449e8804c1907997f0487c16e3387"
+    },
+    {
+      "path": "src/ir/runtime/callable-declarations.ts",
+      "bytes": 3784,
+      "sha256": "f28e1501287d24f66bfd66d1119ea509bdfe9eb41d5178c4c3d0ed716ea4943c",
+      "gitBlob": "e4127b19b2ed847bfd5ff56c9e3a529aeea91369"
+    },
+    {
+      "path": "src/ir/runtime/closure-invocation-callables.ts",
+      "bytes": 1690,
+      "sha256": "b45168c9b71e554521893c6bea5aebbb037e36fea8b90a935b3295cdc1027b87",
+      "gitBlob": "daff162626fc43bfb947bef4a1203bb580037527"
+    },
+    {
+      "path": "src/ir/core/closure-invocation-callables.ts",
+      "bytes": 900,
+      "sha256": "f8ac895743780ee213806bc6585f9141eadbbe3547aca860c030d4c8b320fc04",
+      "gitBlob": "8872f5ce60706629fb1eb4e22a715717936c4a27"
+    },
+    {
+      "path": "src/ir/runtime/numeric-vector-callables.ts",
+      "bytes": 3159,
+      "sha256": "6baa158787c4683be81be988db316369156c16c7a3ccb6452747fa2ab674bb76",
+      "gitBlob": "ca207bd861f9e1190eef5f7a7df476d63ecb476f"
+    },
+    {
+      "path": "src/ir/core/vector-runtime.ts",
+      "bytes": 2138,
+      "sha256": "936219b3246105de0222c65d06b2503d4f016795eb3a570e7a6e9ad5ffa657a9",
+      "gitBlob": "66276d1960d7d245e33186d966a5246c0807610e"
+    },
+    {
+      "path": "src/ir/runtime/vector-callables.ts",
+      "bytes": 7122,
+      "sha256": "ddf5be15098b052f4a0c5461d240cc5e5865fed617eb027ec8550deffa86daec",
+      "gitBlob": "1d50a15ab0de802151c5a7968a3e99bd1830bb3b"
+    },
+    {
+      "path": "src/ir/runtime/number-remainder-callables.ts",
+      "bytes": 4135,
+      "sha256": "26c1977c76e02b97e0587e954a7c7aea66745e5dae65d109af9e5e2154411bb7",
+      "gitBlob": "ad99a0934907dc77e09ce2413f09be2ffdde1c49"
+    },
+    {
+      "path": "src/ir/runtime/number-conversion-callable.ts",
+      "bytes": 1152,
+      "sha256": "4a29dc8667e0ca203f17f05f2febec2f7353469fa8678d83c9907a7dd0466dfe",
+      "gitBlob": "96025a01c30daa0c8555cc75331c4f94b968521d"
+    },
+    {
+      "path": "src/ir/runtime/ordinary-object-callables.ts",
+      "bytes": 5084,
+      "sha256": "5554fe982e9967b1d4547f36bcf2c91deb4ada922e0261ed337406aa07bacc0e",
+      "gitBlob": "c2847456bfda129f0e8900098098b0d68345a3b9"
+    },
+    {
+      "path": "src/ir/runtime/reference-error-callable.ts",
+      "bytes": 4040,
+      "sha256": "e2326a4af1fdcc31a49f24d5d84f780b76b445e38fb35c48c12b20c94c04138e",
+      "gitBlob": "25006b0d9039f48c6dfbeb0b23cdffa2d345363c"
+    },
+    {
+      "path": "src/ir/runtime/async-providers.ts",
+      "bytes": 9201,
+      "sha256": "8bbbe1f71ccc3a234d9bd894173829fb285fd39cb637c617aeea90dc6d3b0100",
+      "gitBlob": "ae8a6f9a76a509be854fee396bd7d068d9d344e3"
+    },
+    {
+      "path": "src/runtime/contracts/async-provider-schema.ts",
+      "bytes": 3057,
+      "sha256": "5c40a91d9c21a96292a58cfe7d61d87e83ec0b6db916b2c9f714d60c5c93499a",
+      "gitBlob": "28ac7d2773d3b556c935ae3bf4e431d24657a7fd"
+    },
+    {
+      "path": "src/ir/core/async-intents.ts",
+      "bytes": 1159,
+      "sha256": "411d7ae2cbfcae0da9c00f2a53e04be4a80ed45906c063c9f9b9ca1692909d0b",
+      "gitBlob": "573dd721ad90c6d3f49df6c1ae86b60ef67a4ccc"
+    },
+    {
+      "path": "src/ir/runtime/contracts/intrinsics.ts",
+      "bytes": 3101,
+      "sha256": "0392774476fc5beb79f6c0ac22e610fb098c3687e80d653a2aa468f85ef25ed2",
+      "gitBlob": "04e452f4a7041ddd094fa3cac9d579d4280febe7"
+    },
+    {
+      "path": "src/ir/analysis/async-plan.ts",
+      "bytes": 31637,
+      "sha256": "0589c846108f32bc41835f533fc7ef36f4373039849c92d237e2fdcc6483fa93",
+      "gitBlob": "a8bccc41f618c04d976677fe73cbfdfcb283fcd0"
+    },
+    {
+      "path": "src/ir/core/fnctor-abi.ts",
+      "bytes": 12944,
+      "sha256": "0fca9decc63f7daad9332b58e3e810cecb55cd620e74166bd20e65d34f3431eb",
+      "gitBlob": "cfbd94c96d785538b5662cc820c61e1d7bfd8bea"
+    },
+    {
+      "path": "src/ir/core/string-runtime.ts",
+      "bytes": 7599,
+      "sha256": "632e60dc92a6145b74f33a2434eb2b24f461e2a83d888354f03e02ecc4d92a3c",
+      "gitBlob": "aae4702b8e27f8099d953fd67ce2bad8e90e83ab"
+    },
+    {
+      "path": "src/ir/core/string-callables.ts",
+      "bytes": 633,
+      "sha256": "c6c182926a84343afa2a4fd5e28140529034e16bf372f5ca3acd32eb709df709",
+      "gitBlob": "fb7862c97b93fd4e892729523af3e7f74edc73d9"
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-site-id.ts",
+      "bytes": 7802,
+      "sha256": "398bcf62a3c6c1002a9728460654384410db93f120eeffb2da435c02ed5e3fcb",
+      "gitBlob": "11565b21d8a9bf4bb3b578ae1ed1fcc3089fdfdd"
+    },
+    {
+      "path": "src/shared/contracts/ir-preparation-failure.ts",
+      "bytes": 12413,
+      "sha256": "5525be0f2d8c588c4045958254c215257898df93f0840cb5400823b6adce5fc7",
+      "gitBlob": "0633ed29be3ce62ffed15c28f14142ff5e8ecd38"
+    },
+    {
+      "path": "src/ir/core/async-plan.ts",
+      "bytes": 5278,
+      "sha256": "d840b1eac116e6e4b8ea61d2019f3117013e2a15e88436fe9ff562a54010f173",
+      "gitBlob": "934603c9b5215570851500f60bfb613e871b688e"
+    },
+    {
+      "path": "src/ir/core/dialect/js.ts",
+      "bytes": 30849,
+      "sha256": "dbe4e49d49cbb8e2ffdc5552a75c5a3d2692b1764aa54df81d987861fa5e231d",
+      "gitBlob": "c40e3a8f4f806a8561f20089cfc4b44bc460d017"
+    },
+    {
+      "path": "src/ir/core/string-types.ts",
+      "bytes": 288,
+      "sha256": "93c2ea34a82e81e89482b88d61dc61ccfdb5edeb3484c510ef24779fac9612bc",
+      "gitBlob": "134319e1bcd5e8a5bc827f7d1843bfd554f8752d"
+    },
+    {
+      "path": "src/wasm/model/instructions.ts",
+      "bytes": 15135,
+      "sha256": "8c4c9a27c00e57caafe29e64f465b49b6ab13d77744d9d071b80609bb65d4360",
+      "gitBlob": "d3c10d8a8e4c1ecd45d2a7c13e372daa8ae378d0"
+    },
+    {
+      "path": "src/ir/core/capability-provenance.ts",
+      "bytes": 701,
+      "sha256": "c20c2d6150b15edd6ebc058fed0aa52253b7fc689e8b9171486a4190ad03970a",
+      "gitBlob": "f3723a3214b07fce2ed4471d06e60399200e5b35"
+    },
+    {
+      "path": "src/ir/core/value-references.ts",
+      "bytes": 1596,
+      "sha256": "b47a5f0fe7a5da86b6c851f3cdfe2af40403c6217ed04e30ab0d94b06752ba9f",
+      "gitBlob": "e05666548e17605878033e91392d43cdf44a7a8b"
+    },
+    {
+      "path": "src/ir/program/input-contracts.ts",
+      "bytes": 2528,
+      "sha256": "8369ba73f4f79f145192b39acb85876c91f47f2ea55d922d658de3c3c66ee0bc",
+      "gitBlob": "e036ad787773a45ddd4e7b703417e9fb59e26164"
+    },
+    {
+      "path": "src/ir/runtime/contracts/prepared.ts",
+      "bytes": 4370,
+      "sha256": "5ad34666195a78cdca49005de505e8cd468af8b04b40d8ff5de88347489515e9",
+      "gitBlob": "6d3e003b0d8ac79060042c402029e830c734f0bd"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/contracts.ts",
+      "bytes": 3763,
+      "sha256": "760bad18bbd59c2849714f4bcb8b8aec3975f9c30ec9dad223abb074d8004e59",
+      "gitBlob": "b3c013cc00ffe3a8cdad4d08e052514851a27eb7"
+    },
+    {
+      "path": "src/ir/core/intrinsic-contracts.ts",
+      "bytes": 1210,
+      "sha256": "ece37f6c4f48129187e326cdad4fd6207217e50c5078739acae1cf5393aa3932",
+      "gitBlob": "177f7aaf3163c4eb47866ae2a226001795745891"
+    },
+    {
+      "path": "src/shared/contracts/ir-counted-string-identity.ts",
+      "bytes": 905,
+      "sha256": "e16f8fcf14d10685e96982a320448ba407b02fd26a35e2122fbdade2258cefd5",
+      "gitBlob": "0906250623854e0e307ea3e1cda76724b737819a"
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+      "bytes": 18730,
+      "sha256": "21d909a664c3e0dcd99e52b13c2185d376f8c1fabedb58a2d80b08556a9aca3d",
+      "gitBlob": "48ec07483c7c79c612071becb68bbd18eaacb2e3"
+    },
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.json",
+      "bytes": 327660,
+      "sha256": "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969",
+      "gitBlob": "6a60f93474b57e87ad18acaab8ce85b232dd4128"
+    },
+    {
+      "path": "tests/helpers/ir-native-allocation-type-ownership-successor.ts",
+      "bytes": 15104,
+      "sha256": "6a358c313b7ab459b8303403211d59d6b85dd7566e8f82dcd00e6ab4c1e5077b",
+      "gitBlob": "8a83845085e652d09a22d00dcf8fbc62c3b911cb"
+    },
+    {
+      "path": "tests/helpers/ir-native-allocation-type-ownership-successor.json",
+      "bytes": 7586,
+      "sha256": "d8d421dfcb36fb1db451a0e67dd4a6546037e65176fa52ced71bfb837150c7be",
+      "gitBlob": "73f5bbcec86434bcdf1542a193868411f371f86a"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-rule-sharing-successor.ts",
+      "bytes": 40165,
+      "sha256": "b799ad4d8cd52819a21db12c36b7347c4fb8226b87c175f87135094091c848dc",
+      "gitBlob": "863104071712769db32986652777b29d5ff078a3"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-rule-sharing-successor.json",
+      "bytes": 45797,
+      "sha256": "7b947e08fab9d09418b3431f0f638f2f8e0278cc5af40ac1d979d7ed2064d8b2",
+      "gitBlob": "59e77cbe5196e1ed9b8a27b5dcfa7c48cbdcb31e"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.ts",
+      "bytes": 29831,
+      "sha256": "7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443",
+      "gitBlob": "059095d2f9cdb2ca2f0a6c42091e7104b89c3a75"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.json",
+      "bytes": 11637,
+      "sha256": "4528c914b70535665feebbd0f93ed5d43ef0a5fbb9b4a752e056da84f89a2c7d",
+      "gitBlob": "508e4a700348f1adacad3aad0e313c979b333159"
+    },
+    {
+      "path": "tests/helpers/ir-native-class-layout-source-successor.ts",
+      "bytes": 6756,
+      "sha256": "d950856c4a218840c61741046bdea483ad9a632a33b664664dbe6dd0cafbf168",
+      "gitBlob": "d79ef4d53983fc9402f7911c5413fa64ce89d886"
+    },
+    {
+      "path": "tests/helpers/ir-native-class-layout-source-successor.json",
+      "bytes": 12174,
+      "sha256": "5adc5506d732c4c9c2e9170557c9a084c8f6dd3dd72929b120aa7d1bdf658045",
+      "gitBlob": "ed2339f103426372d227ea9355899dbbfecfad09"
+    }
+  ],
+  "callers": [
+    {
+      "path": "tests/issue-6920-allocation-provenance-preservation.test.ts",
+      "bytes": 24882,
+      "sha256": "c9497b2223c38fbefc282c92715cd2783321faba04396a7fcf19aa839350b076",
+      "gitBlob": "817368c3a855e8a3247cbfac54240f47d8d02613"
+    },
+    {
+      "path": "tests/issue-6920-allocation-rule-sharing-preservation.test.ts",
+      "bytes": 26707,
+      "sha256": "c3a84f1f8db1ec1ede4d7eda3ed293ec5e8f5052770c37e71abb79b25bbfaa9b",
+      "gitBlob": "7ef157361557e21aa0a0c33f970d469f31dc09f5"
+    },
+    {
+      "path": "tests/issue-6920-native-class-layout-source-successor.test.ts",
+      "bytes": 22794,
+      "sha256": "81ee32076343ed3ae69ba45527a151e813eacb29157e20b0779a92bc52e7863f",
+      "gitBlob": "456f531bc52be0df5b8feb6e7fee56e2d662a6e7"
+    }
+  ],
+  "transforms": [
+    {
+      "path": "src/ir/program/allocations.ts",
+      "before": {
+        "bytes": 5638,
+        "sha256": "aec062632da95addb294e203514e8218284177bfccd7154f3cbb1d8bdd412c33",
+        "gitBlob": "722430a6adb09e2e4b74802650b29c8207431a25"
+      },
+      "current": {
+        "bytes": 5864,
+        "sha256": "8289267472ecee7e17ac0de1de1b2918ad70d7a94a5b84ad2014e3c5d2273037",
+        "gitBlob": "ed0cde44a91482de7042a8d730611640bf8813b6"
+      },
+      "edits": [
+        {
+          "beforeStart": 85,
+          "currentStart": 85,
+          "beforeText": "",
+          "currentText": "import { assertNativeNumberUndefinedGcAllocations } from \"./native-number-undefined-allocation-validation.js\";\n",
+          "beforeEnd": 85,
+          "currentEnd": 196
+        },
+        {
+          "beforeStart": 1665,
+          "currentStart": 1776,
+          "beforeText": "  program: Pick<PreparedIrProgram, \"allocations\" | \"ir\" | \"runtimeSupport\">,\n",
+          "currentText": "  program: Pick<PreparedIrProgram, \"allocations\" | \"ir\" | \"runtimeSupport\"> &\n    Partial<Pick<PreparedIrProgram, \"runtime\">>,\n",
+          "beforeEnd": 1742,
+          "currentEnd": 1903
+        },
+        {
+          "beforeStart": 4938,
+          "currentStart": 5099,
+          "beforeText": "",
+          "currentText": "  if (assertNativeNumberUndefinedGcAllocations(program)) return;\n",
+          "beforeEnd": 4938,
+          "currentEnd": 5164
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-allocation-provenance-preservation.test.ts",
+      "before": {
+        "bytes": 24708,
+        "sha256": "ea478bab7c7d2d3ed3f52b95cdcc086122f60da7e498a47c684443fa69dd4385",
+        "gitBlob": "05cf0b12f416d3bb9bd14d03123bf26fd3f2b017"
+      },
+      "current": {
+        "bytes": 24882,
+        "sha256": "c9497b2223c38fbefc282c92715cd2783321faba04396a7fcf19aa839350b076",
+        "gitBlob": "817368c3a855e8a3247cbfac54240f47d8d02613"
+      },
+      "edits": [
+        {
+          "beforeStart": 169,
+          "currentStart": 169,
+          "beforeText": "",
+          "currentText": "import { createIrNativeNumberUndefinedSourceReader } from \"./helpers/ir-native-number-undefined-source-successor.js\";\n",
+          "beforeEnd": 169,
+          "currentEnd": 287
+        },
+        {
+          "beforeStart": 2191,
+          "currentStart": 2309,
+          "beforeText": "  readBeforeIrNativeAllocationTypeOwnership(path, createIrNativeClassLayoutSourceReader(actualRaw));\n",
+          "currentText": "  readBeforeIrNativeAllocationTypeOwnership(\n    path,\n    createIrNativeClassLayoutSourceReader(createIrNativeNumberUndefinedSourceReader(actualRaw)),\n  );\n",
+          "beforeEnd": 2292,
+          "currentEnd": 2466
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-allocation-rule-sharing-preservation.test.ts",
+      "before": {
+        "bytes": 26533,
+        "sha256": "c51183363c44de09ebe760c5572f3701e2b572699180a8b1485462ad92681be4",
+        "gitBlob": "6ec7f383dd2fa1c1ff5dfa29846bea178f042710"
+      },
+      "current": {
+        "bytes": 26707,
+        "sha256": "c3a84f1f8db1ec1ede4d7eda3ed293ec5e8f5052770c37e71abb79b25bbfaa9b",
+        "gitBlob": "7ef157361557e21aa0a0c33f970d469f31dc09f5"
+      },
+      "edits": [
+        {
+          "beforeStart": 172,
+          "currentStart": 172,
+          "beforeText": "",
+          "currentText": "import { createIrNativeNumberUndefinedSourceReader } from \"./helpers/ir-native-number-undefined-source-successor.js\";\n",
+          "beforeEnd": 172,
+          "currentEnd": 290
+        },
+        {
+          "beforeStart": 2044,
+          "currentStart": 2162,
+          "beforeText": "  readBeforeIrNativeAllocationTypeOwnership(path, createIrNativeClassLayoutSourceReader(actualRaw));\n",
+          "currentText": "  readBeforeIrNativeAllocationTypeOwnership(\n    path,\n    createIrNativeClassLayoutSourceReader(createIrNativeNumberUndefinedSourceReader(actualRaw)),\n  );\n",
+          "beforeEnd": 2145,
+          "currentEnd": 2319
+        }
+      ]
+    },
+    {
+      "path": "tests/issue-6920-native-class-layout-source-successor.test.ts",
+      "before": {
+        "bytes": 22168,
+        "sha256": "117d8ed92663a808f704e9140dd887bbaf95a91fe6da7dfc5232687938e53423",
+        "gitBlob": "1738bf44c3c8409869c4574207d03053185a0ba5"
+      },
+      "current": {
+        "bytes": 22794,
+        "sha256": "81ee32076343ed3ae69ba45527a151e813eacb29157e20b0779a92bc52e7863f",
+        "gitBlob": "456f531bc52be0df5b8feb6e7fee56e2d662a6e7"
+      },
+      "edits": [
+        {
+          "beforeStart": 84,
+          "currentStart": 84,
+          "beforeText": "",
+          "currentText": "import { createIrNativeNumberUndefinedSourceReader } from \"./helpers/ir-native-number-undefined-source-successor.js\";\n",
+          "beforeEnd": 84,
+          "currentEnd": 202
+        },
+        {
+          "beforeStart": 472,
+          "currentStart": 590,
+          "beforeText": "  readBeforeIrNativeClassLayoutSource as beforeClass,\n",
+          "currentText": "  readBeforeIrNativeClassLayoutSource as beforeClassEndpoint,\n",
+          "beforeEnd": 526,
+          "currentEnd": 652
+        },
+        {
+          "beforeStart": 1981,
+          "currentStart": 2107,
+          "beforeText": "const disk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\n",
+          "currentText": "const actualDisk = (path: string): string => readFileSync(new URL(`../${path}`, import.meta.url), \"utf8\");\nconst disk = (path: string): string => createIrNativeNumberUndefinedSourceReader(actualDisk)(path);\nconst beforeClass = (path: string, suppliedReader: (path: string) => string): string =>\n  beforeClassEndpoint(\n    path,\n    suppliedReader === disk ? createIrNativeNumberUndefinedSourceReader(actualDisk) : suppliedReader,\n  );\n",
+          "beforeEnd": 2082,
+          "currentEnd": 2542
+        },
+        {
+          "beforeStart": 2542,
+          "currentStart": 3002,
+          "beforeText": "const snapshot = (): Map<string, string> => new Map(required.map((path) => [path, disk(path)]));\n",
+          "currentText": "const snapshot = (): Map<string, string> => {\n  const captured = createIrNativeNumberUndefinedSourceReader(actualDisk);\n  return new Map(required.map((path) => [path, captured(path)]));\n};\n",
+          "beforeEnd": 2639,
+          "currentEnd": 3191
+        },
+        {
+          "beforeStart": 3033,
+          "currentStart": 3585,
+          "beforeText": "      readBeforeIrNativeAllocationTypeOwnership(q, createIrNativeClassLayoutSourceReader(disk)),\n",
+          "currentText": "      readBeforeIrNativeAllocationTypeOwnership(\n        q,\n        createIrNativeClassLayoutSourceReader(createIrNativeNumberUndefinedSourceReader(actualDisk)),\n      ),\n",
+          "beforeEnd": 3130,
+          "currentEnd": 3756
+        }
+      ]
+    }
+  ]
+}

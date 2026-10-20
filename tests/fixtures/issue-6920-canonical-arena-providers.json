@@ -1,0 +1,1950 @@
+{
+  "provenance": {
+    "head": "529b092b6f80682538c1c2b7f7e136f5ca9d72c2",
+    "runtimeSha256": "7482f82a03f431bf5bdeb334697b25c5b5a3ad24ec3130da65ab13c9daa58f09"
+  },
+  "cases": [
+    {
+      "name": "default",
+      "moduleSha256": "31f84279fee4e7d73f5ca27ddbd24954d619599c619963fb86a6d76569b86532",
+      "binarySha256": "5fb9543df016e75028199a944f9aa484cda4fa30c88699023c3d4492b8ea5516",
+      "binaryBytes": 917,
+      "memories": [
+        {
+          "min": 1,
+          "max": 256
+        }
+      ],
+      "globals": [
+        {
+          "name": "__heap_ptr",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 1024
+            }
+          ]
+        }
+      ],
+      "types": [
+        {
+          "kind": "func",
+          "name": "$type___malloc",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_resolve",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_new",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_grow",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_push",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_get",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "f64"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_set",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_len",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_from_data",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_slice",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        }
+      ],
+      "malloc": {
+        "name": "__malloc",
+        "typeIdx": 0,
+        "locals": [
+          {
+            "name": "__malloc_ret",
+            "type": {
+              "kind": "i32"
+            }
+          },
+          {
+            "name": "__malloc_next",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 0
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": 7
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": -8
+          },
+          {
+            "op": "i32.and"
+          },
+          {
+            "op": "local.set",
+            "index": 2
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "memory.size"
+          },
+          {
+            "op": "i32.const",
+            "value": 65536
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.gt_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 2
+              },
+              {
+                "op": "memory.size"
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.mul"
+              },
+              {
+                "op": "i32.sub"
+              },
+              {
+                "op": "i32.const",
+                "value": 65535
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.div_u"
+              },
+              {
+                "op": "memory.grow"
+              },
+              {
+                "op": "drop"
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "global.set",
+            "index": 0
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 4
+          },
+          {
+            "op": "i32.ge_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "i32.const",
+                "value": 0
+              },
+              {
+                "op": "i32.store",
+                "align": 2,
+                "offset": 0
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "constructor": {
+        "name": "__arr_new",
+        "typeIdx": 2,
+        "locals": [
+          {
+            "name": "$l0",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "i32.const",
+            "value": 16
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 8
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "call",
+            "funcIdx": 0
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 1
+          },
+          {
+            "op": "i32.store8",
+            "align": 0,
+            "offset": 0
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 8
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 12
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "importCount": 0,
+      "functionCount": 10,
+      "exports": [
+        {
+          "name": "memory",
+          "desc": {
+            "kind": "memory",
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "custom-floor",
+      "moduleSha256": "0a020843b33f0daa42808fe30de1a77483cd92b599cfe187cb39aa4ea4ec54dc",
+      "binarySha256": "f7c869678d01670baf0bfe564aa78b9ba89eefe0cde5bc3df27da68962328024",
+      "binaryBytes": 917,
+      "memories": [
+        {
+          "min": 1,
+          "max": 256
+        }
+      ],
+      "globals": [
+        {
+          "name": "__heap_ptr",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 4096
+            }
+          ]
+        }
+      ],
+      "types": [
+        {
+          "kind": "func",
+          "name": "$type___malloc",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_resolve",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_new",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_grow",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_push",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_get",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "f64"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_set",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_len",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_from_data",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_slice",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        }
+      ],
+      "malloc": {
+        "name": "__malloc",
+        "typeIdx": 0,
+        "locals": [
+          {
+            "name": "__malloc_ret",
+            "type": {
+              "kind": "i32"
+            }
+          },
+          {
+            "name": "__malloc_next",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 0
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": 7
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": -8
+          },
+          {
+            "op": "i32.and"
+          },
+          {
+            "op": "local.set",
+            "index": 2
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "memory.size"
+          },
+          {
+            "op": "i32.const",
+            "value": 65536
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.gt_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 2
+              },
+              {
+                "op": "memory.size"
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.mul"
+              },
+              {
+                "op": "i32.sub"
+              },
+              {
+                "op": "i32.const",
+                "value": 65535
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.div_u"
+              },
+              {
+                "op": "memory.grow"
+              },
+              {
+                "op": "drop"
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "global.set",
+            "index": 0
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 4
+          },
+          {
+            "op": "i32.ge_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "i32.const",
+                "value": 0
+              },
+              {
+                "op": "i32.store",
+                "align": 2,
+                "offset": 0
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "constructor": {
+        "name": "__arr_new",
+        "typeIdx": 2,
+        "locals": [
+          {
+            "name": "$l0",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "i32.const",
+            "value": 16
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 8
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "call",
+            "funcIdx": 0
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 1
+          },
+          {
+            "op": "i32.store8",
+            "align": 0,
+            "offset": 0
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 8
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 12
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "importCount": 0,
+      "functionCount": 10,
+      "exports": [
+        {
+          "name": "memory",
+          "desc": {
+            "kind": "memory",
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "seeded",
+      "moduleSha256": "61b3d2b3fa4071df3a1b579b62ee17a60c654b16acdc936b3b8d0c7fe08c22db",
+      "binarySha256": "52ad7079ef2bb1e2ec6c79911ca5f496f5bf6bd61e5fbbe3d8d10ed753788c56",
+      "binaryBytes": 962,
+      "memories": [
+        {
+          "min": 1,
+          "max": 256
+        }
+      ],
+      "globals": [
+        {
+          "name": "existing",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 17
+            }
+          ]
+        },
+        {
+          "name": "__heap_ptr",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 1024
+            }
+          ]
+        }
+      ],
+      "types": [
+        {
+          "kind": "func",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___malloc",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_resolve",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_new",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_grow",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_push",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_get",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "f64"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_set",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_len",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_from_data",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_slice",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        }
+      ],
+      "malloc": {
+        "name": "__malloc",
+        "typeIdx": 1,
+        "locals": [
+          {
+            "name": "__malloc_ret",
+            "type": {
+              "kind": "i32"
+            }
+          },
+          {
+            "name": "__malloc_next",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 1
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": 7
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": -8
+          },
+          {
+            "op": "i32.and"
+          },
+          {
+            "op": "local.set",
+            "index": 2
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "memory.size"
+          },
+          {
+            "op": "i32.const",
+            "value": 65536
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.gt_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 2
+              },
+              {
+                "op": "memory.size"
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.mul"
+              },
+              {
+                "op": "i32.sub"
+              },
+              {
+                "op": "i32.const",
+                "value": 65535
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.div_u"
+              },
+              {
+                "op": "memory.grow"
+              },
+              {
+                "op": "drop"
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "global.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 4
+          },
+          {
+            "op": "i32.ge_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "i32.const",
+                "value": 0
+              },
+              {
+                "op": "i32.store",
+                "align": 2,
+                "offset": 0
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "constructor": {
+        "name": "__arr_new",
+        "typeIdx": 3,
+        "locals": [
+          {
+            "name": "$l0",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "i32.const",
+            "value": 16
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 8
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "call",
+            "funcIdx": 1
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 1
+          },
+          {
+            "op": "i32.store8",
+            "align": 0,
+            "offset": 0
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 8
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 12
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "importCount": 1,
+      "functionCount": 10,
+      "exports": [
+        {
+          "name": "memory",
+          "desc": {
+            "kind": "memory",
+            "index": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "linked",
+      "moduleSha256": "4d95e149d583561add7c20210efc2a3c890fa44370b1ca44feb2f230d29e5c5f",
+      "binarySha256": "deaf559122870a6d0d982ec4cf54c98ca44b79335b9e26f27792f5526e8bc9d0",
+      "binaryBytes": 1006,
+      "memories": [],
+      "globals": [
+        {
+          "name": "existing",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 17
+            }
+          ]
+        },
+        {
+          "name": "__heap_ptr",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 0
+            }
+          ]
+        },
+        {
+          "name": "__arena_limit",
+          "type": {
+            "kind": "i32"
+          },
+          "mutable": true,
+          "init": [
+            {
+              "op": "i32.const",
+              "value": 0
+            }
+          ]
+        }
+      ],
+      "types": [
+        {
+          "kind": "func",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___malloc",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_resolve",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_new",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_grow",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_push",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_get",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "f64"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_set",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "f64"
+            }
+          ],
+          "results": []
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_len",
+          "params": [
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_from_data",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        },
+        {
+          "kind": "func",
+          "name": "$type___arr_slice",
+          "params": [
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            },
+            {
+              "kind": "i32"
+            }
+          ],
+          "results": [
+            {
+              "kind": "i32"
+            }
+          ]
+        }
+      ],
+      "malloc": {
+        "name": "__malloc",
+        "typeIdx": 1,
+        "locals": [
+          {
+            "name": "__malloc_ret",
+            "type": {
+              "kind": "i32"
+            }
+          },
+          {
+            "name": "__malloc_next",
+            "type": {
+              "kind": "i32"
+            }
+          },
+          {
+            "name": "__malloc_chunk",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "global.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": 7
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "i32.const",
+            "value": -8
+          },
+          {
+            "op": "i32.and"
+          },
+          {
+            "op": "local.set",
+            "index": 2
+          },
+          {
+            "op": "global.get",
+            "index": 1
+          },
+          {
+            "op": "i32.eqz"
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "global.get",
+            "index": 2
+          },
+          {
+            "op": "i32.gt_u"
+          },
+          {
+            "op": "i32.or"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 0
+              },
+              {
+                "op": "i32.const",
+                "value": 7
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "i32.const",
+                "value": -8
+              },
+              {
+                "op": "i32.and"
+              },
+              {
+                "op": "local.set",
+                "index": 3
+              },
+              {
+                "op": "local.get",
+                "index": 3
+              },
+              {
+                "op": "i32.const",
+                "value": 65536
+              },
+              {
+                "op": "i32.lt_u"
+              },
+              {
+                "op": "if",
+                "blockType": {
+                  "kind": "empty"
+                },
+                "then": [
+                  {
+                    "op": "i32.const",
+                    "value": 65536
+                  },
+                  {
+                    "op": "local.set",
+                    "index": 3
+                  }
+                ],
+                "else": []
+              },
+              {
+                "op": "local.get",
+                "index": 3
+              },
+              {
+                "op": "call",
+                "funcIdx": 0
+              },
+              {
+                "op": "local.set",
+                "index": 1
+              },
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "i32.eqz"
+              },
+              {
+                "op": "if",
+                "blockType": {
+                  "kind": "empty"
+                },
+                "then": [
+                  {
+                    "op": "unreachable"
+                  }
+                ],
+                "else": []
+              },
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "global.set",
+                "index": 1
+              },
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "local.get",
+                "index": 3
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "global.set",
+                "index": 2
+              },
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "local.get",
+                "index": 0
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "i32.const",
+                "value": 7
+              },
+              {
+                "op": "i32.add"
+              },
+              {
+                "op": "i32.const",
+                "value": -8
+              },
+              {
+                "op": "i32.and"
+              },
+              {
+                "op": "local.set",
+                "index": 2
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "global.get",
+            "index": 1
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 2
+          },
+          {
+            "op": "global.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 4
+          },
+          {
+            "op": "i32.ge_u"
+          },
+          {
+            "op": "if",
+            "blockType": {
+              "kind": "empty"
+            },
+            "then": [
+              {
+                "op": "local.get",
+                "index": 1
+              },
+              {
+                "op": "i32.const",
+                "value": 0
+              },
+              {
+                "op": "i32.store",
+                "align": 2,
+                "offset": 0
+              }
+            ],
+            "else": []
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "constructor": {
+        "name": "__arr_new",
+        "typeIdx": 3,
+        "locals": [
+          {
+            "name": "$l0",
+            "type": {
+              "kind": "i32"
+            }
+          }
+        ],
+        "body": [
+          {
+            "op": "i32.const",
+            "value": 16
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.const",
+            "value": 8
+          },
+          {
+            "op": "i32.mul"
+          },
+          {
+            "op": "i32.add"
+          },
+          {
+            "op": "call",
+            "funcIdx": 1
+          },
+          {
+            "op": "local.set",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 1
+          },
+          {
+            "op": "i32.store8",
+            "align": 0,
+            "offset": 0
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "i32.const",
+            "value": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 8
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          },
+          {
+            "op": "local.get",
+            "index": 0
+          },
+          {
+            "op": "i32.store",
+            "align": 2,
+            "offset": 12
+          },
+          {
+            "op": "local.get",
+            "index": 1
+          }
+        ],
+        "exported": false
+      },
+      "importCount": 2,
+      "functionCount": 10,
+      "exports": []
+    }
+  ]
+}

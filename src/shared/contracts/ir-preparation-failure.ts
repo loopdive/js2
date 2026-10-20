@@ -100,6 +100,7 @@ export type IrFallbackReason =
 export type IrPreparationStage = "select" | "resolve" | "build" | "verify" | "lower" | "backend-legality" | "patch";
 
 export type IrUnsupportedCode =
+  | "target-environment-unsupported"
   | IrFallbackReason
   | "anonymous-class"
   | "static-class-initialization"

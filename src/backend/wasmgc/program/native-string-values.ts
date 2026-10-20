@@ -1,4 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import type {
+  NativePrimitiveBoundaryAbiInput,
+  NativePrimitiveBoundaryPlan,
+} from "../../../ir/program/native-primitive-boundary-contracts.js";
 import type { AllocSiteId } from "../../../ir/core/nodes.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
@@ -30,10 +34,7 @@ import {
 import { freezePreparedIrValue, preparedIrDataMismatch } from "../../../ir/program/data.js";
 import { PreparedIrProgramInvariantError } from "../../../ir/program/errors.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
-import type {
-  NativeStringValueDeclaration,
-  NativeStringValueReservationStep,
-} from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
+import type { NativeStringValueReservationStep } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import type {
   PhysicalModuleReservations,
   TypeReservation,
@@ -107,14 +108,12 @@ export interface NativeStringValueOptions {
   readonly stringConcatEmptyIdentity?: boolean;
   readonly utf8Storage: boolean;
 }
-export interface NativeStringValuePhysicalPlan {
+export interface NativeStringValuePhysicalPlan extends NativePrimitiveBoundaryPlan {
   readonly key: string;
-  readonly mode: "literals" | "number-boundary" | "realm-bootstrap";
   readonly booleans?: NativeBooleanSelection;
   readonly output?: NativeStringOutputPhysicalPlan;
   readonly literalRequirements: NativeStringLiteralRequirements;
   readonly literalUses: readonly { readonly demandIndex: number; readonly cacheKey: string }[];
-  readonly declarations: readonly NativeStringValueDeclaration[];
   readonly reservationSteps: readonly NativeStringValueReservationStep[];
 }
 export type NativeStringValuePlanningOutcome =
@@ -126,8 +125,7 @@ export type NativeStringValuePlanningOutcome =
       readonly realmLiterals?: NativeRealmLiteralPlan;
     }
   | PreparedIrProgramFailure;
-export interface NativeStringValueReservationInput extends NativeRealmLiteralInput {
-  readonly demands: NativeStringValueDemands;
+export interface NativeStringValueReservationInput extends NativePrimitiveBoundaryAbiInput, NativeRealmLiteralInput {
   readonly plan: NativeStringValuePhysicalPlan;
   readonly valueRequirements?: NativeValueResourcePlan;
   readonly outputRequirements?: NativeStringOutputRequirements;

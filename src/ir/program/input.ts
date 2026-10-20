@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { assertSourceClassPreparation } from "./class-preparation.js";
+
 import { AllocSiteRegistry, copyIrPreparationData } from "../analysis/alloc-registry.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
@@ -81,7 +83,7 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
   fields(
     captured,
     ["inventory", "ir", "derivedUnits", "startup", "callables", "globals", "allocations"],
-    ["runtimeSupport", "sourceMap"],
+    ["runtimeSupport", "sourceMap", "classes"],
   );
   fields(captured.inventory, ["sources", "classes", "allUnits", "terminalUnits"]);
   for (const values of [
@@ -107,6 +109,10 @@ export function ownTypedIrProgramInput(input: TypedIrProgramInput): {
     fields(global.identity, ["sourceId", "storageOwnerUnitId"]);
     if (typeof global.identity.sourceId !== "string" || typeof global.identity.storageOwnerUnitId !== "string")
       invalid("typed global lacks source/storage ownership");
+  }
+  if (Object.hasOwn(captured, "classes")) {
+    dense(captured.classes!);
+    assertSourceClassPreparation(captured.inventory, captured.classes!, captured.ir);
   }
   assertGlobalStorage(captured);
   if (Object.hasOwn(captured, "runtimeSupport")) {

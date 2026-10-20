@@ -228,13 +228,17 @@ export function fillPreparedPrimaryUnit(
   resolver: IrLowerResolver,
   backend: IrBackendKind,
   source?: NativeSourceClosureEmission,
+  resolveRuntimeOperation?: import("./backend/linear-emitter.js").LinearEmitterOptions["resolveRuntimeOperation"],
 ): void {
   const owner = source ? requireOwner(tx, source) : undefined;
   const association = owner?.units.get(fn.unitId);
   if (association && (association.fn !== fn || association.slot !== slot || owner!.completed.has(fn.unitId)))
     fail("source canonical lowering uses a changed function/slot or repeats completion");
   if (fn.closureSubtype && source && !association) fail("unbound source closure body");
-  const emitter = backend === "wasmgc" ? new WasmGcEmitter(resolver) : new LinearEmitter();
+  const emitter =
+    backend === "wasmgc"
+      ? new WasmGcEmitter(resolver)
+      : new LinearEmitter({ resolveRuntimeOperation, stringRuntime: resolver });
   const lowered = lowerIrFunctionBody<Instr[], ValType>(
     fn,
     resolver,

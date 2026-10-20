@@ -13,6 +13,18 @@ import { asVal, type IrClassShape, type IrType } from "../core/types.js";
 import type { IrFnctorShape } from "../core/fnctor-shapes.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 
+/**
+ * (#6920) Admission of the checked native Number/Undefined carrier, injected
+ * by the owner that issued it. The verifier only asks these three questions;
+ * the evidence modules that answer them stay out of the lowering value graph
+ * (#3518 lowering-cycle pin).
+ */
+export interface IrBackendNativeAdmission {
+  assertCurrent(fn: IrFunction, backend: string): void;
+  instructionIsAdmitted(fn: IrFunction, backend: string, instr: IrInstr): boolean;
+  typeIsAdmitted(fn: IrFunction, backend: string, instr: IrInstr, type: IrType): boolean;
+}
+
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
 export interface IrBackendLegalityError {
@@ -34,10 +46,19 @@ export function verifyIrBackendLegality(
   func: IrFunction,
   backend: IrBackendKind,
   fnctorResolver?: IrBackendFnctorResolver,
+  nativeNumberUndefined?: IrBackendNativeAdmission,
 ): IrBackendLegalityError[] {
+  if (nativeNumberUndefined) nativeNumberUndefined.assertCurrent(func, backend);
   const errors: IrBackendLegalityError[] = [];
   const checkedClassShapes = new Set<IrClassShape>();
-  const checkType = (type: IrType, block: number | undefined, where: string): void => {
+  const checkType = (type: IrType, block: number | undefined, where: string, instr?: IrInstr): void => {
+    if (
+      type.kind === "dynamic" &&
+      instr &&
+      nativeNumberUndefined &&
+      nativeNumberUndefined.typeIsAdmitted(func, backend, instr, type)
+    )
+      return;
     const fnctorHandle =
       type.kind === "fnctor" && backend === "wasmgc" ? fnctorResolver?.resolveFnctor?.(type.shape) : null;
     const fnctorResolved = fnctorHandle !== null && fnctorHandle !== undefined && fnctorHandle.supportsFieldGet;
@@ -54,7 +75,8 @@ export function verifyIrBackendLegality(
   for (const block of func.blocks) {
     const blockId = block.id as number;
     for (let i = 0; i < block.blockArgTypes.length; i++) checkType(block.blockArgTypes[i]!, blockId, `block arg ${i}`);
-    for (const instr of block.instrs) checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver);
+    for (const instr of block.instrs)
+      checkInstr(func, backend, block, instr, errors, checkType, fnctorResolver, nativeNumberUndefined);
   }
   return errors;
 }
@@ -65,8 +87,9 @@ function checkInstr(
   block: IrBlock,
   instr: IrInstr,
   errors: IrBackendLegalityError[],
-  checkType: (type: IrType, block: number | undefined, where: string) => void,
+  checkType: (type: IrType, block: number | undefined, where: string, instr?: IrInstr) => void,
   fnctorResolver?: IrBackendFnctorResolver,
+  nativeNumberUndefined?: IrBackendNativeAdmission,
 ): void {
   const blockId = block.id as number;
   const reject = (reason: string): void => {
@@ -78,7 +101,7 @@ function checkInstr(
     });
   };
 
-  if (instr.resultType) checkType(instr.resultType, blockId, `${instr.kind} result`);
+  if (instr.resultType) checkType(instr.resultType, blockId, `${instr.kind} result`, instr);
 
   // A nominal fnctor type may cross this boundary only for WasmGC after a
   // concrete resolver has supplied the constructor/layout handle. Other
@@ -98,7 +121,10 @@ function checkInstr(
   }
 
   if (backend === "linear") {
-    const reason = linearInstrError(instr);
+    const reason =
+      nativeNumberUndefined && nativeNumberUndefined.instructionIsAdmitted(func, backend, instr)
+        ? null
+        : linearInstrError(instr);
     if (reason) reject(reason);
   } else if (backend === "bytecode") {
     const reason = bytecodeInstrError(instr);
@@ -108,9 +134,10 @@ function checkInstr(
     if (reason) reject(reason);
   }
 
-  checkInstrEmbeddedTypes(instr, blockId, checkType);
+  checkInstrEmbeddedTypes(instr, blockId, (type, block, where) => checkType(type, block, where, instr));
   for (const nested of nestedInstrBuffers(instr)) {
-    for (const sub of nested) checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver);
+    for (const sub of nested)
+      checkInstr(func, backend, block, sub, errors, checkType, fnctorResolver, nativeNumberUndefined);
   }
 }
 
@@ -118,7 +145,7 @@ function checkInstr(
 // CORE-OP families (const / arithmetic / locals-as-slots / structured control
 // flow / direct call). These lower to core Wasm and `LinearEmitter` emits them
 // byte-identically to `WasmGcEmitter`. The representation-DIVERGENT families
-// (closures, dynamic boxing, exceptions, non-fixed vec
+// (closures, dynamic boxing, non-fixed vec
 // iteration, promises) stay rejected here — the linear analogue lands
 // with the production wiring (#2956). This mirrors `bytecodeInstrError`'s
 // allow-list shape; the operand-type gate (`linearValTypeError`) independently
@@ -126,6 +153,10 @@ function checkInstr(
 // admits a divergent-typed operand.
 function linearInstrError(instr: IrInstr): string | null {
   switch (instr.kind) {
+    // Implemented Wasm EH carries the shared opaque externref payload.
+    case "throw":
+    case "try":
+      return null;
     case "const":
       switch (instr.value.kind) {
         case "i32":
@@ -134,6 +165,10 @@ function linearInstrError(instr: IrInstr): string | null {
         case "f64":
         case "bool":
           return null;
+        case "null":
+          return instr.value.ty.kind === "val" && instr.value.ty.val.kind === "externref"
+            ? null
+            : "linear backend only supports an opaque externref null";
         default:
           // null/ref/string/undefined consts are representation-divergent.
           return `linear backend does not support const '${instr.value.kind}'`;
@@ -481,6 +516,8 @@ function checkValType(
 
 function linearValTypeError(v: ValType): string | null {
   switch (v.kind) {
+    // Opaque reference identity is preserved; GC layout references remain refused.
+    case "externref":
     case "i32":
     case "i64":
     case "f32":

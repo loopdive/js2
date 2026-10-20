@@ -35,6 +35,16 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import {
+  emitNativeNumberUndefinedRead,
+  emitNativeNumberUndefinedJoin,
+} from "./core/native-number-undefined-lowering.js";
+import {
+  assertNativeNumberUndefinedSource,
+  type NativeNumberUndefinedSource,
+} from "./native-number-undefined-source.js";
+import { nativeNumericUndefinedProof } from "./native-vector-undefined-provenance.js";
+import { conditionalBranchTypesAgree } from "./core/native-conditional-type.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -77,6 +87,18 @@ import { staticMemberBindingIsUnsound } from "./class-overrides.js";
 // #2766 — reuse the legacy counted-loop proof predicates (pure AST analysis, no
 // codegen state) to port the `safeIndexedArrays` in-bounds proof into the IR.
 import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-shape.js";
+import {
+  emitNativeVectorMutation,
+  nativeMutationSlotsForLoop,
+  nativeVectorMutationOwnerIsSynchronous,
+} from "./native-vector-mutation.js";
+import {
+  logicalVectorMismatch,
+  validateLogicalVectorFacts,
+  validateVectorInitializer,
+  requireLogicalVector,
+  checkLogicalVectorConsumption,
+} from "./logical-vector-source-facts.js";
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
@@ -170,6 +192,7 @@ import {
   EmptyArrayElementInference,
   emptyArrayInferenceDiagnostic,
   inferEmptyArrayElementTypes,
+  inferClassInitializerArrayTypes,
 } from "./array-element-inference.js";
 import {
   annotatedArrayElementValType,
@@ -201,7 +224,17 @@ import {
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
-import type { IrLowerResolver, IrVecLowering } from "./lower.js";
+import type { IrLowerResolver } from "./lower.js";
+import type { IrVecBackendLowering } from "./backend/handles.js";
+import type { IrBackendKind } from "./backend/legality.js";
+import {
+  irVecHandleCarrier,
+  irVecHandleDataType,
+  irVecRepresentationKindForBackend,
+  isLinearVecLowering,
+  isWasmGcVecLowering,
+} from "./backend/vector-representation.js";
+import { vecElemSetProviderSymbol, vecNewSizedProviderSymbol } from "./ast-vector-representation.js";
 import {
   allocateLiftedFunctionArtifact,
   type IrDerivedUnitProvenance,
@@ -283,16 +316,11 @@ import {
 } from "./nodes.js";
 import type { ValType } from "./types.js";
 import { coerceIrValueToExternref } from "./value-coercion.js";
-import {
-  IR_HOLEY_ARRAY_ELEM_SET,
-  IR_HOLEY_ARRAY_NEW,
-  irVecElemSetSymbol,
-  irVecNewSizedSymbol,
-} from "./vector-runtime.js";
+import { IR_HOLEY_ARRAY_ELEM_SET, IR_HOLEY_ARRAY_NEW } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
 
 interface ResolvedIrVecType {
-  readonly lowering: IrVecLowering;
+  readonly lowering: IrVecBackendLowering;
   readonly elementType: IrType;
   readonly valueType: ValType;
 }
@@ -301,6 +329,33 @@ interface IrSlotRepresentation {
   readonly storageType: ValType;
   readonly bindingType: IrType;
   readonly asType?: IrType;
+}
+
+/**
+ * (#6920 A-C1) The selected backend must agree with a physical vector handle
+ * before its carrier or data type is used. Missing backend information refuses
+ * (no WasmGC default); a handle from the other backend is an invariant failure.
+ */
+function requireSelectedVecBackend(handle: IrVecBackendLowering, cx: Pick<LowerCtx, "resolver" | "funcName">): void {
+  const backend = cx.resolver?.selectedBackend;
+  if (backend === undefined) {
+    demoteToLegacy(
+      "array-representation-unsupported",
+      `ir/from-ast: vector representation has no selected backend (${cx.funcName})`,
+    );
+  }
+  const kind = irVecRepresentationKindForBackend(backend);
+  const agrees =
+    kind === "wasmgc" ? isWasmGcVecLowering(handle) : kind === "linear-memory" ? isLinearVecLowering(handle) : false;
+  if (!agrees) {
+    throw new IrInvariantError(
+      "backend-legality-failure",
+      "build",
+      `ir/from-ast: vec representation mismatch: ${backend} backend received a ${
+        isLinearVecLowering(handle) ? "linear-memory" : "WasmGC"
+      } vector handle (${cx.funcName})`,
+    );
+  }
 }
 
 /** Resolve a logical vec type without exposing its physical type index to inference. */
@@ -320,10 +375,9 @@ function resolveIrVecType(
     if (!elementValType) return null;
     const lowering = cx.resolver?.resolveVecForElement?.(elementValType);
     if (!lowering) return null;
+    requireSelectedVecBackend(lowering, cx);
     const backendValueType =
-      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ??
-      lowering.valueType ??
-      ({ kind: type.nullable ? "ref_null" : "ref", typeIdx: lowering.vecStructTypeIdx } as ValType);
+      cx.resolver?.resolveVecValueTypeForElement?.(elementValType) ?? irVecHandleCarrier(lowering, type.nullable);
     const valueType =
       (backendValueType.kind === "ref" || backendValueType.kind === "ref_null") && type.nullable
         ? ({ kind: "ref_null", typeIdx: backendValueType.typeIdx } as ValType)
@@ -333,7 +387,9 @@ function resolveIrVecType(
   const valueType = asVal(type);
   if (!valueType) return null;
   const lowering = cx.resolver?.resolveVec?.(valueType);
-  return lowering ? { lowering, elementType: irVal(lowering.elementValType), valueType } : null;
+  if (!lowering) return null;
+  requireSelectedVecBackend(lowering, cx);
+  return { lowering, elementType: irVal(lowering.elementValType), valueType };
 }
 
 /** Materialize a logical IR type into mutable backend-local storage. */
@@ -352,14 +408,6 @@ function resolveIrSlotRepresentation(
     storageType = resolveIrVecType(type, { resolver, funcName })?.valueType;
   }
   return storageType ? { storageType, bindingType: irVal(storageType), asType: type } : null;
-}
-
-function vecElemSetProviderSymbol(type: IrType, vec: IrVecLowering): string {
-  return type.kind === "vec" ? irVecElemSetSymbol(type.elementType) : `__vec_elem_set_${vec.vecStructTypeIdx}`;
-}
-
-function vecNewSizedProviderSymbol(type: IrType, vec: IrVecLowering): string {
-  return type.kind === "vec" ? irVecNewSizedSymbol(type.elementType) : `__vec_new_sized_${vec.vecStructTypeIdx}`;
 }
 
 function unsupportedVoidCallExpression(detail: string): never {
@@ -420,6 +468,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Original source-class binding resolved before semantic sealing. */
+  sourceClassShape?(node: ts.Expression): IrClassShape | undefined;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -563,13 +613,22 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
     readonly get: string;
     readonly has: string;
   } | null;
-  resolveVec?(valType: ValType): IrVecLowering | null;
+  /**
+   * (#6920 A-C1) The backend the compiler selected for this lowering — the one
+   * whose emitter/converter consumes this resolver's vector handles. Set by
+   * the resolver's constructor; descriptive only (never provider, ABI or
+   * resource authority). Physical vector representation requires it and never
+   * infers it from a handle's shape; a resolver without it has no physical
+   * vector representation.
+   */
+  readonly selectedBackend?: IrBackendKind;
+  resolveVec?(valType: ValType): IrVecBackendLowering | null;
   /**
    * #1804 — register-or-recover the vec struct for an element ValType so
    * `lowerArrayLiteral` can type a constructed `vec.new_fixed`'s result SSA
    * value as `{ kind: "ref", typeIdx: vecStructTypeIdx }`.
    */
-  resolveVecForElement?(elementValType: ValType): IrVecLowering | null;
+  resolveVecForElement?(elementValType: ValType): IrVecBackendLowering | null;
   /**
    * Backend value representation for a vec constructed from `elementValType`.
    * WasmGC omits this and keeps the registered `(ref $vec)` default; linear
@@ -1169,6 +1228,7 @@ export interface AstToIrOptions {
    */
   readonly paramTypeOverrides?: readonly IrType[];
   /** Source-certified, per-function AST identities; never serialized or physically resolved. */
+  readonly nativeNumberUndefinedSource?: NativeNumberUndefinedSource;
   readonly logicalVectorTypes?: ReadonlyMap<
     ts.ParameterDeclaration | ts.VariableDeclaration | ts.Expression,
     Extract<IrType, { kind: "vec" }>
@@ -1550,6 +1610,16 @@ export function lowerFunctionAstToIr(
     | ts.SetAccessorDeclaration,
   options: AstToIrOptions,
 ): LoweredFunctionResult {
+  if (options.nativeNumberUndefinedSource) {
+    if (!ts.isFunctionDeclaration(fn) || !options.checker || !options.logicalVectorTypes)
+      demoteToLegacy("nullish-value-unsupported", "native Number/Undefined source custody is missing");
+    assertNativeNumberUndefinedSource(
+      options.nativeNumberUndefinedSource,
+      options.checker,
+      fn,
+      options.logicalVectorTypes,
+    );
+  }
   // #1370 Phase B: name resolution.
   //
   // FunctionDeclaration: prefer `fn.name.text`, fall back to options.funcName.
@@ -1818,6 +1888,7 @@ export function lowerFunctionAstToIr(
     returnType,
     ...numericProjectionOptions(options),
     logicalVectorTypes: options.logicalVectorTypes,
+    nativeNumberUndefinedSource: options.nativeNumberUndefinedSource,
     logicalVectorConsumed,
     calleeTypes: options.calleeTypes,
     directCalls: options.directCalls,
@@ -1927,6 +1998,85 @@ export function lowerFunctionAstToIr(
     ...(cx.consumedCountedStringAppends.length > 0
       ? { countedStringAppendPlans: Object.freeze([...cx.consumedCountedStringAppends]) }
       : {}),
+  };
+}
+
+/** A genuine implicit source constructor has no function AST or body to reconstruct. */
+export function lowerPreparedImplicitClassConstructorToIr(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  options: AstToIrOptions & { readonly constructorInitClassShape: IrClassShape },
+): LoweredFunctionResult {
+  const shape = options.constructorInitClassShape;
+  if (shape.parent || shape.constructorParams.length)
+    throw new IrUnsupportedError("class-member-unsupported", "build", "implicit parent constructor remains held");
+  const name = options.funcName ?? `${shape.className}_init`;
+  const type: IrType = { kind: "class", shape };
+  const builder = new IrFunctionBuilder(
+    { unitId: options.ownerUnitId, name },
+    [type],
+    false,
+    options.allocRegistry,
+    undefined,
+    options.sourceMap !== undefined,
+  );
+  const self = builder.addParam("__self", type);
+  builder.openBlock();
+  const scope = new Map<string, ScopeBinding>();
+  scope.set("this", { kind: "local", value: self, type });
+  const sourceScope: FrontendSourceScope | undefined = options.sourceMap
+    ? {
+        builder,
+        sourceMap: options.sourceMap,
+        sourceMapState: {
+          active: new WeakMap(),
+          causes: new WeakMap(),
+          generated: new Set(),
+          synthetic: new WeakMap(),
+          derived: [],
+        },
+        sourceMapBuilderUnitId: options.ownerUnitId,
+        sourceMapFunctionNode: declaration,
+      }
+    : undefined;
+  const initializers = options.constructorFieldInitializers ?? [];
+  const cx: LowerCtx = {
+    ...sourceScope,
+    builder,
+    scope,
+    funcName: name,
+    ownerUnitId: options.ownerUnitId,
+    returnType: type,
+    ...numericProjectionOptions(options),
+    directCalls: options.directCalls,
+    calleeTypes: options.calleeTypes,
+    importedCalls: options.importedCalls,
+    resolver: options.resolver,
+    identityContext: options.identityContext,
+    classShapes: options.classShapes,
+    lifted: [],
+    liftedUnitProvenance: [],
+    liftedCounter: { value: 0 },
+    mutatedLets: new Set(),
+    dynamicStringLocals: new Set(),
+    i32PureNames: new Set(),
+    ownedStringAppendSymbols: new Set(),
+    emptyArrayInference: inferClassInitializerArrayTypes(
+      declaration,
+      initializers.map((i) => i.expression),
+    ),
+    funcKind: "regular",
+    checker: options.checker,
+    oracle: options.oracle,
+    allocRegistry: options.allocRegistry,
+    consumedCountedStringAppends: [],
+    numericLocalScalarForDecl: options.numericLocalScalarForDecl,
+  };
+  lowerConstructorBody(builder, [], options, self, [], cx, name);
+  return {
+    main: builder.finish(),
+    lifted: cx.lifted,
+    liftedUnitProvenance: cx.liftedUnitProvenance,
+    ...sourceMapResult(cx),
   };
 }
 
@@ -2886,6 +3036,7 @@ interface LowerCtx extends FrontendSourceScope {
   readonly booleanReturnBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
+  readonly nativeNumberUndefinedSource?: NativeNumberUndefinedSource;
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -3043,6 +3194,8 @@ interface LowerCtx extends FrontendSourceScope {
    * unproven read falls to the SAFE bounds-checked read (no trap).
    */
   readonly safeIndexedArrays?: ReadonlySet<string>;
+  /** Original checker counter identity joined to the actual lowered slot, body-scoped. */
+  readonly nativeVectorMutationSlots?: ReadonlyMap<ts.Symbol, number>;
   /**
    * (#3931) The #2682 canonical char-read-loop proof(s) active for the CURRENT
    * loop body, keyed by receiver name — the IR twin of legacy's
@@ -3960,23 +4113,6 @@ function logicalVectorDeclarationType(
 }
 
 /** Validate after emission without replacing the initializer's actual type. */
-function validateVectorInitializer(
-  declaredVector: Extract<IrType, { kind: "vec" }> | undefined,
-  inferred: IrType,
-  name: string,
-  isConst: boolean,
-  moduleBinding: ModuleBindingGlobal | undefined,
-  cx: LowerCtx,
-): void {
-  if (cx.logicalVectorTypes !== undefined && inferred.kind === "vec") {
-    if (!declaredVector || !irTypeAssignable(inferred, declaredVector)) {
-      logicalVectorMismatch(cx.funcName, `initializer contradicts vector declaration '${name}'`);
-    }
-    if ((!isConst && cx.mutatedLets.has(name)) || moduleBinding) {
-      logicalVectorMismatch(cx.funcName, "mutable/global vector storage is not part of this logical projection");
-    }
-  }
-}
 
 function resolveMutableLocalRepresentation(
   inferred: IrType,
@@ -4166,6 +4302,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   // keywords; everything else falls through to inference.
   const declaredVector = logicalVectorDeclarationType(d, d.initializer, name, cx);
   let annotated: IrType | undefined =
+    (cx.nativeNumberUndefinedSource?.declarations.has(d) ? irDynamic() : undefined) ??
     declaredVector ??
     (d.type && isPrimitiveTypeNode(d.type) ? typeNodeToIr(d.type, `local ${name} of ${cx.funcName}`) : undefined);
   // (#2856) `number[]` annotation → resolve the f64-element vec and use its
@@ -4247,7 +4384,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     value = boxed;
   }
   const inferred = cx.builder.typeOf(value);
-  validateVectorInitializer(declaredVector, inferred, name, isConst, moduleBinding, cx);
+  validateVectorInitializer(declaredVector, inferred, name, isConst, moduleBinding, cx, irTypeAssignable);
   const stringEncoding = inferred.kind === "string" ? inferStringEncoding(d.initializer, cx) : undefined;
   if (annotated) {
     // Slice 1 (#1169a): the IrType discriminator includes a `string` arm
@@ -4730,65 +4867,6 @@ function lowerHostDateGetterCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
   return result;
 }
 
-function logicalVectorMismatch(funcName: string, detail: string): never {
-  throw new IrInvariantError("type-map-failure", "build", `ir/from-ast: logical vector ${detail} (${funcName})`);
-}
-
-function validateLogicalVectorFacts(
-  fn: ts.FunctionLikeDeclaration,
-  facts: AstToIrOptions["logicalVectorTypes"],
-  funcName: string,
-): void {
-  if (facts === undefined) return;
-  const owned = new Set<ts.Node>();
-  const visit = (node: ts.Node): void => {
-    if (node !== fn && (ts.isFunctionLike(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node))) return;
-    if (ts.isTypeNode(node)) return;
-    owned.add(node);
-    ts.forEachChild(node, visit);
-  };
-  visit(fn);
-  for (const [node, type] of facts) {
-    const parent = node.parent;
-    const nonReadName =
-      ts.isIdentifier(node) &&
-      (((ts.isVariableDeclaration(parent) || ts.isParameter(parent) || ts.isPropertyAccessExpression(parent)) &&
-        parent.name === node) ||
-        (ts.isPropertyAssignment(parent) && parent.name === node));
-    if (
-      !owned.has(node) ||
-      nonReadName ||
-      !(ts.isParameter(node) || ts.isVariableDeclaration(node) || ts.isExpression(node))
-    ) {
-      logicalVectorMismatch(funcName, "entry is not an owned declaration or expression read");
-    }
-    if (
-      type.kind !== "vec" ||
-      typeof type.nullable !== "boolean" ||
-      Object.keys(type).some((key) => !["kind", "elementType", "nullable"].includes(key)) ||
-      type.elementType.kind !== "val" ||
-      Object.keys(type.elementType).some((key) => !["kind", "val"].includes(key)) ||
-      !["f64", "externref"].includes(type.elementType.val.kind) ||
-      Object.keys(type.elementType.val).some((key) => key !== "kind")
-    ) {
-      logicalVectorMismatch(funcName, "entry must be a layout-free f64/Promise-carrier vector");
-    }
-  }
-}
-
-function requireLogicalVector(expr: ts.Expression, cx: LowerCtx): Extract<IrType, { kind: "vec" }> {
-  const type = cx.logicalVectorTypes?.get(expr);
-  if (!type) logicalVectorMismatch(cx.funcName, `missing expression entry for ${ts.SyntaxKind[expr.kind]}`);
-  return type;
-}
-
-function checkLogicalVectorConsumption(cx: LowerCtx): void {
-  for (const node of cx.logicalVectorTypes?.keys() ?? []) {
-    if (!cx.logicalVectorConsumed?.has(node))
-      logicalVectorMismatch(cx.funcName, "entry was not consumed by its owned declaration/expression");
-  }
-}
-
 // (#1373b C-1) `await <e>` in a claimed async body — the legacy SYNC
 // pass-through model, mirrored exactly:
 //   1. `await Promise.resolve(x)` → lower `x` (#3227 static substitution;
@@ -4883,6 +4961,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
 }
 
 function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
+  if (cx.nativeNumberUndefinedSource?.values.has(expr)) hint = irDynamic();
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerExprUnchecked(expr, cx, hint));
   if (ts.isParenthesizedExpression(expr)) {
@@ -5450,10 +5529,8 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
         `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
       );
     }
-    const vecValueType =
-      cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
-      vec.valueType ??
-      ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+    requireSelectedVecBackend(vec, cx);
+    const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
     const vecResultType = hint.kind === "vec" ? irVec(hintElemIr, false) : irVal(vecValueType);
     const countedPush = canonicalCountedPushPlanForLiteral(expr, cx.checker);
     if (countedPush) {
@@ -5625,10 +5702,8 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
       `ir/from-ast: resolver cannot register vec for array literal (${cx.funcName})`,
     );
   }
-  const vecValueType =
-    cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ??
-    vec.valueType ??
-    ({ kind: "ref", typeIdx: vec.vecStructTypeIdx } as ValType);
+  requireSelectedVecBackend(vec, cx);
+  const vecValueType = cx.resolver?.resolveVecValueTypeForElement?.(elemVT) ?? irVecHandleCarrier(vec, false);
   const resultType =
     elemVT.kind === "f64" || elemVT.kind === "i32" || storedElementType.kind === "string"
       ? irVec(storedElementType, false)
@@ -6731,6 +6806,10 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   }
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
+  if (cx.logicalVectorTypes !== undefined && recvType.kind === "vec" && nativeVectorMutationOwnerIsSynchronous(lhs)) {
+    emitNativeVectorMutation(lhs, rhs, cx, recv, recvType, undefined, (value) => lowerExpr(value, cx, IR_F64));
+    return;
+  }
   if (recvType.kind === "dynamic") {
     const key = lowerExpr(lhs.argumentExpression, cx, irDynamic());
     if (cx.builder.typeOf(key).kind !== "dynamic") {
@@ -6920,6 +6999,10 @@ function lowerElementCompound(
   // (1) Receiver — ONCE.
   const recv = lowerExpr(lhs.expression, cx, IR_F64);
   const recvType = cx.builder.typeOf(recv);
+  if (cx.logicalVectorTypes !== undefined && recvType.kind === "vec" && nativeVectorMutationOwnerIsSynchronous(lhs)) {
+    emitNativeVectorMutation(lhs, rhs, cx, recv, recvType, binop, (value) => lowerExpr(value, cx, IR_F64));
+    return;
+  }
   const recvVal = asVal(recvType);
   const scalarVecReceiver =
     recvVal?.kind === "i32" &&
@@ -7038,11 +7121,27 @@ function lowerElementAccess(expr: ts.ElementAccessExpression, cx: LowerCtx): IrV
     if (!scalar || (scalar.kind !== "f64" && scalar.kind !== "i32")) {
       logicalVectorMismatch(cx.funcName, "index must have the existing numeric/bool representation");
     }
+    if (cx.nativeNumberUndefinedSource?.reads.has(expr))
+      return emitNativeNumberUndefinedRead(cx.builder, recv, raw, JS_TAG_IDS.NumberF64, JS_TAG_IDS.Undefined);
     const index = scalar.kind === "i32" ? raw : cx.builder.emitUnary("i32.trunc_sat_f64_s", raw, IR_I32);
-    if (isProvenInBoundsIr(expr, cx)) return cx.builder.emitVecGet(recv, index, recvType.elementType);
+    // A numeric range proof alone must not bypass f64 property-index identity.
+    if (scalar.kind === "i32" && isProvenInBoundsIr(expr, cx)) {
+      return cx.builder.emitVecGet(recv, index, recvType.elementType);
+    }
     // No backend default lookup: retain the existing numeric NaN / externref
     // null out-of-bounds carriers using the layout-free vector element type.
-    return emitSafeVecGet(recv, index, asVal(recvType.elementType)!, { builder: cx.builder, funcName: cx.funcName });
+    const exactIndex =
+      scalar.kind === "f64"
+        ? cx.builder.emitBinary("f64.eq", raw, cx.builder.emitUnary("f64.convert_i32_s", index, IR_F64), IR_I32)
+        : undefined;
+    return emitSafeVecGet(
+      recv,
+      index,
+      asVal(recvType.elementType)!,
+      { builder: cx.builder, funcName: cx.funcName },
+      undefined,
+      exactIndex,
+    );
   }
 
   // Slice 2 — string-literal key on an object-shaped receiver: read the
@@ -7974,6 +8073,14 @@ function lowerNestedFuncCall(
 // Class lowering (#1169d — IR Phase 4 Slice 4)
 // ---------------------------------------------------------------------------
 
+function sourceClassShapeFor(cx: LowerCtx, expression: ts.Expression): IrClassShape | undefined {
+  return cx.resolver?.sourceClassShape
+    ? cx.resolver.sourceClassShape(expression)
+    : ts.isIdentifier(expression)
+      ? cx.classShapes?.get(expression.text)
+      : undefined;
+}
+
 /**
  * Slice 4 (#1169d): lower a `new ClassName(args)` expression.
  *
@@ -8065,7 +8172,7 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // local shape rather than the ambient extern registry's name-only entry.
   // Aliases and non-class shadows have no matching shape and retain the loud
   // extern-shadow invariant below.
-  const shape = cx.classShapes?.get(className);
+  const shape = sourceClassShapeFor(cx, expr.expression);
   const externInfo = cx.resolver?.getExternClassInfo?.(className);
   if (externInfo && !shape) {
     if (cx.resolver?.isAmbientBinding?.(expr.expression) === false) {
@@ -9231,10 +9338,10 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     ts.isIdentifier(expr.expression.expression) &&
     !receiverIsDirectModuleBinding &&
     cx.scope.get(expr.expression.expression.text) === undefined &&
-    cx.classShapes?.has(expr.expression.expression.text)
+    sourceClassShapeFor(cx, expr.expression.expression) !== undefined
   ) {
     const className = expr.expression.expression.text;
-    const shape = cx.classShapes.get(className)!;
+    const shape = sourceClassShapeFor(cx, expr.expression.expression)!;
     const method = findClassMember(shape, methodName, "static");
     if (!method) {
       demoteToLegacy(
@@ -11864,6 +11971,7 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
   // #2952 slice 2 — the loop's label; the body cx carries it as the
   // innermost break/continue target (a continue jumps to the update).
   const bodyScope = new Map(loopCx.scope);
+  const nativeVectorMutationSlots = nativeMutationSlotsForLoop(stmt, loopCx);
   const safePairs =
     provenPair || denseFillPair || fixedLiteralPairs.length > 0
       ? new Set([
@@ -11885,11 +11993,19 @@ function lowerForStatement(stmt: ts.ForStatement, cx: LowerCtx, bodyOverride?: (
         ...loopCx,
         scope: bodyScope,
         safeIndexedArrays: safePairs,
+        nativeVectorMutationSlots,
         provenCharReads,
         loopLabel,
         breakTargetLabel: loopLabel,
       }
-    : { ...loopCx, scope: bodyScope, provenCharReads, loopLabel, breakTargetLabel: loopLabel };
+    : {
+        ...loopCx,
+        scope: bodyScope,
+        nativeVectorMutationSlots,
+        provenCharReads,
+        loopLabel,
+        breakTargetLabel: loopLabel,
+      };
   const bodyInstrs = loopCx.builder.collectBodyInstrs(() => {
     if (bodyOverride) bodyOverride(bodyCx);
     else lowerStmt(stmt.statement, bodyCx);
@@ -12234,7 +12350,7 @@ function lowerForOfVec(
   const valTy = resolvedVec?.valueType ?? asVal(iterableType);
   if (resolvedVec) {
     elemValType = resolvedVec.lowering.elementValType;
-    dataValType = { kind: "ref", typeIdx: resolvedVec.lowering.arrayTypeIdx };
+    dataValType = irVecHandleDataType(resolvedVec.lowering);
   } else {
     if (!valTy) {
       demoteToLegacy(
@@ -13602,6 +13718,19 @@ function boxMixedConditionalArm(
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx));
+  if (cx.nativeNumberUndefinedSource?.values.has(expr)) {
+    const rawCondition = lowerExpr(expr.condition, cx, IR_F64);
+    const condition = lowerToBooleanForCondition(rawCondition, expr.condition, cx);
+    if (condition === null)
+      demoteToLegacy("operand-coercion-unsupported", "native Number/Undefined conditional lacks primitive truthiness");
+    return emitNativeNumberUndefinedJoin(
+      cx.builder,
+      condition,
+      () => lowerExpr(expr.whenTrue, { ...cx, scope: new Map(cx.scope) }, IR_F64),
+      () => lowerExpr(expr.whenFalse, { ...cx, scope: new Map(cx.scope) }, IR_F64),
+      JS_TAG_IDS.NumberF64,
+    );
+  }
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {
@@ -13705,20 +13834,13 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
   });
   const ftype = cx.builder.typeOf(whenFalse);
 
-  const tVal = asVal(ttype);
-  const fVal = asVal(ftype);
-  if (!tVal || !fVal || tVal.kind !== fVal.kind) {
-    // (#3144) Non-scalar arms with the SAME IrType (string/class/extern/
-    // object/…) are lowerable: the `if` lowering derives the result carrier
-    // from the instr's IrType via `lowerIrTypeToValType`, so e.g.
-    // `cond ? "true" : "false"` types as string on either string backend.
-    // Only genuinely mismatched arm types still demote.
-    if (!irTypeEquals(ttype, ftype)) {
-      demoteToLegacy(
-        "operand-coercion-unsupported",
-        `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
-      );
-    }
+  const logicalJoin = cx.logicalVectorTypes?.get(expr);
+  if (!conditionalBranchTypesAgree(ttype, ftype, logicalJoin)) {
+    if (logicalJoin) logicalVectorMismatch(cx.funcName, "conditional arm contradicts its owned join");
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
+    );
   }
 
   joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
@@ -13729,7 +13851,7 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValue
     thenValue: whenTrue,
     else: elseBody,
     elseValue: whenFalse,
-    resultType: ttype,
+    resultType: logicalJoin ?? ttype,
   });
 }
 
@@ -14346,7 +14468,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
       `ir/from-ast: wrapper instanceof cannot normalize ${describeIrType(lt)} to anyref (${cx.funcName})`,
     );
   }
-  const targetShape = cx.classShapes?.get(className);
+  const targetShape = sourceClassShapeFor(cx, expr.right);
   if (!targetShape) {
     demoteToLegacy(
       "operand-coercion-unsupported",
@@ -15275,7 +15397,11 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   // `undefined` through a numeric-vector read, only a proven in-bounds access
   // may participate in the never-undefined fold below. Unproven reads stay on
   // the direct SAFE path instead of folding `a[i] === undefined` to false.
-  if (ts.isElementAccessExpression(other) && !isProvenInBoundsIr(other, cx)) {
+  if (
+    ts.isElementAccessExpression(other) &&
+    !isProvenInBoundsIr(other, cx) &&
+    !cx.nativeNumberUndefinedSource?.reads.has(other)
+  ) {
     throw new IrUnsupportedError(
       "nullish-value-unsupported",
       "build",
@@ -15353,6 +15479,29 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     t.kind === "closure" ||
     t.kind === "string"; // native-strings mode only (host mode took the branch above)
   if (neverUndefinedRep && !staticTypeMayBeUndefined()) {
+    if (
+      cx.logicalVectorTypes !== undefined &&
+      tv !== null &&
+      (tv.kind === "f64" || (tv.kind === "i32" && tv.boolean !== true)) &&
+      nativeNumericUndefinedProof(other, {
+        checker: cx.checker,
+        logicalVectorTypes: cx.logicalVectorTypes,
+        identity: cx.identityContext,
+        ownerUnitId: cx.ownerUnitId,
+        numericParameter: (parameter) => {
+          if (!ts.isIdentifier(parameter.name)) return false;
+          const binding = cx.scope.get(parameter.name.text);
+          return !!binding && "type" in binding && binding.type.kind === "val" && binding.type.val.kind === "f64";
+        },
+        inBounds: (read) => isProvenInBoundsIr(read, cx),
+      }) !== "defined"
+    ) {
+      throw new IrUnsupportedError(
+        "nullish-value-unsupported",
+        "build",
+        `ir/from-ast: native numeric value has no defined-value provenance for undefined comparison (${cx.funcName})`,
+      );
+    }
     return cx.builder.emitConst({ kind: "bool", value: isStrictNeq }, IR_BOOL);
   }
   throw new IrUnsupportedError(

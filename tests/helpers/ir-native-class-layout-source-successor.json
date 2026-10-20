@@ -1,0 +1,412 @@
+{
+  "schema": 1,
+  "kind": "native-class-layout-source-successor",
+  "base": "7107a7418fb391a465bac6daefc4a98f9ea4283b",
+  "currentHead": "4a573ce007cad595f4809504e9473555739254a0",
+  "path": "src/ir/program/class-layouts.ts",
+  "before": {
+    "bytes": 2660,
+    "sha256": "900a8b56289b6565feb9dd52fb06405de720916208542be3079465942d0a6f42",
+    "gitBlob": "aa78513c98c48bb11084aaae05b46bbe2f152661"
+  },
+  "current": [
+    {
+      "path": "src/ir/analysis/lattice.ts",
+      "bytes": 5207,
+      "sha256": "d59cd168f935f4fa35ef21cdaade663b4e56138e08aa358a6611fc60efb3782f",
+      "gitBlob": "888709c116419d3c3f0dde61346e9dcb11150942"
+    },
+    {
+      "path": "src/ir/analysis/ownership.ts",
+      "bytes": 24007,
+      "sha256": "78d75f3f4327db958731a5387fc349aea11ef912f94cb274a8833b6c68f72998",
+      "gitBlob": "c95cb81c9158b417f3ec9634297b8ea59c84e1a9"
+    },
+    {
+      "path": "src/ir/analysis/encoding.ts",
+      "bytes": 10639,
+      "sha256": "1eb7e5ea51c0e54ed105eac8f35e340a0dc0fa25c50cf776a824959fed072b73",
+      "gitBlob": "abdf6e8c932981e2acfcc5a8a376ca362c63daf5"
+    },
+    {
+      "path": "src/ir/analysis/escape.ts",
+      "bytes": 10915,
+      "sha256": "393ef2faebf148ac7616cd0daf12e86a5de5669be27a1c45f50368da11caedca",
+      "gitBlob": "dba40d40f3c4104fbd8faf2f54c07c9403f262e1"
+    },
+    {
+      "path": "src/ir/analysis/dominance.ts",
+      "bytes": 13734,
+      "sha256": "f005d9447e65170b0b968839d3bde44a0ffeb9752a46fab0e34a572191989fdc",
+      "gitBlob": "315b38575a0701b1fe971710651070234539730d"
+    },
+    {
+      "path": "src/ir/verify-alloc.ts",
+      "bytes": 1061,
+      "sha256": "f6fc9383748867ca1ab5204f40830aa23f92152931ea1933ea55ba70730c9179",
+      "gitBlob": "0040069742d6e0ea78b6b5df40876abe3e611256"
+    },
+    {
+      "path": "src/ir/verify.ts",
+      "bytes": 487,
+      "sha256": "af70e5c4d53566c2a2238cbbb6b20799ee9f8fa8bfc0937a3e697a457ba3c3e0",
+      "gitBlob": "0b410820b8232bef843887096ae208a5be9c1d12"
+    },
+    {
+      "path": "src/ir/program-allocations.ts",
+      "bytes": 200,
+      "sha256": "65374da4eff469fb8dfcd9a7fadad5f3ae6b94740ca2b9855de1d2b523c094c8",
+      "gitBlob": "d72726bad0e6f2fb643d2b22c29befb172d275b3"
+    },
+    {
+      "path": "src/ir/program-class-layouts.ts",
+      "bytes": 160,
+      "sha256": "4e2a9f622b78f3cb8cafd2cf77888521c8b70a15d797fc0811824ae9d013e0ca",
+      "gitBlob": "7cfc4a1d44a4c49661793d55ebceafed2117c1a4"
+    },
+    {
+      "path": "src/ir/analysis/alloc-verification.ts",
+      "bytes": 6525,
+      "sha256": "5a0e389a0694ed087154974b17be8e3edbd14c9781f01a97acb18b0dc2260238",
+      "gitBlob": "c24ba307c38da67f75ec8df5b271afcdb054dcb9"
+    },
+    {
+      "path": "src/ir/runtime/verify.ts",
+      "bytes": 122476,
+      "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+      "gitBlob": "95fae5703c947c68feb3d29c8ae6703a59bcb0c3"
+    },
+    {
+      "path": "src/ir/program/allocations.ts",
+      "bytes": 5638,
+      "sha256": "aec062632da95addb294e203514e8218284177bfccd7154f3cbb1d8bdd412c33",
+      "gitBlob": "722430a6adb09e2e4b74802650b29c8207431a25"
+    },
+    {
+      "path": "src/ir/program/class-layouts.ts",
+      "bytes": 3736,
+      "sha256": "253de813d5c6feca176eeff158b5f267e487e325df61c711c622b6b50752363c",
+      "gitBlob": "378bc39407eaf23dc5035be7bd51c18e4f672f68"
+    },
+    {
+      "path": "src/ir/analysis/contracts/allocations.ts",
+      "bytes": 3351,
+      "sha256": "291f33563bf9db37fec8063cd02e4253ef626976b6ac4bce211d2a08831cf051",
+      "gitBlob": "3598a7438774dda6c053fc9cfc2cb346bf1eed47"
+    },
+    {
+      "path": "src/ir/analysis/alloc-registry.ts",
+      "bytes": 16450,
+      "sha256": "33a611e89ae5a9b54fefd59167da726c31bfd38a1b2d7ebc1ef82062396299a5",
+      "gitBlob": "6cbd570322cb8433a947601768bf5390726ce278"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/effect-rules.ts",
+      "bytes": 8002,
+      "sha256": "56a0a59536d0d12760fc7dc93fae032669b87eb4a741d089847d00d26f30b18d",
+      "gitBlob": "4f5a86f92145c1ac1deab3c8e7b2498798726de8"
+    },
+    {
+      "path": "src/ir/analysis/allocation-evidence/census.ts",
+      "bytes": 10151,
+      "sha256": "fe5f001a13c82b4bbecc6c17143a102ba0f0d90202f9a1fcd44d0cebe8d2774f",
+      "gitBlob": "084972dc79d8f5705ce7d60fac26a0d2fbc2904c"
+    },
+    {
+      "path": "src/ir/program/allocation-body-validation.ts",
+      "bytes": 1864,
+      "sha256": "d48bf8cec3edbdb89759df63dbb5a8e3f455b7d739b1e990d669a1eceb69430a",
+      "gitBlob": "1b7c3e14c934cc118d4c6a85da9adb77204df284"
+    },
+    {
+      "path": "src/ir/program/errors.ts",
+      "bytes": 232,
+      "sha256": "1e8dcef3c20b33bdcaffdc593470cd38e197858a135eb86ff4870bb80c3cb399",
+      "gitBlob": "7b28c9cc899d8ddb789577d84df6bb29be430e7c"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-invariant-error.ts",
+      "bytes": 1117,
+      "sha256": "b64c58e9ed9e870aa1fa8b219e413b786b66c6cdf4586adac78a5894fbce5907",
+      "gitBlob": "079dbd626af8dcc207201552095501ba0fd622f1"
+    },
+    {
+      "path": "src/ir/program/abi-signatures.ts",
+      "bytes": 2483,
+      "sha256": "a97e4f44f8c972321120690f7e37ab9c10b000ae814829ef06aeb8c4a62ce183",
+      "gitBlob": "3bd721f7c91aa9aa3c9b8c9faa5ea5ea1a885735"
+    },
+    {
+      "path": "src/ir/core/type-key.ts",
+      "bytes": 3644,
+      "sha256": "f21e457aa4b6a500fc47960c4c4ab363f82c4961b4145e29527ba473775922df",
+      "gitBlob": "20fa37f2eb72b31a18b7d41ae0f9c6313fe0717f"
+    },
+    {
+      "path": "src/ir/program/class-preparation.ts",
+      "bytes": 7239,
+      "sha256": "d8a57c5ca18d97d4685eeaeedc1f9619565fb9742e154b2b85a7922403665259",
+      "gitBlob": "4684e35ea693cd1ac3852aba83c79c926028d3f4"
+    },
+    {
+      "path": "src/ir/program/data.ts",
+      "bytes": 302,
+      "sha256": "caf3bef5ff034d4d83f33226cd909ddb1704f68824d4957c0a03a7bf4eccac71",
+      "gitBlob": "3b93b17cac0e6c52b3957eb9341b9bdca2a8e988"
+    },
+    {
+      "path": "src/shared/contracts/prepared-ir-data.ts",
+      "bytes": 12546,
+      "sha256": "914529ca30ad166b591f495cf6be96b089f87a0b6672dd7f6ef8986661234094",
+      "gitBlob": "4dd2c5cdde434381de1417a7f24ea9db0ede39ea"
+    },
+    {
+      "path": "src/shared/contracts/ir-class-shape-marker.ts",
+      "bytes": 166,
+      "sha256": "31d207c57bfa9e20615966baf2835a7cf32b77cb578a72bb52059865a1b2aeae",
+      "gitBlob": "569b6a3cb6dd674fabd1d0cc60567da82e175b08"
+    },
+    {
+      "path": "src/shared/contracts/identity-values.ts",
+      "bytes": 1208,
+      "sha256": "df20402d646264c0341a16a0c49bac2db4bdb38b5ac3e3b1e7ab7ef5a17f2412",
+      "gitBlob": "b5dcede80a8be81b35e1442f2229a849cb785931"
+    },
+    {
+      "path": "src/ir/core/types.ts",
+      "bytes": 32389,
+      "sha256": "5564dc04fea76d50761ec6521bd6fbe9b4a9c35194a5caaf03a1543a23951888",
+      "gitBlob": "e7cd341029d51186e928eb2cb77755d5470bd767"
+    },
+    {
+      "path": "src/ir/program/prepared-contracts.ts",
+      "bytes": 5353,
+      "sha256": "1b2c050b18d611d0b45316aaed268acb6705d64a4e3299d987bf58320752eae1",
+      "gitBlob": "0f189c79a0bf9221c0e367787e370ae191aa553d"
+    },
+    {
+      "path": "src/ir/program/abi.ts",
+      "bytes": 32535,
+      "sha256": "29591c6feab869c6780144aabcc413afafa38e4adbc8c3f8d5b7bcdc7e9c833d",
+      "gitBlob": "c9240ad8bc83c36774a7def20db27425252f459a"
+    },
+    {
+      "path": "src/ir/core/fnctor-shapes.ts",
+      "bytes": 1758,
+      "sha256": "72a6ebe66e064906582f7f4bc5fbad6850e02d94b1bd00c8a4bb916329d70cf6",
+      "gitBlob": "f56d385b7b01008222034b0a58e200b9a8f90c17"
+    },
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "bytes": 2741,
+      "sha256": "ef9427c37f81455e06b81cf4f2599601d50e80f0d83abcacda447c9048fa4d0f",
+      "gitBlob": "07f882159a6e688c1ed30c2965a36699d21a0b85"
+    },
+    {
+      "path": "src/shared/contracts/ir-unit-inventory.ts",
+      "bytes": 8077,
+      "sha256": "6b5b77eeb6865023b01891bf2bc2efb1d803fac37c9f8ac739759e15e23fef83",
+      "gitBlob": "180df8e4f8b7aa3eabac4cb88b54dc6b04a642bb"
+    },
+    {
+      "path": "src/ir/core/nodes.ts",
+      "bytes": 96440,
+      "sha256": "edbebcf99227dc64eaf1dd83cec02a2431b21c25992e20138c0917f09487dccd",
+      "gitBlob": "2f26e8acb8f2c68b97a71d41c1176dd79da2bd40"
+    }
+  ],
+  "anchors": [
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.ts",
+      "bytes": 18730,
+      "sha256": "21d909a664c3e0dcd99e52b13c2185d376f8c1fabedb58a2d80b08556a9aca3d",
+      "gitBlob": "48ec07483c7c79c612071becb68bbd18eaacb2e3"
+    },
+    {
+      "path": "tests/helpers/ir-validation-analysis-relocation.json",
+      "bytes": 327660,
+      "sha256": "9a52664fbba6044d168f428f9398e5d2bff923cf7cac1adc6aae04827431e969",
+      "gitBlob": "6a60f93474b57e87ad18acaab8ce85b232dd4128"
+    },
+    {
+      "path": "tests/helpers/ir-native-allocation-type-ownership-successor.ts",
+      "bytes": 15104,
+      "sha256": "6a358c313b7ab459b8303403211d59d6b85dd7566e8f82dcd00e6ab4c1e5077b",
+      "gitBlob": "8a83845085e652d09a22d00dcf8fbc62c3b911cb"
+    },
+    {
+      "path": "tests/helpers/ir-native-allocation-type-ownership-successor.json",
+      "bytes": 7586,
+      "sha256": "d8d421dfcb36fb1db451a0e67dd4a6546037e65176fa52ced71bfb837150c7be",
+      "gitBlob": "73f5bbcec86434bcdf1542a193868411f371f86a"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-rule-sharing-successor.ts",
+      "bytes": 40165,
+      "sha256": "b799ad4d8cd52819a21db12c36b7347c4fb8226b87c175f87135094091c848dc",
+      "gitBlob": "863104071712769db32986652777b29d5ff078a3"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-rule-sharing-successor.json",
+      "bytes": 45797,
+      "sha256": "7b947e08fab9d09418b3431f0f638f2f8e0278cc5af40ac1d979d7ed2064d8b2",
+      "gitBlob": "59e77cbe5196e1ed9b8a27b5dcfa7c48cbdcb31e"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.ts",
+      "bytes": 29831,
+      "sha256": "7f818067a0ecb8963f582e232f1692af9d3ca9283b9596f42e9ab8846f1f6443",
+      "gitBlob": "059095d2f9cdb2ca2f0a6c42091e7104b89c3a75"
+    },
+    {
+      "path": "tests/helpers/ir-allocation-provenance-lookup-successor.json",
+      "bytes": 11637,
+      "sha256": "4528c914b70535665feebbd0f93ed5d43ef0a5fbb9b4a752e056da84f89a2c7d",
+      "gitBlob": "508e4a700348f1adacad3aad0e313c979b333159"
+    }
+  ],
+  "edits": [
+    {
+      "beforeStart": 83,
+      "beforeEnd": 83,
+      "currentStart": 83,
+      "currentEnd": 207,
+      "beforeText": "",
+      "currentText": "\n\nimport { preparedIrDataMismatch } from \"./data.js\";\nimport { assertSourceClassPreparation } from \"./class-preparation.js\";"
+    },
+    {
+      "beforeStart": 475,
+      "beforeEnd": 475,
+      "currentStart": 599,
+      "currentEnd": 602,
+      "beforeText": "",
+      "currentText": "\n  "
+    },
+    {
+      "beforeStart": 537,
+      "beforeEnd": 537,
+      "currentStart": 664,
+      "currentEnd": 714,
+      "beforeText": "",
+      "currentText": " & Partial<Pick<PreparedIrProgram, \"inventory\">>,\n"
+    },
+    {
+      "beforeStart": 678,
+      "beforeEnd": 678,
+      "currentStart": 855,
+      "currentEnd": 1200,
+      "beforeText": "",
+      "currentText": "\n  const prepared = program.abi.entries.flatMap((e) =>\n    e.contract.kind === \"class\" && e.contract.preparation ? [e.contract.preparation] : [],\n  );\n  if (prepared.length) {\n    if (!program.inventory) invalid(\"source class preparation lacks original inventory\");\n    assertSourceClassPreparation(program.inventory!, prepared, program.ir);\n  }"
+    },
+    {
+      "beforeStart": 893,
+      "beforeEnd": 893,
+      "currentStart": 1415,
+      "currentEnd": 1969,
+      "beforeText": "",
+      "currentText": ";\n    if (\n      program.inventory?.terminalUnits.some(\n        (u) =>\n          u.lexicalOwnerId === shape.classId &&\n          (u.kind === \"class-constructor\" || u.kind === \"class-implicit-constructor\"),\n      ) &&\n      !entry.contract.preparation\n    )\n      invalid(\"original source constructor lacks complete class preparation\");\n    if (\n      entry.contract.preparation &&\n      preparedIrDataMismatch(entry.contract.shape, entry.contract.preparation.shape) !== undefined\n    )\n      invalid(\"class ABI layout contradicts its source preparation\")"
+    }
+  ],
+  "successor": {
+    "base": "a4d4c99ccc9cd4fe27bd6dba91180fc575616529",
+    "head": "3e16e53585",
+    "transforms": [
+      {
+        "path": "src/ir/runtime/verify.ts",
+        "mode": "epoch",
+        "before": {
+          "bytes": 122476,
+          "sha256": "2d42cdd44b7a979ee0c960369c5ace9f75d2e7c47ccf3c17c8bc9f592f8dd74b",
+          "gitBlob": "95fae5703c947c68feb3d29c8ae6703a59bcb0c3"
+        },
+        "current": {
+          "bytes": 124703,
+          "sha256": "acaac9ec0e009ae812b09da03cdbc7c9cc8da614963ab5d874b7794af8735fad",
+          "gitBlob": "0232eb2216e508c4cce5036a2433780bd87e7597"
+        },
+        "edits": [
+          {
+            "beforeStart": 1270,
+            "beforeEnd": 1372,
+            "beforeText": "import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from \"../core/nodes.js\";\n",
+            "currentStart": 1270,
+            "currentEnd": 1390,
+            "currentText": "import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from \"../core/nodes.js\";\n"
+          },
+          {
+            "beforeStart": 1453,
+            "beforeEnd": 1501,
+            "beforeText": "import type { IrType } from \"../core/types.js\";\n",
+            "currentStart": 1471,
+            "currentEnd": 1533,
+            "currentText": "import type { IrClassShape, IrType } from \"../core/types.js\";\n"
+          },
+          {
+            "beforeStart": 15279,
+            "beforeEnd": 15279,
+            "beforeText": "",
+            "currentStart": 15311,
+            "currentEnd": 15651,
+            "currentText": "  /**\n   * (#7001) Lane fact: does the `string` IrType lower to externref (host\n   * strings)? `false` makes a dynamic/externref value returned into a declared\n   * `string` result non-assignable (native strings lower to\n   * `(ref null $AnyString)`). Absent ⇒ the historical lenient answer.\n   */\n  readonly stringIsExternref?: boolean;\n"
+          },
+          {
+            "beforeStart": 23246,
+            "beforeEnd": 23299,
+            "beforeText": "      if (!returnTypeAssignable(actual, declared)) {\n",
+            "currentStart": 23618,
+            "currentEnd": 23699,
+            "currentText": "      if (!returnTypeAssignable(actual, declared, options?.stringIsExternref)) {\n"
+          },
+          {
+            "beforeStart": 24737,
+            "beforeEnd": 24804,
+            "beforeText": "        if (!returnTypeAssignable(actual, func.resultTypes[0]!)) {\n",
+            "currentStart": 25137,
+            "currentEnd": 25232,
+            "currentText": "        if (!returnTypeAssignable(actual, func.resultTypes[0]!, options?.stringIsExternref)) {\n"
+          },
+          {
+            "beforeStart": 25815,
+            "beforeEnd": 25890,
+            "beforeText": "function returnTypeAssignable(actual: IrType, declared: IrType): boolean {\n",
+            "currentStart": 26243,
+            "currentEnd": 26347,
+            "currentText": "function returnTypeAssignable(actual: IrType, declared: IrType, stringIsExternref?: boolean): boolean {\n"
+          },
+          {
+            "beforeStart": 28284,
+            "beforeEnd": 28284,
+            "beforeText": "",
+            "currentStart": 28741,
+            "currentEnd": 29136,
+            "currentText": "  // (#7001) A dynamic/externref value into a native-string result: string\n  // lowers to `(ref null $AnyString)` there, so the flow needs a checked\n  // conversion the IR does not emit. Only the host lane has string ≡ externref.\n  if (\n    declared.kind === \"string\" &&\n    stringIsExternref === false &&\n    (actual.kind === \"dynamic\" || a?.kind === \"externref\")\n  ) {\n    return false;\n  }\n"
+          },
+          {
+            "beforeStart": 82195,
+            "beforeEnd": 82304,
+            "beforeText": "  \"class.call\": { skip: \"resolver-typed: method signature resolved from the receiver's shape at lowering\" },\n",
+            "currentStart": 83047,
+            "currentEnd": 83151,
+            "currentText": "  // (#7000) Target identity is checked; the signature stays resolver-typed.\n  \"class.call\": \"checked\",\n"
+          },
+          {
+            "beforeStart": 89889,
+            "beforeEnd": 89889,
+            "beforeText": "",
+            "currentStart": 90736,
+            "currentEnd": 90827,
+            "currentText": "    case \"class.call\":\n      checkClassCallTarget(instr, blockId, ctx);\n      return true;\n"
+          },
+          {
+            "beforeStart": 89929,
+            "beforeEnd": 89929,
+            "beforeText": "",
+            "currentStart": 90867,
+            "currentEnd": 92156,
+            "currentText": "/**\n * (#7000) `class.call` is a STATIC call of the member resolved on the\n * receiver's class-shape chain (from-ast `findClassMember`). An exact `target`\n * must be that member's own target: one bound to any other class's member is a\n * wrong-body call (the devirtualisation drift #7000 fixed in the selector). A\n * receiver that is not class-shaped, or a member the walk cannot see, stays\n * resolver-typed and is not judged here.\n */\nfunction checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {\n  const receiver = ctx.typeOf.get(instr.receiver);\n  if (!instr.target || receiver?.kind !== \"class\") return;\n  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {\n    const member = shape.methods.find(\n      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? \"method\") === instr.memberKind,\n    );\n    if (!member) continue;\n    const want = member.target ? bindingKey(member.target.binding) : null;\n    const got = bindingKey(instr.target.binding);\n    if (want !== null && got !== null && want !== got)\n      roadmapError(\n        ctx,\n        blockId,\n        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,\n      );\n    return;\n  }\n}\n\n"
+          }
+        ]
+      }
+    ]
+  }
+}

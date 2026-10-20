@@ -159,6 +159,13 @@ export function assertPreparedIrProgramPopulation(input: Population, abi?: Prepa
         forEachInstrDeep(root, (instruction) => {
           if (instruction.kind === "call") checkReference(fn.unitId, instruction.target);
           if (instruction.kind === "closure.new") checkReference(fn.unitId, instruction.liftedFunc);
+          if (
+            (instruction.kind === "class.new" ||
+              instruction.kind === "class.call" ||
+              instruction.kind === "class.static_call") &&
+            instruction.target
+          )
+            checkReference(fn.unitId, instruction.target);
         });
     }
   }

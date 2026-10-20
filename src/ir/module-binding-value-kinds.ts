@@ -11,6 +11,7 @@ export interface IrModuleCapabilityExternValueKind {
 
 export type IrModuleBindingValueKind =
   | { readonly kind: "f64" }
+  | { readonly kind: "native-f64-vector" }
   | { readonly kind: "i32"; readonly semantic: "boolean" }
   // (#4208 S2 / #5289) A binding whose value is DYNAMIC — an `any`/`unknown`
   // declaration, or one a `++`/`--` retypes. Deliberately ONE kind for both
@@ -88,6 +89,7 @@ export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind
     valueKind.kind === "extern" ||
     valueKind.kind === "capability-extern" ||
     valueKind.kind === "native-map" ||
+    valueKind.kind === "native-f64-vector" ||
     valueKind.kind === "string"
   );
 }

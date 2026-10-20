@@ -139,6 +139,7 @@
     "check:orphaned-scripts": "node scripts/check-orphaned-scripts.mjs",
     "profile:godfiles": "node scripts/profile-godfiles.mjs",
     "gen:ir-adoption": "node scripts/gen-ir-adoption.mjs",
+    "derive:successor-epoch": "node scripts/derive-successor-epoch.mjs",
     "check:ir-adoption": "node scripts/gen-ir-adoption.mjs --check",
     "check:stack-balance": "npx tsx scripts/check-stack-balance.ts",
     "census:async": "node scripts/async-call-census.mjs",

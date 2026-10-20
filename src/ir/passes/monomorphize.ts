@@ -476,9 +476,11 @@ function isMonomorphizable(fn: IrFunction): boolean {
   const paramIds = new Set<IrValueId>();
   for (const p of fn.params) paramIds.add(p.value);
   for (const instr of block.instrs) {
-    for (const u of collectUses(instr)) {
-      if (paramIds.has(u)) return false;
-    }
+    let consumesParameter = false;
+    forEachInstrDeep(instr, (nested) => {
+      consumesParameter ||= collectUses(nested).some((value) => paramIds.has(value));
+    });
+    if (consumesParameter) return false;
   }
   return true;
 }
@@ -675,6 +677,7 @@ function cloneWithParamTypes(
     blocks: [newBlock],
     exported: false,
     valueCount: callee.valueCount,
+    ...(callee.slots === undefined ? {} : { slots: callee.slots.map((slot) => ({ ...slot })) }),
   };
   return { fn, returnType };
 }

@@ -31,6 +31,9 @@
 // claims, frozen in place and passed through A's complete validator. Only that
 // re-authenticated program is returned by `decodePreparedIrProgram`.
 
+import { verifyLinearPreparedAllocationFacts } from "./analysis/linear/allocation-facts.js";
+import { irRuntimeSupportFunctions } from "./program/runtime-support.js";
+import { assertPreparedStartupInvocation } from "./program/startup-validation.js";
 import { IR_CLASS_SHAPE_CELL } from "./nodes.js";
 import { freezePreparedIrRuntimeValue, freezePreparedIrValue, preparedIrDataMismatch } from "./program/data.js";
 import { PreparedIrProgramInvariantError } from "./program/errors.js";
@@ -39,7 +42,10 @@ import { preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
 import { assertPreparedSourceMap } from "./program/validation.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
+import { screenPreparedIrLinearAllocationEntry } from "./program/linear-allocation-validation.js";
 import { prepareWholeProgramRuntimeManifest } from "./runtime-program-manifest.js";
+import { nativeVectorStoreFailure } from "./program/native-vector-store-proof.js";
+import { nativeModuleGlobalEvidence } from "./program/native-module-vector-context.js";
 
 export const PREPARED_IR_PROGRAM_CODEC = "prepared-ir-program-codec-v1" as const;
 export const PREPARED_IR_PROGRAM_SCHEMA = "prepared-ir-program-v1" as const;
@@ -200,6 +206,16 @@ function encodeValue(value: unknown, path: string, ancestors: Set<object>): stri
  * codec never publishes a value a consumer would refuse on structure alone.
  */
 export function encodePreparedIrProgram(program: PreparedIrProgram): string {
+  const attached = screenPreparedIrLinearAllocationEntry(program, false);
+  if (attached) assertPreparedIrProgram(program);
+  assertPreparedIrProgramShape(program);
+  const failure = nativeVectorStoreFailure(program.ir, () => nativeModuleGlobalEvidence(program));
+  if (failure) invalid(`${failure.unitId}: ${failure.detail}`);
+  return encodePreparedIrProgramData(program);
+}
+
+/** Byte normalization alone does not accept decoded runtime identity clones. */
+function encodePreparedIrProgramData(program: PreparedIrProgram): string {
   assertPreparedIrProgramShape(program);
   return `{"codec":${quote(PREPARED_IR_PROGRAM_CODEC)},"program":${encodeValue(program, "program", new Set())},"schema":${quote(PREPARED_IR_PROGRAM_SCHEMA)}}`;
 }
@@ -376,7 +392,7 @@ function parseEnvelope(text: string): unknown {
 export function decodePreparedIrProgramData(text: string): PreparedIrProgram {
   const decoded = freezePreparedIrValue(decodeValue(parseEnvelope(text), "program", new Map()));
   assertPreparedIrProgramShape(decoded);
-  const reencoded = encodePreparedIrProgram(decoded);
+  const reencoded = encodePreparedIrProgramData(decoded);
   if (reencoded !== text) {
     const at = firstDifference(text, reencoded);
     return invalid(`encoded program is not canonical (first difference at byte ${at}); refusing non-canonical input`);
@@ -397,6 +413,7 @@ function firstDifference(left: string, right: string): number {
  * joins in place of the persisted clones. A's complete validator runs last.
  */
 export function reauthenticatePreparedIrProgram(persisted: PreparedIrProgram): PreparedIrProgram {
+  const attached = screenPreparedIrLinearAllocationEntry(persisted, false);
   assertPreparedIrProgramShape(persisted);
   const demands = new Map(persisted.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)]));
   const runtime: PreparedIrProgramRuntimeProjection[] = [];
@@ -439,6 +456,7 @@ export function reauthenticatePreparedIrProgram(persisted: PreparedIrProgram): P
     derivedUnits: persisted.derivedUnits,
     startup: persisted.startup,
     allocations: persisted.allocations,
+    ...(attached ? { linearAllocationFacts: persisted.linearAllocationFacts! } : {}),
     ...(persisted.sourceMap === undefined ? {} : { sourceMap: persisted.sourceMap }),
     ...(persisted.runtimeSupport === undefined ? {} : { runtimeSupport: persisted.runtimeSupport }),
     runtime: Object.freeze(runtime),
@@ -491,6 +509,44 @@ function requireMap(value: unknown, path: string): ReadonlyMap<unknown, unknown>
   return value;
 }
 
+/** Validate only persisted attachment DATA and body joins; this issues no preparation or layout authority. */
+function assertCodecLinearAllocationFacts(program: PreparedIrProgram): void {
+  if (!Object.hasOwn(program, "linearAllocationFacts")) return;
+  const attachment = requireRecord(program.linearAllocationFacts, "program.linearAllocationFacts");
+  if (
+    !Object.hasOwn(attachment, "schema") ||
+    !Object.hasOwn(attachment, "facts") ||
+    Reflect.ownKeys(attachment).length !== 2 ||
+    attachment.schema !== "linear-allocation-facts-v1"
+  )
+    invalid("linear allocation facts have unknown schema or fields");
+  const facts = requireRecord(attachment.facts, "program.linearAllocationFacts.facts");
+  if (Reflect.ownKeys(facts).length !== 2 || !Object.hasOwn(facts, "registry") || !Object.hasOwn(facts, "allocations"))
+    invalid("linear allocation facts have missing or unknown fields");
+  requireArray(facts.allocations, "program.linearAllocationFacts.facts.allocations");
+  const mismatch = preparedIrDataMismatch(program.allocations, facts.registry);
+  if (mismatch !== undefined) invalid(`linear allocation facts registry differs from final registry at ${mismatch}`);
+  const support = irRuntimeSupportFunctions(program.runtimeSupport);
+  const bodies = [
+    program.ir.functions,
+    ...program.runtime
+      .filter((projection) => projection.backend === "linear")
+      .map((projection) => projection.prepared.functions),
+  ];
+  for (const functions of bodies) {
+    try {
+      verifyLinearPreparedAllocationFacts(
+        { ...program.ir, functions: [...functions, ...support] },
+        program.linearAllocationFacts!.facts,
+      );
+    } catch (error) {
+      invalid(
+        `linear allocation population or evidence differs: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
 /**
  * Structural contract of `PreparedIrProgram` as published by package A —
  * container kinds, discriminators and the joins a codec must see before it can
@@ -499,6 +555,8 @@ function requireMap(value: unknown, path: string): ReadonlyMap<unknown, unknown>
  * which `reauthenticatePreparedIrProgram` and the consumer run afterwards.
  */
 export function assertPreparedIrProgramShape(value: unknown): asserts value is PreparedIrProgram {
+  if (value !== null && typeof value === "object")
+    screenPreparedIrLinearAllocationEntry(value as PreparedIrProgram, false);
   const program = requireRecord(value, "program");
   if (program.schema !== PREPARED_IR_PROGRAM_SCHEMA) {
     return invalid(`program.schema must be ${PREPARED_IR_PROGRAM_SCHEMA}, got ${String(program.schema)}`);
@@ -596,7 +654,7 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     if (typeof record.sourceId !== "string" || !sourceIds.has(record.sourceId)) {
       return invalid(`program.startup[${index}] names source ${String(record.sourceId)} absent from the inventory`);
     }
-    if (typeof record.executable !== "boolean") return invalid(`program.startup[${index}].executable must be boolean`);
+    assertPreparedStartupInvocation(record);
     requireArray(record.evaluations, `program.startup[${index}].evaluations`);
   }
 
@@ -624,5 +682,6 @@ export function assertPreparedIrProgramShape(value: unknown): asserts value is P
     }
     requireMap(prepared.providers, `program.runtime[${index}].prepared.providers`);
   }
+  assertCodecLinearAllocationFacts(value as PreparedIrProgram);
   if (Object.hasOwn(program, "sourceMap")) assertPreparedSourceMap(value as PreparedIrProgram);
 }

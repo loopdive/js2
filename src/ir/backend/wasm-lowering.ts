@@ -26,7 +26,7 @@ export function wasmValueTypeConverter(
 ): TypeConverter<ValType> {
   return {
     backend,
-    convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName)],
+    convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName, backend)],
   };
 }
 

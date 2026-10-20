@@ -1,3 +1,5 @@
+import { collectIrUses } from "./backend/instruction-uses.js";
+import { emitNativeGlobalRead } from "./backend/native-global-read.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // IR → Wasm emission pass.
@@ -47,7 +49,12 @@ import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backe
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
-import type { IrVecLowering } from "./backend/handles.js";
+import {
+  type IrVecRepresentation,
+  preflightIrVecRepresentation,
+  resolveIrVecRepresentation,
+} from "./backend/vector-representation.js";
+import { emitVectorElementAccess } from "./backend/vector-element-access.js";
 import {
   emitWasmInt32Coercion,
   emitWasmMathClz32,
@@ -266,7 +273,9 @@ export function lowerIrFunctionBody<S, Slot>(
       `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
     );
   }
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver);
+  const nativeNumberUndefined = resolver.resolveNativeNumberUndefined?.(func);
+  nativeNumberUndefined?.assertFunction(func);
+  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver, nativeNumberUndefined?.admission);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(
@@ -337,6 +346,8 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
+  // #6920: every composite type question uses the active backend's representation.
+  const toValType = (t: IrType): ValType => lowerIrTypeToValType(t, resolver, func.name, emitter.backend);
   /**
    * IrType of an SSA value — looks up params first, then the defining instr's
    * resultType. Used by `box` / `unbox` / `tag.test` lowering to find the
@@ -731,7 +742,7 @@ export function lowerIrFunctionBody<S, Slot>(
       const idx = func.params.length + locals.length;
       locals.push({
         name: `$ir${instr.result}`,
-        type: lowerIrTypeToValType(instr.resultType, resolver, func.name),
+        type: toValType(instr.resultType),
         logicalType: instr.resultType,
       });
       localIdx.set(instr.result, idx);
@@ -840,18 +851,18 @@ export function lowerIrFunctionBody<S, Slot>(
   // first await in the function; reused across subsequent awaits.
   let awaitScratchPromiseIdx: number | null = null;
   let rejectedScratchPromiseIdx: number | null = null;
-  // #1804 — scratch locals for `vec.new_fixed`: one per (array typeIdx) to stash
-  // the `array.new_fixed` data ref while the length is pushed below it for the
-  // (length, data) struct.new field order. Keyed by arrayTypeIdx so distinct
-  // element types get distinctly-typed data locals; reused across literals.
-  const vecNewFixedDataScratch = new Map<number, number>();
-  const ensureVecDataScratch = (arrayTypeIdx: number): number => {
-    const existing = vecNewFixedDataScratch.get(arrayTypeIdx);
+  // #1804/#6920 — `vec.new_fixed` data scratch, declared with the representation's
+  // `newFixedScratchType` at first use: one `$vec_data_<arrayTypeIdx>` per GC array, one i32 on linear.
+  const vecNewFixedDataScratch = new Map<string, number>();
+  const ensureVecDataScratch = (vec: IrVecRepresentation): number => {
+    const type = vec.newFixedScratchType;
+    const key = `${vec.kind}:${type.kind}:${"typeIdx" in type ? type.typeIdx : ""}`;
+    const existing = vecNewFixedDataScratch.get(key);
     if (existing !== undefined) return existing;
     const idx = func.params.length + locals.length;
-    const type: ValType = { kind: "ref_null", typeIdx: arrayTypeIdx };
-    locals.push({ name: `$vec_data_${arrayTypeIdx}`, type, logicalType: { kind: "val", val: type } });
-    vecNewFixedDataScratch.set(arrayTypeIdx, idx);
+    const name = vec.kind === "wasmgc" ? `$vec_data_${vec.lowering.arrayTypeIdx}` : `$linear_vec_ptr_${locals.length}`;
+    locals.push({ name, type, logicalType: { kind: "val", val: type } });
+    vecNewFixedDataScratch.set(key, idx);
     return idx;
   };
   const vecElementScratch = new Map<string, number>();
@@ -947,28 +958,12 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   };
 
-  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecLowering | null => {
-    if (type.kind === "vec") {
-      const elementValType = lowerIrTypeToValType(type.elementType, resolver, func.name);
-      if (type.layout) {
-        return {
-          valueType: {
-            kind: type.nullable ? "ref_null" : "ref",
-            typeIdx: resolver.resolveType(type.layout.carrierType),
-          },
-          vecStructTypeIdx: resolver.resolveType(type.layout.carrierType),
-          lengthFieldIdx: type.layout.lengthFieldIndex,
-          dataFieldIdx: type.layout.dataFieldIndex,
-          arrayTypeIdx: resolver.resolveType(type.layout.dataType),
-          elementValType,
-        };
-      }
-      // Transitional IR fixtures may predate final Program-ABI preparation.
-      // Production prepared components fail closed on the missing layout.
-      return resolver.resolveVecForElement?.(elementValType, alloc) ?? null;
-    }
-    const valType = asVal(type);
-    return valType ? (resolver.resolveVec?.(valType) ?? null) : null;
+  // #6920: one representation for `emitter.backend`; the preflight runs before element conversion.
+  const resolveVecType = (type: IrType, alloc?: AllocSiteId): IrVecRepresentation | null => {
+    if (preflightIrVecRepresentation(emitter.backend, type, func.name) === null) return null;
+    const request = { backend: emitter.backend, type, alloc, resolver, where: func.name };
+    const elementValType = type.kind === "vec" ? toValType(type.elementType) : undefined;
+    return resolveIrVecRepresentation({ ...request, elementValType }, "operation");
   };
 
   // #3733 — best-effort constant-value peek, same defensive shape as
@@ -1041,6 +1036,18 @@ export function lowerIrFunctionBody<S, Slot>(
     locals.push({ name: `${name}_${idx}`, type, logicalType: { kind: "val", val: type } });
     return idx;
   };
+
+  function vectorElementAccessContext(instr: Extract<IrInstr, { kind: "vec.get" | "vec.set" }>) {
+    return {
+      emitter,
+      emitValue,
+      construction: defBy.get(instr.vec),
+      requestedCapacity: resolver.requestedVectorCapacity?.(func.unitId, instr.vec),
+      indexScratch: () => allocScratchLocal("$vec_access_index", { kind: "i32" }),
+      receiverScratch: (type: ValType) => allocScratchLocal("$vec_access_receiver", type),
+      elementScratch: ensureVecElementScratch,
+    };
+  }
 
   /**
    * Emit a nested buffer as a statement sequence with the standard SSA
@@ -1197,6 +1204,31 @@ export function lowerIrFunctionBody<S, Slot>(
   const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
 
   const emitInstrTree = (instr: IrInstr, out: S): void => {
+    if (nativeNumberUndefined?.owns(instr)) {
+      const values =
+        instr.kind === "box" || instr.kind === "tag.test" || instr.kind === "dyn.to_number"
+          ? [instr.value]
+          : instr.kind === "dyn.eq"
+            ? [instr.lhs, instr.rhs]
+            : [];
+      const operands = values.map((value) => {
+        const sink = emitter.newSink();
+        emitValue(value, sink);
+        return requireInstrSink(sink);
+      });
+      const scratch = (type: ValType): number => {
+        const index = func.params.length + locals.length;
+        locals.push({
+          name: "$native_number_undefined_" + index,
+          type,
+          logicalType: { kind: "val", val: type },
+        });
+        return index;
+      };
+      // pushraw-ok(#6920): exact checked native occurrence emits only its issued carrier recipe.
+      for (const op of nativeNumberUndefined.emit(instr, operands, scratch)) emitter.pushRaw(out, op);
+      return;
+    }
     switch (instr.kind) {
       case "const": {
         // (#5166) `const null` carries a SEMANTIC result type, but every
@@ -1212,7 +1244,7 @@ export function lowerIrFunctionBody<S, Slot>(
         // result type reaches the emitter exactly as it did before.
         const nullVecType =
           instr.value.kind === "null" && instr.resultType?.kind === "vec"
-            ? ({ kind: "val", val: lowerIrTypeToValType(instr.resultType, resolver, func.name) } as IrType)
+            ? ({ kind: "val", val: toValType(instr.resultType) } as IrType)
             : null;
         emitter.emitConst(nullVecType ? { ...instr, resultType: nullVecType } : instr, func.name, out);
         return;
@@ -1410,7 +1442,7 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "global.get":
-        emitter.emitGlobalGet(resolver.resolveGlobal(instr.target), out);
+        emitNativeGlobalRead(instr, emitter, resolver, out);
         return;
       case "global.set":
         emitValue(instr.value, out);
@@ -1564,7 +1596,7 @@ export function lowerIrFunctionBody<S, Slot>(
         if (instr.resultType === null) {
           throw new Error(`ir/lower: IrInstrIf without resultType (${func.name})`);
         }
-        const armResultType = lowerIrTypeToValType(instr.resultType, resolver, func.name);
+        const armResultType = toValType(instr.resultType);
         const blockType: BlockType = { kind: "val", type: armResultType };
 
         // Helper: emit a body buffer using the same SSA-materialisation
@@ -1656,7 +1688,7 @@ export function lowerIrFunctionBody<S, Slot>(
             // Verifier R1 backstop — a re-box is provably redundant.
             throw new Error(`ir/lower: box operand is already dynamic (${func.name})`);
           }
-          const fromVal = lowerIrTypeToValType(operandIr, resolver, func.name);
+          const fromVal = toValType(operandIr);
           emitValue(instr.value, out);
           // The target's tag refinement (if the producer proved a partition)
           // becomes the boxing hint — e.g. a Boolean-refined i32 boxes as a
@@ -2317,29 +2349,16 @@ export function lowerIrFunctionBody<S, Slot>(
         const vec = resolveVecType(typeOf(instr.vec));
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.len (${func.name})`);
         emitValue(instr.vec, out);
-        emitter.emitVecLen(vec, out);
+        emitter.emitVecLen(vec.lowering, out);
         // JS length is f64; certified internal counted loops retain the physical i32.
         if (instr.integer !== true) emitter.emitUnary("f64.convert_i32_s", out);
         return;
       }
-      case "vec.get": {
-        const vec = resolveVecType(typeOf(instr.vec));
-        if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.get (${func.name})`);
-        // Stack: dataArray, index → element
-        emitValue(instr.vec, out);
-        emitter.emitVecDataPtr(vec, out);
-        emitValue(instr.index, out);
-        emitter.emitElemGet(vec, out);
-        return;
-      }
+      case "vec.get":
       case "vec.set": {
         const vec = resolveVecType(typeOf(instr.vec));
-        if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set (${func.name})`);
-        emitValue(instr.vec, out);
-        emitter.emitVecDataPtr(vec, out);
-        emitValue(instr.index, out);
-        emitValue(instr.newValue, out);
-        emitter.emitElemSet(vec, ensureVecElementScratch(vec.elementValType), out);
+        if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for ${instr.kind} (${func.name})`);
+        emitVectorElementAccess(instr, vec, vectorElementAccessContext(instr), out);
         return;
       }
       case "vec.set_length": {
@@ -2347,12 +2366,12 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!vec) throw new Error(`ir/lower: resolver cannot lower vec for vec.set_length (${func.name})`);
         emitValue(instr.vec, out);
         emitValue(instr.length, out);
-        emitter.emitVecSetLength(vec, out);
+        emitter.emitVecSetLength(vec.lowering, out);
         return;
       }
       case "vec.new_fixed": {
         // #1804 — build a fixed-length vec from its element SSA values.
-        lowerIrTypeToValType(instr.elementType, resolver, func.name);
+        toValType(instr.elementType);
         const vec = resolveVecType(
           instr.resultType ?? { kind: "vec", elementType: instr.elementType, nullable: false },
           instr.alloc,
@@ -2364,8 +2383,8 @@ export function lowerIrFunctionBody<S, Slot>(
         // wrap in the vec struct via a scratch local for the (length, data)
         // field order.
         for (const el of instr.elements) emitValue(el, out);
-        const dataScratch = ensureVecDataScratch(vec.arrayTypeIdx);
-        emitter.emitVecNewFixed(vec, instr.elements.length, instr.capacity ?? instr.elements.length, dataScratch, out);
+        const capacity = instr.capacity ?? instr.elements.length;
+        emitter.emitVecNewFixed(vec.lowering, instr.elements.length, capacity, ensureVecDataScratch(vec), out);
         return;
       }
       // Slice 7a/7b (#1169f): generator ops.
@@ -2531,12 +2550,12 @@ export function lowerIrFunctionBody<S, Slot>(
 
         // length = vec.length
         wasmOut.push({ op: "local.get", index: slotWasmIdx(instr.vecSlot) });
-        emitter.emitVecLen(vec, out);
+        emitter.emitVecLen(vec.lowering, out);
         wasmOut.push({ op: "local.set", index: slotWasmIdx(instr.lengthSlot) });
 
         // data = vec.data
         wasmOut.push({ op: "local.get", index: slotWasmIdx(instr.vecSlot) });
-        emitter.emitVecDataPtr(vec, out);
+        emitter.emitVecDataPtr(vec.lowering, out);
         wasmOut.push({ op: "local.set", index: slotWasmIdx(instr.dataSlot) });
 
         // counter = 0
@@ -2578,7 +2597,7 @@ export function lowerIrFunctionBody<S, Slot>(
         });
         // `loopBody` is an Instr[] sub-buffer; the arm has asserted S = Instr[]
         // (via requireInstrSink) so the cast to S is sound (#1584 §2a).
-        emitter.emitElemGet(vec, loopBody as unknown as S);
+        emitter.emitElemGet(vec.lowering, loopBody as unknown as S);
         loopBody.push({
           op: "local.set",
           index: slotWasmIdx(instr.elementSlot),
@@ -3680,220 +3699,6 @@ export function lowerIrFunctionBody<S, Slot>(
   };
 }
 
-function collectIrUses(instr: IrInstr): readonly IrValueId[] {
-  switch (instr.kind) {
-    case "const":
-      return [];
-    case "call":
-      return instr.args;
-    case "intrinsic":
-      return instr.args;
-    case "global.get":
-      return [];
-    case "global.set":
-      return [instr.value];
-    case "binary":
-      return [instr.lhs, instr.rhs];
-    case "unary":
-      return [instr.rand];
-    case "select":
-      return [instr.condition, instr.whenTrue, instr.whenFalse];
-    case "if":
-      // (#1392) Surface only the cond at top level. Arm-buffer uses of
-      // OUTER SSA values are surfaced separately via collectForOfBodyUses
-      // so the cross-block / multi-use counters properly materialise
-      // them in Wasm locals before the if-instr emits.
-      return [instr.cond];
-    case "raw.wasm":
-      return [];
-    case "box":
-    case "unbox":
-    case "tag.test":
-    case "dyn.truthy":
-    case "dyn.to_number":
-      return [instr.value];
-    case "dyn.eq":
-      return [instr.lhs, instr.rhs];
-    case "dyn.member_get":
-      return [instr.recv, instr.key];
-    case "dyn.member_set":
-      return [instr.recv, instr.key, instr.value];
-    case "string.const":
-      return [];
-    case "string.concat":
-    case "string.eq":
-      return [instr.lhs, instr.rhs];
-    case "string.repeat":
-      return [instr.value, instr.count];
-    case "string.len":
-      return [instr.value];
-    case "string.char_at":
-    case "string.char_code_at":
-      return [instr.value, instr.index];
-    case "fnctor.new":
-      return [
-        ...instr.captureArgs,
-        ...instr.args,
-        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
-      ];
-    case "fnctor.get":
-      return [instr.value];
-    case "object.new":
-      return instr.values;
-    case "object.get":
-      return [instr.value];
-    case "object.set":
-      return [instr.value, instr.newValue];
-    // Slice 3 (#1169c): closure / ref-cell ops.
-    case "closure.new":
-      return instr.captures;
-    case "closure.cap":
-      return [instr.self];
-    case "closure.call":
-      // INTENTIONAL DOUBLE COUNT for `callee`: the Wasm emission pattern
-      // pushes the closure value twice (once as the implicit __self
-      // argument, once as the source of the funcref struct.get). The
-      // use-counter must see TWO uses so the closure value gets a Wasm
-      // local — otherwise we'd re-emit the (potentially side-effecting)
-      // closure subtree. The verifier's collectUses counts it ONCE
-      // because that's a pure SSA def→use relationship.
-      return [instr.callee, ...instr.args, instr.callee];
-    case "refcell.new":
-      return [instr.value];
-    case "refcell.get":
-      return [instr.cell];
-    case "refcell.set":
-      return [instr.cell, instr.value];
-    // Slice 4 (#1169d): class ops.
-    case "class.new":
-      return instr.args;
-    case "class.get":
-      return [instr.value];
-    case "class.set":
-      return [instr.value, instr.newValue];
-    case "class.call":
-      return [instr.receiver, ...instr.args];
-    case "class.super_init":
-      return [...instr.args, instr.self];
-    case "class.super_call":
-      return [instr.receiver, ...instr.args];
-    case "class.instanceof":
-      return [instr.value];
-    case "class.static_call":
-      return instr.args;
-    // Slice 6 (#1169e): slot / vec / for-of ops.
-    case "slot.read":
-      return [];
-    case "slot.write":
-      return [instr.value];
-    case "vec.len":
-      return [instr.vec];
-    case "vec.get":
-      return [instr.vec, instr.index];
-    case "vec.set":
-      return [instr.vec, instr.index, instr.newValue];
-    case "vec.set_length":
-      return [instr.vec, instr.length];
-    case "vec.new_fixed":
-      return instr.elements; // #1804
-    case "forof.vec":
-      // Body uses are collected separately and merged in by
-      // `lowerIrFunctionToWasm`.
-      return [instr.vec];
-    // Slice 6 part 3 (#1182) — coercion + iterator protocol ops.
-    case "coerce.to_externref":
-      return [instr.value];
-    case "iter.new":
-      return [instr.iterable];
-    case "iter.next":
-      return [instr.iter];
-    case "iter.done":
-      return [instr.resultObj];
-    case "iter.value":
-      return [instr.resultObj];
-    case "iter.return":
-      return [instr.iter];
-    case "forof.iter":
-      // Same rationale as forof.vec — body uses surfaced separately.
-      return [instr.iterable];
-    // Slice 7a (#1169f): generator ops.
-    case "gen.push":
-      return [instr.value];
-    case "gen.epilogue":
-      // No SSA operand uses — buffer + pendingThrow are read from Wasm
-      // locals (slot indices stored on the IrFunction).
-      return [];
-    // Slice 7b (#1169f): yield* delegation.
-    case "gen.yieldStar":
-      return [instr.inner];
-    // #2951 — generator `return <value>` stash.
-    case "gen.setReturn":
-      return [instr.value];
-    // Slice 6 part 4 (#1183) — string for-of.
-    case "forof.string":
-      return [instr.str];
-    // Slice 9 (#1169h) — exception handling.
-    case "throw":
-      return [instr.value];
-    case "try":
-      // Body / catch / finally buffer uses are surfaced separately via
-      // `collectForOfBodyUses` (recurses into try buffers).
-      return [];
-    // Slice 10 (#1169i) — extern class ops.
-    case "extern.new":
-      return instr.args;
-    case "extern.call":
-      return [instr.receiver, ...instr.args];
-    case "extern.prop":
-      return [instr.receiver];
-    case "extern.propSet":
-      return [instr.receiver, instr.value];
-    case "extern.regex":
-      return [];
-    // Slice 12 (#1280) — generic structured loops. Body / cond / update
-    // buffer uses are surfaced separately via `collectForOfBodyUses`.
-    case "while.loop":
-    case "for.loop":
-      return [];
-    // #2952 slice 2 — br.label has no SSA operands; if.stmt surfaces only
-    // its cond (arm-buffer uses via `collectForOfBodyUses`, like `if`).
-    case "br.label":
-      return [];
-    case "if.stmt":
-      return [instr.cond];
-    // #2952 slice 4 — labeled.block has no operands; switch surfaces its
-    // disc (clause-buffer uses via `collectForOfBodyUses`).
-    case "labeled.block":
-      return [];
-    case "switch":
-      return [instr.disc];
-    // (#1373 Phase B) Async / await IR nodes — type-only in this slice.
-    // The lowering Phase C (#1373b) will inflate these into CPS-form
-    // microtask-queue calls; until then they're never emitted by
-    // from-ast and never reach the lowerer.
-    case "await":
-      return [instr.operand];
-    case "async.return":
-      return [instr.value];
-    case "async.throw":
-      return [instr.reason];
-    // (#2856) Early return — the optional return value is a direct use.
-    case "early.return":
-      return instr.value !== null ? [instr.value] : [];
-    // (#4070) Exhaustiveness gate. Under-reporting an instruction's uses would
-    // corrupt the lowerer's use accounting (which decides what gets a Wasm
-    // local), so the runtime arm throws rather than returning `[]`.
-    default: {
-      const _exhaustive: never = instr;
-      void _exhaustive;
-      // invariant (producer-promise): see emitInstrTree's twin above.
-      throw new Error(
-        `ir/lower: collectIrUses has no case for IR instruction kind ${(instr as { readonly kind: string }).kind}`,
-      );
-    }
-  }
-}
-
 /**
  * #2952 slice 2 — does `body` (deeply) contain a `br.label` with the given
  * label + mode? Used by the loop-lowering arms to decide whether to emit the
@@ -3989,7 +3794,13 @@ function memberValType(t: IrType, funcName: string): ValType {
   return v;
 }
 
-export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcName: string): ValType {
+/** `backend` selects the vector representation (#6920); the default serves the WasmGC-only registries. */
+export function lowerIrTypeToValType(
+  t: IrType,
+  resolver: IrLowerResolver,
+  funcName: string,
+  backend: IrBackendKind = "wasmgc",
+): ValType {
   if (t.kind === "support-ref") {
     const typeIdx = resolver.resolveType(t.ref);
     if (!Number.isSafeInteger(typeIdx) || typeIdx < 0)
@@ -4015,16 +3826,15 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     return sty;
   }
   if (t.kind === "vec") {
-    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName);
-    if (t.layout) {
-      return {
-        kind: t.nullable ? "ref_null" : "ref",
-        typeIdx: resolver.resolveType(t.layout.carrierType),
-      };
-    }
-    const vec = resolver.resolveVecForElement?.(elementValType);
-    if (!vec) throw new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
-    return vec.valueType ?? { kind: t.nullable ? "ref_null" : "ref", typeIdx: vec.vecStructTypeIdx };
+    const missing = () => new Error(`ir/lower: resolver cannot lower vec IrType (${funcName})`);
+    if (preflightIrVecRepresentation(backend, t, funcName) === null) throw missing();
+    const elementValType = lowerIrTypeToValType(t.elementType, resolver, funcName, backend);
+    const carrier = resolveIrVecRepresentation(
+      { backend, type: t, elementValType, resolver, where: funcName },
+      "carrier",
+    );
+    if (!carrier) throw missing();
+    return carrier.valueType;
   }
   if (t.kind === "object") {
     // Object IrTypes always lower to a (ref $struct) — mutability of the

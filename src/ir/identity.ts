@@ -130,6 +130,8 @@ export interface IrNestedClassFieldCallInventoryCandidate {
 type PendingIrNestedClassFieldCallInventoryCandidate = Omit<IrNestedClassFieldCallInventoryCandidate, "inventory">;
 
 export interface BuildIrUnitInventoryOptions {
+  /** Original constructors are callable bodies in a complete native source program. */
+  readonly wholeProgramClassConstructors?: boolean;
   /** Marks the entry explicitly without deriving it from caller insertion order. */
   readonly entrySource?: ts.SourceFile | string;
   /** Compiler-owned provenance; user spellings never classify a node as injected. */
@@ -1201,7 +1203,10 @@ class SourceInventoryBuilder {
       directNestedClass &&
       !hasExecutableConstructor &&
       (isBoundedPreparedNestedOrdinaryClass(node) || fieldCallInventoryCandidate);
-    if (!hasExecutableConstructor && firstInstanceInitializer) {
+    if (
+      !hasExecutableConstructor &&
+      (firstInstanceInitializer || (this.options.wholeProgramClassConstructors && !hasDeclareModifier(node)))
+    ) {
       explicitConstructor =
         topLevelDeclaration || promoteNestedImplicitInitializer
           ? this.addTerminalUnit(

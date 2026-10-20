@@ -10,19 +10,8 @@
 // The Rust-borrow-checker framing is deliberately disclaimed: "ownership" here
 // is a discovered classification, never a rejected program property.
 
-/**
- * Ownership state — a totally ordered lattice from most-precise (`owned`) to
- * most-permissive (`escaped`). Higher = more conservative = safer default.
- *
- *   owned  ⊑ borrowed ⊑ shared ⊑ escaped
- *
- * - `owned`    — exactly one live reference (this one) for its liveness.
- * - `borrowed` — referenced elsewhere; this ref must not deallocate/invalidate.
- * - `shared`   — multiple references; mutation must be observable to all.
- * - `escaped`  — lifetime extends beyond this function (return, capture,
- *                store-to-heap, pass to opaque code).
- */
-export type Ownership = "owned" | "borrowed" | "shared" | "escaped";
+import type { Ownership } from "./contracts/allocations.js";
+export type { Ownership } from "./contracts/allocations.js";
 
 /** Lattice rank — index into the total order. Lower = more precise. */
 const OWNERSHIP_RANK: Readonly<Record<Ownership, number>> = {

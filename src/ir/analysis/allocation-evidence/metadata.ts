@@ -1,11 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ALLOC_NAMESPACES } from "../alloc-registry.js";
-import type { AllocRegistrySnapshot } from "../contracts/allocations.js";
-import type { EscapeClass } from "../escape.js";
-import { AccessSet, type Ownership } from "../lattice.js";
-import type { AllocSiteId } from "../../core/nodes.js";
+import { ALLOC_NAMESPACES } from "../contracts/allocations.js";
+import type { AllocRegistrySnapshot, EscapeClass, Ownership } from "../contracts/allocations.js";
 import type { IrStringEncoding } from "../../core/string-types.js";
+import { AccessSet } from "../lattice.js";
+import type { AllocSiteId } from "../../core/nodes.js";
 import type { AllocationEvidenceCapture } from "./census.js";
 import type { AllocationEvidenceFailure, AllocationEvidenceNamespaceMode } from "./contracts.js";
 

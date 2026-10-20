@@ -56,8 +56,23 @@ import { createRequire } from "node:module";
 // The frontend leaf uses default-import + named-export because TypeScript
 // ships an `export = ts` declaration. Re-export its exact binding here to retain
 // both value and namespace access for existing callers.
-import { ts } from "./frontend/typescript.js";
+import { ts } from "./frontend/program-origin.js";
 export { ts };
+// Finite source-origin APIs stay behind this existing frontend wrapper boundary.
+export {
+  createOriginProgram,
+  createOriginLanguageService,
+  originTypeChecker,
+  assertCurrentProgramSources,
+  invalidateCompilerLibraryOrigins,
+  compilerLibraryEpoch,
+} from "./frontend/program-origin.js";
+export {
+  traceTs5Checker,
+  readTs5CheckerTrace,
+  resetTs5CheckerTrace,
+  type Ts5TraceReport,
+} from "./frontend/program-origin.js";
 
 type CjsRequire = (id: string) => unknown;
 

@@ -31,17 +31,8 @@ import { allocationEvidenceRule } from "./allocation-evidence/effect-rules.js";
 import type { IrFunction, IrInstr, IrTerminator, IrValueId } from "../core/nodes.js";
 import { analyzeOwnership, type OwnershipResult } from "./ownership.js";
 
-/**
- * How an allocation escapes its defining function. Ordered most-precise →
- * most-conservative; `local` is the only stack-allocatable classification.
- */
-export type EscapeClass = "local" | "returned" | "stored" | "captured" | "opaque";
-
-export interface EscapeInfo {
-  readonly classification: EscapeClass;
-  /** True iff `classification === "local"` — safe for scalar replacement. */
-  readonly stackAllocatable: boolean;
-}
+import type { EscapeClass, EscapeInfo } from "./contracts/allocations.js";
+export type { EscapeClass, EscapeInfo } from "./contracts/allocations.js";
 
 /** Severity order — a value flowing through several escape edges takes the max. */
 const ESCAPE_RANK: Readonly<Record<EscapeClass, number>> = {

@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { nativeStringTypeKeys } from "../../../shared/contracts/native-string-resource-keys.js";
+import { preparedIrDataMismatch } from "../../../shared/contracts/prepared-ir-data.js";
 
 import type {
   PhysicalModuleReservations,
@@ -36,17 +38,7 @@ import {
   nativeScalarTypeDeclaration,
 } from "./native-resource-declarations.js";
 
-export function nativeStringTypeKeys(key: string) {
-  return {
-    data: `${key}:data`,
-    any: `${key}:any`,
-    flat: `${key}:flat`,
-    cons: `${key}:cons`,
-    hashed: `${key}:hashed`,
-    utf8Data: `${key}:utf8-data`,
-    utf8: `${key}:utf8`,
-  } as const;
-}
+export { nativeStringTypeKeys } from "../../../shared/contracts/native-string-resource-keys.js";
 export function declareNativeStringLiteralTypes(key: string, utf8Storage: boolean): NativeResourceRecipe {
   if (typeof key !== "string" || !key || typeof utf8Storage !== "boolean")
     throw new Error("native strings: invalid type recipe key/config");
@@ -410,6 +402,25 @@ export function requireCompletedNativeStringLiterals(
     ...owner.functions.map((row) => row.token),
   ]);
   return pack;
+}
+
+/** Prove the actual short global against this producer's canonical literal recipe. */
+export function nativeStringLiteralGlobalMatches(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralReservations,
+  text: string,
+  utf8Storage: boolean,
+): boolean {
+  const owner = authenticateLiteralOwner(tx, pack);
+  requireCompletedNativeStringLiterals(tx, pack);
+  const literal = requireNativeStringLiteral(tx, pack, text);
+  const canonical = planNativeStringLiteral(pack.layout, utf8Storage, text);
+  return (
+    owner.utf8Storage === utf8Storage &&
+    literal.kind === "global" &&
+    canonical.kind === "global" &&
+    preparedIrDataMismatch(literal.global.object.init, canonical.init) === undefined
+  );
 }
 
 export function fillNativeStringLiteralResources(

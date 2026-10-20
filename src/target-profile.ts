@@ -11,30 +11,34 @@
 
 import { readEnv } from "./env.js";
 
-export type CompileTarget = "gc" | "linear" | "wasi" | "standalone";
-export type CompileBackend = "wasmgc" | "linear";
-export type CompileEnvironment = "javascript" | "wasi" | "none" | "unknown";
-export type CapabilityPolicy = "ambient-js" | "explicit-only" | "backend-defined";
-/**
- * Public semantic-provider spelling (#6708 S6). `"native-first"` is the
- * default in every environment; `"host-assisted"` is the compatibility
- * profile (byte-identical to the pre-S6 `gc` default), scheduled for removal
- * in S7; `"auto"` is a deprecated alias of `"native-first"`.
- */
-export type SemanticProviderSelection = "native-first" | "host-assisted" | "auto";
-export type SemanticProviderPolicy = "host-assisted" | "native-first" | "backend-defined";
-export type HostValueInteropPolicy = "required" | "enabled" | "off";
-export type AmbientPlatform = "node" | "deno";
-
-/**
- * (#6978) Named host accelerators for the native semantic regime. Each family
- * keeps its native provider as the default; selecting one swaps in the JS
- * host's implementation for that family only. The 2026-09-07 stakeholder
- * constraint names exactly these four (`wasm:js-string` strings, host RegExp,
- * Date and Intl); everything else host-semantic retires in S7 (#5385).
- */
-export const HOST_ACCELERATOR_FAMILIES = ["js-string", "regexp", "date", "intl"] as const;
-export type HostAcceleratorFamily = (typeof HOST_ACCELERATOR_FAMILIES)[number];
+import type { CompileTarget } from "./shared/contracts/compile-target.js";
+export type { CompileTarget } from "./shared/contracts/compile-target.js";
+import type {
+  CompileBackend,
+  CompileEnvironment,
+  CapabilityPolicy,
+  SemanticProviderSelection,
+  SemanticProviderPolicy,
+  HostValueInteropPolicy,
+  AmbientPlatform,
+  TargetProfileInput,
+  CompileTargetProfile,
+  HostAcceleratorFamily,
+} from "./shared/contracts/compile-target-policy.js";
+export type {
+  CompileBackend,
+  CompileEnvironment,
+  CapabilityPolicy,
+  SemanticProviderSelection,
+  SemanticProviderPolicy,
+  HostValueInteropPolicy,
+  AmbientPlatform,
+  TargetProfileInput,
+  CompileTargetProfile,
+  HostAcceleratorFamily,
+} from "./shared/contracts/compile-target-policy.js";
+import { HOST_ACCELERATOR_FAMILIES } from "./shared/contracts/compile-target-policy.js";
+export { HOST_ACCELERATOR_FAMILIES } from "./shared/contracts/compile-target-policy.js";
 
 export function ambientPlatformOf(input: {
   platform?: "web" | "node" | "deno";
@@ -42,65 +46,6 @@ export function ambientPlatformOf(input: {
 }): AmbientPlatform | undefined {
   if (input.platform === "deno") return "deno";
   return input.emulateNode === true || input.platform === "node" ? "node" : undefined;
-}
-
-export interface TargetProfileInput {
-  readonly target?: CompileTarget;
-  readonly ambientPlatform?: AmbientPlatform;
-  readonly platform?: "web" | "node" | "deno";
-  readonly emulateNode?: boolean;
-  /** Internal CodegenOptions compatibility projection. Public callers use target. */
-  readonly wasi?: boolean;
-  /** Internal CodegenOptions compatibility projection. Public callers use target. */
-  readonly standalone?: boolean;
-  readonly strictNoHostImports?: boolean;
-  /** Select migrated Wasm-native semantic families independently of the host. */
-  readonly semanticProviders?: SemanticProviderSelection;
-  /**
-   * Rejects a contradictory explicit native-first request; with no explicit
-   * selection, `false` keeps the pre-S6 host-assisted profile (deprecated).
-   */
-  readonly nativeStrings?: boolean;
-  readonly hostBridge?: "auto" | "always" | "off";
-  /** (#6978) Named host accelerators; validated by `resolveHostAccelerators`. */
-  readonly hostAccelerators?: readonly string[];
-}
-
-/**
- * Immutable policy facts derived from the current compatibility options.
- *
- * `strictEnvImportGate` deliberately records the existing low-level gate; it
- * is not treated as a synonym for `semanticProviders` or `hostValueInterop`.
- * In particular, standalone currently has its own no-host enforcement while
- * the legacy strict-env gate remains false, and a strict GC build still keeps
- * its JS value bridge by default.
- */
-export interface CompileTargetProfile {
-  readonly target: CompileTarget;
-  readonly backend: CompileBackend;
-  readonly environment: CompileEnvironment;
-  readonly capabilityPolicy: CapabilityPolicy;
-  readonly semanticProviders: SemanticProviderPolicy;
-  readonly hostValueInterop: HostValueInteropPolicy;
-  readonly strictEnvImportGate: boolean;
-  readonly nativeStringsRequiredByPolicy: boolean;
-  /**
-   * (#5385) Whether codegen lowers with the native semantic REGIME — the
-   * `ctx.standalone` provider arms — rather than the host-assisted one. True
-   * for the standalone target and for an explicitly selected native-first
-   * policy in a JavaScript environment. This answers "which ECMAScript
-   * implementation runs?"; `environment` / `hostValueInterop` still answer
-   * "who instantiates it and does it keep the JS value bridge?".
-   */
-  readonly nativeRegime: boolean;
-  readonly ambientPlatform?: AmbientPlatform;
-  /**
-   * (#6978) Selected host accelerators, sorted and de-duplicated. Absent when
-   * none is selected, so a default profile — and the JSON adapter manifest that
-   * embeds it — is unchanged. An array rather than a `Set` because the profile
-   * is serialized into the adapter manifest. Query with `hasHostAccelerator`.
-   */
-  readonly accelerators?: readonly HostAcceleratorFamily[];
 }
 
 /** (#6978) Whether `family` is a selected host accelerator of `profile`. */
@@ -188,7 +133,16 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     throw new Error("Conflicting codegen target projections: wasi and standalone are both enabled");
   }
   const target = input.target ?? (input.wasi ? "wasi" : input.standalone ? "standalone" : "gc");
-  const backend: CompileBackend = target === "linear" ? "linear" : "wasmgc";
+  if (input.backend !== undefined && input.backend !== "wasmgc" && input.backend !== "linear")
+    throw new Error("Unsupported compile backend");
+  if (input.backend === "linear" && target !== "linear" && target !== "standalone" && target !== "wasi")
+    throw new Error("Linear backend requires an explicit standalone or WASI target, or legacy target linear");
+  if (input.backend === "wasmgc" && target === "linear")
+    throw new Error("Compile target linear conflicts with backend wasmgc");
+  const backend: CompileBackend = input.backend ?? (target === "linear" ? "linear" : "wasmgc");
+  const nativeLinear = backend === "linear" && (target === "standalone" || target === "wasi");
+  if (nativeLinear && input.nativeStrings === false)
+    throw new Error("Native Linear backend conflicts with nativeStrings: false");
   const environment: CompileEnvironment =
     target === "gc" ? "javascript" : target === "wasi" ? "wasi" : target === "standalone" ? "none" : "unknown";
 
@@ -202,7 +156,10 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
 
   let capabilityPolicy: CapabilityPolicy;
   let semanticProviders: SemanticProviderPolicy;
-  if (target === "linear") {
+  if (nativeLinear) {
+    capabilityPolicy = "explicit-only";
+    semanticProviders = "native-first";
+  } else if (target === "linear") {
     // The legacy linear target does not itself identify its embedder/provider
     // policy. Say unknown instead of silently treating it as JS or host-free.
     capabilityPolicy = "backend-defined";

@@ -49,6 +49,9 @@ import {
   LINEAR_IR_VEC_INIT_F64_FN,
 } from "../../codegen-linear/runtime.js";
 import { linearStringLiteralInstrs } from "../../codegen-linear/string-literals.js";
+import { preflightLinearBodyBatchResources, type LinearBackendResourceDemand } from "./linear-body-batch-resources.js";
+export type { LinearBackendResourceDemand } from "./linear-body-batch-resources.js";
+import { readLinearBodyBatchExceptionTag } from "../../wasm/physical/linear-body-batch-exception-tag.js";
 import {
   authenticateLinearStringRepeatReservationReceipt,
   authenticateLinearStringRepeatProvider,
@@ -174,12 +177,12 @@ import type {
 } from "./linear-ir-coverage.js";
 import type {
   IrRefCellLowering,
-  IrVecLowering,
   LinearMemoryFieldLowering,
   LinearObjectLowering,
   LinearRefCellLowering,
   LinearVecLowering,
 } from "./handles.js";
+import { resolveIrVecRepresentation } from "./vector-representation.js";
 import { readEnv } from "../../env.js";
 
 /** One function routed to the direct path, and its stable bucketed reason. */
@@ -413,21 +416,6 @@ export function linearIrEnabled(): boolean {
   return readEnv("JS2WASM_LINEAR_IR") !== "0";
 }
 
-/**
- * Backend resources required by one already-built linear IR module.
- *
- * The names are runtime bindings, while operations/layouts/data segments stay
- * symbolic. This is deliberately a demand projection: it never assigns a
- * final linear address or discovers a new source/runtime intent.
- */
-export interface LinearBackendResourceDemand {
-  readonly runtimeFunctions: readonly string[];
-  readonly runtimeOperations: readonly LinearRuntimeOperation[];
-  readonly allocationSites: readonly AllocSiteId[];
-  readonly layoutIds: readonly string[];
-  readonly dataSegmentIds: readonly string[];
-}
-
 function linearBackendResourceInvariant(detail: string): never {
   throw new IrInvariantError(
     "selection-preparation-mismatch",
@@ -574,18 +562,19 @@ export function collectLinearBackendResourceDemand(
   });
 }
 
-/** Prove structural resources and the forwarding ABI before any body consumer. */
+/** Bind existing adapter ports to the complete physical resource preflight. */
 function preflightLinearBackendResources(ctx: LinearContext, module: IrModule, memoryPlan: LinearMemoryPlan): void {
-  const demand = collectLinearBackendResourceDemand(module, memoryPlan);
-  validateLinearBackendResourceDemand({
-    demand,
-    memoryPlan,
-    availableFunctionNames: new Set(ctx.mod.functions.map((fn) => fn.name)),
+  preflightLinearBodyBatchResources(module, ctx.mod, collectLinearBackendResourceDemand(module, memoryPlan), {
+    validateDemand: (demand) =>
+      validateLinearBackendResourceDemand({
+        demand,
+        memoryPlan,
+        availableFunctionNames: new Set(ctx.mod.functions.map((fn) => fn.name)),
+      }),
+    resolveRuntimeOperation: (operation) => resolveLinearRuntimeOperation(ctx, operation),
+    internFunctionType: (type) => internLinearFuncType(ctx, type),
+    forEachInstruction: forEachLinearIrInstruction,
   });
-  for (const operation of demand.runtimeOperations) {
-    if (operation.family === "vector" && operation.operation === "resolve-forwarding")
-      resolveLinearRuntimeOperation(ctx, operation);
-  }
 }
 
 /**
@@ -1600,22 +1589,16 @@ export function compileLinearIrFunctions(
       continue;
     }
     {
-      const main = consumed.func;
       const body = consumed.lowered;
-      const emitter = consumed.emitter as LinearEmitter;
       requireLinearOwnerPair(owner, body.name);
-      const vecScratchLocals = new Set(emitter.getVecScratchLocalIndices());
-      const wasmLocals = body.locals.flatMap((local) =>
+      // Generic lowering declared every local (including vec construction
+      // scratch) with its linear representation; flatten them verbatim.
+      const locals = body.locals.flatMap((local) =>
         local.slots.map((type, slot) => ({
           name: slot === 0 ? local.name : `${local.name}$${slot}`,
           type,
         })),
       );
-      const locals = wasmLocals.map((local, index) => {
-        const absoluteIndex = main.params.length + index;
-        if (!vecScratchLocals.has(absoluteIndex)) return local;
-        return { name: `$linear_vec_ptr_${index}`, type: { kind: "i32" as const } };
-      });
       const stackOperations = stackFrameOperations(memoryPlan, name);
       if (stackOperations) {
         const markLocal = body.params.flatMap((param) => param.slots).length + locals.length;
@@ -1808,6 +1791,15 @@ function resolvePreparedLinearStringRepeatProvider(
   return authenticatePreparedLinearStringRepeatProvider(ctx, prepared);
 }
 
+function resolveNamedLinearRuntimeFunction(ctx: LinearContext, name: string): number {
+  // Runtime functions were appended before user-slot pre-assignment. Scan
+  // the actual defined-function table so a source function with a reserved
+  // helper-like name cannot shadow the runtime entry in funcMap.
+  const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
+  if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
+  return ctx.numImportFuncs + localIdx;
+}
+
 /**
  * The linear resolver: required name/table methods plus the L2 fixed-f64-vec,
  * aggregate/refcell subsets and the L3 i32-pointer string representation.
@@ -1832,14 +1824,7 @@ function makeLinearIrResolver(
   const unitFuncSlotById = new Map<IrUnitId, LinearIrLegacySlotAdapter>();
   let memoryPlan: LinearMemoryPlan | undefined;
 
-  const resolveRuntimeFunc = (name: string): number => {
-    // Runtime functions were appended before user-slot pre-assignment. Scan
-    // the actual defined-function table so a source function with a reserved
-    // helper-like name cannot shadow the runtime entry in funcMap.
-    const localIdx = ctx.mod.functions.findIndex((func) => func.name === name);
-    if (localIdx < 0) throw new Error(`linear-ir: runtime helper '${name}' missing`);
-    return ctx.numImportFuncs + localIdx;
-  };
+  const resolveRuntimeFunc = (name: string): number => resolveNamedLinearRuntimeFunction(ctx, name);
 
   const resolveImportFunc = (module: string, field: string): number =>
     resolveLinearImportFunc(ctx, module, field, resolveRuntimeFunc);
@@ -1912,7 +1897,7 @@ function makeLinearIrResolver(
     return null;
   };
 
-  const f64VecHandle = (alloc?: AllocSiteId): IrVecLowering & LinearVecLowering => {
+  const f64VecHandle = (alloc?: AllocSiteId): LinearVecLowering => {
     const layout = memoryPlan?.layoutForVector(f64IrType) ?? provisionalF64VectorLayout;
     const allocation = allocationFor(layout.id, alloc);
     const allocate = plannedOperation(
@@ -1929,16 +1914,17 @@ function makeLinearIrResolver(
     );
     return {
       valueType: { kind: "i32" },
-      vecStructTypeIdx: 0,
-      lengthFieldIdx: 0,
-      dataFieldIdx: 0,
-      arrayTypeIdx: 0,
       elementValType: { kind: "f64" },
       linearMemory: { allocation, layout, allocate, initializeElement },
     };
   };
 
   const resolver: IrLowerResolver & IrFromAstResolver = {
+    // (#6920 A-C1) Bodies resolved here are lowered by the linear emitter only.
+    selectedBackend: "linear",
+    ensureExnTag(): number {
+      return readLinearBodyBatchExceptionTag(ctx.mod);
+    },
     resolveFunc(ref: IrFuncRef): number {
       switch (ref.binding.kind) {
         case "unit": {
@@ -2172,10 +2158,10 @@ function makeLinearIrResolver(
       refCells.set(key, lowering);
       return lowering;
     },
-    resolveVec(valType: ValType): IrVecLowering | null {
+    resolveVec(valType: ValType): LinearVecLowering | null {
       return valType.kind === "i32" ? f64VecHandle() : null;
     },
-    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): IrVecLowering | null {
+    resolveVecForElement(elementValType: ValType, alloc?: AllocSiteId): LinearVecLowering | null {
       return elementValType.kind === "f64" ? f64VecHandle(alloc) : null;
     },
     resolveVecValueTypeForElement(elementValType: ValType): ValType | null {
@@ -2364,7 +2350,15 @@ function linearValueTypeConverter(resolver: IrLowerResolver, funcName: string): 
     backend: "linear",
     convertType(type: IrType): readonly ValType[] {
       if (type.kind === "val") return [type.val];
-      if (type.kind === "string" || type.kind === "vec") return [{ kind: "i32" }];
+      if (type.kind === "string") return [{ kind: "i32" }];
+      if (type.kind === "vec") {
+        const elementValType = asVal(type.elementType) ?? undefined;
+        const carrier = resolveIrVecRepresentation(
+          { backend: "linear", type, elementValType, resolver, where: funcName },
+          "carrier",
+        );
+        if (carrier) return [carrier.valueType];
+      }
       if (type.kind === "object" && resolver.resolveObject?.(type.shape)) return [{ kind: "i32" }];
       if (type.kind === "boxed") {
         const inner = asVal(type.inner);
