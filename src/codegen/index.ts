@@ -704,6 +704,7 @@ import {
   emitIsDataStructExport,
   fillStandaloneTypeofClosureArms,
 } from "./closure-exports.js"; // (#3272) extracted verbatim
+import { exposeClosureResultProbes } from "./native-dynamic-boundary-tag.js";
 import {
   hasReservedStandaloneDomCallbackDispatch,
   reserveStandaloneDomCallbackDispatch,
@@ -6506,6 +6507,7 @@ export function generateModule(
       const topArity = topHighClosureMethodCallArity(ctx, cap);
       if (topArity !== undefined) emitClosureMethodCallExportN(ctx, topArity, cap + 1);
     }
+    exposeClosureResultProbes(ctx); // (#7098) host-read closure results need the module's probes
 
     // (#1058) Callable-property sites can compile before the closure stored by
     // a later source has published its concrete funcref ABI. Complete their
