@@ -5627,3 +5627,123 @@ first-class undefined, Linear/WASI and full architecture/custody/conformance/
 retirement acceptance. The prerequisite was freshly read OPEN/unmerged; PR6762
 remains draft, both Markdown issues stay in progress and the full goal stays
 active. No GitHub issue/comment was created or existing failure repinned.
+
+### S7-aj compose the genuine native ToObject wrapping kernel (2026-10-20, Codex)
+
+Continue from signed `0c1cc249ddbccac6482f58a05d7d8f68c4cdfe16`. The previous
+goal turn made authoritative progress by verifying/publishing the real primitive
+prototype bootstrap. Reuse its exact issued role getters, existing pure ToObject
+control flow and genuine wrapper/StringCreate/classifier/unbox/error resources.
+Own five fixed unary factories and three predicate bridges; no caller-selected
+prototype/global/body/handle binder, public constructor or object graph copy.
+
+First admit the private native ABI: only canonical undefined may occupy its
+carrier role; nullish inputs throw the actual native tagged TypeError before
+prototype lookup. Positively owned native objects return unchanged. Unknown,
+stale, unready or foreign private objects must trap rather than reach the pure
+body's ECMAScript-domain passthrough. Primitive wrappers are fresh, keep exact
+native payloads and use the retained per-realm intrinsic role identities.
+
+Completion independently re-derives every owned body and the executed Boolean/
+Number unboxers, canonical undefined and native error/literal definitions.
+Require authentic same-family completed prototype and classifier dependencies;
+partial fills remain terminal. This is a private wrapping-kernel scope, not full
+prototype members, source/public admission or whole-realm completion.
+
+Add opt-in native component wiring without changing old fixture defaults or
+resource order. Readers of the shared fixture are the existing extensibility,
+SetPrototype, retained-setter and prototype-bootstrap suites. Keep their
+assertions, binary witnesses and original deadlines; use bounded setup hooks
+and cooperative audit phases. Verify every primitive family, numeric edge
+cases, real String descriptors/indices, object/payload identity, nullish errors,
+missing/stale prototype guards and substituted/foreign/partial-fill controls.
+The full migration, both no-host backends and the existing conflict/architecture/
+custody/conformance/retirement obligations remain open.
+
+#### S7-aj implementation and development evidence
+
+`native-to-object.ts` issues a fixed private kernel from genuine same-family
+prototype, classifier and native error owners. It owns three predicate bridges,
+five unary factories and the actual wrapping entry. The shared pure ToObject
+body remains unchanged; `native-to-object-bodies.ts` adds private-domain
+admission and canonical intrinsic selection. String factories use the real
+StringCreate owner, not raw wrapper storage. Boolean/Number unboxers, canonical
+undefined, TypeError name/message leaf and constructor definitions are
+independently re-derived at completion. No source/public publication is added.
+
+The first native run is terminal exit one: **62/65 pass**, zero skips, with all
+**48/48 runtime cases passing**. Three dependency-forgery tests correctly
+trigger a canonical-body refusal but then expect the weaker `missing canonical`
+diagnostic. The physical ledger is already terminally failed, so it correctly
+refuses subsequent access as `physical index requested in failed`. Assert both
+the failed ledger state and that actual refusal; do not reset the ledger or
+weaken the production canonical checks. The new prototype-selector corruption
+control follows this same terminal-state contract. Retain
+`.tmp/s7aj-native.json` SHA256
+`9859f9a978b974101d9448426f947ac7a7a19bd7abbc184bdc732d8ba5e502c0`
+and `.tmp/s7aj-native.log` SHA256
+`301d664ddb7dfe31e4c201d2dc3ffbb7fb564e1758467793b6b43e7534c29a63`.
+That run predates the additional slice/rope/lone-surrogate/selector controls;
+the expanded pre-correction and corrected runs are separate records.
+
+Shared control-flow/structural preservation is terminal **107/107 pass**
+(96 pure ToObject and 11 prototype-builder cases), zero skips, exit zero.
+The report includes lone UTF16 surrogates in case names; jq refuses those
+escaped strings, so read the untouched report with JSON.parse, retaining all
+code units and positive two-file/case-count floors. Do not normalize case/error
+strings or treat the JSON reader refusal as a failed semantic test.
+
+Two new modules are classified in existing backend-wasmgc/native-runtime
+layers. Inventory valid:1986 source modules, zero errors, architectureComplete
+false. Largest SCC712, four nontrivial SCCs and all direction metrics equal the
+parent; the same four directions remain red against main. Whole-PR source
+budget384 files/net -15816 LOC; the two existing function grants are unchanged.
+No new floor, edge allowance, baseline, root or waiver. Preservation-only6/6
+full+6/6 cut still passes; strict dynamic-import closure/retirement remain open.
+Final complete new/old runtime results must be inspected before claiming
+complete passing verification; the user-requested work-so-far PR may retain
+explicitly pending verification in its handoff.
+
+#### S7-aj PR checkpoint and actionable handoff
+
+Publish the work so far to the existing [migration PR](https://github.com/loopdive/js2/pull/6762),
+not a GitHub issue or issue comment. It remains a **draft checkpoint, not
+merge-ready**: GitHub freshly reports DIRTY/conflicts and the prerequisite
+[refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+is OPEN/unmerged. Both repo issues remain in progress.
+
+The expanded pre-correction execution is now terminal: **64/68 pass**, including
+**50/50 runtime cases**, zero skips, exit one. The four failures are the same
+terminal-ledger expectation defect described above (including the added
+prototype-getter corruption control), not permission to weaken canonical checks.
+The corrected full68-case execution and older175-case preservation execution
+are still active when preparing this handoff. **No clean68-case result or
+175-case/all12-binary preservation claim is made.** Their live session IDs are
+4700 and83531 respectively; continue observing those jobs, do not restart or
+kill them. Scratch reports/logs and exact source/report hashes, measured
+components, gate results and limitations are recorded in
+[the native ToObject audit](../audit/6979-native-to-object-20261020.json).
+
+Next maintainer actions, in order:
+
+1. Read terminal exits and complete reports for those same jobs. Require68
+   corrected native cases and175 older cases with zero skips/errors before
+   claiming those floors. Compare old full case identities/status/error fields
+   against retained S7-ai/S7-ag reports, and all12 binary witnesses (four
+   extensibility, three setPrototypeOf, three retained setter, two prototype
+   bootstrap). Update the audit with actual measured outcomes; retain failures.
+2. Implement genuine Object.getPrototypeOf and Object.prototype.valueOf catalog
+   algorithms and guarded Call entries. The former applies this ToObject owner
+   to argv[0], then actual mixed getPrototypeOf, accepts only success status1
+   and returns the exact prototype reference; other internal statuses must not
+   become public values. The latter applies ToObject to this. Derive fixed
+   entries from actual realm catalog metadata, not caller-selected handles.
+3. Complete the remaining catalog/mixed Get/Call, prototype members/constructors
+   and atomic authenticated source/public publication. A private kernel does
+   not authorize source closures or foreign host objects. Foreign JS objects
+   and callables must remain live per-instance identity-backed boundary refs,
+   without recursive copying or reinstating a host semantic engine.
+4. Resolve the stacked PR conflicts and still-open first-class undefined,
+   Linear/WASI, architecture, custody, conformance and strict retirement proof
+   obligations. Existing cycle/unknown-import failures are not waived. Do not
+   mark this issue or the migration complete based on this checkpoint.

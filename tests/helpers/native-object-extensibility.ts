@@ -51,6 +51,11 @@ import {
   fillNativePrimitivePrototypeIdentities,
   requireCompletedNativePrimitivePrototypeIdentities,
 } from "../../src/backend/wasmgc/resources/native-primitive-prototype-identities.js";
+import {
+  reserveNativeToObjectKernel,
+  fillNativeToObjectKernel,
+  requireCompletedNativeToObjectKernel,
+} from "../../src/backend/wasmgc/resources/native-to-object.js";
 
 export function objectExtensibilityFixture(
   displaced = false,
@@ -59,6 +64,7 @@ export function objectExtensibilityFixture(
   includeSetPrototype = false,
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
+  includeToObject = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -131,6 +137,20 @@ export function objectExtensibilityFixture(
   const primitivePrototypes = includePrimitivePrototypes
     ? reserveNativePrimitivePrototypeIdentities(tx, primitivePrototypeDependencies)
     : undefined;
+  if (includeToObject && !primitivePrototypes) throw Error("ToObject fixture requires genuine prototype identities");
+  const toObjectDependencies = primitivePrototypes
+    ? {
+        prototypes: primitivePrototypes,
+        prototypeDependencies: primitivePrototypeDependencies,
+        primitives,
+        primitivePlan,
+        primitiveDependencies,
+        errors,
+        errorRequirements,
+        errorDependencies,
+      }
+    : undefined;
+  const toObject = includeToObject ? reserveNativeToObjectKernel(tx, toObjectDependencies!) : undefined;
   return {
     ...r,
     mixed,
@@ -150,6 +170,8 @@ export function objectExtensibilityFixture(
     prototypeSetter,
     primitivePrototypeDependencies,
     primitivePrototypes,
+    toObjectDependencies,
+    toObject,
   };
 }
 export function fillObjectExtensibilityDependencies(r: ReturnType<typeof objectExtensibilityFixture>) {
@@ -176,6 +198,7 @@ export function objectExtensibilityRuntime(
   includeSetPrototype = false,
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
+  includeToObject = false,
 ) {
   const steps = objectExtensibilityRuntimeSteps(
     displaced,
@@ -184,6 +207,7 @@ export function objectExtensibilityRuntime(
     includeSetPrototype,
     includePrototypeSetter,
     includePrimitivePrototypes,
+    includeToObject,
   );
   let step = steps.next();
   while (!step.done) step = steps.next();
@@ -200,6 +224,7 @@ export async function objectExtensibilityRuntimeAsync(
   includeSetPrototype = false,
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
+  includeToObject = false,
 ) {
   const steps = objectExtensibilityRuntimeSteps(
     displaced,
@@ -208,6 +233,7 @@ export async function objectExtensibilityRuntimeAsync(
     includeSetPrototype,
     includePrototypeSetter,
     includePrimitivePrototypes,
+    includeToObject,
   );
   const synchronousPhaseMs: number[] = [];
   for (;;) {
@@ -223,6 +249,7 @@ export async function objectExtensibilityRuntimeAsync(
           mode,
           includePrototypeSetter,
           includePrimitivePrototypes,
+          includeToObject,
           synchronousPhaseMs,
         }),
       );
@@ -239,6 +266,7 @@ function* objectExtensibilityRuntimeSteps(
   includeSetPrototype = false,
   includePrototypeSetter = false,
   includePrimitivePrototypes = false,
+  includeToObject = false,
 ) {
   const r = objectExtensibilityFixture(
       displaced,
@@ -247,6 +275,7 @@ function* objectExtensibilityRuntimeSteps(
       includeSetPrototype,
       includePrototypeSetter,
       includePrimitivePrototypes,
+      includeToObject,
     ),
     { tx, f } = r;
   const selectedEntries = [
@@ -256,6 +285,14 @@ function* objectExtensibilityRuntimeSteps(
   ];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
+    ...(includeToObject
+      ? {
+          toObjectText: { params: [], results: [ext] },
+          toObjectRope: { params: [ext, ext], results: [ext] },
+          toObjectSlice: { params: [], results: [ext] },
+          toObjectIndexCodeUnit: { params: [ext, i32], results: [i32] },
+        }
+      : {}),
     ...(includePrimitivePrototypes
       ? {
           renewRealm: { params: [], results: [] },
@@ -348,6 +385,12 @@ function* objectExtensibilityRuntimeSteps(
     requireCompletedNativePrimitivePrototypeIdentities(tx, r.primitivePrototypes, r.primitivePrototypeDependencies);
   }
   if (includePrimitivePrototypes) yield;
+  if (r.toObject) {
+    fillNativeToObjectKernel(tx, r.toObject);
+    yield;
+    requireCompletedNativeToObjectKernel(tx, r.toObject, r.toObjectDependencies!);
+    yield;
+  }
   // Exercise the real prevention algorithm's false branch with the genuine
   // IsExtensible result of a non-extensible object. This derivative is a named
   // test control, never filled into a catalog slot or accepted by its owner.
@@ -492,6 +535,64 @@ function* objectExtensibilityRuntimeSteps(
         { op: "any.convert_extern" },
         { op: "ref.cast_null", typeIdx: f.objects.object.typeIndex },
         { op: "struct.set", typeIdx: f.objects.object.typeIndex, fieldIdx: 0 },
+      ],
+    });
+  }
+  if (includeToObject) {
+    const layout = f.strings.layout;
+    const string = (index: number): Instr[] => [...as(index, layout.anyStrTypeIdx)];
+    tx.fillFunction(controls.toObjectText!, {
+      locals: [],
+      body: [...buildInlineNativeStringLiteral(layout, "é😀\ud800\0"), { op: "extern.convert_any" }],
+    });
+    tx.fillFunction(controls.toObjectRope!, {
+      locals: [],
+      body: [
+        ...string(0),
+        { op: "struct.get", typeIdx: layout.anyStrTypeIdx, fieldIdx: 0 },
+        ...string(1),
+        { op: "struct.get", typeIdx: layout.anyStrTypeIdx, fieldIdx: 0 },
+        { op: "i32.add" },
+        ...string(0),
+        ...string(1),
+        { op: "struct.new", typeIdx: layout.consStrTypeIdx },
+        { op: "extern.convert_any" },
+      ],
+    });
+    tx.fillFunction(controls.toObjectSlice!, {
+      locals: [],
+      body: [
+        n(5),
+        n(2),
+        ...buildInlineNativeStringLiteral(layout, "ppé😀\ud800\0qq"),
+        { op: "struct.get", typeIdx: layout.nativeStrTypeIdx, fieldIdx: 2 },
+        { op: "struct.new", typeIdx: layout.nativeStrTypeIdx },
+        { op: "extern.convert_any" },
+      ],
+    });
+    tx.fillFunction(controls.toObjectIndexCodeUnit!, {
+      locals: [{ name: "flat-character", type: { kind: "ref", typeIdx: layout.nativeStrTypeIdx } }],
+      body: [
+        ...as(0, f.objects.object.typeIndex),
+        n(1),
+        n(0),
+        get(1),
+        n(48),
+        { op: "i32.add" },
+        { op: "array.new_fixed", typeIdx: layout.nativeStrDataTypeIdx, length: 1 },
+        { op: "struct.new", typeIdx: layout.nativeStrTypeIdx },
+        { op: "extern.convert_any" },
+        call(r.own.findOwn.handle),
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 1 },
+        { op: "ref.cast", typeIdx: layout.anyStrTypeIdx },
+        call(r.flatten.flatten.handle),
+        { op: "local.set", index: 2 },
+        get(2),
+        { op: "struct.get", typeIdx: layout.nativeStrTypeIdx, fieldIdx: 2 },
+        get(2),
+        { op: "struct.get", typeIdx: layout.nativeStrTypeIdx, fieldIdx: 1 },
+        { op: "array.get_u", typeIdx: layout.nativeStrDataTypeIdx },
       ],
     });
   }
@@ -662,6 +763,7 @@ function* objectExtensibilityRuntimeSteps(
     newBigInt: r.wrappers.allocation.BigInt,
     newString: r.stringCreate.create,
     objectPrototype: r.realm.declarations.objectPrototype.singleton,
+    ...(r.toObject ? { toObject: r.toObject.toObject } : {}),
     ...(r.primitivePrototypes
       ? {
           initializePrimitivePrototypes: r.primitivePrototypes.initialize,
@@ -671,7 +773,7 @@ function* objectExtensibilityRuntimeSteps(
           ...Object.fromEntries(Object.entries(r.wrappers.read).map(([kind, token]) => ["payload_" + kind, token])),
         }
       : {}),
-    ...(includeSetPrototype
+    ...(includeSetPrototype || includeToObject
       ? { getPrototypeOf: r.mixed.getPrototypeOf, internalSetPrototypeOf: r.mixed.setPrototypeOf }
       : {}),
   }))

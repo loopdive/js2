@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-aj private native ToObject wrapping kernel",
+  "parentCommit": "0c1cc249ddbccac6482f58a05d7d8f68c4cdfe16",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "normativeOperation": "https://tc39.es/ecma262/2026/multipage/abstract-operations.html#sec-toobject",
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-to-object.ts": "b828eeb54c921a4c3b30ebe369800413b4a232b118f470abb38afebb61dc6642",
+    "src/runtime/wasmgc/values/native-to-object-bodies.ts": "9deaae861294c593d575e10d4718e3ab201f672be8e1dd3ef38fbbd0f4f09880",
+    "tests/helpers/native-object-extensibility.ts": "ca0badf7ed094056094a7c13d83da3e5c256b014d6cd7018b8509cb338c9556a",
+    "tests/issue-6979-native-to-object.test.ts": "a560dd6395a17c0db4ef1cc20e0609da5d12fe5461c72c1c384726e9e76f72aa"
+  },
+  "scope": {
+    "completionScope": "native-to-object-wrapping-kernel",
+    "fixedOwnedFunctions": 9,
+    "unchangedSharedToObjectBodyReused": true,
+    "canonicalUndefinedAndPositiveNativeObjectAdmissionRequired": true,
+    "fiveFreshWrapperFamiliesUseGenuineIntrinsicIdentities": true,
+    "stringFactoryUsesActualStringCreate": true,
+    "executedBodiesAndPrerequisitesIndependentlyRederived": true,
+    "partialFillTerminal": true,
+    "hostSemanticImportsAdded": false,
+    "objectOrPayloadGraphsCopied": false,
+    "foreignBoundaryReferenceAdmissionCompleted": false,
+    "catalogConsumersImplementedThisCheckpoint": false,
+    "fullPrototypeMemberOrConstructorPopulationCompleted": false,
+    "sourceOrPublicProviderAdmissionCompleted": false,
+    "wholeRealmCompleted": false,
+    "migrationComplete": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "config": ".tmp/s7g-vitest.config.ts",
+    "forkLimitEnvironmentPerExecution": { "VITEST_MAX_FORKS": 1 },
+    "distinctExecutionsOverlap": true,
+    "wholeRunConcurrencyOrPerformanceCausalityClaimed": false,
+    "flags": ["--experimental-wasm-exnref"],
+    "caseTimeoutMs": 35000,
+    "componentAndFixtureHookTimeoutMs": 120000,
+    "deadlinesRaised": false
+  },
+  "tests": {
+    "initialDevelopment": {
+      "path": ".tmp/s7aj-native.json",
+      "log": ".tmp/s7aj-native.log",
+      "status": "terminal",
+      "runnerExit": 1,
+      "cases": 65,
+      "passed": 62,
+      "failed": 3,
+      "skipped": 0,
+      "runtimePassed": 48,
+      "runtimeCases": 48,
+      "jsonSha256": "9859f9a978b974101d9448426f947ac7a7a19bd7abbc184bdc732d8ba5e502c0",
+      "logSha256": "301d664ddb7dfe31e4c201d2dc3ffbb7fb564e1758467793b6b43e7534c29a63"
+    },
+    "expandedBeforeControlCorrections": {
+      "path": ".tmp/s7aj-native-final.json",
+      "log": ".tmp/s7aj-native-final.log",
+      "status": "terminal",
+      "runnerExit": 1,
+      "cases": 68,
+      "passed": 64,
+      "failed": 4,
+      "skipped": 0,
+      "runtimePassed": 50,
+      "runtimeCases": 50,
+      "jsonSha256": "79b137a3136dcdadde9296509ebf046be9079d6c38d9565246ed105a117a1f74",
+      "logSha256": "096e78b3d84bb647f7e18ce1be1000d02660188e85f2c860e6b31a61fbb8981d",
+      "failureExplanation": "Four controls reached the intended canonical refusal, then incorrectly expected missing canonical from an already failed physical ledger. Current tests assert failed state and physical index requested in failed; no production check changed. Filename final does not identify the corrected source."
+    },
+    "correctedNative": {
+      "path": ".tmp/s7aj-native-corrected.json",
+      "log": ".tmp/s7aj-native-corrected.log",
+      "session": 4700,
+      "status": "running at handoff preparation; terminal exit and complete report not yet observed",
+      "expectedCasesNotObservedFinalCount": 68,
+      "passingCompleteRunClaimed": false
+    },
+    "olderFourSuites": {
+      "path": ".tmp/s7aj-preserved.json",
+      "log": ".tmp/s7aj-preserved.log",
+      "session": 83531,
+      "status": "running at handoff preparation; terminal exit and complete report not yet observed",
+      "expectedCasesNotObservedFinalCount": 175,
+      "requiredRetainedComponentWitnesses": 12,
+      "fullCaseAndBinaryPreservationClaimed": false
+    },
+    "sharedBodies": {
+      "path": ".tmp/s7aj-shared-bodies.json",
+      "log": ".tmp/s7aj-shared-bodies.log",
+      "status": "terminal",
+      "runnerExit": 0,
+      "files": 2,
+      "cases": 107,
+      "passed": 107,
+      "failed": 0,
+      "skipped": 0,
+      "pureToObjectCases": 96,
+      "prototypeStructuralCases": 11,
+      "jsonSha256": "c7bed4cf7d58867812cee11774874b2c3a586e2fe84a9c6f77801ebd6a7d40ea",
+      "reader": "JSON.parse preserves lone UTF16 surrogate case names rejected by jq; original report unchanged"
+    }
+  },
+  "observedExpandedComponents": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "interned",
+      "bytes": 46608,
+      "sha256": "02e58640240a416a7d5d503e3afd8fbb6f346245a3e6692d2492971e636e7512",
+      "imports": [],
+      "reachableFunctions": 102,
+      "deadSnapshotBodies": 101,
+      "wholeRealmCompleted": false
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "booleans": "allocating",
+      "bytes": 46393,
+      "sha256": "22527e39fa54ac1649c6f1bb9876fb14725dfa30fbeaa389ec83bfb64918b665",
+      "imports": [],
+      "reachableFunctions": 103,
+      "deadSnapshotBodies": 102,
+      "wholeRealmCompleted": false
+    }
+  ],
+  "componentLimits": "Both expanded executions emitted identical witnesses. Only named cloned snapshots sweep dead bodies; every reachable function requires a real fill. Real ledgers remain filling/unsealed. Test-only observers and bootstrap are included; sizes are not marginal production costs. Initial pre-observer components differ legitimately.",
+  "gates": {
+    "typecheckAndLint": "terminal exit zero after test-control corrections",
+    "sourceBudget": { "changedSourceFiles": 384, "netLoc": -15816, "newGrants": 0 },
+    "inventory": { "valid": true, "modules": 1986, "errors": 0, "architectureComplete": false },
+    "policyHash": "db0f8f1445f64029261ba41da82450e3f30ba38ebcc057a10198bfd4a0e26e93",
+    "cycles": "terminal exit one; current metrics equal S7-ai, largest SCC712 and four nontrivial SCCs; four directions remain red versus main",
+    "preservation": "preservation-only 6/6 full and 6/6 cut; strict modeled closure fails two unknown nonliteral dynamic imports; retirement NOT CERTIFIED",
+    "layerFlatOracleCoercionAndFallbackChecks": "terminal exit zero; standard tsx fallback commands required outside-sandbox IPC access",
+    "fullTest262HistoricalCustodyBroader161779AndCompilerControlCohortsRerun": false
+  },
+  "handoff": [
+    "Observe the same live sessions; do not kill or restart solely because observation times out. Inspect terminal runner exits, complete case identities/statuses/errors and positive counts.",
+    "Compare all twelve older binary witnesses and all175 old case rows against retained S7-ai/S7-ag evidence before claiming preservation.",
+    "Implement actual Object.getPrototypeOf and Object.prototype.valueOf catalog algorithm and guarded Call slots using this owner, not arbitrary handles or a placeholder population receipt.",
+    "Finish remaining catalog/mixed Get/Call, full members/constructors, atomic authenticated source/public publication and live identity-backed foreign boundary references without graph copying.",
+    "Retain first-class undefined, Linear/WASI, architecture/custody/conformance/retirement acceptance and PR conflict resolution in full migration scope."
+  ]
+}

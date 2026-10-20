@@ -1842,3 +1842,45 @@ The same architecture/strict retirement proof gaps remain; broader conformance,
 custody and compiler-control cohorts were not rerun. Both issues stay in
 progress and the PR stays draft. Resume with actual ToObject composition,
 not another placeholder prototype/member catalog or a narrowed migration goal.
+
+### S7-aj: native ToObject composition through genuine intrinsic identities
+
+The new private kernel composes the existing pure operation with fixed owned
+factories, genuine Boolean/Number unboxers, StringCreate, native classification,
+native TypeError/tag and the retained primitive-prototype role getters. It
+preserves admitted object/payload identity and refuses unknown/stale private
+inputs instead of blessing a generic passthrough. No public constructor, host
+semantic import or object graph copy is added. Constructor/member population,
+source/public admission and the full migration remain unfinished.
+
+The initial executable run passes48/48 runtime cases; three negative-control
+assertions need the actual terminal failed-ledger diagnostic rather than
+`missing canonical`. Source canonical checks are unchanged. Shared body
+preservation passes107/107 in two files. Expanded String slice/rope/surrogate
+and selector controls, corrected native verification and full older-suite
+preservation runs are active; no complete passing cohort is assumed. Detailed
+failed evidence and scope are tracked in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Keep the goal and both issues in progress; the conflict/architecture/retirement,
+Linear/WASI, live boundary-reference and conformance obligations remain open.
+
+#### S7-aj published-checkpoint handoff
+
+The expanded pre-correction run is terminal64/68, all50 runtime cases pass;
+four negative controls expected the wrong diagnostic after canonical refusal
+had already failed the physical ledger. Current controls assert the actual
+failed state/refusal without changing production checks. Shared bodies remain
+107/107 pass. Corrected native68 and older175-case jobs are still active at
+handoff preparation, so neither full passing result nor all12 older binary
+witnesses is claimed. See [the exact ToObject audit](../audit/6979-native-to-object-20261020.json)
+and the **S7-aj PR checkpoint and actionable handoff** section in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+
+Publish to existing [migration PR](https://github.com/loopdive/js2/pull/6762),
+which remains draft/conflicted; prerequisite PR6701 is freshly OPEN/unmerged.
+Resume those same jobs first, then implement actual Object.getPrototypeOf and
+Object.prototype.valueOf catalog/guarded Call consumers. Full population,
+source/public admission, live foreign boundary references (no graph copies),
+first-class undefined, both no-host targets and all architecture/retirement/
+custody/conformance acceptance remain required. This is a work-so-far handoff,
+not migration completion or a merge-ready claim. No GitHub issue/comment.
