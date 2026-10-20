@@ -2259,3 +2259,24 @@ conformance/architecture/reviewed-integration acceptance open. Import policy sta
 437/452 across33 unchanged probes; the approved increase remains unnecessary.
 Details and the final exact audit are in
 [S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+
+#### S7-au actual Boolean invocation arguments, 2026-10-20
+
+Real source call/apply now has call-specific proof of supplied boxed Boolean
+arguments, Boolean parameter/conditional returns and chained invocation values.
+Physical transport reads the owned Boolean payload strictly, not via Number.
+Missing/undefined/raw/mixed arguments are still explicit refusals rather than
+false. Erased assertions now preserve the existing unshadowed-undefined selection,
+including a real numeric default; lexical/module shadow checks remain unchanged.
+The old argument factory matches parent72/72 without the new binding. Three
+isolated removal controls lose exactly the producer check, strict reader and
+asserted-undefined behavior, while independent controls pass; sources restored.
+
+Final verification passes23/23 new cases and a separate113/113 stable four-file
+preservation cohort (including17 Linear cases), zero skips/exit0 in each. Both
+final runners are closed. The exact S7-au handoff is under
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+No full realm/source/foreign boundary, undefined/default or complete Linear/WASI
+admission is inferred. Both migration issues remain in progress and the full
+retirement/historical/conformance/architecture and reviewed-integration scope is
+unchanged.

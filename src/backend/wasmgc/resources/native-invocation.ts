@@ -344,7 +344,16 @@ function entries(
       info.returnType.boolean === true &&
       owner.dependencies.booleanBoxes !== undefined;
     if (
-      info.paramTypes.some((type) => type.kind !== "externref" && type.kind !== "f64") ||
+      info.paramTypes.some(
+        (type, index) =>
+          type.kind !== "externref" &&
+          type.kind !== "f64" &&
+          !(
+            type.kind === "i32" &&
+            type.boolean === true &&
+            objectResultIsBoolean(row.source.closureSubtype?.signature.params[index])
+          ),
+      ) ||
       (info.returnType && info.returnType.kind !== "externref" && info.returnType.kind !== "f64" && !booleanResult)
     )
       fail("selected callable lacks its actual native argument/result conversion");
@@ -354,7 +363,13 @@ function entries(
       funcTypeIdx: row.slot.object.typeIdx,
       closureArity: info.paramTypes.length,
       params: info.paramTypes,
-      arguments: { unboxNumber: values.functions.unboxNumber.handle, isUndefined: pack.isUndefined.handle },
+      arguments: {
+        unboxNumber: values.functions.unboxNumber.handle,
+        isUndefined: pack.isUndefined.handle,
+        ...(info.paramTypes.some((type) => type.kind === "i32" && type.boolean === true)
+          ? { booleanTypeIdx: values.types.boxedBoolean.typeIndex }
+          : {}),
+      },
       result: info.returnType
         ? {
             kind: "value",

@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-au: actual value-preserving Boolean invocation arguments",
+  "parent": "a4d012ed351d81d4a7435dae4e15ebdbb42d7f17",
+  "scope": "Actual public source call/apply, proved Boolean arguments, parameter/conditional returns and chained results. Strict owned Boolean payload read, not numeric conversion/general ToBoolean. Existing unshadowed undefined recognizer also sees erased assertions; lexical/module checks retained. Not full realm/source/foreign admission, general undefined/defaults or complete Linear/WASI migration.",
+  "sourceSha256": {
+    "src/ir/from-ast.ts": "5ae42475e50f14cf1568b6949fa00b93620527aad786abb84f4008a28036f2ab",
+    "src/ir/program/native-invocation-result-values.ts": "7ec047f89bdda16baad6aa1d8acb5ae3dda93a563d2c0ffe83a1658929743c16",
+    "src/ir/program/native-invocation-requirements.ts": "6ebfa1d846524a85879a52ee13d852235e948805674004f233e4d4cc2dfa05b1",
+    "src/backend/wasmgc/resources/native-invocation.ts": "64c681406d3b286ca3beb46df98b9de0eb260540d8fa10052718f656c8e348e9",
+    "src/runtime/wasmgc/values/closure-argument-bodies.ts": "41ffbbe067cbee9d9ce285a16ffc1ef48bdc74ef13ed46befa16e9389b9e897c",
+    "tests/issue-6979-native-invocation-boolean-arguments.test.ts": "63318bc441abcf434938623e1a577bf3e63bbc4807a68f4d8bf01a352eef8850"
+  },
+  "proofLimits": [
+    "Per-call evidence comes from the original allocation/target signature and supplied Boolean boxes or independently proved invocation results in both views. Private formal evidence is not caller-supplied authority.",
+    "Active proof keys include unit, view and occurrence. Cyclic argument/result evidence refuses; there is no arbitrary proof-depth success cutoff or runtime graph copying.",
+    "Omitted, undefined, numeric-as-Boolean and raw/mixed arguments remain explicit gaps. This does not implement general ToBoolean or complete undefined/default value carriers.",
+    "Strict-reader observer modifies only a clone with passive callee/argument globals and exports of actual producer slots. Real allocations come from run(); no fake source, algorithms or production completion capability. It is a private transport witness, not public foreign admission."
+  ],
+  "reports": {
+    "s7au-first": {
+      "sha256": "8d5efb0155761837c84cd96e49e31ff31ca89ffe8db6a5feb76cbebea7efc581",
+      "total": 19,
+      "passed": 17,
+      "failed": 2,
+      "skippedOrUnselected": 0,
+      "runnerExit": 1,
+      "meaning": "All eight public executions pass. Two negative fixtures stop before intended phase: boxing policy already rejects preparation; erased asserted undefined was not recognized. Natural policy error retained; undefined helper repaired without removing shadow checks."
+    },
+    "s7au-second": {
+      "sha256": "d8a16072a7187f63ff998c666394737e7896ccaecbddf4ac2f76766d58d60023",
+      "total": 21,
+      "passed": 21,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0
+    },
+    "s7au-observer-positive": {
+      "sha256": "207663b6e23a34c386535c4bfb3e1dd31acfcaa952e8925748f217a1aed48447",
+      "total": 23,
+      "passed": 2,
+      "failed": 0,
+      "skippedOrUnselected": 21,
+      "runnerExit": 0,
+      "meaning": "Actual numeric default with asserted undefined returns20; real producer strict-reader observer refuses Number boxes0/1/NaN, raw null/undefined/true and hostile Proxy with zero hooks."
+    },
+    "s7au-argument-proof-removal": {
+      "sha256": "4f0cd76d3a10e7e41d6e010bdc64d06982328fcf89ae94ef2cee67bef067de3a",
+      "total": 23,
+      "passed": 1,
+      "failed": 1,
+      "skippedOrUnselected": 21,
+      "runnerExit": 1,
+      "meaning": "Only supplied Boolean producer check bypassed: fresh requirements admit forged raw argument with zero gaps; independent old fallback recipe passes."
+    },
+    "s7au-strict-reader-removal": {
+      "sha256": "b64f2668c7d04cde152bb2c479f5ad8658bc3839a5d5cedd5d3c40573acbcaa7",
+      "total": 23,
+      "passed": 1,
+      "failed": 1,
+      "skippedOrUnselected": 21,
+      "runnerExit": 1,
+      "meaning": "Only strict Boolean reader branch disabled: actual producer slot accepts a Number box instead of trapping; independent old fallback recipe passes."
+    },
+    "s7au-erased-undefined-removal": {
+      "sha256": "3c4da7ffbfa341f0b1be5160bb156add3c778cc5ed9ea710da561b6d37bce6e4",
+      "total": 23,
+      "passed": 1,
+      "failed": 1,
+      "skippedOrUnselected": 21,
+      "runnerExit": 1,
+      "meaning": "Only erased-wrapper recognition reverted: numeric default source refuses asserted undefined; independent shadowed Boolean source still executes correctly."
+    },
+    "s7au-final": {
+      "sha256": "9e68439f49714bf4c1d124f662aead0ca32f5ce8c9ad67c8aa6813d30ebf369e",
+      "total": 23,
+      "passed": 23,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0,
+      "meaning": "Final unfiltered file after exact three-source restoration,183.20s. Eleven execution/observer cases, nine argument/policy/proof controls and three recipe cases."
+    },
+    "s7au-consumer-preservation": {
+      "sha256": "3fdfa96da6ff7c634bb968260c9681a50afdda9a492559c56f90fb3d586f106e",
+      "total": 96,
+      "passed": 96,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0,
+      "meaning": "Intermediate three-file run started before the undefined-helper edit. Not substituted for stable final preservation."
+    },
+    "s7au-final-preservation": {
+      "closed": true,
+      "runnerExit": 0,
+      "sha256": "d7661e2a8c9543648b1c3af3d919ac64c48c6d2d9e8701f086d6e3408d1f098d",
+      "total": 113,
+      "passed": 113,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "perFile": {
+        "nativeGetterResults": 21,
+        "nativeInvocationConsumer": 61,
+        "preparedLinearEarlyReturn": 17,
+        "nativeBooleanResults": 14
+      },
+      "meaning": "Final stable restored-source four-file cohort,370.00s. Includes17 Linear preservation cases, not complete Linear Boolean/native migration."
+    }
+  },
+  "reportLocation": "Each report key names .tmp/<key>.json and matching .log. All three guards restored exactly before both final runners; no tests killed/restarted on observation timeout.",
+  "oldArgumentFactory": {
+    "report": ".tmp/s7au-old-argument-comparison.json",
+    "sha256": "37be66071da81e1b32f9251fd48172595a67a6fe3c5cbe3ab85a0173e286026b",
+    "passed": 72,
+    "total": 72,
+    "method": "Exact parent module against current complete instruction deep-strict equality, eight carrier forms times three old binding sets times three coordinate offsets. No new Boolean binding supplied. Type-only parent import erased, no runtime import rewritten.",
+    "notClaimed": "Full historical emitted-GC byte equivalence."
+  },
+  "gateArtifactHashes": {
+    ".tmp/s7au-final-typecheck.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7au-final-lint.log": "feccb66eec6515a282f25422b5e707e73044ec58b3b360a22a4eb57f8f1ee6c0",
+    ".tmp/s7au-final-loc.log": "e142dc6744870074711ef9ccd87a6cf848a027728f41574a1369dba416e5ea5e",
+    ".tmp/s7au-final-func.log": "aa311cf23ed9c90430ee117f04099299a28e88921ed09e01298997ac8923bbfb",
+    ".tmp/s7au-final-coercion.log": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+    ".tmp/s7au-final-oracle.log": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a",
+    ".tmp/s7au-inventory.json": "356f3ca9a5cb7afc73558ae76550a80e656ef392f133b945f8ff5c1f01af8adc",
+    ".tmp/s7au-layering.log": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9",
+    ".tmp/s7au-flat.log": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f",
+    ".tmp/s7au-import-cycles.json": "db0d3e70b850cb1acb402133cba25989594486535c5f5066ee68e842300aca9d",
+    ".tmp/s7au-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7au-import-policy.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7au-preservation-only.log": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2",
+    ".tmp/s7au-format-final.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "ceiling": 452,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "approvedHistoricalCeiling": 456,
+    "approvedIncreaseApplied": false
+  },
+  "architecture": {
+    "inventoryValid": true,
+    "modules": 1998,
+    "errors": 0,
+    "architectureComplete": false,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cycleGateExit": 1,
+    "waiverAdded": false
+  },
+  "retainedFailures": [
+    "Same four red cycle directions and two unknown nonliteral imports; preservation-only6/6 full+6/6 cut does not certify strict closure or retirement.",
+    "Earlier historical storage188/202 with14 unwaived receipts and five separate symbolic receipt failures not fixed/retested here. No source receipt repin.",
+    "Open prerequisite, conflicting incomplete draft PR and unverified full GC-byte/Test262/npm/accelerator acceptance."
+  ],
+  "remaining": [
+    "Full catalog algorithms/population consumption and original realm/source/code/body/allocation joins",
+    "General value/receiver/undefined/default handling and mixed bound/live-foreign Call/Get",
+    "Per-instance boundary identity without graph copying",
+    "Complete Linear/WASI migration and named generator-buffer/SharedArrayBuffer/Temporal gaps",
+    "Runtime/host-arm retirement, historical/conformance/architecture acceptance and reviewed integration"
+  ],
+  "fullGoalComplete": false
+}

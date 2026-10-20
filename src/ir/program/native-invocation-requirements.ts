@@ -32,7 +32,13 @@ import {
   reconcileNativeGetterInvocationRequirements,
   type NativeGetterInvocationUse,
 } from "./native-getter-invocation-requirements.js";
-import { nativeInvocationBooleanResult, nativeSourceReturnsBoolean } from "./native-invocation-result-values.js";
+import {
+  nativeInvocationBooleanResult,
+  nativeInvocationReturnsBoolean,
+  nativeInvocationBooleanArguments,
+  type NativeBooleanArgumentUse,
+} from "./native-invocation-result-values.js";
+import { objectResultIsBoolean } from "./native-object-result-values.js";
 
 export interface NativeInvocationUse {
   readonly occurrence: number;
@@ -45,6 +51,7 @@ export interface NativeInvocationUse {
     readonly allocationOccurrence: number;
     readonly liftedUnitId: IrUnitId;
   }[];
+  readonly booleanArguments?: readonly NativeBooleanArgumentUse[];
 }
 export interface NativeInvocationRequirements {
   readonly key: string;
@@ -255,13 +262,24 @@ function calculate(
         unitId,
         detail: `callable ${liftedUnitId} needs its fixed-parameter/public-length producer contract`,
       });
-    const supported = (type: IrType): boolean =>
+    const needsBooleanArguments = calleeType.signature.params.some(objectResultIsBoolean);
+    const booleanArguments = needsBooleanArguments
+      ? nativeInvocationBooleanArguments(source, unitId, "projection", occurrence)
+      : undefined;
+    if (needsBooleanArguments && !booleanArguments)
+      gaps.push({
+        unitId,
+        detail: `callable ${liftedUnitId} Boolean argument needs its original supplied boxed Boolean producer; omission/undefined and unproved values are unsupported`,
+      });
+    const scalar = (type: IrType): boolean =>
       external(type) || (type.kind === "val" && !type.typeRef && type.val.kind === "f64");
+    const supported = (type: IrType): boolean =>
+      scalar(type) || (objectResultIsBoolean(type) && booleanArguments !== undefined);
     if (
       !calleeType.signature.params.every(supported) ||
       (calleeType.signature.returnType &&
-        !supported(calleeType.signature.returnType) &&
-        !nativeSourceReturnsBoolean(source, liftedUnitId))
+        !scalar(calleeType.signature.returnType) &&
+        !nativeInvocationReturnsBoolean(source, unitId, "projection", occurrence))
     )
       gaps.push({ unitId, detail: `callable ${liftedUnitId} needs its actual argument/result conversion owner` });
     uses.push({
@@ -271,6 +289,7 @@ function calculate(
       ...(arity === undefined ? {} : { arity }),
       liftedUnitId,
       callbacks,
+      ...(booleanArguments?.arguments.length ? { booleanArguments: booleanArguments.arguments } : {}),
     });
   }
   const getters = objectAccess
@@ -279,6 +298,26 @@ function calculate(
   gaps.push(...getters.gaps);
   const booleanResults: NonNullable<ReturnType<typeof nativeInvocationBooleanResult>>[] = [];
   for (const owner of demands.owners) {
+    const argumentPopulations = (["program", "projection"] as const).map((view) =>
+      demands.occurrences.flatMap((_, occurrence) => {
+        const result = nativeInvocationBooleanArguments(source, owner.unitId, view, occurrence);
+        return result?.arguments.length
+          ? [
+              {
+                arguments: result.arguments.map((row) => row.argument),
+                liftedUnitId: result.liftedUnitId,
+                symbol: result.symbol,
+                site: result.site,
+              },
+            ]
+          : [];
+      }),
+    );
+    if (preparedIrDataMismatch(argumentPopulations[0], argumentPopulations[1]) !== undefined)
+      gaps.push({
+        unitId: owner.unitId,
+        detail: "Boolean invocation argument semantic/projection association differs",
+      });
     const populations = (["program", "projection"] as const).map((view) =>
       demands.occurrences.flatMap((_, occurrence) => {
         const result = nativeInvocationBooleanResult(source, owner.unitId, view, occurrence);

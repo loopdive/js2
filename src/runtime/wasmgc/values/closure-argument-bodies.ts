@@ -65,6 +65,8 @@ export function buildClosureI64Argument(
 }
 
 export interface ClosureArgumentConversion {
+  /** Strict native Boolean payload, not numeric conversion or general ToBoolean. */
+  readonly booleanTypeIdx?: number;
   readonly unboxNumber?: FuncHandle;
   readonly isUndefined?: FuncHandle;
   readonly toBigInt?: FuncHandle;
@@ -82,6 +84,13 @@ export function buildClosureMethodArgument(
 ): Instr[] {
   let ops: Instr[] = [{ op: "local.get", index: argLocalIdx }];
   if (paramType) {
+    if (paramType.kind === "i32" && paramType.boolean === true && bindings.booleanTypeIdx !== undefined)
+      return [
+        ...ops,
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: bindings.booleanTypeIdx },
+        { op: "struct.get", typeIdx: bindings.booleanTypeIdx, fieldIdx: 0 },
+      ];
     if (paramType.kind === "f64" && bindings.unboxNumber !== undefined)
       return buildClosureF64Argument(argLocalIdx, bindings.unboxNumber, bindings.isUndefined);
     if (paramType.kind === "i32" && bindings.unboxNumber !== undefined)

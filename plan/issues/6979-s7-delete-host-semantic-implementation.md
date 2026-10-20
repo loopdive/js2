@@ -7160,3 +7160,100 @@ net−12702 LOC, only the two old function allowances. Preservation-only remains
 All scoped runners are closed. Next actual work remains the genuine full-catalog
 and original source/realm/code/allocation integration, not more completion labels
 on the older bootstrap. Preserve all scope/holds and both no-host backends.
+
+#### S7-au value-preserving Boolean invocation arguments (in progress)
+
+Fresh actual prepared-source probe confirms Boolean arguments/identity returns
+still fail: the source packet contains real Boolean boxes and exact call/apply
+allocations, but invocation admission rejects its argument conversion and cannot
+prove a Boolean parameter return. Implement the actual consumer path, not a
+numeric-to-Boolean conversion or a general ToBoolean reinterpretation.
+
+Derive each Boolean formal's actual supplied argument from the original call or
+fixed apply vector in each view; prove the boxed Boolean producer. Reconcile both
+view populations and retain exact target/signature/allocation association. Read
+the original native Boolean payload via its genuine value type, with no numeric
+unboxing/truncation. Check real parameter-return/conditional producers using the
+call's proved Boolean formals, not an annotation-only assumption; support chained
+proved invocation results without unbounded recursive proof. Preserve all old
+argument recipes when no new binding is supplied. Missing/undefined/raw/mixed or
+unproved arguments stay explicit gaps, including Boolean default omission until
+undefined-preserving carriers exist. Keep general Call/Get/bound/foreign identity,
+full catalog/source/realm/code/allocation joins, first-class undefined, complete
+Linear/WASI and every historical/retirement acceptance requirement in scope.
+
+S7-au intermediate execution passes all8 public cases (17/19 overall). Two
+negative fixtures failed before reaching the intended phase: unsupported Boolean
+boxing is already a preparation error, and `undefined as any` bypassed the
+existing unshadowed-undefined expression recognizer. Keep the natural policy
+error; do not permit boxing without policy. Extend only erased wrappers in the
+existing IR helper, retaining its actual lexical/module shadow checks. Its two
+readers are ordinary closure default arguments and native call/apply lowering;
+no scope map is mutated. Test canonical asserted undefined on a real numeric
+default, asserted shadowed Boolean `undefined`, and refusal of asserted undefined
+for a Boolean formal. This is not complete undefined-preserving value admission.
+
+S7-au now derives call-specific Boolean formal evidence from each actual supplied
+box or chained proved invocation result. Fixed apply vectors retain their exact
+element producer. Parameter-return/conditional proof uses only those proved
+formals in the actual source unit, independently in both views; the private helper
+does not accept caller-supplied formal authority. Active proof keys contain unit,
+view and occurrence, avoiding cross-function SSA conflation and refusing cyclic
+argument/result proofs. Pure derived result data are not completion capabilities.
+No runtime graph is recursively copied.
+
+The actual invocation producer binds the original value owner's Boolean type.
+Shared argument emission uses a strict cast/payload read, never Number conversion
+or truncation for that native binding. Exact parent-factory comparison passes72/72
+complete instruction arrays across8 carrier forms,3 old binding sets and3 index
+offsets with no new Boolean binding. This is not full emitted-GC byte equivalence.
+The unfiltered second new file passes21/21, zero skips/exit0; two later added cases
+separately pass2/2 (21 unselected): canonical asserted undefined reaches a real
+numeric default and returns20, and the strict physical reader is observed in an
+actual compiler-produced method slot. The latter adds passive callee/argument
+observers and exports only in a clone, not a production algorithm/body authority.
+It obtains real source allocations through run(), accepts the genuine Boolean,
+and refuses native Number boxes0/1/NaN, raw null/undefined/true and a hostile Proxy
+without invoking property hooks. It is a private transport observer, not public
+foreign boundary completion or a substitute full realm initializer.
+
+Three isolated removals each give1/2 selected passes,21 unselected. Removing only
+the supplied Boolean producer check admits a forged raw argument with zero fresh
+requirements gaps; the independent old-fallback recipe passes. Removing only the
+strict Boolean reader makes the actual producer slot wrongly accept a Number box;
+the old fallback control still passes. Removing only erased-wrapper recognition
+breaks the actual numeric-default source program with its previous unsupported
+undefined diagnostic, while the shadowed Boolean case still executes correctly.
+All three exact sources are restored to pre-control hashes before final tests.
+
+Final unfiltered23-case new verification and four-file preservation are running
+on that restored source, sessions13404 and50861 respectively. Preserve their
+terminal counts/exits, not just earlier partial/cohort results. The earlier96-case
+consumer preservation run passed, but started before the small undefined-helper
+edit; the stable final rerun is required. Do not restart live runners merely for
+buffered output/observation timeout. No deadline, source receipt, baseline, floor,
+allowed edge or budget allowance was relaxed. Complete source/realm/code/allocation
+joins, all catalog algorithms, general arguments/undefined/defaults, bound/live
+foreign mixed Call/Get without copying, Linear/WASI, named gaps, retirement and
+all historical/conformance/architecture/reviewed integration remain required.
+
+S7-au terminal stable verification is **23/23 new cases, zero skips/exit0**,
+183.20s, plus a separate **113/113 preservation cases/four files, zero skips/exit0**,
+370.00s:21 native getter results,61 native invocation consumer,17 prepared Linear
+early-return and14 prior Boolean-result cases. Both final runners are closed;
+all sources match exact pre-control restoration hashes. No generic Linear Boolean
+admission or full GC-byte/Test262/npm result is inferred from those17 cases.
+[Exact S7-au source/report/gate hashes, controls and retained limits](../audit/6979-native-invocation-boolean-arguments-20261020.json).
+
+Final typecheck/lint (7315 files)/format and LOC/function/coercion/oracle,
+inventory/layering/flat-directory/issue gates pass within scope. Whole PR417
+changed source files/net−12456 LOC; only the two old function grants. Inventory1998
+is valid/error-free, architectureComplete=false. Import policy437/452 across33
+unchanged probes, zero unknown/regime-gap imports; the reviewed historical adapter
+increase remains unused. Same four cycle failures, SCC712/four components and
+strict closure's two nonliteral imports remain unwaived. Historical188/202 storage
+receipts and five separate symbolic receipt failures were not fixed/retested.
+Resume at genuine full catalog algorithms/population consumption and original
+source/realm/code/body/allocation joins, general value/default/undefined handling,
+bound/live-foreign mixed Call/Get and complete Linear/WASI; do not substitute this
+typed argument progress for those requirements. Both issues remain in progress.

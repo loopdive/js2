@@ -7803,7 +7803,14 @@ function expandStaticSpreadArgs(args: readonly ts.Expression[], cx: LowerCtx): t
  */
 function isUnshadowedUndefinedExpression(expr: ts.Expression, cx: LowerCtx): boolean {
   let candidate = expr;
-  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  while (
+    ts.isParenthesizedExpression(candidate) ||
+    ts.isAsExpression(candidate) ||
+    ts.isTypeAssertionExpression(candidate) ||
+    ts.isNonNullExpression(candidate) ||
+    ts.isSatisfiesExpression(candidate)
+  )
+    candidate = candidate.expression;
   return (
     ts.isIdentifier(candidate) &&
     candidate.text === "undefined" &&
