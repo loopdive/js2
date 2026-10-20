@@ -2504,7 +2504,7 @@ function resolveReturnType(
     mapped !== undefined &&
     (mapped.kind === "f64" || mapped.kind === "bool" || mapped.kind === "string" || mapped.kind === "object") &&
     irFunctionBodyReturnsValue(fn.body) &&
-    !blockLastStatementTerminates(fn.body)
+    !functionBodyAlwaysTerminates(fn.body)
   ) {
     return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
   }
@@ -2521,6 +2521,21 @@ function resolveReturnType(
     return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(fn) === true ? null : "dynamic";
   }
   return null;
+}
+
+/**
+ * (#7106 S1b) Does control always leave `body` through a `return` / `throw`?
+ * `thenArmTerminates` covers return / throw / block / if-else; a tail
+ * `switch` or `try` terminates by its own all-paths analysis (the SAME
+ * helpers the tail arms use), so a function ending in `try { return … }
+ * catch (e) { throw e; }` is not mistaken for a fall-out.
+ */
+function functionBodyAlwaysTerminates(body: ts.Block): boolean {
+  const last = body.statements[body.statements.length - 1];
+  if (last === undefined) return false;
+  if (ts.isSwitchStatement(last)) return switchAllPathsTerminate(last);
+  if (ts.isTryStatement(last)) return tryAllPathsTerminate(last);
+  return thenArmTerminates(last);
 }
 
 /**
@@ -3329,7 +3344,25 @@ function dynamicUsesAreMoveOnly(
       }
       return true;
     }
-    // For-of / try / throw / nested functions /
+    // (#7106 S1c) `try { … } catch (e) { … } finally { … }` — the catch
+    // binding is a dynamic value (the thrown payload); each block is an
+    // ordinary statement list. `throw <expr>` throws a dynamic or a concrete
+    // value alike. These are assert.js's `formatSimpleValue` shapes.
+    if (ts.isTryStatement(s)) {
+      for (const inner of s.tryBlock.statements) if (!scanStmt(inner)) return false;
+      if (s.catchClause) {
+        const binding = s.catchClause.variableDeclaration?.name;
+        if (binding !== undefined && ts.isIdentifier(binding)) dynNames.add(binding.text);
+        else if (binding !== undefined) return false;
+        for (const inner of s.catchClause.block.statements) if (!scanStmt(inner)) return false;
+      }
+      if (s.finallyBlock) for (const inner of s.finallyBlock.statements) if (!scanStmt(inner)) return false;
+      return true;
+    }
+    if (ts.isThrowStatement(s)) {
+      return scanExpr(s.expression, isDynShaped(s.expression));
+    }
+    // For-of / nested functions /
     // anything else: conservative — claimable exactly when the statement
     // doesn't touch a dynamic value at all.
     return !subtreeTouchesDynamic(s, dynNames);
@@ -7340,6 +7373,15 @@ function ambientJsonStringifyCall(expr: ts.CallExpression): ts.Expression | null
   if (ts.isSpreadElement(arg)) return null;
   if (!selectorSeesAmbientBinding(callee.expression)) return null;
   if (currentSelectionOptions?.supportsBackendCapability?.("native-json-codec") !== true) return null;
+  // A statically primitive operand stays on legacy's static/inline arms (its
+  // JSON rendering of a `boolean` / `number` / `string` is NOT the boxed-any
+  // codec path — measured 2026-10-20: `JSON.stringify(true)` through the
+  // boxed carrier regressed the equivalence suite). Only a value the checker
+  // cannot pin to a primitive reaches `dyn.json_stringify`.
+  const family = currentSelectionOptions?.classifyPrimitiveExpression?.(arg);
+  if (family === "string" || family === "number" || family === "boolean") return null;
+  if (ts.isStringLiteralLike(arg) || ts.isNumericLiteral(arg)) return null;
+  if (arg.kind === ts.SyntaxKind.TrueKeyword || arg.kind === ts.SyntaxKind.FalseKeyword) return null;
   return arg;
 }
 

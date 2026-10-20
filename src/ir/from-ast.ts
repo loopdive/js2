@@ -9262,9 +9262,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     const raw = lowerExpr(argument, cx, irDynamic());
     const rawType = cx.builder.typeOf(raw);
     if (rawType.kind === "dynamic") return cx.builder.emitDynJsonStringify(raw);
-    if (rawType.kind === "string" || irTypeIsBoolean(rawType) || asVal(rawType)?.kind === "f64") {
-      return cx.builder.emitDynJsonStringify(cx.builder.emitBox(raw, irDynamic()));
-    }
+    // The selector admits only an operand the checker cannot pin to a primitive;
+    // a concrete representation here is a selector/producer disagreement and
+    // withdraws rather than rendering through the boxed codec path.
     demoteToLegacy(
       "method-call-unsupported",
       `ir/from-ast: JSON.stringify of ${describeIrType(rawType)} operand is deferred (${cx.funcName})`,
