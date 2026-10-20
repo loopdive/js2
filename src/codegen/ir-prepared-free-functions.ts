@@ -56,6 +56,7 @@ import {
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
+import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
 import { hasPreparedFunctionObjectReference } from "./ir-imported-call-planning.js";
 import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
@@ -496,6 +497,20 @@ function identifierResolvesToDeclaration(
   return resolved !== undefined && sameDeclarationSite(resolved, declaration);
 }
 
+/** Keep the ordinary .call/.apply scanner exclusion; this arm actually reads the receiver. */
+function identifierIsApplyArgArrayTypeErrorReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const access = identifier.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== identifier || access.questionDotToken)
+    return false;
+  const call = access.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression === access &&
+    call.questionDotToken === undefined &&
+    applyArgArrayTypeErrorMaterializesReceiver(ctx, call, access)
+  );
+}
+
 function collectTopLevelFunctionValueTargets(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -503,16 +518,30 @@ function collectTopLevelFunctionValueTargets(
     string,
     readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
   >,
+  includeApplyArgArrayTypeErrorReceivers = false,
 ): ReadonlySet<IrUnitId> {
   const targets = new Set<IrUnitId>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
-      const declaration = ctx.oracle.valueDeclarationOf(node);
-      const exact =
-        declaration === undefined
-          ? undefined
-          : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
-      if (exact) targets.add(exact.unitId);
+    if (ts.isIdentifier(node)) {
+      const ordinaryReference = identifierIsRuntimeFunctionValueReference(node);
+      const applyReceiver =
+        includeApplyArgArrayTypeErrorReceivers &&
+        !ordinaryReference &&
+        identifierIsApplyArgArrayTypeErrorReceiver(ctx, node);
+      if (ordinaryReference || applyReceiver) {
+        const declaration = ctx.oracle.valueDeclarationOf(node);
+        const exact =
+          declaration === undefined
+            ? undefined
+            : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
+        if (
+          exact &&
+          (ordinaryReference ||
+            (ctx.runtimeEvalGlobalFunctionBindings !== true &&
+              !ctx.reassignedFunctionDeclarations?.has(exact.declaration)))
+        )
+          targets.add(exact.unitId);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -554,7 +583,12 @@ export function collectPreparedTopLevelFunctionValueTargetUnitIds(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
 ): ReadonlySet<IrUnitId> {
-  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
+  return collectTopLevelFunctionValueTargets(
+    ctx,
+    sourceFile,
+    topLevelFunctionUnitsByName(sourceFile, identityPlan),
+    true,
+  );
 }
 
 /**
