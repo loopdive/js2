@@ -353,6 +353,10 @@ type RecordMetadata = {
   compilerPathFailureKind?: string;
   imports?: string[];
   hostImportLeakClass?: string;
+  // Fallback-free pass metric (worker `summarizeIrRoute`).
+  irUnits?: number;
+  irLegacyUnits?: number;
+  irFallbackCodes?: readonly { code: string; count: number }[];
   reachedTest?: boolean;
   // (#2939/#2940) True when the `fail` is a vacuity correction (harness-wrapper
   // callback never executed). Surfaced in the JSONL so the report tallies the
@@ -426,6 +430,13 @@ function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): Re
     ...(combinedWorkerMetadata.get(result) ?? test262CompilerResultMetadata(result)),
     ...(result.imports && result.imports.length > 0 ? { imports: result.imports } : {}),
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
+    ...(typeof (result as { irUnits?: number }).irUnits === "number"
+      ? {
+          irUnits: (result as { irUnits?: number }).irUnits,
+          irLegacyUnits: (result as { irLegacyUnits?: number }).irLegacyUnits,
+          irFallbackCodes: (result as { irFallbackCodes?: RecordMetadata["irFallbackCodes"] }).irFallbackCodes,
+        }
+      : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
     ...((result as { linkedFallback?: boolean }).linkedFallback ? { linkedFallback: true } : {}),
     ...((result as { linkedFallbackReason?: string }).linkedFallbackReason
