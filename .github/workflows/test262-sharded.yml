@@ -69,19 +69,25 @@ on:
     - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
+      compiler_path_measurement:
+        description: "Measure the full corpus through IR standalone, separately from legacy regression baselines."
+        type: boolean
+        default: false
+      compiler_path:
+        description: "Requested compiler path, independent of IR_FIRST and execution proof."
+        type: choice
+        options: [ir]
+        default: ir
+      measurement_target:
+        description: "New Test262 measurements are standalone only; JS Host charts are historical."
+        type: choice
+        options: [standalone]
+        default: standalone
       standalone_temporal:
         description: "(#5383 S3, #5407) Build the STANDALONE Temporal provider and let standalone shards link it. ON by default since 2026-09-24 (owner decision): #5407 halved the linked compile cost. Uncheck on a dispatch run to measure the unlinked lane. The wiring is always present; this only decides whether the artifact exists."
         required: false
         default: true
         type: boolean
-      native_first:
-        description: "Also measure native-first semantics in the JS environment (separate artifacts, never promotes host baselines)"
-        type: boolean
-        default: false
-      honest_audit:
-        description: "(#3451 slice 6) Also run the HONEST whole-assembly oracle over the same host chunks as the AUDIT lane, plus a same-run parity report against the authoritative linked-harness rows. Separate artifacts; never promotes a baseline and is never a required check. (Was `linked_lane` until the slice-6 authority flip, when the two lanes swapped roles.)"
-        type: boolean
-        default: false
       standalone_linked:
         description: "(#6723 P1/P2) SHADOW measurement: also pre-warm the standalone harness providers and run the STANDALONE cells a second time under the linked-harness oracle (separate `test262-standalone-linked` artifacts + a parity report vs the promoted standalone baseline). The authoritative standalone cells stay honest. A dispatch with this checked never promotes a baseline."
         type: boolean
@@ -196,11 +202,11 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v5
-        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         with:
           fetch-depth: 0
       - name: Acquire and admit one immutable baseline pair
-        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE_COMMIT: ${{ inputs.baseline_commit }}
@@ -222,7 +228,7 @@ jobs:
           fi
           node scripts/acquire-test262-baseline-pair.mjs admitted-baseline
       - name: Preserve baseline admission evidence even on refusal
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         uses: actions/upload-artifact@v6
         with:
           name: admitted-measurement-baseline
@@ -967,14 +973,14 @@ jobs:
       # host-semantics provider. The README marker keeps the artifact
       # downloadable either way.
       - name: Restore native-first Temporal provider cache (#6706)
-        if: env.ANY_LANE == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.native_first))
+        if: false # JS-host Test262 computation, including provider warming, is retired.
         uses: actions/cache@v4
         with:
           path: .test262-cache/temporal-native-first
           key: temporal-provider-native-first-v1-${{ hashFiles('src/**/*.ts', 'tests/dogfood/temporal-polyfill-pin.json', 'tests/dogfood/setup-temporal-polyfill.mjs') }}
 
       - name: Build and stamp the provider (native-first regime, #6706)
-        if: env.ANY_LANE == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.native_first))
+        if: false # JS-host Test262 computation, including provider warming, is retired.
         continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=3072
@@ -984,14 +990,14 @@ jobs:
           --cache-dir .test262-cache/temporal-native-first
 
       - name: Ensure the native-first provider directory is uploadable (#6706)
-        if: env.ANY_LANE == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.native_first))
+        if: false # JS-host Test262 computation, including provider warming, is retired.
         run: |
           mkdir -p .test262-cache/temporal-native-first
           echo "native-first provider dir; the stamp (prewarm-native-first.json), if any, is the real payload" \
             > .test262-cache/temporal-native-first/README.txt
 
       - name: Upload native-first Temporal provider (#6706)
-        if: env.ANY_LANE == 'true' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.native_first))
+        if: false # JS-host Test262 computation, including provider warming, is retired.
         uses: actions/upload-artifact@v6
         with:
           name: temporal-provider-native-first-${{ github.run_id }}
@@ -1889,6 +1895,322 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  compiler-path-measurement-plan:
+    name: select full-corpus IR standalone measurement
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.plan.outputs.run }}
+    steps:
+      - name: Select weekly or explicit measurement
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MEASUREMENT: ${{ inputs.compiler_path_measurement }}
+          COMPILER_PATH: ${{ inputs.compiler_path }}
+          MEASUREMENT_TARGET: ${{ inputs.measurement_target }}
+        run: |
+          node --input-type=module <<'NODE'
+          // IR_MEASUREMENT_PLAN_START
+          const scheduled = process.env.EVENT_NAME === 'schedule' && new Date().getUTCDay() === 1;
+          const manual = process.env.EVENT_NAME === 'workflow_dispatch' && process.env.MEASUREMENT === 'true';
+          if (manual && (process.env.COMPILER_PATH !== 'ir' || process.env.MEASUREMENT_TARGET !== 'standalone'))
+            throw new Error('Only IR standalone is supported; JS Host results are historical');
+          const run = scheduled || manual;
+          const cells = run ? [{ compilerPath: 'ir', target: 'standalone', chunks: 102 }] : [];
+          console.log(JSON.stringify({ run, cells, promotion: false }));
+          const { appendFileSync } = await import('node:fs');
+          appendFileSync(process.env.GITHUB_OUTPUT, `run=${run}\n`);
+          // IR_MEASUREMENT_PLAN_END
+          NODE
+
+  test262-ir-measurement-shard:
+    name: test262 IR standalone measurement shard ${{ matrix.chunk }}
+    needs: [compiler-path-measurement-plan]
+    if: needs.compiler-path-measurement-plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk:
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94,
+            95,
+            96,
+            97,
+            98,
+            99,
+            100,
+            101,
+            102,
+          ]
+        target:
+          - name: standalone
+            test262_target: standalone
+            result_prefix: test262-measurement-ir-standalone
+    env:
+      COMPILER_POOL_SIZE: ${{ inputs.compiler_pool_size || '4' }}
+      VITEST_FORK_MAX_OLD_SPACE_SIZE: "1024"
+      TEST262_WORKER_MAX_OLD_SPACE_SIZE: "1024"
+      JS2WASM_IR_FIRST: ""
+      TEST262_COMPILER_PATH: ir
+      JS2WASM_FNCTOR_LAYOUT_EMIT: ""
+      TEST262_INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
+      TEST262_CHUNK_TOTAL: "102"
+      RUN_TIMESTAMP: ${{ github.run_id }}-${{ github.run_attempt }}-ir-standalone-chunk${{ matrix.chunk }}
+      TEST262_TARGET: ${{ matrix.target.test262_target }}
+      TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
+      TEST262_ORACLE_MODE: honest
+      JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
+      TEST262_IT_TIMEOUT_MS: ${{ matrix.target.test262_target == 'standalone' && '300000' || '' }}
+      TEST262_FULL_RUNTIME_EVAL: ""
+      TEST262_PATH_FILTER: "" # Full corpus, never a PR scope.
+      JS2WASM_TEMPORAL_CACHE: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build compiler bundles
+        run: |
+          ./node_modules/.bin/esbuild scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm \
+            --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
+            --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*
+
+      - name: Run shard
+        run: |
+          mkdir -p vitest-blob
+          set +e
+          export TEST262_CHUNK_INDEX=$(( ${{ matrix.chunk }} - 1 ))
+          node node_modules/vitest/dist/cli.js run tests/test262-chunk-dynamic.test.ts \
+            --reporter=blob \
+            --outputFile=vitest-blob/blob-${{ matrix.target.name }}-${{ matrix.chunk }}.json
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 1 ]; then
+            echo "Vitest exited with unexpected code $exit_code"
+            exit "$exit_code"
+          fi
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
+            echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
+            exit 2
+          fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
+          echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload shard artifacts
+        id: upload_shard
+        uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          retention-days: 1
+          name: test262-measurement-ir-standalone-shard-${{ matrix.chunk }}
+          path: |
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
+          if-no-files-found: warn
+
+      - name: Retry shard artifact upload on transient flake (#3404)
+        if: always() && steps.upload_shard.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          retention-days: 1
+          name: test262-measurement-ir-standalone-shard-${{ matrix.chunk }}
+          overwrite: true
+          path: |
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
+          if-no-files-found: warn
+
+  merge-ir-measurement:
+    name: merge complete IR standalone measurement
+    needs: [compiler-path-measurement-plan, test262-ir-measurement-shard]
+    if: needs.compiler-path-measurement-plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-node-pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: test262-measurement-ir-standalone-shard-*
+          path: ir-shards
+          merge-multiple: true
+      - name: Validate all 102 shards before reporting any verdict
+        run: |
+          mkdir -p ir-measurement/ir/runs
+          cat ir-shards/test262-measurement-ir-standalone-results-*.jsonl > ir-measurement/results.jsonl
+          node --input-type=module <<'NODE'
+          import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+          const files = readdirSync('ir-shards').filter(name => name.endsWith('.complete.json')).sort();
+          if (files.length !== 102) throw new Error(`Expected 102 completion manifests, got ${files.length}`);
+          writeFileSync('ir-measurement/completion.json', JSON.stringify(files.map(name => JSON.parse(readFileSync(`ir-shards/${name}`, 'utf8')))));
+          NODE
+          node scripts/validate-test262-completeness.mjs --input ir-measurement/results.jsonl \
+            --manifest ir-measurement/completion.json --expected-shards 102
+      - name: Build requested IR report including compiler failures
+        env:
+          INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}
+        run: |
+          proposals=()
+          if [ "$INCLUDE_PROPOSALS" = 1 ]; then proposals+=(--include-proposals); fi
+          # Unknown causes remain honest failures in this non-promoting measurement.
+          failure_ceiling=$(node --input-type=module -e "import {readFileSync} from 'node:fs'; const rows=readFileSync('ir-measurement/results.jsonl','utf8').trim().split(/\n/).filter(Boolean).map(JSON.parse); console.log(rows.filter(row=>['fail','compile_error','compile_timeout'].includes(row.status)).length)")
+          node scripts/build-test262-report.mjs --input ir-measurement/results.jsonl \
+            --output ir-measurement/test262-standalone-ir-report.json --compiler-path ir \
+            --target standalone --baseline-sha "${{ github.sha }}" --max-unclassified-root-causes "$failure_ceiling" "${proposals[@]}"
+      - name: Record separate status and run history
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          // IR_MEASUREMENT_ARTIFACTS_START
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync('ir-measurement/test262-standalone-ir-report.json', 'utf8'));
+          if (report.compilerPath !== 'ir' || report.requestedCompilerPath !== 'ir' ||
+              report.mode?.target !== 'standalone' || !['measured', 'unavailable'].includes(report.measurementState) ||
+              (report.measurementState === 'measured' && report.attemptedCases <= 0))
+            throw new Error('Report is not an explicit requested IR standalone result');
+          const { categories, ...metadata } = report;
+          const run = { ...metadata, runId: process.env.RUN_ID, runAttempt: process.env.RUN_ATTEMPT,
+            sourceSha: process.env.SOURCE_SHA, measuredAt: report.timestamp };
+          let reason;
+          if (report.measurementState === 'unavailable') {
+            const rows = readFileSync('ir-measurement/results.jsonl', 'utf8').split(/\n/).filter(Boolean).map(JSON.parse);
+            const refusal = rows.find(row => ['transport', 'infrastructure'].includes(row.compilerPathFailureKind));
+            reason = typeof refusal?.error === 'string' && refusal.error
+              ? refusal.error : 'The completed report records no admitted compiler-path measurement; no score is available.';
+          }
+          writeFileSync('ir-measurement/test262-standalone-ir-status.json', JSON.stringify({
+            ...run, schema: 'test262-compiler-path-status-v1', state: report.measurementState,
+            ...(reason ? { reason } : {}) }, null, 2));
+          // Keep raw report/JSONL evidence in the artifact, but never turn unavailable transport into a score/history.
+          if (report.measurementState === 'measured') {
+            writeFileSync('ir-measurement/ir/test262-standalone-categories.json', JSON.stringify({ ...run, categories }, null, 2));
+            writeFileSync('ir-measurement/ir/runs/standalone-index.json', JSON.stringify({ ...run, runs: [run] }, null, 2));
+          }
+          // IR_MEASUREMENT_ARTIFACTS_END
+          NODE
+      - uses: actions/upload-artifact@v6
+        with:
+          name: test262-ir-standalone-measurement
+          path: ir-measurement
+          if-no-files-found: error
+          retention-days: 90
+
   test262-shard:
     # Heavy 102-shard standalone test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -1922,7 +2244,7 @@ jobs:
     # implicit `success()` over `needs` holds for both arms.
     if: |
       ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_dispatch' && !inputs.compiler_path_measurement)
     # Runs in PARALLEL with `gate` — both are independently required by the
     # ruleset (`cheap gate (main-ancestor + lint)` and `merge shard reports`),
     # so PRs still can't merge unless both pass, but they don't block each
@@ -2506,6 +2828,7 @@ jobs:
     # run behaves exactly as before.
     if: |
       always() && github.event_name != 'schedule' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: merge shard reports
     # #3448 — mg-artifact-probe added so SHARD_SKIP_OK can green-skip the
@@ -2599,13 +2922,13 @@ jobs:
           merge-multiple: false
 
       - name: Download the admitted measurement baseline pair
-        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         uses: actions/download-artifact@v7
         with:
           name: admitted-measurement-baseline
           path: /tmp/cat-baselines
       - name: Verify measurement baseline before any report guard
-        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         run: |
           node scripts/admit-test262-baseline-pair.mjs /tmp/cat-baselines /tmp/cat-baselines/expectations.json /tmp/cat-baselines/rechecked.json
           mkdir -p .test262-cache
@@ -2678,7 +3001,7 @@ jobs:
             ${{ github.event_name != 'workflow_dispatch' && '--include-proposals' || (inputs.include_proposals && '--include-proposals' || '') }}
 
       - name: Check measurement candidate population against admitted pair
-        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: env.SHARDS_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         run: |
           node scripts/admit-test262-baseline-pair.mjs /tmp/cat-baselines /tmp/cat-baselines/expectations.json /tmp/cat-baselines/candidate-admission.json /tmp/cat-baselines/test262-current.jsonl merged-reports/test262-standalone-results-merged.jsonl
 
@@ -2842,7 +3165,7 @@ jobs:
           # Sparse + blob-filtered clone: the baselines repo carries a large
           # runs/ history (~500 MB cap), so a plain --depth=1 clone took
           # ~100s. Materializing only the two baseline JSONLs takes ~2-5s.
-          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote }}" != "true" ]; then
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement }}" != "true" ]; then
           { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/cat-baselines \
             && git -C /tmp/cat-baselines sparse-checkout set --no-cone /test262-current.jsonl /test262-standalone-current.jsonl \
             && git -C /tmp/cat-baselines checkout main; } 2>/dev/null || true
@@ -2907,7 +3230,7 @@ jobs:
         continue-on-error: true
         run: |
           BASE=/tmp/cat-baselines/test262-current.jsonl
-          if [ ! -s "$BASE" ] && [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote }}" != "true" ]; then
+          if [ ! -s "$BASE" ] && [ "${{ github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement }}" != "true" ]; then
             # The #1668 clone failed or was skipped: one fresh sparse clone.
             rm -rf /tmp/host-rows-baselines
             { git clone --depth=1 --filter=blob:none --no-checkout https://github.com/loopdive/js2wasm-baselines.git /tmp/host-rows-baselines \
@@ -3284,6 +3607,7 @@ jobs:
     # pull_request.
     if: |
       always() && github.event_name != 'schedule' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
       (github.event_name != 'push' || github.actor != 'github-actions[bot]')
     name: check for test262 regressions
     # Deliberately does NOT need merge-report: this job only consumes the
@@ -3337,13 +3661,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Download the admitted measurement baseline pair
-        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         uses: actions/download-artifact@v7
         with:
           name: admitted-measurement-baseline
           path: admitted-baseline
       - name: Verify measurement baseline before regression comparison
-        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         run: |
           node scripts/admit-test262-baseline-pair.mjs admitted-baseline admitted-baseline/expectations.json admitted-baseline/rechecked.json
           cp admitted-baseline/test262-current.jsonl benchmarks/results/test262-current.jsonl
@@ -3706,7 +4030,7 @@ jobs:
           test -s merged-reports/test262-results-merged.jsonl
 
       - name: Check measurement host population against admitted baseline
-        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote
+        if: env.HOST_RAN == 'true' && github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement
         run: |
           node scripts/admit-test262-baseline-pair.mjs admitted-baseline admitted-baseline/expectations.json admitted-baseline/candidate-admission.json merged-reports/test262-results-merged.jsonl
 
@@ -4113,9 +4437,10 @@ jobs:
       needs.mg-artifact-probe.result == 'success' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.actor != 'github-actions[bot]' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.compiler_path_measurement) &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
       !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
-      !(github.event_name == 'workflow_dispatch' && inputs.skip_promote) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.skip_promote && !inputs.compiler_path_measurement) &&
       !(github.event_name == 'workflow_dispatch' && inputs.native_first) &&
       !(github.event_name == 'workflow_dispatch' && inputs.standalone_linked) &&
       !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')

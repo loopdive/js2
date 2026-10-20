@@ -66,6 +66,7 @@ jobs:
   # 1. Compute the main src/ tree hash and probe the cache for prior results.
   # -------------------------------------------------------------------------
   check-main-cache:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: probe main cache
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -143,6 +144,7 @@ jobs:
   #     the no-filter set to prevent this. When in doubt, run all tests.
   # -------------------------------------------------------------------------
   detect-scope:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: detect path scope
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -215,6 +217,7 @@ jobs:
   #    test262-sharded.yml's `test262-shard` job.
   # -------------------------------------------------------------------------
   test262-branch-shard:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: branch shard ${{ matrix.chunk }}
     needs: detect-scope
     runs-on: ubuntu-latest
@@ -364,9 +367,9 @@ jobs:
   #    artifact prefix.
   # -------------------------------------------------------------------------
   test262-main-shard:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: main shard ${{ matrix.chunk }}
     needs: check-main-cache
-    if: needs.check-main-cache.outputs.cache_hit != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -509,6 +512,7 @@ jobs:
   # 4. Merge branch shards into a single JSONL.
   # -------------------------------------------------------------------------
   merge-branch:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: merge branch shards
     needs: test262-branch-shard
     runs-on: ubuntu-latest
@@ -566,9 +570,9 @@ jobs:
   #    `test262-main-results-${main_tree}` for future PRs to reuse.
   # -------------------------------------------------------------------------
   merge-main:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: merge main shards (and cache)
     needs: [check-main-cache, test262-main-shard]
-    if: needs.check-main-cache.outputs.cache_hit != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -636,11 +640,11 @@ jobs:
   #    main HEAD results — no rolling baseline drift.
   # -------------------------------------------------------------------------
   compare:
+    if: false # JS-host Test262 measurement retired; historical chart data remains.
     name: differential gate (branch vs main)
     needs: [check-main-cache, merge-branch, merge-main]
     # `merge-main` is skipped on cache hit; we still need this job to run.
     # `if: always() && ...needs success/skipped` covers both.
-    if: always() && needs.merge-branch.result == 'success' && (needs.merge-main.result == 'success' || needs.merge-main.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

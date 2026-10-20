@@ -19,6 +19,7 @@ import { widenJsDefaultGuessSlot } from "./js-default-param-type-guess.js";
  */
 
 import { ts, forEachChild } from "../ts-api.js";
+import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
@@ -434,38 +435,10 @@ export function collectParamDefaultReferences(
  * names shadowed by nested function scopes are not collected.
  */
 export function collectWrittenIdentifiers(node: ts.Node, names: Set<string>, shadowed?: ReadonlySet<string>): void {
-  if (ts.isBinaryExpression(node)) {
-    const op = node.operatorToken.kind;
-    // Assignment operators
-    if (
-      op === ts.SyntaxKind.EqualsToken ||
-      op === ts.SyntaxKind.PlusEqualsToken ||
-      op === ts.SyntaxKind.MinusEqualsToken ||
-      op === ts.SyntaxKind.AsteriskEqualsToken ||
-      op === ts.SyntaxKind.SlashEqualsToken ||
-      op === ts.SyntaxKind.PercentEqualsToken ||
-      op === ts.SyntaxKind.AmpersandEqualsToken ||
-      op === ts.SyntaxKind.BarEqualsToken ||
-      op === ts.SyntaxKind.CaretEqualsToken ||
-      op === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken ||
-      op === ts.SyntaxKind.AsteriskAsteriskEqualsToken ||
-      op === ts.SyntaxKind.BarBarEqualsToken ||
-      op === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
-      op === ts.SyntaxKind.QuestionQuestionEqualsToken
-    ) {
-      if (ts.isIdentifier(node.left)) {
-        if (!shadowed || !shadowed.has(node.left.text)) names.add(node.left.text);
-      }
-    }
-  } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-    const op = node.operator;
-    if (op === ts.SyntaxKind.PlusPlusToken || op === ts.SyntaxKind.MinusMinusToken) {
-      if (ts.isIdentifier(node.operand)) {
-        if (!shadowed || !shadowed.has(node.operand.text)) names.add(node.operand.text);
-      }
-    }
+  // (#6992) Any assignment operator, `++`/`--`, destructuring targets and
+  // for-in/for-of heads — the shared `isLexicalBindingWrite` contract.
+  if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) {
+    if (!shadowed || !shadowed.has(node.text)) names.add(node.text);
   }
   if (isFunctionScopeBoundary(node)) {
     const merged = new Set<string>(shadowed ?? []);

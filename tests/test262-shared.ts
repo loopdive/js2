@@ -32,7 +32,7 @@ import {
 } from "fs";
 import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
-import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+import { CompilerPool, test262CompilerResultMetadata, type TestResult } from "../scripts/compiler-pool.js";
 // (#5353) ONE Temporal gate across every lane — see scripts/test262-temporal.mjs.
 import { test262OracleLane } from "../scripts/test262-harness-cache.mjs";
 import { test262NeedsTemporalGlobal, test262TemporalLaneEnabled } from "../scripts/test262-temporal.mjs";
@@ -140,8 +140,10 @@ const DEFAULT_TEST_WEIGHT_MS = Number.isFinite(parsedDefaultTestWeightMs)
 // ── Cache setup (for disk cache side-effect) ───────────────────────
 
 const TEST262_COMPILER_PATH = requireTest262CompilerPath(process.env.TEST262_COMPILER_PATH);
+const REQUIRED_PREPARED = TEST262_COMPILER_PATH === "ir";
+const REQUIRED_REQUEST = { kind: "prepared-program-required", version: 1 } as const;
 const CACHE_DIR = join(import.meta.dirname ?? ".", "..", test262CacheDirectoryName(TEST262_COMPILER_PATH));
-mkdirSync(CACHE_DIR, { recursive: true });
+if (!REQUIRED_PREPARED) mkdirSync(CACHE_DIR, { recursive: true });
 
 function buildCompilerHash(): string {
   const h = createHash("md5");
@@ -194,11 +196,13 @@ const TEST262_SEMANTIC_PROVIDERS = parseTest262SemanticProviders(process.env.TES
 const TEST262_ORACLE_MODE = process.env.TEST262_ORACLE_MODE;
 // (#6723 P2) `TEST262_STANDALONE_LINKED=1` admits the linked arm on the
 // standalone target (shadow measurement only); unset => the host-only gate.
-const ORACLE_LANE = test262OracleLane({
-  oracleMode: TEST262_ORACLE_MODE,
-  target: TEST262_TARGET,
-  standaloneLinked: process.env.TEST262_STANDALONE_LINKED,
-});
+const ORACLE_LANE = REQUIRED_PREPARED
+  ? "honest"
+  : test262OracleLane({
+      oracleMode: TEST262_ORACLE_MODE,
+      target: TEST262_TARGET,
+      standaloneLinked: process.env.TEST262_STANDALONE_LINKED,
+    });
 
 // (#3451 slice 3) Linked-harness shadow oracle — the harness prefix is compiled
 // ONCE per include-set into a separate provider module (#2527) and each body is
@@ -214,7 +218,8 @@ const LINKED_HARNESS_ORACLE = ORACLE_LANE === "linked-harness";
 // (#5383 S3) May this lane link the compiled `Temporal` provider (#4628)?
 // Read ONCE — it consults the pre-warm stamp on disk, and the answer is a
 // property of the run, not of a row. See scripts/test262-temporal.mjs.
-const TEMPORAL_LANE_ENABLED = test262TemporalLaneEnabled(TEST262_TARGET, undefined, TEST262_SEMANTIC_PROVIDERS);
+const TEMPORAL_LANE_ENABLED =
+  !REQUIRED_PREPARED && test262TemporalLaneEnabled(TEST262_TARGET, undefined, TEST262_SEMANTIC_PROVIDERS);
 
 // (#3461) Fast native-harness oracle — the execution side of the fast lane that
 // #3462 stamps above. Active ONLY when `TEST262_ORACLE_MODE=fast` AND the run is
@@ -287,7 +292,8 @@ mkdirSync(RESULTS_DIR, { recursive: true });
 const RUN_TIMESTAMP =
   process.env.RUN_TIMESTAMP || new Date().toISOString().replace(/[-:T]/g, "").replace(/\..+/, "").slice(0, 15);
 const RESULT_PREFIX =
-  process.env.TEST262_RESULT_PREFIX || test262ResultPrefix(TEST262_TARGET ?? "gc", TEST262_SEMANTIC_PROVIDERS);
+  process.env.TEST262_RESULT_PREFIX ||
+  test262ResultPrefix(TEST262_TARGET ?? "gc", TEST262_SEMANTIC_PROVIDERS, TEST262_COMPILER_PATH);
 const JSONL_PATH = join(RESULTS_DIR, `${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl`);
 
 // Open results JSONL — each chunk appends independently
@@ -340,6 +346,11 @@ class ConformanceError extends Error {
 }
 
 type RecordMetadata = {
+  compilerAttempts?: number;
+  compilerPathVerified?: boolean;
+  executionCompilerPath?: string;
+  preparedExecutionReport?: Readonly<Record<string, unknown>>;
+  compilerPathFailureKind?: string;
   imports?: string[];
   hostImportLeakClass?: string;
   reachedTest?: boolean;
@@ -409,8 +420,10 @@ function metadataFromImports(imports: any[] | undefined, reachedTest: boolean): 
   };
 }
 
-function metadataFromWorkerResult(result: TestResult, reachedTestFallback = false): RecordMetadata {
+const combinedWorkerMetadata = new WeakMap<object, RecordMetadata>();
+function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): RecordMetadata {
   return {
+    ...(combinedWorkerMetadata.get(result) ?? test262CompilerResultMetadata(result)),
     ...(result.imports && result.imports.length > 0 ? { imports: result.imports } : {}),
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
@@ -447,6 +460,15 @@ function recordResult(
     // tests/test262-oracle-version.ts when the oracle tightens (e.g. #1945).
     oracle_version: ORACLE_VERSION,
     ...test262RequestedCompilerPathMetadata(TEST262_COMPILER_PATH, TEST262_TARGET),
+    ...(REQUIRED_PREPARED
+      ? {
+          compilerAttempts: metadata?.compilerAttempts ?? 0,
+          compilerPathVerified: metadata?.compilerPathVerified === true,
+          executionCompilerPath: metadata?.compilerPathVerified === true ? "ir" : "unknown",
+          preparedExecutionReport: metadata?.preparedExecutionReport,
+          compilerPathFailureKind: metadata?.compilerPathFailureKind,
+        }
+      : { compilerAttempts: metadata?.compilerAttempts ?? 0 }),
     // #3462: oracle LANE discriminator (the #3450 hybrid). "honest" is the
     // in-wasm v8 lane (host + standalone, the published number); a fast-mode
     // HOST run stamps "fast-nativeharness" and its own `oracle_fast_rev`. This
@@ -771,6 +793,16 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
 
             const source = readFileSync(filePath, "utf-8");
             const meta = parseMeta(source);
+            let compilerAttempts = 0;
+            const runWorkerTest = async (...args: Parameters<CompilerPool["runTest"]>) => {
+              const result = await pool!.runTest(...args);
+              compilerAttempts += Number(test262CompilerResultMetadata(result).compilerAttempts ?? 0);
+              return result;
+            };
+            const metadataFromWorkerResult = (result: TestResult, reached = false): RecordMetadata => ({
+              ...baseWorkerMetadata(result, reached),
+              compilerAttempts,
+            });
             // Exact discovery intentionally realpaths each file to enforce
             // containment. Keep its canonical manifest identity for policy
             // rules, since a symlinked corpus root may erase `test262/` from
@@ -808,7 +840,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // has no native runInContext step — so those rows stay honest even
             // in a fast run. When the flag is off, `nativeAssembly` is null and
             // nothing below diverges from the honest path (AC#2).
-            const nativeAssembly = NATIVE_HARNESS_ORACLE ? assembleNativeHarness(source, meta) : null;
+            const nativeAssembly =
+              !REQUIRED_PREPARED && NATIVE_HARNESS_ORACLE ? assembleNativeHarness(source, meta) : null;
             // (#3451 slice 3) Linked-harness shadow oracle. The split is the
             // slice-1 one — strict-neutral prefix + body-only unit — so the
             // primary and strict-rerun variants reuse ONE provider artifact.
@@ -816,7 +849,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // exactly as the artifact model requires. The in-process FIXTURE
             // path keeps the honest compile (it has no provider seam), so those
             // rows stay honest even in a linked run.
-            const linkedAssembly = LINKED_HARNESS_ORACLE ? assembleLinkedHarness(source, meta) : null;
+            const linkedAssembly =
+              !REQUIRED_PREPARED && LINKED_HARNESS_ORACLE ? assembleLinkedHarness(source, meta) : null;
             // The prefix is strict-neutral, so ONE descriptor serves the primary
             // and the strict rerun; only `linkedHarnessBody`/`linkedHarnessStrict`
             // are re-set per variant, at the run site.
@@ -876,9 +910,10 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // the compiled graph settles as a rejected Promise at runtime. Do
             // not turn dynamic fixtures into eager compileMulti inputs.
             if (
-              Object.keys(fixtureGraph.fixtureFiles).length > 0 ||
-              selfModuleImport ||
-              fixtureGraph.requiresEntrySelfImportGraph === true
+              !REQUIRED_PREPARED &&
+              (Object.keys(fixtureGraph.fixtureFiles).length > 0 ||
+                selfModuleImport ||
+                fixtureGraph.requiresEntrySelfImportGraph === true)
             ) {
               // Fixture tests are rare — compile in-process
               try {
@@ -1210,8 +1245,8 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             // ── Normal path: unified compile+execute in fork ────────
             // Cache disabled — stale cache entries caused false baselines.
             // Every test is compiled and executed fresh each run.
-            const wasmPath = "";
-            const metaPath = "";
+            const wasmPath = REQUIRED_PREPARED ? undefined : "";
+            const metaPath = REQUIRED_PREPARED ? undefined : "";
             // (#3461) In fast native-harness mode the worker compiles ONLY
             // `bindingShim + body` and runs `harnessPrefix` natively. The prefix
             // is strict-neutral (identical for the primary and strict-rerun
@@ -1247,7 +1282,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               lineAdjustOffset = linkedAssembly.primary.bodyLineOffset;
             }
             const runHarnessSource = (variantSource: string, label: string) =>
-              pool!.runTest(
+              runWorkerTest(
                 variantSource,
                 {
                   isNegative: isNegative || false,
@@ -1259,6 +1294,14 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   metaPath,
                   label,
                   target: TEST262_TARGET,
+                  ...(REQUIRED_PREPARED
+                    ? {
+                        wholeProgram: REQUIRED_REQUEST,
+                        fixtureFiles: fixtureGraph.fixtureFiles,
+                        entryFile: fixtureGraph.entryFile,
+                        requiresEntrySelfImportGraph: fixtureGraph.requiresEntrySelfImportGraph || selfModuleImport,
+                      }
+                    : {}),
                   semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
                   scriptGoal,
@@ -1296,6 +1339,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 linkedHarnessOpts.linkedHarnessStrict = linkedAssembly.strictRerun.strict;
                 linkedHarnessOpts.linkedHarnessHonestSource = harnessAssembly.strictRerun.source;
               }
+              const primaryIdentity = baseWorkerMetadata(r);
               const strictResult = await runHarnessSource(compileSource, `${relPath} [strict rerun]`);
               if ((strictResult as { linkedFallback?: boolean }).linkedFallback) {
                 lineAdjustOffset = harnessAssembly.strictRerun.bodyLineOffset;
@@ -1308,6 +1352,12 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 compileMs: primaryCompileMs + (strictResult.compileMs ?? 0),
                 execMs: primaryExecMs + (strictResult.execMs ?? 0),
               };
+              const strictIdentity = baseWorkerMetadata(strictResult);
+              combinedWorkerMetadata.set(r, {
+                ...strictIdentity,
+                compilerPathVerified:
+                  primaryIdentity.compilerPathVerified === true && strictIdentity.compilerPathVerified === true,
+              });
             }
 
             const timing = { compileMs: r.compileMs, execMs: r.execMs };
@@ -1344,7 +1394,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               if ((r.status === "compile_error" || r.status === "fail") && isPoisonCompileError(r.error)) {
                 poisonRetriesUsed++;
                 const retry = await runRetrySerial(() =>
-                  pool!.runTest(
+                  runWorkerTest(
                     compileSource,
                     {
                       isNegative: isNegative || false,
@@ -1356,6 +1406,14 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       metaPath,
                       label: relPath + " [poison retry]",
                       target: TEST262_TARGET,
+                      ...(REQUIRED_PREPARED
+                        ? {
+                            wholeProgram: REQUIRED_REQUEST,
+                            fixtureFiles: fixtureGraph.fixtureFiles,
+                            entryFile: fixtureGraph.entryFile,
+                            requiresEntrySelfImportGraph: fixtureGraph.requiresEntrySelfImportGraph || selfModuleImport,
+                          }
+                        : {}),
                       semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
                       scriptGoal,
@@ -1424,7 +1482,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
               if (r.status === "compile_timeout" && retriesUsed < MAX_RETRIES_PER_SHARD) {
                 retriesUsed++;
                 const retry = await runRetrySerial(() =>
-                  pool!.runTest(
+                  runWorkerTest(
                     compileSource,
                     {
                       isNegative: isNegative || false,
@@ -1436,6 +1494,14 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       metaPath,
                       label: relPath + " [retry]",
                       target: TEST262_TARGET,
+                      ...(REQUIRED_PREPARED
+                        ? {
+                            wholeProgram: REQUIRED_REQUEST,
+                            fixtureFiles: fixtureGraph.fixtureFiles,
+                            entryFile: fixtureGraph.entryFile,
+                            requiresEntrySelfImportGraph: fixtureGraph.requiresEntrySelfImportGraph || selfModuleImport,
+                          }
+                        : {}),
                       semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
                       scriptGoal,
