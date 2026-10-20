@@ -1967,10 +1967,13 @@ Focused verification is **18/18 pass**, zero skips and exit zero, including eigh
 receipt-valid substituted definitions and four before/after-ledger interruptions.
 The original14/16 opaque-matcher failures remain in
 [the exact source-body custody audit](../audit/6979-native-source-body-custody-20261020.json).
-Five-file source/invocation/getter/realm/mixed preservation is still live on
-session64251: resume the actual handle, do not restart from silent JSON output.
-No clean broader cohort is claimed. The detailed **S7-al source-body custody for
-the pending mixed Call join** handoff lives in
+Five-file source/invocation/getter/realm/mixed preservation now passes**171/171**,
+zero skips and exit zero, with positive five-file/171-row and per-file count
+checks; session64251 is closed, do not poll or restart it. These are two separate
+clean executions, not one189-case run; no before/after byte comparison is claimed.
+Signed source checkpoint `38532b0c901b63a45e39b5d1c0703ec89a706c68` is pushed with
+normal hooks including18/18 numeric-local tests. The detailed **S7-al verified
+source-body custody; mixed Call join remains pending** handoff lives in
 [S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
 Full mixed invocation and remaining catalog/population, live boundary refs,
 Linear/WASI, runtime retirement, architecture/closure/conformance and PR conflicts

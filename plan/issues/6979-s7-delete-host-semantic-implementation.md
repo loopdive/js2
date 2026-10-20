@@ -6081,7 +6081,7 @@ strict closure, custody/conformance/npm-compat/accelerators and PR conflict
 resolution in full scope. Both Markdown issues stay in progress and the full
 migration goal stays active.
 
-#### S7-al source-body custody for the pending mixed Call join (in progress)
+#### S7-al verified source-body custody; mixed Call join remains pending
 
 Fresh tracing confirms that mixed Get already has a shared algorithm builder,
 but its reservation remains deliberately unfilled until genuine mixed invocation
@@ -6127,11 +6127,13 @@ No production change or deadline increase was used to correct that instrument.
 
 Exact source/report hashes and limits are in
 [the source-body custody audit](../audit/6979-native-source-body-custody-20261020.json).
-The five-file source/invocation/getter/realm/mixed preservation run is **still
-live**, confirmed via actual session64251; its stdout is intentionally silent
-under the JSON reporter. Resume that same handle, do not restart from silence
-or treat this checkpoint as a clean broader cohort. The audit records its exact
-file population. The earlier catalog56/older243 cases were not rerun this turn.
+The five-file source/invocation/getter/realm/mixed preservation run is now
+**171/171 pass**, zero skips and terminal exit zero. Session64251 is **closed**;
+do not poll or restart it. Positive five-file/171-row floors, all case statuses
+and empty failureMessages, plus exact per-file42/61/37/26/5 row counts were
+checked. This is a separate execution from18/18, not one189-case run. No
+before/after byte-identity comparison is claimed. The audit records both exact
+reports/hashes. The earlier catalog56/older243 cases were not rerun this turn.
 
 Final typecheck/lint/format and source ratchets pass. Inventory is valid for1988
 modules/zero errors but architectureComplete=false. All current cycle metrics
@@ -6149,3 +6151,11 @@ the three named gaps, runtime/arm retirement, architecture/strict closure and
 custody/conformance/npm-compat/accelerators plus PR conflicts in the full scope.
 Both issues and the full migration remain in progress; do not mark ready/merge
 from body custody alone. No GitHub issue/comment is created.
+
+Signed source checkpoint `38532b0c901b63a45e39b5d1c0703ec89a706c68` is pushed to
+the existing migration PR. Normal pre-push typecheck/lint/format/oracle/coercion,
+18/18 numeric-local tests and committed issue integrity all pass. The earlier
+pending-run handoff in that commit was accurate when written; this terminal
+readback supersedes it without rewriting history. Prerequisite
+[refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+is freshly OPEN/unmerged, and the migration PR remains draft/unmergeable.

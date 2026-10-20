@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "checkpoint": "S7-al actual prepared source-body custody",
   "parentCommit": "7e56dd71e9ed9961cd9601e9fa030d4b12f71257",
+  "signedSourceCheckpoint": "38532b0c901b63a45e39b5d1c0703ec89a706c68",
   "sourceHashes": {
     "src/ir/program-native-invocation.ts": "db8676df3c26daeba363df260615a85368c19449b988f6ad3825fdc9720e18bf",
     "tests/issue-6979-native-source-body-custody.test.ts": "d868338f8b12bf43915c2e050f50ef493155576586491abb7a4ba13142accfba"
@@ -66,7 +67,16 @@
       "report": ".tmp/s7al-source-preservation.json",
       "log": ".tmp/s7al-source-preservation.log",
       "session": 64251,
-      "status": "live at this audit draft; no result claimed",
+      "status": "terminal; handle closed, do not poll or restart",
+      "runnerExit": 0,
+      "cases": 171,
+      "passed": 171,
+      "failed": 0,
+      "skipped": 0,
+      "jsonSha256": "a412ff606382ea0cf3f617813502e02e03825850ea43e457b0e523a05e519b78",
+      "logSha256": "cd1c2239b1035383beb3359a6180efb5cf93889a3fcbeb29ed263be879a6c10d",
+      "positiveFloorsVerified": "Exactly five files and 171 assertion records, all passed, all failureMessages empty, zero skipped, terminal runner exit zero; per-file row counts 42/61/37/26/5",
+      "scope": "Actual current prepared source/getter/invocation/realm/mixed components and fresh-child source replay. Separate execution from the 18-case custody suite, not one 189-case run. No before/after byte-identity comparison claimed.",
       "files": [
         "tests/issue-3518-native-source-closure-consumer.test.ts",
         "tests/issue-3518-native-invocation-consumer.test.ts",
@@ -107,6 +117,7 @@
     "newRootFloorEdgeAllowanceBaselineOrWaiver": false,
     "issueIndexer": "4955 issues indexed; no GitHub issue or comment created"
   },
+  "publication": "Signed source checkpoint pushed to fork with normal hooks: typecheck/lint/format/oracle/coercion, 18/18 numeric-local regressions and committed issue integrity pass. Full migration remains draft/unmerged; prerequisite PR6701 freshly OPEN/unmerged and PR6762 unmergeable. No hooks bypassed.",
   "notRerun": "Prior catalog 56-case and older 243-case runs, full Test262, historical custody, broader previously known-failing cohorts, host import-policy probes and Linear/WASI conformance are not rerun or certified by this body-custody checkpoint.",
   "next": "Join this body custody with genuine original ABI/dependency/allocation owners into the real mixed invocation graph. Authenticate source function identity and realm, complete remaining catalog/member/constructor algorithms and initializer/population, then atomic source/public publication. Live identity-backed foreign boundary refs, first-class undefined, Linear/WASI, three named gaps, runtime/arm retirement, architecture/strict closure, conformance/npm compatibility/accelerators and PR conflicts remain in full scope."
 }
