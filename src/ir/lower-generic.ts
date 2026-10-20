@@ -275,7 +275,7 @@ export function lowerIrFunctionBody<S, Slot>(
   }
   const nativeNumberUndefined = resolver.resolveNativeNumberUndefined?.(func);
   nativeNumberUndefined?.assertFunction(func);
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver, nativeNumberUndefined?.legality);
+  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver, nativeNumberUndefined?.admission);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(

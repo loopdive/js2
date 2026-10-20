@@ -198,6 +198,7 @@ import {
 } from "../backend/linear/program/memory.js";
 import type { PreparedLinearMemoryPlan } from "../backend/linear/program/contracts.js";
 import { nativeNumberUndefinedLegality, nativeNumberUndefinedLowering } from "./program-number-undefined-resources.js";
+import { nativeNumberUndefinedAdmission } from "./analysis/allocation-evidence/native-number-undefined-legality.js";
 import {
   reserveNativeNumberUndefinedGc,
   fillNativeNumberUndefinedGc,
@@ -415,11 +416,12 @@ export function acceptPreparedIrProgram(
   }
 
   for (const fn of runtime.prepared.functions) {
+    const legalityUse = nativeNumberUndefinedLegality(program, runtime, fn);
     const errors = verifyIrBackendLegality(
       fn,
       options.backend,
       undefined,
-      nativeNumberUndefinedLegality(program, runtime, fn),
+      legalityUse && nativeNumberUndefinedAdmission(legalityUse),
     );
     if (errors.length > 0) {
       return locate(program, fn.unitId, {

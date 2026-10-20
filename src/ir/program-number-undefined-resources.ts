@@ -33,6 +33,7 @@ import {
   assertNativeNumberUndefinedLegalityCurrent,
   nativeNumberUndefinedInstructionIsAdmitted,
   type NativeNumberUndefinedLegalityUse,
+  nativeNumberUndefinedAdmission,
 } from "./analysis/allocation-evidence/native-number-undefined-legality.js";
 import { IrUnsupportedError } from "../shared/contracts/ir-preparation-errors.js";
 
@@ -162,6 +163,7 @@ export function nativeNumberUndefinedLowering(
   return Object.freeze({
     carrier,
     legality: checked,
+    admission: nativeNumberUndefinedAdmission(checked),
     assertFunction(actual: IrFunction) {
       assertEmissionActive();
       if (actual !== fn) fail("foreign physical function");

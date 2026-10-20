@@ -2,6 +2,7 @@
 import type { IrFunction, IrInstr } from "../core/nodes.js";
 import type { Instr, ValType } from "../../wasm/model/instructions.js";
 import type { NativeNumberUndefinedLegalityUse } from "../analysis/allocation-evidence/native-number-undefined-legality.js";
+import type { IrBackendNativeAdmission } from "../analysis/backend-legality.js";
 
 /** The existing vocabulary admitted by an independently checked native carrier. */
 export type NativeNumberUndefinedInstruction = Extract<
@@ -15,6 +16,8 @@ export type { NativeNumberUndefinedMemoryDescription } from "../program/prepared
 export interface NativeNumberUndefinedLowering {
   readonly carrier: ValType;
   readonly legality: NativeNumberUndefinedLegalityUse;
+  /** The verifier's injected admission over `legality` (#3518 lowering-cycle pin). */
+  readonly admission: IrBackendNativeAdmission;
   assertFunction(fn: IrFunction): void;
   owns(instr: IrInstr): instr is NativeNumberUndefinedInstruction;
   emit(

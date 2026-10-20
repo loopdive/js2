@@ -12,12 +12,18 @@ import type { IrBinop, IrBlock, IrFunction, IrInstr } from "../core/nodes.js";
 import { asVal, type IrClassShape, type IrType } from "../core/types.js";
 import type { IrFnctorShape } from "../core/fnctor-shapes.js";
 import type { ValType } from "../../wasm/model/instructions.js";
-import {
-  assertNativeNumberUndefinedLegalityCurrent,
-  nativeNumberUndefinedInstructionIsAdmitted,
-  nativeNumberUndefinedTypeIsAdmitted,
-  type NativeNumberUndefinedLegalityUse,
-} from "./allocation-evidence/native-number-undefined-legality.js";
+
+/**
+ * (#6920) Admission of the checked native Number/Undefined carrier, injected
+ * by the owner that issued it. The verifier only asks these three questions;
+ * the evidence modules that answer them stay out of the lowering value graph
+ * (#3518 lowering-cycle pin).
+ */
+export interface IrBackendNativeAdmission {
+  assertCurrent(fn: IrFunction, backend: string): void;
+  instructionIsAdmitted(fn: IrFunction, backend: string, instr: IrInstr): boolean;
+  typeIsAdmitted(fn: IrFunction, backend: string, instr: IrInstr, type: IrType): boolean;
+}
 
 export type IrBackendKind = "wasmgc" | "linear" | "bytecode" | "porffor";
 
@@ -40,9 +46,9 @@ export function verifyIrBackendLegality(
   func: IrFunction,
   backend: IrBackendKind,
   fnctorResolver?: IrBackendFnctorResolver,
-  nativeNumberUndefined?: NativeNumberUndefinedLegalityUse,
+  nativeNumberUndefined?: IrBackendNativeAdmission,
 ): IrBackendLegalityError[] {
-  if (nativeNumberUndefined) assertNativeNumberUndefinedLegalityCurrent(nativeNumberUndefined, func, backend);
+  if (nativeNumberUndefined) nativeNumberUndefined.assertCurrent(func, backend);
   const errors: IrBackendLegalityError[] = [];
   const checkedClassShapes = new Set<IrClassShape>();
   const checkType = (type: IrType, block: number | undefined, where: string, instr?: IrInstr): void => {
@@ -50,7 +56,7 @@ export function verifyIrBackendLegality(
       type.kind === "dynamic" &&
       instr &&
       nativeNumberUndefined &&
-      nativeNumberUndefinedTypeIsAdmitted(nativeNumberUndefined, func, backend, instr, type)
+      nativeNumberUndefined.typeIsAdmitted(func, backend, instr, type)
     )
       return;
     const fnctorHandle =
@@ -83,7 +89,7 @@ function checkInstr(
   errors: IrBackendLegalityError[],
   checkType: (type: IrType, block: number | undefined, where: string, instr?: IrInstr) => void,
   fnctorResolver?: IrBackendFnctorResolver,
-  nativeNumberUndefined?: NativeNumberUndefinedLegalityUse,
+  nativeNumberUndefined?: IrBackendNativeAdmission,
 ): void {
   const blockId = block.id as number;
   const reject = (reason: string): void => {
@@ -116,7 +122,7 @@ function checkInstr(
 
   if (backend === "linear") {
     const reason =
-      nativeNumberUndefined && nativeNumberUndefinedInstructionIsAdmitted(nativeNumberUndefined, func, backend, instr)
+      nativeNumberUndefined && nativeNumberUndefined.instructionIsAdmitted(func, backend, instr)
         ? null
         : linearInstrError(instr);
     if (reason) reject(reason);

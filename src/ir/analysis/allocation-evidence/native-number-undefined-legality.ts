@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { forEachNestedBuffer, type IrFunction, type IrInstr, type IrModule } from "../../core/nodes.js";
 import type { IrType } from "../../core/types.js";
+import type { IrBackendNativeAdmission } from "../backend-legality.js";
 import type { AllocRegistrySnapshot } from "../contracts/allocations.js";
 import { copyIrPreparationData } from "../alloc-registry.js";
 import {
@@ -221,4 +222,15 @@ export function nativeNumberUndefinedTypeIsAdmitted(
       : (instr.kind === "const" || instr.kind === "if") && type === instr.resultType;
   // Outsider values are opaque until strict identity proves an actual current DATA field.
   return field && type !== null && type !== undefined && type.kind === "dynamic";
+}
+
+/** The verifier's injected view of one issued use (#3518 lowering-cycle pin: no value edge from the verifier). */
+export function nativeNumberUndefinedAdmission(use: NativeNumberUndefinedLegalityUse): IrBackendNativeAdmission {
+  return Object.freeze({
+    assertCurrent: (fn: IrFunction, backend: string) => assertNativeNumberUndefinedLegalityCurrent(use, fn, backend),
+    instructionIsAdmitted: (fn: IrFunction, backend: string, instr: IrInstr) =>
+      nativeNumberUndefinedInstructionIsAdmitted(use, fn, backend, instr),
+    typeIsAdmitted: (fn: IrFunction, backend: string, instr: IrInstr, type: IrType) =>
+      nativeNumberUndefinedTypeIsAdmitted(use, fn, backend, instr, type),
+  });
 }
