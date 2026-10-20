@@ -60,7 +60,7 @@ export function emitVectorElementAccess<S>(
     emitter.emitIf({ kind: "val", type: { kind: "i32" } }, grown, original, out);
     emitter.emitBinary("i32.ge_u", out);
     const trap = emitter.newSink();
-    emitter.pushRaw(trap, { op: "unreachable" });
+    emitter.emitUnreachable(trap);
     emitter.emitIf({ kind: "empty" }, trap, emitter.newSink(), out);
     // Resolution and length refresh occur after all operand effects, with no callbacks between.
     emitter.emitLocalGet(receiver, out);
@@ -89,7 +89,7 @@ export function emitVectorElementAccess<S>(
     emitter.emitScalarConst("i32", capacity, out);
     emitter.emitBinary("i32.ge_u", out);
     const trap = emitter.newSink();
-    emitter.pushRaw(trap, { op: "unreachable" });
+    emitter.emitUnreachable(trap);
     emitter.emitIf({ kind: "empty" }, trap, emitter.newSink(), out);
     emitter.emitLocalGet(index, out);
     if (value !== undefined) emitter.emitLocalGet(value, out);
