@@ -1291,11 +1291,19 @@ function summarizeIrRoute(outcomes) {
   if (!Array.isArray(outcomes)) return {};
   let irUnits = 0;
   let irLegacyUnits = 0;
+  let irDualUnits = 0;
   const codes = new Map();
   for (const outcome of outcomes) {
     if (!outcome || outcome.kind === "non-executable") continue;
     irUnits++;
-    if (!outcome.legacyBodyEmitted) continue;
+    // A unit whose IR body was emitted ships the IR body even when the direct
+    // dispatcher also ran (stage `patch`: the IR body replaced the legacy
+    // slot; a parity mismatch would have left a failure row instead). Only a
+    // unit with NO IR body is a legacy unit.
+    if (outcome.irBodyEmitted) {
+      if (outcome.legacyBodyEmitted) irDualUnits++;
+      continue;
+    }
     irLegacyUnits++;
     const code =
       outcome.kind === "emitted" ? "withdrawn-after-emit" : `${outcome.kind}:${outcome.stage}:${outcome.code}`;
@@ -1304,6 +1312,7 @@ function summarizeIrRoute(outcomes) {
   return {
     irUnits,
     irLegacyUnits,
+    ...(irDualUnits > 0 ? { irDualUnits } : {}),
     ...(codes.size > 0
       ? { irFallbackCodes: [...codes].sort((a, b) => b[1] - a[1]).map(([code, count]) => ({ code, count })) }
       : {}),

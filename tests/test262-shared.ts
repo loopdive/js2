@@ -356,6 +356,7 @@ type RecordMetadata = {
   // Fallback-free pass metric (worker `summarizeIrRoute`).
   irUnits?: number;
   irLegacyUnits?: number;
+  irDualUnits?: number;
   irFallbackCodes?: readonly { code: string; count: number }[];
   reachedTest?: boolean;
   // (#2939/#2940) True when the `fail` is a vacuity correction (harness-wrapper
@@ -434,6 +435,7 @@ function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): Re
       ? {
           irUnits: (result as { irUnits?: number }).irUnits,
           irLegacyUnits: (result as { irLegacyUnits?: number }).irLegacyUnits,
+          irDualUnits: (result as { irDualUnits?: number }).irDualUnits,
           irFallbackCodes: (result as { irFallbackCodes?: RecordMetadata["irFallbackCodes"] }).irFallbackCodes,
         }
       : {}),
@@ -507,6 +509,7 @@ function recordResult(
     // compiler bundle recorded no outcome ledger.
     ir_units: metadata?.irUnits,
     ir_legacy_units: metadata?.irLegacyUnits,
+    ir_dual_units: metadata?.irDualUnits,
     ir_fallback_codes: metadata?.irFallbackCodes,
     reached_test: metadata?.reachedTest ?? false,
     // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
