@@ -30,6 +30,9 @@ import {
   reserveNativeObjectSetPrototypeAlgorithm,
   fillNativeObjectSetPrototypeAlgorithm,
   requireCompletedNativeObjectSetPrototypeAlgorithm,
+  reserveNativeObjectPrototypeSetterAlgorithm,
+  fillNativeObjectPrototypeSetterAlgorithm,
+  requireCompletedNativeObjectPrototypeSetterAlgorithm,
 } from "../../src/backend/wasmgc/resources/native-object-structural-algorithms.js";
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import { buildUndefinedInitializer } from "../../src/runtime/wasmgc/values/primitive-layouts.js";
@@ -41,12 +44,14 @@ import {
 import { emitBinary } from "../../src/emit/binary.js";
 import { as, get, ext, i32 } from "./native-realm-object-layouts.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
+import { setImmediate } from "node:timers/promises";
 
 export function objectExtensibilityFixture(
   displaced = false,
   decoded = false,
   mode: "interned" | "allocating" = "interned",
   includeSetPrototype = false,
+  includePrototypeSetter = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -103,6 +108,10 @@ export function objectExtensibilityFixture(
   const prototypeAlgorithm = includeSetPrototype
     ? reserveNativeObjectSetPrototypeAlgorithm(tx, algorithmDependencies)
     : undefined;
+  if (includePrototypeSetter && !includeSetPrototype) throw Error("setter fixture requires the structural controls");
+  const prototypeSetter = includePrototypeSetter
+    ? reserveNativeObjectPrototypeSetterAlgorithm(tx, algorithmDependencies)
+    : undefined;
   return {
     ...r,
     mixed,
@@ -119,6 +128,7 @@ export function objectExtensibilityFixture(
     algorithmDependencies,
     algorithms,
     prototypeAlgorithm,
+    prototypeSetter,
   };
 }
 export function fillObjectExtensibilityDependencies(r: ReturnType<typeof objectExtensibilityFixture>) {
@@ -143,10 +153,55 @@ export function objectExtensibilityRuntime(
   decoded = false,
   mode: "interned" | "allocating" = "interned",
   includeSetPrototype = false,
+  includePrototypeSetter = false,
 ) {
-  const r = objectExtensibilityFixture(displaced, decoded, mode, includeSetPrototype),
+  const steps = objectExtensibilityRuntimeSteps(displaced, decoded, mode, includeSetPrototype, includePrototypeSetter);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/** Same real checks/emission as the synchronous API. Service runner IPC between
+ * expensive phases without changing hook/case/RPC deadlines or skipping work.
+ */
+export async function objectExtensibilityRuntimeAsync(
+  displaced = false,
+  decoded = false,
+  mode: "interned" | "allocating" = "interned",
+  includeSetPrototype = false,
+  includePrototypeSetter = false,
+) {
+  const steps = objectExtensibilityRuntimeSteps(displaced, decoded, mode, includeSetPrototype, includePrototypeSetter);
+  const synchronousPhaseMs: number[] = [];
+  for (;;) {
+    const start = performance.now(),
+      step = steps.next();
+    synchronousPhaseMs.push(performance.now() - start);
+    if (step.done) {
+      console.info(
+        "component scheduling",
+        JSON.stringify({ displaced, decoded, mode, includePrototypeSetter, synchronousPhaseMs }),
+      );
+      return step.value;
+    }
+    await setImmediate();
+  }
+}
+
+function* objectExtensibilityRuntimeSteps(
+  displaced = false,
+  decoded = false,
+  mode: "interned" | "allocating" = "interned",
+  includeSetPrototype = false,
+  includePrototypeSetter = false,
+) {
+  const r = objectExtensibilityFixture(displaced, decoded, mode, includeSetPrototype, includePrototypeSetter),
     { tx, f } = r;
-  const selectedEntries = [...r.algorithms.entries, ...(r.prototypeAlgorithm?.entries ?? [])];
+  const selectedEntries = [
+    ...r.algorithms.entries,
+    ...(r.prototypeAlgorithm?.entries ?? []),
+    ...(r.prototypeSetter?.entries ?? []),
+  ];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
     initialize: { params: [], results: [] },
@@ -178,6 +233,15 @@ export function objectExtensibilityRuntime(
           native2: { params: [i32, i32], results: [ext] },
         }
       : {}),
+    ...(includePrototypeSetter
+      ? {
+          stored3: {
+            params: [ext, ext, { kind: "ref" as const, typeIdx: f.substrate.arguments.carrier.typeIndex }],
+            results: [ext],
+          },
+          native3: { params: [i32, i32], results: [ext] },
+        }
+      : {}),
   };
   const controls = Object.fromEntries(
     Object.entries(signatures).map(([name, signature]) => [
@@ -199,13 +263,22 @@ export function objectExtensibilityRuntime(
     fill(token, definition);
     completed.add(token.object);
   };
+  yield;
   fillObjectExtensibilityDependencies(r);
+  yield;
   fillNativeObjectExtensibilityAlgorithms(tx, r.algorithms);
   requireCompletedNativeObjectExtensibilityAlgorithms(tx, r.algorithms);
+  yield;
   if (r.prototypeAlgorithm) {
     fillNativeObjectSetPrototypeAlgorithm(tx, r.prototypeAlgorithm);
     requireCompletedNativeObjectSetPrototypeAlgorithm(tx, r.prototypeAlgorithm);
   }
+  yield;
+  if (r.prototypeSetter) {
+    fillNativeObjectPrototypeSetterAlgorithm(tx, r.prototypeSetter);
+    requireCompletedNativeObjectPrototypeSetterAlgorithm(tx, r.prototypeSetter);
+  }
+  yield;
   // Exercise the real prevention algorithm's false branch with the genuine
   // IsExtensible result of a non-extensible object. This derivative is a named
   // test control, never filled into a catalog slot or accepted by its owner.
@@ -361,13 +434,15 @@ export function objectExtensibilityRuntime(
       { op: "extern.convert_any" },
     ],
   });
-  if (r.prototypeAlgorithm) {
-    const entry = r.prototypeAlgorithm.entries[0]!;
-    tx.fillFunction(controls.native2!, {
+  for (const [entry, control] of [
+    ...(r.prototypeAlgorithm ? [[r.prototypeAlgorithm.entries[0]!, controls.native2!] as const] : []),
+    ...(r.prototypeSetter ? [[r.prototypeSetter.entries[0]!, controls.native3!] as const] : []),
+  ]) {
+    tx.fillFunction(control, {
       locals: [],
       body: [
         { op: "ref.func", funcIdx: entry.lifted.handle },
-        n(2),
+        n(entry.request.intrinsic.callable.length),
         call(r.storage.createNull.handle),
         n(0),
         get(0),
@@ -413,9 +488,11 @@ export function objectExtensibilityRuntime(
     locals: [],
     body: [...as(0, r.errors.type.typeIndex), { op: "struct.get", typeIdx: r.errors.type.typeIndex, fieldIdx: 0 }],
   });
-  for (const [index, key] of (includeSetPrototype
-    ? ["stored0", "stored1", "stored2"]
-    : ["stored0", "stored1"]
+  for (const [index, key] of (includePrototypeSetter
+    ? ["stored0", "stored1", "stored2", "stored3"]
+    : includeSetPrototype
+      ? ["stored0", "stored1", "stored2"]
+      : ["stored0", "stored1"]
   ).entries())
     tx.fillFunction(controls[key]!, {
       locals: [],
@@ -459,6 +536,7 @@ export function objectExtensibilityRuntime(
       : {}),
   }))
     tx.defineExport("extensibility:export:" + name, name, token);
+  yield;
   const live = reachableFunctionPositions(f.module),
     liveNames = f.module.functions.filter((_, i) => live[i]).map((fn) => fn.name);
   const unfilledReachable = f.module.functions.filter((fn, i) => live[i] && !completed.has(fn));
@@ -475,6 +553,7 @@ export function objectExtensibilityRuntime(
   const snapshot = structuredClone(f.module),
     stubbed = stubUnreachableFunctions(snapshot, live);
   if (!stubbed || stubsReachedAfterFinalize(snapshot).length) throw Error("invalid component sweep");
+  yield;
   const bytes = emitBinary(snapshot),
     wasm = new WebAssembly.Module(bytes as BufferSource);
   const api = new WebAssembly.Instance(wasm).exports as Record<string, any>;

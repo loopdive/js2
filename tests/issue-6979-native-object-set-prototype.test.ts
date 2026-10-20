@@ -6,6 +6,7 @@ import {
   objectExtensibilityFixture,
   fillObjectExtensibilityDependencies,
   objectExtensibilityRuntime,
+  objectExtensibilityRuntimeAsync,
 } from "./helpers/native-object-extensibility.js";
 import {
   reserveNativeObjectSetPrototypeAlgorithm,
@@ -24,8 +25,8 @@ for (const [displaced, decoded, mode] of [
 ] as const)
   describe(`actual Object.setPrototypeOf displaced=${displaced} decoded=${decoded} boxes=${mode}`, () => {
     let r: ReturnType<typeof objectExtensibilityRuntime>;
-    beforeAll(() => {
-      r = objectExtensibilityRuntime(displaced, decoded, mode, true);
+    beforeAll(async () => {
+      r = await objectExtensibilityRuntimeAsync(displaced, decoded, mode, true);
       console.info(
         "Object.setPrototypeOf component",
         JSON.stringify({

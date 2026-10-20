@@ -1738,3 +1738,52 @@ Source/report hashes and failed development observations are retained in
 `plan/audit/6979-native-object-set-prototype-20261020.json`. The auxiliary
 issue-ID checker's failed/empty scans are tracked in the detailed handoff and
 are not treated as passing verification.
+
+### S7-ag: complete the retained prototype setter before realm population
+
+Continue from `d54d8454130e9721dc37e429ca081c9b4e0771aa`. The actual
+`%set Object.prototype.__proto__%` algorithm and guarded Call owner now use the
+existing mixed mutation/primitive/error owners. Unlike Object.setPrototypeOf,
+this operation reads its receiver from `this`, ignores invalid native primitive
+P and returns canonical undefined. Its false result still throws a native
+TypeError; unknown/unready private inputs still refuse loudly. No objects are
+copied and no host import or public admission is added. A distinct fixed scope
+prevents one structural algorithm family from certifying another.
+
+This retained normative-optional member is part of the existing Object.prototype
+catalog and is a real population prerequisite, not a replacement for the larger
+migration. Verification and the next handoff are tracked in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+
+Next owner work remains concrete: `to-object-body.ts` supplies control flow but
+not provider authority. Native value/Boolean resources supply primitive payload
+unboxing; wrapper storage requires an explicit prototype and has no intrinsic
+selection authority; StringCreate separately supplies the own length/virtual
+index behavior. The Object/Function catalog currently has no genuine primitive
+prototype family owner. Issue real intrinsic singleton/default-prototype
+ownership and compose these existing producers; do not bless arbitrary globals,
+raw handles or explicit-null test prototypes as ToObject completion. Canonical
+undefined and unknown/native-object admission must remain strict at that entry.
+Full population and atomic source/public publication, foreign live boundary
+identity, Linear/WASI and the existing architecture/retirement/conformance
+obligations remain required. Both issues remain in progress.
+
+S7-ag verification is **76/76 plus 63/63 in two separate clean executions**,
+zero skips/reported runner errors and exit zero in both: the new 38-case setter,
+existing 38-case Object.setPrototypeOf and full 63-case extensibility files.
+Seven existing component binaries retain exact parent hashes. The first
+76-case run reported all cases passing but exited one with an onTaskUpdate
+timeout even while JSON said success; that failure is retained, not hidden.
+Expensive test fixtures now yield between the same real audit/emission phases,
+with the original case/hook/RPC deadlines and semantic checks intact. This is
+not proof of a performance/concurrency cause, nor a single combined 139-case run.
+
+All 33 default-path policy inventories/binaries and six native compiled controls
+match retained parent reports; they do not prove IR/source admission. Source
+growth is two files/net +62 LOC, with no new allowance or policy/graph changes.
+The same four growing dependency directions, strict dynamic-import gaps,
+prerequisite and mergeability obligations remain open. Broader/full conformance
+and custody runs were not repeated. Exact source/report hashes and remaining
+producer acceptance are in the detailed issue and
+`plan/audit/6979-native-object-prototype-setter-20261020.json`. The PR remains
+draft, both issues stay in progress, and the full migration is not complete.

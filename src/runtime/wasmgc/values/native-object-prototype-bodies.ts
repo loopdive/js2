@@ -21,8 +21,22 @@ const when = (then: Instr[]): Instr => ({ op: "if", blockType: { kind: "empty" }
 export function buildNativeObjectSetPrototypeDefinition(
   d: NativeObjectSetPrototypeOperands,
 ): BuiltinFunctionDefinition {
+  return definition(d, false);
+}
+
+/** The retained accessor setter consumes this/argv[0], not argv[0]/argv[1]. */
+export function buildNativeObjectPrototypeSetterDefinition(
+  d: NativeObjectSetPrototypeOperands,
+): BuiltinFunctionDefinition {
+  return definition(d, true);
+}
+
+function definition(d: NativeObjectSetPrototypeOperands, setter: boolean): BuiltinFunctionDefinition {
   const error = () => structuredClone(d.throwTypeError);
-  const undefinedGuard = (local: number): Instr[] => [
+  const undefinedValue = (): Instr[] => [{ op: "global.get", index: d.undefinedGlobal }, { op: "extern.convert_any" }];
+  const invalidPrototype = (): Instr[] => (setter ? [...undefinedValue(), { op: "return" }] : error());
+  const result = (): Instr[] => (setter ? undefinedValue() : [get(2)]);
+  const undefinedGuard = (local: number, prototype = false): Instr[] => [
     get(local),
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: d.undefinedTypeIdx },
@@ -32,7 +46,7 @@ export function buildNativeObjectSetPrototypeDefinition(
       { op: "ref.cast", typeIdx: d.undefinedTypeIdx },
       { op: "global.get", index: d.undefinedGlobal },
       { op: "ref.eq" },
-      when(error()),
+      when(prototype ? invalidPrototype() : error()),
       // A lookalike/tagged value is not the canonical undefined input.
       { op: "unreachable" },
     ]),
@@ -52,7 +66,7 @@ export function buildNativeObjectSetPrototypeDefinition(
       { name: "status", type: { kind: "i32" } },
     ],
     body: [
-      ...buildBuiltinFunctionArgument(d, 1, 0),
+      ...(setter ? [get(0)] : buildBuiltinFunctionArgument(d, 1, 0)),
       { op: "local.set", index: 2 },
       // RequireObjectCoercible precedes even reading the prototype argument.
       get(2),
@@ -64,15 +78,15 @@ export function buildNativeObjectSetPrototypeDefinition(
       { op: "local.tee", index: 4 },
       { op: "i32.eqz" },
       when(objectGuard(2)),
-      ...buildBuiltinFunctionArgument(d, 1, 1),
+      ...buildBuiltinFunctionArgument(d, 1, setter ? 0 : 1),
       { op: "local.set", index: 3 },
       get(3),
       { op: "ref.is_null" },
       { op: "i32.eqz" },
-      when([...undefinedGuard(3), get(3), call(d.isPrimitive), when(error()), ...objectGuard(3)]),
+      when([...undefinedGuard(3, true), get(3), call(d.isPrimitive), when(invalidPrototype()), ...objectGuard(3)]),
       // Prototype validity is required even when O is a non-null primitive.
       get(4),
-      when([get(2), { op: "return" }]),
+      when([...result(), { op: "return" }]),
       get(2),
       get(3),
       call(d.setPrototypeOf),
@@ -84,7 +98,7 @@ export function buildNativeObjectSetPrototypeDefinition(
       get(5),
       { op: "i32.eqz" },
       when(error()),
-      get(2),
+      ...result(),
     ],
   };
 }

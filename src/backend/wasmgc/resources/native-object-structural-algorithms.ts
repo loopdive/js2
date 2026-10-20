@@ -30,7 +30,10 @@ import {
 import { requireNativeStringLiteral, nativeStringLiteralReservationInventory } from "./native-string-literals.js";
 import { planNativeStringLiteral } from "../../../runtime/wasmgc/values/string-literal-bodies.js";
 import { buildNativeObjectExtensibilityDefinition } from "../../../runtime/wasmgc/values/native-object-extensibility-bodies.js";
-import { buildNativeObjectSetPrototypeDefinition } from "../../../runtime/wasmgc/values/native-object-prototype-bodies.js";
+import {
+  buildNativeObjectSetPrototypeDefinition,
+  buildNativeObjectPrototypeSetterDefinition,
+} from "../../../runtime/wasmgc/values/native-object-prototype-bodies.js";
 import { buildBoxBooleanBody, buildBooleanBoxInitializer } from "../../../runtime/wasmgc/values/boolean-bodies.js";
 import { buildUndefinedInitializer } from "../../../runtime/wasmgc/values/primitive-layouts.js";
 import { buildErrorConstructorBody } from "../../../runtime/wasmgc/values/error-bodies.js";
@@ -58,10 +61,22 @@ export interface NativeObjectSetPrototypeAlgorithm {
   readonly entries: readonly NativeObjectRealmEntry[];
   readonly completionScope: "native-object-set-prototype-call";
 }
-type Algorithms = NativeObjectExtensibilityAlgorithms | NativeObjectSetPrototypeAlgorithm;
-type Kind = "extensibility" | "set-prototype";
-const scope = (kind: Kind) =>
-  kind === "extensibility" ? "native-object-extensibility-calls" : "native-object-set-prototype-call";
+export interface NativeObjectPrototypeSetterAlgorithm {
+  readonly realm: NativeObjectRealmDeclarations;
+  readonly entries: readonly NativeObjectRealmEntry[];
+  readonly completionScope: "native-object-prototype-setter-call";
+}
+type Algorithms =
+  | NativeObjectExtensibilityAlgorithms
+  | NativeObjectSetPrototypeAlgorithm
+  | NativeObjectPrototypeSetterAlgorithm;
+type Kind = "extensibility" | "set-prototype" | "prototype-setter";
+const scopes = {
+  extensibility: "native-object-extensibility-calls",
+  "set-prototype": "native-object-set-prototype-call",
+  "prototype-setter": "native-object-prototype-setter-call",
+} as const;
+const scope = (kind: Kind) => scopes[kind];
 const roles = [
   "mixed",
   "mixedDependencies",
@@ -76,6 +91,7 @@ const roles = [
 const ids = {
   extensibility: ["%Object.isExtensible%", "%Object.preventExtensions%"],
   "set-prototype": ["%Object.setPrototypeOf%"],
+  "prototype-setter": ["%set Object.prototype.__proto__%"],
 } as const;
 interface Owner {
   readonly kind: Kind;
@@ -151,7 +167,7 @@ function dependencies(tx: PhysicalModuleReservations, input: NativeObjectExtensi
 function entries(realm: NativeObjectRealmDeclarations, kind: Kind) {
   return ids[kind].map((id) => {
     const entry = realm.entries.find((entry) => entry.request.intrinsic.id === id);
-    if (!entry || entry.construct || entry.request.intrinsic.callable.length !== (kind === "extensibility" ? 1 : 2))
+    if (!entry || entry.construct || entry.request.intrinsic.callable.length !== (kind === "set-prototype" ? 2 : 1))
       fail("missing actual structural catalog entry");
     return entry;
   });
@@ -186,6 +202,12 @@ export function reserveNativeObjectSetPrototypeAlgorithm(
 ): NativeObjectSetPrototypeAlgorithm {
   return reserve(tx, input, "set-prototype") as NativeObjectSetPrototypeAlgorithm;
 }
+export function reserveNativeObjectPrototypeSetterAlgorithm(
+  tx: PhysicalModuleReservations,
+  input: NativeObjectExtensibilityDependencies,
+): NativeObjectPrototypeSetterAlgorithm {
+  return reserve(tx, input, "prototype-setter") as NativeObjectPrototypeSetterAlgorithm;
+}
 function current(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx || owner.kind !== kind) fail("foreign, copied or wrong-scope algorithm owner");
@@ -216,6 +238,15 @@ export function requireNativeObjectSetPrototypeAlgorithm(
   realm: NativeObjectRealmDeclarations,
 ): NativeObjectSetPrototypeAlgorithm {
   current(tx, pack, "set-prototype");
+  if (pack.realm !== realm) fail("different expected realm");
+  return pack;
+}
+export function requireNativeObjectPrototypeSetterAlgorithm(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectPrototypeSetterAlgorithm,
+  realm: NativeObjectRealmDeclarations,
+): NativeObjectPrototypeSetterAlgorithm {
+  current(tx, pack, "prototype-setter");
   if (pack.realm !== realm) fail("different expected realm");
   return pack;
 }
@@ -298,9 +329,13 @@ function definitions(
     { op: "throw", tagIdx: tx.physicalIndex(realm.exception.tag) },
   ];
   const prevent = entry.request.intrinsic.id === "%Object.preventExtensions%";
+  const setter = entry.request.intrinsic.id === "%set Object.prototype.__proto__%";
+  const prototypeBuilder = setter
+    ? buildNativeObjectPrototypeSetterDefinition
+    : buildNativeObjectSetPrototypeDefinition;
   const algorithm =
-    entry.request.intrinsic.id === "%Object.setPrototypeOf%"
-      ? buildNativeObjectSetPrototypeDefinition({
+    setter || entry.request.intrinsic.id === "%Object.setPrototypeOf%"
+      ? prototypeBuilder({
           vectorTypeIdx: substrate.arguments.carrier.typeIndex,
           vectorArrayTypeIdx: substrate.arguments.array.typeIndex,
           undefinedGlobal: tx.physicalIndex(m.values.globals.undefined),
@@ -376,6 +411,12 @@ export function fillNativeObjectSetPrototypeAlgorithm(
 ): void {
   fill(tx, pack, "set-prototype");
 }
+export function fillNativeObjectPrototypeSetterAlgorithm(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectPrototypeSetterAlgorithm,
+): void {
+  fill(tx, pack, "prototype-setter");
+}
 export function requireCompletedNativeObjectExtensibilityAlgorithms(
   tx: PhysicalModuleReservations,
   pack: NativeObjectExtensibilityAlgorithms,
@@ -388,5 +429,12 @@ export function requireCompletedNativeObjectSetPrototypeAlgorithm(
   pack: NativeObjectSetPrototypeAlgorithm,
 ): NativeObjectSetPrototypeAlgorithm {
   completed(tx, pack, "set-prototype");
+  return pack;
+}
+export function requireCompletedNativeObjectPrototypeSetterAlgorithm(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectPrototypeSetterAlgorithm,
+): NativeObjectPrototypeSetterAlgorithm {
+  completed(tx, pack, "prototype-setter");
   return pack;
 }

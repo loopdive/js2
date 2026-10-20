@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ag retained Object.prototype.__proto__ setter and guarded Call",
+  "parentCommit": "d54d8454130e9721dc37e429ca081c9b4e0771aa",
+  "candidate": "Identified by exact sourceHashes; signed checkpoint follows",
+  "sourceHashes": {
+    "src/backend/wasmgc/resources/native-object-structural-algorithms.ts": "2099d3e43625d481fc857b82970a29808146f3c5de26da1d9defff0ea03b06af",
+    "src/runtime/wasmgc/values/native-object-prototype-bodies.ts": "4ff2fb34c8ec3f36142afeb4c955cb326e3b610a6faef2eb5c03c26392c19f24",
+    "tests/helpers/native-object-extensibility.ts": "1fae7893892576de9f9220c8fd2a6836b65776510549ce39526907c2f645ab90",
+    "tests/issue-6979-native-object-prototype-setter.test.ts": "463a19309d4e677406da3f98a263bca42a9e0c2e1351324f0995ca9d09507a7a",
+    "tests/issue-6979-native-object-set-prototype.test.ts": "5df2c71c908f3fdbfe36a8aaa97443e0927583ebe1fa8c66d2f85cd95073dc69",
+    "tests/issue-6979-native-object-extensibility.test.ts": "829d22faa83cf84a49eda0bb9cf6e6a936281600d0555b6f9551cabefa39a4da"
+  },
+  "specification": "https://tc39.es/ecma262/2026/multipage/fundamental-objects.html#sec-set-object.prototype.__proto__",
+  "scope": {
+    "completionScope": "native-object-prototype-setter-call",
+    "actualEntry": "%set Object.prototype.__proto__%",
+    "actualReservedAlgorithmAndGuardedLiftedSlots": true,
+    "fixedFactoriesDistinctScopesAndPerKindUniqueness": true,
+    "callerSelectedHandlesBodiesOrEntriesAccepted": false,
+    "receiverIsThisAndPrototypeIsArgumentZero": true,
+    "requireObjectCoercibleBeforePrototype": true,
+    "invalidNativePrimitivePrototypeReturnsCanonicalUndefined": true,
+    "primitiveReceiverAndSuccessfulMutationReturnCanonicalUndefined": true,
+    "internalFalseThrowsNativeTypeError": true,
+    "existingMixedOwnerMutatesLiveState": true,
+    "unsupportedUnreadyOrUnknownPrivateInputsTrap": true,
+    "objectsOrBagsCopied": false,
+    "newHostImportsOrPublicSourceAdmission": false,
+    "toObjectDefaultPrototypePopulationOrWholeRealmCompleted": false,
+    "migrationComplete": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forkLimitEnvironment": { "VITEST_MAX_FORKS": 1 },
+    "actualConcurrentWorkerCountSampled": false,
+    "flags": ["--experimental-wasm-exnref"],
+    "caseTimeoutMs": 35000,
+    "componentHookTimeoutMs": 120000,
+    "timeoutsSkipsIgnoresOrOldExpectationsChanged": false,
+    "timingOrConcurrencyABClaimed": false
+  },
+  "tests": {
+    "focused": {
+      "path": ".tmp/s7ag-focused-cooperative.json",
+      "log": ".tmp/s7ag-focused-cooperative.log",
+      "status": "terminal",
+      "runnerExit": 0,
+      "cases": 76,
+      "passed": 76,
+      "failed": 0,
+      "skipped": 0,
+      "reportedRunnerErrors": 0,
+      "newSetter": { "runtime": 33, "ownerControls": 5, "passed": 38 },
+      "existingSetPrototype": { "cases": 38, "passed": 38 },
+      "fullCaseIdentitiesStatusesAndAssertionErrorStringsEqualBeforeScheduling": true,
+      "runnerErrorRemovedWithoutIgnoringOrNormalizing": true
+    },
+    "beforeCooperativeScheduling": {
+      "path": ".tmp/s7ag-focused.json",
+      "log": ".tmp/s7ag-focused.log",
+      "runnerExit": 1,
+      "cases": 76,
+      "casesReportedPassed": 76,
+      "failedOrSkippedCases": 0,
+      "reportedRunnerErrors": 1,
+      "runnerError": "[vitest-worker]: Timeout calling onTaskUpdate",
+      "jsonSuccessFlag": true,
+      "cleanRunClaimed": false,
+      "helperSha256": "2880120b84a5acb18f44150d1a5c790ef74aa336f3c017f0cceed2b98ac876fd",
+      "setterTestSha256": "9e42b522384f926eb44ad477c4261739bd1c16eef7c61332728c6776a212f712",
+      "existingSetPrototypeTestSha256": "6368c7f12448edbc302c574be0a2172183197afd34035f65c51acd4b9a37ea0d"
+    },
+    "schedulingInvestigation": {
+      "installedVitestVersion": "3.2.4",
+      "workerRpcDefaultTimeoutMs": 60000,
+      "suitePrepareUpdateSentBeforeBeforeAll": true,
+      "hookTimeoutMsUnchanged": 120000,
+      "hypothesis": "A long synchronous multi-audit component hook can starve IPC response processing even if the hook is within its own deadline",
+      "change": "The unchanged real reservation/fill/completion/emission sequence is factored through a private generator; the original synchronous API remains and the async test entry yields between phases",
+      "productionSourceOrSemanticAssertionsChangedForScheduling": false,
+      "rpcCaseHookTimeoutsSkipsOrIgnoresChanged": false,
+      "same76CaseCohort": true,
+      "synchronousPhaseDurationsRecorded": true,
+      "componentPhaseObservationRows": 6,
+      "maximumObservedSynchronousPhaseMs": 16267.59925,
+      "performanceOrConcurrencyCausalityClaimed": false
+    },
+    "fullExtensibility63CaseRerun": {
+      "path": ".tmp/s7ag-extensibility-cooperative.json",
+      "log": ".tmp/s7ag-extensibility-cooperative.log",
+      "status": "terminal",
+      "runnerExit": 0,
+      "cases": 63,
+      "passed": 63,
+      "failed": 0,
+      "skipped": 0,
+      "reportedRunnerErrors": 0,
+      "semanticAssertionsOrReceiptsChanged": false,
+      "caseIdentitiesStatusesAndCompleteAssertionErrorsEqualRetainedS7aeRows": true,
+      "componentPhaseObservationRows": 4,
+      "maximumObservedSynchronousPhaseMs": 12416.372374999999
+    },
+    "aggregateInterpretation": "76/76 and 63/63 in two separate terminal executions, not one combined 139-case run",
+    "fullPrior674CaseCohortRerun": false,
+    "broader161And779CohortsRerun": false,
+    "fullTest262OrHistoricalCustodyRerun": false,
+    "priorFailuresRepinnedNormalizedOrCertifiedAway": false
+  },
+  "componentInterpretation": {
+    "actualProducerAlgorithmAndLiftedSlotsExecuted": true,
+    "allReachableFunctionsRequireRealFills": true,
+    "onlyClonedSnapshotsUseExistingUnreachableFunctionSweep": true,
+    "realLedgerStaysUnsealedAndMissingProductionSlotsUnfilled": true,
+    "testInitializationIsProductionPopulation": false,
+    "sizesAreMarginalProductionCosts": false
+  },
+  "existingSetPrototypeComponentComparison": {
+    "rows": 3,
+    "allCoordinatesByteHashesImportsAndReachabilityCountsEqualParent": true,
+    "parentAudit": "plan/audit/6979-native-object-set-prototype-20261020.json",
+    "freshParentExecutionThisTurn": false
+  },
+  "existingExtensibilityComponentComparison": {
+    "rows": 4,
+    "allCoordinatesByteHashesImportsAndReachabilityCountsEqualRetainedS7aeAudit": true,
+    "freshParentExecutionThisTurn": false
+  },
+  "componentWitnesses": [
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "interned",
+      "bytes": 44727,
+      "sha256": "29c8a13c75f4365a4118979c7a3476977729ae02460e2469b6122237ead46541",
+      "imports": [],
+      "reachableFunctions": 75,
+      "deadSnapshotBodies": 107
+    },
+    {
+      "displaced": true,
+      "decoded": true,
+      "booleans": "interned",
+      "bytes": 44538,
+      "sha256": "8f5ec021cedc48525d4ea15f40316cbc750f587687ea989375b9d9bdc48119a7",
+      "imports": [],
+      "reachableFunctions": 76,
+      "deadSnapshotBodies": 108
+    },
+    {
+      "displaced": false,
+      "decoded": false,
+      "booleans": "allocating",
+      "bytes": 44700,
+      "sha256": "389864280ba06431d84320afdc403506c72c2ad833d4225117664cf5047fb34d",
+      "imports": [],
+      "reachableFunctions": 75,
+      "deadSnapshotBodies": 107
+    }
+  ],
+  "compilerControls": {
+    "compilerPath": "Existing probes use default compilation, not proof of complete IR/source admission",
+    "policyInventories": 33,
+    "policyBinaryWitnesses": 33,
+    "policyReport": ".tmp/s7ag-policy.log",
+    "policyReportSha256": "17f87021b75df26b865737c49331d7749a160bb621e955115d1786ef16f253dd",
+    "nativeStandaloneAndWasiControls": 6,
+    "nativeReport": ".tmp/s7ag-native-controls.log",
+    "nativeReportSha256": "3b2b598b433a5802cd71989c1bb4f1f31b21af605afe596685e74c7f120f7895",
+    "reportsEqualRetainedParentReportsByteForByte": true,
+    "freshParentExecutionThisTurn": false,
+    "nativeImports": [],
+    "nativeOutputs": [42, 7]
+  },
+  "qualityAndArchitecture": {
+    "typecheckLintFormatSizeFunctionCoercionOracleLayeringFlatDirectoryFallback": "pass",
+    "checkpointSourceFiles": 2,
+    "checkpointNetSourceLoc": 62,
+    "wholePrSourceFiles": 379,
+    "wholePrNetSourceLoc": -16728,
+    "wholePrBudgetBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+    "existingFunctionGrantsChanged": false,
+    "inventory": ".tmp/s7ag-inventory.json",
+    "inventoryValid": true,
+    "modules": 1981,
+    "inventoryErrors": 0,
+    "architectureComplete": false,
+    "policyClassificationsRootsFloorsEdgesBaselinesOrWaiversChanged": false,
+    "graph": ".tmp/s7ag-cycles.json",
+    "valueEdges": 10848,
+    "largestScc": 712,
+    "nontrivialSccs": 4,
+    "allDirectionMetricsEqualParent": true,
+    "cycleGateExit": 1,
+    "redAgainstMain": [
+      "backend->ir 115 to 117",
+      "codegen->ir 298 to 301",
+      "ir->codegen 74 to 75",
+      "ir->frontend 7 to 10"
+    ],
+    "preservationOnly": "6/6 full and 6/6 dispatch-cut pass; strict closure still refuses the two unconstrained dynamic imports; retirement not certified"
+  },
+  "remaining": [
+    "genuine primitive intrinsic/default-prototype owners and ToObject composition",
+    "remaining catalog methods and constructors",
+    "mixed Get/Call and complete population",
+    "atomic authenticated source/public publication",
+    "live foreign/dynamic boundary references and first-class undefined",
+    "Linear/WASI construction",
+    "architecture/custody/conformance/retirement acceptance and merge conflicts"
+  ],
+  "handoff": {
+    "pr": "https://github.com/loopdive/js2/pull/6762",
+    "draft": true,
+    "mergeReady": false,
+    "issues": [
+      "plan/issues/6979-s7-delete-host-semantic-implementation.md",
+      "plan/issues/5385-merge-host-semantics-into-native-core.md"
+    ],
+    "githubIssuesOrIssueCommentsCreated": false
+  },
+  "artifactHashes": {
+    ".tmp/s7ag-extensibility-cooperative.json": "9a0f6b6d5c817305e680582bdf92b13d8d12efb233caf70808d07cb76fd47ad4",
+    ".tmp/s7ag-extensibility-cooperative.log": "b394d02c818db570d0aa7196d825ef99edcfb0b78f8fa6d61525f0a3e826ad73",
+    ".tmp/s7ag-focused-cooperative.json": "0041e5828351e5ace3fa7b7f5c455f7b447fbfadc3192ff0c730b6af2e75a6aa",
+    ".tmp/s7ag-focused-cooperative.log": "cd2cd46783f808959e90ee62d6538c7c817ba7b61e3001d2205701d176e0a9d7",
+    ".tmp/s7ag-focused.json": "37ced18cd7c9ae2d64e2d8b189965b4ef8e38a41dc883d923adece9f947fa479",
+    ".tmp/s7ag-focused.log": "165701d39fee10662b0d6ad45f3a37e5f5593f0b9184268d27c237630237f547",
+    ".tmp/s7ag-inventory.json": "91448b37b5c9510c92f44766c4b694bb99074626bfc6a23a0584dd8c5a3e591e",
+    ".tmp/s7ag-cycles.json": "14fd55f2cc879c50a99c61d0875890f39cc37ed2aa3995b1957734ee3685d172",
+    ".tmp/s7ag-preservation.log": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02"
+  }
+}

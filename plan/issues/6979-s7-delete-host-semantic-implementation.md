@@ -5260,3 +5260,142 @@ and historical custody cohorts were not rerun. Prior physical-receipt and other
 failures remain open. Exact source/report hashes, component witnesses and all
 development failures are in
 `plan/audit/6979-native-object-set-prototype-20261020.json`.
+
+### S7-ag retained Object.prototype.__proto__ setter (2026-10-20, Codex)
+
+Continue from signed `d54d8454130e9721dc37e429ca081c9b4e0771aa`.
+The genuine ToObject owner is still absent: the pure builder exists, but the
+Object/Function realm catalog does not issue the required primitive prototype
+families. Do not bind arbitrary handles/null prototypes to claim completion.
+Object.prototype population also requires the retained normative-optional
+`%set Object.prototype.__proto__%` algorithm, whose dependencies now exist.
+Implement that complete catalog algorithm as a real bootstrap prerequisite,
+not as a substitute for the remaining ToObject/default-prototype work.
+
+Use `this` as O and argv[0] as P. RequireObjectCoercible precedes P. Invalid
+native primitive P returns canonical undefined; a primitive O also returns
+undefined, and successful mutation returns undefined rather than O. Preserve
+native TypeError on internal false and loud refusal of unknown/unready private
+inputs. Keep actual mixed mutation, immutable/non-extensible/cycle rules, exact
+undefined identity and guarded self identity. No source/public admission or
+whole-realm completeness follows.
+
+Readers of the shared prototype builder are the fixed structural producer and
+its execution tests; its only writers are fresh instruction factories and the
+existing reservation fill owner. Reuse private construction without changing
+the existing Object.setPrototypeOf instruction stream. Add a fixed issued
+setter scope, per-kind uniqueness and canonical algorithm/lifted re-derivation;
+never expose a general entry/body binder. Extend only opt-in test observers so
+the existing component binaries remain byte-identical. Track current proof
+limits and the broader migration in this issue and its parent.
+
+The first complete S7-ag run reports all **76 cases passing** (38 new
+setter + 38 unchanged Object.setPrototypeOf) and no skipped/failed cases,
+but also one `[vitest-worker]: Timeout calling onTaskUpdate` and exit one.
+The JSON reporter nevertheless says `success: true`; this is not a clean run
+and the terminal log/exit take precedence. The requested fork limit was one,
+so the observation is not evidence for a concurrency cause. Investigate the
+actual installed runner's update handoff, retaining this failed report and
+unchanged semantic checks/time limits; do not suppress/normalize the error.
+
+Installed Vitest3.2.4 sends a suite-prepare task update before beforeAll and
+uses a 60000ms RPC timeout; it waits for pending updates only at final flush.
+The component hooks synchronously perform multiple complete ownership audits
+under their separate 120000ms hook budget. Investigate event-loop starvation
+without assuming a concurrency defect: preserve the synchronous fixture API,
+factor its identical steps through a generator, and let an asynchronous test
+entry yield between real reservation/fill/completion/emission phases. Keep all
+checks, statement order, emitted bodies, case/hook/RPC deadlines and assertions
+unchanged. Record measured synchronous phase durations and rerun the exact
+same 76-case cohort. A green JSON flag alone remains insufficient.
+
+Apply the same scheduling-only hook change to the older extensibility suite,
+the remaining consumer of this synchronous component constructor, and rerun
+its complete 63-case file separately. Preserve its assertions/receipts and
+four component byte hashes as well; do not report two executions as one combined
+139-case run. The synchronous helper API remains available and emits the same
+bodies, while all three expensive component hooks use its cooperative entry.
+
+The cooperative 76-case rerun is terminal: **76/76 pass**, zero skips/reported
+runner errors and exit zero. The complete 76 case identities, statuses and
+assertion error fields equal the pre-yield run; its full failed log/report are
+retained separately. Six component scheduling records observed a maximum
+synchronous phase of 16267.59925ms. Both old/new component byte hashes stayed
+identical across this scheduling change. This is a correctness observation for
+the same private native-ABI cohort, not proof of a performance/concurrency cause
+or a fresh signed-commit A/B. The production source did not change for this
+harness repair, and all original case/hook/RPC limits remain intact.
+
+#### Next producer acceptance contract: native ToObject
+
+Bind actual issued primitive intrinsic/default-prototype declaration and
+initialization owners for Boolean, Number, String, Symbol and BigInt in the
+same realm. Do not accept caller-selected globals, arbitrary factory handles,
+explicit-null test prototypes or a non-null anchor as that authority. Keep an
+algorithm-only completion scope distinct from complete prototype population;
+public/source publication still requires the latter and all remaining owners.
+
+Compose existing native value/Boolean unboxers, wrapper storage and StringCreate
+through owned unary factories; independently audit the definitions that actually
+execute, not just allocator receipts. A String storage allocation is not the
+String exotic operation. Retain immutable primitive payload references where
+appropriate, signed-zero Number behavior and fresh wrapper identity. Do not
+invoke public constructors or observable coercion to implement this operation.
+
+The pure ToObject body's final passthrough assumes an ECMAScript-value domain;
+it does not authenticate an unknown private-ABI input as an Object. Preserve
+canonical undefined identity and positively owned native object admission.
+Foreign/dynamic objects require the live per-instance boundary reference owner,
+not recursive copying or a silent host-object passthrough shortcut. Supported
+objects must retain exact identity; unknown/stale authority must not become a
+fake semantic result.
+
+Verify all five primitive families, native i31 and boxed Numbers including
+negative zero/NaN, String own length/virtual indices, repeated fresh wrappers,
+exact intrinsic prototypes and object-reference preservation, plus substituted
+dependencies/definitions and stale/foreign realm controls. Then compose the
+dependent catalog entries and atomic publication. Keep explicitly selected IR
+source/custody evidence separate from the default compiled preservation probes;
+both no-host backends and full migration acceptance remain required.
+
+#### S7-ag verified publication and handoff
+
+The additional full extensibility file is terminal: **63/63 pass**, zero skips
+or reported runner errors, exit zero. Its complete case identities, statuses
+and assertion error fields match the retained S7-ae report exactly. All four
+component coordinate/byte-hash/import/reachability rows match that parent audit;
+this is not a fresh parent execution. Together with the clean 76-case run,
+the observations cover **76/76 and 63/63 in two separate runs**, not a single
+139-case run. All seven existing component binaries are unchanged. No semantic
+assertion, receipt, timeout, ignore setting or authority check was weakened.
+
+Source/report hashes, three actual setter component witnesses, ten measured
+cooperative component records and the failed pre-yield report are recorded in
+`plan/audit/6979-native-object-prototype-setter-20261020.json`. The synchronous
+test helper API remains; all three expensive component hooks use its async
+phase-yielding entry. Production scheduling and semantic bodies were not
+changed for the runner repair. Do not infer a performance/concurrency cause or
+whole-suite conformance from these observations.
+
+All 33 policy inventories/binaries and six standalone/WASI compiled controls
+equal retained parent reports. They use the default compilation route, not
+proof of complete IR/source admission. Selected quality/budget gates pass:
+two changed source files, net +62 LOC; whole PR379 source files, net -16728 LOC
+against `ae913d622f3cb5c4136e43a27594b8ec48e4c933`. Existing function grants
+unchanged; no new allowance. Inventory valid with 1981 modules and zero errors,
+architecture incomplete; policy and all direction metrics are unchanged from
+the parent. Value edges10848, largest SCC712 and four nontrivial SCCs remain.
+The same four directions still fail against main; strict closure still refuses
+both unconstrained dynamic imports despite preservation-only 6/6 full + 6/6 cut.
+No baseline, root, floor, edge allowance or waiver changed.
+
+Both Markdown issues stay in progress and PR6762 stays draft. The prerequisite
+was read back OPEN/unmerged; the latest mergeability state was UNKNOWN, not a
+merge approval. No GitHub issue/comment was created. Resume with the genuine
+ToObject/default-prototype producer contract above, remaining catalog and
+constructor bodies, mixed Get/Call/full population and atomic authenticated
+source/public publication. Live foreign boundary identity, first-class
+undefined, Linear/WASI construction and full architecture/custody/conformance/
+retirement acceptance remain required. Complete prior 674-case, broader161/779,
+full Test262 and historical custody cohorts were not rerun; existing receipt
+and broader failures are not repinned or certified away.

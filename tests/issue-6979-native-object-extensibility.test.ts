@@ -6,6 +6,7 @@ import {
   objectExtensibilityFixture,
   fillObjectExtensibilityDependencies,
   objectExtensibilityRuntime,
+  objectExtensibilityRuntimeAsync,
 } from "./helpers/native-object-extensibility.js";
 import {
   reserveNativeObjectExtensibilityAlgorithms,
@@ -30,8 +31,8 @@ for (const [displaced, decoded, mode] of [
 ] as const)
   describe(`actual Object extensibility algorithms displaced=${displaced} decoded=${decoded} boxes=${mode}`, () => {
     let r: ReturnType<typeof objectExtensibilityRuntime>;
-    beforeAll(() => {
-      r = objectExtensibilityRuntime(displaced, decoded, mode);
+    beforeAll(async () => {
+      r = await objectExtensibilityRuntimeAsync(displaced, decoded, mode);
       console.info(
         "Object extensibility component",
         JSON.stringify({
