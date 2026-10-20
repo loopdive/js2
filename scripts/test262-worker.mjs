@@ -196,11 +196,17 @@ const HARNESS_HOST_BRIDGE = { hostBridge: "always" };
 
 // #6776: the worker validates itself with source-mapped reporting; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
 const WORKER_SELF_VALIDATES = { validate: false };
+// Fallback-free pass metric: every compile records which terminal units the IR
+// emitted and which fell back to a direct (legacy) body, so the report can
+// count passes that ran with zero legacy bodies as a separate percentage and
+// rank the remaining fallback reasons by test count.
+const IR_ROUTE_CENSUS = { trackIrOutcomes: true };
 
 function compileSingleSource(source, options) {
   const opts = {
     ...HARNESS_HOST_BRIDGE,
     ...(options.wholeProgram === undefined ? WORKER_SELF_VALIDATES : {}),
+    ...IR_ROUTE_CENSUS,
     ...options,
   };
   return incrementalCompiler ? incrementalCompiler.compile(source, opts) : compile(source, opts);
@@ -210,6 +216,7 @@ function compileMultipleSources(files, entryFile, options) {
   const opts = {
     ...HARNESS_HOST_BRIDGE,
     ...(options.wholeProgram === undefined ? WORKER_SELF_VALIDATES : {}),
+    ...IR_ROUTE_CENSUS,
     ...options,
   };
   return incrementalCompiler?.compileMulti
@@ -1269,7 +1276,37 @@ function buildResultMetadata(result, reachedTest) {
   return {
     ...(imports.length > 0 ? { imports } : {}),
     ...(hostImportLeakClass ? { hostImportLeakClass } : {}),
+    ...summarizeIrRoute(result?.irOutcomes),
     reachedTest,
+  };
+}
+
+/**
+ * Per-compile IR route census from the compiler's `irOutcomes` ledger: how many
+ * terminal units there were, how many were emitted from a direct (legacy)
+ * body, and the fallback reason codes behind those. `{}` when the ledger is
+ * absent (older compiler bundles), so rows stay byte-identical there.
+ */
+function summarizeIrRoute(outcomes) {
+  if (!Array.isArray(outcomes)) return {};
+  let irUnits = 0;
+  let irLegacyUnits = 0;
+  const codes = new Map();
+  for (const outcome of outcomes) {
+    if (!outcome || outcome.kind === "non-executable") continue;
+    irUnits++;
+    if (!outcome.legacyBodyEmitted) continue;
+    irLegacyUnits++;
+    const code =
+      outcome.kind === "emitted" ? "withdrawn-after-emit" : `${outcome.kind}:${outcome.stage}:${outcome.code}`;
+    codes.set(code, (codes.get(code) ?? 0) + 1);
+  }
+  return {
+    irUnits,
+    irLegacyUnits,
+    ...(codes.size > 0
+      ? { irFallbackCodes: [...codes].sort((a, b) => b[1] - a[1]).map(([code, count]) => ({ code, count })) }
+      : {}),
   };
 }
 

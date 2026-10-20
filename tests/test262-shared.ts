@@ -491,6 +491,12 @@ function recordResult(
     error_signature: normalizeErrorSignature(status, errorCategory, error),
     imports: metadata?.imports && metadata.imports.length > 0 ? metadata.imports : undefined,
     host_import_leak_class: metadata?.hostImportLeakClass,
+    // Fallback-free pass metric: terminal IR units and how many of them fell
+    // back to a direct (legacy) body, with the fallback codes. Absent when the
+    // compiler bundle recorded no outcome ledger.
+    ir_units: metadata?.irUnits,
+    ir_legacy_units: metadata?.irLegacyUnits,
+    ir_fallback_codes: metadata?.irFallbackCodes,
     reached_test: metadata?.reachedTest ?? false,
     // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
     vacuous: metadata?.vacuous || undefined,

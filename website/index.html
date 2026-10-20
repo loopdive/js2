@@ -5500,7 +5500,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           donut.setAttribute("caption-sub", IR_SELECTED ? `IR ${captionSub}` : captionSub);
           donut.setAttribute("style", donutStyle);
           updateHeadlineStat(
-            { pass, fail, ce, skip, total },
+            { pass, fail, ce, skip, total, ir_only_pass: summary?.ir_only_pass, ir_measured: summary?.ir_measured },
             captionMain,
             IR_SELECTED ? `IR ${captionSub}` : captionSub,
           );
@@ -5543,6 +5543,14 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           window.__conformanceHeadlineHydrated = true;
           rateEl.textContent = `${pct}%`;
           rateLabelEl.textContent = `${captionMain} ${captionSub}: ${pass.toLocaleString()} / ${total.toLocaleString()} test262 tests passing`;
+          // Separate percentage for passes that took no legacy (direct AST)
+          // body at all — the honest IR-path number on the hybrid route.
+          const irOnly = Number(summary?.ir_only_pass);
+          const irMeasured = Number(summary?.ir_measured);
+          if (Number.isFinite(irOnly) && Number.isFinite(irMeasured) && irMeasured > 0) {
+            const irPct = ((irOnly / total) * 100).toFixed(1);
+            rateLabelEl.textContent += ` · IR path (no legacy fallback): ${irOnly.toLocaleString()} (${irPct}%)`;
+          }
         };
         const updateHeadlineUnavailable = (captionMain, captionSub, detail) => {
           if (!rateEl || !rateLabelEl) return;
