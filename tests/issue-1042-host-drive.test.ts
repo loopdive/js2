@@ -150,9 +150,24 @@ describe("#1042 host drive — rejection routing", () => {
 });
 
 describe("#1042 host drive — unclaimed shapes keep the legacy fallback (no regression)", () => {
-  it("await inside a loop still compiles via the legacy path", async () => {
-    // planLinearAwaits rejects awaits in control flow — must compile and keep
-    // today's behavior (sync-settled operands thread synchronously).
+  it("await inside a loop the loop CFG declines still compiles via the legacy path", async () => {
+    // A `break` in the body is outside the async loop CFG's shape — must compile
+    // and keep today's behavior (sync-settled operands thread synchronously).
+    const exports = await compileToWasm(`
+      async function g(): Promise<number> { return 1; }
+      async function f(): Promise<number> {
+        let s: number = 0;
+        for (let i = 0; i < 3; i++) { s = s + (await g()); if (s > 100) break; }
+        return s;
+      }
+      export function main(): number { return f() as any as number; }
+    `);
+    expect(exports.main()).toBe(3);
+  });
+
+  it("a plain `for` body with an await is driven by the loop CFG (#7096)", async () => {
+    // Until #7096 this shape took the legacy path above; it is now a real
+    // suspension, so `f()` is a Promise that settles to the sum.
     const exports = await compileToWasm(`
       async function g(): Promise<number> { return 1; }
       async function f(): Promise<number> {
@@ -160,9 +175,9 @@ describe("#1042 host drive — unclaimed shapes keep the legacy fallback (no reg
         for (let i = 0; i < 3; i++) { s = s + (await g()); }
         return s;
       }
-      export function main(): number { return f() as any as number; }
+      export async function main(): Promise<number> { return await f(); }
     `);
-    expect(exports.main()).toBe(3);
+    await expect(settled(exports.main())).resolves.toBe(3);
   });
 
   it("await-elidable bodies stay on the legacy synchronous path", async () => {
