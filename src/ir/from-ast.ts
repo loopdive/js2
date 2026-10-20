@@ -5068,6 +5068,13 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     if (!p) {
       const moduleBinding = cx.resolver?.resolveModuleBinding?.(expr);
       if (moduleBinding) return lowerResolvedModuleBindingRead(expr.text, moduleBinding, cx);
+      // #7104 — global numeric constants (legacy: `identifiers.ts` NaN/Infinity arm).
+      if (expr.text === "NaN" || expr.text === "Infinity") {
+        return cx.builder.emitConst(
+          { kind: "f64", value: expr.text === "NaN" ? NaN : Infinity },
+          irVal({ kind: "f64" }),
+        );
+      }
       const standaloneDomGlobal = cx.resolver?.standaloneDomOperation?.(expr);
       const hg = cx.resolver?.getHostGlobalInfo?.(expr.text);
       if (standaloneDomGlobal?.kind === "global-get" && !hg) {

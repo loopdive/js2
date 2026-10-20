@@ -31,6 +31,8 @@ func-budget-allow:
   - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/select.ts::whyNotIrClaimable
   - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/from-ast.ts::lowerExprUnchecked
 loc-budget-allow:
   - src/codegen/index.ts
   - src/ir/select.ts

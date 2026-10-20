@@ -21,6 +21,8 @@ export function isUndefinedEmpty() { return empty() === undefined; }
 export function isUndefinedBare() { return bareReturn() === undefined; }
 export function isUndefinedFall() { return fallsThrough(1) === undefined; }
 export function mayThrow(a) { if (a) { throwsOnly(); } return 7; }
+export function inf() { return Infinity; }
+export function nanIsNotSelf() { return NaN !== NaN; }
 `;
 
 async function build() {
@@ -39,7 +41,7 @@ describe("#7104 dynamic undefined return on the IR path", () => {
   it("IR-emits the no-value-return and fall-through shapes without a parity withdrawal", async () => {
     const result = await build();
     const outcomes = result.irOutcomes ?? [];
-    for (const name of ["throwsOnly", "empty", "bareReturn", "guardReturn", "fallsThrough"]) {
+    for (const name of ["throwsOnly", "empty", "bareReturn", "guardReturn", "fallsThrough", "inf", "nanIsNotSelf"]) {
       const outcome = outcomes.find((o) => o.displayName === name);
       expect(outcome, JSON.stringify(outcomes, null, 2)).toMatchObject({ kind: "emitted", irBodyEmitted: true });
     }
@@ -59,5 +61,7 @@ describe("#7104 dynamic undefined return on the IR path", () => {
     expect(exports.isUndefinedFall!()).toBe(1);
     expect(exports.mayThrow!(0)).toBe(7);
     expect(() => exports.mayThrow!(1)).toThrow();
+    expect(exports.inf!()).toBe(Infinity);
+    expect(exports.nanIsNotSelf!()).toBe(1);
   });
 });

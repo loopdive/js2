@@ -9467,6 +9467,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
+    // #7104 — the global numeric constants `Infinity` / `NaN` (unshadowed):
+    // f64 constants on every lane, exactly as legacy's identifier arm.
+    if (
+      (expr.text === "Infinity" || expr.text === "NaN") &&
+      !scope.has(expr.text) &&
+      currentModuleBindingResolver?.isDirectModuleBinding(expr) !== true
+    ) {
+      return true;
+    }
     if (scope.has(expr.text)) {
       // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
       // a first-class IR value. The class-declaration and `const C = class {…}`
