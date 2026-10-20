@@ -38,6 +38,7 @@ import type { IrIntegrationOptions } from "./integration-options.js";
 export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
+import { irPlatformExternClassPredicate } from "./host-extern.js"; // (#7091)
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
 import { irTypeKey } from "./type-key.js";
 export { irTypeKey } from "./type-key.js";
@@ -7119,6 +7120,11 @@ function makeFromAstResolver(
     // host-extern arms.
     jsHostExterns(): boolean {
       return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
+    },
+    // (#7091) The platform-extern lane's per-class admission — the SAME
+    // predicate the selector was handed in `planIrOverlay`.
+    platformExternClass(className: string): boolean {
+      return irPlatformExternClassPredicate(ctx)?.(className) === true;
     },
     standaloneDomOperation(node: ts.Node) {
       return standaloneDomCapability?.operation(node);

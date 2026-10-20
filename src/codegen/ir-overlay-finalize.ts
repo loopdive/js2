@@ -17,6 +17,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "../ir/runtime-host-capabilities.js";
+import { irPlatformExternClassPredicate } from "../ir/host-extern.js";
 import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -281,7 +282,10 @@ export function prepareHostVoidCallbackLoweringByIdentity(
     hasStandaloneDomDispatcher &&
     reserveStandaloneDomCallbackDispatch(ctx, callbacks, retained) &&
     hasReservedStandaloneDomCallbackDispatch(ctx, callbacks, retained);
-  if (!hasExactStandaloneDomDispatcher && !hasExactHostVoidCallbackMakerImport(ctx)) {
+  // (#7091) On the platform-extern lane the packed closure crosses as a
+  // carrier the runtime's platform-arg marshal bridges; no maker import.
+  const platformCarrierLane = irPlatformExternClassPredicate(ctx) !== undefined;
+  if (!hasExactStandaloneDomDispatcher && !platformCarrierLane && !hasExactHostVoidCallbackMakerImport(ctx)) {
     for (const callback of activePlans) blocked.add(callback.ownerUnitId);
   }
   if (!ctx.programAbiSession) {

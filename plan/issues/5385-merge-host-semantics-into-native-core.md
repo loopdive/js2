@@ -958,3 +958,42 @@ fixed at head `3349cc9145`.
 retirement (S7 entry condition 5); whether a schedule-only regime test262
 lane is re-enabled; PR 6707 (#7010) stays `hold` until the review lane
 accepts the freeze disposition.
+
+### 2026-10-20 — second gap wave landed; host-retirement entry conditions cleared on the IR gate, SAB and the 3214 pins
+
+Same working model as 10-19 (Fable lead plans, files and merges; Opus
+implementers in parallel worktrees). Landed or queued since the 10-19
+checkpoint:
+
+| PR | Issue | What |
+| --- | --- | --- |
+| 6772 (merged) | #7011 | native `SharedArrayBuffer` + `Atomics`; no `SharedArrayBuffer_*` import on any native lane |
+| 6773 (merged) | #7089 | `Promise.try`, `withResolvers.call(Sub)` and TS-cast `.call` spellings construct through the subclass |
+| 6775 (merged) | #7091 | IR lowers DOM / declared-function calls on the default profile; `check:ir-fallbacks` measures production again (decision (B) retired); a selector bug (uncertified callback reaching the DOM call) fixed on the way |
+| 6779 (merged) | #7095 | declared host functions receive JS strings and callables; the string bridge is exported when a declared function carries a reference |
+| 6780 (merged) | #7094 | `await` as a compound/binary right operand delivers the settled value; pre-await reads saved across the suspension |
+| 6783 (merged) | #7092 | native promises answer `.constructor` and `@@toStringTag` |
+| 6785 | #7098 | host-read closure results answer JS values (boundary-tag + boolean probes exported where the closure bridge meets a JS boundary); the last `issue-3214` host-assisted pin un-pinned |
+| 6787 | #7097 | the "string length after await" symptom was an unsound legacy constant fold of `.length` on a reassigned `let`/`var`; narrowed to const / never-reassigned bindings |
+| 6788 | #7096 | async loop CFG drives `for` and `do…while` bodies with a pending await; pre-loop locals read after the loop saved across the suspension |
+| docs | | #7093 (first-class Promise static `.call(Sub)`, backlog), #7099 (`p.then === undefined` compares true on a native promise) filed |
+
+Measured facts worth keeping: every "after" test262 number in the issue files
+combines a subset run with isolated re-runs of compile-timeout rows (the box
+sat at load 60–110); every apparent pass→non-pass was a timeout. Three
+premises in my issue plans were wrong and are corrected in the files: the
+runtime alone cannot read a native string without the exported bridge
+(#7095), cannot recognise the `$undefined` singleton without an exported
+probe (#7098), and #7097 was never an async-frame bug.
+
+**S7 entry conditions now cleared by this wave:** the IR-fallback gate no
+longer spells `host-assisted` (#7091); the `SharedArrayBuffer_new`
+regime-gap entry can be deleted (#7011); the `issue-3214` host-assisted pins
+reduce to the B2 host-bridge shape rows only once 6785 lands (#7098), which
+S7 retires with the profile. The S7 stack (6701 / 6705 / S7-c) remains with
+the Codex recovery lane; 6701 and 6705 are DIRTY against current main and
+need a re-merge there.
+
+**Still open for the stakeholder:** PR 6707 (#7010) `hold`; README
+conformance line after retirement (S7 entry condition 5); schedule-only
+regime test262 lane.

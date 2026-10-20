@@ -80,6 +80,17 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..");
 const BASELINE_PATH = join(REPO_ROOT, "scripts/ir-fallback-baseline.json");
 const CORPUS_ROOTS = [join(REPO_ROOT, "website/playground/examples")];
+const IMPORTED_HOF_ENTRY_FILES = new Set(
+  [
+    "website/playground/examples/benchmarks.ts",
+    "website/playground/examples/benchmarks/array.ts",
+    "website/playground/examples/benchmarks/dom.ts",
+    "website/playground/examples/benchmarks/fib.ts",
+    "website/playground/examples/benchmarks/loop.ts",
+    "website/playground/examples/benchmarks/string.ts",
+    "website/playground/examples/benchmarks/style.ts",
+  ].map((file) => resolve(REPO_ROOT, file)),
+);
 
 /** Reasons that must NOT increase vs. baseline. */
 const UNINTENDED: ReadonlySet<IrFallbackReason> = new Set([
@@ -321,19 +332,28 @@ async function aggregate(): Promise<{
     }
     let productionResult: Awaited<ReturnType<typeof compileFiles>> | undefined;
     try {
-      // This ledger deliberately measures the browser/JS-host selector above
-      // (`jsHostExterns: true`). #6979 removed the compatibility semantic
-      // profile, so the production receipt uses the sole native semantic core.
+      // The production receipt is the DEFAULT profile (native-first since
+      // #6708). #7091 lets the IR claim the JS environment's platform
+      // capabilities (DOM, declared APIs) under the native regime, so the
+      // `#3214 A+B1` invariant below holds on what users actually compile;
+      // the selector ledger above still names the browser/JS-host shapes.
       productionResult = await compileFiles(filePath, {
         experimentalIR: true,
         trackIrOutcomes: true,
       });
+      if (
+        IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath)) &&
+        !(productionResult.irCompiledFuncs ?? []).includes("main")
+      ) {
+        throw new Error(`#3214 A+B1 gate invariant: ${relative(REPO_ROOT, filePath)}::main was not emitted through IR`);
+      }
       for (const e of productionResult.irPostClaimErrors ?? []) {
         const kind = (POST_CLAIM_KINDS as readonly string[]).includes(e.kind) ? (e.kind as PostClaimKind) : "lower";
         const cls = normalizeMessageClass(e.message);
         postClaim[kind][cls] = (postClaim[kind][cls] ?? 0) + 1;
       }
     } catch (error) {
+      if (IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath))) throw error;
       // Other example-file compile failures are not the gate's concern. Their
       // preliminary selector fallbacks remain visible because no terminal
       // production outcome exists to reconcile them.

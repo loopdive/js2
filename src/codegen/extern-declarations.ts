@@ -25,7 +25,7 @@ import { FS_PATH_BASED_MEMBERS, WASI_NODE_FS_ALIAS_SENTINEL } from "../checker/n
 import { addFuncType } from "./registry/types.js";
 import { addImport, addStringConstantGlobal, addStringImports } from "./registry/imports.js";
 import { brandExternMethodResult } from "./shared.js";
-import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureNativeStringBoundaryBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerHostIntlExternClasses } from "./helpers/host-intl-classes.js";
@@ -43,6 +43,10 @@ import {
   type LibDeclIndex,
 } from "./lib-decl-index.js";
 import { isStandaloneUnprovidedExternClass, skipStandalonePackageStub } from "./standalone-unavailable-globals.js";
+
+/** (#7095) A wasm value type a native carrier can cross in (any reference). */
+const isRefValType = (type: ValType): boolean => !/^(?:i32|i64|f32|f64|v128|i8|i16)$/.test(type.kind);
+
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -891,6 +895,17 @@ function collectExternDeclarationsImpl(
             // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
             // `env` JS-host module. Unset for every user compile.
             registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
+            // (#7095) A JS-environment regime module hands this host function
+            // Wasm-owned strings; export the bridge the runtime marshal reads.
+            const userHostFunction = !name.startsWith("__"); // `__*` stubs are injected runtime preludes (timers, stdin)
+            if (
+              ctx.nativeStrings &&
+              userHostFunction &&
+              !ctx.externImportModule &&
+              [...params, ...results].some(isRefValType)
+            ) {
+              ensureNativeStringBoundaryBridge(ctx);
+            }
           }
         }
       }
@@ -1558,7 +1573,7 @@ export function collectDeclaredGlobals(
         ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
       // (#6708) The regime in a JS environment keeps DOM globals: they are
       // platform capabilities of the embedder, not ECMAScript semantics.
-      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && DOM_ONLY_GLOBALS.has(name);
+      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && isJsEnvironmentPlatformGlobalName(name);
       if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal))
         continue;
       const importName = `global_${name}`;
@@ -1724,6 +1739,14 @@ export function usesJsEnvironmentPlatformGlobal(ctx: CodegenContext): boolean {
  * DOM-only globals that require a browser host and are not available in WASI.
  * Used to emit a compile error when `--target wasi` is combined with DOM usage.
  */
+/**
+ * (#6708/#7091) The ambient DOM globals the regime keeps in a JS environment
+ * (`global_<name>` handles); the IR platform lane admits exactly these.
+ */
+export function isJsEnvironmentPlatformGlobalName(name: string): boolean {
+  return DOM_ONLY_GLOBALS.has(name);
+}
+
 const DOM_ONLY_GLOBALS = new Set([
   "document",
   "window",
