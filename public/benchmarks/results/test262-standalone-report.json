@@ -3,9 +3,9 @@
   "compilerPathVerified": false,
   "executionCompilerPath": "unknown",
   "configuredCompilerPath": "hybrid",
-  "timestamp": "2026-10-19T22:46:36.667Z",
-  "baseline_generated_at": "2026-10-19T22:46:36.667Z",
-  "baseline_sha": "aa02f55f613cdbf80e3afd7758abcd2a8756ee6b",
+  "timestamp": "2026-10-20T00:36:41.428Z",
+  "baseline_generated_at": "2026-10-20T00:36:41.429Z",
+  "baseline_sha": "e11e81b76c751c9672b289e4824bc4da7dbe4496",
   "oracle_version": 15,
   "mode": {
     "target": "standalone",
@@ -16,22 +16,22 @@
   "summary": {
     "total": 48232,
     "pass": 42454,
-    "fail": 4496,
+    "fail": 4494,
     "compile_error": 1243,
-    "compile_timeout": 21,
+    "compile_timeout": 23,
     "skip": 18,
-    "compilable": 46950,
+    "compilable": 46948,
     "host_free_pass": 42454,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 41411,
-        "fail": 4467,
+        "fail": 4465,
         "compile_error": 1229,
-        "compile_timeout": 21,
+        "compile_timeout": 23,
         "skip": 18,
-        "compilable": 45878,
+        "compilable": 45876,
         "host_free_pass": 41411,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -63,11 +63,11 @@
       "official": {
         "total": 48232,
         "pass": 42454,
-        "fail": 4496,
+        "fail": 4494,
         "compile_error": 1243,
-        "compile_timeout": 21,
+        "compile_timeout": 23,
         "skip": 18,
-        "compilable": 46950,
+        "compilable": 46948,
         "host_free_pass": 42454,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -75,11 +75,11 @@
       "full": {
         "total": 48735,
         "pass": 42690,
-        "fail": 4512,
+        "fail": 4510,
         "compile_error": 1398,
-        "compile_timeout": 21,
+        "compile_timeout": 23,
         "skip": 114,
-        "compilable": 47202,
+        "compilable": 47200,
         "host_free_pass": 42690,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -89,33 +89,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 42454,
-    "fail": 4496,
+    "fail": 4494,
     "compile_error": 1243,
-    "compile_timeout": 21,
+    "compile_timeout": 23,
     "skip": 18,
-    "compilable": 46950,
+    "compilable": 46948,
     "host_free_pass": 42454,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 42690,
-    "fail": 4512,
+    "fail": 4510,
     "compile_error": 1398,
-    "compile_timeout": 21,
+    "compile_timeout": 23,
     "skip": 114,
-    "compilable": 47202,
+    "compilable": 47200,
     "host_free_pass": 42690,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 40083,
-    "fail": 4403,
+    "fail": 4401,
     "compile_error": 1196,
-    "compile_timeout": 21,
+    "compile_timeout": 23,
     "skip": 18,
-    "compilable": 44486,
+    "compilable": 44484,
     "host_free_pass": 40083,
     "stale": 0
   },
@@ -145,11 +145,11 @@
     "standard": {
       "total": 47146,
       "pass": 41411,
-      "fail": 4467,
+      "fail": 4465,
       "compile_error": 1229,
-      "compile_timeout": 21,
+      "compile_timeout": 23,
       "skip": 18,
-      "compilable": 45878,
+      "compilable": 45876,
       "host_free_pass": 41411,
       "stale": 0
     }
@@ -642,13 +642,13 @@
     {
       "name": "built-ins/Promise",
       "path": "built-ins/Promise",
-      "pass": 551,
-      "fail": 132,
+      "pass": 553,
+      "fail": 130,
       "compile_error": 46,
       "compile_timeout": 0,
       "skip": 0,
       "total": 729,
-      "host_free_pass": 551
+      "host_free_pass": 553
     },
     {
       "name": "built-ins/Proxy",
@@ -785,13 +785,13 @@
     {
       "name": "built-ins/Temporal",
       "path": "built-ins/Temporal",
-      "pass": 4483,
+      "pass": 4481,
       "fail": 101,
       "compile_error": 0,
-      "compile_timeout": 19,
+      "compile_timeout": 21,
       "skip": 0,
       "total": 4603,
-      "host_free_pass": 4483
+      "host_free_pass": 4481
     },
     {
       "name": "built-ins/ThrowTypeError",
@@ -1202,7 +1202,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 2663,
+    "assertion_fail": 2661,
     "host_import_leak": 658,
     "illegal_cast": 211,
     "missing_builtin": 47,
@@ -1276,14 +1276,14 @@
           "#661"
         ],
         "label": "Temporal proposal/polyfill gap",
-        "count": 120,
+        "count": 122,
         "statuses": {
           "pass": 0,
           "fail": 101,
           "compile_error": 0,
-          "compile_timeout": 19,
+          "compile_timeout": 21,
           "skip": 0,
-          "total": 120,
+          "total": 122,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -1294,14 +1294,14 @@
           "illegal_cast": 1
         },
         "by_edition": {
-          "ES2026": 120
+          "ES2026": 122
         },
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
           "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
           "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-ceil.js"
+          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
@@ -2492,19 +2492,19 @@
           "#990"
         ],
         "label": "Eval and `new Function` semantics",
-        "count": 279,
+        "count": 277,
         "statuses": {
           "pass": 0,
-          "fail": 275,
+          "fail": 273,
           "compile_error": 4,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 279,
+          "total": 277,
           "host_free_pass": 0
         },
         "error_categories": {
           "promise_error": 10,
-          "assertion_fail": 155,
+          "assertion_fail": 153,
           "other": 106,
           "runtime_error": 4,
           "host_import_leak": 1,
@@ -2521,10 +2521,10 @@
           "ES2023": 39,
           "ES2027": 41,
           "ES2022": 5,
-          "ES2025": 6,
+          "ES2025": 5,
           "ES2017": 4,
           "Proposals": 7,
-          "ES2024": 3
+          "ES2024": 2
         },
         "sample_files": [
           "test/built-ins/Promise/allSettled/iter-step-err-reject.js",

@@ -2856,12 +2856,12 @@
   },
   {
     "edition": "ES2024",
-    "pass": 403,
-    "fail": 96,
+    "pass": 404,
+    "fail": 95,
     "ce": 57,
     "skip": 0,
     "total": 556,
-    "pct": 72,
+    "pct": 73,
     "features": [
       {
         "name": "TypedArray",
@@ -3054,12 +3054,12 @@
       },
       {
         "name": "promise-with-resolvers",
-        "pass": 5,
-        "fail": 4,
+        "pass": 6,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 9,
-        "pct": 56
+        "pct": 67
       },
       {
         "name": "String.prototype.isWellFormed",
@@ -3263,12 +3263,12 @@
   },
   {
     "edition": "ES2025",
-    "pass": 665,
-    "fail": 282,
+    "pass": 666,
+    "fail": 281,
     "ce": 54,
     "skip": 0,
     "total": 1001,
-    "pct": 66,
+    "pct": 67,
     "features": [
       {
         "name": "iterator-helpers",
@@ -3371,12 +3371,12 @@
       },
       {
         "name": "promise-try",
-        "pass": 11,
-        "fail": 1,
+        "pass": 12,
+        "fail": 0,
         "ce": 0,
         "skip": 0,
         "total": 12,
-        "pct": 92
+        "pct": 100
       },
       {
         "name": "Reflect.construct",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4585,
+    "pass": 4583,
     "fail": 197,
-    "ce": 139,
+    "ce": 141,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4486,
+        "pass": 4484,
         "fail": 106,
-        "ce": 19,
+        "ce": 21,
         "skip": 0,
         "total": 4611,
         "pct": 97
