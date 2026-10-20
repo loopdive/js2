@@ -7326,3 +7326,82 @@ into actual public consumers, then verify both no-host backends. General values,
 undefined/defaults,bound/live-foreign mixed Call/Get,live per-instance boundary
 identity without copying,all remaining algorithms/constructors,complete
 Linear/WASI,named gaps,retirement and reviewed integration all remain required.
+
+#### S7-aw actual native integrity algorithms (in progress)
+
+Public source builtin bindings require the genuine full realm/population path,
+whose initializer references still-missing catalog algorithms. Do not replace
+that integration with a special Object.is spelling or a second private ABI.
+Implement the missing Object.freeze/seal/isFrozen/isSealed catalog slots over
+the existing authenticated mixed-object own storage. Scan actual live property
+entries (including symbols and accessor descriptors), not cached frozen/sealed
+bits. Preserve unrelated flags, accessor writability, payload/prototype identity
+and tombstones; only data descriptors lose writable when freezing. Virtual String
+indices are already immutable. Unready/foreign/source carriers retain explicit
+gaps; native callable bags require actual completed descriptor population before
+their missing virtual name/length properties can be treated as absent.
+
+Share the existing primitive/Boolean/error/argument dependency checks and add an
+authenticated own-storage projection from the original mixed owner. No new host
+import or raw-body binder. Execute all four real algorithm and guarded Call slots
+with native primitives, ordinary objects, primitive wrappers and String values;
+prove refusal of raw JS values and incomplete callable populations. Inspect
+actual descriptor flags and property values after freeze/seal, including mutation
+after preventExtensions and accessors. Add isolated guard/algorithm removal
+controls and preservation runs. Public builtin/source/realm/code/body/allocation
+integration, full remaining catalog/constructors, complete Linear/WASI and every
+historical/conformance/retirement requirement remain required.
+
+S7-aw now owns the four actual catalog algorithm/lifted pairs plus five native
+storage/operation helpers. Ordinary objects and Boolean/Number/Symbol/BigInt/
+String wrappers operate on authenticated live own storage. Native/source callable
+and intrinsic-prototype descriptor populations are not joined to this issuer;
+they explicitly return unready rather than treating their partial bags as empty.
+This is not complete catalog or public source admission. Shared structural
+dependency checks are exposed unchanged, and the old extensibility factory
+matches its exact parent24/24 with the new primitive-query binding absent.
+The two added modules are classified in the architecture inventory, not admitted
+through new allowed edges; inventory2000 is valid,architectureComplete=false.
+
+First new run passes19/20, including all18 execution cases; the combined custody
+case takes36.07s and exceeds its unchanged35s case limit. A phased second run
+passes23/24 but its new fill hook hits the default10s hook limit. Move the fill
+into the original35s case, leaving only construction/dependency setup in hooks:
+the selected custody case passes1/1 (23 unselected),22.49s case time. No production
+work, assertion or existing deadline was removed/raised. New prototype and guarded
+TypeError execution cases also pass in the23-case cohort. Two isolated semantic
+removal controls and final restored/preservation runs remain in progress; do not
+substitute these partial results for their terminal reports.
+
+S7-aw final restored native file passes **24/24,zero skips,exit0**,203.81s,
+after hook-only lint cleanup (one beforeEach, no suppression/deadline increase).
+Both removal controls are **1/2 selected passes,22 unselected,exit1**: dropping
+data-writable clearing leaves the actual writable bit set; dropping query-entry
+checks falsely reports a configurable/writable object frozen. The independent
+primitive control passes in each; exact body hash restored before final runs.
+All source/type/lint/format/LOC/function/coercion/oracle checks pass; whole PR419
+source files,net−12022 LOC,only two existing function grants. Inventory2000 is
+valid,architectureComplete=false; same four red cycle directions/SCC712/four
+components remain unwaived. Import policy437/452 across33 unchanged probes,
+zero unknown/regime-gap imports; no approved adapter increase was needed.
+
+The five-file preservation runner is **still live**,session24574,report
+`.tmp/s7aw-preservation.json`,log`.tmp/s7aw-preservation.log`. Its ToObject
+components emit the exact previously recorded S7-as binaries (953f3674… and
+89a8f80b…), but the file/suite has no terminal result yet. The prior S7-as70-case
+file took1479.91s; that historical timing is not a current result or deadline.
+Re-poll this actual handle or inspect its process; do not restart it for buffered
+output or treat lack of terminal JSON as a failure. The published draft checkpoint
+explicitly leaves this preservation run pending; record its eventual exact
+counts/exits and per-file rows before making any preservation claim.
+[Exact S7-aw source/report/gate hashes and live-run handoff](../audit/6979-native-object-integrity-20261020.json).
+
+Next real work remains population/source/callable ownership integration into the
+same public path, not a hard-coded Object.is bypass. Native/source callable and
+intrinsic-prototype integrity populations remain explicit unready; foreign/proxy
+SetIntegrityLevel must keep callback ordering and cannot inherit this native
+callback-free bulk scan merely by classification. Full catalog/constructors,
+public bindings,values/undefined/defaults,mixed builtin/bound/source/live-foreign
+Call/Get,live boundary identity without copying,complete Linear/WASI,named gaps,
+host runtime retirement,historical/conformance/architecture acceptance and reviewed
+prerequisite/conflict integration all remain required. Both issues stay in progress.

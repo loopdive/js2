@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-aw: actual native integrity catalog calls",
+  "parent": "09899e106604f5354c0f8baea5d1ca41f74ddb32",
+  "scope": "Actual freeze/seal/isFrozen/isSealed algorithm and guarded Call slots over authenticated ordinary and primitive-wrapper storage. Native/source callable and intrinsic-prototype descriptor populations, general foreign admission and public source builtin bindings remain unjoined. No whole-realm or complete Linear/WASI claim.",
+  "sourceSha256": {
+    "src/backend/wasmgc/resources/native-object-integrity.ts": "b6ec8dd8a359a1b73a74fb7f087115cbb7310dcc19eadc495a780ff34fc13fb4",
+    "src/backend/wasmgc/resources/native-mixed-object-access.ts": "95201286c5d8b692aa81f50c6a3c1665757d29c7ac0ec042201bbe4e216ca88e",
+    "src/backend/wasmgc/resources/native-object-structural-algorithms.ts": "1a907778af5f14f179a23b5ceaca75b55e63ddb8ea2537eab0fb607404ef4fa5",
+    "src/runtime/wasmgc/values/native-object-integrity-bodies.ts": "d3a511803b8c614fc33b08e8a4ddfeab2c5fcd96bf55976ca721376988a87150",
+    "src/runtime/wasmgc/values/native-object-extensibility-bodies.ts": "3685a0391145c052848bce3985601bf3777c267c117ce7e4a2efe66161700ed7",
+    "tests/helpers/native-object-extensibility.ts": "1b836b78a28d549cdad9eb0bae00a1a23d900e0129f18a1304b202d7b1a951b5",
+    "tests/issue-6979-native-object-integrity.test.ts": "b3f684bd7a3bd74619a8bde7d7931c83af45441b9f0b6b916e93156663ded9e7",
+    "scripts/compiler-boundaries.json": "8653ef5c6841ffcf654c3ed0b90cfb61eb80dc8a521bf3265c37680f2d44e1d0"
+  },
+  "execution": {
+    "actualCatalogIds": ["%Object.freeze%", "%Object.seal%", "%Object.isFrozen%", "%Object.isSealed%"],
+    "algorithmAndLiftedSlots": 8,
+    "internalOperations": 5,
+    "componentImports": 0,
+    "cases": [
+      "Live string/symbol data descriptor flags; accessor references and irrelevant writable bit preserved",
+      "Seal retains writable data; freeze clears only data writable/configurable; tombstones unchanged",
+      "Queries inspect actual entries and extensibility, never cached frozen/sealed bits",
+      "Native primitive identity/omission, all primitive wrapper families and immutable String virtual descriptors",
+      "Prototype identity preserved without recursively freezing the parent",
+      "Genuine guarded singleton identity and tagged TypeError",
+      "Hostile/raw unsupported values and incomplete populations refuse without property hooks; ignored receiver/tails untouched"
+    ],
+    "limits": "Native callback-free storage specialization only. Foreign/proxy SetIntegrityLevel must preserve abstract-operation callback ordering when joined; it cannot inherit this direct bulk scan by classification alone. Private i31 Number ABI may be observed as a JS integer; no general raw-host admission is inferred."
+  },
+  "reports": {
+    "s7aw-first": {
+      "sha256": "ffcdfdae24eba7c9ce4743d2131cfa0684605d2528f955caa4cc50bca807213f",
+      "total": 20,
+      "passed": 19,
+      "failed": 1,
+      "pending": 0,
+      "exit": 1,
+      "meaning": "All18 execution cases pass. Combined custody setup/fill/audit took36.07s and exceeded unchanged35s case limit."
+    },
+    "s7aw-second": {
+      "sha256": "b682dcd8c5e738cf3debc03ed6dce2c49be88fa05c052d5d44902820058bf50d",
+      "total": 24,
+      "passed": 23,
+      "failed": 0,
+      "pending": 1,
+      "exit": 1,
+      "meaning": "Two added prototype/guard cases per cohort pass. New fill hook exceeds its default10s limit; not a successful full run."
+    },
+    "s7aw-custody-selected": {
+      "sha256": "3b87eab37d22ca89f3c7704b65646c40145e3dfa3a346d151c1c098b82f81dc8",
+      "total": 24,
+      "passed": 1,
+      "failed": 0,
+      "pending": 23,
+      "exit": 0,
+      "meaning": "Setup stays in bounded hooks; fill/audit stays inside unchanged35s case,22.49s case time. No production work removed."
+    },
+    "s7aw-writable-removal": {
+      "sha256": "52d39dea4040ff315042092955dd221e894165aaa5437ecc1d75f2feb7746b4f",
+      "total": 24,
+      "passed": 1,
+      "failed": 1,
+      "pending": 22,
+      "exit": 1,
+      "meaning": "Only data-writable clearing disabled. Actual data flags are16387 instead of16386; independent primitive case passes."
+    },
+    "s7aw-live-scan-removal": {
+      "sha256": "5dbcc3d49dea06197c0e5c85ca30533fa62595eaa311a130f265a30b505280ef",
+      "total": 24,
+      "passed": 1,
+      "failed": 1,
+      "pending": 22,
+      "exit": 1,
+      "meaning": "Only query entry checks removed. Real non-extensible object with configurable/writable entry wrongly reports frozen; independent primitive case passes."
+    },
+    "s7aw-final": {
+      "sha256": "b1c56828dc3098f8eefd40c14c4091d34d442da41f54efaf5c0f4660ae1c8e5f",
+      "total": 24,
+      "passed": 24,
+      "failed": 0,
+      "pending": 0,
+      "exit": 0,
+      "meaning": "Full restored native run,204.91s. Subsequent hook-only lint cleanup requires its own final full rerun."
+    }
+  },
+  "finalRestoredRun": {
+    "closed": true,
+    "sha256": "c2b172ef536d4c512756616f5a3c080fb2f4cee84a1f7b107658359fbc8eed2d",
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "pending": 0,
+    "exit": 0,
+    "meaning": "Unfiltered full file after exact native source restoration and hook-only lint cleanup,203.81s. Duplicate setup hooks were merged into one beforeEach; no suppression or deadline increase."
+  },
+  "preservationRun": {
+    "closed": false,
+    "sessionId": 24574,
+    "report": ".tmp/s7aw-preservation.json",
+    "log": ".tmp/s7aw-preservation.log",
+    "files": 5,
+    "meaning": "Full existing extensibility, set-prototype, prototype-setter, ToObject catalog and prepared Linear early-return files; no inferred denominator before terminal report. Still live at checkpoint publication. The two ToObject components have emitted exact prior S7-as bytes, not proof of all test results. Re-poll the same live handle; never restart for buffered output."
+  },
+  "oldFactoryComparison": {
+    "equal": 24,
+    "total": 24,
+    "parent": "09899e106604f5354c0f8baea5d1ca41f74ddb32",
+    "factory": "src/runtime/wasmgc/values/native-object-extensibility-bodies.ts",
+    "runtimeImportRewritten": false,
+    "newPrimitiveQueryBinding": "absent/explicit undefined",
+    "meaning": "Exact complete instruction arrays across three offsets, both old operations and two error-body shapes. Not full historical emitted-GC byte equivalence."
+  },
+  "gateSha256": {
+    ".tmp/s7aw-final-typecheck-restored.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7aw-final-lint-restored.log": "e6a170dac94e4ae361ab8c0eff02b15405dfcc4be0034a7824c538d4341f4e0c",
+    ".tmp/s7aw-final-format-restored.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    ".tmp/s7aw-final-loc-restored.log": "ae734f2bb2452b2b6e70aea3355a87c8878275dd6f8518163816543ca5a55352",
+    ".tmp/s7aw-final-functions-restored.log": "b4e1a5375d4f16a58206d8f63d4fccfe1de53847925f77e5e93da22fde8a3550",
+    ".tmp/s7aw-final-coercion-restored.log": "f2467c0fff402c0f13810ec9a0954efdae80ec3e5b50fb2d8b3f06ce231d7c4c",
+    ".tmp/s7aw-final-oracle-restored.log": "031546c532af36cd91146eb9710a7fb4c994c737a2a2a9ae9e60ae36d14212b7",
+    ".tmp/s7aw-final-inventory.json": "cccd2f02c1ff3678cb594dde98d464dd5b238fae3f6178152c36753319aea233",
+    ".tmp/s7aw-import-cycles.json": "2f241a21dcb65baa9f5533e14ee07c33c17b6d6dd9c00f4169fc944a47bb5b69",
+    ".tmp/s7aw-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7aw-layering.log": "cbbdbd4d531f68c7e942601605aa7d692a9f4eea68d5811a2da3339a4c1998df",
+    ".tmp/s7aw-flat.log": "79049ac96f5154b630c1549f619889ba8acd810b409837617b82fe92aa04a719",
+    ".tmp/s7aw-preservation-only.log": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2",
+    ".tmp/s7aw-import-policy.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7aw-old-recipe-comparison.json": "bd57c3ff8df048471f5cea53c7dded5c99b9df5b148d1c537cbc030fbbd77c3e"
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "ceiling": 452,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "approvedIncreaseApplied": false
+  },
+  "architecture": {
+    "modules": 2000,
+    "inventoryValid": true,
+    "architectureComplete": false,
+    "newModulesClassified": 2,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cycleGateExit": 1,
+    "waiverAdded": false
+  },
+  "remaining": [
+    "Join actual intrinsic/source callable and prototype descriptor populations to this integrity issuer; preserve explicit unready status until then",
+    "Full public builtin bindings/catalog consumption and original source/realm/code/body/allocation joins",
+    "Remaining catalog algorithms/constructors including Function/CreateDynamicFunction; general values/undefined/defaults and mixed builtin/bound/source/live-foreign Call/Get",
+    "Live per-instance boundary identity without recursive graph copying, complete Linear/WASI and named generator-buffer/SharedArrayBuffer/Temporal gaps",
+    "Runtime/host-arm retirement, same four cycle failures, strict closure's two unknown nonliteral imports and historical/conformance/accelerator acceptance",
+    "Earlier storage188/202 and five separate symbolic receipt failures unwaived; reviewed prerequisite/conflict integration"
+  ],
+  "fullGoalComplete": false
+}

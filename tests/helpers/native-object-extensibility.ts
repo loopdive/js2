@@ -61,6 +61,11 @@ import {
   fillNativeObjectToObjectAlgorithms,
   requireCompletedNativeObjectToObjectAlgorithms,
 } from "../../src/backend/wasmgc/resources/native-object-to-object-algorithms.js";
+import {
+  reserveNativeObjectIntegrityAlgorithms,
+  fillNativeObjectIntegrityAlgorithms,
+  requireCompletedNativeObjectIntegrityAlgorithms,
+} from "../../src/backend/wasmgc/resources/native-object-integrity.js";
 
 export function objectExtensibilityFixture(
   displaced = false,
@@ -71,6 +76,7 @@ export function objectExtensibilityFixture(
   includePrimitivePrototypes = false,
   includeToObject = false,
   includeToObjectAlgorithms = false,
+  includeIntegrity = false,
 ) {
   const r = mixedOwnerFixture(displaced, decoded),
     { tx } = r;
@@ -124,6 +130,7 @@ export function objectExtensibilityFixture(
     errorDependencies,
   };
   const algorithms = reserveNativeObjectExtensibilityAlgorithms(tx, algorithmDependencies);
+  const integrity = includeIntegrity ? reserveNativeObjectIntegrityAlgorithms(tx, algorithmDependencies) : undefined;
   const prototypeAlgorithm = includeSetPrototype
     ? reserveNativeObjectSetPrototypeAlgorithm(tx, algorithmDependencies)
     : undefined;
@@ -179,6 +186,7 @@ export function objectExtensibilityFixture(
     errorDependencies,
     algorithmDependencies,
     algorithms,
+    integrity,
     prototypeAlgorithm,
     prototypeSetter,
     primitivePrototypeDependencies,
@@ -215,6 +223,7 @@ export function objectExtensibilityRuntime(
   includePrimitivePrototypes = false,
   includeToObject = false,
   includeToObjectAlgorithms = false,
+  includeIntegrity = false,
 ) {
   const steps = objectExtensibilityRuntimeSteps(
     displaced,
@@ -225,6 +234,7 @@ export function objectExtensibilityRuntime(
     includePrimitivePrototypes,
     includeToObject,
     includeToObjectAlgorithms,
+    includeIntegrity,
   );
   let step = steps.next();
   while (!step.done) step = steps.next();
@@ -243,6 +253,7 @@ export async function objectExtensibilityRuntimeAsync(
   includePrimitivePrototypes = false,
   includeToObject = false,
   includeToObjectAlgorithms = false,
+  includeIntegrity = false,
 ) {
   const steps = objectExtensibilityRuntimeSteps(
     displaced,
@@ -253,6 +264,7 @@ export async function objectExtensibilityRuntimeAsync(
     includePrimitivePrototypes,
     includeToObject,
     includeToObjectAlgorithms,
+    includeIntegrity,
   );
   const synchronousPhaseMs: number[] = [];
   for (;;) {
@@ -291,6 +303,7 @@ export function* objectExtensibilityRuntimeSteps(
   includePrimitivePrototypes = false,
   includeToObject = false,
   includeToObjectAlgorithms = false,
+  includeIntegrity = false,
 ) {
   const r = objectExtensibilityFixture(
       displaced,
@@ -301,6 +314,7 @@ export function* objectExtensibilityRuntimeSteps(
       includePrimitivePrototypes,
       includeToObject,
       includeToObjectAlgorithms,
+      includeIntegrity,
     ),
     { tx, f } = r;
   const selectedEntries = [
@@ -308,13 +322,20 @@ export function* objectExtensibilityRuntimeSteps(
     ...(r.prototypeAlgorithm?.entries ?? []),
     ...(r.prototypeSetter?.entries ?? []),
     ...(r.toObjectAlgorithms?.entries ?? []),
+    ...(r.integrity?.entries ?? []),
   ];
   const bigintOperands = reserveBigIntOperands(tx);
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
     ...Object.fromEntries(
-      (r.toObjectAlgorithms?.entries ?? []).flatMap((_, index) => [
+      (r.integrity?.entries ?? []).map((_, index) => [
+        "stored" + (selectedEntries.length - r.integrity!.entries.length + index),
+        { params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }], results: [ext] },
+      ]),
+    ),
+    ...Object.fromEntries(
+      (r.toObjectAlgorithms?.entries ?? []).flatMap((entry, index) => [
         [
-          "stored" + (selectedEntries.length - r.toObjectAlgorithms!.entries.length + index),
+          "stored" + selectedEntries.indexOf(entry),
           {
             params: [ext, ext, { kind: "ref", typeIdx: f.substrate.arguments.carrier.typeIndex }],
             results: [ext],
@@ -323,6 +344,21 @@ export function* objectExtensibilityRuntimeSteps(
         ["coercionNative" + index, { params: [i32, i32], results: [ext] }],
       ]),
     ),
+    ...(includeIntegrity
+      ? {
+          integrityInsert: { params: [ext, ext, ext, i32], results: [] },
+          integrityEntry: { params: [ext, ext], results: [ext] },
+          integrityStringEntry: { params: [ext, ext], results: [ext] },
+          integrityLengthKey: { params: [], results: [ext] },
+          integrityIndexKey: { params: [], results: [ext] },
+          integrityEntryFlags: { params: [ext], results: [i32] },
+          integritySetEntryFlags: { params: [ext, i32], results: [] },
+          integrityAccessor: { params: [ext, ext, ext], results: [] },
+          integrityEntryValue: { params: [ext], results: [ext] },
+          integrityGetter: { params: [ext], results: [ext] },
+          integritySetter: { params: [ext], results: [ext] },
+        }
+      : {}),
     ...(includeToObject
       ? {
           toObjectText: { params: [], results: [ext] },
@@ -435,6 +471,12 @@ export function* objectExtensibilityRuntimeSteps(
     requireCompletedNativeObjectToObjectAlgorithms(tx, r.toObjectAlgorithms, r.toObjectAlgorithmsDependencies!);
     yield;
   }
+  if (r.integrity) {
+    fillNativeObjectIntegrityAlgorithms(tx, r.integrity);
+    yield;
+    requireCompletedNativeObjectIntegrityAlgorithms(tx, r.integrity, r.algorithmDependencies);
+    yield;
+  }
   // Exercise the real prevention algorithm's false branch with the genuine
   // IsExtensible result of a non-extensible object. This derivative is a named
   // test control, never filled into a catalog slot or accepted by its owner.
@@ -452,6 +494,71 @@ export function* objectExtensibilityRuntimeSteps(
   tx.fillFunction(controls.preventionFalseControl!, falseDefinition);
   fillBigIntOperands(tx, r.bigints, bigintOperands);
   const call = (handle: number): Instr => ({ op: "call", funcIdx: handle });
+  if (includeIntegrity) {
+    tx.fillFunction(controls.integrityInsert!, {
+      locals: [],
+      body: [
+        ...as(0, f.objects.object.typeIndex),
+        get(1),
+        get(2),
+        { op: "any.convert_extern" },
+        get(3),
+        n(0),
+        call(r.storage.insert.handle),
+      ],
+    });
+    tx.fillFunction(controls.integrityEntry!, {
+      locals: [],
+      body: [...as(0, f.objects.object.typeIndex), get(1), call(r.lookup.findOwn.handle), { op: "extern.convert_any" }],
+    });
+    tx.fillFunction(controls.integrityStringEntry!, {
+      locals: [],
+      body: [...as(0, f.objects.object.typeIndex), get(1), call(r.own.findOwn.handle), { op: "extern.convert_any" }],
+    });
+    for (const [name, text] of [
+      ["integrityLengthKey", "length"],
+      ["integrityIndexKey", "0"],
+    ] as const)
+      tx.fillFunction(controls[name]!, {
+        locals: [],
+        body: [...buildInlineNativeStringLiteral(f.strings.layout, text), { op: "extern.convert_any" }],
+      });
+    for (const [name, field, external] of [
+      ["integrityEntryFlags", 2, false],
+      ["integrityEntryValue", 1, true],
+      ["integrityGetter", 4, true],
+      ["integritySetter", 5, true],
+    ] as const)
+      tx.fillFunction(controls[name]!, {
+        locals: [],
+        body: [
+          ...as(0, f.objects.propEntry.typeIndex),
+          { op: "struct.get", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: field },
+          ...(external ? [{ op: "extern.convert_any" } as Instr] : []),
+        ],
+      });
+    tx.fillFunction(controls.integritySetEntryFlags!, {
+      locals: [],
+      body: [
+        ...as(0, f.objects.propEntry.typeIndex),
+        get(1),
+        { op: "struct.set", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 2 },
+      ],
+    });
+    tx.fillFunction(controls.integrityAccessor!, {
+      locals: [],
+      body: [
+        ...as(0, f.objects.propEntry.typeIndex),
+        get(1),
+        { op: "any.convert_extern" },
+        { op: "struct.set", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 4 },
+        ...as(0, f.objects.propEntry.typeIndex),
+        get(2),
+        { op: "any.convert_extern" },
+        { op: "struct.set", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 5 },
+      ],
+    });
+  }
   const realm = tx.physicalIndex(f.pack.anchors.realm);
   const prefix = (): Instr[] => [
     { op: "ref.null", typeIdx: f.objects.object.typeIndex },
@@ -794,6 +901,9 @@ export function* objectExtensibilityRuntimeSteps(
     ...controls,
     source: sourceControl,
     ...bigintOperands,
+    ...(r.integrity
+      ? Object.fromEntries(r.integrity.operations.map((token, i) => ["integrityKernel" + i, token]))
+      : {}),
     boxNumber: r.values.functions.boxNumber,
     isPrimitive: r.primitives.isPrimitive,
     boxBoolean: r.booleanBoxes.boxBoolean,
@@ -816,7 +926,7 @@ export function* objectExtensibilityRuntimeSteps(
           ...Object.fromEntries(Object.entries(r.wrappers.read).map(([kind, token]) => ["payload_" + kind, token])),
         }
       : {}),
-    ...(includeSetPrototype || includeToObject
+    ...(includeSetPrototype || includeToObject || includeIntegrity
       ? { getPrototypeOf: r.mixed.getPrototypeOf, internalSetPrototypeOf: r.mixed.setPrototypeOf }
       : {}),
   }))

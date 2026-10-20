@@ -369,6 +369,15 @@ const builders = {
   isExtensible: buildMixedObjectIsExtensible,
   preventExtensions: buildMixedObjectPreventExtensions,
 };
+/** Derived coordinates only, never semantic completion or a callable body binder. */
+export function nativeMixedObjectAccessOperands(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  expected: NativeMixedObjectAccessDependencies,
+): MixedObjectAccessOperands {
+  requireNativeMixedObjectAccessReservations(tx, pack, expected);
+  return operands(tx, pack, current(tx, pack).identities);
+}
 function canonical(
   tx: PhysicalModuleReservations,
   token: FunctionReservation,

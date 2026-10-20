@@ -11,6 +11,7 @@ export interface NativeObjectExtensibilityOperands {
   readonly operation: FuncHandle;
   readonly boxBoolean: FuncHandle;
   readonly throwTypeError: Instr[];
+  readonly primitiveResult?: 0 | 1;
 }
 const get = (index: number): Instr => ({ op: "local.get", index });
 const n = (value: number): Instr => ({ op: "i32.const", value });
@@ -25,7 +26,10 @@ export function buildNativeObjectExtensibilityDefinition(
   d: NativeObjectExtensibilityOperands,
   prevent: boolean,
 ): BuiltinFunctionDefinition {
-  const primitive = (): Instr[] => [...(prevent ? [get(2)] : [n(0), call(d.boxBoolean)]), { op: "return" }];
+  const primitive = (): Instr[] => [
+    ...(prevent ? [get(2)] : [n(d.primitiveResult ?? 0), call(d.boxBoolean)]),
+    { op: "return" },
+  ];
   return {
     locals: [
       { name: "value", type: { kind: "externref" } },

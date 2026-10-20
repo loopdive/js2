@@ -121,7 +121,10 @@ function record(value: unknown, keys: readonly string[]): Record<string, unknown
       fail("own enumerable dependency data required");
   return Object.fromEntries(keys.map((key) => [key, fields[key]!.value]));
 }
-function dependencies(tx: PhysicalModuleReservations, input: NativeObjectExtensibilityDependencies) {
+export function requireNativeObjectAlgorithmDependencies(
+  tx: PhysicalModuleReservations,
+  input: NativeObjectExtensibilityDependencies,
+) {
   const d = record(input, roles) as unknown as NativeObjectExtensibilityDependencies;
   record(d.mixedDependencies, [
     "realm",
@@ -175,7 +178,7 @@ function entries(realm: NativeObjectRealmDeclarations, kind: Kind) {
 /** Downstream composition of actual reserved slots, never a raw-handle/body binder. */
 function reserve(tx: PhysicalModuleReservations, input: NativeObjectExtensibilityDependencies, kind: Kind): Algorithms {
   if (tx.state !== "reserving") fail("invalid reservation phase");
-  const d = Object.freeze(dependencies(tx, input)),
+  const d = Object.freeze(requireNativeObjectAlgorithmDependencies(tx, input)),
     realm = d.mixedDependencies.realm;
   const issued = realms.get(realm) ?? new Set<Kind>();
   if (issued.has(kind)) fail("realm already has this structural algorithm owner");
@@ -211,7 +214,7 @@ export function reserveNativeObjectPrototypeSetterAlgorithm(
 function current(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind) {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx || owner.kind !== kind) fail("foreign, copied or wrong-scope algorithm owner");
-  const d = dependencies(tx, owner.original);
+  const d = requireNativeObjectAlgorithmDependencies(tx, owner.original);
   if (roles.some((role) => d[role] !== owner.dependencies[role])) fail("changed dependency identity");
   if (
     pack.realm !== d.mixedDependencies.realm ||
@@ -271,7 +274,10 @@ function canonicalLiteral(tx: PhysicalModuleReservations, d: NativeObjectExtensi
   if (binding.kind !== "global" || plan?.kind !== "global") fail("different canonical error literal recipe");
   tx.assertCanonicalGlobalInitializer(binding.global, plan.init);
 }
-function completedDependencies(tx: PhysicalModuleReservations, d: NativeObjectExtensibilityDependencies) {
+export function requireCompletedNativeObjectAlgorithmDependencies(
+  tx: PhysicalModuleReservations,
+  d: NativeObjectExtensibilityDependencies,
+) {
   const m = d.mixedDependencies;
   requireCompletedNativeMixedObjectAccessStructure(tx, d.mixed, m);
   requireCompletedNativeNumberPrimitiveClassifier(tx, d.primitives, d.primitivePlan, d.primitiveDependencies);
@@ -375,7 +381,7 @@ function definitions(
 function fill(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind): void {
   const owner = current(tx, pack, kind);
   if (tx.state !== "filling" || owner.phase !== "reserved") fail("invalid phase or duplicate/failed fill");
-  completedDependencies(tx, owner.dependencies);
+  requireCompletedNativeObjectAlgorithmDependencies(tx, owner.dependencies);
   const bodies = owner.entries.map((entry) => definitions(tx, owner.dependencies, entry));
   owner.phase = "filling";
   try {
@@ -392,7 +398,7 @@ function fill(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind): voi
 function completed(tx: PhysicalModuleReservations, pack: Algorithms, kind: Kind): void {
   const owner = current(tx, pack, kind);
   if (owner.phase !== "complete") fail("missing canonical algorithm/lifted fill");
-  completedDependencies(tx, owner.dependencies);
+  requireCompletedNativeObjectAlgorithmDependencies(tx, owner.dependencies);
   owner.entries.forEach((entry) => {
     const body = definitions(tx, owner.dependencies, entry);
     tx.assertCanonicalFunctionDefinition(entry.algorithm, body.algorithm);

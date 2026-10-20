@@ -2305,3 +2305,25 @@ Both issues remain in progress. Full catalog/population,values/undefined/default
 bound/live-foreign identity-preserving Call/Get,both no-host backends,named gaps,
 retirement,architecture/historical/conformance acceptance and reviewed integration
 all remain required.
+
+### S7-aw native integrity catalog calls (2026-10-20, in progress)
+
+The actual freeze/seal/isFrozen/isSealed algorithm and guarded Call slots now
+operate on authenticated ordinary and primitive-wrapper storage, scanning real
+descriptor flags, preserving accessor/prototype/payload identity and skipping
+tombstones. This is not full public source admission: native/source callable and
+intrinsic-prototype populations and general foreign operations remain explicit
+gaps. No JS-host semantic fallback or object graph copying was introduced.
+
+Final native verification passes24/24,zero skips/exit0. Two isolated removals
+each give1/2 selected passes,22 unselected,with a passing primitive control;
+exact restoration precedes the final run. Old extensibility recipes match the
+parent24/24 without the new query binding. The five-file preservation runner is
+still live on session24574 and explicitly pending in the published draft
+checkpoint; do not infer a denominator or conformance result. Continue the same
+handle and update the exact audit when it terminates. The full handoff is under
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Both issues remain in progress. All public builtin/population/source/realm/code/
+body/allocation joins,remaining algorithms/constructors,general values and live
+foreign Call/Get,both no-host backends,named gaps,retirement and full historical/
+conformance/architecture/reviewed-integration requirements remain open.
