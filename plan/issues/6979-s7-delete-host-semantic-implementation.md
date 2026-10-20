@@ -6351,3 +6351,219 @@ join code/body/allocation custody with builtin, bound and live foreign boundary
 owners in mixed Call/Get. Keep both no-host targets and every earlier full
 migration/acceptance obligation open. Publish this as an unfinished draft PR
 checkpoint, not ready/merged or migration complete. No GitHub issue/comment.
+
+S7-an terminal verification readback: focused20998 is now closed with39/39
+passing assertion records/zero skips, but terminal runner exit one and no error
+explanation in its JSON-only log. Preliminary preservation13369 similarly closes
+at357/357 assertions across11 files, zero skips/JSON success, but runner exit one;
+it also began before final source changes. Neither is a clean execution claim.
+Retain their exact reports and investigate with a second text reporter plus an
+explicit shell-exit observation on the same source revision, not normalized
+errors, larger deadlines or changed semantics. Final preservation54748 remains
+confirmed live; recheck that exact handle, do not restart it. All earlier failed
+focused handles73796/45757/59707 and now20998/13369 are closed.
+
+#### S7-ao genuine consumer primary-dependency reconciliation (in progress)
+
+The real physicalBodyResolver is private to program-consumer and derives calls,
+globals and types from the original transaction maps. Do not export a raw
+resolver binder or invent an issuer flag as dependency authority. Its ordinary
+non-source primary bodies (for example an adjust helper called by a lifted
+closure) currently get only ledger fill receipts: source emission snapshots
+lifted/allocation owners, not every original primary dependency. Record the
+actual producer's pre-fill definition data for all synchronous primaries and
+retain/audit it only inside the genuine accepted-consumer transaction. Returned
+definition data alone must never grant a semantic capability.
+
+First reproduce receipt-valid helper-body substitution through the real
+one-argument emitAcceptedIrProgram API, with a positively executed exact-source
+program and original helper/unit/population checks. Then retain independent
+pre-fill output from the actual lowerer, associate it with the original accepted
+unit/slot in the private consumer, and check it before publication and on later
+emission observations. Also independently re-derive ordinary defined scalar
+global initializers from the accepted plan; receipt-valid initializer replacement
+is not authority. Keep async-frame and native algorithm completion under their
+actual separate producers, not a count or ordinary primary-body permission.
+
+Readers/mutators of this shared state are fillPrimaryBody, the single physical
+body loop, recordEmissionObservation and emittedSupportFunctionReceipts; no
+external resolver map/callback/handle binder is introduced. The lowerer's
+pre-fill snapshots are data, never a new public completion token. Preserve
+original function identities, ABI brands and reference coordinates, terminal
+fill behavior and the existing exact module ownership partition. Test genuine
+execution plus before-ledger replacement/in-place body and global controls.
+Do not change production files until the already-running final-source S7-an
+preservation54748 is terminal; its exact source snapshot must remain stable.
+
+This addresses synchronous primary dependencies and accepted scalar resources,
+not all native algorithms, async frames, general JavaScript argument/receiver/
+result adaptation or full mixed Call/Get/public admission. Both no-host targets,
+live identity-backed boundary refs and all earlier full migration/acceptance
+obligations remain required. No host import, old-AST feature, graph copying,
+historical pin change or baseline/floor/root/edge waiver.
+
+The first four-case primary-dependency control stops at0/4 during preparation:
+`direct call to "adjust" has no exact AST-site plan in make__closure_0`.
+No helper/global substitution was reached, so this does not yet prove the
+receipt gap. The callable graph's visitCalls currently skips every nested
+function-like node, while the actual lifted IR body retains its R0 terminal
+planning owner and exact original AST nodes. Ordinary closures must be visited
+only through that genuine ownership join; do not infer targets by names, borrow
+a different terminal owner, admit class/accessor bodies through a parent, or move
+the helper call out of the closure to make the control easier. Repair this IR
+producer prerequisite before claiming the private dependency chain is covered.
+
+Whole-source IR preparation explicitly selects the owned-nested traversal;
+legacy prepared-component selection keeps its original top-level-only census
+and output behavior. That traversal option is not permission: every site still
+uses the exact original AST/checker target and genuine R0 terminal owner. This
+repairs the authoritative IR producer without new old/direct-AST development.
+
+The S7-an dual-reporter execution76679 is now closed:39/39 assertion records
+pass but one actual unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"`
+forces shell-confirmed exit one. JSON alone omits that diagnostic. Add cooperative
+setImmediate yields between and after the two synchronous fixture compilations
+inside the same120-second hook, retaining every assertion/fill/audit/emission,
+case35-second and RPC deadlines. This is not permission to ignore the error.
+Do not attribute the separate JSON-only357-case runner failures to the same
+cause without their own diagnostic evidence. Final preservation54748 is now
+closed too:357/357 assertions/11 files/zero skips, but runner exit one and no
+explanation in its retained log. No clean357-case execution is claimed.
+
+The genuine accepted-consumer repair now audits synchronous primary definitions
+and original program resource headers/ABIs, with source-owner snapshots kept
+separate from returned definition data. An independent guard-removal control
+must positively execute the wrong999 helper result through the same accepted
+zero-import module, not merely fail an expected-throw assertion before checking
+that the interception actually ran. Native algorithms and async frames still
+need their own semantic completion, not this ordinary-primary permission.
+
+Architectural follow-through: keep genuine acceptance and semantic binding-key
+selection private to program-consumer; generic resource data, scalar reservation/
+initialization, ABI/definition comparisons and module census belong in
+wasm/physical/program-resources. That leaf imports no IR/backend implementation
+or planner type. Opaque signature elements and the original compiler failure
+policy are inputs, not a new issuer/capability. The private consumer projects
+its real original unit lookup map on every use. Move actual scalar/remainder
+fill/index functions, preserving builders/errors/fields, rather than grant a
+driver/function-size waiver or mark an IR-coupled module clean.
+
+The real consumer still does not join all realm/code-identity carrier resources
+when creating source closures. This reconciliation alone must not be relabelled
+realm-source admission: the default consumer's stateless/source path is not
+permission to publish a fully populated realm or general JavaScript Call. Next
+join genuine source body/resource/code/allocation owners into the actual realm
+transaction, with real semantic argument/receiver/result handling and native
+algorithm/bound/live-foreign owners. Preserve Linear/WASI and all full acceptance
+requirements; neither a typed f64 witness nor this resource audit completes them.
+
+#### S7-ao publication handoff — requested work-so-far PR (2026-10-20)
+
+Publish this checkpoint on the existing
+[refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762),
+branch `codex/6979-s7c-ir-arms`, predecessor commit
+`a2c6d35e2e65a7e57ea7e714acfdade7036dd1e0`. This is an unfinished draft,
+not permission to merge or a completed migration. Its prerequisite
+[refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701)
+is still open/unmerged; PR 6762 still conflicts with main. Do not force-push,
+rewrite main, relax a gate or close this issue to publish the checkpoint.
+Use repository Markdown for follow-up issues; no GitHub issue/comment.
+
+Implemented:
+
+- Whole-source IR preparation now collects direct-call sites inside ordinary
+  lifted closures through their exact original AST/checker/R0 owner. Legacy
+  component traversal retains its prior census. Shadowed/reassigned targets,
+  copied AST populations and unrelated method/terminal owners gain no authority.
+- The genuine private consumer retains the real lowerer's independent pre-fill
+  definitions for every synchronous primary, then compares actual bodies,
+  physical ABIs, original callable/global bindings and scalar initializers before
+  publication and again on receipt observations. Valid ledger receipts alone
+  cannot authorize substituted ordinary helper bodies or scalar initialization.
+- Returned definition data are separate clones, never a capability or a way to
+  mutate the source owner's private canonical expectations. Async frames and
+  native algorithms retain separate, still-required semantic owners.
+- Generic physical resource reservation/fill/index/census/startup operations now
+  live in `src/wasm/physical/program-resources.ts`, with no IR/backend imports.
+  Genuine acceptance and resolver selection remain private to program-consumer.
+  The existing Wasm root classifies this actual leaf; no floor/root shrink,
+  baseline repin, new allowed dependency edge or size waiver was introduced.
+
+Verification and unresolved failures:
+
+- S7-an handles20998/13369/54748 are all **closed**, superseding earlier live
+  notes. The latter two have357/357 assertion records but runner exit1 and no
+  JSON-only diagnostic; they are not clean executions. Dual-reporter76679
+  exposes a real `onTaskUpdate` RPC timeout despite39/39 assertions. Cooperative
+  fixture preparation31486 then closes cleanly at39/39, no skipped assertions
+  or increased hook/case/RPC deadlines. The allocation-custody audit retains
+  every earlier failure and separates this clean focused run from combined runs.
+- S7-ao broader consumer42983 closes at255/259 in12 files, zero skips/exit1.
+  Two async-family cases fail `ambiguous prepared SSA definition`; formatter
+  fast-path false/true cases expect31 support buffers but receive43. Preserve
+  these exact failures; neither counts nor errors were normalized to green.
+- Selected four-case controls60193/93814 both close at0/4,49 other cases
+  excluded by the explicit name filter. Exact case/status/error records match
+  with only the new owned-nested planner option on versus off. This rules out
+  that switch as the cause in this experiment, **not** all changes since a clean
+  historical commit. Restore the production option to true (done). Next obtain
+  a genuine historical A/B or repair the authoritative producer; never simply
+  change31 to43 or move the nested call out of its owner.
+- Source preservation33709 closes at81/81 assertion records in3 files, zero
+  skips, but exit1 with one actual `onTaskUpdate` RPC timeout. It began before
+  final physical factoring: not a clean or final-whole-revision proof.
+- Initial primary controls stopped at0/4 on the genuine missing nested-call
+  plan. After repairing planning,1/4 passed and three receipt-valid substitutions
+  were not refused. Subsequent intermediate runs reached4/4,10/10 and12/12.
+  Retain these as intermediate, not final revision evidence. The first expanded
+  publication run is12/13: the guard-removal witness returned62, not999, because
+  the tiny helper had been inlined. Keep a multi-block helper with a positive
+  prepared-block floor so the final wrong-result control reaches a real call.
+- Current source gates pass typecheck, lint, LOC/function budgets against the
+  whole-PR base, coercion/oracle, preservation-only, IR layering and flat-dir
+  checks. Preservation-only explicitly leaves strict modeled closure red on two
+  unknown nonliteral dynamic imports; it is not retirement certification.
+  Inventory is valid1992 modules/zero errors, `architectureComplete:false`.
+  Cycle gate remains red at the same four direction debts, largest SCC712 and
+  four nontrivial SCCs. No waiver was added. Historical closure-layout and
+  receipt bytes are unchanged. Full historical GC byte equivalence, Test262,
+  npm compatibility and Linear/WASI acceptance are not newly certified here.
+
+Next owner sequence (do not reduce the full goal to this checkpoint):
+
+1. Finish the retained-call13-case final verification and preserve its exact
+   report/log hashes alongside the12/13 inlined-control failure. Resolve the
+   broader four failures and reporting timeout with positive controls; rerun
+   affected consumer/startup/async/Linear and source preservation on one stable
+   revision. Do not call passing assertions plus nonzero runner exit clean.
+2. Join source code/body/allocation resources with the **actual realm transaction**
+   in program-consumer. Its current stateless source-carrier path is not full
+   realm-source/public admission. Keep `requireCompletedNativeObjectRealm`
+   refusing until genuine population and original-owner joins exist.
+3. Implement semantic arguments/receiver/results for real source ABIs and join
+   builtin, bound and live per-instance foreign boundary owners into mixed
+   Call/Get. Reuse identity-backed host objects only at an explicit boundary;
+   no recursive graph copying, general f64 unboxing shortcut or second host
+   semantic engine. Preserve first-class undefined and both no-host backends.
+4. Complete catalog/constructors/descriptors/initializers, atomic full population,
+   public source admission, generator-buffer/SharedArrayBuffer/Temporal gaps,
+   remaining host semantic-arm/runtime retirement, all architecture/strict
+   closure and conformance/historical custody/npm/accelerator acceptance.
+   Resolve the prerequisite stack and PR conflicts through reviewed commits
+   only after evidence supports readiness. Both migration issues stay in progress.
+
+Terminal publication readback: retained-call session11139 is now **closed with
+13/13 passing, two files, zero skips and explicit shell exit0**. The real
+zero-import module returns999 only when the new independent primary audit is
+removed; with it present, receipt-valid replacement and in-place helper changes
+are refused. Final fixture has the positive multi-block floor, avoiding the
+earlier inlined/unused-slot control. No new production bypass was added.
+The first12/13 execution remains recorded separately. All current test handles
+are closed; the continuation's first step now starts at the broader unresolved
+failures and stable-revision preservation, not rerunning a live handle.
+
+[Exact S7-ao source/report/gate hashes and proof limits](../audit/6979-native-consumer-primary-custody-20261020.json)
+record the clean13/13 independently from255/259 and81/81-with-runner-error.
+[The S7-an allocation audit](../audit/6979-native-source-allocation-custody-20261020.json)
+now records closed statuses, the actual RPC diagnostic and separate clean39/39
+cooperative execution. No combined clean or completed migration claim is made.

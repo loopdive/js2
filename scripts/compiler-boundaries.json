@@ -54,6 +54,7 @@
         "src/wasm/physical/function-handles.ts",
         "src/wasm/physical/function-types.ts",
         "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/program-resources.ts",
         "src/wasm/physical/exception-control.ts",
         "src/wasm/physical/type-layout.ts"
       ],
@@ -14084,6 +14085,11 @@
     },
     {
       "path": "src/wasm/physical/module-reservations.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/program-resources.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },

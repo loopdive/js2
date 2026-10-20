@@ -2042,3 +2042,45 @@ exact handles, alongside earlier live13369. Intermediate59707 is now closed at
 pass. All earlier failed handles73796/45757/59707 are closed. No current clean cohort
 result is claimed. Source/ABI body custody still does not certify non-source
 dependency ownership, generic Call, full source/public admission or Linear/WASI.
+
+#### S7-ao work-so-far PR and continuation handoff (2026-10-20)
+
+The latest checkpoint belongs to
+[refactor(codegen): separate native semantics from JS host mode](https://github.com/loopdive/js2/pull/6762),
+still an unfinished, conflicting draft above the open prerequisite
+[refactor(runtime): remove the host-assisted semantic policy](https://github.com/loopdive/js2/pull/6701).
+Do not merge this as completed migration. No GitHub issues/comments were filed.
+
+The authoritative IR planner now retains exact owned nested-call sites; the
+genuine consumer independently reconciles synchronous primary definitions,
+actual callable/global ABIs and scalar initializers instead of trusting ledger
+receipts. Generic physical mechanics moved below IR into the real Wasm resource
+leaf. Source private expectations are not exposed through returned data.
+This is not async/native algorithm completion or full realm/public admission.
+
+All older live handles in the preceding S7-an note are now closed. Focused
+cooperative preparation passes39/39 cleanly;357/357 combined assertion records
+still have unexplained runner exit1. The newer source cohort has81/81 assertion
+records but a real worker RPC timeout/exit1. Broader consumer preservation is
+255/259: two ambiguous-SSA async cases and two31-versus43 formatter support
+counts remain red. Four selected on/off planning controls reproduce exactly the
+same failures; this is not a historical clean baseline. No assertion, floor,
+dependency edge, historical pin or deadline was relaxed.
+
+The detailed implementation, retained test failures, exact controls and ordered
+continuation instructions are in **S7-ao publication handoff — requested
+work-so-far PR** under
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).
+Next join the genuine source/code/allocation owners into the real realm
+transaction and semantic mixed Call/Get, including live identity-backed foreign
+boundary objects without copying. Preserve first-class undefined, Linear/WASI,
+full population/publication, runtime/host-arm retirement and every existing
+architecture/conformance/merge acceptance obligation. Both issues remain in progress.
+
+Final focused checkpoint verification closes cleanly at **13/13**, two files,
+zero skips/exit0, including actual999 execution after removal of only the new
+primary-definition audit. The earlier12/13 inlined-fixture control is retained,
+not rewritten as a successful wrong-result witness. See
+[the exact source/report/gate audit](../audit/6979-native-consumer-primary-custody-20261020.json).
+All current handles are closed; broader failures, reporting errors, full migration
+and the conflicting/open prerequisite PR stack remain unresolved.

@@ -66,6 +66,12 @@ export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
   readonly types: NativeSourceClosureTypes;
 }
+/** Lowerer output data only, NOT source/resolver authority or a completion capability. */
+export interface PreparedPrimaryUnitDefinition {
+  readonly locals: LocalDef[];
+  readonly body: Instr[];
+  readonly signature: PhysicalFunctionSignature;
+}
 /** Actual lifted-body custody only; never source allocation or realm population authority. */
 export interface NativeRealmSourceClosureBodyCustody {
   readonly source: NativeSourceClosureEmission;
@@ -81,10 +87,7 @@ interface SourceOwner {
   readonly tx: PhysicalModuleReservations;
   readonly units: Map<IrUnitId, { readonly fn: IrFunction; readonly slot: FunctionReservation }>;
   readonly allocationUnits: Map<IrUnitId, { readonly fn: IrFunction; readonly slot: FunctionReservation }>;
-  readonly completed: Map<
-    IrUnitId,
-    { readonly locals: LocalDef[]; readonly body: Instr[]; readonly signature: PhysicalFunctionSignature }
-  >;
+  readonly completed: Map<IrUnitId, PreparedPrimaryUnitDefinition>;
   readonly attempted: Set<IrUnitId>;
   callables?: NativeSourceClosureCallables;
   realmCallables?: NativeRealmSourceClosureCallables;
@@ -493,7 +496,7 @@ export function fillPreparedPrimaryUnit(
   resolver: IrLowerResolver,
   backend: IrBackendKind,
   source?: NativeSourceClosureEmission,
-): void {
+): PreparedPrimaryUnitDefinition {
   const owner = source ? requireOwner(tx, source) : undefined;
   const association = owner?.units.get(fn.unitId) ?? owner?.allocationUnits.get(fn.unitId);
   if (association && (association.fn !== fn || association.slot !== slot || owner!.attempted.has(fn.unitId)))
@@ -540,10 +543,14 @@ export function fillPreparedPrimaryUnit(
   };
   // Clone BEFORE the ledger sees the definition: its receipt may faithfully
   // describe an intercepted/substituted fill rather than the actual IR output.
-  const canonical = association ? structuredClone({ ...definition, signature: { params, results } }) : undefined;
+  const canonical = structuredClone({ ...definition, signature: { params, results } });
   if (association) owner!.attempted.add(fn.unitId);
   tx.fillFunction(slot, definition);
-  if (canonical) owner!.completed.set(fn.unitId, canonical);
+  if (association) owner!.completed.set(fn.unitId, canonical);
+  // Never leak the source owner's private expected definition. The real
+  // consumer retains its own copy from its private resolver invocation; a raw
+  // caller's returned data cannot mint or mutate source completion authority.
+  return structuredClone(canonical);
 }
 
 export function requireCompletedNativeSourceClosures(

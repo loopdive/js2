@@ -1,0 +1,320 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-ao genuine accepted-consumer synchronous primary reconciliation",
+  "parentCommit": "a2c6d35e2e65a7e57ea7e714acfdade7036dd1e0",
+  "status": "unfinished draft checkpoint; focused clean, broader failures and merge conflicts unresolved",
+  "sourceHashes": {
+    "src/ir/program-callable-bindings.ts": "65b28fa3deccdd4fa2956e123b13f29c47827294dd5b992bc31f57a73f61a398",
+    "src/ir/program-consumer.ts": "88589f7f1dd93d62b2085c77805d0b187baa63e0f5a666f12d478570ef8ceef5",
+    "src/ir/program-native-invocation.ts": "d4c6726864b243f5ffaf6a6fa0e5ff1af8087698ee58e4bcf448fc0c3512dd28",
+    "src/ir/program-source.ts": "7f0d2033896146a0bb7941144894fd91f785776933f6004fb8867efa20bb86de",
+    "src/wasm/physical/module-reservations.ts": "66b05ca4704bebfb478133cbd8a123c4904c45aee664c7bd6ee910a29414b516",
+    "src/wasm/physical/program-resources.ts": "2a1dfbc26bdc0bd22c40686e4d65280fff624f225ff9edebbeb9fac2df650545",
+    "tests/issue-6979-native-source-allocation-custody.test.ts": "9dff497572f78c8a4ddca2fc959fc59d8042f690547d2fd6bd878cb6d1ae9432",
+    "tests/issue-6979-native-consumer-primary-custody.test.ts": "2c2af9b8ade0a4331fc6fce401b13f9d8fe99bef4092b6058e789747d756190d",
+    "tests/issue-6979-owned-nested-call-plans.test.ts": "1fc8b16b4822ebeac2ff4270443deca0237895b5e14a86b8215a367a99cf20d4",
+    "scripts/compiler-boundaries.json": "7b429fdd0b8f9733c7aee8a311d9e0c4eb66e9458ff79ca62d2a37ca6aaa0f86"
+  },
+  "scope": {
+    "ownedNestedPlanning": "Whole-source IR explicitly traverses ordinary nested functions with the exact original AST/checker/R0 owner; default legacy component traversal unchanged. Shadowed/reassigned targets, copied AST populations and other terminal owners remain refused.",
+    "primaryCustody": "The genuine private accepted-consumer resolver retains independent actual pre-fill lowering definitions for every synchronous primary. Returned data are not capabilities and do not alias private source expectations. Recheck canonical definitions, actual ABIs, binding identities/headers and default scalar initializers before publication and later receipt observations.",
+    "physicalLeaf": "Actual generic reservation/fill/index/startup/census mechanics live under wasm/physical with only shared foundation identity and Wasm imports. Failure classification remains with the original private compiler owner.",
+    "asyncFrameCompletion": false,
+    "nativeAlgorithmCompletion": false,
+    "fullRealmSourceAdmission": false,
+    "semanticArgumentReceiverResultAdaptation": false,
+    "mixedGetCallCompletion": false,
+    "fullRealmPopulationAndPublication": false,
+    "liveForeignBoundaryOwner": false,
+    "linearWasiAcceptance": false,
+    "migrationComplete": false
+  },
+  "harness": {
+    "node": "v24.4.1",
+    "vitest": "3.2.4",
+    "forkLimitPerExecution": 1,
+    "localOnlyUncommittedFlag": "--experimental-wasm-exnref",
+    "reporters": ["verbose", "json"],
+    "explicitShellExitObserved": true,
+    "deadlineIncrease": false
+  },
+  "tests": {
+    "s7ao-primary-before": {
+      "report": ".tmp/s7ao-primary-before.json",
+      "log": ".tmp/s7ao-primary-before.log",
+      "jsonSha256": "6199f421d8164d0a4067d3f8dd0feae54bc879f76c34f42faa0c6679c5d3e890",
+      "logSha256": "70b6638c24633b1e5c086ecb004a51657c7cb4378c6362177433303ae7ac5522",
+      "jsonSuccess": false,
+      "total": 4,
+      "passed": 0,
+      "failed": 4,
+      "skipped": 0,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-primary-planned": {
+      "report": ".tmp/s7ao-primary-planned.json",
+      "log": ".tmp/s7ao-primary-planned.log",
+      "jsonSha256": "f45cd6fd5d721b918781381d889317753d66fdce5ff1c7b569f2f9ed032d0a35",
+      "logSha256": "93e2f78a0fa3144b00c8abdf7a84ef7c264568c8322644f9c4f42f0449ce61df",
+      "jsonSuccess": false,
+      "total": 4,
+      "passed": 1,
+      "failed": 3,
+      "skipped": 0,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-primary-owned": {
+      "report": ".tmp/s7ao-primary-owned.json",
+      "log": ".tmp/s7ao-primary-owned.log",
+      "jsonSha256": "1f08a701a4ef1c7e8c7005109b416dda45e687c1080246173aea5a67eca38487",
+      "logSha256": "9c0f375a1076bee7b29932ef563c9501c20b31b07230b249f6b12ba4d058deca",
+      "jsonSuccess": true,
+      "total": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "runnerExit": 0,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-owned": {
+      "report": ".tmp/s7ao-owned.json",
+      "log": ".tmp/s7ao-owned.log",
+      "jsonSha256": "a9fcac6882e02d49ddababcd88d482dfef11afbf0f806c48c2ca13bea5c71949",
+      "logSha256": "c1197310a5292c9d0a65f1734a21b33c9017057b382d6240453825986447360f",
+      "jsonSuccess": false,
+      "total": 10,
+      "passed": 9,
+      "failed": 1,
+      "skipped": 0,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-audited": {
+      "report": ".tmp/s7ao-audited.json",
+      "log": ".tmp/s7ao-audited.log",
+      "jsonSha256": "2dff0d920248e9d7686d49ee8b9754af7aa0ef9b6f20b84f74433ac61f5a431e",
+      "logSha256": "7784d1b6f826026199cbbf45c22ce0cbff489bba87a2f4a2814c1b802a39b29f",
+      "jsonSuccess": true,
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0,
+      "runnerExit": 0,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-reconciled": {
+      "report": ".tmp/s7ao-reconciled.json",
+      "log": ".tmp/s7ao-reconciled.log",
+      "jsonSha256": "c1746c50a677df5dcb24b26aa51ab2cd0f520c2498263e4c5af201e22536d30d",
+      "logSha256": "e5ac59cbd96b742cae621da3b6b5599ecd512f0aca097f27468a4cd2492b35c1",
+      "jsonSuccess": true,
+      "total": 12,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "runnerExit": 0,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-physical-owned": {
+      "report": ".tmp/s7ao-physical-owned.json",
+      "log": ".tmp/s7ao-physical-owned.log",
+      "jsonSha256": "8f1f7bf23b1a7684792f5b43f02e7f5d28a660e1cf49726de60cdec4117a170d",
+      "logSha256": "f5204e3d3123a311746bc267946eeac60b448c3d003fe40af0349043bff09038",
+      "jsonSuccess": true,
+      "total": 12,
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "runnerExit": 0,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-publish-focused": {
+      "report": ".tmp/s7ao-publish-focused.json",
+      "log": ".tmp/s7ao-publish-focused.log",
+      "jsonSha256": "6e5c9526843f328e8824fbfee045d29611d87df3468dc032effd2fba53988ba2",
+      "logSha256": "a7150d6509ca5dda7fec90ceb8836048d7f712dddfe10f9b0d7a223dac4ae6b2",
+      "jsonSuccess": false,
+      "total": 13,
+      "passed": 12,
+      "failed": 1,
+      "skipped": 0,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-publish-owned-call": {
+      "report": ".tmp/s7ao-publish-owned-call.json",
+      "log": ".tmp/s7ao-publish-owned-call.log",
+      "jsonSha256": "8096bb686de16e2de871d9448c7464c42919133bf0473591e6f165348a954830",
+      "logSha256": "bcab00d5833778afc8644f1d9f9355e394b0ddb2781c869b0530eece7f01997a",
+      "jsonSuccess": true,
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "runnerExit": 0,
+      "closed": true,
+      "finalSourceRevisionProof": true
+    },
+    "s7ao-consumer-preservation": {
+      "report": ".tmp/s7ao-consumer-preservation.json",
+      "log": ".tmp/s7ao-consumer-preservation.log",
+      "jsonSha256": "359b39b2b653f58739af4ddc72be5171767cb5692e049d5cfec42efa7cc80044",
+      "logSha256": "9c0ad51ffc2223ef4d430fd94a2e4035bdb242d8c9293670f521dcee424b7fec",
+      "jsonSuccess": false,
+      "total": 259,
+      "passed": 255,
+      "failed": 4,
+      "skipped": 0,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-source-preservation": {
+      "report": ".tmp/s7ao-source-preservation.json",
+      "log": ".tmp/s7ao-source-preservation.log",
+      "jsonSha256": "ffcd54fac4551440d11c9fe5587dcac9451cec1e5b33690203f1364c430b572c",
+      "logSha256": "0f234970dfc9b122adfc5162f77ffacd263ac692f0e7693dbeb419217bd2605d",
+      "jsonSuccess": true,
+      "total": 81,
+      "passed": 81,
+      "failed": 0,
+      "skipped": 0,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-gap-planning-on": {
+      "report": ".tmp/s7ao-gap-planning-on.json",
+      "log": ".tmp/s7ao-gap-planning-on.log",
+      "jsonSha256": "6074f58719436512e018eb66f74a4936855de577dbcb97ff61b8114d362eec86",
+      "logSha256": "c111349c88016b578116f1fd742214e91d6979dd5c392f147d28235309597c70",
+      "jsonSuccess": false,
+      "total": 53,
+      "passed": 0,
+      "failed": 4,
+      "skipped": 49,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    },
+    "s7ao-gap-planning-off": {
+      "report": ".tmp/s7ao-gap-planning-off.json",
+      "log": ".tmp/s7ao-gap-planning-off.log",
+      "jsonSha256": "a27bca3a03045b22381712bd2a3569543b2cd0c5a0c924a835f15c7afb26b9d5",
+      "logSha256": "b016891674b66d65c93dbeaaab8f331c4b997d7f715ed14350c989b26a7c57e2",
+      "jsonSuccess": false,
+      "total": 53,
+      "passed": 0,
+      "failed": 4,
+      "skipped": 49,
+      "runnerExit": 1,
+      "closed": true,
+      "finalSourceRevisionProof": false
+    }
+  },
+  "interpretation": {
+    "initialPreparation": "0/4 stops before ledger interception: adjust has no exact AST-site plan inside the original lifted closure. After owned-site planning, 1/4 passes and three expected refusals do not occur. These are distinct defects/evidence stages.",
+    "firstExpanded": "9/10 has one test-only arrow ancestor lookup error; corrected with ts.findAncestor. Later intermediate 10/10 and 12/12 are not final-source proof.",
+    "inlinedControl": "Publication 12/13: guard-removal control reached an accepted receipt but run(5) returned62, not999, because adjust was inlined. Do not call this a wrong-result witness. Final fixture keeps a genuine multi-block helper with a positive prepared-block floor and distinct branch; the final 13/13 run observes999 with only the new primary guard removed, and refusal with the guard present. Production safeguards unchanged for this correction.",
+    "broaderConsumer": "255/259, 12 files, zero skips, exit1. Two failures are ambiguous prepared SSA definitions in the full async family; two formatter demand tests expect31 support buffers but receive43. Began before final physical factoring, not final whole-revision proof.",
+    "sourcePreservation": "81/81 assertion records, 3 files, zero skips, exit1 with actual [vitest-worker] Timeout calling onTaskUpdate. JSON success is not clean runner success; this also began before final physical factoring.",
+    "planningControl": "Selected four cases fail identically on and off, with49 unselected cases in each report. Exact full file/case/status/failureMessages records match without normalization. This is one switch comparison on the candidate working tree, not a complete historical-commit A/B. It rules out the new switch as cause in this experiment, not all checkpoint changes. Production option restored true."
+  },
+  "gates": {
+    "sourceRatchets": {
+      "runnerExit": 0,
+      "wholePrBase": "ae913d622f3cb5c4136e43a27594b8ec48e4c933",
+      "changedSourceFiles": 399,
+      "netLoc": -14614,
+      "newSizeWaiver": false,
+      "logs": {
+        "typecheck": {
+          "log": ".tmp/s7ao-publish-typecheck.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "lint": {
+          "log": ".tmp/s7ao-publish-lint.log",
+          "sha256": "aa492cf12c14dc64265e9811ee34771d3fb80f08f432da870c028a1352d6ad43"
+        },
+        "loc": {
+          "log": ".tmp/s7ao-publish-loc.log",
+          "sha256": "52a35de515509795787f644f58dd8b64979c529ae28d90968dee4a34a330b0e6"
+        },
+        "functions": {
+          "log": ".tmp/s7ao-publish-functions.log",
+          "sha256": "8c4f9300f45dccdb59799c0f890347329849661e167334c210b105a13a3daa4a"
+        },
+        "coercion": {
+          "log": ".tmp/s7ao-publish-coercion.log",
+          "sha256": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95"
+        },
+        "oracle": {
+          "log": ".tmp/s7ao-publish-oracle.log",
+          "sha256": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a"
+        },
+        "preservation": {
+          "log": ".tmp/s7ao-publish-preservation.log",
+          "sha256": "44138c9a54f79482ee3467c1aec41b74cbc1847a01cf01272c6168992aacdb02"
+        },
+        "layering": {
+          "log": ".tmp/s7ao-publish-layering.log",
+          "sha256": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9"
+        },
+        "flat": {
+          "log": ".tmp/s7ao-publish-flat.log",
+          "sha256": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f"
+        }
+      }
+    },
+    "inventory": {
+      "report": ".tmp/s7ao-publish-inventory.json",
+      "sha256": "657f747e2396dc13554e2310dfe38e3c4114cdefdad97cf87be3dcb81b1aade9",
+      "runnerExit": 0,
+      "modules": 1992,
+      "errors": 0,
+      "architectureComplete": false
+    },
+    "cycles": {
+      "report": ".tmp/s7ao-publish-cycles.json",
+      "sha256": "53064b716d357422cc16f4e5a1045c75da7982c27237d3323677109775fc4105",
+      "runnerExit": 1,
+      "largestSccSize": 712,
+      "nontrivialSccs": 4,
+      "debts": {
+        "backend->ir": [115, 117],
+        "codegen->ir": [298, 301],
+        "ir->codegen": [74, 75],
+        "ir->frontend": [7, 10]
+      },
+      "newEdgeAllowance": false
+    },
+    "preservationOnly": "6/6 full and6/6 cut witnesses pass; strict modeled closure remains red on unknown nonliteral dynamic imports in optimize.ts and platform-capability-adapter.ts. Retirement/deletion NOT certified."
+  },
+  "historicalPins": {
+    "src/runtime/wasmgc/values/closure-layouts.ts": "7d9229c8c4a9bdae3d3105138b2c3c2685d0659e0b8f71df1b7fc2c0bc309d67",
+    "tests/fixtures/issue-3518-closure-state-preservation/receipt.json": "fcba38b74541c4343282997d4b4f8fad364daa251d5f0f2f0d9552dbcadf7e8e",
+    "modified": false,
+    "fullGcByteIdentityClaimed": false
+  },
+  "publication": {
+    "pullRequest": "https://github.com/loopdive/js2/pull/6762",
+    "branch": "codex/6979-s7c-ir-arms",
+    "prerequisite": "https://github.com/loopdive/js2/pull/6701",
+    "prerequisiteState": "OPEN/unmerged at fresh pre-publication read",
+    "mergeable": "CONFLICTING at fresh pre-publication read",
+    "draft": true,
+    "merged": false,
+    "githubIssuesOrCommentsCreated": false
+  },
+  "next": "Follow the S7-ao publication handoff in both repository Markdown issues. Resolve broader actual failures/reporting and rerun one stable revision; join genuine source code/body/allocation resources into the real realm transaction; implement semantic argument/receiver/results and mixed builtin/bound/live-foreign Call/Get; retain full population/publication, undefined, Linear/WASI, named gaps, runtime/host-arm retirement, architecture/strict closure, historical custody/Test262/npm compatibility/accelerators and prerequisite/conflict acceptance. Keep both issues in progress."
+}

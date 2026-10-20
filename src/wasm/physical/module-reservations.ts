@@ -886,12 +886,17 @@ export class PhysicalModuleReservations {
   }
 
   /** Check the actual reserved type, not a caller's signature or function's fill receipt. */
-  assertFunctionSignature(token: FunctionReservation, expected: PhysicalFunctionSignature): void {
+  assertFunctionSignature(token: CallableReservation, expected: PhysicalFunctionSignature): void {
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`signature requested in ${this.#state}`);
     this.#verifyLayout();
     this.#owned(token);
-    if (token.kind !== "function") this.#fail("signature requires a defined function");
-    const actual = this.#functionType(token.object.typeIdx);
+    const typeIdx =
+      token.kind === "function"
+        ? token.object.typeIdx
+        : token.kind === "function-import" && token.object.desc.kind === "func"
+          ? token.object.desc.typeIdx
+          : this.#fail("signature requires a defined or imported function");
+    const actual = this.#functionType(typeIdx);
     if (!sameValTypes(actual.params, expected.params) || !sameValTypes(actual.results, expected.results))
       this.#fail(`noncanonical function signature ${token.key}`);
   }

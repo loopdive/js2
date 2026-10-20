@@ -10,7 +10,7 @@ import { ts } from "../ts-api.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId, type IrSourceId, type IrUnitId } from "./identity.js";
 import type { IrTerminalUnitRecord } from "./identity.js";
-import type { IrPlanningIdentityContext } from "./planning-identity.js";
+import { requireIrPlanningOwnerUnitId, type IrPlanningIdentityContext } from "./planning-identity.js";
 import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 export type { IrProgramCallableBindingKind, IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 
@@ -36,6 +36,10 @@ export interface BuildIrProgramCallableBindingGraphInput {
   readonly checker: ts.TypeChecker;
   readonly sourceFiles: readonly ts.SourceFile[];
   readonly identityContext: IrPlanningIdentityContext;
+  /** Whole-source IR preparation includes ordinary lifted bodies owned by their original R0 terminal.
+   * Legacy component selection retains its existing top-level-only census. This selects traversal,
+   * not callable authority: exact checker, AST and terminal ownership still decide every site. */
+  readonly includeOwnedNestedCalls?: boolean;
 }
 
 export type IrProgramCallableBindingInvariantCode =
@@ -796,7 +800,19 @@ function collectCallableGraphUses(
   );
   const visitCalls = (root: SourceCallable): void => {
     const visit = (node: ts.Node): void => {
-      if (node !== root.declaration && ts.isFunctionLike(node)) return;
+      if (node !== root.declaration && ts.isFunctionLike(node)) {
+        // Ordinary lifted bodies retain their exact R0 terminal planning
+        // owner. Collect their original AST call sites too; the lowerer
+        // must never fall back to identifier text for these dependencies.
+        // Other function-like boundaries (methods/accessors/constructors),
+        // or independently owned terminals, cannot borrow this root's plan.
+        if (
+          !input.includeOwnedNestedCalls ||
+          !(ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) ||
+          requireIrPlanningOwnerUnitId(identityContext, node) !== root.unitId
+        )
+          return;
+      }
       if (ts.isCallExpression(node)) {
         const binding = bindingForCall(node);
         if (binding) {

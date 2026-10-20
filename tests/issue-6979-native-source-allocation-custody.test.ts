@@ -89,8 +89,9 @@ for (const [displaced, decoded] of [
   describe(`actual allocation-owner custody displaced=${displaced}, decoded=${decoded}`, () => {
     let runtime: ReturnType<typeof publicRealmSourceRuntime>;
     let mutable: { runtime: typeof runtime; sourceHookCalls: number };
-    beforeAll(() => {
+    beforeAll(async () => {
       runtime = publicRealmSourceRuntime(displaced, decoded, true);
+      await setImmediate();
       // Compile both real programs within the existing 120s preparation hook;
       // the mutable-capture case retains its ordinary 35s assertion deadline.
       const hostile = vi.fn(() => {
@@ -113,6 +114,7 @@ for (const [displaced, decoded] of [
       });
       // Capture before afterEach restores mocks in preceding cases.
       mutable = { runtime: prepared, sourceHookCalls: hostile.mock.calls.length };
+      await setImmediate();
     }, 120000);
     it("executes genuinely lowered factories and retains a distinct full allocation-body scope", () => {
       const r = runtime,

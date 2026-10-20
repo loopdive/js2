@@ -1613,6 +1613,7 @@ export function prepareIrProgramSources(
       checker: input.checker,
       sourceFiles,
       identityContext: identity,
+      includeOwnedNestedCalls: true,
     });
     const moduleResolver = makeIrIdentityModuleBindingResolver(
       input.checker,
