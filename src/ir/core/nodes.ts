@@ -28,6 +28,7 @@ import type {
   IrInstrDynToNumber,
   IrInstrDynTruthy,
   IrInstrDynUndefined,
+  IrInstrDynTypeof,
   IrInstrExternCall,
   IrInstrExternNew,
   IrInstrExternProp,
@@ -1644,6 +1645,7 @@ export type {
   IrInstrAsyncThrow,
   IrInstrDynTruthy,
   IrInstrDynUndefined,
+  IrInstrDynTypeof,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,
@@ -1686,6 +1688,7 @@ export type IrInstr =
   | IrInstrTagTest
   | IrInstrDynTruthy
   | IrInstrDynUndefined
+  | IrInstrDynTypeof
   | IrInstrDynToNumber
   | IrInstrDynEq
   | IrInstrDynMemberGet
@@ -2046,6 +2049,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "tag.test":
     case "dyn.truthy":
     case "dyn.undefined":
+    case "dyn.typeof":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2216,6 +2220,7 @@ export function mapNestedBuffers(
     case "tag.test":
     case "dyn.truthy":
     case "dyn.undefined":
+    case "dyn.typeof":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2325,6 +2330,7 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.eq":

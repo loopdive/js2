@@ -5921,6 +5921,8 @@ function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
     if (innerType.kind === "dynamic") {
       const families = exactDynamicPrimitiveTypeofFamilies(expr.expression, cx);
       if (families !== null) return lowerExactDynamicPrimitiveTypeof(inner, families, cx);
+      // #7104 — the general case: every partition through the lane's `__typeof`.
+      return cx.builder.emitDynTypeof(inner);
     }
     demoteToLegacy(
       "operand-coercion-unsupported",

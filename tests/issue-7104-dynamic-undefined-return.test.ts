@@ -21,6 +21,10 @@ export function isUndefinedEmpty() { return empty() === undefined; }
 export function isUndefinedBare() { return bareReturn() === undefined; }
 export function isUndefinedFall() { return fallsThrough(1) === undefined; }
 export function mayThrow(a) { if (a) { throwsOnly(); } return 7; }
+function isPrimitive(value) { return !value || (typeof value !== 'object' && typeof value !== 'function'); }
+// Dynamic (unknown-typed) arguments, as the test262 harness passes them: a
+// concrete-typed caller would type the parameter f64/string (or a union).
+export function primOf(v) { return isPrimitive(v) ? 1 : 0; }
 export function inf() { return Infinity; }
 export function nanIsNotSelf() { return NaN !== NaN; }
 `;
@@ -41,7 +45,16 @@ describe("#7104 dynamic undefined return on the IR path", () => {
   it("IR-emits the no-value-return and fall-through shapes without a parity withdrawal", async () => {
     const result = await build();
     const outcomes = result.irOutcomes ?? [];
-    for (const name of ["throwsOnly", "empty", "bareReturn", "guardReturn", "fallsThrough", "inf", "nanIsNotSelf"]) {
+    for (const name of [
+      "throwsOnly",
+      "empty",
+      "bareReturn",
+      "guardReturn",
+      "fallsThrough",
+      "inf",
+      "nanIsNotSelf",
+      "isPrimitive",
+    ]) {
       const outcome = outcomes.find((o) => o.displayName === name);
       expect(outcome, JSON.stringify(outcomes, null, 2)).toMatchObject({ kind: "emitted", irBodyEmitted: true });
     }

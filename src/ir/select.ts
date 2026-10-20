@@ -3087,6 +3087,13 @@ function dynamicUsesAreMoveOnly(
 
       return scanExpr(e.left, false) && scanExpr(e.right, false);
     }
+    // #7104 — `typeof <dynamic>`: a concrete string result (`dyn.typeof`),
+    // lowered through the lane's `__typeof`; not on the fast $AnyValue strategy.
+    if (ts.isTypeOfExpression(e)) {
+      if (expectDyn) return false;
+      if (isDynShaped(e.expression)) return currentDynamicRuntimeBuildable && scanExpr(e.expression, true);
+      return scanExpr(e.expression, false);
+    }
     if (ts.isPrefixUnaryExpression(e) || ts.isPostfixUnaryExpression(e)) {
       if (expectDyn) return false;
       const op = e.operand;

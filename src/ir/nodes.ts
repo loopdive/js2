@@ -128,6 +128,7 @@ export type {
   IrInstrAsyncThrow,
   IrInstrDynTruthy,
   IrInstrDynUndefined,
+  IrInstrDynTypeof,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

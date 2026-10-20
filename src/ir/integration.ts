@@ -8873,8 +8873,10 @@ function isDynamicOp(instr: IrInstr): boolean {
   // #2949 S5.1 — dyn.truthy always consumes the boxed-any carrier, so its
   // presence requires the dynamic backing (ensureAnyHelpers / addUnionImports).
   if (instr.kind === "dyn.truthy") return true;
-  // #7104 — dyn.undefined produces the carrier's undefined value.
+  // #7104 — dyn.undefined produces the carrier's undefined value; dyn.typeof
+  // consumes the carrier and calls the union-family `__typeof`.
   if (instr.kind === "dyn.undefined") return true;
+  if (instr.kind === "dyn.typeof") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9454,6 +9456,12 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         // `ensureAnyValueType` reserved one, else the same initializer inline.
         return undefinedAnyValueInstrs(ctx);
       },
+      emitTypeof(): readonly Instr[] {
+        // (#7104) `__typeof` takes the externref carrier; the fast `$AnyValue`
+        // strategy has no admitted conversion yet, and the selector's dynamic
+        // scan keeps `typeof <dynamic>` off this strategy (`dynamicRuntimeBuildable`).
+        throw new Error("ir/integration: dyn.typeof is not lowerable on the fast $AnyValue carrier (#7104)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9570,6 +9578,18 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
     tagFieldIdx: -1,
     payloadFieldIdx(tag: JsTag): number {
       throw new Error(`ir/integration: host dynamic carrier has no payload fields (asked for ${JsTag[tag]})`);
+    },
+    emitTypeof(): readonly Instr[] {
+      // (#7104) The union-family `__typeof` (host import, or the native-first
+      // function whose body `typeof-natives-finalize` completes). Its externref
+      // result IS the host string carrier; under native strings the IR string
+      // carrier is `(ref $anyStr)`, which the extern-wrapped constant unwraps to.
+      return [
+        callImport("__typeof"),
+        ...(ctx.nativeStrings && ctx.anyStrTypeIdx >= 0
+          ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr]
+          : []),
+      ];
     },
     emitUndefined(): readonly Instr[] {
       // (#7104) Exactly legacy's `emitUndefined` on the externref carrier:

@@ -950,6 +950,17 @@ function verifyInstrStructure(
       block: block.id as number,
     });
   }
+  // #7104 — dyn.typeof is typeof over the boxed-any carrier: operand dynamic.
+  if (instr.kind === "dyn.typeof") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.typeof operand must be a dynamic IrType, got ${operandIr.kind} (#7104)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   if (instr.kind === "dyn.truthy") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
     if (operandIr && operandIr.kind !== "dynamic") {
@@ -1282,6 +1293,7 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.eq":
@@ -1867,6 +1879,7 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "tag.test": { skip: "checked-elsewhere: shares unbox's dynamic-operand tagId rules in verifyInstrStructure (#2949)" },
   "dyn.truthy": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.1)" },
   "dyn.undefined": { skip: "checked-elsewhere: result-must-be-dynamic rule in verifyInstrStructure (#7104)" },
+  "dyn.typeof": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7104)" },
   "dyn.to_number": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.3)" },
   "dyn.eq": { skip: "checked-elsewhere: both-operands-dynamic rule in verifyInstrStructure (#2949 S5.2)" },
   "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },

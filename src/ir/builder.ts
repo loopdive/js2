@@ -646,6 +646,24 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /**
+   * Emit `dyn.typeof{value}` — JS `typeof` over every partition of the
+   * boxed-any carrier (#7104); result is `string`. Routes to the lane's
+   * runtime `__typeof` via `IrDynamicLowering.emitTypeof`.
+   */
+  emitDynTypeof(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynTypeof operand ${value} is not dynamic — static typeof folds inline (#7104) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.typeof", value, result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

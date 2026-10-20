@@ -319,6 +319,14 @@ export interface IrDynamicLowering {
    */
   emitUndefined(): readonly Instr[];
   /**
+   * (#7104) Carrier on the stack → the lane's string carrier holding JS
+   * `typeof` of the value, through the SAME runtime `__typeof` legacy calls
+   * (host union import / native-first function; externref result re-tagged
+   * into the native string carrier under native strings). Throws on the fast
+   * `$AnyValue` strategy, which the selector never claims for this op.
+   */
+  emitTypeof(): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,
