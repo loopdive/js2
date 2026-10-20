@@ -122,14 +122,14 @@ function authenticate(
   requireNativeSourceClosureTypes(tx, dependencies.source, requirements.source);
   requireNativeValueReservations(tx, dependencies.values, dependencies.valuePlan, dependencies.valueDependencies);
   requireNativeVectorTypeReservations(tx, dependencies.vectors, dependencies.vectorPlan);
-  const needsBooleanBox = requirements.getterUses.some((use) =>
+  const needsBooleanBox = [...requirements.getterUses, ...requirements.uses].some((use) =>
     objectResultIsBoolean(
       requirements.source.demands.owners.find((row) => row.unitId === use.liftedUnitId)?.projectedFunction
         .closureSubtype?.signature.returnType,
     ),
   );
   if (needsBooleanBox && !dependencies.booleanBoxes)
-    fail("selected Boolean getter needs its actual native Boolean BOX owner");
+    fail("selected Boolean callable needs its actual native Boolean BOX owner");
   if (dependencies.booleanBoxes)
     requireNativeBooleanBoxReservations(
       tx,

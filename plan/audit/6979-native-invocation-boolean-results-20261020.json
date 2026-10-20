@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "checkpoint": "S7-at: actual public source call/apply Boolean results",
+  "parent": "11d02765c69d4d29fec25acfb739e5258e93c338",
+  "scope": "Real source preparation and public accepted consumer, not private ABI fixtures. Exact source return/allocation/extraction proof in both semantic/projection views; explicit native Boolean policy/original owners. Not general ToBoolean, Boolean arguments, full realm/source/foreign admission or full Linear/WASI migration.",
+  "sourceSha256": {
+    "src/ir/source-closure-invocation.ts": "4b270f89f48285257c37628becec45c310f5beddc55165e64b4825742eefe79b",
+    "src/ir/source-closure-invocation-effects.ts": "b468a8ccfe3271ddd539856a41eb3cae3fdcd6dcb409c740d9767a3ac30746db",
+    "src/ir/program/native-invocation-result-values.ts": "89b7f1505d1f997f36c77717c22c93d7f48614d3418bb514a91448d06c5c8ab1",
+    "src/ir/program/native-invocation-requirements.ts": "31f8e2bde1906de525cd36f69bf136a65388d31d4c0caef7115daeb945dbfa7c",
+    "src/ir/program/native-object-result-requirements.ts": "fd597546703de9bf35600922c5118b891e7b57fb49ba15129e854c3c59495cc2",
+    "src/backend/wasmgc/program/native-primitive-boundary-abi.ts": "b4cf03c06efaf6038985ea9b1c31f8089997f254e2b60a44adef62df64f738b8",
+    "src/backend/wasmgc/resources/native-invocation.ts": "663c0020eabf5e7ca12b089e897e86189e1d405bbbad2672d345d4991a8dde1b",
+    "tests/issue-6979-native-invocation-boolean-results.test.ts": "74f48474a37e0a1396b4b6625e1a40a0d5a79e42c090fe421c772a5dd32abb7b",
+    "scripts/compiler-boundaries.json": "aa887c2a392ede51f701f73c7558aa53ffa2ccebea44b71dccce700e93c0bdb3"
+  },
+  "reports": {
+    "s7at-first": {
+      "sha256": "ec35642ab1418983a5722b50ce98c165245f3997707abc2fd9aed9430144a222",
+      "total": 13,
+      "passed": 0,
+      "failed": 13,
+      "skippedOrUnselected": 0,
+      "runnerExit": 1,
+      "meaning": "Existing effect proof correctly refuses unknown exported numeric coercion. No new native execution measured."
+    },
+    "s7at-second": {
+      "sha256": "f89db66c0b16f72d2f9dac973f46fe74af108a5ed75969dee02c85ec8b2b28b9",
+      "total": 13,
+      "passed": 0,
+      "failed": 13,
+      "skippedOrUnselected": 0,
+      "runnerExit": 1,
+      "meaning": "Existing effect traversal rejects inert conditional punctuation. Fixed executable-child traversal, not effect checks."
+    },
+    "s7at-third": {
+      "sha256": "c64307a1fc75a876eb981fb881bc9f069b5ed1ca3e8d61d68e8ca24408212384",
+      "total": 13,
+      "passed": 11,
+      "failed": 2,
+      "skippedOrUnselected": 0,
+      "runnerExit": 1,
+      "meaning": "All six public executions pass. Two negative controls mutated no IR and fail their positive change-count; corrected to actual receiver projections/return terminators."
+    },
+    "s7at-final": {
+      "sha256": "dbdb730c680fbd55ee583c565a533fae0a7919653ac464e78b8c975ea9fda720",
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0
+    },
+    "s7at-return-proof-removal": {
+      "sha256": "099a14760f054217419b74509f4ac80848dd8008fd4ddd0d4f14a926ddc5cb16",
+      "total": 14,
+      "passed": 1,
+      "failed": 1,
+      "skippedOrUnselected": 12,
+      "runnerExit": 1,
+      "meaning": "Only real return-expression proof removed. Fresh requirements admit mutated non-Boolean return with zero gaps; copied-owner positive still passes. Admission evidence only, not execution of a changed return under its old physical ABI."
+    },
+    "s7at-source-admission-removal": {
+      "sha256": "adec653d297c567ec3ccc091bdcdec8e14c774455932d2c42d18f718f137383f",
+      "total": 14,
+      "passed": 1,
+      "failed": 1,
+      "skippedOrUnselected": 12,
+      "runnerExit": 1,
+      "meaning": "Only source Boolean result conversion removed. Public positive returns old unsupported-result failure; independent unknown-coercion refusal passes."
+    },
+    "s7at-restored-final": {
+      "sha256": "ecb6be48a9f521df940af8527253be6e49c333394c25006a7c9b4513a06bd53a",
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0,
+      "meaning": "Final unfiltered file after exact restoration of both source hashes. Six public zero-import executions and eight proof/policy/owner/effect controls."
+    },
+    "s7at-consumer-preservation": {
+      "sha256": "2913327ce37cea8dd24aa34c54acd6559f51a65a49f3aebe72d903e3bbd48cb3",
+      "total": 82,
+      "passed": 82,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0,
+      "files": ["tests/issue-3518-native-invocation-consumer.test.ts", "tests/issue-3518-native-getter-results.test.ts"]
+    },
+    "s7at-linear-preservation": {
+      "sha256": "33544ede0e02cf40b9a723a9db296fa3badd9bddf16734728f9ded742e9adb24",
+      "total": 17,
+      "passed": 17,
+      "failed": 0,
+      "skippedOrUnselected": 0,
+      "runnerExit": 0,
+      "files": ["tests/issue-3525-prepared-linear-early-return.test.ts"],
+      "meaning": "Prepared Linear early-return preservation, not full Linear Boolean invocation migration."
+    }
+  },
+  "reportLocation": "Each report key names .tmp/<key>.json and matching .log. All recorded runners are closed; no test killed/restarted on observation timeout.",
+  "gateArtifactHashes": {
+    ".tmp/s7at-restored-typecheck.log": "4bb495ce4eb5e7b3df938b7d801e25cbdb2fbf1c5553ec804a0262a1f37b98da",
+    ".tmp/s7at-restored-lint.log": "01b600f444eecb8a74c9408dfd4413356cc1aeb36173ebe0ca102804d67b87b7",
+    ".tmp/s7at-restored-loc.log": "f29cea302ee55e339fdb17e3bef2f6622748db4916c0c860d2b44875eb65697e",
+    ".tmp/s7at-restored-func.log": "bfa38fb8801d48da8357b61996b3390971b977e75d6f1c21beabf0d584eca2d5",
+    ".tmp/s7at-restored-coercion.log": "ae3e9207103f1811f15fb8c8638211135c8e21d87c60334dd5e384e8922daf95",
+    ".tmp/s7at-restored-oracle.log": "4b2e4d0b7b99667da9a16cabe1bf879f6e269b931d09fef6983c5d571b8e367a",
+    ".tmp/s7at-restored-format.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    ".tmp/s7at-inventory.json": "5f1383c36e5957a386be3b6e6a7ada82578990ce4254a4217bf27d5413478e36",
+    ".tmp/s7at-layering.log": "24525f5befea182e906d9259cfa5f7e63419c0f1547a42488ed32f288f8278e9",
+    ".tmp/s7at-flat.log": "f0b78fe828237241478262ee42ac4c4a448775db1be342e63d4fc1381da66e0f",
+    ".tmp/s7at-import-cycles.json": "68ade2d4d37eb8780a6ecdd535720469385b3dd7b20b8da1e5188b420ba9c25b",
+    ".tmp/s7at-import-cycles.log": "c71a22c492c60c23fd3e7b87560967ab4081cec05c81f140d792a6b84f288c62",
+    ".tmp/s7at-import-policy.log": "502793057f0b2b345b28bb9be45b6506df077c63005fb8f80e80989d22700861",
+    ".tmp/s7at-preservation-only.log": "5f9f0a961e87ac8c6b8c54f863d37c2cc96b1a1efd0d3b998a1b709ea1c619a2"
+  },
+  "imports": {
+    "probes": 33,
+    "imports": 437,
+    "ceiling": 452,
+    "unknownImports": 0,
+    "regimeGapImports": 0,
+    "approvedHistoricalCeiling": 456,
+    "approvedIncreaseApplied": false
+  },
+  "architecture": {
+    "inventoryValid": true,
+    "modules": 1998,
+    "errors": 0,
+    "architectureComplete": false,
+    "largestSccSize": 712,
+    "nontrivialSccs": 4,
+    "cycleGateExit": 1,
+    "waiverAdded": false
+  },
+  "retainedFailures": [
+    "Four existing red cycle directions: backend->ir 115->117, codegen->ir 298->301, ir->codegen 74->75, ir->frontend 7->10.",
+    "Preservation-only 6/6 full and 6/6 cut passes, but strict closure remains unknown at two nonliteral imports in optimize.ts and platform-capability-adapter.ts; retirement not certified.",
+    "Prior historical storage 188/202 with 14 unwaived receipt failures, plus five separate earlier symbolic receipt failures; neither rerun here, no repin.",
+    "Open prerequisite and conflicting incomplete draft PR; no reviewed merge or integration claim."
+  ],
+  "remaining": [
+    "Real remaining catalog algorithms/constructors and full population consumption in program-consumer",
+    "Original source/code/body/allocation/realm joins, not detached anchors or dummy algorithms",
+    "Semantic arguments/receiver/results including Boolean arguments and first-class undefined",
+    "Mixed builtin/bound/source/live-foreign Call/Get and per-instance identity without graph copying",
+    "Complete Linear/WASI migration; named generator-buffer/SharedArrayBuffer/Temporal gaps",
+    "Runtime/host-arm retirement, architecture/strict closure and historical/Test262/npm/accelerator acceptance",
+    "Prerequisite/conflict integration and reviewed merge"
+  ],
+  "fullGoalComplete": false
+}

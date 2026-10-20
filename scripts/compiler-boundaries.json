@@ -244,6 +244,7 @@
         "src/ir/program/population.ts",
         "src/ir/program/native-ref-cell-requirements.ts",
         "src/ir/program/native-invocation-requirements.ts",
+        "src/ir/program/native-invocation-result-values.ts",
         "src/ir/program/native-object-access-requirements.ts",
         "src/ir/program/native-getter-invocation-requirements.ts",
         "src/ir/program/native-object-result-requirements.ts",
@@ -14716,6 +14717,11 @@
     },
     {
       "path": "src/ir/program/native-object-result-values.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-invocation-result-values.ts",
       "state": "clean",
       "layer": "ir-program"
     },

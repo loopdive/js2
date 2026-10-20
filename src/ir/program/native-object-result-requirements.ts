@@ -13,6 +13,7 @@ import {
   type NativeSourceClosureRequirements,
 } from "./native-source-closure-requirements.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
+import { nativeInvocationBooleanResult } from "./native-invocation-result-values.js";
 import {
   objectResultDefinitions,
   objectResultOriginal,
@@ -249,6 +250,9 @@ function calculate(source: NativeSourceClosureRequirements, access: NativeObject
         if (buffer.ownerUnitId !== owner.unitId || buffer.view !== view) continue;
         const intent = projectedIntent(row.instruction, types);
         if (!intent) continue;
+        // A genuine source invocation has a separate return/allocation proof;
+        // it is not an ordinary Get and must never borrow a Get descriptor proof.
+        if (nativeInvocationBooleanResult(source, owner.unitId, view, occurrence)) continue;
         const get = intent.value === undefined ? undefined : definitions.get(intent.value);
         population.push({
           get:

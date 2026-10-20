@@ -2235,3 +2235,27 @@ The separate S7-as preservation run subsequently closed **104/104, zero skips,
 exit0** (36 primitive-prototype identity and68 native ToObject cases), with its
 own report/hash in the audit. Neither run changes the retained historical
 receipt failures, architecture debt or full migration/merge-readiness status.
+
+#### S7-at actual public source Boolean invocation results, 2026-10-20
+
+Source `.call`/`.apply` Boolean returns now reach the actual accepted consumer,
+with original allocation/signature and real return-expression proofs in both
+semantic/projection views. No annotation-only admission, numeric Boolean boxing
+or general ToBoolean shortcut. The conditional effect checker now visits its
+executable children instead of rejecting inert punctuation; unknown coercion
+and all arm effects remain checked. New verification passes14/14, separate
+existing getter/numeric consumer coverage82/82 and prepared Linear early-return
+preservation17/17, zero skips/exit0 in each cohort. Two removal controls lose
+exactly the intended source admission and non-Boolean-return refusal, while
+independent controls still pass; exact restoration precedes the final rerun.
+
+This closes an actual source-result conversion prerequisite, not full public
+realm completion. The trace confirms `program-consumer` still uses the older
+bootstrap, not the new full population/source state/code graph. That join must
+use genuine remaining algorithms, not dummy slots or detached anchors. Keep
+Boolean arguments, first-class undefined, bound/live foreign identity without
+copying, Linear/WASI, remaining catalog/gaps/retirement and all historical,
+conformance/architecture/reviewed-integration acceptance open. Import policy stays
+437/452 across33 unchanged probes; the approved increase remains unnecessary.
+Details and the final exact audit are in
+[S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators](6979-s7-delete-host-semantic-implementation.md).

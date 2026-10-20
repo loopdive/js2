@@ -157,6 +157,8 @@ export function lowerSourceClosureInvocation(
   // The native invocation owner returns its canonical undefined singleton for void callees.
   if (result === null) return value;
   if (result?.kind === "val" && result.val.kind === "f64") return builder.emitIntrinsic("js.number.unbox", [value]);
+  if (result?.kind === "val" && !result.typeRef && result.val.kind === "i32" && result.val.boolean === true)
+    return builder.emitIntrinsic("js.boolean.unbox", [value]);
   if (result?.kind === "extern" || (result?.kind === "val" && result.val.kind === "externref")) return value;
   unsupported("result needs its canonical native invocation conversion");
 }

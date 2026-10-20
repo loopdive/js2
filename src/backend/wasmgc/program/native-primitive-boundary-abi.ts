@@ -39,7 +39,7 @@ function booleanDemands(demands: NativeStringValueDemands, direction: "box" | "u
   );
 }
 
-/** Actual keyed Get proof is required before the permissive payload reader is selected. */
+/** Actual keyed Get or source-call return proof precedes selection of the typed payload reader. */
 export function selectNativeBooleans(
   demands: NativeStringValueDemands,
   invocation: NativeInvocationRequirements | undefined,
@@ -55,12 +55,14 @@ export function selectNativeBooleans(
   const unboxes = booleanDemands(demands, "unbox");
   for (const row of unboxes) {
     const proof = invocation?.objectResults;
+    const sourceResult = invocation?.booleanResults.some((use) => use.occurrence === row.occurrence);
     if (
       !invocation ||
-      !proof ||
-      proof.gaps.length ||
       invocation.source.demands.occurrences[row.occurrence]?.instruction !== row.instruction ||
-      !proof.uses.some((use) => use.occurrence === row.occurrence && objectResultIsBoolean(use.resultType))
+      (!sourceResult &&
+        (!proof ||
+          proof.gaps.length ||
+          !proof.uses.some((use) => use.occurrence === row.occurrence && objectResultIsBoolean(use.resultType))))
     )
       return {
         gap: { occurrence: row.occurrence, detail: "native Boolean extraction needs its exact keyed Get result proof" },
@@ -72,6 +74,14 @@ export function selectNativeBooleans(
         ?.signature.returnType,
     ),
   );
+  const callBox = invocation?.uses.find(
+    (use) =>
+      use.liftedUnitId &&
+      objectResultIsBoolean(
+        invocation.source.demands.owners.find((row) => row.unitId === use.liftedUnitId)?.projectedFunction
+          .closureSubtype?.signature.returnType,
+      ),
+  );
   if (getterBox && demands.projection.prepared.manifest.policy.booleanBoundary.box !== "native")
     return {
       gap: {
@@ -79,8 +89,16 @@ export function selectNativeBooleans(
         detail: "selected Boolean getter result requires explicit native Boolean boxing policy",
       },
     };
+  if (callBox && demands.projection.prepared.manifest.policy.booleanBoundary.box !== "native")
+    return {
+      gap: {
+        occurrence: callBox.occurrence,
+        detail: "selected Boolean invocation result requires explicit native Boolean boxing policy",
+      },
+    };
   const box =
     getterBox ||
+    callBox ||
     (demands.projection.prepared.manifest.policy.booleanBoundary.box === "native" &&
       booleanDemands(demands, "box").length > 0);
   return box || unboxes.length

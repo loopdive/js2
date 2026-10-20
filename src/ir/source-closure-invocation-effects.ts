@@ -270,6 +270,14 @@ export function assertSourceClosureInvocationEffects(
       visit(node.operand);
       return;
     }
+    if (ts.isConditionalExpression(node)) {
+      // Inspect executable children, not the inert QuestionToken/ColonToken.
+      // Every call, getter and coercion in either arm still receives its check.
+      visit(node.condition);
+      visit(node.whenTrue);
+      visit(node.whenFalse);
+      return;
+    }
     if (ts.isCallExpression(node) && !plans.has(node) && !callbacks.calls.has(node)) {
       const declaration = ts.isIdentifier(node.expression)
         ? checker.getSymbolAtLocation(node.expression)?.valueDeclaration

@@ -32,6 +32,7 @@ import {
   reconcileNativeGetterInvocationRequirements,
   type NativeGetterInvocationUse,
 } from "./native-getter-invocation-requirements.js";
+import { nativeInvocationBooleanResult, nativeSourceReturnsBoolean } from "./native-invocation-result-values.js";
 
 export interface NativeInvocationUse {
   readonly occurrence: number;
@@ -54,6 +55,7 @@ export interface NativeInvocationRequirements {
   readonly objectAccess?: NativeObjectAccessRequirements;
   readonly objectResults?: NativeObjectResultRequirements;
   readonly getterUses: readonly NativeGetterInvocationUse[];
+  readonly booleanResults: readonly NonNullable<ReturnType<typeof nativeInvocationBooleanResult>>[];
   readonly methodArities: readonly number[];
   readonly applyVector: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
@@ -257,7 +259,9 @@ function calculate(
       external(type) || (type.kind === "val" && !type.typeRef && type.val.kind === "f64");
     if (
       !calleeType.signature.params.every(supported) ||
-      (calleeType.signature.returnType && !supported(calleeType.signature.returnType))
+      (calleeType.signature.returnType &&
+        !supported(calleeType.signature.returnType) &&
+        !nativeSourceReturnsBoolean(source, liftedUnitId))
     )
       gaps.push({ unitId, detail: `callable ${liftedUnitId} needs its actual argument/result conversion owner` });
     uses.push({
@@ -273,8 +277,24 @@ function calculate(
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
   gaps.push(...getters.gaps);
+  const booleanResults: NonNullable<ReturnType<typeof nativeInvocationBooleanResult>>[] = [];
+  for (const owner of demands.owners) {
+    const populations = (["program", "projection"] as const).map((view) =>
+      demands.occurrences.flatMap((_, occurrence) => {
+        const result = nativeInvocationBooleanResult(source, owner.unitId, view, occurrence);
+        return result ? [result] : [];
+      }),
+    );
+    const semantic = populations.map((rows) =>
+      rows.map(({ liftedUnitId, symbol, site }) => ({ liftedUnitId, symbol, site })),
+    );
+    if (preparedIrDataMismatch(semantic[0], semantic[1]) !== undefined)
+      gaps.push({ unitId: owner.unitId, detail: "Boolean invocation result semantic/projection association differs" });
+    booleanResults.push(...populations[1]!);
+  }
   return {
     uses,
+    booleanResults,
     getterUses: getters.getterUses,
     methodArities: [
       ...new Set([
@@ -365,6 +385,7 @@ export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocation
     preparedIrDataMismatch(data, {
       uses: pack.uses,
       getterUses: pack.getterUses,
+      booleanResults: pack.booleanResults,
       methodArities: pack.methodArities,
       applyVector: pack.applyVector,
       gaps: pack.gaps,

@@ -7076,3 +7076,87 @@ the final normal pre-push checks, remove only the local exnref execArgv addition
 Resume substantive work at the real remaining catalog algorithms and original
 source/code/body/allocation consumer joins, preserving full boundary/Linear/WASI
 and retirement acceptance. Both Markdown issues remain in progress.
+
+#### S7-at actual source call/apply Boolean results (in progress)
+
+Fresh integration trace: `program-consumer` reserves/fills the older bootstrap
+kernel only. It does not pass realm-state/code-identity carriers to source
+allocation or consume the full public population producer. The old kernel uses
+a different ordinary-storage/realm owner; simply substituting new public slots
+would either require unimplemented catalog algorithms or publish a false complete
+realm. Do not add dummy algorithms, detached anchors or a copied second population
+to make that connection appear complete.
+
+Close an executable prerequisite in the actual consumer: source `.call`/`.apply`
+currently refuse Boolean results in source lowering, invocation requirements and
+physical result conversion. Existing Boolean boxing is restricted to getters.
+Prove real return expressions in both semantic/projection views, retain exact
+source allocation/call association, and route actual results through the same
+native Boolean boxer/typed reader. Keep raw-externref/mixed-return/forged-annotation
+refusals; do not reinterpret typed extraction as general ToBoolean. Authenticate
+the original value owner and explicit boxing policy. Test public source emission,
+transported replay, call/apply, captures/branches and negative producer controls
+with zero imports. Retain getter proof and numeric omission refusal. This does
+not complete full realm/source/foreign admission, Boolean arguments, first-class
+undefined, Linear/WASI or any remaining migration acceptance.
+
+S7-at implements this through actual IR source preparation and public accepted
+emission, not a private ABI witness. The new logical result proof follows each
+Boolean extraction to the actual call/apply, original allocation/target signature
+and all normal return producers in both semantic/projection views. Compare paired
+extraction populations across those views; currentness recomputes the proof.
+Keyed Get keeps its separate descriptor proof; a source call cannot borrow it.
+The physical selector requires explicit native Boolean boxing and the original
+value/Boolean owner; actual invocation returns use the existing Boolean recipe,
+not numeric boxing or general ToBoolean. Void/numeric/source argument rules and
+unproved raw projections remain unchanged.
+
+An independent IR effect-checker repair visits a conditional's executable
+condition/arms, not its inert QuestionToken/ColonToken. Both arms still receive
+all call/getter/coercion checks. The original unknown-exported-number coercion
+refusal is retained and directly tested. No direct-AST path or host import was
+added. One new logical proof leaf is classified in the existing IR-program layer;
+no allowed edge, baseline, budget allowance or deadline was relaxed.
+
+Verification before removal controls:14/14 unfiltered new cases, zero skips/exit0,
+including six genuine public executions across capture/branch results, both
+encodings, original/transported programs and GVN off/on. Separate existing
+consumer/getter preservation passes82/82 across two files, zero skips/exit0;
+the existing prepared Linear early-return suite passes17/17, zero skips/exit0.
+These are separate cohorts, not full migration or Linear Boolean admission.
+The first two13-case attempts failed at the existing unknown-numeric coercion
+guard and conditional punctuation bug; neither was counted as native execution.
+The third gives11/13: all six public executions pass, two negative mutations
+never changed their intended IR. Fixed the controls to mutate actual receiver
+projections and actual return terminators, retaining a positive change-count.
+
+Removing ONLY real return-expression proof gives1/2 selected passes: the positive
+copied-owner control passes, but a fresh issuer admits the mutated non-Boolean
+return with zero gaps (12 unselected). This is admission-proof evidence, not a
+claim that the mutated numeric-return body executes successfully through its
+unchanged physical Boolean ABI. Removing ONLY the frontend Boolean conversion
+gives1/2: the public positive refuses with its prior unsupported-result diagnostic,
+while the independent unknown-coercion refusal still passes (12 unselected).
+Both exact sources are restored to their pre-control hashes before final rerun.
+
+The import gate remains437/452 across33 probes, zero unknown/regime-gap imports;
+the historical four-adapter approval stays unused. Inventory1998 is valid with
+zero errors, architectureComplete=false. Largest SCC712/four components and all
+four old red directions remain; no waiver. Existing188/202 historical-storage
+receipt failures, five earlier symbolic receipt failures, strict closure and full
+GC-byte/Test262/npm/accelerator acceptance are not newly certified. Full catalog
+population consumption/source-code-allocation joins, semantic Boolean arguments,
+bound/live-foreign mixed Call/Get, first-class undefined, complete Linear/WASI,
+named gaps, runtime retirement and reviewed prerequisite/conflict integration all
+remain required. Both migration issues remain in progress.
+
+S7-at final restored verification: **14/14, zero skips, exit0**, unfiltered file,
+100.20s, report SHA256ecb6be48a9f521df940af8527253be6e49c333394c25006a7c9b4513a06bd53a.
+Both guards are restored exactly; typecheck/lint (7314 files)/format and all source
+ratchets are rechecked after restoration. Whole PR416 changed source files,
+net−12702 LOC, only the two old function allowances. Preservation-only remains
+6/6 full+6/6 cut with strict closure open, not retirement certification.
+[Exact S7-at source/report/gate hashes and proof limits](../audit/6979-native-invocation-boolean-results-20261020.json).
+All scoped runners are closed. Next actual work remains the genuine full-catalog
+and original source/realm/code/allocation integration, not more completion labels
+on the older bootstrap. Preserve all scope/holds and both no-host backends.
