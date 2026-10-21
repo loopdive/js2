@@ -134,8 +134,28 @@ export function counted() {
 }
 `;
 
+// An int32-narrowed vector (#3734) is searched in the f64 domain, so a
+// fractional or out-of-range needle never matches a truncated element.
+const NARROWED = `
+export function narrowed(): number {
+  const values: number[] = [];
+  for (let i = 0; i < 10; i++) values.push(i & 7);
+  let r = 0;
+  if (values.indexOf(1.5) === -1) r += 1;
+  if (values.indexOf(2147483648) === -1) r += 2;
+  if (values.indexOf(7) === 7) r += 4;
+  if (!values.includes(NaN)) r += 8;
+  if (values.join("") === "0123456701") r += 16;
+  return r;
+}
+`;
+
 describe("#7108 — IR indexOf / includes / join on number and string vecs", () => {
   for (const target of TARGETS) {
+    it(`an int32-narrowed vec is searched in the f64 domain (${target})`, async () => {
+      await expectMatchesNode(NARROWED, target, ["narrowed"]);
+    });
+
     it(`number indexOf / includes match node (${target})`, async () => {
       await expectMatchesNode(NUMBER_SEARCH, target, ["idx", "has", "searchNumbers"]);
     });
