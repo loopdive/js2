@@ -95,13 +95,19 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
+  isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
 } from "./select-expression-structure.js";
 
-export { effectiveIrParamTypeNode, effectiveIrReturnTypeNode } from "./select-expression-structure.js";
+export {
+  effectiveIrParamTypeNode,
+  effectiveIrReturnTypeNode,
+  isFunctionObjectChainedWrite,
+  functionObjectStoreRoot,
+} from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import {
   closureLiteralIsBuildable,
@@ -10213,6 +10219,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
     if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
+    if (isFunctionObjectStoredValue(expr, currentSelectionOptions?.functionObjectValues)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.

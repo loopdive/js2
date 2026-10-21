@@ -79,10 +79,33 @@ function resolveFunctionObjectReceiver(
   const use = access.parent;
   if (
     !(ts.isCallExpression(use) && use.expression === access) &&
-    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) &&
+    !isFunctionObjectChainedWrite(access)
   )
     return;
   return resolver?.resolveTopLevelFunctionValue(node);
+}
+
+/**
+ * (#7106 census arm 3) `F.p.x = v` — the function object's `F.p` member READ is
+ * the receiver of a member WRITE (`Test262Error.prototype.toString = …`). `F`
+ * is still only a dynamic receiver: `F.p` is a dynamic member get on the boxed
+ * function object, and the write a dynamic member set on its result.
+ */
+export function isFunctionObjectChainedWrite(
+  access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): boolean {
+  const store = access.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    ts.isPropertyAccessExpression(store) &&
+    ts.isIdentifier(store.name) &&
+    store.expression === access &&
+    store.questionDotToken === undefined &&
+    ts.isBinaryExpression(store.parent) &&
+    store.parent.left === store &&
+    store.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  );
 }
 
 /**
@@ -98,6 +121,51 @@ export function isFunctionObjectReceiver(
   resolver: IrImportedFunctionResolver | undefined,
 ): boolean {
   return resolveFunctionObjectReceiver(node, resolver) !== undefined;
+}
+
+/**
+ * (#7106 census arm 3) `F.x = G` / `F[k] = G`: a stable top-level function `G`
+ * stored on a function-object receiver `F`. The value is boxed into the dynamic
+ * carrier and written through the receiver's dynamic member write — like a
+ * receiver-only use it never reads `G`'s signature, so it needs no evidence.
+ */
+export function isFunctionObjectStoredValue(
+  node: ts.Identifier,
+  resolver: IrImportedFunctionResolver | undefined,
+): boolean {
+  const root = functionObjectStoreRoot(node);
+  return (
+    root !== undefined &&
+    resolveFunctionObjectReceiver(root, resolver) !== undefined &&
+    resolver?.resolveTopLevelFunctionValue(node) !== undefined
+  );
+}
+
+/**
+ * The receiver identifier `F` when `node` is the stored value of `F.x = node`,
+ * `F[k] = node` or the chained `F.p.x = node` (see
+ * {@link isFunctionObjectChainedWrite}); otherwise `undefined`. Syntax only —
+ * the selector and the planner each apply their own resolver to `F` and `node`.
+ */
+export function functionObjectStoreRoot(node: ts.Identifier): ts.Identifier | undefined {
+  const assignment = node.parent;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.right !== node ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  )
+    return undefined;
+  const store = assignment.left;
+  if (!(ts.isPropertyAccessExpression(store) || ts.isElementAccessExpression(store)) || store.questionDotToken)
+    return undefined;
+  if (ts.isIdentifier(store.expression)) return store.expression;
+  const chained = store.expression;
+  return ts.isPropertyAccessExpression(chained) &&
+    ts.isIdentifier(chained.expression) &&
+    chained.questionDotToken === undefined &&
+    isFunctionObjectChainedWrite(chained)
+    ? chained.expression
+    : undefined;
 }
 
 export function functionObjectMemberCallIsBuildable(

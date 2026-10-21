@@ -23,6 +23,8 @@ import {
   certifyImportedIrCall,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
+  isFunctionObjectChainedWrite,
+  functionObjectStoreRoot,
   type IrSelection,
 } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
@@ -211,6 +213,11 @@ export function recordIrOverlayPreparationFailure(
  * member call/write on it dispatches dynamically. All-dynamic is the one
  * signature that claims nothing about the target's real ABI.
  */
+function isFunctionObjectStoredValue(node: ts.Identifier, resolver: IrIdentityImportedFunctionResolver): boolean {
+  const root = functionObjectStoreRoot(node);
+  return root !== undefined && resolver.resolveTopLevelFunctionValueTarget(root)?.legacyProjection === "unambiguous";
+}
+
 function opaqueReceiverSignature(declaration: ts.FunctionDeclaration): IrClosureSignature {
   const dynamic: IrType = { kind: "dynamic" };
   return { params: declaration.parameters.map(() => dynamic), returnType: dynamic };
@@ -856,7 +863,8 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             ((ts.isCallExpression(use) && use.expression === access) ||
               (ts.isBinaryExpression(use) &&
                 use.left === access &&
-                use.operatorToken.kind === ts.SyntaxKind.EqualsToken));
+                use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+              isFunctionObjectChainedWrite(access));
           // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
           // callee (`dyn.construct`) or the `x instanceof F` operand
           // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
@@ -866,8 +874,13 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                 access.right === node &&
                 access.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) &&
             irSelfGuardedConstructorValue(ctx, node);
+          // (#7106 census arm 3) A top-level function STORED on a function
+          // object (`F.x = G`): its value is boxed into the dynamic carrier and
+          // written through the receiver's dynamic member write, exactly like
+          // a receiver-only use — the signature is never read.
+          const isStoredValue = isFunctionObjectStoredValue(node, functionObjectValues);
           const target =
-            (isReceiver || isSelfGuardedValue) && options.sourceOwnerUnitId(node) === ownerUnitId
+            (isReceiver || isSelfGuardedValue || isStoredValue) && options.sourceOwnerUnitId(node) === ownerUnitId
               ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
               : undefined;
           if (target?.legacyProjection === "unambiguous") {
@@ -885,7 +898,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             // accessor's externref is boxed straight into the dynamic carrier
             // and every member call/write dispatches dynamically, so it gets
             // the opaque all-dynamic signature (#7106 census arm 4).
-            if (missingEvidence && !isReceiver) return;
+            if (missingEvidence && !isReceiver && !isStoredValue) return;
             const signature = missingEvidence
               ? opaqueReceiverSignature(target.declaration)
               : {
