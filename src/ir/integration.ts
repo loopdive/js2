@@ -95,17 +95,15 @@ import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codege
 import { ensureIrArgumentsLengthHelper, IR_ARGUMENTS_LENGTH_HELPER } from "../codegen/ir-arguments-length.js";
 import {
   ensureIrCurrentThisHelper,
+  ensureIrDynamicConstructHelper,
   ensureIrInstanceOfFunctionHelper,
   IR_CURRENT_THIS_SLOPPY_HELPER,
   IR_CURRENT_THIS_STRICT_HELPER,
+  irDynamicConstructCalleeIsPlain,
+  irDynamicConstructHelperName,
   irFunctionThisStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
-} from "../codegen/ir-dynamic-construct.js";
-import {
-  ensureIrDynamicConstructHelper,
-  irDynamicConstructCalleeIsPlain,
-  irDynamicConstructHelperName,
 } from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
