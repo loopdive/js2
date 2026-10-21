@@ -378,6 +378,12 @@ export interface IrDynamicLowering {
    */
   emitArgumentsLength(formals: number): readonly Instr[];
   /**
+   * (#7106 S1i) Nothing on the stack → nothing: publish a direct call site's
+   * actual argument count to `__argc` (legacy's `emitSetArgc`), wrapped once
+   * per module (`__ir_publish_argc`). Same `native-arguments-length` lanes.
+   */
+  emitPublishArgc(count: number): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

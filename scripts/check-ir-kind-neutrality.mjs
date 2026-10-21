@@ -821,6 +821,11 @@ const VERDICTS = {
     why: 'ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the number of arguments passed), read through the call-site count protocol shared with legacy.',
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the number of arguments actually" }],
   },
+  "dyn.publish_argc": {
+    verdict: "js",
+    why: 'The caller half of the ECMAScript arguments count: a direct call site publishes the number of arguments it actually passes (§10.4.4.6 sets "length" to that count), through the call-site count protocol shared with legacy.',
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "publishes the number of arguments actually passed" }],
+  },
   "dyn.construct": {
     verdict: "js",
     why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",

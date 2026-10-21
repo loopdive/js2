@@ -251,6 +251,20 @@ export interface IrInstrDynArgumentsLength extends IrInstrBase {
 }
 
 /**
+ * `dyn.publish_argc{count}` — the caller half of the same count protocol
+ * (#7106 S1i): publishes the number of arguments actually passed at a direct
+ * call whose callee reads its own `arguments` (§10.4.4.6: "length" is the
+ * number of arguments passed), immediately before that call — exactly
+ * legacy's `emitSetArgc` for an under-arity call site. The callee's entry
+ * prologue consumes and clears it. No operands, no result.
+ */
+export interface IrInstrDynPublishArgc extends IrInstrBase {
+  readonly kind: "dyn.publish_argc";
+  /** The call site's actual argument count (fewer than the callee's formals). */
+  readonly count: number;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

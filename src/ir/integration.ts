@@ -92,7 +92,12 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
-import { ensureIrArgumentsLengthHelper, IR_ARGUMENTS_LENGTH_HELPER } from "../codegen/ir-arguments-length.js";
+import {
+  ensureIrArgumentsLengthHelper,
+  ensureIrPublishArgcHelper,
+  IR_ARGUMENTS_LENGTH_HELPER,
+  IR_PUBLISH_ARGC_HELPER,
+} from "../codegen/ir-arguments-length.js";
 import {
   ensureIrDynamicConstructHelper,
   irDynamicConstructCalleeIsPlain,
@@ -8898,6 +8903,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.construct") return true;
   if (instr.kind === "dyn.string_carrier") return true;
   if (instr.kind === "dyn.arguments_length") return true;
+  if (instr.kind === "dyn.publish_argc") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9112,6 +9118,8 @@ function preregisterDynamicSupport(
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
   let usesDynArgumentsLength = false;
+  // (#7106 S1i) `dyn.publish_argc` calls the caller-side argc wrapper.
+  let usesDynPublishArgc = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9126,6 +9134,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
+          if (i.kind === "dyn.publish_argc") usesDynPublishArgc = true;
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9272,6 +9281,13 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
+  }
+  if (usesDynPublishArgc && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    if (ensureIrPublishArgcHelper(ctx) === undefined) {
+      throw new Error("ir/integration: dyn.publish_argc has no argc-protocol wrapper on this lane (#7106 S1i)");
+    }
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_PUBLISH_ARGC_HELPER);
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     // (#7106 S3a) One wrapper per arity, built from legacy's own construct
@@ -9546,6 +9562,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
           "ir/integration: dyn.arguments_length is not lowerable on the fast $AnyValue carrier (#7106 S1e)",
         );
       },
+      emitPublishArgc(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.publish_argc is not lowerable on the fast $AnyValue carrier (#7106 S1i)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9711,6 +9730,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.arguments_length needs the host-free argc protocol (#7106 S1e)");
       }
       return [{ op: "i32.const", value: formals } as Instr, callImport(IR_ARGUMENTS_LENGTH_HELPER)];
+    },
+    emitPublishArgc(count: number): readonly Instr[] {
+      // (#7106 S1i) legacy's `emitSetArgc` for an under-arity direct call, wrapped once.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.publish_argc needs the host-free argc protocol (#7106 S1i)");
+      }
+      return [{ op: "i32.const", value: count } as Instr, callImport(IR_PUBLISH_ARGC_HELPER)];
     },
     emitConstruct(arity: number): readonly Instr[] {
       // (#7106 S3a) callee + args already on the stack as externref; the
