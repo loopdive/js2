@@ -683,7 +683,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-object-tostring-tag"
       | "native-dynamic-construct"
       | "native-string-carrier-coercion"
-      | "native-arguments-length",
+      | "native-arguments-length"
+      | "native-own-property-test",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
