@@ -94,9 +94,14 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
+  type FunctionObjectTypeEvidence,
+  effectiveIrParamTypeNode,
+  effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
 } from "./select-expression-structure.js";
+
+export { effectiveIrParamTypeNode, effectiveIrReturnTypeNode } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import {
   closureLiteralIsBuildable,
@@ -2190,24 +2195,10 @@ function isIrClaimable(
 //   and was the last claim-then-demote channel for non-move any-uses.
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
-/**
- * Return the declaration's effective parameter type node.
- *
- * For TypeScript this is the ordinary `param.type`. For JavaScript, the TS
- * parser/checker boundary exposes a standard `@param {T}` annotation through
- * `getJSDocType` while deliberately leaving `param.type` unset. Keeping this
- * lookup in one helper prevents the selector and the shared AST-to-IR
- * signature resolver from disagreeing about the same source declaration. No
- * comment text is parsed and no synthetic annotation is attached to the AST.
- */
-export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
-  if (param.type) return param.type;
-  // A synthesized parameter (factory-built, no parent — the implicit-ctor
-  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
-  // and would throw. Its type comes from `paramTypeOverrides`.
-  if (param.parent === undefined) return undefined;
-  return ts.getJSDocType(param);
-}
+const functionObjectTypeEvidence: FunctionObjectTypeEvidence = Object.freeze({
+  parameterType: effectiveIrParamTypeNode,
+  returnType: effectiveIrReturnTypeNode,
+});
 
 /**
  * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
@@ -2233,20 +2224,6 @@ export function jsDocParamIsExternrefCandidate(param: ts.ParameterDeclaration): 
     jsDocType.kind !== ts.SyntaxKind.StringKeyword &&
     jsDocType.kind !== ts.SyntaxKind.BooleanKeyword
   );
-}
-
-/**
- * Return the declaration's effective return type node, including a JavaScript
- * JSDoc `@returns {T}` annotation when present.
- *
- * The caller still applies the existing narrow primitive/object/dynamic
- * mapping. In particular, this helper does not turn an unannotated, `any`,
- * union, or otherwise unsupported signature into a primitive claim.
- */
-export function effectiveIrReturnTypeNode(
-  fn: ts.FunctionDeclaration | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-): ts.TypeNode | undefined {
-  return fn.type ?? ts.getJSDocReturnType(fn);
 }
 
 /**
@@ -9857,6 +9834,19 @@ function phase1IndirectEvalStatementVerdict(
   return undefined;
 }
 
+function functionObjectCallIsPhase1(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  return functionObjectMemberCallIsBuildable(
+    expr,
+    currentSelectionOptions?.functionObjectValues,
+    functionObjectTypeEvidence,
+    (expression) => isPhase1Expr(expression, scope, localClasses),
+  );
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -9989,7 +9979,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
+    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
+      return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.
@@ -10326,11 +10317,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       isExpressionBuildable: (argument) => isPhase1Expr(argument, scope, localClasses),
     });
     if (superMethodVerdict !== undefined) return superMethodVerdict;
-    const functionObjectCall = functionObjectMemberCallIsBuildable(
-      expr,
-      currentSelectionOptions?.functionObjectValues,
-      (expression) => isPhase1Expr(expression, scope, localClasses),
-    );
+    const functionObjectCall = functionObjectCallIsPhase1(expr, scope, localClasses);
     if (functionObjectCall !== undefined) return functionObjectCall;
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { forEachChild, ts } from "../ts-api.js";
-import type { IrImportedFunctionResolver } from "./imported-functions.js";
+import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 
 export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
   return ts.isAsExpression(expr) ||
@@ -32,37 +32,101 @@ export function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression)
   return indexHasMultiply;
 }
 
-export function isFunctionObjectReceiver(
+/**
+ * Return the declaration's effective parameter type node.
+ *
+ * For TypeScript this is the ordinary `param.type`. For JavaScript, the TS
+ * parser/checker boundary exposes a standard `@param {T}` annotation through
+ * `getJSDocType` while deliberately leaving `param.type` unset. Keeping this
+ * lookup in one helper prevents the selector and the shared AST-to-IR
+ * signature resolver from disagreeing about the same source declaration. No
+ * comment text is parsed and no synthetic annotation is attached to the AST.
+ */
+export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
+}
+
+/**
+ * Return the declaration's effective return type node, including a JavaScript
+ * JSDoc `@returns {T}` annotation when present.
+ *
+ * The caller still applies the existing narrow primitive/object/dynamic
+ * mapping. In particular, this helper does not turn an unannotated, `any`,
+ * union, or otherwise unsupported signature into a primitive claim.
+ */
+export function effectiveIrReturnTypeNode(
+  fn: ts.FunctionDeclaration | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+): ts.TypeNode | undefined {
+  return fn.type ?? ts.getJSDocReturnType(fn);
+}
+
+export interface FunctionObjectTypeEvidence {
+  readonly parameterType: (parameter: ts.ParameterDeclaration) => ts.TypeNode | undefined;
+  readonly returnType: (declaration: ts.FunctionDeclaration) => ts.TypeNode | undefined;
+}
+
+/** Preclaim evidence cannot depend on a target acquiring a later IR claim. */
+export function functionObjectHasTypeEvidence(
+  declaration: ts.FunctionDeclaration,
+  evidence: FunctionObjectTypeEvidence,
+): boolean {
+  return (
+    declaration.parameters.every((parameter) => evidence.parameterType(parameter) !== undefined) &&
+    evidence.returnType(declaration) !== undefined
+  );
+}
+
+function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
-): boolean {
+): IrResolvedFunctionTarget | undefined {
   const access = node.parent;
   if (
     !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
     access.expression !== node ||
     access.questionDotToken !== undefined
   )
-    return false;
+    return;
   const use = access.parent;
   if (
     !(ts.isCallExpression(use) && use.expression === access) &&
     !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken)
   )
-    return false;
-  return resolver?.resolveTopLevelFunctionValue(node) !== undefined;
+    return;
+  return resolver?.resolveTopLevelFunctionValue(node);
+}
+
+/** Without evidence this is only the existing stable receiver-identity test. */
+export function isFunctionObjectReceiver(
+  node: ts.Identifier,
+  resolver: IrImportedFunctionResolver | undefined,
+  evidence?: FunctionObjectTypeEvidence,
+): boolean {
+  const target = resolveFunctionObjectReceiver(node, resolver);
+  return (
+    target !== undefined && (evidence === undefined || functionObjectHasTypeEvidence(target.declaration, evidence))
+  );
 }
 
 export function functionObjectMemberCallIsBuildable(
   expr: ts.CallExpression,
   resolver: IrImportedFunctionResolver | undefined,
+  evidence: FunctionObjectTypeEvidence,
   isExpressionBuildable: (expression: ts.Expression) => boolean,
 ): boolean | undefined {
   const functionAccess = expr.expression;
-  if (
+  const target =
     (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess)) &&
-    ts.isIdentifier(functionAccess.expression) &&
-    isFunctionObjectReceiver(functionAccess.expression, resolver)
-  ) {
+    ts.isIdentifier(functionAccess.expression)
+      ? resolveFunctionObjectReceiver(functionAccess.expression, resolver)
+      : undefined;
+  if (target && (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess))) {
+    if (!functionObjectHasTypeEvidence(target.declaration, evidence)) return false;
     if (functionAccess.questionDotToken || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
       return false;
     if (ts.isElementAccessExpression(functionAccess) && !isExpressionBuildable(functionAccess.argumentExpression))
