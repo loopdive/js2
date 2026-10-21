@@ -14,7 +14,7 @@ import { irImportFuncRef, irSupportFuncRef, irUnitFuncRef, sameIrCallableBinding
 import type { IrAmbientClassCallResolver } from "../ir/host-extern.js";
 import type { IrIdentityImportedFunctionResolver, IrImportedFunctionResolver } from "../ir/imported-functions.js";
 import type { IrBindingId, IrSourceId, IrUnitId, IrNestedClassFieldCallAdmission } from "../ir/identity.js";
-import type { IrType } from "../ir/nodes.js";
+import type { IrClosureSignature, IrType } from "../ir/nodes.js";
 import type { IrModuleInitEvaluationEntry, IrModuleInitPlanningEvidence } from "../ir/module-init-plan.js";
 import { classifyIrFailure, IrInvariantError, IrUnsupportedError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { LatticeType } from "../ir/propagate.js";
@@ -201,6 +201,19 @@ export function recordIrOverlayPreparationFailure(
     );
   }
   plan.preparationFailuresByUnitId.set(unitId, failure);
+}
+
+/**
+ * (#7106 census arm 4) The signature of a RECEIVER-only function-object plan
+ * whose target carries no parameter/result evidence. Only the IR type of the
+ * accessor's result reads it (`callable<S>`, which lowers to externref for
+ * every `S`), and that value is boxed into the dynamic carrier at once; every
+ * member call/write on it dispatches dynamically. All-dynamic is the one
+ * signature that claims nothing about the target's real ABI.
+ */
+function opaqueReceiverSignature(declaration: ts.FunctionDeclaration): IrClosureSignature {
+  const dynamic: IrType = { kind: "dynamic" };
+  return { params: declaration.parameters.map(() => dynamic), returnType: dynamic };
 }
 
 function ambientHostValType(type: IrType | null): ValType | null | undefined {
@@ -860,31 +873,34 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
           if (target?.legacyProjection === "unambiguous") {
             const claim = identity.functionClaims.find((candidate) => candidate.unitId === target.targetUnitId);
             const returnNode = effectiveIrReturnTypeNode(target.declaration);
-            // Missing flow evidence is not a dynamic signature. Leave this
-            // occurrence to the existing compatibility route without minting
-            // canonical support for an unsupported exact receiver plan.
-            if (
+            const missingEvidence =
               target.declaration.parameters.some(
                 (parameter, index) =>
                   effectiveIrParamTypeNode(parameter) === undefined && claim?.typeEntry.params[index] === undefined,
               ) ||
-              (returnNode === undefined && claim?.typeEntry.returnType === undefined)
-            )
-              return;
-            const params = target.declaration.parameters.map((parameter, index) =>
-              resolvePositionType(
-                effectiveIrParamTypeNode(parameter),
-                claim?.typeEntry.params[index],
-                classShapeSidecar,
-              ),
-            );
-            const signature = {
-              params,
-              returnType:
-                returnNode?.kind === ts.SyntaxKind.VoidKeyword
-                  ? null
-                  : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
-            };
+              (returnNode === undefined && claim?.typeEntry.returnType === undefined);
+            // Missing flow evidence is not a dynamic signature, so a VALUE use
+            // (the S3c self-guarded constructor) stays on the compatibility
+            // route. A receiver-only use never reads the signature: the
+            // accessor's externref is boxed straight into the dynamic carrier
+            // and every member call/write dispatches dynamically, so it gets
+            // the opaque all-dynamic signature (#7106 census arm 4).
+            if (missingEvidence && !isReceiver) return;
+            const signature = missingEvidence
+              ? opaqueReceiverSignature(target.declaration)
+              : {
+                  params: target.declaration.parameters.map((parameter, index) =>
+                    resolvePositionType(
+                      effectiveIrParamTypeNode(parameter),
+                      claim?.typeEntry.params[index],
+                      classShapeSidecar,
+                    ),
+                  ),
+                  returnType:
+                    returnNode?.kind === ts.SyntaxKind.VoidKeyword
+                      ? null
+                      : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
+                };
             const funcIdx = ctx.programAbiSourceCallables?.handleForUnit(target.targetUnitId);
             const prepared =
               funcIdx === undefined ? null : ensureFuncClosureSingletonAccessor(ctx, target.targetName, funcIdx);
