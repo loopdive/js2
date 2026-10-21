@@ -4,6 +4,7 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -40,7 +41,11 @@ import {
   irFnctorParameterPreselectionIsCurrent,
   planIrFnctorParameterPreselection,
 } from "./ir-fnctor-parameter-planning.js";
-import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "./fnctor-typed-instances.js";
+import {
+  legacyParamSlotIsExternref,
+  makeIrDynamicCarrierDivergenceProbe,
+  resolveFnctorInstanceType,
+} from "./fnctor-typed-instances.js";
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
@@ -104,6 +109,7 @@ import {
 import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import {
   effectiveIrParamTypeNode,
+  jsDocParamIsExternrefCandidate,
   effectiveIrReturnTypeNode,
   irClosureSignatureFromFunctionTypeNode,
   type IrFallbackReason,
@@ -2865,6 +2871,13 @@ function makeIrImplicitParamTypeResolver(
       return { kind: "bool", type: irVal({ kind: "i32", boolean: true }) };
     }
     if (parameter.type) return undefined;
+    // (#7106 item 1) A JSDoc position legacy lowers as plain externref
+    // (`@param {object} obj`, a union, a bracketed tag) projects as the
+    // dynamic carrier by that evidence — the same answer the selector gives,
+    // ahead of any call-site lattice narrowing legacy never applies here.
+    if (jsDocParamIsExternrefCandidate(parameter) && legacyParamSlotIsExternref(ctx, parameter)) {
+      return { kind: "dynamic", type: irDynamic() };
+    }
     const declaration = parameter.parent;
     if (!ts.isFunctionDeclaration(declaration) || !declaration.name || declaration.parent !== sourceFile) {
       return undefined;
@@ -3222,7 +3235,9 @@ function planIrOverlay(
     let allPositionsAreExplicitNumbers = true;
     for (const parameter of declaration.parameters) {
       const explicitType = effectiveIrParamTypeNode(parameter);
-      if (explicitType) {
+      // (#7106 item 1) A JSDoc position legacy registered as externref is a
+      // dynamic projection, not an annotation (the resolver below answers it).
+      if (explicitType && !(jsDocParamIsExternrefCandidate(parameter) && legacyParamSlotIsExternref(ctx, parameter))) {
         if (explicitType.kind !== ts.SyntaxKind.NumberKeyword) allPositionsAreExplicitNumbers = false;
         continue;
       }
@@ -3305,11 +3320,13 @@ function planIrOverlay(
       isArrayExpression,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
       implicitParamUsesNumericVecAbi,
       dynamicCarrierDivergesFromLegacy: makeIrDynamicCarrierDivergenceProbe(ctx),
+      jsDocParamLowersAsExternref: (parameter) => legacyParamSlotIsExternref(ctx, parameter),
       resolveFnctorAdmission,
       ...(fnctorArgumentProjections.length > 0
         ? {

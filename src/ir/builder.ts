@@ -717,6 +717,50 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S1e — the invocation's `arguments.length` (actual argument count); result f64. */
+  emitDynArgumentsLength(formals: number): IrValueId {
+    if (!Number.isInteger(formals) || formals < 0) {
+      throw new Error(
+        `IrFunctionBuilder: emitDynArgumentsLength formals must be a non-negative integer, got ${formals} (#7106 S1e) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = irVal({ kind: "f64" });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.arguments_length", formals, result, resultType });
+    return result;
+  }
+
+  /** #7106 S1c — checked native-string carrier recovery from a dynamic value; result string. */
+  emitDynStringCarrier(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynStringCarrier operand ${value} is not dynamic (#7106 S1c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.string_carrier", value, result, resultType });
+    return result;
+  }
+
+  /** #7106 S3a — `new callee(...args)` over dynamic carriers; result dynamic. */
+  emitDynConstruct(callee: IrValueId, args: readonly IrValueId[]): IrValueId {
+    for (const [label, v] of [["callee", callee] as const, ...args.map((a, i) => [`arg${i}`, a] as const)]) {
+      if (this.typeOf(v).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynConstruct ${label} operand ${v} is not dynamic (#7106 S3a) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.construct", callee, args: [...args], result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

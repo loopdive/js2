@@ -232,6 +232,8 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
   effectiveIrParamTypeNode,
+  jsDocParamIsExternrefCandidate,
+  functionBodyReferencesArguments,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -1665,9 +1667,17 @@ export function lowerFunctionAstToIr(
         `ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`,
       );
     }
+    // (#7106 item 1) A JSDoc position the planner projected to the dynamic
+    // carrier off legacy's registered externref slot is authoritative over
+    // the JSDoc node (`@param {string} [functionName]` is externref there).
+    const jsDocExternref = override?.kind === "dynamic" && jsDocParamIsExternrefCandidate(p);
     return {
       name: p.name.text,
-      type: resolveIrType(effectiveIrParamTypeNode(p), override, `param ${p.name.text} of ${name}`),
+      type: resolveIrType(
+        jsDocExternref ? undefined : effectiveIrParamTypeNode(p),
+        override,
+        `param ${p.name.text} of ${name}`,
+      ),
     };
   });
 
@@ -1812,6 +1822,9 @@ export function lowerFunctionAstToIr(
   const cx: LowerCtx = {
     ...sourceScope,
     builder,
+    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && functionBodyReferencesArguments(fn.body)
+      ? { argumentsLength: {} }
+      : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
     scope,
     funcName: name,
@@ -1903,6 +1916,9 @@ export function lowerFunctionAstToIr(
     return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
+  // (#7106 S1e) `arguments.length` is read at ENTRY, before any nested call
+  // can clobber the call site's published count — exactly legacy's prologue.
+  if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
   if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
   checkLogicalVectorConsumption(cx);
@@ -2975,6 +2991,8 @@ interface LowerCtx extends FrontendSourceScope {
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
   readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
   readonly consumedCountedStringAppends: IrCountedStringAppendLoweringPlan[];
+  /** (#7106 S1e) The entry-time `arguments.length` value of this top-level function, when its body reads it. */
+  readonly argumentsLength?: { value?: IrValueId };
   readonly identityContext?: IrPlanningIdentityContext;
   /** Slice 4 (#1169d) — class shape registry, keyed by className. */
   readonly classShapes?: ReadonlyMap<string, IrClassShape>;
@@ -6191,6 +6209,24 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
 function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
+  // (#7106 S1e) `arguments.length` — the entry-time count (selector-admitted
+  // only in the claimed function's own body, unshadowed).
+  if (
+    ts.isIdentifier(expr.name) &&
+    expr.name.text === "length" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "arguments" &&
+    !cx.scope.has("arguments")
+  ) {
+    const entry = cx.argumentsLength?.value;
+    if (entry === undefined) {
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: arguments.length outside its function's entry prologue (${cx.funcName})`,
+      );
+    }
+    return entry;
+  }
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
   if (ordinary !== null) return ordinary;
   // #3000 — private-field read (`this.#x`). A PrivateIdentifier is not an
@@ -6474,6 +6510,16 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     }
     const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
     return cx.builder.emitDynMemberGet(recv, key);
+  }
+  // (#7106 S1c) A raw externref receiver — the catch binding (`err.name`), a
+  // host handle — is the host carrier unboxed: box it into the canonical
+  // dynamic carrier (identity on the host strategy, `__any_from_extern` on
+  // gc) and take the same unified reader. Admitted by the selector only for
+  // catch bindings today (`currentCatchBoundNames`).
+  if (asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true) {
+    const boxedRecv = cx.builder.emitBox(recv, irDynamic());
+    const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
+    return cx.builder.emitDynMemberGet(boxedRecv, key);
   }
 
   demoteToLegacy(
@@ -8096,6 +8142,45 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     );
   }
   const className = expr.expression.text;
+  // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: the selector
+  // admitted only a dynamic-typed parameter callee; every argument becomes a
+  // dynamic carrier (concrete operands box exactly like a member-store value).
+  const calleeBinding = cx.scope.get(className);
+  if (calleeBinding?.kind === "local" && calleeBinding.type.kind === "dynamic") {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      throw new IrUnsupportedError(
+        "constructor-resolution-unsupported",
+        "build",
+        `ir/from-ast: dynamic construct callee "${className}" lost its carrier (${cx.funcName})`,
+      );
+    }
+    const args: IrValueId[] = [];
+    for (const argExpr of expr.arguments ?? []) {
+      if (ts.isSpreadElement(argExpr)) {
+        throw new IrUnsupportedError(
+          "constructor-arity-unsupported",
+          "build",
+          `ir/from-ast: dynamic construct spread argument escaped selection (${cx.funcName})`,
+        );
+      }
+      let value = lowerExpr(argExpr, cx, irDynamic());
+      const valueType = cx.builder.typeOf(value);
+      if (valueType.kind !== "dynamic") {
+        const boxed = boxConcreteToDynamic(value, valueType, argExpr, cx);
+        if (boxed === null) {
+          throw new IrUnsupportedError(
+            "operand-coercion-unsupported",
+            "build",
+            `ir/from-ast: dynamic construct argument of ${describeIrType(valueType)} has no dynamic carrier (${cx.funcName})`,
+          );
+        }
+        value = boxed;
+      }
+      args.push(value);
+    }
+    return cx.builder.emitDynConstruct(callee, args);
+  }
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
     demoteToLegacy(
       "unknown-class-construction",
@@ -11002,6 +11087,13 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   if (declared?.kind === "string") {
     const actualT = cx.builder.typeOf(value);
     const isExternShaped = actualT.kind === "dynamic" || asVal(actualT)?.kind === "externref";
+    // (#7106 S1c) A dynamic carrier returned into a native-string result
+    // recovers its string exactly as legacy's return site does
+    // (`coerceType(externref → $AnyString)`): `dyn.string_carrier`. The
+    // selector admits the site only where the capability holds.
+    if (actualT.kind === "dynamic" && cx.resolver?.stringIsExternref?.() !== true) {
+      return cx.builder.emitDynStringCarrier(value);
+    }
     if (isExternShaped && cx.resolver?.stringIsExternref?.() !== true) {
       throw new IrUnsupportedError(
         "return-type-legacy-coupling",
@@ -14702,7 +14794,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // `IrInstrIf` so it runs only on the branch that needs it. Handled before
   // the eager operand lowering below, like `??`.
   if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
-    return lowerLogicalAndOr(expr, op, cx);
+    return lowerLogicalAndOr(expr, op, cx, hint);
   }
 
   // (#3144) `x instanceof C` with a LOCAL-class RHS — intercepted before the
@@ -15241,14 +15333,62 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
  * right operand is lowered into its own body buffer (only the taken branch
  * runs it) and the two arms are combined with a structured `IrInstrIf`.
  */
-function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId {
+function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerLogicalAndOr(expr, op, cx));
+    return withNodeSourceSite(cx, expr, () => lowerLogicalAndOr(expr, op, cx, hint));
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
-  const rawLhs = lowerExpr(expr.left, cx, irVal({ kind: "i32" }));
+  // (#7106 item 1) A nested logical on the left (`a && a.x || b`) must keep
+  // its VALUE form outside a boolean position: an `i32` hint would ToBoolean
+  // it and the outer selection would lose the carrier.
+  let leftExpr: ts.Expression = expr.left;
+  while (ts.isParenthesizedExpression(leftExpr)) leftExpr = leftExpr.expression;
+  const nestedLogicalLeft =
+    ts.isBinaryExpression(leftExpr) &&
+    (leftExpr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      leftExpr.operatorToken.kind === ts.SyntaxKind.BarBarToken);
+  const leftWantsCarrier =
+    hint?.kind === "dynamic" || (nestedLogicalLeft && !(hint !== undefined && asVal(hint)?.kind === "i32"));
+  const rawLhs = lowerExpr(expr.left, cx, leftWantsCarrier ? irDynamic() : irVal({ kind: "i32" }));
   const lhsType = cx.builder.typeOf(rawLhs);
+  // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: §13.13.1 — evaluate the
+  // left carrier once, ToBoolean it, and select it or the (boxed) right
+  // operand. Only a boolean position (an `if` condition, a boolean return:
+  // the `i32` hint) keeps the ToBoolean'd `i32` form below. The selector
+  // admits only a dynamic-parameter left operand with a dynamic or boxable
+  // right operand.
+  const booleanPosition = hint !== undefined && asVal(hint)?.kind === "i32";
+  if (lhsType.kind === "dynamic" && !booleanPosition) {
+    const cond = cx.builder.emitDynTruthy(rawLhs);
+    const skippedScope = new Map(cx.scope);
+    const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
+    let rhs!: IrValueId;
+    const rhsBody = cx.builder.collectBodyInstrs(() => {
+      let rawRhs = lowerExpr(expr.right, rhsCx, irDynamic());
+      const rhsType = cx.builder.typeOf(rawRhs);
+      if (rhsType.kind !== "dynamic") {
+        const boxed = boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx);
+        if (boxed === null) {
+          demoteToLegacy(
+            "logical-value-unsupported",
+            `ir/from-ast: operator '${opName}' right operand of ${describeIrType(rhsType)} has no dynamic carrier in ${cx.funcName}`,
+          );
+        }
+        rawRhs = boxed;
+      }
+      rhs = rawRhs;
+    });
+    joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
+    return cx.builder.emitIfElse({
+      cond,
+      then: isAnd ? rhsBody : [],
+      thenValue: isAnd ? rhs : rawLhs,
+      else: isAnd ? [] : rhsBody,
+      elseValue: isAnd ? rawLhs : rhs,
+      resultType: irDynamic(),
+    });
+  }
   const lhs =
     lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
   if (lhs === null) {
@@ -15272,6 +15412,11 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
       rhs = cx.builder.emitDynTruthy(rawRhs);
     } else if (asVal(rhsType)?.kind === "i32") {
       rhs = rawRhs;
+    } else if (lhsType.kind === "dynamic" && boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx) !== null) {
+      // (#7106 S3b) `if (dyn || "")`: a boxable concrete right operand in a
+      // boolean position is ToBoolean'd through its dynamic carrier, exactly
+      // as the value form selects it.
+      rhs = cx.builder.emitDynTruthy(boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx)!);
     } else {
       demoteToLegacy(
         "logical-value-unsupported",

@@ -126,6 +126,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier": // #7106 S1c — carrier recovery, no user code
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":
@@ -177,6 +178,10 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "extern.call":
     case "class.new":
     case "fnctor.new":
+    // #7106 S3a — runs an arbitrary user constructor body.
+    case "dyn.construct":
+    // #7106 S1e — reads and clears the __argc/__extras_argv protocol globals.
+    case "dyn.arguments_length":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
@@ -485,6 +490,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "class.set" ||
     i.kind === "class.new" ||
     i.kind === "fnctor.new" ||
+    i.kind === "dyn.construct" || // #7106 S3a — the constructor body runs for its effects
     // #3000-E: super(...) runs the parent `_init` (writes parent fields on self);
     // super.method() invokes the parent method body — both arbitrary effects, and
     // super_init is void-result so DCE MUST keep it (and its operands) live via

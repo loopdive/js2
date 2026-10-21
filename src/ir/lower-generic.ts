@@ -1894,6 +1894,61 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitObjectToStringTag(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.arguments_length": {
+        // #7106 S1e — the invocation's actual argument count, legacy's prologue.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.arguments_length (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitArgumentsLength(instr.formals)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.string_carrier": {
+        // #7106 S1c — checked native-string carrier recovery, legacy's return ladder.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(
+            `ir/lower: dyn.string_carrier operand must be dynamic, got ${valueIrType.kind} (${func.name})`,
+          );
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.string_carrier (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitStringCarrier()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.construct": {
+        // #7106 S3a — `new <dynamic callee>(<dynamic args>)` through the lane's
+        // ordinary-[[Construct]] driver; callee then args, source order.
+        for (const [label, operand] of [
+          ["callee", instr.callee] as const,
+          ...instr.args.map((a, i) => [`arg${i}`, a] as const),
+        ]) {
+          const t = typeOf(operand);
+          if (t.kind !== "dynamic") {
+            throw new Error(`ir/lower: dyn.construct ${label} must be dynamic, got ${t.kind} (${func.name})`);
+          }
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.construct (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.callee, out);
+        for (const arg of instr.args) emitValue(arg, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitConstruct(instr.args.length)) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.truthy": {
         // #2949 S5.1 — ToBoolean on a boxed-any carrier. The operand MUST be
         // dynamic (verifier enforces); the op sequence comes from the
@@ -2726,7 +2781,10 @@ export function lowerIrFunctionBody<S, Slot>(
           (opTy.kind === "val" && opTy.val.kind === "externref") ||
           opTy.kind === "extern" ||
           opTy.kind === "callable" ||
-          (opTy.kind === "string" && resolver.resolveString?.()?.kind === "externref");
+          (opTy.kind === "string" && resolver.resolveString?.()?.kind === "externref") ||
+          // (#7106 S3a) the boxed-any carrier on the host strategy IS externref
+          // (`IrDynamicLowering.carrier`); only the `$AnyValue` carrier converts.
+          (opTy.kind === "dynamic" && resolver.resolveDynamicLowering?.()?.carrier.kind === "externref");
         if (!alreadyExternref) {
           emitter.emitToExternref(out);
         }
@@ -3800,8 +3858,13 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
+    case "dyn.arguments_length":
+      return [];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":

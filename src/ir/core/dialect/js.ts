@@ -205,6 +205,52 @@ export interface IrInstrDynObjectTag extends IrInstrBase {
 }
 
 /**
+ * `dyn.construct{callee, args}` — `new callee(...args)` (§13.3.5.1
+ * EvaluateNew) where the constructor is a runtime VALUE on the boxed-any
+ * carrier (#7106 S3a). Callee and every argument are dynamic carriers,
+ * evaluated callee-first then left to right exactly once; the result is the
+ * constructed object as a dynamic carrier. Lowering delegates to the SAME
+ * ordinary-[[Construct]] driver legacy calls for a dynamic constructor value
+ * (`__native_construct_<N>`, including its `$__ta_ctor` arm), so an IR caller
+ * and a legacy caller construct byte-for-byte the same instance.
+ */
+export interface IrInstrDynConstruct extends IrInstrBase {
+  readonly kind: "dyn.construct";
+  /** The constructor value carrier (`dynamic`). */
+  readonly callee: IrValueId;
+  /** The argument carriers (`dynamic`), in source order. */
+  readonly args: readonly IrValueId[];
+}
+
+/**
+ * `dyn.string_carrier{value}` — the checked recovery of the native string
+ * carrier from a boxed-any value (#7106 S1c): legacy's `coerceType(externref →
+ * $AnyString)` ladder (`ref.test $AnyString` → cast; a boxed `new String(…)`
+ * wrapper's [[StringData]]; the `$AnyValue` tag-5 payload; null otherwise),
+ * which legacy emits for `return <dynamic>` into a string-registered result.
+ * NOT ToString — no user `toString`/`valueOf` runs. Result `string`.
+ */
+export interface IrInstrDynStringCarrier extends IrInstrBase {
+  readonly kind: "dyn.string_carrier";
+  /** The dynamic carrier to recover a native string from. */
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.arguments_length{formals}` — the ECMAScript `arguments.length` of the
+ * current function invocation (#7106 S1e): the number of arguments actually
+ * passed (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the actual
+ * argument count, not the formal count). Reads and clears the call site's
+ * published count exactly as legacy's arguments prologue does, at function
+ * entry; an unknown caller yields `formals`. Result `f64`. No operands.
+ */
+export interface IrInstrDynArgumentsLength extends IrInstrBase {
+  readonly kind: "dyn.arguments_length";
+  /** The declared formal-parameter count (the unknown-caller fallback). */
+  readonly formals: number;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

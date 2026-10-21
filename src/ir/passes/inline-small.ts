@@ -699,6 +699,8 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (c === inst.cond && t === inst.thenValue && e === inst.elseValue && !armChanged) return inst;
       return { ...inst, cond: c, thenValue: t, elseValue: e, then: newThen, else: newElse };
     }
+    case "dyn.arguments_length":
+      return inst; // no operands (#7106 S1e)
     case "box":
     case "unbox":
     case "tag.test":
@@ -707,6 +709,7 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;
@@ -753,6 +756,18 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const index = mapId(rename, inst.index);
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
+    }
+    case "dyn.construct": {
+      let changed = false;
+      const callee = mapId(rename, inst.callee);
+      changed ||= callee !== inst.callee;
+      const args = inst.args.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      if (!changed) return inst;
+      return { ...inst, callee, args };
     }
     case "fnctor.new": {
       let changed = false;
