@@ -46,7 +46,7 @@ import {
 import type { PreparedDynamicInstructionSupportEvidence } from "./prepared-instruction-support.js";
 import type { Import, ValType } from "./types.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { jsTagToStaticType } from "./js-tag.js";
+import { JsTag, jsTagToStaticType } from "./js-tag.js";
 import { JS_TAG_IDS, jsTagOf } from "./runtime/js-tag-domain.js";
 
 /** The owning integration observes its existing canonical box dispatcher. */
@@ -197,6 +197,39 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               ctx.funcMap.get(name),
               params,
               results,
+            );
+            if (ref === undefined) nameable = false;
+            else planned.set(instr, [ref]);
+            return;
+          }
+          // (#7106 Stage 4) `message === undefined` / `thrown === null` over the
+          // externref carrier: the host tag.test arms `emitTagTest` emits —
+          // Undefined calls `__typeof_undefined`, Null is a bare `ref.is_null`
+          // (no callable). Other partitions stay unnamed (unmeasured).
+          if (
+            native &&
+            functionObjects &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "tag.test" &&
+            instr.tagId !== undefined
+          ) {
+            const tag = jsTagOf(instr.tagId);
+            if (tag === JsTag.Null) {
+              planned.set(instr, []);
+              return;
+            }
+            if (tag !== JsTag.Undefined) {
+              nameable = false;
+              return;
+            }
+            const ref = exactPreparedDynamicHelperRef(
+              ctx,
+              callableImports,
+              "__typeof_undefined",
+              ctx.funcMap.get("__typeof_undefined"),
+              [{ kind: "externref" }],
+              [{ kind: "i32" }],
             );
             if (ref === undefined) nameable = false;
             else planned.set(instr, [ref]);

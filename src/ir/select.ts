@@ -6354,7 +6354,16 @@ function isPhase1ClosureLiteral(
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,
-    isStatementListBuildable: isPhase1StatementList,
+    // (#7106 Stage 4) A planned void-result member closure admits bare
+    // `return;` exactly like a void top-level function.
+    isStatementListBuildable: (statements, inner, classes) =>
+      isPhase1StatementList(
+        statements,
+        inner,
+        classes,
+        false,
+        plan !== undefined && plan.signature.returnType === null,
+      ),
     restoreProjectionBindings,
     withClosureState: withFunctionMemberClosureState,
   });
@@ -6395,8 +6404,15 @@ function withFunctionMemberClosureState<T>(
   currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentSubjectFunctionName = null;
-  currentSubjectReturnsBoolean = true;
+  // (#7106 Stage 4) The closure is its own function: an enclosing subject's
+  // return context (module-init's barrier, an outer loop) does not apply to
+  // its body; a `return` there exits the closure.
+  const outerEarlyReturn = [earlyReturnLoopDepth, earlyReturnBarrierDepth] as const;
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 0;
+  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
+  currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set();
   currentNumericParamNames = new Set();
@@ -6433,6 +6449,7 @@ function withFunctionMemberClosureState<T>(
       currentNestedFunctionNames,
       currentLexicalValueBindingNames,
     ] = outer;
+    [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentMutableSlotNames = mutableSlots;
   }
 }
