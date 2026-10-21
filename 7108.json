@@ -1,11 +1,10 @@
 {
   "id": "7108",
-  "assignee": "",
+  "assignee": "ttraenkler/session-d",
   "requested_by": "ttraenkler/session-d",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-21T19:29:22Z",
-  "updated_at": "2026-10-21T19:29:22Z",
-  "write_id": "16880-4v8dpwpc",
-  "pr_scan": "degraded"
+  "status": "in-progress",
+  "branch": "claude/ir-array-method-search-join",
+  "claimed_at": "2026-10-21T19:43:26Z",
+  "updated_at": "2026-10-21T19:43:26Z",
+  "write_id": "23416-uh1g326g"
 }
