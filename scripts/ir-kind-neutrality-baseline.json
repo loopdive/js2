@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 93,
+    "total": 94,
     "neutral": 55,
-    "js": 35,
+    "js": 36,
     "unresolved": 3,
     "core": 58,
-    "dialect": 35,
+    "dialect": 36,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -222,6 +222,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynObjectTag",
       "why": "ECMAScript Object.prototype.toString (§20.1.3.6) `[object Tag]` classification of a boxed-any carrier, through the standalone runtime classifier shared with legacy.",
       "evidence": ["src/ir/core/dialect/js.ts#a040c88b8e84"]
+    },
+    "dyn.own_property": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynOwnProperty",
+      "why": "ECMAScript Object.prototype.hasOwnProperty (§20.1.3.2, [[GetOwnProperty]] ≠ undefined) / propertyIsEnumerable (§20.1.3.4) over a boxed-any receiver and key, through the providers legacy uses for the propertyHelper uncurried aliases.",
+      "evidence": ["src/ir/core/dialect/js.ts#24683110e305"]
     },
     "dyn.string_carrier": {
       "verdict": "js",

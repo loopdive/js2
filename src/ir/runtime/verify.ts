@@ -972,6 +972,29 @@ function verifyInstrStructure(
       });
     }
   }
+  // #7106 S1g — dyn.own_property: receiver and key dynamic, result bool.
+  if (instr.kind === "dyn.own_property") {
+    for (const [label, operand] of [
+      ["receiver", instr.receiver],
+      ["key", instr.key],
+    ] as const) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.own_property ${label} must be a dynamic IrType, got ${operandIr.kind} (#7106 S1g)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.own_property result must be an i32 (bool) IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S1g)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   // #7106 S1e — dyn.arguments_length: no operands, result f64, formals ≥ 0.
   if (instr.kind === "dyn.arguments_length") {
     if (!Number.isInteger(instr.formals) || instr.formals < 0) {
@@ -1393,6 +1416,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.value];
     case "dyn.arguments_length":
       return [];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
     case "dyn.construct":
       return [instr.callee, ...instr.args];
     case "dyn.eq":
@@ -1987,6 +2012,9 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "dyn.arguments_length": {
     skip: "checked-elsewhere: no-operand + result-f64 rules in verifyInstrStructure (#7106 S1e)",
+  },
+  "dyn.own_property": {
+    skip: "checked-elsewhere: receiver/key-dynamic + result-bool rules in verifyInstrStructure (#7106 S1g)",
   },
   "dyn.construct": {
     skip: "checked-elsewhere: callee/args/result all-dynamic rules in verifyInstrStructure (#7106 S3a)",
