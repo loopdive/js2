@@ -1656,7 +1656,16 @@ function collectDirectOnlyFunctionDeclarations(
       const declaration = declarations.get(node.text);
       if (declaration && node !== declaration.name && identifierIsValueReference(node)) {
         const directCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
-        if (!directCall) valueUsed.add(declaration);
+        // (#7106 item 1) `compareArray.format = …` / `compareArray.format(x)`:
+        // the function is the HOST of a member access, not a value handed to
+        // a legacy callback trampoline (the carrier concern this set guards).
+        // `call`/`apply`/`bind` stay value uses — a bound or re-targeted
+        // invocation can reach the function through the callback ABI.
+        const memberHost =
+          ts.isPropertyAccessExpression(node.parent) &&
+          node.parent.expression === node &&
+          !["call", "apply", "bind"].includes(node.parent.name.text);
+        if (!directCall && !memberHost) valueUsed.add(declaration);
       }
     }
     forEachChild(node, visit);
@@ -2925,6 +2934,38 @@ function dynamicUsesAreMoveOnly(
    * The member-read arms only CLASSIFY the receiver here; `scanExpr` re-validates
    * the full access (key shape, chain) against the from-ast producer contract.
    */
+  /**
+   * (#7106 item 1) The function-object receiver of `fn.member(...)` /
+   * `fn[key](...)` (Stage 2's `functionObjectMemberCallIsBuildable` shape),
+   * or null. A dyn-named receiver is a dynamic method call, not this.
+   */
+  const functionObjectMemberCallee = (e: ts.Expression): ts.Identifier | null => {
+    if (!currentDynamicRuntimeBuildable || !ts.isCallExpression(e)) return null;
+    const access = e.expression;
+    if (!(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access))) return null;
+    if (!ts.isIdentifier(access.expression) || dynNames.has(access.expression.text)) return null;
+    if (access.questionDotToken || e.questionDotToken || e.arguments.some(ts.isSpreadElement)) return null;
+    const resolver = currentSelectionOptions?.functionObjectValues;
+    if (!isFunctionObjectReceiver(access.expression, resolver)) return null;
+    // The planner (`ir-imported-call-planning.ts`) mints the canonical
+    // function-object support only with type evidence for every parameter
+    // and the result (an annotation, or the target's own IR claim entry).
+    // The claim set is not visible here, so require the annotations: an
+    // untyped legacy-owned function object (test262's `assert`) is refused
+    // PRE-claim instead of demoting at lowering. Loosen when the planner's
+    // claim-entry route can be mirrored (post Stage 3c, when `assert` claims).
+    const declaration = resolver?.resolveTopLevelFunctionValue(access.expression)?.declaration;
+    if (
+      declaration === undefined ||
+      declaration.parameters.some((parameter) => effectiveIrParamTypeNode(parameter) === undefined) ||
+      effectiveIrReturnTypeNode(declaration) === undefined
+    ) {
+      shapeNo("function-object-member-evidence", e);
+      return null;
+    }
+    return access.expression;
+  };
+
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return currentStableFunctionCallSubject !== null;
@@ -2943,6 +2984,10 @@ function dynamicUsesAreMoveOnly(
     ) {
       return true;
     }
+    // (#7106 item 1) `assert._isSameValue(x, y)`: a member call on a stable
+    // top-level function object (Stage 2) lowers through the dynamic closed
+    // dispatch and produces a dynamic value.
+    if (functionObjectMemberCallee(e) !== null) return true;
     if (
       currentDynamicRuntimeBuildable &&
       ts.isCallExpression(e) &&
@@ -3148,6 +3193,26 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn || !currentDynamicRuntimeBuildable) return false;
         for (const argument of e.arguments) {
           if (ts.isSpreadElement(argument)) return false;
+          if (isDynShaped(argument)) {
+            if (!scanExpr(argument, true)) return false;
+          } else {
+            const concrete = unwrap(argument);
+            if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+          }
+        }
+        return true;
+      }
+      // (#7106 item 1) `assert._isSameValue(b[i], a[i])`: a member call on a
+      // stable top-level function object → a DYNAMIC result; every argument is
+      // a carrier or a boxable concrete (the producer boxes primitives and
+      // wraps refs, `functionObjectDynamicValue`); an element key is scanned.
+      if (functionObjectMemberCallee(e) !== null) {
+        if (!expectDyn) return false;
+        if (ts.isElementAccessExpression(e.expression)) {
+          const key = unwrap(e.expression.argumentExpression);
+          if (!scanExpr(key, isDynShaped(key))) return false;
+        }
+        for (const argument of e.arguments) {
           if (isDynShaped(argument)) {
             if (!scanExpr(argument, true)) return false;
           } else {
@@ -3449,6 +3514,10 @@ function dynamicUsesAreMoveOnly(
         const key = unwrap(e.argumentExpression);
         if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return true;
         if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
+        // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
+        // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
+        // so the key is never null.
+        if (expressionIsProvenNumber(key) && scanExpr(key, false)) return true;
         return false; // any other index shape is out of the producer contract
       }
       // Concrete receiver: the existing typed element-read path (unchanged).

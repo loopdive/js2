@@ -500,6 +500,46 @@ in a conditional (`__isArray(obj) && … ? nonIndexNumericPropertyName : …`),
 not admitted (the scan's return arm wants a dynamic carrier, `g` is i32); not
 a harness shape, recorded only.
 
+### Item 1, S1h slice — 2026-10-21 11:40Z (C, measured): `compareArray`'s three selector blockers
+
+assert.js's `compareArray(a, b)` stopped on `b.length !== a.length`
+(`move-only[concrete]`). Three selector gaps, all pre-claim, all opened:
+
+1. **Member host ≠ value use.** `collectDirectOnlyFunctionDeclarations`
+   counted `compareArray.format = …` as a value use, so the dynamic member
+   equality refusal (the callback-boundary carrier concern: legacy array HOFs
+   pass `obj` in the raw array carrier) applied. A function that is only the
+   HOST of a member access is never handed to a callback trampoline; it now
+   stays in the direct-only set. `fn.call` / `fn.apply` / `fn.bind` remain
+   value uses (a bound invocation can reach the callback ABI).
+2. **Proven-number element key.** `b[i]` with a counted-loop `i`: the scan's
+   key-shape contract allowed only literals and dynamic indexes; the producer
+   (`lowerElementAccess`, dyn arm) lowers any other key f64 and boxes it
+   tag-3, so a `expressionIsProvenNumber` key is admitted.
+3. **Function-object member call as a dynamic value.** `assert._isSameValue(b[i],
+   a[i])` had no scan arm (fell to "no dynamic involvement"); it is now
+   dyn-shaped and scanned like the receiver-first method plan (arguments are
+   carriers or boxable concretes, `functionObjectDynamicValue` boxes), and its
+   result may feed `!`/truthiness/`if`.
+
+**Stage 2 claim-then-demote channel found while opening 3 (recorded for the
+Stage 2 owner, gated here):** the selector's `functionObjectMemberCallIsBuildable`
+admits any member call on a `resolveTopLevelFunctionValue` receiver, but the
+planner (`ir-imported-call-planning.ts`, `objectReceiver: true`) mints the
+canonical support only when EVERY parameter and the result have type evidence
+(an annotation or the target's IR claim entry); test262's untyped,
+legacy-owned `assert` has neither, so the claim demotes at lowering
+(`identifier "assert" is not in scope`) — visible today on `<module-init>`
+(`assert._isSameValue = …`) and on `compareArray`. The new scan arm mirrors
+the planner's annotation route (`function-object-member-evidence` refusal);
+the claim-entry route cannot be mirrored in the selector (claims are not
+visible there). Consequence for the harness: `compareArray` claims and runs
+end to end against a TYPED function object (measured: length mismatch, `-0`
+vs `0`, `NaN` vs `NaN` all match legacy), but on the real harness it waits
+for `assert` to become an IR claim (Stage 3c) AND for the planner's claim
+route to be mirrored (or the Stage 2 isPhase1Expr arm to require the same
+evidence). gc/standalone bytes identical to the S1e reference.
+
 Measured again 04:35Z, correcting the note above: a function mixing
 `return o + "!"` and `return o` (or `return "x"` / `return String(o)` with a
 dynamic return) registers `(result externref)` in BOTH front-ends and ships
