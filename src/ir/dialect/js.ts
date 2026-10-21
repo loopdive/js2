@@ -50,6 +50,8 @@ export type {
   IrInstrDynConstruct,
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
+  IrInstrDynCurrentThis,
+  IrInstrDynInstanceOfFunction,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

@@ -182,6 +182,10 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.construct":
     // #7106 S1e — reads and clears the __argc/__extras_argv protocol globals.
     case "dyn.arguments_length":
+    // #7106 S3c — reads the receiver protocol global; runs no user code.
+    case "dyn.current_this":
+    // #7106 S3c — reads F.prototype (lazily materialised) and walks the chain.
+    case "dyn.instanceof_fn":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":

@@ -251,6 +251,35 @@ export interface IrInstrDynArgumentsLength extends IrInstrBase {
 }
 
 /**
+ * `dyn.current_this{strict}` — the `this` binding of an ordinary top-level
+ * function invocation (#7106 S3c): the receiver the caller installed
+ * (OrdinaryCallBindThis §10.2.1.2, a `[[Construct]]` or a method call), else
+ * the unbound answer, which depends on the function's own strictness — the
+ * global object for sloppy code, `undefined` for strict (§10.2.1.2 step 5).
+ * Reads the same receiver protocol legacy's `this` ladder reads, so both
+ * frontends see the same receiver. Result `dynamic`. No operands.
+ */
+export interface IrInstrDynCurrentThis extends IrInstrBase {
+  readonly kind: "dyn.current_this";
+  /** The function's code is strict (unbound `this` stays `undefined`). */
+  readonly strict: boolean;
+}
+
+/**
+ * `dyn.instanceof_fn{value, target}` — `value instanceof F` (§13.10.2) where F
+ * is a known top-level function constructor of this module (#7106 S3c):
+ * OrdinaryHasInstance (§7.3.20) walks `value`'s prototype chain for
+ * `F.prototype`, read through the SAME per-function prototype object legacy's
+ * `instanceof F` and `new F()` use. `value` is `dynamic`; result `i32` (0/1).
+ */
+export interface IrInstrDynInstanceOfFunction extends IrInstrBase {
+  readonly kind: "dyn.instanceof_fn";
+  readonly value: IrValueId;
+  /** The constructor function's exact unit identity. */
+  readonly target: IrFuncRef;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a
@@ -361,6 +390,11 @@ export interface IrInstrDynMemberSet extends IrInstrBase {
   readonly key: IrValueId;
   /** The assigned value carrier (`dynamic`). */
   readonly value: IrValueId;
+  /**
+   * (#7106 S3c) Sloppy-mode PutValue (§6.2.5.6 step 6.d): a failed `[[Set]]`
+   * is ignored instead of throwing — legacy's `__extern_set`. Absent → strict.
+   */
+  readonly sloppy?: true;
 }
 
 /**

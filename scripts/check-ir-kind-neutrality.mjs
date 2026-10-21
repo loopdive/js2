@@ -821,6 +821,16 @@ const VERDICTS = {
     why: 'ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the number of arguments passed), read through the call-site count protocol shared with legacy.',
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the number of arguments actually" }],
   },
+  "dyn.current_this": {
+    verdict: "js",
+    why: "ECMAScript OrdinaryCallBindThis (§10.2.1.2) for an ordinary function: the installed receiver, else the global object (sloppy) or undefined (strict), read through the receiver protocol shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the `this` binding of an ordinary top-level" }],
+  },
+  "dyn.instanceof_fn": {
+    verdict: "js",
+    why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) against a known function constructor's prototype object, shared with legacy's per-function prototype.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "OrdinaryHasInstance (§7.3.20) walks" }],
+  },
   "dyn.construct": {
     verdict: "js",
     why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",
