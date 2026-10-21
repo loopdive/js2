@@ -233,6 +233,7 @@ import {
   boundedMixedConditionalPrimitiveFamily,
   effectiveIrParamTypeNode,
   jsDocParamIsExternrefCandidate,
+  functionBodyReferencesArguments,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -1821,6 +1822,9 @@ export function lowerFunctionAstToIr(
   const cx: LowerCtx = {
     ...sourceScope,
     builder,
+    ...(ts.isFunctionDeclaration(fn) && !options.moduleInitUnit && functionBodyReferencesArguments(fn.body)
+      ? { argumentsLength: {} }
+      : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
     scope,
     funcName: name,
@@ -1912,6 +1916,9 @@ export function lowerFunctionAstToIr(
     return { main: builder.finish(), lifted, liftedUnitProvenance, ...sourceMapResult(cx) };
   }
 
+  // (#7106 S1e) `arguments.length` is read at ENTRY, before any nested call
+  // can clobber the call site's published count — exactly legacy's prologue.
+  if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
   if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
   checkLogicalVectorConsumption(cx);
@@ -2984,6 +2991,8 @@ interface LowerCtx extends FrontendSourceScope {
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
   readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
   readonly consumedCountedStringAppends: IrCountedStringAppendLoweringPlan[];
+  /** (#7106 S1e) The entry-time `arguments.length` value of this top-level function, when its body reads it. */
+  readonly argumentsLength?: { value?: IrValueId };
   readonly identityContext?: IrPlanningIdentityContext;
   /** Slice 4 (#1169d) — class shape registry, keyed by className. */
   readonly classShapes?: ReadonlyMap<string, IrClassShape>;
@@ -6200,6 +6209,24 @@ function lowerPreparedOrdinaryPropertyRead(expr: ts.PropertyAccessExpression, cx
 function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerPropertyAccess(expr, cx));
+  // (#7106 S1e) `arguments.length` — the entry-time count (selector-admitted
+  // only in the claimed function's own body, unshadowed).
+  if (
+    ts.isIdentifier(expr.name) &&
+    expr.name.text === "length" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "arguments" &&
+    !cx.scope.has("arguments")
+  ) {
+    const entry = cx.argumentsLength?.value;
+    if (entry === undefined) {
+      demoteToLegacy(
+        "body-shape-rejected",
+        `ir/from-ast: arguments.length outside its function's entry prologue (${cx.funcName})`,
+      );
+    }
+    return entry;
+  }
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
   if (ordinary !== null) return ordinary;
   // #3000 — private-field read (`this.#x`). A PrivateIdentifier is not an

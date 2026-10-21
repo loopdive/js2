@@ -1894,6 +1894,18 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitObjectToStringTag(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.arguments_length": {
+        // #7106 S1e — the invocation's actual argument count, legacy's prologue.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.arguments_length (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitArgumentsLength(instr.formals)) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.string_carrier": {
         // #7106 S1c — checked native-string carrier recovery, legacy's return ladder.
         const valueIrType = typeOf(instr.value);
@@ -3851,6 +3863,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.value];
     case "dyn.construct":
       return [instr.callee, ...instr.args];
+    case "dyn.arguments_length":
+      return [];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":

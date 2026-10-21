@@ -717,6 +717,20 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S1e — the invocation's `arguments.length` (actual argument count); result f64. */
+  emitDynArgumentsLength(formals: number): IrValueId {
+    if (!Number.isInteger(formals) || formals < 0) {
+      throw new Error(
+        `IrFunctionBuilder: emitDynArgumentsLength formals must be a non-negative integer, got ${formals} (#7106 S1e) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = irVal({ kind: "f64" });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.arguments_length", formals, result, resultType });
+    return result;
+  }
+
   /** #7106 S1c — checked native-string carrier recovery from a dynamic value; result string. */
   emitDynStringCarrier(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {

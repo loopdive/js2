@@ -972,6 +972,23 @@ function verifyInstrStructure(
       });
     }
   }
+  // #7106 S1e — dyn.arguments_length: no operands, result f64, formals ≥ 0.
+  if (instr.kind === "dyn.arguments_length") {
+    if (!Number.isInteger(instr.formals) || instr.formals < 0) {
+      errors.push({
+        message: `dyn.arguments_length formals must be a non-negative integer, got ${instr.formals} (#7106 S1e)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "f64") {
+      errors.push({
+        message: `dyn.arguments_length result must be an f64 IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S1e)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   // #7106 S1c — dyn.string_carrier: operand dynamic, result string.
   if (instr.kind === "dyn.string_carrier") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
@@ -1374,6 +1391,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.arguments_length":
+      return [];
     case "dyn.construct":
       return [instr.callee, ...instr.args];
     case "dyn.eq":
@@ -1965,6 +1984,9 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "dyn.object_tag": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106 S1c)" },
   "dyn.string_carrier": {
     skip: "checked-elsewhere: operand-dynamic + result-string rules in verifyInstrStructure (#7106 S1c)",
+  },
+  "dyn.arguments_length": {
+    skip: "checked-elsewhere: no-operand + result-f64 rules in verifyInstrStructure (#7106 S1e)",
   },
   "dyn.construct": {
     skip: "checked-elsewhere: callee/args/result all-dynamic rules in verifyInstrStructure (#7106 S3a)",

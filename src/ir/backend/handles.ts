@@ -370,6 +370,14 @@ export interface IrDynamicLowering {
    */
   emitStringCarrier(): readonly Instr[];
   /**
+   * (#7106 S1e) Nothing on the stack → the invocation's `arguments.length`
+   * as f64: the count half of legacy's arguments prologue (read + clear
+   * `__argc`, consume `__extras_argv`; an unknown caller yields `formals`),
+   * wrapped once per module (`__ir_arguments_length`). Throws where the
+   * `native-arguments-length` capability does not hold.
+   */
+  emitArgumentsLength(formals: number): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

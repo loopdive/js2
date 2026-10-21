@@ -816,6 +816,11 @@ const VERDICTS = {
     why: "ECMAScript String value recovery from a boxed-any carrier (a primitive string or a String wrapper's [[StringData]], §10.4.3), through the coercion ladder shared with legacy; not ToString.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the checked recovery of the native string" }],
   },
+  "dyn.arguments_length": {
+    verdict: "js",
+    why: 'ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the number of arguments passed), read through the call-site count protocol shared with legacy.',
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the number of arguments actually" }],
+  },
   "dyn.construct": {
     verdict: "js",
     why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",

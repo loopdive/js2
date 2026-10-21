@@ -237,6 +237,20 @@ export interface IrInstrDynStringCarrier extends IrInstrBase {
 }
 
 /**
+ * `dyn.arguments_length{formals}` — the ECMAScript `arguments.length` of the
+ * current function invocation (#7106 S1e): the number of arguments actually
+ * passed (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the actual
+ * argument count, not the formal count). Reads and clears the call site's
+ * published count exactly as legacy's arguments prologue does, at function
+ * entry; an unknown caller yields `formals`. Result `f64`. No operands.
+ */
+export interface IrInstrDynArgumentsLength extends IrInstrBase {
+  readonly kind: "dyn.arguments_length";
+  /** The declared formal-parameter count (the unknown-caller fallback). */
+  readonly formals: number;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

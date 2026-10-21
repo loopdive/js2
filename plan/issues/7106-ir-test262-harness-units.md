@@ -28,10 +28,11 @@ assignee: "ttraenkler/claude-c"
 # joins the SCC (it imports the construct-driver modules).
 flat-dir-budget-allow:
   - src/codegen/ir-string-carrier.ts # 2026-10-21 (#7106 S1c): the dyn.string_carrier wrapper beside ir-dynamic-construct.ts
+  - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
-  - ir->codegen: 78 # 2026-10-21 (#7106 S3a/S1c): integration.ts pre-registers the dynamic-construct and string-carrier wrappers
-  - largestSccSize: 723 # 2026-10-21 (#7106 S3a/S1c): codegen/ir-dynamic-construct.ts and codegen/ir-string-carrier.ts join the SCC
+  - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
+  - largestSccSize: 724 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC
 func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
@@ -354,6 +355,46 @@ After the slice (`verifyProperty` legacy: `(externref ×4) -> i32`):
 | `verifyProperty` | `arguments.length` (`expr-ident-not-in-scope «arguments»`), then Stage 2 (`assert(...)` direct call to the fnctor) |
 | `verifyCallableProperty` | `options && options.verifyProperty || verifyProperty` — a function-object operand: **Stage 2** |
 | `verifyAccessorProperty` | `checkGet || checkSet` over `__hasOwnProperty(...)` (bound-builtin alias results), then Stage 2 |
+
+### Item 1, S1e slice — 2026-10-21 04:20Z (C, measured; shipped on #6815)
+
+`verifyProperty`'s next blocker was `arguments.length` (`assert(arguments.length
+> 2, …)`). Legacy lowers `arguments` through a call-site count protocol, not
+the formal count: every direct caller of an arguments-reading function
+publishes `__argc = min(actual, formals)` (`emitSetArgc`) and over-arity
+extras in `__extras_argv`; the callee's ENTRY prologue reads both, clears
+them to the `-1`/null sentinels so nested calls never see stale data, and
+`arguments.length = argc + extras.length` (`emitArgumentsVecBody`). An
+unknown caller (`-1`) reads the formal count. Measured: `vp(1,2,3)` → 3,
+`vp(1,2)` → 2, `vq(1,2,3)` on two formals → 3.
+
+The IR mirrors exactly the count half: `dyn.arguments_length{formals}` (35th
+kind, result f64; capability `native-arguments-length`) → one wrapper
+`__ir_arguments_length(i32) -> f64` (`src/codegen/ir-arguments-length.ts`)
+with that prologue verbatim, emitted at the claimed function's entry before
+any statement. The selector admits `arguments.length` only in the claimed
+top-level function's own body (arrows inherit it; a nested `function` has
+its own), unshadowed; every other `arguments` use stays legacy. The
+propagator types it `f64`.
+
+**Caller side deliberately NOT in this slice:** an IR direct call to a local
+arguments-reading callee would have to publish `__argc` (the imported-call
+plan already does, via `funcUsesArguments`; the local direct-call plan has
+no argc slot), so such a caller is rejected
+(`expr-call-arguments-reading-callee`) and stays legacy — legacy callers
+publish the count, so the claimed callee observes it correctly. Adding the
+slot to `IrDirectCallLoweringPlan` + `emitGlobalSet(irArgcGlobalRef)` after
+argument evaluation is the follow-up that lets `verifyCallableProperty` /
+`verifyAccessorProperty` (both call `verifyProperty`) migrate.
+
+Pre-existing gap met while testing, NOT this slice's: an unannotated
+`function g(a,b,c,d) { if (a > 2) return 1; return 0; }` is withdrawn at
+parity on base too (IR result externref vs legacy f64; the early-return
+numeric-literal shape). The S1e tests use the boolean-return and
+`return n + a` shapes instead.
+
+After the slice `verifyProperty` stops on `assert` (a function object:
+**Stage 2**).
 
 Open divergence recorded for the next slice: legacy types `dyn + "!"` as a
 STRING result (`(result (ref null $AnyString))`) while the lattice says

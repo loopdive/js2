@@ -8432,6 +8432,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/ir-arguments-length.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dyn.arguments_length support (#7106 S1e): the wrapper over legacy's __argc/__extras_argv count protocol; moves with the arguments-object split."
+    },
+    {
       "path": "src/codegen/ir-string-carrier.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

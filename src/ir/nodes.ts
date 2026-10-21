@@ -134,6 +134,7 @@ export type {
   IrInstrDynObjectTag,
   IrInstrDynConstruct,
   IrInstrDynStringCarrier,
+  IrInstrDynArgumentsLength,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

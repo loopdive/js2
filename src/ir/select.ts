@@ -1811,6 +1811,7 @@ function whyNotIrClaimable(
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   typedShapeRejectReason = null;
+  currentArgumentsSubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
   currentClaimClassName =
     isMethod && fn.parent && (ts.isClassDeclaration(fn.parent) || ts.isClassExpression(fn.parent))
       ? ([...currentLocalClassDeclarations].find(([, declaration]) => declaration === fn.parent)?.[0] ??
@@ -2666,6 +2667,45 @@ export function irFunctionBodyReturnsValue(body: ts.Block): boolean {
  * as non-dynamic (conservative: dyn args to it reject the claim).
  */
 let currentDynScanDecls: ReadonlyMap<string, ts.FunctionDeclaration> | null = null;
+// (#7106 S1e) The top-level FunctionDeclaration being claimed, for the
+// `arguments.length` arm: only ITS own body (not a nested function's) reads
+// the prologue count the IR emits at that function's entry.
+let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
+
+/** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
+export function functionBodyReferencesArguments(body: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === "arguments") {
+      found = true;
+      return;
+    }
+    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node))) return;
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return found;
+}
+
+/**
+ * (#7106 S1e) `arguments.length` read by the claimed top-level function's OWN
+ * body (an arrow inside it inherits the binding and is admitted; a nested
+ * `function` has its own `arguments` and is not), unshadowed, on a lane with
+ * the argc-protocol wrapper. Every other `arguments` use stays rejected.
+ */
+function phase1ArgumentsLengthRead(expr: ts.PropertyAccessExpression, scope: ReadonlySet<string>): boolean {
+  if (currentArgumentsSubject === null) return false;
+  if (!ts.isIdentifier(expr.name) || expr.name.text !== "length") return false;
+  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "arguments") return false;
+  if (scope.has("arguments")) return false;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") !== true) return false;
+  for (let cur: ts.Node | undefined = expr.parent; cur; cur = cur.parent) {
+    if (cur === currentArgumentsSubject) return true;
+    if (ts.isFunctionDeclaration(cur) || ts.isFunctionExpression(cur) || ts.isMethodDeclaration(cur)) return false;
+  }
+  return false;
+}
 
 /** Resolve whether param `argIdx` of local function `calleeName` is dynamic
  *  (same `resolveParamType` verdict the callee's own claim check uses, so the
@@ -10262,6 +10302,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
+    // (#7106 S1e) A direct call to a local function that reads `arguments`
+    // must publish `__argc` first (legacy's `emitSetArgc`); the IR direct-call
+    // plan carries no argc slot yet, so such a caller stays legacy.
+    if (ts.isIdentifier(expr.expression) && !scope.has(expr.expression.text)) {
+      const callee = currentDynScanDecls?.get(expr.expression.text);
+      if (callee?.body && functionBodyReferencesArguments(callee.body)) {
+        return capabilityNo("call-arity-unsupported", "expr-call-arguments-reading-callee", expr);
+      }
+    }
     const programCallableVerdict = programCallablePhase1Verdict(
       certifiedImportedHofCall(expr, currentSelectionOptions?.importedFunctions)
         ? undefined
@@ -10881,6 +10930,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // class instance (recv is Phase-1; lowerer dispatches by the recv's
   // resolved IrType).
   if (ts.isPropertyAccessExpression(expr)) {
+    // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
+    if (phase1ArgumentsLengthRead(expr, scope)) return true;
     // #3000 — accept private-field reads (`this.#x`). A PrivateIdentifier is a
     // valid class-instance field access; from-ast lowers it to `class.get` on
     // the mangled `__priv_x` slot. Non-class receivers with a private name are

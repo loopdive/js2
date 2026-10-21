@@ -707,6 +707,8 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.arguments_length":
+      return inst; // no operands (#7106 S1e)
     case "dyn.string_carrier":
     case "dyn.to_number": {
       const v = mapId(rename, inst.value);

@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 92,
+    "total": 93,
     "neutral": 55,
-    "js": 34,
+    "js": 35,
     "unresolved": 3,
     "core": 58,
-    "dialect": 34,
+    "dialect": 35,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -173,6 +173,13 @@
       "why": "Materializes a typed constant; the operation is fixed by the IrConst payload's own type.",
       "evidence": ["src/ir/core/nodes.ts#0701bace61ad"],
       "residual": "Value model, not operation: IrConst carries BOTH `null` and `undefined` — the ECMAScript two-sentinel model, i.e. the JsTag.Null / JsTag.Undefined partitions (src/ir/js-tag.ts). Owned by #3954 phase 1 (TagDomain), not by the dialect split."
+    },
+    "dyn.arguments_length": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynArgumentsLength",
+      "why": "ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets \"length\" to the number of arguments passed), read through the call-site count protocol shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#0d2b59b30530"]
     },
     "dyn.construct": {
       "verdict": "js",

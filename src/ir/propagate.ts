@@ -1090,6 +1090,15 @@ function inferPropertyAccessAtom(
 ): LatticeType {
   if (!ts.isIdentifier(expr.name)) return DYNAMIC;
   if (expr.questionDotToken) return DYNAMIC;
+  // (#7106 S1e) `arguments.length` is a number (the actual argument count).
+  if (
+    expr.name.text === "length" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "arguments" &&
+    !scope.has("arguments")
+  ) {
+    return F64;
+  }
   const recvType = inferExpr(expr.expression, scope, entries, resolveCallTarget, ext);
   if (recvType.kind !== "object") return DYNAMIC;
   const propName = expr.name.text;

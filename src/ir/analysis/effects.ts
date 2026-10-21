@@ -180,6 +180,8 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "fnctor.new":
     // #7106 S3a — runs an arbitrary user constructor body.
     case "dyn.construct":
+    // #7106 S1e — reads and clears the __argc/__extras_argv protocol globals.
+    case "dyn.arguments_length":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":

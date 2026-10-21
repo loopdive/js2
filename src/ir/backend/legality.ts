@@ -27,7 +27,8 @@ export type IrBackendTargetCapability =
   | "native-json-codec"
   | "native-object-tostring-tag"
   | "native-dynamic-construct"
-  | "native-string-carrier-coercion";
+  | "native-string-carrier-coercion"
+  | "native-arguments-length";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -113,6 +114,14 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "native-arguments-length":
+      // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
+      // host-free lanes (`__ir_arguments_length`).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
     case "native-string-carrier-coercion":
       // (#7106 S1c) the checked externref → $AnyString recovery ladder legacy
       // emits on the native-string host-free lanes (`__ir_string_carrier`).
