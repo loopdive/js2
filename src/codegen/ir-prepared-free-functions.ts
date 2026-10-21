@@ -44,6 +44,8 @@ import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import { applyIrFinalContextFunctionUnitIds, type IrOverlayPreparationPlan } from "./ir-overlay-preparation.js";
 import {
   buildIrRequestedFunctionSkipProjection,
+  identifierIsRuntimeFunctionValueReference,
+  sameDeclarationSite,
   computeIrFirstSkipUnitIds,
   mergeIrIntegrationReports,
   preparedIrBodyRouting,
@@ -51,6 +53,7 @@ import {
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
+import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
 import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
@@ -459,46 +462,6 @@ function prepareClassConstructorSupports(ctx: CodegenContext, classShapes: Reado
   }
 }
 
-function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): boolean {
-  const parent = identifier.parent;
-  if (!parent) return false;
-  if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
-  // The direct owner already lowers an immediately invoked `.call` / `.apply`
-  // without retaining a generic runtime function value. Preparing singleton
-  // support for this receiver alone would keep the JS-string bridge and the
-  // whole generic closure surface alive in an otherwise tiny optimized module.
-  if (
-    ts.isPropertyAccessExpression(parent) &&
-    parent.expression === identifier &&
-    (parent.name.text === "call" || parent.name.text === "apply") &&
-    ts.isCallExpression(parent.parent) &&
-    parent.parent.expression === parent
-  ) {
-    return false;
-  }
-  if (
-    ((ts.isFunctionDeclaration(parent) ||
-      ts.isFunctionExpression(parent) ||
-      ts.isClassDeclaration(parent) ||
-      ts.isClassExpression(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isGetAccessorDeclaration(parent) ||
-      ts.isSetAccessorDeclaration(parent)) &&
-      parent.name === identifier) ||
-    (ts.isVariableDeclaration(parent) && parent.name === identifier) ||
-    (ts.isParameter(parent) && parent.name === identifier) ||
-    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === identifier) ||
-    (ts.isBindingElement(parent) && (parent.name === identifier || parent.propertyName === identifier)) ||
-    (ts.isLabeledStatement(parent) && parent.label === identifier) ||
-    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === identifier) ||
-    ts.isImportSpecifier(parent) ||
-    ts.isExportSpecifier(parent)
-  ) {
-    return false;
-  }
-  return true;
-}
-
 function topLevelFunctionUnitsByName(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
@@ -521,22 +484,6 @@ function topLevelFunctionUnitsByName(
   return byName;
 }
 
-/**
- * The checker oracle can retain a declaration node from a sibling Program
- * snapshot while selection walks the structurally identical current source.
- * Compare the stable source site as well as object identity so incremental
- * compilation cannot silently lose an otherwise exact declaration match.
- */
-function sameDeclarationSite(left: ts.Declaration, right: ts.Declaration): boolean {
-  if (left === right) return true;
-  return (
-    left.kind === right.kind &&
-    left.pos === right.pos &&
-    left.end === right.end &&
-    left.getSourceFile().fileName === right.getSourceFile().fileName
-  );
-}
-
 function identifierResolvesToDeclaration(
   ctx: CodegenContext,
   identifier: ts.Identifier,
@@ -546,6 +493,20 @@ function identifierResolvesToDeclaration(
   return resolved !== undefined && sameDeclarationSite(resolved, declaration);
 }
 
+/** Keep the ordinary .call/.apply scanner exclusion; this arm actually reads the receiver. */
+function identifierIsApplyArgArrayTypeErrorReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  const access = identifier.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== identifier || access.questionDotToken)
+    return false;
+  const call = access.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression === access &&
+    call.questionDotToken === undefined &&
+    applyArgArrayTypeErrorMaterializesReceiver(ctx, call, access)
+  );
+}
+
 function collectTopLevelFunctionValueTargets(
   ctx: CodegenContext,
   sourceFile: ts.SourceFile,
@@ -553,16 +514,30 @@ function collectTopLevelFunctionValueTargets(
     string,
     readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
   >,
+  includeApplyArgArrayTypeErrorReceivers = false,
 ): ReadonlySet<IrUnitId> {
   const targets = new Set<IrUnitId>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
-      const declaration = ctx.oracle.valueDeclarationOf(node);
-      const exact =
-        declaration === undefined
-          ? undefined
-          : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
-      if (exact) targets.add(exact.unitId);
+    if (ts.isIdentifier(node)) {
+      const ordinaryReference = identifierIsRuntimeFunctionValueReference(node);
+      const applyReceiver =
+        includeApplyArgArrayTypeErrorReceivers &&
+        !ordinaryReference &&
+        identifierIsApplyArgArrayTypeErrorReceiver(ctx, node);
+      if (ordinaryReference || applyReceiver) {
+        const declaration = ctx.oracle.valueDeclarationOf(node);
+        const exact =
+          declaration === undefined
+            ? undefined
+            : (unitsByName.get(node.text) ?? []).find((unit) => sameDeclarationSite(unit.declaration, declaration));
+        if (
+          exact &&
+          (ordinaryReference ||
+            (ctx.runtimeEvalGlobalFunctionBindings !== true &&
+              !ctx.reassignedFunctionDeclarations?.has(exact.declaration)))
+        )
+          targets.add(exact.unitId);
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -604,7 +579,12 @@ export function collectPreparedTopLevelFunctionValueTargetUnitIds(
   sourceFile: ts.SourceFile,
   identityPlan: irOverlayIdentity.IrOverlayIdentityPlan,
 ): ReadonlySet<IrUnitId> {
-  return collectTopLevelFunctionValueTargets(ctx, sourceFile, topLevelFunctionUnitsByName(sourceFile, identityPlan));
+  return collectTopLevelFunctionValueTargets(
+    ctx,
+    sourceFile,
+    topLevelFunctionUnitsByName(sourceFile, identityPlan),
+    true,
+  );
 }
 
 function containsTopLevelFunctionValueReference(
