@@ -995,6 +995,23 @@ function verifyInstrStructure(
       });
     }
   }
+  // #7106 S1i — dyn.publish_argc: no operands, no result, count ≥ 0.
+  if (instr.kind === "dyn.publish_argc") {
+    if (!Number.isInteger(instr.count) || instr.count < 0) {
+      errors.push({
+        message: `dyn.publish_argc count must be a non-negative integer, got ${instr.count} (#7106 S1i)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.result !== null || instr.resultType !== null) {
+      errors.push({
+        message: `dyn.publish_argc must not produce a value (#7106 S1i)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   // #7106 S1e — dyn.arguments_length: no operands, result f64, formals ≥ 0.
   if (instr.kind === "dyn.arguments_length") {
     if (!Number.isInteger(instr.formals) || instr.formals < 0) {
@@ -1415,6 +1432,7 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "dyn.to_number":
       return [instr.value];
     case "dyn.arguments_length":
+    case "dyn.publish_argc":
       return [];
     case "dyn.own_property":
       return [instr.receiver, instr.key];
@@ -2012,6 +2030,9 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "dyn.arguments_length": {
     skip: "checked-elsewhere: no-operand + result-f64 rules in verifyInstrStructure (#7106 S1e)",
+  },
+  "dyn.publish_argc": {
+    skip: "checked-elsewhere: no-operand + no-result rules in verifyInstrStructure (#7106 S1i)",
   },
   "dyn.own_property": {
     skip: "checked-elsewhere: receiver/key-dynamic + result-bool rules in verifyInstrStructure (#7106 S1g)",
