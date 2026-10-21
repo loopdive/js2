@@ -122,6 +122,7 @@ import {
 import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
+import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import {
   collectOuterWrites,
   collectTransitiveClosureCaptures,
@@ -2141,6 +2142,30 @@ function denseArrayReductionPlan(stmts: readonly ts.Statement[]): DenseArrayRedu
   };
 }
 
+/**
+ * The terminator after a tail `switch` / loop / `try`: control that falls out
+ * of the construct reaches the function's implicit return. Void → the empty
+ * return; (#7106 S1b) dynamic → the carrier's `undefined` (#7104's
+ * `dyn.undefined`), which is what the selector admits for a dynamic-return
+ * function whose tail `switch` has no `default` (assert.js's
+ * `formatIdentityFreeValue` on a Symbol or object matches no clause); any
+ * other return type → the selector proved nothing falls out, so the
+ * instruction is unreachable. Measured 2026-10-21 (#6811 merge group): the
+ * dynamic arm used to be `unreachable` too, and every `assert.deepEqual` on a
+ * non-primitive trapped — 8 ES5 harness self-tests.
+ */
+function terminateTailFallOut(cx: LowerCtx): void {
+  if (cx.returnType === null) {
+    cx.builder.terminate({ kind: "return", values: [] });
+    return;
+  }
+  if (cx.returnType.kind === "dynamic") {
+    cx.builder.terminate({ kind: "return", values: [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)] });
+    return;
+  }
+  cx.builder.terminate({ kind: "unreachable" });
+}
+
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
     // #7104 — an empty dynamic-return body returns the carrier's undefined.
@@ -2781,7 +2806,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   //     throw-tail arm uses).
   if (ts.isSwitchStatement(stmt)) {
     lowerSwitchStatement(stmt, { ...cx, scope: new Map(cx.scope) });
-    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    terminateTailFallOut(cx);
     return;
   }
   // #5165 S1 — a function ENDING in a C-style loop. Identical
@@ -2797,7 +2822,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     if (ts.isWhileStatement(stmt)) lowerWhileStatement(stmt, loopCx);
     else if (ts.isForStatement(stmt)) lowerForStatement(stmt, loopCx);
     else lowerDoStatement(stmt, loopCx);
-    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    terminateTailFallOut(cx);
     return;
   }
   // #5165 S3 — a function ENDING in a `try`. Same `emitTry` lowering as the
@@ -2805,7 +2830,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   // return) or `tryAllPathsTerminate` (nothing falls out at all).
   if (ts.isTryStatement(stmt)) {
     lowerTryStatement(stmt, { ...cx, scope: new Map(cx.scope) });
-    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    terminateTailFallOut(cx);
     return;
   }
   demoteToLegacy(
@@ -5163,7 +5188,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     return lowerBinary(expr, cx, hint);
   }
   if (ts.isConditionalExpression(expr)) {
-    return lowerConditional(expr, cx);
+    return lowerConditional(expr, cx, hint);
   }
   if (ts.isCallExpression(expr)) {
     const hostDateGetter = lowerHostDateGetterCall(expr, cx);
@@ -5914,6 +5939,12 @@ function lowerExactDynamicPrimitiveTypeof(
 function lowerTypeOf(expr: ts.TypeOfExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerTypeOf(expr, cx));
+  // (#7106 S1b) `typeof <unshadowed ambient global>` is a constant tag — the
+  // same proof the selector's `ambientTypeofTag` demanded.
+  if (ts.isIdentifier(expr.expression)) {
+    const ambientTag = ambientTypeofIdentifierTagFromAst(expr.expression, cx);
+    if (ambientTag !== undefined) return cx.builder.emitStringConst(ambientTag);
+  }
   const inner = lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
   const innerType = cx.builder.typeOf(inner);
   const tag = staticTypeOfFor(innerType);
@@ -7633,6 +7664,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
+  const generalToString = tryLowerAmbientStringToStringCall(expr, cx);
+  if (generalToString !== null) return generalToString;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
   // receiver must lower to an IrType.class; the method must exist on
   // the class shape and be non-void (slice 4 only handles methods with
@@ -9236,6 +9269,55 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
   );
   if (consoleResult !== undefined) return consoleResult;
 
+  // (#7106 S1c) `Object.prototype.toString.call(v)` on the ambient `Object`:
+  // the operand must already be the dynamic carrier (the selector admits no
+  // statically primitive operand); the classifier runs in the lane's runtime.
+  if (
+    methodName === "call" &&
+    ts.isPropertyAccessExpression(expr.expression.expression) &&
+    expr.expression.expression.name.text === "toString" &&
+    ts.isPropertyAccessExpression(expr.expression.expression.expression) &&
+    expr.expression.expression.expression.name.text === "prototype" &&
+    ts.isIdentifier(expr.expression.expression.expression.expression) &&
+    expr.expression.expression.expression.expression.text === "Object" &&
+    expr.arguments.length === 1 &&
+    !ts.isSpreadElement(expr.arguments[0]!) &&
+    cx.scope.get("Object") === undefined &&
+    cx.resolver?.isAmbientBinding?.(expr.expression.expression.expression.expression) !== false
+  ) {
+    const raw = lowerExpr(expr.arguments[0]!, cx, irDynamic());
+    const rawType = cx.builder.typeOf(raw);
+    if (rawType.kind === "dynamic") return cx.builder.emitDynObjectTag(raw);
+    demoteToLegacy(
+      "method-call-unsupported",
+      `ir/from-ast: Object.prototype.toString.call of ${describeIrType(rawType)} operand is deferred (${cx.funcName})`,
+    );
+  }
+  // (#7106 S1b) One-argument `JSON.stringify(v)` on the ambient namespace:
+  // the operand is boxed into the dynamic carrier (a primitive) or already is
+  // one, then serialised through the native codec root legacy calls.
+  if (
+    ts.isIdentifier(expr.expression.expression) &&
+    expr.expression.expression.text === "JSON" &&
+    methodName === "stringify" &&
+    expr.arguments.length === 1 &&
+    !ts.isSpreadElement(expr.arguments[0]!) &&
+    !receiverIsDirectModuleBinding &&
+    cx.scope.get("JSON") === undefined &&
+    cx.resolver?.isAmbientBinding?.(expr.expression.expression) !== false
+  ) {
+    const argument = expr.arguments[0]!;
+    const raw = lowerExpr(argument, cx, irDynamic());
+    const rawType = cx.builder.typeOf(raw);
+    if (rawType.kind === "dynamic") return cx.builder.emitDynJsonStringify(raw);
+    // The selector admits only an operand the checker cannot pin to a primitive;
+    // a concrete representation here is a selector/producer disagreement and
+    // withdraws rather than rendering through the boxed codec path.
+    demoteToLegacy(
+      "method-call-unsupported",
+      `ir/from-ast: JSON.stringify of ${describeIrType(rawType)} operand is deferred (${cx.funcName})`,
+    );
+  }
   // Exact-arity Math builtins become semantic intrinsics before receiver
   // lowering because the ambient `Math` global has no IR value binding.
   // Recheck the selector proof here so divergence fails with a clear error.
@@ -13491,6 +13573,41 @@ function convertMixedPrimitiveArm(
   return number;
 }
 
+/**
+ * (#7106 S1) The general `String(v)` against the ambient constructor. A
+ * dynamic operand is `dyn.to_string` (the lane's `__extern_toString`, one
+ * ToString engine with legacy's `String(any)` arm); a concrete primitive
+ * operand folds inline exactly as the #5092 mixed-conditional arms do. Any
+ * other operand representation demotes — the selector admitted the shape, the
+ * dynamic scan proved the operand's family, so reaching the demote is a
+ * producer/selector disagreement worth a withdrawal, not an invariant.
+ */
+function tryLowerAmbientStringToStringCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
+  if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
+    return withNodeSourceSite(cx, expr, () => tryLowerAmbientStringToStringCall(expr, cx));
+  if (
+    !ts.isIdentifier(expr.expression) ||
+    expr.expression.text !== "String" ||
+    cx.scope.has("String") ||
+    expr.arguments.length !== 1 ||
+    ts.isSpreadElement(expr.arguments[0]!) ||
+    cx.resolver?.isAmbientStringBinding?.(expr.expression) !== true
+  ) {
+    return null;
+  }
+  const argument = expr.arguments[0]!;
+  const value = lowerExpr(argument, cx, irDynamic());
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return cx.builder.emitDynToString(value);
+  if (type.kind === "string") return value;
+  if (irTypeIsBoolean(type)) return lowerBooleanToString(cx.builder, value);
+  if (asVal(type)?.kind === "f64") return lowerNumericSubstitutionToString(value, type, argument, cx);
+  demoteToLegacy(
+    "operand-coercion-unsupported",
+    `ir/from-ast: String() of ${describeIrType(type)} operand is deferred (${cx.funcName})`,
+  );
+}
+
 function tryLowerExactMixedPrimitiveWrapperCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryLowerExactMixedPrimitiveWrapperCall(expr, cx));
@@ -13657,9 +13774,25 @@ function boxMixedConditionalArm(
   return boxed;
 }
 
-function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId {
+/** (#7106 S1b) from-ast's half of the `typeof <ambient>` fold proof (see `lowerTypeOf`). */
+function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "object" | "function" | undefined {
+  if (cx.scope.get(id.text) !== undefined) return undefined;
+  const tag = AMBIENT_TYPEOF_TAGS[id.text];
+  if (tag === undefined) return undefined;
+  if (cx.resolver?.isAmbientBinding?.(id) !== true) return undefined;
+  if (cx.resolver?.isDirectModuleBinding?.(id) === true) return undefined;
+  return tag;
+}
+
+function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx));
+    return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
+  // (#7106 S1b) A constant `typeof <ambient>` condition selects its live arm
+  // at build time — the selector admitted exactly that arm.
+  const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTagFromAst(id, cx));
+  if (folded !== undefined) {
+    return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
+  }
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {

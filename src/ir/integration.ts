@@ -93,6 +93,8 @@ import {
   scriptVarSlotIsSoleHome,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
+import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
   ensureIrNativeMapAdapters,
@@ -8881,6 +8883,10 @@ function isDynamicOp(instr: IrInstr): boolean {
   // consumes the carrier and calls the union-family `__typeof`.
   if (instr.kind === "dyn.undefined") return true;
   if (instr.kind === "dyn.typeof") return true;
+  // #7106 S1 — dyn.to_string consumes the carrier and calls `__extern_toString`.
+  if (instr.kind === "dyn.to_string") return true;
+  if (instr.kind === "dyn.json_stringify") return true;
+  if (instr.kind === "dyn.object_tag") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9103,6 +9109,14 @@ function preregisterDynamicSupport(
   // (#7104) `dyn.undefined` on the host externref carrier needs the
   // `__get_undefined` import reserved BEFORE Phase 3 bakes funcIdxs.
   let usesDynUndefined = false;
+  // (#7106 S1) `dyn.to_string` calls `__extern_toString`: a host late import,
+  // or on native lanes the function `ensureObjectRuntime` registers — either
+  // way reserved BEFORE Phase 3 bakes funcIdxs.
+  let usesDynToString = false;
+  // (#7106 S1b) `dyn.json_stringify` calls the native codec root.
+  let usesDynJsonStringify = false;
+  // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
+  let usesDynObjectTag = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9111,6 +9125,9 @@ function preregisterDynamicSupport(
         forEachInstrDeep(instr, (i) => {
           if (isDynamicOp(i)) usesDynamicOps = true;
           if (i.kind === "dyn.undefined") usesDynUndefined = true;
+          if (i.kind === "dyn.to_string") usesDynToString = true;
+          if (i.kind === "dyn.json_stringify") usesDynJsonStringify = true;
+          if (i.kind === "dyn.object_tag") usesDynObjectTag = true;
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9259,6 +9276,30 @@ function preregisterDynamicSupport(
     ensureObjectRuntime(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
+  }
+  if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    ensureObjectProtoToStringRuntimeHelper(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, "__object_proto_to_string_runtime");
+  }
+  if (usesDynJsonStringify && ctx.nativeStrings && !ctx.fast) {
+    // The native codec (`__json_stringify_value` + its 1-arg root) is a DEFINED
+    // function family; register it now so no Phase-3 body drives a late shift.
+    emitJsonStringifyValue(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, "__json_stringify_root");
+  }
+  if (usesDynToString && !ctx.fast) {
+    if (ctx.nativeStrings) {
+      // Native lanes: `__extern_toString` is a DEFINED function of the object
+      // runtime (object-runtime.ts `registerNative("__extern_toString", …)`).
+      ensureObjectRuntime(ctx);
+      flushLateImportShifts(ctx, null);
+      observeNativeRuntimeProvider(ctx, "__extern_toString");
+    } else {
+      ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
+      flushLateImportShifts(ctx, null);
+    }
   }
   if (usesDynUndefined && !ctx.fast && !ctx.nativeStrings) {
     // Host externref carrier: the same `__get_undefined` import legacy's
@@ -9466,6 +9507,19 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         // scan keeps `typeof <dynamic>` off this strategy (`dynamicRuntimeBuildable`).
         throw new Error("ir/integration: dyn.typeof is not lowerable on the fast $AnyValue carrier (#7104)");
       },
+      emitToString(): readonly Instr[] {
+        // (#7106 S1) `__extern_toString` takes the externref carrier; same gate
+        // as `emitTypeof` — the selector keeps `String(<dynamic>)` off this strategy.
+        throw new Error("ir/integration: dyn.to_string is not lowerable on the fast $AnyValue carrier (#7106)");
+      },
+      emitJsonStringify(): readonly Instr[] {
+        throw new Error(
+          "ir/integration: dyn.json_stringify is not lowerable on the fast $AnyValue carrier (#7106 S1b)",
+        );
+      },
+      emitObjectToStringTag(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.object_tag is not lowerable on the fast $AnyValue carrier (#7106 S1c)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9590,6 +9644,46 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       // carrier is `(ref $anyStr)`, which the extern-wrapped constant unwraps to.
       return [
         callImport("__typeof"),
+        ...(ctx.nativeStrings && ctx.anyStrTypeIdx >= 0
+          ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr]
+          : []),
+      ];
+    },
+    emitToString(): readonly Instr[] {
+      // (#7106 S1) The SAME `__extern_toString` legacy's `String(any)` arm
+      // calls (`emitToString` → the `_toPrimitive` walker, hint "string"; on
+      // standalone the native function `ensureObjectRuntime` registers). Its
+      // externref result IS the host string carrier; under native strings the
+      // IR string carrier is `(ref $anyStr)`, exactly as `emitTypeof` re-tags.
+      return [
+        callImport("__extern_toString"),
+        ...(ctx.nativeStrings && ctx.anyStrTypeIdx >= 0
+          ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr]
+          : []),
+      ];
+    },
+    emitJsonStringify(): readonly Instr[] {
+      // (#7106 S1b) Exactly legacy's one-argument `JSON.stringify(anyVar)`:
+      // the externref carrier → `any.convert_extern` → the native codec root,
+      // whose `(ref $AnyString)` result IS the native string carrier.
+      if (!ctx.nativeStrings) {
+        throw new Error("ir/integration: dyn.json_stringify needs the native JSON codec (native strings) (#7106 S1b)");
+      }
+      return [{ op: "any.convert_extern" } as Instr, callImport("__json_stringify_root")];
+    },
+    emitObjectToStringTag(scratch: () => number): readonly Instr[] {
+      // (#7106 S1c) Exactly legacy's standalone `.call` arm: an unused null
+      // self slot beneath the value, then the runtime classifier; its externref
+      // result is re-tagged into the native string carrier like `emitTypeof`.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.object_tag needs the standalone runtime classifier (#7106 S1c)");
+      }
+      const s = scratch();
+      return [
+        { op: "local.set", index: s } as Instr,
+        { op: "ref.null.extern" } as Instr,
+        { op: "local.get", index: s } as Instr,
+        callImport("__object_proto_to_string_runtime"),
         ...(ctx.nativeStrings && ctx.anyStrTypeIdx >= 0
           ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx } as Instr]
           : []),

@@ -1,7 +1,7 @@
 ---
 id: 7106
 title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallback-free pass is possible"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-20
 updated: 2026-10-20
@@ -13,7 +13,46 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 6920
-assignee: ""
+assignee: "ttraenkler/claude-c"
+# 2026-10-20 (S1, dyn.to_string): one new IR instruction threaded through its
+# node, verifier, builder, lowering (both dynamic strategies), pre-registration
+# and the from-ast/selector arms that use it — the same shape as #7104's
+# dyn.typeof; each growth is that one arm.
+# 2026-10-20 (S1b): `dyn.json_stringify` pre-registers the native JSON codec
+# from the bridge (`src/ir/integration.ts` → `codegen/json-codec-native.ts`),
+# the same shape as the object-runtime and any-helpers edges already there;
+# one more two-way ir→codegen edge, no new SCC member.
+import-cycles-allow:
+  - ir->codegen: 76 # 2026-10-20 (#7106): integration.ts pre-registers the native JSON codec root and the Object.prototype.toString classifier
+func-budget-allow:
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/integration.ts::makeDynamicLowering
+  - src/ir/integration.ts::preregisterDynamicSupport
+  - src/ir/runtime/verify.ts::verifyInstrStructure
+  - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/ir/from-ast.ts::lowerExprUnchecked
+  - src/ir/from-ast.ts::lowerCall
+  - src/ir/from-ast.ts::lowerMethodCall
+  - src/ir/from-ast.ts::lowerConditional
+  - src/ir/from-ast.ts::lowerTypeOf
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExpr
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/select.ts::collectCallGraph
+loc-budget-allow:
+  - src/ir/builder.ts
+  - src/ir/core/nodes.ts
+  - src/ir/core/dialect/js.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
+  - src/ir/lower-generic.ts
+  - src/ir/runtime/verify.ts
+  - src/ir/select.ts
+  - src/ir/backend/handles.ts
+  - src/ir/backend/legality.ts
+  - src/ir/ambient-typeof.ts
+  - src/ir/prepared-component-dependencies.ts
 ---
 
 ## Problem

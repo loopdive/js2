@@ -162,6 +162,49 @@ export interface IrInstrDynTypeof extends IrInstrBase {
 }
 
 /**
+ * `dyn.to_string{value}` — JS `ToString` (§7.1.17) over EVERY partition of a
+ * boxed-any carrier (#7106 S1): the general `String(v)` on a dynamic operand.
+ * `value` MUST be `IrType.dynamic`; result (via `IrInstrBase.result`) is
+ * `string`. Lowering routes to the SAME `__extern_toString` legacy calls for
+ * an `any`-typed `String(v)` argument (host import, or the native-first
+ * function `ensureObjectRuntime` registers), re-tagged into the lane's string
+ * carrier — one ToString engine. The static arms (`String(number)`,
+ * `String(boolean)`, the #5092 mixed conditional) stay inline.
+ */
+export interface IrInstrDynToString extends IrInstrBase {
+  readonly kind: "dyn.to_string";
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.json_stringify{value}` — `JSON.stringify(value)` (§25.5.2, one argument,
+ * no replacer, no space) over a boxed-any carrier (#7106 S1b). `value` MUST be
+ * `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`. Lowering
+ * routes to the SAME native codec root legacy's one-argument
+ * `JSON.stringify(anyVar)` calls (`__json_stringify_root`), so the two
+ * frontends serialise identically, substrate limitations included. Admitted
+ * only where the `native-json-codec` backend capability holds.
+ */
+export interface IrInstrDynJsonStringify extends IrInstrBase {
+  readonly kind: "dyn.json_stringify";
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.object_tag{value}` — `Object.prototype.toString.call(value)` (§20.1.3.6,
+ * the `[object Tag]` classifier) over a boxed-any carrier (#7106 S1c). `value`
+ * MUST be `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`.
+ * Lowering calls the SAME standalone runtime classifier legacy's `.call` arm
+ * does (`__object_proto_to_string_runtime(unusedSelf, value)`), re-tagged into
+ * the lane's string carrier. Admitted only where the
+ * `native-object-tostring-tag` backend capability holds.
+ */
+export interface IrInstrDynObjectTag extends IrInstrBase {
+  readonly kind: "dyn.object_tag";
+  readonly value: IrValueId;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

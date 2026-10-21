@@ -794,6 +794,9 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "tag.test":
     case "dyn.truthy":
     case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.eq":
