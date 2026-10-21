@@ -4183,10 +4183,8 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
   }
   if (!d.initializer) {
-    demoteToLegacy(
-      "body-shape-rejected",
-      `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
-    );
+    lowerUninitializedVar(d, name, isConst, cx);
+    return;
   }
   if (ts.isClassExpression(d.initializer) && isConst && preparedLocalClassExpressionBinding(d.initializer, name, cx)) {
     // Selection proved the class definition inert and the exact Program ABI
@@ -4424,6 +4422,37 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     );
   }
   cx.scope.set(name, { kind: "local", value, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
+}
+
+/**
+ * (#7106 Stage 4) `var x;` (selector: untyped, function-local, not in a loop):
+ * the dynamic carrier's `undefined`, in a slot when the body reassigns it.
+ */
+function lowerUninitializedVar(d: ts.VariableDeclaration, name: string, isConst: boolean, cx: LowerCtx): void {
+  const isLexical = (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
+  if (isConst || isLexical || d.type || cx.moduleBindings?.has(name)) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
+    );
+  }
+  const value = cx.builder.emitDynUndefined();
+  if (!cx.mutatedLets.has(name)) {
+    cx.scope.set(name, { kind: "local", value, type: irDynamic() });
+    return;
+  }
+  const representation = resolveMutableLocalRepresentation(irDynamic(), true, cx);
+  if (!representation) {
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: dynamic var '${name}' has no slot (${cx.funcName})`);
+  }
+  const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+  cx.builder.emitSlotWrite(slotIndex, value);
+  cx.scope.set(name, {
+    kind: "slot",
+    slotIndex,
+    type: representation.bindingType,
+    ...(representation.asType ? { asType: representation.asType } : {}),
+  });
 }
 
 function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId, cx: LowerCtx): void {
