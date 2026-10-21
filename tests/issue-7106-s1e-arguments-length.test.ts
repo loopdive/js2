@@ -61,19 +61,21 @@ describe("#7106 S1e — arguments.length through dyn.arguments_length", () => {
       `
         function inner(x, y, z) { return arguments.length; }
         function outer(a, b) {
-          var k = inner(1);
+          var k = inner(1, 2, 3);
           return arguments.length * 10 + k;
         }
-        export function ok() { return outer(7) === 11 ? 1 : 0; }
+        export function ok() { return outer(7) === 13 ? 1 : 0; }
       `,
       { ...OPTIONS, fileName: "issue-7106-s1e-entry.js" },
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irPostClaimErrors ?? []).toEqual([]);
-    expect(irBodies(result), JSON.stringify(result.irOutcomes, null, 2)).toContain("inner");
-    // `outer` directly calls an arguments-reading local function; the IR
-    // direct-call plan publishes no __argc yet, so the selector keeps it legacy.
-    expect(irBodies(result)).not.toContain("outer");
+    // Both claim: `outer` reads its own count (published by its legacy
+    // caller) and calls `inner` at exact arity, where the untouched `-1`
+    // sentinel yields the formal count — the value a legacy caller publishes.
+    expect(irBodies(result), JSON.stringify(result.irOutcomes, null, 2)).toEqual(
+      expect.arrayContaining(["inner", "outer"]),
+    );
     expect(await call(result.binary, "ok")).toBe(1);
   });
 

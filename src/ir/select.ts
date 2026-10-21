@@ -10304,14 +10304,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   }
   if (ts.isCallExpression(expr)) {
     // (#7106 S1e) A direct call to a local function that reads `arguments`
-    // must publish `__argc` first (legacy's `emitSetArgc`); the IR direct-call
-    // plan carries no argc slot yet, so such a caller stays legacy.
-    if (ts.isIdentifier(expr.expression) && !scope.has(expr.expression.text)) {
-      const callee = currentDynScanDecls?.get(expr.expression.text);
-      if (callee?.body && functionBodyReferencesArguments(callee.body)) {
-        return capabilityNo("call-arity-unsupported", "expr-call-arguments-reading-callee", expr);
-      }
-    }
+    // needs no `__argc` publication from an IR caller: the direct-call plan
+    // is exact-arity (from-ast demotes any other count), and the callee's
+    // prologue maps the untouched `-1` sentinel to its formal count — the
+    // same value an exact-arity legacy caller would publish.
     const programCallableVerdict = programCallablePhase1Verdict(
       certifiedImportedHofCall(expr, currentSelectionOptions?.importedFunctions)
         ? undefined

@@ -377,15 +377,14 @@ top-level function's own body (arrows inherit it; a nested `function` has
 its own), unshadowed; every other `arguments` use stays legacy. The
 propagator types it `f64`.
 
-**Caller side deliberately NOT in this slice:** an IR direct call to a local
-arguments-reading callee would have to publish `__argc` (the imported-call
-plan already does, via `funcUsesArguments`; the local direct-call plan has
-no argc slot), so such a caller is rejected
-(`expr-call-arguments-reading-callee`) and stays legacy — legacy callers
-publish the count, so the claimed callee observes it correctly. Adding the
-slot to `IrDirectCallLoweringPlan` + `emitGlobalSet(irArgcGlobalRef)` after
-argument evaluation is the follow-up that lets `verifyCallableProperty` /
-`verifyAccessorProperty` (both call `verifyProperty`) migrate.
+**Caller side needs no slot:** the IR direct-call plan is exact-arity
+(from-ast demotes any other count), and the callee's prologue maps the
+untouched `-1` sentinel to its formal count — the same value an exact-arity
+legacy caller publishes (`min(actual, formals)`, no extras). So an IR caller
+of an arguments-reading local callee is claimable as-is (measured: `outer(7)`
+→ `arguments.length * 10 + inner(1, 2, 3)` = 13 with both bodies IR). The
+imported-call plan keeps its explicit `__argc` publication (it admits
+missing arguments).
 
 Pre-existing gap met while testing, NOT this slice's: an unannotated
 `function g(a,b,c,d) { if (a > 2) return 1; return 0; }` is withdrawn at
