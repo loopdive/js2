@@ -34,6 +34,8 @@ import-cycles-allow:
   - largestSccSize: 723 # 2026-10-21 (#7106 S3a/S1c): codegen/ir-dynamic-construct.ts and codegen/ir-string-carrier.ts join the SCC
 func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
+  - src/ir/select.ts::scanExprInner
+  - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeDynamicLowering
@@ -306,6 +308,59 @@ coercion. The lattice half is fixed here (a fall-out callee now propagates
 the dynamic carrier, so `basic` reads the same way in the lattice and the
 selector); the coercion arm is a new IR lowering (`dyn.to_string_carrier`
 or a `coerce` form over the same legacy engine) and is the next S1c step.
+
+### Item 1, S1d slice — 2026-10-21 03:30Z (C, measured; shipped on #6815)
+
+The three `verify*` units were NOT blocked on the member read at all but on
+**JSDoc**: `@param {object} obj`, `{string|symbol} name`,
+`{PropertyDescriptor|undefined} desc`, `[options]` resolve to type nodes the
+IR could not express, and `resolveParamType` rejected the whole function
+(`param-type-not-resolvable`) before any body scan ran. Legacy types these
+from the checker, and the answer is **not syntactic** (legacy-only WAT,
+standalone):
+
+| JSDoc | legacy slot |
+|---|---|
+| `{object}`, `{Object}`, `{*}`, `{?}`, `{any}`, `{unknown}`, `{null}`, `{Function}`, `{typeof f}` | externref |
+| `{string|symbol}`, `{string|null}`, `{object|undefined}`, `{PropertyDescriptor|undefined}`, `{Function|undefined}` | externref |
+| every bracketed tag `[p]`, `{number=}`, `{string=}` | externref |
+| `{string|number}`, `{boolean|number}` | `(ref null $AnyValue)` |
+| `{string|undefined}` | `(ref null $AnyString)`; `{number|undefined}` → f64 |
+| `{symbol}` | i32; `{Array}` → vec struct |
+
+So the rule reads the **registered legacy signature** (`ctx.funcMap` →
+`ctx.mod.types`, the artifact the parity guard compares against):
+`jsDocParamIsExternrefCandidate` (any JSDoc type outside number/string/boolean,
+or a bracketed tag) + `legacyParamSlotIsExternref` ⇒ the position is
+`dynamic` in the selector, the implicit projection and the caller-ABI proof,
+and from-ast lets that override win over the JSDoc node. The propagator seeds
+a JSDoc-declared object type `dynamic` (not `unknown`), so call sites no
+longer join `{label: 3}` and `undefined` into a union return. Also in the
+slice: `options && options.label || String(name)` as a VALUE (nested
+logicals and member reads on dynamic parameters are logical carriers; a
+nested left keeps its value form outside a boolean position), and
+`return undefined;` on a dynamic result in the move-only scan.
+
+Selector diagnostics (`JS2WASM_IR_SHAPE_DIAG=1`) now attribute EVERY
+rejection, not only `body-shape-rejected`: the move-only scan names the
+innermost failing expression (`move-only[dyn|concrete|stmt]:<kind> «text»`),
+the param/return resolvers name the position and lattice kind, and the
+parity withdrawal prints both signatures.
+
+After the slice (`verifyProperty` legacy: `(externref ×4) -> i32`):
+
+| unit | now blocked on |
+|---|---|
+| `verifyProperty` | `arguments.length` (`expr-ident-not-in-scope «arguments»`), then Stage 2 (`assert(...)` direct call to the fnctor) |
+| `verifyCallableProperty` | `options && options.verifyProperty || verifyProperty` — a function-object operand: **Stage 2** |
+| `verifyAccessorProperty` | `checkGet || checkSet` over `__hasOwnProperty(...)` (bound-builtin alias results), then Stage 2 |
+
+Open divergence recorded for the next slice: legacy types `dyn + "!"` as a
+STRING result (`(result (ref null $AnyString))`) while the lattice says
+`dynamic`; a function mixing `return label + "!"` and `return label` is
+withdrawn at parity. Mirroring legacy means `+` with a string-literal
+operand infers `string` in the propagator and the return goes through
+`dyn.string_carrier`/concat.
 
 ## Ownership
 

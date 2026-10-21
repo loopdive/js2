@@ -156,6 +156,26 @@ export function legacyPositionCarriesFnctorInstance(
  * parity is enforced by the hard `abi-type-index-mismatch` invariant, not by
  * this soft pre-claim decline).
  */
+/**
+ * (#7106 item 1) Is the registered legacy slot for parameter `index` of the
+ * top-level declaration `name` plain externref? Reads `ctx.funcMap` →
+ * `ctx.mod.types`, the artifact the parity guard compares against. `false`
+ * when the slot is not registered (IR-first ordering, bare selector).
+ */
+export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
+  const owner = parameter.parent;
+  if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
+  const index = owner.parameters.indexOf(parameter);
+  if (index < 0) return false;
+  const funcIdx = ctx.funcMap.get(owner.name.text);
+  if (funcIdx === undefined) return false;
+  const legacyFunction = definedFuncAt(ctx, funcIdx);
+  if (legacyFunction === undefined) return false;
+  const signature = ctx.mod.types[legacyFunction.typeIdx];
+  if (signature?.kind !== "func") return false;
+  return signature.params[index]?.kind === "externref";
+}
+
 export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (position: ts.Node) => boolean {
   return (position: ts.Node): boolean => {
     if (ts.isParameter(position)) {

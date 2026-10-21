@@ -160,7 +160,13 @@ let typedShapeRejectReason: IrFallbackReason | null = null;
 /** Record the proximate reject arm (first-wins) and return false. */
 function shapeNo(arm: string, node: ts.Node): false {
   if (SHAPE_DIAG_ON && shapeRejectDetail === null) {
-    shapeRejectDetail = `${arm}:${ts.SyntaxKind[node.kind]}`;
+    let text = "";
+    try {
+      text = node.getSourceFile() ? ` «${node.getText().replace(/\s+/g, " ").slice(0, 72)}»` : "";
+    } catch {
+      text = "";
+    }
+    shapeRejectDetail = `${arm}:${ts.SyntaxKind[node.kind]}${text}`;
   }
   return false;
 }
@@ -407,6 +413,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * omit it and keep the historical behaviour.
    */
   readonly dynamicCarrierDivergesFromLegacy?: (position: ts.Node) => boolean;
+  /**
+   * (#7106 item 1) Does legacy's REGISTERED signature carry plain externref
+   * in this JSDoc-typed parameter position? Consulted only for
+   * `jsDocParamIsExternrefCandidate` positions; `undefined`/false keeps the
+   * selector's prior (syntactic) answer. Reads the same artifact the
+   * `abi-signature-parity` guard compares against.
+   */
+  readonly jsDocParamLowersAsExternref?: (parameter: ts.ParameterDeclaration) => boolean;
   /**
    * Standalone/WASI normally close claims over local callers. A production
    * planner may exempt a callee when its direct callable and IR overlay share
@@ -1925,7 +1939,10 @@ function whyNotIrClaimable(
       isDynamicReturn = returnResolved === "dynamic";
     } else {
       const returnResolved = preAbiEvidence?.returnType ?? resolveReturnType(fn, entry?.returnType);
-      if (returnResolved === null) return "return-type-not-resolvable";
+      if (returnResolved === null) {
+        shapeNo(`return-type-unresolved(lattice=${entry?.returnType?.kind ?? "absent"})`, fn);
+        return "return-type-not-resolvable";
+      }
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
       currentFnReturnsString = returnResolved === "string";
@@ -1986,7 +2003,10 @@ function whyNotIrClaimable(
 
     const mapped = entry?.params[i];
     const paramResolved = preAbiEvidence?.params[i] ?? resolveParamType(p, mapped);
-    if (paramResolved === null) return "param-type-not-resolvable";
+    if (paramResolved === null) {
+      shapeNo(`param-type-unresolved(${p.name.text})`, p);
+      return "param-type-not-resolvable";
+    }
     if (
       directMutationNames.has(p.name.text) &&
       !mutableParameterHasIrSlot(p, paramResolved, currentSelectionOptions?.implicitParamUsesNumericVecAbi)
@@ -2127,9 +2147,11 @@ export function assessIrStructuralSelectorSubject(
   preAbiEvidence?: IrStructuralSelectorAccessorAbiEvidence,
 ): { readonly reason: IrFallbackReason | null; readonly detail?: string } {
   const reason = whyNotIrClaimable(subject, typeMap, localClasses, isMethod, preAbiEvidence);
+  // Under the diag flag every rejection carries its proximate arm; the
+  // `body-shape-rejected` bucket alone keeps the "unattributed" placeholder.
   const detail =
-    reason === "body-shape-rejected" && SHAPE_DIAG_ON
-      ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
+    reason !== null && SHAPE_DIAG_ON
+      ? (takeShapeRejectDetail() ?? (reason === "body-shape-rejected" ? "unattributed-arm:helper-internal" : undefined))
       : undefined;
   return detail === undefined ? { reason } : { reason, detail };
 }
@@ -2202,6 +2224,32 @@ export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.Typ
   // and would throw. Its type comes from `paramTypeOverrides`.
   if (param.parent === undefined) return undefined;
   return ts.getJSDocType(param);
+}
+
+/**
+ * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
+ * the IR must ASK about rather than derive? True for a JSDoc type outside the
+ * certified scalar keywords (`@param {object} obj`, `{string|symbol} name`,
+ * `{PropertyDescriptor|undefined} desc` — the test262 propertyHelper shapes)
+ * and for any bracketed tag (`@param {string} [functionName]`). Legacy lowers
+ * these from the checker and the answer is NOT syntactic (measured 2026-10-21:
+ * `{object}`, `{string|symbol}`, `{Function}`, `{*}`, every bracketed tag →
+ * externref; `{string|number}` → `$AnyValue`; `{string|undefined}` →
+ * `$AnyString`; `{symbol}` → i32), so the selector resolves such a position
+ * `dynamic` only when `jsDocParamLowersAsExternref` reads externref off the
+ * registered legacy signature, and keeps its prior answer otherwise. A real
+ * `.type` annotation is never a candidate (#2135's union rejection stands).
+ */
+export function jsDocParamIsExternrefCandidate(param: ts.ParameterDeclaration): boolean {
+  if (param.type !== undefined || param.parent === undefined) return false;
+  const jsDocType = ts.getJSDocType(param);
+  if (jsDocType === undefined) return false;
+  if (ts.getJSDocParameterTags(param).some((tag) => tag.isBracketed === true)) return true;
+  return (
+    jsDocType.kind !== ts.SyntaxKind.NumberKeyword &&
+    jsDocType.kind !== ts.SyntaxKind.StringKeyword &&
+    jsDocType.kind !== ts.SyntaxKind.BooleanKeyword
+  );
 }
 
 /**
@@ -2403,6 +2451,19 @@ export function certifyImportedIrCall(
 
 function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | undefined): ResolvedKind {
   const effectiveType = effectiveIrParamTypeNode(p);
+  // (#7106 item 1) A JSDoc-typed position whose REGISTERED legacy slot is
+  // externref is `dynamic` by that evidence alone (see
+  // `jsDocParamIsExternrefCandidate`): the propagation lattice below is
+  // seeded from call sites, which legacy ignores once the checker carries a
+  // JSDoc type (`labelOf({}, "p", …)` must not narrow `name` to a string slot
+  // legacy never registers).
+  if (
+    effectiveType &&
+    jsDocParamIsExternrefCandidate(p) &&
+    currentSelectionOptions?.jsDocParamLowersAsExternref?.(p) === true
+  ) {
+    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true ? null : "dynamic";
+  }
   if (effectiveType) {
     if (effectiveType.kind === ts.SyntaxKind.NumberKeyword) return "f64";
     if (effectiveType.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
@@ -2459,8 +2520,13 @@ function resolveParamType(p: ts.ParameterDeclaration, mapped: LatticeType | unde
   // struct here, in which case `dynamic` is a guaranteed post-claim parity
   // withdrawal — decline instead. See `dynamicCarrierDivergesFromLegacy`.
   if (mapped && (mapped.kind === "unknown" || mapped.kind === "dynamic")) {
-    return currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true ? null : "dynamic";
+    if (currentSelectionOptions?.dynamicCarrierDivergesFromLegacy?.(p) === true) {
+      shapeNo("param-dynamic-carrier-diverges-from-legacy", p);
+      return null;
+    }
+    return "dynamic";
   }
+  shapeNo(`param-lattice-${mapped?.kind ?? "absent"}`, p);
   return null;
 }
 
@@ -2918,7 +2984,15 @@ function dynamicUsesAreMoveOnly(
    * must flow here (box needed otherwise → reject); false ⇒ a concrete value
    * must flow here (unbox needed otherwise → reject).
    */
+  // Diagnostic wrapper: under `JS2WASM_IR_SHAPE_DIAG=1` the FIRST failing
+  // (innermost) expression is recorded as `move-only[dyn|concrete]:<kind>` so
+  // a `param-type-not-resolvable` outcome names the construct the scan refused.
   const scanExpr = (expr: ts.Expression, expectDyn: boolean): boolean => {
+    const ok = scanExprInner(expr, expectDyn);
+    if (!ok) shapeNo(`move-only[${expectDyn ? "dyn" : "concrete"}]`, unwrap(expr));
+    return ok;
+  };
+  const scanExprInner = (expr: ts.Expression, expectDyn: boolean): boolean => {
     const e = unwrap(expr);
     if (e.kind === ts.SyntaxKind.ThisKeyword) {
       return currentStableFunctionCallSubject !== null && expectDyn;
@@ -3313,6 +3387,11 @@ function dynamicUsesAreMoveOnly(
   };
 
   const scanStmt = (s: ts.Statement): boolean => {
+    const ok = scanStmtInner(s);
+    if (!ok) shapeNo("move-only[stmt]", s);
+    return ok;
+  };
+  const scanStmtInner = (s: ts.Statement): boolean => {
     if (ts.isVariableStatement(s)) {
       for (const d of s.declarationList.declarations) {
         if (!ts.isIdentifier(d.name) || !d.initializer) {
@@ -3343,6 +3422,9 @@ function dynamicUsesAreMoveOnly(
       if (!returnIsDynamic) return scanExpr(s.expression, false);
       if (isDynShaped(s.expression)) return scanExpr(s.expression, true);
       const concrete = unwrap(s.expression);
+      // (#7104 / #7106 item 1) `return undefined;` on a dynamic result is the
+      // carrier's undefined (from-ast's `dyn.undefined` arm, no box needed).
+      if (ts.isIdentifier(concrete) && concrete.text === "undefined" && !dynNames.has("undefined")) return true;
       // `coerceReturnValue` boxes only after the expression has lowered.
       // A mixed concrete ternary cannot form its join before that boundary;
       // keep it on direct codegen until branch-local boxing is represented.
@@ -9585,11 +9667,34 @@ function dynamicConstructCallee(expr: ts.Expression): ts.Identifier | null {
  */
 function dynamicLogicalValueOperands(expr: ts.BinaryExpression): boolean {
   if (!currentDynamicRuntimeBuildable) return false;
-  const left = unwrapPhase1Parens(expr.left);
-  if (!ts.isIdentifier(left) || !currentDynamicParamNames.has(left.text)) return false;
+  if (!dynamicLogicalValueCarrier(expr.left)) return false;
   const right = unwrapPhase1Parens(expr.right);
-  if (ts.isIdentifier(right) && currentDynamicParamNames.has(right.text)) return true;
+  if (dynamicLogicalValueCarrier(right)) return true;
   return concreteDynamicAssignmentOperandIsBuildable(right);
+}
+
+/**
+ * (#7106 item 1) A dynamic-carrier operand of the logical VALUE shape: a
+ * dynamic parameter, a nested `&&`/`||` value over such carriers
+ * (`options && options.label || …`), or a named member read off a dynamic
+ * parameter (`options.label` — `dyn.member_get`, result dynamic).
+ */
+function dynamicLogicalValueCarrier(operand: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(operand);
+  if (ts.isIdentifier(e)) return currentDynamicParamNames.has(e.text);
+  if (
+    ts.isBinaryExpression(e) &&
+    (e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      e.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    return dynamicLogicalValueOperands(e);
+  }
+  return (
+    ts.isPropertyAccessExpression(e) &&
+    ts.isIdentifier(e.name) &&
+    ts.isIdentifier(e.expression) &&
+    currentDynamicParamNames.has(e.expression.text)
+  );
 }
 
 /** The parameter names of the function-like node enclosing `node` (empty at top level). */

@@ -5551,7 +5551,10 @@ export function compileIrPathFunctions(
             new IrUnsupportedError(
               "abi-signature-parity",
               "resolve",
-              `function typeIdx parity mismatch: IR=${wasmFunc.typeIdx}, legacy=${existing.typeIdx} — keeping legacy body`,
+              `function typeIdx parity mismatch: IR=${wasmFunc.typeIdx}, legacy=${existing.typeIdx} — keeping legacy body` +
+                (process.env.JS2WASM_IR_SHAPE_DIAG === "1"
+                  ? ` [IR ${JSON.stringify(ctx.mod.types[wasmFunc.typeIdx])} vs legacy ${JSON.stringify(ctx.mod.types[existing.typeIdx])}]`
+                  : ""),
             ),
             "patch",
           );

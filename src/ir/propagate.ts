@@ -642,7 +642,16 @@ function seedParamType(param: ts.ParameterDeclaration, checker: ts.TypeChecker |
   // as well as `implicit-any` locals.
   if (!checker) return UNKNOWN;
   const ty = checker.getTypeAtLocation(param);
-  return tsTypeToLattice(ty, checker);
+  const seeded = tsTypeToLattice(ty, checker);
+  // (#7106 item 1) A DECLARED JSDoc object type (`@param {object} obj`) is a
+  // fixed externref slot in legacy, never refined from call sites; the
+  // `Object ⇒ unknown` rule above is for INFERRED object shapes (#1231), so a
+  // JSDoc-declared one seeds `dynamic` and absorbs the inbound evidence
+  // instead of joining `{label: 3}` and `undefined` into a union.
+  if (seeded.kind === "unknown" && param.parent !== undefined && ts.getJSDocType(param) !== undefined) {
+    return DYNAMIC;
+  }
+  return seeded;
 }
 
 function seedReturnType(

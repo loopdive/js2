@@ -232,6 +232,7 @@ import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import {
   boundedMixedConditionalPrimitiveFamily,
   effectiveIrParamTypeNode,
+  jsDocParamIsExternrefCandidate,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -1665,9 +1666,17 @@ export function lowerFunctionAstToIr(
         `ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`,
       );
     }
+    // (#7106 item 1) A JSDoc position the planner projected to the dynamic
+    // carrier off legacy's registered externref slot is authoritative over
+    // the JSDoc node (`@param {string} [functionName]` is externref there).
+    const jsDocExternref = override?.kind === "dynamic" && jsDocParamIsExternrefCandidate(p);
     return {
       name: p.name.text,
-      type: resolveIrType(effectiveIrParamTypeNode(p), override, `param ${p.name.text} of ${name}`),
+      type: resolveIrType(
+        jsDocExternref ? undefined : effectiveIrParamTypeNode(p),
+        override,
+        `param ${p.name.text} of ${name}`,
+      ),
     };
   });
 
@@ -15303,7 +15312,18 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
-  const rawLhs = lowerExpr(expr.left, cx, hint?.kind === "dynamic" ? irDynamic() : irVal({ kind: "i32" }));
+  // (#7106 item 1) A nested logical on the left (`a && a.x || b`) must keep
+  // its VALUE form outside a boolean position: an `i32` hint would ToBoolean
+  // it and the outer selection would lose the carrier.
+  let leftExpr: ts.Expression = expr.left;
+  while (ts.isParenthesizedExpression(leftExpr)) leftExpr = leftExpr.expression;
+  const nestedLogicalLeft =
+    ts.isBinaryExpression(leftExpr) &&
+    (leftExpr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      leftExpr.operatorToken.kind === ts.SyntaxKind.BarBarToken);
+  const leftWantsCarrier =
+    hint?.kind === "dynamic" || (nestedLogicalLeft && !(hint !== undefined && asVal(hint)?.kind === "i32"));
+  const rawLhs = lowerExpr(expr.left, cx, leftWantsCarrier ? irDynamic() : irVal({ kind: "i32" }));
   const lhsType = cx.builder.typeOf(rawLhs);
   // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: §13.13.1 — evaluate the
   // left carrier once, ToBoolean it, and select it or the (boxed) right
