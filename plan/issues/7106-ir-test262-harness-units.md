@@ -411,6 +411,24 @@ numeric-literal shape). The S1e tests use the boolean-return and
 After the slice `verifyProperty` stops on `assert` (a function object:
 **Stage 2**).
 
+### Item 1, S1f slice — 2026-10-21 09:50Z (C, measured; after Stage 2 landed)
+
+With Stage 2 on main `verifyProperty` was no longer blocked on `assert`
+(function-object member calls lower) but on the bare global `undefined` as a
+VALUE — `assert.sameValue(originalDesc, undefined, …)`
+(`expr-ident-not-in-scope «undefined»`): the selector admitted `undefined`
+only in equality and return positions. S1f admits the unshadowed global
+`undefined` as a Phase-1 value where the dynamic runtime is buildable
+(call argument, local initializer, logical-value operand); from-ast lowers
+it to #7104's `dyn.undefined` next to the `NaN`/`Infinity` arm, and the
+move-only scan treats it as a dynamic carrier. Measured: `same(o,
+undefined)`, `var v = undefined`, `d || undefined` all claim and run; a
+shadowed `undefined` stays an ordinary binding. gc bytes identical.
+
+After the slice `verifyProperty` stops on
+`__hasOwnProperty(desc, 'enumerable') && desc.enumerable !== undefined` —
+the uncurried-alias tail below. Census unchanged at 6 IR units.
+
 **Measured 04:10Z, the next item-1 tail (NOT started — Stage-2-adjacent):**
 propertyHelper's uncurried aliases `__hasOwnProperty`, `__propertyIsEnumerable`,
 `__push`, `__join` (`var __x = Function.prototype.call.bind(Builtin.prototype.m)`)

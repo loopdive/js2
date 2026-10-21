@@ -5074,6 +5074,12 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     if (!p) {
       const moduleBinding = cx.resolver?.resolveModuleBinding?.(expr);
       if (moduleBinding) return lowerResolvedModuleBindingRead(expr.text, moduleBinding, cx);
+      // (#7106 item 1) the global `undefined` as a value: the carrier's
+      // undefined (#7104 `dyn.undefined`); selector-admitted on the dynamic
+      // host-free lanes only.
+      if (expr.text === "undefined" && cx.resolver?.stringIsExternref?.() !== true) {
+        return cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
+      }
       // #7104 — global numeric constants (legacy: `identifiers.ts` NaN/Infinity arm).
       if (expr.text === "NaN" || expr.text === "Infinity") {
         return cx.builder.emitConst(

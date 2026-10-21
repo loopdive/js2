@@ -2105,7 +2105,8 @@ function whyNotIrClaimable(
     dynNames.size > 0 ||
     isDynamicReturn ||
     currentStableFunctionCallSubject !== null ||
-    containsReceiverFirstDynamicMethodCall(body)
+    containsReceiverFirstDynamicMethodCall(body) ||
+    bodyCallsDynamicParamCallee(body, typeMap)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
@@ -2704,6 +2705,34 @@ function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeM
   return calleeParamResolvedKind(calleeName, argIdx, typeMap) === "dynamic";
 }
 
+/**
+ * (#7106 item 1) Does `body` directly call a local function with a dynamic
+ * parameter? Such a caller crosses the carrier boundary at every argument
+ * even when it has no dynamic binding of its own, so the move-only scan must
+ * run for it too — otherwise an object literal or `null` argument is only
+ * caught post-claim (`arg N of call to … is object, expected dynamic`), a
+ * claim-then-demote channel the selector is meant to close.
+ */
+function bodyCallsDynamicParamCallee(body: ts.Block, typeMap: TypeMap | undefined): boolean {
+  if (currentDynScanDecls === null) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== body && ts.isFunctionLike(node)) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      calleeHasAnyDynamicParam(node.expression.text, typeMap)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return found;
+}
+
 function calleeHasAnyDynamicParam(calleeName: string, typeMap: TypeMap | undefined): boolean {
   const decl = currentDynScanDecls?.get(calleeName);
   if (!decl) return false;
@@ -2897,6 +2926,8 @@ function dynamicUsesAreMoveOnly(
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return currentStableFunctionCallSubject !== null;
+    // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
+    if (ts.isIdentifier(e) && e.text === "undefined" && !dynNames.has("undefined")) return true;
     if (ts.isIdentifier(e)) return dynNames.has(e.text);
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
@@ -3020,6 +3051,8 @@ function dynamicUsesAreMoveOnly(
       return currentStableFunctionCallSubject !== null && expectDyn;
     }
     if (ts.isIdentifier(e)) {
+      // (#7106 item 1) `undefined` as a value is only ever the dynamic carrier.
+      if (e.text === "undefined" && !dynNames.has("undefined")) return expectDyn;
       return dynNames.has(e.text) === expectDyn;
     }
     // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: every
@@ -9674,6 +9707,8 @@ function dynamicLogicalValueOperands(expr: ts.BinaryExpression): boolean {
  */
 function dynamicLogicalValueCarrier(operand: ts.Expression): boolean {
   const e = unwrapPhase1Parens(operand);
+  // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
+  if (ts.isIdentifier(e) && e.text === "undefined" && !currentDynamicParamNames.has("undefined")) return true;
   if (ts.isIdentifier(e)) return currentDynamicParamNames.has(e.text);
   if (
     ts.isBinaryExpression(e) &&
@@ -9940,6 +9975,17 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (currentModuleBindingResolver?.(expr) !== undefined) return true;
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
+    }
+    // (#7106 item 1) the global `undefined` (unshadowed) as a VALUE — a call
+    // argument, a member-store value, a logical operand: the dynamic carrier's
+    // undefined (`dyn.undefined`, #7104), where the capability holds. Equality
+    // and return positions already have their own arms.
+    if (
+      isUnshadowedUndefinedIdentifier(expr, scope) &&
+      currentDynamicRuntimeBuildable &&
+      currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+    ) {
+      return true;
     }
     // #7104 — the global numeric constants `Infinity` / `NaN` (unshadowed):
     // f64 constants on every lane, exactly as legacy's identifier arm.
