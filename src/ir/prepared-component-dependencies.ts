@@ -580,6 +580,7 @@ function implicitSupportRequirement(
     case "dyn.object_tag":
     case "dyn.string_carrier":
     case "dyn.arguments_length":
+    case "dyn.delete_property":
     case "dyn.construct":
     case "dyn.to_number":
     case "dyn.eq":

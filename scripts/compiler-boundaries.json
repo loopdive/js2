@@ -8453,6 +8453,14 @@
       "nextBoundary": "IR dyn.arguments_length support (#7106 S1e): the wrapper over legacy's __argc/__extras_argv count protocol; moves with the arguments-object split."
     },
     {
+      "path": "src/codegen/ir-dynamic-delete.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dyn.delete_property support (#7106 S2d): the wrappers over legacy's generic delete tail (RequireObjectCoercible, __delete_property, strict refusal); moves with the delete-operator split."
+    },
+    {
       "path": "src/codegen/ir-string-carrier.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

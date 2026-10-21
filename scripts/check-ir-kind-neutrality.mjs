@@ -821,6 +821,16 @@ const VERDICTS = {
     why: 'ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the number of arguments passed), read through the call-site count protocol shared with legacy.',
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the number of arguments actually" }],
   },
+  "dyn.delete_property": {
+    verdict: "js",
+    why: "ECMAScript delete operator (§13.5.1.2) on a property reference over boxed-any base and key: RequireObjectCoercible, [[Delete]], and the strict-mode refusal TypeError, through the delete runtime shared with legacy.",
+    evidence: [
+      {
+        file: path.join(DIALECT_DIR, "js.ts"),
+        quote: "operator on a property reference whose base and key are boxed-any",
+      },
+    ],
+  },
   "dyn.construct": {
     verdict: "js",
     why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",

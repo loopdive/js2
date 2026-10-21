@@ -378,6 +378,14 @@ export interface IrDynamicLowering {
    */
   emitArgumentsLength(formals: number): readonly Instr[];
   /**
+   * (#7106 S2d) Receiver then key carriers on the stack → i32: legacy's
+   * generic `delete base[key]` tail (RequireObjectCoercible, the runtime
+   * `__delete_property`, and in strict code the refusal TypeError), wrapped
+   * once per strictness (`__ir_delete_property[_strict]`). Throws where the
+   * `native-dynamic-delete` capability does not hold.
+   */
+  emitDeleteProperty(strict: boolean): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

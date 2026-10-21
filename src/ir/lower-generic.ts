@@ -1925,6 +1925,29 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitStringCarrier()) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.delete_property": {
+        // #7106 S2d — legacy's generic `delete base[key]` tail, wrapped per strictness.
+        for (const [label, operand] of [
+          ["receiver", instr.receiver],
+          ["key", instr.key],
+        ] as const) {
+          const t = typeOf(operand);
+          if (t.kind !== "dynamic") {
+            throw new Error(`ir/lower: dyn.delete_property ${label} must be dynamic, got ${t.kind} (${func.name})`);
+          }
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.delete_property (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.receiver, out);
+        emitValue(instr.key, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitDeleteProperty(instr.strict)) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.construct": {
         // #7106 S3a — `new <dynamic callee>(<dynamic args>)` through the lane's
         // ordinary-[[Construct]] driver; callee then args, source order.
@@ -3863,6 +3886,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.value];
     case "dyn.construct":
       return [instr.callee, ...instr.args];
+    case "dyn.delete_property":
+      return [instr.receiver, instr.key];
     case "dyn.arguments_length":
       return [];
     case "dyn.eq":

@@ -682,7 +682,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-object-tostring-tag"
       | "native-dynamic-construct"
       | "native-string-carrier-coercion"
-      | "native-arguments-length",
+      | "native-arguments-length"
+      | "native-dynamic-delete",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -3468,6 +3469,9 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isExpressionStatement(s)) {
       const e = unwrap(s.expression);
+      // (#7106 S2d) `delete <dynParam>[<dynParam>];` — both carriers move
+      // into `dyn.delete_property`; its boolean is dropped.
+      if (dynamicDeleteStatement(e)) return true;
       // Statement-position direct call: the result is DROPPED, so a dynamic
       // return is fine here regardless of the callee's return verdict.
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
@@ -3771,6 +3775,8 @@ function phase1MutatingStatementVerdict(
   localClasses: ReadonlySet<string>,
   topLevel: boolean,
 ): Phase1MutatingVerdict | null {
+  // (#7106 S2d) `delete <dynParam>[<dynParam>];` — `dyn.delete_property`.
+  if (dynamicDeleteStatement(expr)) return { ok: true };
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
     // S3 — `a = b = e;`.
@@ -9649,6 +9655,29 @@ function dynamicConstructCallee(expr: ts.Expression): ts.Identifier | null {
   if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-construct") !== true) return null;
   if (currentSelectionOptions?.dynamicConstructCalleeIsPlain?.(expr.expression) !== true) return null;
   return expr.expression;
+}
+
+/**
+ * (#7106 S2d) The statement `delete <recv>[<key>];` `dyn.delete_property`
+ * admits: both operands are the current subject's dynamic-typed PARAMETERS
+ * (propertyHelper's `isConfigurable`: `delete obj[name];`), so legacy takes
+ * its generic `__delete_property` arm for the site — no struct-field arm (the
+ * key is not a literal), no `arguments` arm, no `this` exception — on a lane
+ * with the host-free delete wrapper. Only statement position: the boolean
+ * result is discarded.
+ */
+function dynamicDeleteStatement(expr: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(expr);
+  if (!ts.isDeleteExpression(e)) return false;
+  const target = unwrapPhase1Parens(e.expression);
+  if (!ts.isElementAccessExpression(target) || target.questionDotToken !== undefined) return false;
+  const receiver = target.expression;
+  const key = target.argumentExpression;
+  if (!ts.isIdentifier(receiver) || !ts.isIdentifier(key)) return false;
+  if (receiver.text === "arguments" || key.text === "arguments") return false;
+  if (!currentDynamicParamNames.has(receiver.text) || !currentDynamicParamNames.has(key.text)) return false;
+  if (!currentDynamicRuntimeBuildable) return false;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-delete") === true;
 }
 
 /**

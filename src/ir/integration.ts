@@ -93,6 +93,12 @@ import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import { ensureIrArgumentsLengthHelper, IR_ARGUMENTS_LENGTH_HELPER } from "../codegen/ir-arguments-length.js";
+import { isStrictContext } from "../codegen/helpers/is-strict-function.js";
+import {
+  ensureIrDynamicDeleteHelper,
+  IR_DELETE_PROPERTY_HELPER,
+  IR_DELETE_PROPERTY_STRICT_HELPER,
+} from "../codegen/ir-dynamic-delete.js";
 import {
   ensureIrDynamicConstructHelper,
   irDynamicConstructCalleeIsPlain,
@@ -6950,6 +6956,10 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    dynamicDeleteIsStrict(expr: ts.DeleteExpression) {
+      // (#7106 S2d) legacy's own strictness answer for this delete site.
+      return isStrictContext(expr);
+    },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (
         fnctorParameterPreselection?.nativeStringReplaceCall === call &&
@@ -8898,6 +8908,8 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.construct") return true;
   if (instr.kind === "dyn.string_carrier") return true;
   if (instr.kind === "dyn.arguments_length") return true;
+  // #7106 S2d — dyn.delete_property consumes carriers and calls the delete wrapper.
+  if (instr.kind === "dyn.delete_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9112,6 +9124,8 @@ function preregisterDynamicSupport(
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
   let usesDynArgumentsLength = false;
+  // (#7106 S2d) `dyn.delete_property` calls the per-strictness delete wrapper.
+  const dynDeleteStrictness = new Set<boolean>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9126,6 +9140,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
+          if (i.kind === "dyn.delete_property") dynDeleteStrictness.add(i.strict);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9272,6 +9287,16 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
+  }
+  if (dynDeleteStrictness.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    for (const strict of [false, true]) {
+      if (!dynDeleteStrictness.has(strict)) continue;
+      if (ensureIrDynamicDeleteHelper(ctx, strict) === undefined) {
+        throw new Error("ir/integration: dyn.delete_property has no host-free delete wrapper on this lane (#7106 S2d)");
+      }
+      flushLateImportShifts(ctx, null);
+      observeNativeRuntimeProvider(ctx, strict ? IR_DELETE_PROPERTY_STRICT_HELPER : IR_DELETE_PROPERTY_HELPER);
+    }
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     // (#7106 S3a) One wrapper per arity, built from legacy's own construct
@@ -9546,6 +9571,11 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
           "ir/integration: dyn.arguments_length is not lowerable on the fast $AnyValue carrier (#7106 S1e)",
         );
       },
+      emitDeleteProperty(): readonly Instr[] {
+        throw new Error(
+          "ir/integration: dyn.delete_property is not lowerable on the fast $AnyValue carrier (#7106 S2d)",
+        );
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9711,6 +9741,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.arguments_length needs the host-free argc protocol (#7106 S1e)");
       }
       return [{ op: "i32.const", value: formals } as Instr, callImport(IR_ARGUMENTS_LENGTH_HELPER)];
+    },
+    emitDeleteProperty(strict: boolean): readonly Instr[] {
+      // (#7106 S2d) legacy's generic `delete base[key]` tail, wrapped per strictness.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.delete_property needs the host-free delete wrapper (#7106 S2d)");
+      }
+      return [callImport(strict ? IR_DELETE_PROPERTY_STRICT_HELPER : IR_DELETE_PROPERTY_HELPER)];
     },
     emitConstruct(arity: number): readonly Instr[] {
       // (#7106 S3a) callee + args already on the stack as externref; the

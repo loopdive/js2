@@ -182,6 +182,8 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.construct":
     // #7106 S1e — reads and clears the __argc/__extras_argv protocol globals.
     case "dyn.arguments_length":
+    // #7106 S2d — [[Delete]] mutates the receiver and may throw.
+    case "dyn.delete_property":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
@@ -491,6 +493,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "class.new" ||
     i.kind === "fnctor.new" ||
     i.kind === "dyn.construct" || // #7106 S3a — the constructor body runs for its effects
+    i.kind === "dyn.delete_property" || // #7106 S2d — `delete o[k];` is kept for its effect
     // #3000-E: super(...) runs the parent `_init` (writes parent fields on self);
     // super.method() invokes the parent method body — both arbitrary effects, and
     // super_init is void-result so DCE MUST keep it (and its operands) live via

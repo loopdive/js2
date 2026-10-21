@@ -251,6 +251,22 @@ export interface IrInstrDynArgumentsLength extends IrInstrBase {
 }
 
 /**
+ * `dyn.delete_property{receiver, key, strict}` — the ECMAScript `delete`
+ * operator on a property reference whose base and key are boxed-any values
+ * (§13.5.1.2): RequireObjectCoercible(base), then the base's [[Delete]](key),
+ * whose boolean is the result; in strict code a `false` result throws a
+ * TypeError instead (step 6.b). Lowered through the same delete runtime
+ * legacy calls. Result `i32` (the boolean). (#7106 S2d)
+ */
+export interface IrInstrDynDeleteProperty extends IrInstrBase {
+  readonly kind: "dyn.delete_property";
+  readonly receiver: IrValueId;
+  readonly key: IrValueId;
+  /** The delete occurs in strict-mode code (a refusal throws). */
+  readonly strict: boolean;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

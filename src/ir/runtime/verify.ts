@@ -1007,6 +1007,29 @@ function verifyInstrStructure(
       });
     }
   }
+  // #7106 S2d — dyn.delete_property: receiver and key dynamic, result i32.
+  if (instr.kind === "dyn.delete_property") {
+    for (const [label, operand] of [
+      ["receiver", instr.receiver],
+      ["key", instr.key],
+    ] as const) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.delete_property ${label} must be a dynamic IrType, got ${operandIr.kind} (#7106 S2d)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.delete_property result must be an i32 IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S2d)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   // #7106 S3a — dyn.construct: callee and every argument dynamic, result dynamic.
   if (instr.kind === "dyn.construct") {
     for (const [label, operand] of [
@@ -1395,6 +1418,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [];
     case "dyn.construct":
       return [instr.callee, ...instr.args];
+    case "dyn.delete_property":
+      return [instr.receiver, instr.key];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":
@@ -1987,6 +2012,9 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "dyn.arguments_length": {
     skip: "checked-elsewhere: no-operand + result-f64 rules in verifyInstrStructure (#7106 S1e)",
+  },
+  "dyn.delete_property": {
+    skip: "checked-elsewhere: operands-dynamic + result-i32 rules in verifyInstrStructure (#7106 S2d)",
   },
   "dyn.construct": {
     skip: "checked-elsewhere: callee/args/result all-dynamic rules in verifyInstrStructure (#7106 S3a)",

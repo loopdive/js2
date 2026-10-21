@@ -717,6 +717,20 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S2d — `delete receiver[key]` over two dynamic carriers; result the i32 boolean. */
+  emitDynDeleteProperty(receiver: IrValueId, key: IrValueId, strict: boolean): IrValueId {
+    if (this.typeOf(receiver).kind !== "dynamic" || this.typeOf(key).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynDeleteProperty needs dynamic receiver and key (#7106 S2d) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = irVal({ kind: "i32" });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.delete_property", receiver, key, strict, result, resultType });
+    return result;
+  }
+
   /** #7106 S1e — the invocation's `arguments.length` (actual argument count); result f64. */
   emitDynArgumentsLength(formals: number): IrValueId {
     if (!Number.isInteger(formals) || formals < 0) {

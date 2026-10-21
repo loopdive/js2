@@ -28,7 +28,8 @@ export type IrBackendTargetCapability =
   | "native-object-tostring-tag"
   | "native-dynamic-construct"
   | "native-string-carrier-coercion"
-  | "native-arguments-length";
+  | "native-arguments-length"
+  | "native-dynamic-delete";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -114,6 +115,14 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "native-dynamic-delete":
+      // (#7106 S2d) legacy's generic `delete base[key]` tail over the
+      // native `__delete_property` runtime (`__ir_delete_property[_strict]`).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
     case "native-arguments-length":
       // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
       // host-free lanes (`__ir_arguments_length`).

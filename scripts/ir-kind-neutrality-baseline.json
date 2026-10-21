@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 93,
+    "total": 94,
     "neutral": 55,
-    "js": 35,
+    "js": 36,
     "unresolved": 3,
     "core": 58,
-    "dialect": 35,
+    "dialect": 36,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -187,6 +187,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynConstruct",
       "why": "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",
       "evidence": ["src/ir/core/dialect/js.ts#f6c79febcad4"]
+    },
+    "dyn.delete_property": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynDeleteProperty",
+      "why": "ECMAScript delete operator (§13.5.1.2) on a property reference over boxed-any base and key: RequireObjectCoercible, [[Delete]], and the strict-mode refusal TypeError, through the delete runtime shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#1e9170abdf39"]
     },
     "dyn.eq": {
       "verdict": "js",

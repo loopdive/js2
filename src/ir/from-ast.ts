@@ -850,6 +850,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 S2d) Is this `delete` in strict-mode code? Legacy's own
+   * `isStrictContext` answer, so a refused delete throws exactly where
+   * legacy's does. Undefined when the resolver cannot say.
+   */
+  dynamicDeleteIsStrict?(expr: ts.DeleteExpression): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -2366,6 +2372,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       lowerDiscardedExpression(s.expression, cx);
       return false;
     }
+    if (lowerDynamicDeleteStatement(s.expression, cx)) return false;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(s)) {
@@ -5209,6 +5216,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // `delete f().x` must still call f) and then push the constant
   // `true`.
   if (ts.isDeleteExpression(expr)) {
+    const dynamicDelete = tryLowerDynamicDelete(expr, cx);
+    if (dynamicDelete !== null) return dynamicDelete;
     // Lower operand for side effects only — the result is unused.
     // Property-access operand: lower the receiver (the .name part is
     // statically resolved, so the access itself has no runtime effect
@@ -5238,6 +5247,38 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     "body-shape-rejected",
     `ir/from-ast: unsupported expression kind ${ts.SyntaxKind[expr.kind]} in ${cx.funcName}`,
   );
+}
+
+/**
+ * (#7106 S2d) `delete <recv>[<key>]` where both operands are dynamic-carrier
+ * bindings (the selector admits only the statement form over two dynamic
+ * parameters): `dyn.delete_property`, whose strictness is the site's own
+ * (legacy's `isStrictContext`, via the resolver). `null` = not this shape.
+ */
+function lowerDynamicDeleteStatement(statement: ts.Expression, cx: LowerCtx): boolean {
+  let expr = statement;
+  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  // The boolean result is discarded (statement position).
+  return ts.isDeleteExpression(expr) && tryLowerDynamicDelete(expr, cx) !== null;
+}
+
+function tryLowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
+  let target: ts.Expression = expr.expression;
+  while (ts.isParenthesizedExpression(target)) target = target.expression;
+  if (!ts.isElementAccessExpression(target) || target.questionDotToken !== undefined) return null;
+  const operands = [target.expression, target.argumentExpression];
+  for (const operand of operands) {
+    if (!ts.isIdentifier(operand)) return null;
+    const binding = cx.scope.get(operand.text);
+    if (!binding || !("type" in binding) || binding.type.kind !== "dynamic") return null;
+  }
+  const strict = cx.resolver?.dynamicDeleteIsStrict?.(expr);
+  if (strict === undefined) {
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: dynamic delete has no strictness evidence in ${cx.funcName}`);
+  }
+  const receiver = lowerExpr(target.expression, cx, irDynamic());
+  const key = lowerExpr(target.argumentExpression, cx, irDynamic());
+  return cx.builder.emitDynDeleteProperty(receiver, key, strict);
 }
 
 /**
@@ -12706,6 +12747,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerDiscardedExpression(stmt.expression, cx);
       return;
     }
+    if (lowerDynamicDeleteStatement(stmt.expression, cx)) return;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(stmt)) {

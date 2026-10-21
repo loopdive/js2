@@ -757,6 +757,12 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
     }
+    case "dyn.delete_property": {
+      const receiver = mapId(rename, inst.receiver);
+      const key = mapId(rename, inst.key);
+      if (receiver === inst.receiver && key === inst.key) return inst;
+      return { ...inst, receiver, key };
+    }
     case "dyn.construct": {
       let changed = false;
       const callee = mapId(rename, inst.callee);
