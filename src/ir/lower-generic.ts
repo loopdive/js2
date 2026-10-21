@@ -1894,6 +1894,29 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitObjectToStringTag(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.own_property": {
+        // #7106 S1g — receiver then key, both carriers, then the provider call.
+        for (const [label, operand] of [
+          ["receiver", instr.receiver],
+          ["key", instr.key],
+        ] as const) {
+          const t = typeOf(operand);
+          if (t.kind !== "dynamic") {
+            throw new Error(`ir/lower: dyn.own_property ${label} must be dynamic, got ${t.kind} (${func.name})`);
+          }
+        }
+        const dynOwn = resolver.resolveDynamicLowering?.();
+        if (!dynOwn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.own_property (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.receiver, out);
+        emitValue(instr.key, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dynOwn.emitOwnPropertyTest(instr.test)) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.arguments_length": {
         // #7106 S1e — the invocation's actual argument count, legacy's prologue.
         const dyn = resolver.resolveDynamicLowering?.();
@@ -3893,6 +3916,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [];
     case "dyn.instanceof_fn":
       return [instr.value];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":

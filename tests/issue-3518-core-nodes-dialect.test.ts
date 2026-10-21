@@ -38,13 +38,13 @@ function fixture() {
 function positive(f: ReturnType<typeof fixture>) {
   const report = f.run();
   expect(report.failures).toEqual([]);
-  expect(report.declarations).toBe(37);
+  expect(report.declarations).toBe(38);
 }
 
-describe("#3518 complete nodes preserves a single dialect assembly boundary", () => {
-  it("pins the nonempty 37-interface contract", () => {
-    expect(DIALECT_NAMES).toHaveLength(37);
-    expect(new Set(DIALECT_NAMES).size).toBe(37);
+describe("#3618 complete nodes preserves a single dialect assembly boundary", () => {
+  it("pins the nonempty 38-interface contract", () => {
+    expect(DIALECT_NAMES).toHaveLength(38);
+    expect(new Set(DIALECT_NAMES).size).toBe(38);
     positive(fixture());
   });
 
@@ -96,7 +96,7 @@ describe("#3518 complete nodes preserves a single dialect assembly boundary", ()
     const f = fixture();
     positive(f);
     f.put(legacy, change(f.forwarder));
-    expect(f.run().failures.join("\n")).toContain("exact 37-name type-only compatibility forwarder");
+    expect(f.run().failures.join("\n")).toContain("exact 38-name type-only compatibility forwarder");
   });
 
   it("rejects an omitted canonical re-export", () => {
@@ -110,9 +110,9 @@ describe("#3518 complete nodes preserves a single dialect assembly boundary", ()
     const f = fixture();
     positive(f);
     f.put(canonical, f.declarations.replace("IrInstrAwait", "RenamedAwait"));
-    expect(f.run().failures.join("\n")).toContain("exactly the 37 reviewed dialect interfaces");
+    expect(f.run().failures.join("\n")).toContain("exactly the 38 reviewed dialect interfaces");
     f.put(canonical, `${f.declarations}\nexport interface IrInstrAwait { readonly kind: 'await'; }`);
-    expect(f.run().failures.join("\n")).toContain("exactly the 37 reviewed dialect interfaces");
+    expect(f.run().failures.join("\n")).toContain("exactly the 38 reviewed dialect interfaces");
   });
 
   it("ignores an unrelated directory with the same name", () => {

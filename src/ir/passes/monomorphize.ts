@@ -805,6 +805,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
       return [];
     case "dyn.instanceof_fn":
       return [instr.value];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
     case "dyn.construct":
       return [instr.callee, ...instr.args];
     case "dyn.eq":

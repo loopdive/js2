@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4574,
-    "fail": 195,
-    "ce": 152,
+    "pass": 4585,
+    "fail": 197,
+    "ce": 139,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4475,
-        "fail": 104,
-        "ce": 32,
+        "pass": 4486,
+        "fail": 106,
+        "ce": 19,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -3697,12 +3697,12 @@
       },
       {
         "name": "Intl.Era-monthcode",
-        "pass": 9,
+        "pass": 10,
         "fail": 0,
-        "ce": 1,
+        "ce": 0,
         "skip": 0,
         "total": 10,
-        "pct": 90
+        "pct": 100
       },
       {
         "name": "Math.sumPrecise",

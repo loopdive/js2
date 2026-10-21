@@ -8913,6 +8913,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.arguments_length") return true;
   if (instr.kind === "dyn.current_this") return true;
   if (instr.kind === "dyn.instanceof_fn") return true;
+  if (instr.kind === "dyn.own_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9131,6 +9132,8 @@ function preregisterDynamicSupport(
   // (#7106 S3c) `dyn.current_this` / `dyn.instanceof_fn` call receiver wrappers.
   const currentThisStrictness = new Set<boolean>();
   const instanceOfFunctions = new Set<string>();
+  // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
+  const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9147,6 +9150,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
           if (i.kind === "dyn.current_this") currentThisStrictness.add(i.strict);
           if (i.kind === "dyn.instanceof_fn") instanceOfFunctions.add(i.target.name);
+          if (i.kind === "dyn.own_property") ownPropertyTests.add(i.test);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9308,6 +9312,19 @@ function preregisterDynamicSupport(
         throw new Error(`ir/integration: dyn.instanceof_fn has no chain-walk wrapper for ${functionName} (#7106 S3c)`);
       }
       observeNativeRuntimeProvider(ctx, irInstanceOfFunctionHelperName(functionName));
+    }
+    flushLateImportShifts(ctx, null);
+  }
+  if (ownPropertyTests.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 S1g) exactly legacy's registration for the uncurried aliases
+    // (`call-object-builtins.ts`): `(externref, externref) -> i32 bool`.
+    for (const test of ownPropertyTests) {
+      ensureLateImport(
+        ctx,
+        test === "hasOwnProperty" ? "__hasOwnProperty" : "__propertyIsEnumerable",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32", boolean: true }],
+      );
     }
     flushLateImportShifts(ctx, null);
   }
@@ -9593,6 +9610,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       emitInstanceOfFunction(): readonly Instr[] {
         throw new Error("ir/integration: dyn.instanceof_fn is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
       },
+      emitOwnPropertyTest(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.own_property is not lowerable on the fast $AnyValue carrier (#7106 S1g)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9777,6 +9797,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.instanceof_fn needs the host-free chain walk (#7106 S3c)");
       }
       return [callImport(irInstanceOfFunctionHelperName(functionName))];
+    },
+    emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[] {
+      // (#7106 S1g) receiver + key already on the stack as externref.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.own_property needs the host-free own-property providers (#7106 S1g)");
+      }
+      return [callImport(test === "hasOwnProperty" ? "__hasOwnProperty" : "__propertyIsEnumerable")];
     },
     emitConstruct(arity: number): readonly Instr[] {
       // (#7106 S3a) callee + args already on the stack as externref; the

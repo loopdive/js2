@@ -394,6 +394,13 @@ export interface IrDynamicLowering {
    */
   emitInstanceOfFunction(functionName: string): readonly Instr[];
   /**
+   * (#7106 S1g) Receiver then key on the stack (both carriers) → i32 bool:
+   * the lane's `__hasOwnProperty` / `__propertyIsEnumerable` provider, exactly
+   * legacy's lowering of the propertyHelper uncurried aliases. Throws where the
+   * `native-own-property-test` capability does not hold.
+   */
+  emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

@@ -129,6 +129,8 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
       return instr; // no operands (#7106 S1e/S3c)
     case "dyn.instanceof_fn":
       return { ...instr, value: resolve(instr.value) };
+    case "dyn.own_property":
+      return { ...instr, receiver: resolve(instr.receiver), key: resolve(instr.key) };
     case "box":
     case "unbox":
     case "tag.test":
