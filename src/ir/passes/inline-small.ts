@@ -700,7 +700,8 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       return { ...inst, cond: c, thenValue: t, elseValue: e, then: newThen, else: newElse };
     }
     case "dyn.arguments_length":
-      return inst; // no operands (#7106 S1e)
+    case "dyn.publish_argc":
+      return inst; // no operands (#7106 S1e/S1i)
     case "dyn.own_property": {
       const receiver = mapId(rename, inst.receiver);
       const key = mapId(rename, inst.key);
