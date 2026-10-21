@@ -14,7 +14,13 @@
 //     SourceFile (`getLineAndCharacterOfPosition` of undefined), turning a
 //     successful compile into an "Internal error compiling expression".
 //
-// The invariant ROW is still recorded — gates read rows, not `success`.
+// The invariant ROW used to be recorded — gates read rows, not `success`.
+// (#7106) The twin identity is the DESIGNED shape (`declarations.ts`:
+// "Variable-bound class expressions are registered under both"), so the
+// receipt audit now records it instead of counting it and this source yields
+// no invariant row at all; the warning-severity contract for genuine
+// invariants stays pinned by tests/issue-3519-ir-outcomes.test.ts,
+// issue-3520-outcome-correlation-identity and issue-5262-accounting-precedence.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -119,7 +125,7 @@ describe("#7002 trackIrOutcomes is observation-only", () => {
     }
   }
 
-  it("still records the compile-twice invariant ROW (demoted diagnostic only)", async () => {
+  it("the class-expression twin identity records no compile-twice invariant row (#7106)", async () => {
     const tracked = await compile(CLASS_EXPR_ACCESSORS, {
       fileName: "test.js",
       target: "standalone",
@@ -127,11 +133,10 @@ describe("#7002 trackIrOutcomes is observation-only", () => {
     });
     expect(tracked.success).toBe(true);
     const invariants = (tracked.irOutcomes ?? []).filter((outcome) => outcome.kind === "invariant");
-    expect(invariants.length).toBeGreaterThan(0);
-    expect(invariants.every((outcome) => outcome.code === "body-emission-evidence")).toBe(true);
+    expect(invariants, JSON.stringify(invariants, null, 2)).toEqual([]);
     const notes = tracked.errors.filter((error) => error.message.startsWith("IR outcome invariant ["));
-    expect(notes.length).toBe(invariants.length);
-    expect(notes.every((note) => note.severity === "warning")).toBe(true);
+    expect(notes).toEqual([]);
+    expect(tracked.irOutcomes?.length ?? 0).toBeGreaterThan(0);
   }, 60_000);
 });
 

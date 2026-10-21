@@ -797,8 +797,13 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.arguments_length":
+      return [];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":
