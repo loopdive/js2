@@ -214,6 +214,38 @@ item 1, none of which touches the #3521 seam:
    .toString = function () {…}` = Stage 2 `dyn.member_set` on the function
    object's `.prototype`.
 
+**S3c measured 2026-10-21 00:45Z (C), before implementation.** Legacy does
+NOT compile the harness's `Test262Error` as a `this`-reading function: the
+fnctor escape gate (`analyzeFnctorEscapeGate`, `codegen/index.ts` ~5475,
+before IR planning at ~6046) approves it, so its body IS the allocator —
+`(func $Test262Error (param externref) (result (ref null 17))`, `this` is the
+reserved `__fnctor_Test262Error` struct and every `new Test262Error(…)` is a
+`struct.new`. `__current_this` is read only by lifted closure bodies
+(`fctx.readsCurrentThis`, `expressions/this-keyword.ts`); a direct-call-only
+named function reads `emitUnboundThis` (undefined / global object) without
+touching the global. Consequences:
+
+- A `dyn.this` unit for `Test262Error` cannot match legacy's registered ABI
+  (`abi-signature-parity` would withdraw it). The IR body for a constructor
+  the gate approves needs the reserved-struct ABI — the #3521 seam's
+  standalone construction pin, a #3521-owner change, not a #7106 stage.
+- The bounded alternative: an IR claim of a constructor function on the
+  host-free lane makes legacy REFUSE the fnctor for that name
+  (`fnctorEscapeGate.approvedNames` / `refusedNames`, mutated after IR
+  planning and before declaration emission — ordering and the struct
+  reservation consumers between ~5475 and ~6046 still to be verified), so
+  legacy routes `new Test262Error(…)` through the dynamic construct driver
+  (= S3a's lowering) and the body through the lifted-closure `this` read.
+  Then S3c = `dyn.this` whose lowering is legacy's `this-keyword.ts` ladder
+  (`global.get __current_this`; null → `emitUnboundThis`, non-null →
+  `buildCurrentThisNonNullArm`) behind a wrapper like `__ir_dyn_construct_N`,
+  admitted only for functions legacy lifts (value uses exist, so
+  `readsCurrentThis` holds). Standalone bytes move for every test (the
+  harness constructor changes lowering); host-assisted gc must not.
+- Either way the constructor body also needs A's `dyn.member_set` on an
+  externref receiver (`this.message = …`) and Stage 2's function-object
+  identity for `this instanceof Test262Error`.
+
 Acceptance unchanged: `Test262Error` and `$DONOTEVALUATE` IR-emitted; first
 **non-zero `ir_only_pass`** on the addition slice (needs 1–4, Stage 2 and
 item 1 together).
