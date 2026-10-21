@@ -294,6 +294,21 @@ item 1 together).
 
 ### Stage 4 — script top-level residue (item 5; `<module-init>`)
 
+**Pre-measured 2026-10-21 11:45Z (C, `language/expressions/addition`, 48
+script tests, sta+assert+compareArray+propertyHelper prefix, standalone):**
+`<module-init>` emits for 0/48. First blocker on all 48:
+`expr-ident-not-in-scope «Test262Error»` — sta.js's own
+`Test262Error.prototype.toString = …` / `Test262Error.thrower = …` (Stage 3c:
+the constructor is not an IR unit, so its function object has no value).
+With those two statements masked, 47/48 stop at `closure-return-type` on
+`assert.sameValue = function (actual, expected, message) {…}` — a
+function-object member WRITE whose untyped function-expression RHS has no
+resolvable return type (the same type-evidence gap as the member-call
+planner, see S1h); the remaining 1 at `expr-ident-not-in-scope «assert»`.
+So Stage 4's first two items are Stage 3c and the Stage 2 member-write
+evidence rule, before any of the expected `var`-initialiser residue is even
+reachable.
+
 Whatever `<module-init>` still rejects after Stages 1–3 (probe with
 `JS2WASM_IR_SHAPE_DIAG=1` on the slice); expected: `var` initialisers with
 object literals (`var obj = {5: kValue, length: 100}`), `Math.length = 1`
