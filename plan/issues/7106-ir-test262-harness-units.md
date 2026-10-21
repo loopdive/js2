@@ -251,6 +251,17 @@ touching the global. Consequences:
   `analyzeFnctorEscapeGate` — i.e. a pre-gate decision of which constructors
   the IR will own, which changes legacy's lowering of those constructors in
   every host-free program. That is a project-lead call, not a slice.
+  **Measured 02:40Z (temporary, uncommitted env refusal in
+  `analyzeFnctorEscapeGate`):** refusing `Test262Error` in the escape gate
+  alone changes NOTHING in legacy's lowering — `__fnctor_Test262Error` is
+  still reserved and `assert`'s `throw new Test262Error(m)` still lowers to
+  `struct.new` (`call; struct.new 82; struct.new 99; call`), because the
+  keep-typed path (`fnctor-ctor-decl.ts` `funcConstructorForCallee` /
+  `fnctor-typed-instances.ts`) keys on the declaration, not on the gate's
+  approval. All 78 `test/harness/*` self-tests behave identically with and
+  without the refusal (77 pass, `assert-throws-same-realm.js` fails on both).
+  Route 2 therefore has to switch BOTH mechanisms off for an IR-owned
+  constructor; the gate predicate is necessary but not sufficient.
 - Either way the constructor body also needs A's `dyn.member_set` on an
   externref receiver (`this.message = …`) and Stage 2's function-object
   identity for `this instanceof Test262Error`.
