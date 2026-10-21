@@ -242,6 +242,13 @@ touching the global. Consequences:
   admitted only for functions legacy lifts (value uses exist, so
   `readsCurrentThis` holds). Standalone bytes move for every test (the
   harness constructor changes lowering); host-assisted gc must not.
+  **Measured 00:55Z:** legacy consumes the gate BEFORE IR planning
+  (`fnctorReceivers` ~5502, `reserveFnctorStructTypes` ~5633, the #2773
+  keystone), so the refusal cannot be a post-planning mutation of
+  `approvedNames`; it has to be a predicate handed to
+  `analyzeFnctorEscapeGate` — i.e. a pre-gate decision of which constructors
+  the IR will own, which changes legacy's lowering of those constructors in
+  every host-free program. That is a project-lead call, not a slice.
 - Either way the constructor body also needs A's `dyn.member_set` on an
   externref receiver (`this.message = …`) and Stage 2's function-object
   identity for `this instanceof Test262Error`.
