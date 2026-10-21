@@ -664,6 +664,59 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /**
+   * Emit `dyn.to_string{value}` — JS `ToString` over every partition of the
+   * boxed-any carrier (#7106 S1); result is `string`. Routes to the lane's
+   * runtime `__extern_toString` via `IrDynamicLowering.emitToString`.
+   */
+  emitDynToString(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynToString operand ${value} is not dynamic — static ToString folds inline (#7106) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.to_string", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Emit `dyn.json_stringify{value}` — one-argument `JSON.stringify` over the
+   * boxed-any carrier (#7106 S1b); result is `string`. Routes to the native
+   * codec root via `IrDynamicLowering.emitJsonStringify`.
+   */
+  emitDynJsonStringify(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynJsonStringify operand ${value} is not dynamic (#7106 S1b) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.json_stringify", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Emit `dyn.object_tag{value}` — `Object.prototype.toString.call(value)` over
+   * the boxed-any carrier (#7106 S1c); result is `string`.
+   */
+  emitDynObjectTag(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynObjectTag operand ${value} is not dynamic (#7106 S1c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.object_tag", value, result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

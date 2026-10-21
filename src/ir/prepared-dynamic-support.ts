@@ -46,8 +46,8 @@ import {
 import type { PreparedDynamicInstructionSupportEvidence } from "./prepared-instruction-support.js";
 import type { Import, ValType } from "./types.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { JsTag, jsTagToStaticType } from "./js-tag.js";
-import { jsTagOf } from "./runtime/js-tag-domain.js";
+import { jsTagToStaticType } from "./js-tag.js";
+import { JS_TAG_IDS, jsTagOf } from "./runtime/js-tag-domain.js";
 
 /** The owning integration observes its existing canonical box dispatcher. */
 export type PreparedDynamicBoxObserver = (
@@ -238,7 +238,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               // Same refinement split as makeDynamicLowering.emitBox: Boolean
               // i32 uses __box_boolean; an unrefined i32 first converts to f64
               // and uses __box_number. The conversion itself calls no helper.
-              const boolean = instr.toType.tag === JsTag.Boolean;
+              const boolean = instr.toType.tag === JS_TAG_IDS.Boolean;
               const name = boolean ? "__box_boolean" : "__box_number";
               const ref = exactPreparedDynamicHelperRef(
                 ctx,

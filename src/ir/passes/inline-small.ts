@@ -704,6 +704,9 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
     case "tag.test":
     case "dyn.truthy":
     case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
     case "dyn.to_number": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;

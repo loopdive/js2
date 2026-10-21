@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 87,
+    "total": 90,
     "neutral": 55,
-    "js": 29,
+    "js": 32,
     "unresolved": 3,
     "core": 58,
-    "dialect": 29,
+    "dialect": 32,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -181,6 +181,13 @@
       "why": "ECMAScript abstract/strict equality over dynamically-tagged values (§7.2.13/§7.2.15).",
       "evidence": ["src/ir/core/dialect/js.ts#2b4f27412292"]
     },
+    "dyn.json_stringify": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynJsonStringify",
+      "why": "ECMAScript JSON.stringify (§25.5.2) over a boxed-any carrier, through the native codec root shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#00a3087bf1d1"]
+    },
     "dyn.member_get": {
       "verdict": "js",
       "where": "dialect",
@@ -195,12 +202,26 @@
       "why": "ECMAScript [[Set]] by dynamic key, with spec evaluation order.",
       "evidence": ["src/ir/core/dialect/js.ts#5dcbfb763fd5"]
     },
+    "dyn.object_tag": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynObjectTag",
+      "why": "ECMAScript Object.prototype.toString (§20.1.3.6) `[object Tag]` classification of a boxed-any carrier, through the standalone runtime classifier shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#a040c88b8e84"]
+    },
     "dyn.to_number": {
       "verdict": "js",
       "where": "dialect",
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynToNumber",
       "why": "ECMAScript ToNumber over a dynamically-tagged value (§7.1.4).",
       "evidence": ["src/ir/core/dialect/js.ts#46a73157bf27"]
+    },
+    "dyn.to_string": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynToString",
+      "why": "ECMAScript ToString over every partition of a boxed-any carrier (§7.1.17), one ToString engine shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#8f750198c6ce"]
     },
     "dyn.truthy": {
       "verdict": "js",

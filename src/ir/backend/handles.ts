@@ -327,6 +327,32 @@ export interface IrDynamicLowering {
    */
   emitTypeof(): readonly Instr[];
   /**
+   * (#7106 S1) Carrier on the stack → the lane's string carrier holding JS
+   * `ToString` of the value, through the SAME runtime `__extern_toString`
+   * legacy's `String(any)` calls (host import / native-first function;
+   * externref result re-tagged into the native string carrier under native
+   * strings). Throws on the fast `$AnyValue` strategy, which the selector
+   * never claims for this op.
+   */
+  emitToString(): readonly Instr[];
+  /**
+   * (#7106 S1b) Carrier on the stack → the native string carrier holding
+   * `JSON.stringify(value)`, through the SAME native codec root legacy calls
+   * (`__json_stringify_root`, `anyref -> ref $AnyString`). Only on the lanes
+   * where the `native-json-codec` capability holds; throws elsewhere, which
+   * the selector's capability gate makes unreachable.
+   */
+  emitJsonStringify(): readonly Instr[];
+  /**
+   * (#7106 S1c) Carrier on the stack → the lane's string carrier holding
+   * `Object.prototype.toString.call(value)`, through the SAME standalone
+   * runtime classifier legacy calls (`__object_proto_to_string_runtime
+   * (unusedSelf, value)`); `scratch` lends the externref local that lets the
+   * null self slot be pushed beneath the value. Throws where the
+   * `native-object-tostring-tag` capability does not hold.
+   */
+  emitObjectToStringTag(scratch: () => number): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,
