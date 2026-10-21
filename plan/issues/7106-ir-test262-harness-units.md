@@ -396,6 +396,25 @@ numeric-literal shape). The S1e tests use the boolean-return and
 After the slice `verifyProperty` stops on `assert` (a function object:
 **Stage 2**).
 
+**Measured 04:10Z, the next item-1 tail (NOT started — Stage-2-adjacent):**
+propertyHelper's uncurried aliases `__hasOwnProperty`, `__propertyIsEnumerable`,
+`__push`, `__join` (`var __x = Function.prototype.call.bind(Builtin.prototype.m)`)
+and the plain aliases `__getOwnPropertyNames`, `__getOwnPropertyDescriptor`
+(`var __x = Object.m`) are module-level callable bindings. Legacy certifies
+the exact uncurried set in `resolveUncurriedBuiltinPrototypeMethod`
+(`codegen/object-builtin-effects.ts`: Array `join`/`push`, Object
+`hasOwnProperty`/`propertyIsEnumerable`/`valueOf`) and lowers each call
+through the builtin's native direct-call lowering. The IR today rejects
+`__hasOwnProperty(desc, "get")` in the move-only scan (`move-only[concrete]
+«desc»`: a call to a module binding with no plan expects concrete
+arguments), so `checkGet || checkSet` never gets boolean operands. How IR
+bodies call module-level callable bindings is exactly Stage 2/4's
+function-object/`<module-init>` contract (Shepherd, #6816); the alias
+lowerings (`dyn.has_own_property`, array push/join over the dynamic
+carrier, `Object.getOwnPropertyNames/Descriptor` into the carrier) should
+be designed against that contract rather than ahead of it. `verifyProperty`
+also needs `assert(...)`/`assert.sameValue(...)` (Stage 2) on every path.
+
 Open divergence recorded for the next slice: legacy types `dyn + "!"` as a
 STRING result (`(result (ref null $AnyString))`) while the lattice says
 `dynamic`; a function mixing `return label + "!"` and `return label` is
