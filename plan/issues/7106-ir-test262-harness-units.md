@@ -294,6 +294,21 @@ item 1 together).
 
 ### Stage 4 — script top-level residue (item 5; `<module-init>`)
 
+**Pre-measured 2026-10-21 11:45Z (C, `language/expressions/addition`, 48
+script tests, sta+assert+compareArray+propertyHelper prefix, standalone):**
+`<module-init>` emits for 0/48. First blocker on all 48:
+`expr-ident-not-in-scope «Test262Error»` — sta.js's own
+`Test262Error.prototype.toString = …` / `Test262Error.thrower = …` (Stage 3c:
+the constructor is not an IR unit, so its function object has no value).
+With those two statements masked, 47/48 stop at `closure-return-type` on
+`assert.sameValue = function (actual, expected, message) {…}` — a
+function-object member WRITE whose untyped function-expression RHS has no
+resolvable return type (the same type-evidence gap as the member-call
+planner, see S1h); the remaining 1 at `expr-ident-not-in-scope «assert»`.
+So Stage 4's first two items are Stage 3c and the Stage 2 member-write
+evidence rule, before any of the expected `var`-initialiser residue is even
+reachable.
+
 Whatever `<module-init>` still rejects after Stages 1–3 (probe with
 `JS2WASM_IR_SHAPE_DIAG=1` on the slice); expected: `var` initialisers with
 object literals (`var obj = {5: kValue, length: 100}`), `Math.length = 1`
@@ -411,6 +426,46 @@ numeric-literal shape). The S1e tests use the boolean-return and
 After the slice `verifyProperty` stops on `assert` (a function object:
 **Stage 2**).
 
+### Item 1, S1f slice — 2026-10-21 09:50Z (C, measured; after Stage 2 landed)
+
+With Stage 2 on main `verifyProperty` was no longer blocked on `assert`
+(function-object member calls lower) but on the bare global `undefined` as a
+VALUE — `assert.sameValue(originalDesc, undefined, …)`
+(`expr-ident-not-in-scope «undefined»`): the selector admitted `undefined`
+only in equality and return positions. S1f admits the unshadowed global
+`undefined` as a Phase-1 value where the dynamic runtime is buildable
+(call argument, local initializer, logical-value operand); from-ast lowers
+it to #7104's `dyn.undefined` next to the `NaN`/`Infinity` arm, and the
+move-only scan treats it as a dynamic carrier. Measured: `same(o,
+undefined)`, `var v = undefined`, `d || undefined` all claim and run; a
+shadowed `undefined` stays an ordinary binding. gc bytes identical.
+
+After the slice `verifyProperty` stops on
+`__hasOwnProperty(desc, 'enumerable') && desc.enumerable !== undefined` —
+the uncurried-alias tail below. Census unchanged at 6 IR units.
+
+**CI finding on the S1f PR (#6821, 10:16Z): a claim-then-demote channel the
+`undefined` arm opened.** `quality` failed `check:host-import-policy`
+(native-first imports 458 > 452). Bisected per probe: `functionCall` and
+`functionApply` (`add.call(undefined, 6)` / `add.apply(undefined, [8])` in a
+`(): number` body) went 0 → 3 imports each. With `undefined` Phase-1, Stage
+2's function-object member arm (`functionObjectMemberCallIsBuildable`)
+admitted the whole call — it accepts ANY member call on a stable top-level
+function value and lowers it through the dynamic closed dispatch with a
+DYNAMIC result — so `run` was claimed, failed at verify (`return[0] type
+dynamic not assignable to declared result f64`) and demoted with the
+dynamic runtime already prepared into the module (3 `__str_*` imports,
+~50 helpers, `__fn_value_add`; module 2.2× larger). On main the same shape
+with `null` is also claimed and demotes at build, earlier, leaving nothing
+behind. Fix (one selector arm): `fn.call(...)`/`fn.apply(...)` on a direct
+callable (`knownCallableArity` known) now reaches the existing
+`function-invocation-method-unsupported` refusal BEFORE the function-object
+member arm. Probe back to 452; gc/standalone bytes identical to the S1e
+reference. Remaining Stage 2 gap, recorded not fixed: the function-object
+member arm still admits a dynamic-result call in a concrete-result function
+(`add.foo(x)` with `(): number`) — the move-only scan does not run for such
+bodies, so the result position is only checked at verify.
+
 **Measured 04:10Z, the next item-1 tail (NOT started — Stage-2-adjacent):**
 propertyHelper's uncurried aliases `__hasOwnProperty`, `__propertyIsEnumerable`,
 `__push`, `__join` (`var __x = Function.prototype.call.bind(Builtin.prototype.m)`)
@@ -429,6 +484,76 @@ lowerings (`dyn.has_own_property`, array push/join over the dynamic
 carrier, `Object.getOwnPropertyNames/Descriptor` into the carrier) should
 be designed against that contract rather than ahead of it. `verifyProperty`
 also needs `assert(...)`/`assert.sameValue(...)` (Stage 2) on every path.
+
+### Item 1, S1g slice — 2026-10-21 10:50Z (C, measured)
+
+The uncurried aliases `__hasOwnProperty` / `__propertyIsEnumerable` (a
+top-level `var` initialised to `Function.prototype.call.bind(Object.prototype.M)`
+with no writes, certified by `src/ir/uncurried-object-alias.ts`) called with
+two arguments lower to the 36th dialect kind `dyn.own_property{receiver, key,
+test}` — an i32 bool over the dynamic carrier, reaching legacy's own
+`__hasOwnProperty` / `__propertyIsEnumerable` natives (the same
+`ensureLateImport` helpers `call-object-builtins.ts` uses, so the answer is
+legacy's by construction). Capability `native-own-property-test` (wasmgc,
+non-fast, standalone|wasi). The call is exactly boolean for the selector's
+family check, which now also recurses through `&&`/`||` of two exact booleans
+(`stringCheck && __hasOwnProperty(o, n) && __propertyIsEnumerable(o, n)`);
+`var hadValue = __hasOwnProperty(o, n)` keeps its i32 slot because the
+unboxed-local proof accepts the certified alias call as a boolean
+initializer (the checker types it `any`). A shadowed or reassigned alias
+and a one-argument call stay on legacy before claim. gc/standalone bytes
+identical to the S1e reference.
+
+Measured on the harness: `both`/`absent`/`had`/`enumerable` shapes claim and
+run; the census stays at 6 IR units because every alias-using harness unit
+has a second blocker — `verifyProperty` → `isWritable(obj, name)`
+(under-arity direct call, 4 formals), `isWritable` → a module-binding alias
+in a conditional (`__isArray(obj) && … ? nonIndexNumericPropertyName : …`),
+`isEnumerable` → `for (var x in obj)` with a value-used head, `isConfigurable`
+→ `delete obj[name]`, the `verify*` family → `new Test262Error` (Stage 3c).
+`var g = __hasOwnProperty(o, n); return g;` in a DYNAMIC-return function is
+not admitted (the scan's return arm wants a dynamic carrier, `g` is i32); not
+a harness shape, recorded only.
+
+### Item 1, S1h slice — 2026-10-21 11:40Z (C, measured): `compareArray`'s three selector blockers
+
+assert.js's `compareArray(a, b)` stopped on `b.length !== a.length`
+(`move-only[concrete]`). Three selector gaps, all pre-claim, all opened:
+
+1. **Member host ≠ value use.** `collectDirectOnlyFunctionDeclarations`
+   counted `compareArray.format = …` as a value use, so the dynamic member
+   equality refusal (the callback-boundary carrier concern: legacy array HOFs
+   pass `obj` in the raw array carrier) applied. A function that is only the
+   HOST of a member access is never handed to a callback trampoline; it now
+   stays in the direct-only set. `fn.call` / `fn.apply` / `fn.bind` remain
+   value uses (a bound invocation can reach the callback ABI).
+2. **Proven-number element key.** `b[i]` with a counted-loop `i`: the scan's
+   key-shape contract allowed only literals and dynamic indexes; the producer
+   (`lowerElementAccess`, dyn arm) lowers any other key f64 and boxes it
+   tag-3, so a `expressionIsProvenNumber` key is admitted.
+3. **Function-object member call as a dynamic value.** `assert._isSameValue(b[i],
+   a[i])` had no scan arm (fell to "no dynamic involvement"); it is now
+   dyn-shaped and scanned like the receiver-first method plan (arguments are
+   carriers or boxable concretes, `functionObjectDynamicValue` boxes), and its
+   result may feed `!`/truthiness/`if`.
+
+**Stage 2 claim-then-demote channel found while opening 3 (recorded for the
+Stage 2 owner, gated here):** the selector's `functionObjectMemberCallIsBuildable`
+admits any member call on a `resolveTopLevelFunctionValue` receiver, but the
+planner (`ir-imported-call-planning.ts`, `objectReceiver: true`) mints the
+canonical support only when EVERY parameter and the result have type evidence
+(an annotation or the target's IR claim entry); test262's untyped,
+legacy-owned `assert` has neither, so the claim demotes at lowering
+(`identifier "assert" is not in scope`) — visible today on `<module-init>`
+(`assert._isSameValue = …`) and on `compareArray`. The new scan arm mirrors
+the planner's annotation route (`function-object-member-evidence` refusal);
+the claim-entry route cannot be mirrored in the selector (claims are not
+visible there). Consequence for the harness: `compareArray` claims and runs
+end to end against a TYPED function object (measured: length mismatch, `-0`
+vs `0`, `NaN` vs `NaN` all match legacy), but on the real harness it waits
+for `assert` to become an IR claim (Stage 3c) AND for the planner's claim
+route to be mirrored (or the Stage 2 isPhase1Expr arm to require the same
+evidence). gc/standalone bytes identical to the S1e reference.
 
 Measured again 04:35Z, correcting the note above: a function mixing
 `return o + "!"` and `return o` (or `return "x"` / `return String(o)` with a

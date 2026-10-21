@@ -28,7 +28,8 @@ export type IrBackendTargetCapability =
   | "native-object-tostring-tag"
   | "native-dynamic-construct"
   | "native-string-carrier-coercion"
-  | "native-arguments-length";
+  | "native-arguments-length"
+  | "native-own-property-test";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -114,6 +115,14 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "native-own-property-test":
+      // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
+      // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
     case "native-arguments-length":
       // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
       // host-free lanes (`__ir_arguments_length`).

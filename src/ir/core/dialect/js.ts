@@ -251,6 +251,23 @@ export interface IrInstrDynArgumentsLength extends IrInstrBase {
 }
 
 /**
+ * `dyn.own_property{receiver, key, test}` — the ECMAScript
+ * `Object.prototype.hasOwnProperty` ([[GetOwnProperty]] ≠ undefined,
+ * §20.1.3.2) or `Object.prototype.propertyIsEnumerable` (§20.1.3.4) predicate
+ * applied to a boxed-any receiver and key (#7106 S1g): the test262
+ * propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
+ * `__propertyIsEnumerable(obj, name)` aliases, which legacy lowers to the
+ * lane's `__hasOwnProperty` / `__propertyIsEnumerable` provider over two
+ * externref arguments. Result `bool` (i32).
+ */
+export interface IrInstrDynOwnProperty extends IrInstrBase {
+  readonly kind: "dyn.own_property";
+  readonly receiver: IrValueId;
+  readonly key: IrValueId;
+  readonly test: "hasOwnProperty" | "propertyIsEnumerable";
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a
