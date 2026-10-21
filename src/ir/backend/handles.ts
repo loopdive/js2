@@ -378,6 +378,12 @@ export interface IrDynamicLowering {
    */
   emitArgumentsLength(formals: number): readonly Instr[];
   /**
+   * (#7106 S1i) Nothing on the stack → nothing: publish a direct call site's
+   * actual argument count to `__argc` (legacy's `emitSetArgc`), wrapped once
+   * per module (`__ir_publish_argc`). Same `native-arguments-length` lanes.
+   */
+  emitPublishArgc(count: number): readonly Instr[];
+  /**
    * (#7106 S1g) Receiver then key on the stack (both carriers) → i32 bool:
    * the lane's `__hasOwnProperty` / `__propertyIsEnumerable` provider, exactly
    * legacy's lowering of the propertyHelper uncurried aliases. Throws where the
