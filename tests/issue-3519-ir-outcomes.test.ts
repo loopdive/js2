@@ -352,9 +352,16 @@ export function answer(): number { return 42; }
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
+    // (#7108) Pinned to the profile this fixture was written for. #6708 S6
+    // (612cea9864) flipped the DEFAULT `semanticProviders` to native-first,
+    // where the unannotated `() => {}` callback is refused `closure-return-type`,
+    // `delayed` stays legacy and the injected `setTimeout` follows it
+    // (`call-graph-closure`) — so the default profile has no IR timer terminal
+    // to record. The ledger contract under test is profile-independent.
     const result = await compile(`export function delayed(): void { setTimeout(() => {}, 1); }`, {
       fileName: "timer.ts",
       trackIrOutcomes: true,
+      semanticProviders: "host-assisted",
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(terminal(result)).toHaveLength(2);
@@ -512,6 +519,10 @@ export function second(x: number): number { return x + 2; }`,
   });
 
   it("does not demote unexpected imported-call planning throws", async () => {
+    // (#7108) Pinned to host-assisted for the same #6708 default flip: under
+    // native-first this cross-module call is planned through the program
+    // callable graph (`planProgramCallableCall`), so the injection inside the
+    // module-import certification arm is never reached and nothing throws.
     process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW = "run";
     const result = await compileMulti(
       {
@@ -520,7 +531,7 @@ export function second(x: number): number { return x + 2; }`,
 export function run(value: number): number { return imported(value); }`,
       },
       "main.ts",
-      { trackIrOutcomes: true },
+      { trackIrOutcomes: true, semanticProviders: "host-assisted" },
     );
     expectInvariantWarning(result, "unexpected-internal-throw"); // (#7002) see the Promise case above
     expect(terminal(result).find((outcome) => outcome.displayName === "run")).toMatchObject({
