@@ -702,6 +702,12 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
     case "dyn.arguments_length":
     case "dyn.publish_argc":
       return inst; // no operands (#7106 S1e/S1i)
+    case "dyn.own_property": {
+      const receiver = mapId(rename, inst.receiver);
+      const key = mapId(rename, inst.key);
+      if (receiver === inst.receiver && key === inst.key) return inst;
+      return { ...inst, receiver, key };
+    }
     case "box":
     case "unbox":
     case "tag.test":

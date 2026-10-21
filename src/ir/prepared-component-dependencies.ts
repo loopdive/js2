@@ -581,6 +581,7 @@ function implicitSupportRequirement(
     case "dyn.string_carrier":
     case "dyn.arguments_length":
     case "dyn.publish_argc":
+    case "dyn.own_property":
     case "dyn.construct":
     case "dyn.to_number":
     case "dyn.eq":

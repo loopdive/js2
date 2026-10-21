@@ -816,6 +816,11 @@ const VERDICTS = {
     why: "ECMAScript String value recovery from a boxed-any carrier (a primitive string or a String wrapper's [[StringData]], §10.4.3), through the coercion ladder shared with legacy; not ToString.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the checked recovery of the native string" }],
   },
+  "dyn.own_property": {
+    verdict: "js",
+    why: "ECMAScript Object.prototype.hasOwnProperty (§20.1.3.2, [[GetOwnProperty]] ≠ undefined) / propertyIsEnumerable (§20.1.3.4) over a boxed-any receiver and key, through the providers legacy uses for the propertyHelper uncurried aliases.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "applied to a boxed-any receiver and key" }],
+  },
   "dyn.arguments_length": {
     verdict: "js",
     why: 'ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the number of arguments passed), read through the call-site count protocol shared with legacy.',

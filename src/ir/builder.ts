@@ -717,6 +717,25 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S1g — Object.prototype.hasOwnProperty / propertyIsEnumerable over the carrier; result bool. */
+  emitDynOwnProperty(receiver: IrValueId, key: IrValueId, test: "hasOwnProperty" | "propertyIsEnumerable"): IrValueId {
+    for (const [label, operand] of [
+      ["receiver", receiver],
+      ["key", key],
+    ] as const) {
+      if (this.typeOf(operand).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynOwnProperty ${label} ${operand} is not dynamic (#7106 S1g) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType: IrType = irVal({ kind: "i32", boolean: true });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.own_property", receiver, key, test, result, resultType });
+    return result;
+  }
+
   /** #7106 S1i — publish a direct call site's actual argument count to the callee's prologue. */
   emitDynPublishArgc(count: number): void {
     if (!Number.isInteger(count) || count < 0) {

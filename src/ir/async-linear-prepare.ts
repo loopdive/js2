@@ -127,6 +127,8 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
     case "dyn.arguments_length":
     case "dyn.publish_argc":
       return instr; // no operands (#7106 S1e/S1i)
+    case "dyn.own_property":
+      return { ...instr, receiver: resolve(instr.receiver), key: resolve(instr.key) };
     case "box":
     case "unbox":
     case "tag.test":

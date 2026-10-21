@@ -51,6 +51,7 @@ export type {
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
   IrInstrDynPublishArgc,
+  IrInstrDynOwnProperty,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

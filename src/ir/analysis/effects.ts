@@ -184,6 +184,8 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.arguments_length":
     // #7106 S1i — writes the __argc protocol global the callee prologue reads.
     case "dyn.publish_argc":
+    // #7106 S1g — a Proxy receiver may run user traps, like member reads.
+    case "dyn.own_property":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
