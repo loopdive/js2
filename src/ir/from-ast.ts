@@ -238,6 +238,7 @@ import {
   effectiveIrParamTypeNode,
   jsDocParamIsExternrefCandidate,
   functionBodyReferencesArguments,
+  directCallPublishesArgc,
   effectiveIrReturnTypeNode,
   expressionStatementMutatesAtTopLevel,
   irClosureSignatureFromFunctionTypeNode,
@@ -7842,7 +7843,8 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   // time to one IR arg per literal element. The pre-expansion arity
   // check below counts spread elements as their literal element count.
   const expandedArgExprs = expandStaticSpreadArgs(expr.arguments, cx);
-  if (expandedArgExprs.length !== calleeSig.params.length) {
+  const underArity = planUnderArityDirectCall(expr, direct, expandedArgExprs.length, cx);
+  if (expandedArgExprs.length !== calleeSig.params.length && underArity === null) {
     demoteToLegacy(
       "call-arity-unsupported",
       `ir/from-ast: call to ${calleeName} has ${expandedArgExprs.length} args, expected ${calleeSig.params.length} in ${cx.funcName}`,
@@ -7922,6 +7924,14 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     }
     args.push(argVal);
   }
+  if (underArity !== null) {
+    // (#7106 S1i) Legacy's order: supplied arguments, the `undefined` pads,
+    // then `__argc` (emitSetArgc) immediately before the call.
+    for (let i = args.length; i < calleeSig.params.length; i++) {
+      args.push(cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined));
+    }
+    if (underArity.publishArgc) cx.builder.emitDynPublishArgc(expandedArgExprs.length);
+  }
   const result = cx.builder.emitCall(direct.target, args, calleeSig.returnType);
   if (result === null) {
     // (#2856 C4) `quicksort(arr, lo, p - 1);` — a void direct call in
@@ -7933,6 +7943,37 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     );
   }
   return result;
+}
+
+/**
+ * (#7106 S1i) An under-arity direct call (`isWritable(obj, name)` on four
+ * formals): legacy pads each missing formal with the canonical `undefined`
+ * and publishes `__argc = actual` when the callee reads its own `arguments`.
+ * Admitted only when every missing formal is the dynamic carrier (a concrete
+ * formal takes legacy's `0` sentinel, not `undefined`) and the exact callee
+ * declaration is known, so the argc decision is the callee's, not a guess.
+ * `null` = not an under-arity call this lowering can build.
+ */
+function planUnderArityDirectCall(
+  expr: ts.CallExpression,
+  direct: IrDirectCallLoweringPlan,
+  actual: number,
+  cx: LowerCtx,
+): { readonly publishArgc: boolean } | null {
+  const params = direct.signature.params;
+  if (actual >= params.length || expr.arguments.some(ts.isSpreadElement)) return null;
+  for (let i = actual; i < params.length; i++) if (params[i]!.kind !== "dynamic") return null;
+  const binding = direct.target.binding;
+  const declaration = binding.kind === "unit" ? cx.identityContext?.declarationByUnitId.get(binding.unitId) : undefined;
+  if (
+    declaration === undefined ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.parameters.length !== params.length ||
+    declaration.parameters.some((parameter) => parameter.initializer || parameter.dotDotDotToken)
+  ) {
+    return null;
+  }
+  return { publishArgc: directCallPublishesArgc(declaration) };
 }
 
 /**
