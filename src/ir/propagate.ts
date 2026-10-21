@@ -93,6 +93,7 @@ import {
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 import { readEnv } from "../env.js";
+import { functionBodyAlwaysTerminates, irFunctionBodyReturnsValue } from "./select.js";
 
 // ---------------------------------------------------------------------------
 // Public shapes
@@ -434,6 +435,23 @@ export function buildIrUnitTypeMap(
           },
           fnctorExtension,
         );
+        // (#7106 S1c) An unannotated value-returning body that can FALL OUT
+        // (a tail `switch` without `default`, a guard `if`) also returns
+        // `undefined`. The checker's seed hides that outside strictNullChecks
+        // (`string | undefined` collapses to `string`), so the lattice said
+        // `string` for assert.js's `formatIdentityFreeValue` while legacy
+        // registers `(result externref)` and the selector resolves it dynamic
+        // (`resolveReturnType`'s fall-out arm); callers then saw `basic` two
+        // ways and the move-only scan rejected `return basic`. Mirror the
+        // selector: the fall-out widens the return to the dynamic carrier.
+        if (
+          ts.isFunctionDeclaration(fn) &&
+          fn.type === undefined &&
+          irFunctionBodyReturnsValue(fn.body) &&
+          !functionBodyAlwaysTerminates(fn.body)
+        ) {
+          newReturn = DYNAMIC;
+        }
       }
 
       // --- detect change ---------------------------------------------

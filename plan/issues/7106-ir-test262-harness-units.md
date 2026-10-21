@@ -64,6 +64,7 @@ loc-budget-allow:
   - src/ir/ambient-typeof.ts
   - src/ir/prepared-component-dependencies.ts
   - src/codegen/index.ts
+  - src/ir/propagate.ts
 ---
 
 ## Problem
@@ -293,6 +294,16 @@ carrier).
 
 Every remaining unit is gated on Stage 2, item 1 or the S3c decision; no further
 C-only slice moves the fallback-free count until those land.
+
+**`formatSimpleValue`, measured 03:10Z:** its own blocker is NOT the member
+read (`err.name === 'TypeError'` already lowers through `dyn.member_get` on a
+caught binding) but `return basic` — legacy registers the function as
+`(result (ref null 6))` (string) and coerces the dynamic `basic` through
+`__wrapper_string_value` + cast, while the IR has no dynamic→string return
+coercion. The lattice half is fixed here (a fall-out callee now propagates
+the dynamic carrier, so `basic` reads the same way in the lattice and the
+selector); the coercion arm is a new IR lowering (`dyn.to_string_carrier`
+or a `coerce` form over the same legacy engine) and is the next S1c step.
 
 ## Ownership
 

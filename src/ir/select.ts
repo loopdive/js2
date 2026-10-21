@@ -2547,7 +2547,7 @@ function resolveReturnType(
  * helpers the tail arms use), so a function ending in `try { return … }
  * catch (e) { throw e; }` is not mistaken for a fall-out.
  */
-function functionBodyAlwaysTerminates(body: ts.Block): boolean {
+export function functionBodyAlwaysTerminates(body: ts.Block): boolean {
   const last = body.statements[body.statements.length - 1];
   if (last === undefined) return false;
   if (ts.isSwitchStatement(last)) return switchAllPathsTerminate(last);
