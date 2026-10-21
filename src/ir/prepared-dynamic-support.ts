@@ -46,7 +46,7 @@ import {
 import type { PreparedDynamicInstructionSupportEvidence } from "./prepared-instruction-support.js";
 import type { Import, ValType } from "./types.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { JsTag, jsTagToStaticType } from "./js-tag.js";
+import { jsTagToStaticType } from "./js-tag.js";
 import { JS_TAG_IDS, jsTagOf } from "./runtime/js-tag-domain.js";
 
 /** The owning integration observes its existing canonical box dispatcher. */
@@ -214,12 +214,11 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             instr.kind === "tag.test" &&
             instr.tagId !== undefined
           ) {
-            const tag = jsTagOf(instr.tagId);
-            if (tag === JsTag.Null) {
+            if (instr.tagId === JS_TAG_IDS.Null) {
               planned.set(instr, []);
               return;
             }
-            if (tag !== JsTag.Undefined) {
+            if (instr.tagId !== JS_TAG_IDS.Undefined) {
               nameable = false;
               return;
             }
