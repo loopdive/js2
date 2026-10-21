@@ -3191,6 +3191,14 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
    */
   readonly noEarlyReturn?: boolean;
   /**
+   * (#7106 Stage 4) A planned function-member closure binds its catch
+   * parameter as the dynamic carrier (the thrown payload is an arbitrary JS
+   * value; on the non-fast lanes the externref slot IS that carrier), so
+   * `typeof thrown`, `thrown === null` and `thrown.constructor` use the
+   * dynamic operations.
+   */
+  readonly dynamicCatchBindings?: boolean;
+  /**
    * (#3142 Slice 2) Module-scope binding storage map — present only when
    * lowering the `<module-init>` unit. `lowerVarDecl` consults it: a
    * declared name with an entry binds as a `moduleGlobal` ScopeBinding
@@ -7766,6 +7774,16 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
+  }
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding.
+  const bindingLogicalType =
+    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
+  if (bindingLogicalType?.kind === "dynamic") {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
+    }
+    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx));
   }
 
   // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
@@ -16948,6 +16966,7 @@ function liftClosureBody(
     consumedCountedStringAppends: [],
     identityContext: cx.identityContext,
     classShapes: cx.classShapes,
+    ...(functionMemberClosure ? { dynamicCatchBindings: true } : {}),
     resolver: cx.resolver,
     lifted: cx.lifted,
     liftedUnitProvenance: cx.liftedUnitProvenance,
@@ -17283,6 +17302,9 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
         kind: "slot",
         slotIndex: payloadSlot,
         type: irVal({ kind: "externref" }),
+        ...(cx.dynamicCatchBindings === true && cx.resolver?.dynamicCarrierIsExternref?.() === true
+          ? { asType: irDynamic() }
+          : {}),
       });
     } else if (stmt.catchClause.variableDeclaration) {
       // Destructuring catch — selector should have rejected this.
