@@ -8901,6 +8901,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.construct") return true;
   if (instr.kind === "dyn.string_carrier") return true;
   if (instr.kind === "dyn.arguments_length") return true;
+  if (instr.kind === "dyn.own_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9115,6 +9116,8 @@ function preregisterDynamicSupport(
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
   let usesDynArgumentsLength = false;
+  // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
+  const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9129,6 +9132,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
+          if (i.kind === "dyn.own_property") ownPropertyTests.add(i.test);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9275,6 +9279,19 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
+  }
+  if (ownPropertyTests.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 S1g) exactly legacy's registration for the uncurried aliases
+    // (`call-object-builtins.ts`): `(externref, externref) -> i32 bool`.
+    for (const test of ownPropertyTests) {
+      ensureLateImport(
+        ctx,
+        test === "hasOwnProperty" ? "__hasOwnProperty" : "__propertyIsEnumerable",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "i32", boolean: true }],
+      );
+    }
+    flushLateImportShifts(ctx, null);
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     // (#7106 S3a) One wrapper per arity, built from legacy's own construct
@@ -9549,6 +9566,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
           "ir/integration: dyn.arguments_length is not lowerable on the fast $AnyValue carrier (#7106 S1e)",
         );
       },
+      emitOwnPropertyTest(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.own_property is not lowerable on the fast $AnyValue carrier (#7106 S1g)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9714,6 +9734,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.arguments_length needs the host-free argc protocol (#7106 S1e)");
       }
       return [{ op: "i32.const", value: formals } as Instr, callImport(IR_ARGUMENTS_LENGTH_HELPER)];
+    },
+    emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[] {
+      // (#7106 S1g) receiver + key already on the stack as externref.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.own_property needs the host-free own-property providers (#7106 S1g)");
+      }
+      return [callImport(test === "hasOwnProperty" ? "__hasOwnProperty" : "__propertyIsEnumerable")];
     },
     emitConstruct(arity: number): readonly Instr[] {
       // (#7106 S3a) callee + args already on the stack as externref; the

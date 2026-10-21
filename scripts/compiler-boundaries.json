@@ -13414,6 +13414,14 @@
       "nextBoundary": "N1 moved the closed instruction declarations into wasm/model/instructions.ts. Split remaining Wasm module/type records from compiler metadata before completing the originally planned wasm/model/types.ts boundary; old imports and compiler metadata remain debt."
     },
     {
+      "path": "src/ir/uncurried-object-alias.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Frontend source-shape certifier for the uncurried Object.prototype predicate aliases; move with the other source-admission helpers when the frontend inventory is split from ir-core."
+    },
+    {
       "path": "src/ir/update-retyped-bindings.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
