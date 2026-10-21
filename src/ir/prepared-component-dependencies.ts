@@ -8,7 +8,7 @@ import {
 } from "./abi-bindings.js";
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
 import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
-import type { IrBindingId, IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
+import type { IrBindingId, IrClassId, IrUnitId, IrUnitInventory } from "./identity.js";
 import {
   forEachInstrDeep,
   type IrClassShape,
@@ -30,6 +30,8 @@ import {
 } from "./capability-abi-validation.js";
 import {
   buildPreparedComponentOwnershipIndex,
+  terminalInventoryUnit,
+  terminalOwnerForIntent,
   type PreparedComponentOwnershipIndex as OwnershipIndex,
 } from "./prepared-component-ownership.js";
 import {
@@ -39,7 +41,13 @@ import {
   type PreparedComponentClosureSupportEvidence,
   type PreparedDynamicInstructionSupportEvidence,
 } from "./prepared-instruction-support.js";
-import type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from "./program/abi-lookup.js";
+import {
+  canonicalAbiEntry,
+  type CanonicalAbiEntry,
+  type PreparedComponentAbiEntry,
+  type PreparedComponentAbiLookup,
+} from "./program/abi-lookup.js";
+import { functionValueAccessorOwner } from "./program/function-value-dependency.js";
 export type { PreparedComponentAbiEntry, PreparedComponentAbiLookup } from "./program/abi-lookup.js";
 
 export { assertPreparedIrRuntimeSupportDependencies } from "./program/runtime-support-dependencies.js";
@@ -160,57 +168,12 @@ interface MutableFunctionEvidence {
   readonly failures: Map<string, PreparedComponentDependencyFailure>;
 }
 
-interface CanonicalAbiEntry {
-  readonly requested: PreparedComponentAbiEntry;
-  readonly canonical: PreparedComponentAbiEntry;
-}
-
-type CanonicalAbiResolution =
-  | { readonly kind: "resolved"; readonly entry: CanonicalAbiEntry }
-  | { readonly kind: "missing" }
-  | { readonly kind: "cycle" };
-
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function readonlyMap<K, V>(entries: Iterable<readonly [K, V]>): ReadonlyMap<K, V> {
   return new Map(entries);
-}
-
-function terminalInventoryUnit(inventory: IrUnitInventory, unitId: IrUnitId): IrTerminalUnitRecord | undefined {
-  // R2 components are keyed by terminal executable ownership, not by syntax
-  // family. Free functions, class members, and module init all carry the same
-  // exact terminal-owner contract in the inventory.
-  return inventory.terminalUnits.find((unit) => unit.id === unitId);
-}
-
-function canonicalAbiEntry(abi: PreparedComponentAbiLookup, id: IrBindingId): CanonicalAbiResolution {
-  const requested = abi.get(id);
-  if (!requested) return { kind: "missing" };
-  let canonical = requested;
-  const visited = new Set<IrBindingId>();
-  while (canonical.slotPolicy === "alias") {
-    if (visited.has(canonical.id)) return { kind: "cycle" };
-    visited.add(canonical.id);
-    if (!canonical.aliasOf) return { kind: "missing" };
-    const target = abi.get(canonical.aliasOf);
-    if (!target) return { kind: "missing" };
-    canonical = target;
-  }
-  return { kind: "resolved", entry: { requested, canonical } };
-}
-
-function terminalOwnerForIntent(intent: ProgramAbiIntent, ownership: OwnershipIndex): IrUnitId | null {
-  if (intent.kind === "callable") {
-    if (intent.unitId) return ownership.unitTerminalOwner.get(intent.unitId) ?? null;
-    if (intent.classId) return ownership.classTerminalOwner.get(intent.classId) ?? null;
-  }
-  if (intent.kind === "global" && intent.unitId) {
-    return ownership.unitTerminalOwner.get(intent.unitId) ?? null;
-  }
-  if (intent.kind === "class") return ownership.classTerminalOwner.get(intent.classId) ?? null;
-  return null;
 }
 
 function failureKey(failure: PreparedComponentDependencyFailure): string {
@@ -891,6 +854,28 @@ function recordUnitReference(
   if (!entry) return;
 }
 
+/** A cached value accessor executes support owned by its exact source target. */
+function recordFunctionValueAccessorOwner(
+  evidence: MutableFunctionEvidence,
+  ref: IrFuncRef,
+  functionsByUnitId: ReadonlyMap<IrUnitId, IrFunction>,
+  input: DerivePreparedComponentDependenciesInput,
+  ownership: OwnershipIndex,
+): void {
+  const owner = functionValueAccessorOwner(ref, input.abi);
+  if (owner?.kind === "contract-mismatch") {
+    addFailure(evidence, {
+      code: "abi-binding-contract-mismatch",
+      ownerUnitId: evidence.terminalOwnerUnitId,
+      bindingId: owner.bindingId,
+      detail: "cached function-value accessor lacks its exact zero-argument externref ABI",
+    });
+    return;
+  }
+  if (owner)
+    recordUnitReference(evidence, owner.unitId, functionsByUnitId, input.terminalUnitIds, input.abi, ownership);
+}
+
 /**
  * An implicit constructor is source-identifiable but has no terminal source
  * body. Preparation installs its exact `_init` support body; derived support
@@ -1219,6 +1204,29 @@ function recordConstructorNewSupportDependency(
   recordExternalCallable(evidence, constructorTarget, input.abi, ownership);
 }
 
+/** Record the exact source-body or external/support dependencies of one call. */
+function recordCallTargetDependency(
+  evidence: MutableFunctionEvidence,
+  call: Extract<IrInstr, { readonly kind: "call" }>,
+  functionsByUnitId: ReadonlyMap<IrUnitId, IrFunction>,
+  input: DerivePreparedComponentDependenciesInput,
+  ownership: OwnershipIndex,
+): void {
+  if (call.target.binding.kind === "unit") {
+    recordUnitReference(
+      evidence,
+      call.target.binding.unitId,
+      functionsByUnitId,
+      input.terminalUnitIds,
+      input.abi,
+      ownership,
+    );
+  } else {
+    recordExternalCallable(evidence, call.target, input.abi, ownership);
+    recordFunctionValueAccessorOwner(evidence, call.target, functionsByUnitId, input, ownership);
+  }
+}
+
 function collectFunctionEvidence(
   fn: IrFunction,
   terminalOwnerUnitId: IrUnitId,
@@ -1438,18 +1446,7 @@ function collectFunctionEvidence(
         });
       }
       if (nested.kind === "call") {
-        if (nested.target.binding.kind === "unit") {
-          recordUnitReference(
-            evidence,
-            nested.target.binding.unitId,
-            functionsByUnitId,
-            input.terminalUnitIds,
-            input.abi,
-            ownership,
-          );
-        } else {
-          recordExternalCallable(evidence, nested.target, input.abi, ownership);
-        }
+        recordCallTargetDependency(evidence, nested, functionsByUnitId, input, ownership);
       } else if (nested.kind === "intrinsic") {
         if (nested.provider?.kind === "callable") {
           recordExternalCallable(evidence, nested.provider.target, input.abi, ownership);

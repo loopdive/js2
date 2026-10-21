@@ -1978,6 +1978,19 @@
   ],
   "files": [
     {
+      "path": "src/ir/function-object-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Frontend source-node/callback-driven lowering into symbolic IR; separate source admission from representation-neutral call construction."
+    },
+    {
+      "path": "src/ir/program/function-value-dependency.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/backend/wasmgc/resources/native-string-own-keys.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
@@ -16443,6 +16456,30 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Pure TS-AST scan of logical-assignment NamedEvaluation targets feeding the IR lowerer's legacy demotion (#7040); move behind the frontend-ts boundary with the mutation pre-pass."
+    },
+    {
+      "path": "src/ir/function-member-closure-plan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Compiler-local exact AST/checker/physical-ABI sidecar and final allocation observer; separate frontend source identity from core contracts before certification."
+    },
+    {
+      "path": "src/codegen/function-member-closure-planning.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Source checker/physical closure ABI/prepared allocator metadata boundary; separate source proof from canonical backend allocation."
+    },
+    {
+      "path": "src/ir/select-closure-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7106-stage2-function-objects",
+      "nextBoundary": "Source closure shape/body selection through required canonical selector operations; isolate frontend AST admission from core IR."
     }
   ]
 }

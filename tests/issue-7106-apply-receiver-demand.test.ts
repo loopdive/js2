@@ -7,6 +7,7 @@ import { buildIrPlanningIdentityContext } from "../src/ir/planning-identity.js";
 import { createCodegenContext } from "../src/codegen/context/create-context.js";
 import { buildIrOverlayIdentityMaps, planIrOverlayByIdentity } from "../src/codegen/ir-overlay-identity.js";
 import { collectPreparedTopLevelFunctionValueTargetUnitIds } from "../src/codegen/ir-prepared-free-functions.js";
+import { identifierIsRuntimeFunctionValueReference } from "../src/codegen/ir-overlay-safety.js";
 
 // This is a genuine bound Program/checker/inventory. No oracle stubs, forged
 // unit IDs, fabricated allocator objects or TypeNode injection are used.
@@ -45,6 +46,8 @@ describe("#7106 canonical primitive-apply receiver demand before sealing", () =>
     const access = call.expression.expression;
     if (!ts.isPropertyAccessExpression(access) || !ts.isIdentifier(access.expression)) throw new Error("receiver lost");
     expect(f.ctx.oracle.valueDeclarationOf(access.expression)).toBe(f.declaration);
+    // Generic R2 classification is deliberately unchanged.
+    expect(identifierIsRuntimeFunctionValueReference(access.expression)).toBe(false);
   });
 
   it.each([

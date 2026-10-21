@@ -35,6 +35,8 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import * as functionObjects from "./function-object-lowering.js";
+import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
@@ -59,6 +61,9 @@ import {
   IR_DYN_LE_FN,
   IR_DYN_LT_FN,
   IR_DYN_METHOD_CALL_0_FN,
+  IR_DYN_CALL_VALUE_FN,
+  IR_DYN_CALL_BOX_FN,
+  IR_DYN_CALL_ARGUMENT_FN,
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
@@ -147,7 +152,6 @@ import {
   type IrCountedStringAppendLoweringPlan,
   type IrImportedCallLoweringPlan,
   type IrImportedOptionalParamPlan,
-  type IrTopLevelFunctionValueLoweringPlan,
   type ModuleBindingGlobal,
 } from "./ast-lowering-plans.js";
 export type {
@@ -1117,7 +1121,7 @@ function withNodeSourceSite<T>(scope: FrontendSourceScope, node: ts.Node, run: (
   }
 }
 
-export interface AstToIrOptions {
+export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPlans {
   readonly sourceMap?: IrFunctionSourceMapContext;
   readonly exported?: boolean;
   /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
@@ -1206,8 +1210,6 @@ export interface AstToIrOptions {
   /** Exact native-string runtime boundaries keyed by AST call site. */
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** (#3214) Exact imported-call, function-value, and host-callback AST-site plans. */
-  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
-  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
@@ -1837,8 +1839,7 @@ export function lowerFunctionAstToIr(
     directCalls: options.directCalls,
     fnctorParameterPreselection: options.fnctorParameterPreselection,
     fnctorNativeStringBoundaries: options.fnctorNativeStringBoundaries,
-    importedCalls: options.importedCalls,
-    topLevelFunctionValues: options.topLevelFunctionValues,
+    ...functionObjects.projectFunctionValueLoweringPlans(options),
     hostVoidCallbacks: options.hostVoidCallbacks,
     hostDateSnapshots: options.hostDateSnapshots,
     hostDateGetters: options.hostDateGetters,
@@ -2965,7 +2966,7 @@ interface NestedCapture {
   readonly withField?: { readonly name: string; readonly type: IrType };
 }
 
-interface LowerCtx extends FrontendSourceScope {
+interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLoweringPlans {
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
   readonly booleanReturnBuilder?: IrFunctionBuilder;
@@ -2983,8 +2984,6 @@ interface LowerCtx extends FrontendSourceScope {
   readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
-  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
-  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
@@ -3246,37 +3245,6 @@ function sameScopeStorage(a: StringEncodingScopeBinding, b: ScopeBinding | undef
     case "slot":
       return b.kind === "slot" && b.slotIndex === a.slotIndex;
   }
-}
-
-/**
- * (#3214 B1) Read/create the canonical cached wrapper for one exact bare
- * top-level function-value site.  The codegen planning phase has already
- * materialized the matching symbolic trampoline/global declarations through
- * `ensureFuncClosureSingleton`; IR owns only the lazy access sequence.
- */
-function lowerTopLevelFunctionValue(plan: IrTopLevelFunctionValueLoweringPlan, cx: LowerCtx): IrValueId {
-  requireMatchingLoweringPlanOwner("top-level function value", plan.ownerUnitId, cx.ownerUnitId, cx.funcName);
-  if (plan.target.binding.kind !== "unit") {
-    // invariant (producer-promise): identity resolution promised an exact unit — #4502.
-    throw new Error(`ir/from-ast: top-level function value target ${plan.target.name} is not an exact unit`);
-  }
-  if (plan.trampoline.binding.kind !== "support") {
-    // invariant (producer-promise): the prepared trampoline plan promised a compiler-support binding — #4502.
-    throw new Error(`ir/from-ast: function-value trampoline ${plan.trampoline.name} is not compiler support`);
-  }
-  const cache = plan.cacheGlobal;
-  const cached = cx.builder.emitGlobalGet(cache, irVal({ kind: "externref" }));
-  const isNull = cx.builder.emitRefIsNull(cached);
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    const closure = cx.builder.emitClosureNew(plan.trampoline, plan.signature, [], []);
-    const external = cx.builder.emitCoerceToExternref(closure);
-    cx.builder.emitGlobalSet(cache, external);
-  });
-  cx.builder.emitIfStmt({ cond: isNull, then: thenBody, else: [] });
-  // `callable<S>` is the source boundary type and lowers to the exact same
-  // externref global carrier. Retagging the final read avoids an unsound
-  // externref→closure cast while preserving singleton identity.
-  return cx.builder.emitGlobalGet(cache, { kind: "callable", signature: plan.signature });
 }
 
 /**
@@ -4981,14 +4949,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // decides the value representation, so the asserted type cannot change the
   // emitted bytes. Paired with the matching `isPhase1Expr` arm in select.ts:
   // selector claim ⇔ lowering parity.
-  if (
-    ts.isAsExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr)
-  ) {
-    return lowerExpr(expr.expression, cx, hint);
-  }
+  const typeErasedOperand = unwrapTypeErasedExpression(expr);
+  if (typeErasedOperand) return lowerExpr(typeErasedOperand, cx, hint);
   if (ts.isAwaitExpression(expr)) {
     return lowerAwaitExpression(expr, cx, hint);
   }
@@ -5096,7 +5058,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   }
   if (ts.isIdentifier(expr)) {
     const topLevelFunction = cx.topLevelFunctionValues?.get(expr);
-    if (topLevelFunction) return lowerTopLevelFunctionValue(topLevelFunction, cx);
+    if (topLevelFunction)
+      return functionObjects.lowerTopLevelFunctionValue(topLevelFunction, functionObjectLoweringHost(cx));
     const p = cx.scope.get(expr.text);
     // (#2856) Host ambient global (`document`, `window`, …): not a scope
     // binding — resolves through the legacy declared-globals registry to the
@@ -7596,6 +7559,21 @@ function lowerPreparedNumberCall(expr: ts.CallExpression, cx: LowerCtx): IrValue
   return result;
 }
 
+function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjectLoweringHost {
+  return {
+    builder: cx.builder,
+    ownerUnitId: cx.ownerUnitId,
+    funcName: cx.funcName,
+    dynamicCarrierIsExternref: () =>
+      cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
+    requireOwner: (ownerUnitId) =>
+      requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
+    lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
+    boxConcrete: (value, type, source) => boxConcreteToDynamic(value, type, source, cx),
+    symbols: { IR_DYN_CALL_BOX_FN, IR_DYN_CALL_VALUE_FN, IR_DYN_CALL_ARGUMENT_FN },
+  };
+}
+
 function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerCall(expr, cx, statementPosition));
@@ -7710,6 +7688,10 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
+  const functionAccess = expr.expression;
+  if (functionObjects.isPreparedFunctionObjectAccess(functionAccess, cx.topLevelFunctionValues)) {
+    return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));
+  }
   const generalToString = tryLowerAmbientStringToStringCall(expr, cx);
   if (generalToString !== null) return generalToString;
   // Slice 4 (#1169d): method call — `<recv>.<methodName>(args)`. The
@@ -9014,6 +8996,11 @@ function lowerMethodCallWithSourcePlan(
     return withNodeSourceSite(cx, expr, () => lowerMethodCallWithSourcePlan(expr, cx, statementPosition));
   if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
+  }
+  // Statement/discarded calls enter here directly instead of lowerCall.
+  // Keep the same exact receiver certificate on every call entry path.
+  if (functionObjects.isPreparedFunctionObjectAccess(expr.expression, cx.topLevelFunctionValues)) {
+    return functionObjects.lowerFunctionObjectMemberCall(expr, expr.expression, functionObjectLoweringHost(cx));
   }
   const closureInvocation = cx.resolver?.sourceClosureInvocation?.(expr);
   if (closureInvocation)
@@ -10406,6 +10393,11 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
+
+  if (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) {
+    functionObjects.lowerFunctionObjectPropertyWrite(recv, fieldName, expr.right, functionObjectLoweringHost(cx));
+    return;
+  }
 
   if (recvType.kind === "class") {
     const field = recvType.shape.fields.find((f) => f.name === fieldName);
@@ -15934,33 +15926,6 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   return null;
 }
 
-function expressionIsDefinitelyBoolean(expression: ts.Expression): boolean {
-  const candidate = peelParensExpr(expression);
-  if (candidate.kind === ts.SyntaxKind.TrueKeyword || candidate.kind === ts.SyntaxKind.FalseKeyword) return true;
-  if (ts.isPrefixUnaryExpression(candidate) && candidate.operator === ts.SyntaxKind.ExclamationToken) return true;
-  if (ts.isBinaryExpression(candidate)) {
-    const op = candidate.operatorToken.kind;
-    return (
-      op === ts.SyntaxKind.LessThanToken ||
-      op === ts.SyntaxKind.LessThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanToken ||
-      op === ts.SyntaxKind.GreaterThanEqualsToken ||
-      op === ts.SyntaxKind.EqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsToken ||
-      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-      op === ts.SyntaxKind.InstanceOfKeyword ||
-      op === ts.SyntaxKind.InKeyword ||
-      op === ts.SyntaxKind.AmpersandAmpersandToken ||
-      op === ts.SyntaxKind.BarBarToken
-    );
-  }
-  if (ts.isConditionalExpression(candidate)) {
-    return expressionIsDefinitelyBoolean(candidate.whenTrue) && expressionIsDefinitelyBoolean(candidate.whenFalse);
-  }
-  return false;
-}
-
 /**
  * #2949 S5.3 — lower `dyn < x` / `dyn > x` / `dyn <= x` / `dyn >= x` (either or
  * both operands dynamic) as a NUMERIC-ABSTRACT relational compare: each dynamic
@@ -16294,6 +16259,14 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerClosureExpression(expr, cx));
+  const memberPlan = ts.isFunctionExpression(expr) ? cx.functionMemberClosures?.resolve(expr) : undefined;
+  if (memberPlan) {
+    if (!memberPlan.isCurrent() || memberPlan.ownerUnitId !== cx.ownerUnitId)
+      demoteToLegacy("body-shape-rejected", "function-member closure source proof is stale");
+    return lowerClosureExpressionWithSignature(expr, memberPlan.signature, new Set(), cx, {
+      functionMemberClosure: memberPlan,
+    });
+  }
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   let descriptorOwner: ts.Node | undefined = expr.parent;
@@ -16567,6 +16540,7 @@ function lowerClosureExpressionWithSignature(
     exact?.allowConciseVoidBody === true,
     exact?.hostOneShot === true,
     exact?.domCallbackAuthority,
+    exact?.functionMemberClosure,
   );
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
@@ -16686,8 +16660,7 @@ function liftNestedFunction(
     ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
-    importedCalls: cx.importedCalls,
-    topLevelFunctionValues: cx.topLevelFunctionValues,
+    ...functionObjects.projectFunctionValueLoweringPlans(cx),
     hostVoidCallbacks: cx.hostVoidCallbacks,
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
@@ -16756,6 +16729,7 @@ function liftClosureBody(
   allowConciseVoidBody = false,
   hostOneShot = false,
   domCallbackAuthority?: import("./nodes.js").IrDomCallbackAuthority,
+  functionMemberClosure?: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
 ): IrFunction {
   const body = expr.body;
   if (!body) {
@@ -16804,6 +16778,29 @@ function liftClosureBody(
   }
 
   builder.openBlock();
+  if (functionMemberClosure) {
+    if (
+      !functionMemberClosure.isCurrent() ||
+      functionMemberClosure.sourceUnitId !== liftedIdentity.unitId ||
+      functionMemberClosure.expression !== expr ||
+      functionMemberClosure.signature !== signature ||
+      captures.length !== 0
+    )
+      demoteToLegacy("body-shape-rejected", "function-member closure entry proof diverged");
+    for (const index of functionMemberClosure.dynamicParameterIndices) {
+      const parameter = expr.parameters[index]!;
+      const binding = ts.isIdentifier(parameter.name) ? scope.get(parameter.name.text) : undefined;
+      if (binding?.kind !== "local" || binding.type.kind !== "val" || binding.type.val.kind !== "externref")
+        demoteToLegacy("body-shape-rejected", "function-member closure raw parameter ABI diverged");
+      const bindParameter = (): void => {
+        const dynamic = builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [binding.value], irDynamic());
+        if (dynamic === null) throw new Error("function-member closure entry adapter returned void");
+        scope.set((parameter.name as ts.Identifier).text, { kind: "local", value: dynamic, type: irDynamic() });
+      };
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
+      else bindParameter();
+    }
+  }
 
   // Read each capture out of __self. captureFieldTypes is parallel to
   // captures; lifted body sees captures at index 0..N-1.
@@ -16823,8 +16820,7 @@ function liftClosureBody(
     ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
-    importedCalls: cx.importedCalls,
-    topLevelFunctionValues: cx.topLevelFunctionValues,
+    ...functionObjects.projectFunctionValueLoweringPlans(cx),
     hostVoidCallbacks: cx.hostVoidCallbacks,
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,

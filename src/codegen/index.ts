@@ -50,7 +50,7 @@ import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
-import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
+import { promoteTrampolineTailCalls, ensureFuncClosureSingletonAccessor } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { funnelRepeatedReturnTails } from "./helpers/return-tail-funnel.js";
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
@@ -161,10 +161,10 @@ import {
   type IrUnitKind,
   type IrUnitId,
 } from "../ir/identity.js";
-import { planIrNestedClassFieldCalls } from "../ir/class-field-call-planning.js";
 import {
   buildIrPlanningIdentityContext,
   requireIrPlanningSourceId,
+  requireIrPlanningOwnerUnitId,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 import { makeIrPromiseDelayResolver } from "../ir/promise-delay.js";
@@ -220,7 +220,14 @@ import { sweepAfterInline, verifyFunctionSweep } from "./function-reachability-s
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
-import { planIrImportedCalls, recordIrOverlayPreparationFailure } from "./ir-imported-call-planning.js";
+import {
+  planIrImportedCalls,
+  preparedMemberInit,
+  preparedModuleInitEvaluationMatchesStatement,
+  recordIrOverlayPreparationFailure,
+  planIrFunctionValueResolverState,
+  prepareTopLevelFunctionValueTargetSupport,
+} from "./ir-imported-call-planning.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,
@@ -286,7 +293,6 @@ import {
   buildMultiIrGraphSafety,
   collectMultiIrFunctionNameCollisions,
   type EarlyMultiPreparedScalarLeafState,
-  type MultiPreparedFunctionValueSupportReceipt,
   type MultiPreparedScalarLeafGraphSafety,
 } from "./multi-prepared-scalar-leaf.js";
 import { assertMultiPreparedArrayLeafRouteCurrent } from "./multi-prepared-array-leaf.js";
@@ -501,7 +507,7 @@ import {
   repairStructTypeMismatches,
 } from "./fixups.js";
 import { emitInlineMathFunctions } from "./math-helpers.js";
-import { ensureFuncClosureSingleton, finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
+import { finalizeMethodTrampolines, getFuncRefWrapperRootTypeIdx } from "./closures.js";
 import { peepholeOptimize } from "./peephole.js";
 import { instrArraySharing } from "./call-arg-producers.js";
 import { repairCrossHierarchyOperands } from "./cross-hierarchy-operands.js"; // (#4157 park 6)
@@ -2552,6 +2558,7 @@ export interface IrOverlayPlan {
   /** Checker-certified source-unit and ambient-host call sites, keyed by exact AST node. */
   readonly importedCalls: Map<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues: Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+  readonly functionMemberClosures?: import("../ir/function-member-closure-plan.js").IrFunctionMemberClosures;
   /** Exact ambient addEventListener void arrows admitted by B2/Calendar. */
   readonly hostVoidCallbacks: Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   /** Exact ambient Date snapshot constructors and getter uses admitted by Calendar. */
@@ -2599,88 +2606,6 @@ function withdrawChunkedModuleInitFromIrSelection(
     detail: "module initialization exceeds the complete-entry Wasm body budget and uses direct chunked emission",
   });
   safeSelection.moduleInit = undefined;
-}
-
-/**
- * Allocate and freeze direct function-value singleton support before a target
- * body can seal through Prepared IR. A direct caller may still materialize the
- * value later, but it must reuse these exact allocator objects rather than
- * adding ABI drafts to an already sealed target component.
- */
-function prepareTopLevelFunctionValueTargetSupport(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  plan: IrOverlayPlan,
-  selectedLegacyNames: ReadonlySet<string>,
-): ReadonlyMap<IrUnitId, MultiPreparedFunctionValueSupportReceipt> {
-  const receipts = new Map<IrUnitId, MultiPreparedFunctionValueSupportReceipt>();
-  const selectedUnitIds = new Set(
-    [...selectedLegacyNames].map((legacyName) =>
-      irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
-    ),
-  );
-  const valueTargetUnitIds = collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan);
-  for (const unitId of valueTargetUnitIds) {
-    if (!selectedUnitIds.has(unitId)) continue;
-    const claim = plan.functionClaimsByUnitId.get(unitId);
-    const funcIdx = claim ? ctx.programAbiSourceCallables?.handleForUnit(unitId) : undefined;
-    const target = claim ? irUnitFuncRef({ unitId, name: claim.legacyName }) : undefined;
-    if (claim === undefined || funcIdx === undefined || target === undefined) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} has no exact allocated source callable`,
-      );
-    }
-    const singleton = ensureFuncClosureSingleton(ctx, claim.legacyName, funcIdx, false);
-    const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
-    const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
-    if (!singleton || !trampoline || !cache) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} could not allocate its exact singleton support`,
-      );
-    }
-    const functionValuePlan = {
-      target,
-      trampoline: irSupportFuncRef(unitId, "function-value-trampoline", trampoline.name),
-      cacheGlobal: irSupportGlobalRef(unitId, "function-value-cache", cache.name),
-    };
-    if (!planProgramAbiFunctionValue(ctx, functionValuePlan, trampoline, cache)) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} could not freeze its singleton Program ABI`,
-      );
-    }
-    if (
-      functionValuePlan.trampoline.binding.kind !== "support" ||
-      functionValuePlan.cacheGlobal.binding.kind !== "support"
-    ) {
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "resolve",
-        `prepared function-value target ${unitId} lost its exact support binding identities`,
-      );
-    }
-    receipts.set(
-      unitId,
-      Object.freeze({
-        targetFunction: ctx.programAbiSourceCallables!.functionForUnit(unitId)!,
-        targetHandle: funcIdx,
-        trampolineFunction: trampoline,
-        trampolineHandle: singleton.trampolineFuncIdx,
-        trampolineRef: functionValuePlan.trampoline,
-        trampolineBindingId: functionValuePlan.trampoline.binding.bindingId,
-        cacheGlobal: cache,
-        cacheGlobalHandle: singleton.cacheGlobalIdx,
-        cacheGlobalRef: functionValuePlan.cacheGlobal,
-        cacheGlobalBindingId: functionValuePlan.cacheGlobal.binding.bindingId,
-      }),
-    );
-  }
-  return receipts;
 }
 
 function recordWholeSourceFailure(
@@ -2998,30 +2923,43 @@ interface IrOverlayPlanningOptions {
   readonly countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan };
 }
 
+/** Build one source's canonical value and fnctor resolver services in their original order. */
+function planIrOverlaySourceResolverState(
+  ctx: CodegenContext,
+  ast: TypedAST,
+  identityContext: IrPlanningIdentityContext,
+  options: IrOverlayPlanningOptions,
+) {
+  const state = planIrFunctionValueResolverState(
+    ctx,
+    identityContext,
+    options,
+    () => makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
+    irVal,
+  );
+  const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
+  const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
+  return { ...state, resolveFnctorAdmission, resolveFnctorPropagationAdmission };
+}
+
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
   identityContext: IrPlanningIdentityContext,
   options: IrOverlayPlanningOptions = {},
 ): IrOverlayPlan {
-  const identityImportedFunctions = options.importedFunctions;
-  const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
-  // (#3522 F2/F4) ONE exact resolver per source, constructed before identity
-  // selection and reused by direct-call projection and the field-call proof.
-  const identityResolver = makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions);
-  // (#3522 F4) Validate the complete dormant F3 proof and derive the single
-  // immutable admitted-class marker BEFORE local class-expression resolution
-  // and identity selection. Every downstream consumer carries this object; none
-  // recomputes it.
-  const nestedClassFieldCallProofs = planIrNestedClassFieldCalls({ identityContext, resolver: identityResolver });
-  const nestedClassFieldCallAdmission: IrNestedClassFieldCallAdmission =
-    irOverlayIdentity.computeIrNestedClassFieldCallAdmission({
-      identityContext,
-      resolver: identityResolver,
-      proofs: nestedClassFieldCallProofs,
-    });
-  const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
-  const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
+  const {
+    identityImportedFunctions,
+    legacyImportedFunctions,
+    identityResolver,
+    functionObjectValues,
+    functionMemberClosures,
+    functionValueSelectionOptions,
+    nestedClassFieldCallProofs,
+    nestedClassFieldCallAdmission,
+    resolveFnctorAdmission,
+    resolveFnctorPropagationAdmission,
+  } = planIrOverlaySourceResolverState(ctx, ast, identityContext, options);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
     if (readEnv("JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW") === "1") {
@@ -3295,6 +3233,7 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
+      ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
       // carrier, which is already externref and can feed the shared
@@ -3625,8 +3564,10 @@ function planIrOverlay(
   const { importedCalls, topLevelFunctionValues } = planIrImportedCalls({
     ctx,
     identityPlan,
+    sourceOwnerUnitId: (node) => requireIrPlanningOwnerUnitId(identityContext, node),
     preparationFailuresByUnitId,
     ...(hostExternSurface && identityImportedFunctions ? { identityImportedFunctions, legacyImportedFunctions } : {}),
+    ...(functionObjectValues ? { functionObjectValues } : {}),
     ...(timerShim ? { resolvePreparedTimerShim: timerShim } : {}),
     ...(resolveAmbientClassCall ? { resolveAmbientClassCall } : {}),
     classShapeSidecar,
@@ -3656,6 +3597,7 @@ function planIrOverlay(
     declByName,
     importedCalls,
     topLevelFunctionValues,
+    ...(functionMemberClosures ? { functionMemberClosures } : {}),
     ...calendarLoweringPlans,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
@@ -4083,10 +4025,17 @@ function prepareMultiIrImportedLowering(
       blocked.add(valuePlan.ownerUnitId);
       continue;
     }
-    const singleton = ensureFuncClosureSingleton(ctx, valuePlan.target.name, funcIdx, false);
+    const access = ensureFuncClosureSingletonAccessor(ctx, valuePlan.target.name, funcIdx);
+    const singleton = access?.singleton;
+    const accessor = access ? definedFuncAt(ctx, access.accessorFuncIdx) : undefined;
     const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
     const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
-    if (!trampoline || !cache || !planProgramAbiFunctionValue(ctx, valuePlan, trampoline, cache)) {
+    if (
+      !trampoline ||
+      !cache ||
+      !accessor ||
+      !planProgramAbiFunctionValue(ctx, valuePlan, trampoline, cache, accessor)
+    ) {
       blocked.add(valuePlan.ownerUnitId);
     }
   }
@@ -4323,34 +4272,6 @@ interface PreparedLexicalModuleInitEvidence {
   readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export" | "wasi-start-export">;
 }
 
-function preparedModuleInitEvaluationMatchesStatement(
-  sourceId: IrSourceId,
-  sourceFile: ts.SourceFile,
-  statement: ts.Statement,
-  evaluation: IrModuleInitEvaluationEntry,
-  sourceOrdinal: number,
-  kind: Extract<IrModuleInitEvaluationEntry["kind"], "variable-initializer" | "statement">,
-  bindingIds: readonly IrBindingId[],
-): boolean {
-  const statementOrdinal = sourceFile.statements.indexOf(statement);
-  const start = statement.getStart(sourceFile);
-  return (
-    statement.getSourceFile() === sourceFile &&
-    statementOrdinal >= 0 &&
-    evaluation.key === `${sourceId}:eval:${sourceOrdinal}` &&
-    evaluation.kind === kind &&
-    evaluation.sourceOrdinal === sourceOrdinal &&
-    evaluation.statementOrdinal === statementOrdinal &&
-    evaluation.nestedOrdinal === 0 &&
-    evaluation.start === start &&
-    evaluation.end === statement.end &&
-    evaluation.classId === null &&
-    evaluation.legacyKey === `statement:${start}:${statement.end}` &&
-    evaluation.bindingIds.length === bindingIds.length &&
-    evaluation.bindingIds.every((bindingId, index) => bindingId === bindingIds[index])
-  );
-}
-
 function preparedExactLexicalDeclaration(
   ctx: CodegenContext,
   sourceId: IrSourceId,
@@ -4561,6 +4482,22 @@ function isPreparedExactScalarModuleAssignment(
     binding.tdzBindingId !== null &&
     binding.start === declaration.getStart(sourceFile) &&
     binding.end === declaration.end
+  );
+}
+
+/** Keep lexical admission first; member-only admission proves no scalar storage. */
+function preparedExactModuleInit(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: IrOverlayPlan,
+  selection: Pick<IrSelection, "funcs" | "moduleInit">,
+  planning: IrModuleInitPlanningEvidence | undefined,
+): PreparedLexicalModuleInitEvidence | undefined {
+  return (
+    preparedExactLexicalModuleInit(ctx, sourceFile, selection, planning, plan.identityPlan.identityContext) ??
+    preparedMemberInit(ctx, sourceFile, plan, selection, planning, (node) =>
+      requireIrPlanningOwnerUnitId(plan.identityPlan.identityContext, node),
+    )
   );
 }
 
@@ -4901,12 +4838,12 @@ function planIrFirstBodyRouting(
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
   const hasLateFeaturePreparation = timerRouting.hasOtherLateFeaturePreparation;
-  const preliminaryModuleInit = preparedExactLexicalModuleInit(
+  const preliminaryModuleInit = preparedExactModuleInit(
     ctx,
     sourceFile,
+    plan,
     preliminarySelection,
     moduleInitPlanning,
-    plan.identityPlan.identityContext,
   );
   const selectedClassIds = selectPreparedClassMemberUnitIds(ctx, preliminarySelection, plan.identityPlan);
   // Preserve the established late-feature gate for ordinary members and
@@ -4930,6 +4867,7 @@ function planIrFirstBodyRouting(
   const preliminaryOwnerPopulation = freeNames
     ? selectR2PreparedOwnerComponents({
         ctx,
+        topLevelFunctionValues: plan.topLevelFunctionValues,
         sourceFile,
         selectedLegacyNames: freeNames,
         baselineLegacyNames: new Set(),
@@ -4942,7 +4880,9 @@ function planIrFirstBodyRouting(
         // (#4508) A module-binding reader may only stay a prepared candidate
         // when the module-init that owns its storage joins the same sealed
         // transaction.
-        preparedStorageTerminalUnitIds: new Set(preliminaryModuleInit ? [preliminaryModuleInit.unitId] : []),
+        preparedStorageTerminalUnitIds: new Set(
+          preliminaryModuleInit?.globalBindingIds.size ? [preliminaryModuleInit.unitId] : [],
+        ),
       })
     : {
         freeFunctionNames: new Set<string>(),
@@ -5055,12 +4995,12 @@ function planIrFirstBodyRouting(
     const finalModuleInit =
       preliminaryModuleInit === undefined
         ? undefined
-        : preparedExactLexicalModuleInit(
+        : preparedExactModuleInit(
             ctx,
             sourceFile,
-            preparedSelection,
+            plan,
+            { ...preparedSelection, funcs: preparedFreeFunctionNames },
             moduleInitPlanning,
-            plan.identityPlan.identityContext,
           );
     const prepareModuleInit = finalModuleInit !== undefined;
     if (preparedFreeFunctionNames.size === 0 && finalClassMemberNames.size === 0 && !prepareModuleInit) {
@@ -5088,7 +5028,9 @@ function planIrFirstBodyRouting(
           },
           selection,
         );
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, preparedFreeFunctionNames);
+      prepareTopLevelFunctionValueTargetSupport(ctx, plan, preparedFreeFunctionNames, () =>
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      );
       const preparedBodies = prepareIrBodies({
         ctx,
         sourceFile,
@@ -10709,7 +10651,9 @@ function planMultiPreparedProgramRoutes(
         irTimerShim.inspectIrCompilerTimerShimRouting(plan).ownerUnitIds,
       ),
     prepareFunctionValueSupport: (plan, sourceFile, unitId, legacyName) =>
-      prepareTopLevelFunctionValueTargetSupport(ctx, sourceFile, plan, new Set([legacyName])).get(unitId),
+      prepareTopLevelFunctionValueTargetSupport(ctx, plan, new Set([legacyName]), () =>
+        collectPreparedTopLevelFunctionValueTargetUnitIds(ctx, sourceFile, plan.identityPlan),
+      ).get(unitId),
     projectLoweringPlans: (plan, selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     moduleInit: {
       selectExactLexicalModuleInit: (sourceFile, selection, planning) =>

@@ -4,6 +4,7 @@ import {
   irDirectCallLoweringPlanEquals,
   type IrDirectCallLoweringPlan,
   type IrHostVoidCallbackLoweringPlan,
+  type IrTopLevelFunctionValueLoweringPlan,
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
 import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
@@ -17,6 +18,7 @@ import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrR2Withdrawal, IrR2WithdrawalReason } from "../ir/r2-withdrawal.js";
 import {
   buildIrLegacyUnitProjection,
+  requireIrPlanningOwnerUnitId,
   type IrLegacyUnitProjection,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
@@ -46,6 +48,7 @@ import {
   buildIrRequestedFunctionSkipProjection,
   identifierIsRuntimeFunctionValueReference,
   sameDeclarationSite,
+  containsTopLevelFunctionValueReference,
   computeIrFirstSkipUnitIds,
   mergeIrIntegrationReports,
   preparedIrBodyRouting,
@@ -55,6 +58,7 @@ import {
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
+import { hasPreparedFunctionObjectReference } from "./ir-imported-call-planning.js";
 import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
@@ -585,34 +589,6 @@ export function collectPreparedTopLevelFunctionValueTargetUnitIds(
     topLevelFunctionUnitsByName(sourceFile, identityPlan),
     true,
   );
-}
-
-function containsTopLevelFunctionValueReference(
-  ctx: CodegenContext,
-  declaration: ts.FunctionLikeDeclaration,
-  unitsByName: ReadonlyMap<
-    string,
-    readonly { readonly declaration: ts.FunctionDeclaration; readonly unitId: IrUnitId }[]
-  >,
-): boolean {
-  if (!declaration.body) return false;
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isIdentifier(node) && identifierIsRuntimeFunctionValueReference(node)) {
-      const valueDeclaration = ctx.oracle.valueDeclarationOf(node);
-      if (
-        valueDeclaration !== undefined &&
-        (unitsByName.get(node.text) ?? []).some((unit) => sameDeclarationSite(unit.declaration, valueDeclaration))
-      ) {
-        found = true;
-        return;
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(declaration.body);
-  return found;
 }
 
 /**
@@ -1411,6 +1387,30 @@ export function finalizeR3PreparedOwnerPopulation(input: {
   };
 }
 
+/** Preserve the admission short circuit and the refusal-only fast-name rescan. */
+function firstR2PreparedOwnerAdmissionFailure(
+  admissionPredicates: readonly (readonly [IrR2WithdrawalReason, () => boolean])[],
+): IrR2WithdrawalReason | undefined {
+  const firstFailing = admissionPredicates.find(([, rejects]) => rejects());
+  if (firstFailing) {
+    // (#5282) The DECISION above is untouched, so the prepared set is
+    // byte-identical; only the NAME moves. `fast-signature-unproven` is entry
+    // zero and its guard subsumes every later predicate, so in a fast lane it
+    // answered for refusals it does not describe — one object-parameter unit
+    // read `fast-signature-unproven` fast and `param-signature-unstable`
+    // plain. The unit is ALREADY refused here, so running the remaining
+    // predicates cannot admit it; it can only find the reason that fits. No
+    // later predicate firing means the fast proof was the sole objection.
+    let reason = firstFailing[0];
+    if (reason === "fast-signature-unproven") {
+      const specific = admissionPredicates.slice(1).find(([, rejects]) => rejects());
+      if (specific) reason = specific[0];
+    }
+    return reason;
+  }
+  return undefined;
+}
+
 /**
  * R2/R3 prepare only components whose free-function and class-member contracts
  * have one backend-stable Program ABI projection: scalars, strings, selected
@@ -1422,6 +1422,7 @@ export function finalizeR3PreparedOwnerPopulation(input: {
  * that owner.
  */
 export function selectR2PreparedOwnerComponents(input: {
+  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly ctx: CodegenContext;
   readonly sourceFile: ts.SourceFile;
   readonly selectedLegacyNames: ReadonlySet<string>;
@@ -1456,6 +1457,8 @@ export function selectR2PreparedOwnerComponents(input: {
   /** Source-qualified callable boundaries pending final IR/support certification. */
   readonly pendingCallableBoundaryCandidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 } {
+  const sourceOwnerUnitId = (node: ts.Node): IrUnitId =>
+    requireIrPlanningOwnerUnitId(input.identityPlan.identityContext, node);
   const withdrawals = new Map<IrUnitId, IrR2Withdrawal>();
   // First-wins: the reason that actually removed the unit is the first one
   // reached, never a later iteration's.
@@ -1531,7 +1534,17 @@ export function selectR2PreparedOwnerComponents(input: {
       ["direct-caller-activation-target", () => directCallerActivationTargets.has(unitId)],
       [
         "function-value-reference",
-        () => containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName),
+        () =>
+          containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName, (identifier) =>
+            hasPreparedFunctionObjectReference(
+              input.ctx,
+              identifier,
+              input.topLevelFunctionValues?.get(identifier),
+              input.identityPlan,
+              unitId,
+              sourceOwnerUnitId,
+            ),
+          ),
       ],
       [
         "param-signature-unstable",
@@ -1543,22 +1556,9 @@ export function selectR2PreparedOwnerComponents(input: {
         () => !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override, signatureOptions),
       ],
     ];
-    const firstFailing = admissionPredicates.find(([, rejects]) => rejects());
-    if (firstFailing) {
-      // (#5282) The DECISION above is untouched, so the prepared set is
-      // byte-identical; only the NAME moves. `fast-signature-unproven` is entry
-      // zero and its guard subsumes every later predicate, so in a fast lane it
-      // answered for refusals it does not describe — one object-parameter unit
-      // read `fast-signature-unproven` fast and `param-signature-unstable`
-      // plain. The unit is ALREADY refused here, so running the remaining
-      // predicates cannot admit it; it can only find the reason that fits. No
-      // later predicate firing means the fast proof was the sole objection.
-      let reason = firstFailing[0];
-      if (reason === "fast-signature-unproven") {
-        const specific = admissionPredicates.slice(1).find(([, rejects]) => rejects());
-        if (specific) reason = specific[0];
-      }
-      record(unitId, "admission", reason);
+    const admissionFailure = firstR2PreparedOwnerAdmissionFailure(admissionPredicates);
+    if (admissionFailure !== undefined) {
+      record(unitId, "admission", admissionFailure);
       continue;
     }
     freeFunctionCandidates.add(unitId);

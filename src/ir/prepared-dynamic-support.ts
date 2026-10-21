@@ -29,6 +29,7 @@
 import {
   exactPreparedDynamicHelperRef,
   isDynamicInstruction,
+  prepareStandaloneDynamicToNumberSupport,
   resolveIrDynamicCarrierType,
   type CodegenContext,
 } from "./compiler-timer-shim-preparation.js";
@@ -43,7 +44,16 @@ import {
   type IrValueId,
 } from "./nodes.js";
 import type { PreparedDynamicInstructionSupportEvidence } from "./prepared-instruction-support.js";
-import type { Import } from "./types.js";
+import type { Import, ValType } from "./types.js";
+import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { jsTagToStaticType } from "./js-tag.js";
+import { JS_TAG_IDS, jsTagOf } from "./runtime/js-tag-domain.js";
+
+/** The owning integration observes its existing canonical box dispatcher. */
+export type PreparedDynamicBoxObserver = (
+  from: ValType,
+  hint: ReturnType<typeof jsTagToStaticType>,
+) => readonly IrFuncRef[] | undefined;
 
 /** One prepared artifact body and the terminal unit that owns it. */
 export interface PreparedDynamicSupportEntry {
@@ -115,56 +125,172 @@ export function prepareDynamicInstructionSupportForUnits(input: {
   readonly ctx: CodegenContext;
   readonly entries: readonly PreparedDynamicSupportEntry[];
   readonly callableImports: ReadonlyMap<string, Import>;
+  readonly observeDynamicBoxHelpers?: PreparedDynamicBoxObserver;
 }): ReadonlyMap<IrUnitId, PreparedDynamicInstructionSupportEvidence> {
   const { ctx, entries, callableImports } = input;
   const support = new Map<IrUnitId, PreparedDynamicInstructionSupportEvidence>();
-  // Plan first, mint nothing: `plans` holds only units whose every dynamic
-  // instruction resolved to an exact physical symbol.
-  const plans = new Map<IrUnitId, Map<IrInstr, "__box_number">>();
+  if (!ctx.programAbiTypes) return support;
+  const carrierValType = resolveIrDynamicCarrierType(ctx);
+  const native = ctx.targetProfile.semanticProviders === "native-first";
+  const plans = new Map<IrUnitId, Map<IrInstr, readonly IrFuncRef[]>>();
+  const blocked = new Set<IrUnitId>();
   for (const entry of entries) {
+    if (blocked.has(entry.terminalOwnerUnitId)) continue;
+    let functionObjects = false;
+    for (const block of entry.fn.blocks)
+      for (const root of block.instrs)
+        forEachInstrDeep(root, (instr) => {
+          // Closed runtime identity emitted by the certified producer, never a
+          // source-name match or an admission marker in an unrelated body.
+          if (
+            instr.kind === "call" &&
+            instr.target.binding.kind === "runtime" &&
+            instr.target.binding.symbol === "__ir_dyn_call_box"
+          )
+            functionObjects = true;
+        });
     const types = valueTypesOf(entry.fn);
-    const planned = new Map<IrInstr, "__box_number">();
+    const planned = new Map<IrInstr, readonly IrFuncRef[]>();
     let nameable = true;
-    for (const block of entry.fn.blocks) {
+    for (const block of entry.fn.blocks)
       for (const root of block.instrs) {
         forEachInstrDeep(root, (instr) => {
           if (!isDynamicInstruction(instr)) return;
+          // The certified function-object producer uses the existing native
+          // externref operations. Name their ACTUAL lowering providers, with
+          // exact physical signatures, before dependency discovery. Unsupported
+          // operations still invalidate the whole terminal sidecar below.
+          if (
+            native &&
+            functionObjects &&
+            ctx.standalone &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.to_number"
+          ) {
+            const refs = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
+            if (refs === undefined) nameable = false;
+            else planned.set(instr, refs);
+            return;
+          }
+          if (
+            native &&
+            functionObjects &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            (instr.kind === "dyn.truthy" || instr.kind === "dyn.typeof" || (instr.kind === "dyn.eq" && !instr.loose))
+          ) {
+            const name =
+              instr.kind === "dyn.truthy"
+                ? "__is_truthy"
+                : instr.kind === "dyn.typeof"
+                  ? "__typeof"
+                  : "__extern_strict_eq";
+            const params: readonly ValType[] =
+              instr.kind === "dyn.eq" ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
+            const results: readonly ValType[] =
+              instr.kind === "dyn.typeof" ? [{ kind: "externref" }] : [{ kind: "i32" }];
+            const ref = exactPreparedDynamicHelperRef(
+              ctx,
+              callableImports,
+              name,
+              ctx.funcMap.get(name),
+              params,
+              results,
+            );
+            if (ref === undefined) nameable = false;
+            else planned.set(instr, [ref]);
+            return;
+          }
+          if (native && functionObjects && (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")) {
+            const name = instr.kind === "dyn.member_get" ? "__dyn_member_get" : "__dyn_member_set";
+            const handle = ctx.funcMap.get(name);
+            if (handle === undefined) {
+              nameable = false;
+              return;
+            }
+            const ref = irRuntimeFuncRef(name);
+            ctx.programAbiCallableProviders?.observe(ref, handle);
+            planned.set(instr, [ref]);
+            return;
+          }
+          if (native && functionObjects && instr.kind === "box" && instr.toType.kind === "dynamic") {
+            const operand = types.get(instr.value);
+            const from: ValType | null =
+              operand?.kind === "callable"
+                ? { kind: "externref" }
+                : operand?.kind === "string"
+                  ? ctx.nativeStrings && ctx.anyStrTypeIdx >= 0
+                    ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx }
+                    : { kind: "externref" }
+                  : operand
+                    ? asVal(operand)
+                    : null;
+            if (!from) {
+              nameable = false;
+              return;
+            }
+            if (!ctx.fast && (from.kind === "externref" || from.kind === "ref" || from.kind === "ref_null")) {
+              planned.set(instr, []); // Backend identity/extern.convert_any: no callable.
+              return;
+            }
+            if (!ctx.fast && carrierValType.kind === "externref" && from.kind === "i32") {
+              // Same refinement split as makeDynamicLowering.emitBox: Boolean
+              // i32 uses __box_boolean; an unrefined i32 first converts to f64
+              // and uses __box_number. The conversion itself calls no helper.
+              const boolean = instr.toType.tag === JS_TAG_IDS.Boolean;
+              const name = boolean ? "__box_boolean" : "__box_number";
+              const ref = exactPreparedDynamicHelperRef(
+                ctx,
+                callableImports,
+                name,
+                ctx.funcMap.get(name),
+                [{ kind: boolean ? "i32" : "f64" }],
+                [{ kind: "externref" }],
+              );
+              if (ref === undefined) nameable = false;
+              else planned.set(instr, [ref]);
+              return;
+            }
+            if (ctx.fast) {
+              const tag = instr.toType.tag;
+              const hint = jsTagToStaticType(tag === undefined ? undefined : jsTagOf(tag));
+              const refs = input.observeDynamicBoxHelpers?.(from, hint);
+              if (refs === undefined) nameable = false;
+              else planned.set(instr, refs);
+              return;
+            }
+          }
           const name = exactHostHelperName(instr, types);
-          if (name === null) nameable = false;
-          else planned.set(instr, name);
+          const ref =
+            name === null
+              ? undefined
+              : exactPreparedDynamicHelperRef(
+                  ctx,
+                  callableImports,
+                  name,
+                  ctx.funcMap.get(name),
+                  [{ kind: "f64" }],
+                  [{ kind: "externref" }],
+                );
+          if (ref === undefined) nameable = false;
+          else planned.set(instr, [ref]);
         });
       }
-    }
-    if (!nameable || (planned.size === 0 && !carriesDynamicSurface(entry.fn, types))) {
+    if (!nameable) {
+      blocked.add(entry.terminalOwnerUnitId);
       plans.delete(entry.terminalOwnerUnitId);
       continue;
     }
+    if (planned.size === 0 && !carriesDynamicSurface(entry.fn, types)) continue;
     const existing = plans.get(entry.terminalOwnerUnitId);
-    if (existing) for (const [instr, name] of planned) existing.set(instr, name);
+    if (existing) for (const [instr, refs] of planned) existing.set(instr, refs);
     else plans.set(entry.terminalOwnerUnitId, planned);
   }
-  if (plans.size === 0 || !ctx.programAbiTypes) return support;
-  const carrierValType = resolveIrDynamicCarrierType(ctx);
-  if (carrierValType.kind !== "externref") return support;
-  const needsBoxNumber = [...plans.values()].some((planned) => planned.size > 0);
-  const boxNumber = needsBoxNumber
-    ? exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__box_number",
-        ctx.funcMap.get("__box_number"),
-        [{ kind: "f64" }],
-        [{ kind: "externref" }],
-      )
-    : undefined;
-  const usable = [...plans].filter(([, planned]) => planned.size === 0 || boxNumber !== undefined);
-  if (usable.length === 0) return support;
+  if (plans.size === 0) return support;
   const carrier = ctx.programAbiTypes.prepareDynamicCarrier(carrierValType);
-  for (const [unitId, planned] of usable) {
-    const instructionCallables = new Map<IrInstr, readonly IrFuncRef[]>();
-    if (boxNumber) for (const instr of planned.keys()) instructionCallables.set(instr, [boxNumber]);
+  for (const [unitId, instructionCallables] of plans)
     support.set(unitId, Object.freeze({ dynamicCarrierRef: carrier.carrierRef, instructionCallables }));
-  }
   return support;
 }
 

@@ -11,14 +11,15 @@ import {
  * Extracted verbatim from `closures.ts` (issue #3270). Wraps a capture-carrying
  * nested function DECLARATION as a memoized closure struct + per-function
  * trampoline (`emitFuncRefAsClosure`), with its private memoized-instance
- * emitter (`emitMemoizedNestedFnClosure`). Depends on the extracted
+ * emitter (`emitMemoizedNestedFnClosure`), plus the canonical lazy function-value
+ * accessor and allocation kernel shared with method trampolines. Depends on the extracted
  * funcref-wrapper-types registry.
  */
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { ts } from "../../ts-api.js";
 import { captureSourceSlot, expectsBoxedCaptureValue, pushBoxedTdzFlagRef } from "./capture-source-slot.js";
-import type { FieldDef, Instr, ValType } from "../../ir/types.js";
+import type { FieldDef, Instr, LocalDef, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
@@ -29,7 +30,12 @@ import {
   observeProgramAbiFunctionValue,
   sourceFunctionDeclarationForHandle,
 } from "../program-abi-source-callable-planning.js";
-import { emitCachedFuncClosureAccess } from "./method-trampolines.js";
+import {
+  emitCachedFuncClosureAccess,
+  ensureFuncClosureSingleton,
+  type FuncClosureSingleton,
+} from "./method-trampolines.js";
+import { addFuncType } from "../registry/types.js";
 import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
 import { coercionInstrs } from "../type-coercion.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
@@ -816,4 +822,131 @@ export function materializeHoistedFunctionValueBinding(
   if (!published) publishedBindings.set(fctx.body, (published = new Map()));
   published.set(name, { index: fctx.body.length - 1, instr: fctx.body[fctx.body.length - 1]! });
   return true;
+}
+
+/**
+ * A `FunctionContext` shaped exactly like a func-decl trampoline's WRAPPER
+ * signature (`__self` at slot 0, the wrapper's user params at 1..N), so helpers
+ * that allocate scratch locals compute indices past the real params and the
+ * allocated `localDefs` can be attached to the registered function.
+ *
+ * `finalizeMethodTrampolines` builds this inline for its coercion temps; the
+ * (#4630) async-promise wrap needs the identical thing at REGISTRATION time,
+ * where no `FunctionContext` exists yet. Callers assign `body` themselves.
+ */
+export function miniTrampolineFctx(
+  name: string,
+  wrapperUserParams: readonly ValType[],
+  wrapperResult: ValType | undefined,
+  localDefs: LocalDef[],
+): FunctionContext {
+  return {
+    name,
+    params: [
+      { name: "__self", type: { kind: "anyref" } },
+      ...wrapperUserParams.map((p, i) => ({ name: `__p${i}`, type: p })),
+    ],
+    locals: localDefs,
+    localMap: new Map(),
+    returnType: wrapperResult ?? null,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+}
+
+/** (#4437) Narrow a singleton's optional metadata pair into the emit argument. */
+export function fnMetaAllocOf(
+  singleton: FuncClosureSingleton,
+): { allocStructTypeIdx: number; metaInit: Instr[] } | undefined {
+  return singleton.allocStructTypeIdx !== undefined && singleton.metaInit !== undefined
+    ? { allocStructTypeIdx: singleton.allocStructTypeIdx, metaInit: singleton.metaInit }
+    : undefined;
+}
+
+export function emitLazyClosureCacheAccess(
+  fctx: FunctionContext,
+  cacheGlobalIdx: number,
+  trampolineFuncIdx: number,
+  structTypeIdx: number,
+  arity: number,
+  constructible = false,
+  /** (#4437) `$fnmeta` operand + the SUBTYPE to allocate, when the slot exists. */
+  meta?: { allocStructTypeIdx: number; metaInit: Instr[] },
+): void {
+  const initBody: Instr[] = [
+    { op: "ref.func", funcIdx: trampolineFuncIdx },
+    { op: "i32.const", value: arity }, // (#3673) $arity
+    closureBagInitInstr(), // (#4241) $bag
+    ...(constructible ? ([{ op: "i32.const", value: 1 }] satisfies Instr[]) : []),
+    ...(meta ? meta.metaInit : []),
+    { op: "struct.new", typeIdx: meta ? meta.allocStructTypeIdx : structTypeIdx },
+    { op: "extern.convert_any" },
+    { op: "global.set", index: cacheGlobalIdx },
+  ];
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: initBody,
+    else: [],
+  });
+  fctx.body.push({ op: "global.get", index: cacheGlobalIdx });
+}
+
+/**
+ * (#7106) Prepare an IR-callable accessor for the SAME canonical lazy cache.
+ * It emits the existing allocation kernel, including constructible/rest/fnmeta
+ * operands. A generic closure.new cannot represent those target-owned fields.
+ * No declaration is added by an IR body emitter.
+ */
+export function ensureFuncClosureSingletonAccessor(
+  ctx: CodegenContext,
+  funcName: string,
+  funcIdx: number,
+): { readonly singleton: FuncClosureSingleton; readonly accessorFuncIdx: number } | null {
+  const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx);
+  if (!singleton) return null;
+  const key = ctx.funcClosureSingletonKeyByFuncIdx.get(funcIdx);
+  if (key === undefined) return null;
+  const name = `__fn_value_${key}`;
+  const existing = ctx.funcMap.get(name);
+  const locals: LocalDef[] = [];
+  const fctx = miniTrampolineFctx(name, [], { kind: "externref" }, locals);
+  emitLazyClosureCacheAccess(
+    fctx,
+    singleton.cacheGlobalIdx,
+    singleton.trampolineFuncIdx,
+    singleton.closureStructTypeIdx,
+    ctx.closureInfoByTypeIdx.get(singleton.closureStructTypeIdx)?.paramTypes.length ?? 0,
+    singleton.constructible,
+    fnMetaAllocOf(singleton),
+  );
+  if (existing !== undefined) {
+    const fn = definedFuncAt(ctx, existing);
+    const signature = fn ? ctx.mod.types[fn.typeIdx] : undefined;
+    // Compare the complete generated kernel and ABI, not a synthetic prefix.
+    // These are compiler-owned instruction data, never source AST objects.
+    if (
+      ctx.funcMapOwnerDecl.has(name) ||
+      fn?.name !== name ||
+      signature?.kind !== "func" ||
+      signature.params.length !== 0 ||
+      signature.results.length !== 1 ||
+      signature.results[0]?.kind !== "externref" ||
+      fn.locals.length !== locals.length ||
+      JSON.stringify(fn.body) !== JSON.stringify(fctx.body)
+    )
+      return null;
+    return { singleton, accessorFuncIdx: existing };
+  }
+  const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }], "$fn_value_accessor");
+  const accessorFuncIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, accessorFuncIdx, { name, typeIdx, locals, body: fctx.body, exported: false });
+  ctx.funcMap.set(name, accessorFuncIdx);
+  return { singleton, accessorFuncIdx };
 }

@@ -64,6 +64,10 @@ export function requireValidImportedCallTarget(plan: IrImportedCallLoweringPlan)
 }
 
 export interface IrTopLevelFunctionValueLoweringPlan {
+  /** Prepared canonical lazy accessor; absent only for historical plans. */
+  readonly accessor?: IrFuncRef;
+  /** This exact identifier is certified as a function-object property receiver. */
+  readonly objectReceiver?: boolean;
   readonly ownerUnitId: IrUnitId;
   readonly ownerName: string;
   /** Exact source-unit function whose value is being materialized. */
@@ -397,6 +401,7 @@ export interface IrIntegrationLoweringPlans {
   readonly directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly importedCalls: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+  readonly functionMemberClosures?: import("./function-member-closure-plan.js").IrFunctionMemberClosures;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
