@@ -8072,6 +8072,45 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
     );
   }
   const className = expr.expression.text;
+  // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: the selector
+  // admitted only a dynamic-typed parameter callee; every argument becomes a
+  // dynamic carrier (concrete operands box exactly like a member-store value).
+  const calleeBinding = cx.scope.get(className);
+  if (calleeBinding?.kind === "local" && calleeBinding.type.kind === "dynamic") {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      throw new IrUnsupportedError(
+        "constructor-resolution-unsupported",
+        "build",
+        `ir/from-ast: dynamic construct callee "${className}" lost its carrier (${cx.funcName})`,
+      );
+    }
+    const args: IrValueId[] = [];
+    for (const argExpr of expr.arguments ?? []) {
+      if (ts.isSpreadElement(argExpr)) {
+        throw new IrUnsupportedError(
+          "constructor-arity-unsupported",
+          "build",
+          `ir/from-ast: dynamic construct spread argument escaped selection (${cx.funcName})`,
+        );
+      }
+      let value = lowerExpr(argExpr, cx, irDynamic());
+      const valueType = cx.builder.typeOf(value);
+      if (valueType.kind !== "dynamic") {
+        const boxed = boxConcreteToDynamic(value, valueType, argExpr, cx);
+        if (boxed === null) {
+          throw new IrUnsupportedError(
+            "operand-coercion-unsupported",
+            "build",
+            `ir/from-ast: dynamic construct argument of ${describeIrType(valueType)} has no dynamic carrier (${cx.funcName})`,
+          );
+        }
+        value = boxed;
+      }
+      args.push(value);
+    }
+    return cx.builder.emitDynConstruct(callee, args);
+  }
   if (cx.resolver?.isDirectModuleBinding?.(expr.expression) === true) {
     demoteToLegacy(
       "unknown-class-construction",

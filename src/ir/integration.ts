@@ -95,6 +95,11 @@ import {
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
+import {
+  ensureIrDynamicConstructHelper,
+  irDynamicConstructCalleeIsPlain,
+  irDynamicConstructHelperName,
+} from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
   ensureIrNativeMapAdapters,
@@ -2526,6 +2531,7 @@ export function compileIrPathFunctions(
       isRegExpExpression,
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -8887,6 +8893,8 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.to_string") return true;
   if (instr.kind === "dyn.json_stringify") return true;
   if (instr.kind === "dyn.object_tag") return true;
+  // #7106 S3a — dyn.construct consumes carriers and calls the construct driver wrapper.
+  if (instr.kind === "dyn.construct") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
   // the dynamic backing pre-registered too.
@@ -9117,6 +9125,8 @@ function preregisterDynamicSupport(
   let usesDynJsonStringify = false;
   // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
   let usesDynObjectTag = false;
+  // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
+  const dynConstructArities = new Set<number>();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9128,6 +9138,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.to_string") usesDynToString = true;
           if (i.kind === "dyn.json_stringify") usesDynJsonStringify = true;
           if (i.kind === "dyn.object_tag") usesDynObjectTag = true;
+          if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
@@ -9276,6 +9287,17 @@ function preregisterDynamicSupport(
     ensureObjectRuntime(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
+  }
+  if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 S3a) One wrapper per arity, built from legacy's own construct
+    // arming so the driver/guard reservations are shared with legacy sites.
+    for (const arity of [...dynConstructArities].sort((a, b) => a - b)) {
+      if (ensureIrDynamicConstructHelper(ctx, arity) === undefined) {
+        throw new Error(`ir/integration: dyn.construct arity ${arity} has no host-free construct wrapper (#7106 S3a)`);
+      }
+      observeNativeRuntimeProvider(ctx, irDynamicConstructHelperName(arity));
+    }
+    flushLateImportShifts(ctx, null);
   }
   if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     ensureObjectProtoToStringRuntimeHelper(ctx);
@@ -9520,6 +9542,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       emitObjectToStringTag(): readonly Instr[] {
         throw new Error("ir/integration: dyn.object_tag is not lowerable on the fast $AnyValue carrier (#7106 S1c)");
       },
+      emitConstruct(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.construct is not lowerable on the fast $AnyValue carrier (#7106 S3a)");
+      },
       emitUnbox(tag: JsTag): readonly Instr[] {
         switch (tag) {
           case JsTag.NumberF64:
@@ -9670,6 +9695,14 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.json_stringify needs the native JSON codec (native strings) (#7106 S1b)");
       }
       return [{ op: "any.convert_extern" } as Instr, callImport("__json_stringify_root")];
+    },
+    emitConstruct(arity: number): readonly Instr[] {
+      // (#7106 S3a) callee + args already on the stack as externref; the
+      // wrapper is legacy's `tryCompileNativeConstructFromValue` tail.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.construct needs the host-free construct driver (#7106 S3a)");
+      }
+      return [callImport(irDynamicConstructHelperName(arity))];
     },
     emitObjectToStringTag(scratch: () => number): readonly Instr[] {
       // (#7106 S1c) Exactly legacy's standalone `.call` arm: an unused null

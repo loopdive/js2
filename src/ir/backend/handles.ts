@@ -353,6 +353,15 @@ export interface IrDynamicLowering {
    */
   emitObjectToStringTag(scratch: () => number): readonly Instr[];
   /**
+   * (#7106 S3a) `callee, arg0 … argN-1` carriers on the stack → the
+   * constructed object's carrier, through the SAME ordinary-[[Construct]]
+   * driver legacy calls for a dynamic constructor value
+   * (`__native_construct_<N>` behind the `__ir_dyn_construct_<N>` wrapper
+   * `ensureIrDynamicConstructHelper` builds). Throws where the
+   * `native-dynamic-construct` capability does not hold.
+   */
+  emitConstruct(arity: number): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

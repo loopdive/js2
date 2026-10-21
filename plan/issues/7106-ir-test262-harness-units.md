@@ -22,8 +22,13 @@ assignee: "ttraenkler/claude-c"
 # from the bridge (`src/ir/integration.ts` → `codegen/json-codec-native.ts`),
 # the same shape as the object-runtime and any-helpers edges already there;
 # one more two-way ir→codegen edge, no new SCC member.
+# 2026-10-21 (S3a): `dyn.construct` pre-registers the per-arity construct
+# wrapper (`src/ir/integration.ts` → `codegen/ir-dynamic-construct.ts`) and the
+# selector option reads legacy's callee predicates from the same module, which
+# joins the SCC (it imports the construct-driver modules).
 import-cycles-allow:
-  - ir->codegen: 76 # 2026-10-20 (#7106): integration.ts pre-registers the native JSON codec root and the Object.prototype.toString classifier
+  - ir->codegen: 77 # 2026-10-21 (#7106 S3a): integration.ts pre-registers the dynamic-construct wrapper
+  - largestSccSize: 722 # 2026-10-21 (#7106 S3a): codegen/ir-dynamic-construct.ts joins the SCC
 func-budget-allow:
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
@@ -40,6 +45,9 @@ func-budget-allow:
   - src/ir/select.ts::scanExpr
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select.ts::collectCallGraph
+  - src/ir/select.ts::whyNotIrClaimable
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
 loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
@@ -53,6 +61,7 @@ loc-budget-allow:
   - src/ir/backend/legality.ts
   - src/ir/ambient-typeof.ts
   - src/ir/prepared-component-dependencies.ts
+  - src/codegen/index.ts
 ---
 
 ## Problem
@@ -156,23 +165,58 @@ that only calls `assert.sameValue` IR-emitted.
 
 ### Stage 3 — constructor functions (item 3; `Test262Error`)
 
-1. Generalise `IrFnctorAdmission.shape` from the single `[{ input: string }]`
-   to `fields: readonly IrFnctorField[]` with `dynamic` field kinds; the
-   proof block stays literal-`true` per field.
-2. Constructor body lowering: `this` is the instance (reserved struct from
-   `IrFnctorShape`), `this.message = message || ""` → `object.set` with a
-   `dynamic` field; `if (!(this instanceof Test262Error)) return new
-   Test262Error(message)` → `class.instanceof` against the reserved struct +
-   fnctor `new` (the `phase1FnctorNewExpression` arm, arguments Phase-1).
-3. Prototype method `Test262Error.prototype.toString = function () {…}` and
-   static `Test262Error.thrower = function (m) {…}`: Stage-2 `fn.object` +
-   `dyn.member_set`; the method body itself is an ordinary function
-   expression with dynamic `this`.
-4. `throw new Test262Error(m)` in test bodies: fnctor `new` + the existing
-   throw lowering.
+**Re-planned 2026-10-20 23:50Z after measuring the #3521 fnctor seam
+(C).** The original plan ("generalise `IrFnctorAdmission.shape`") cannot
+reach a fallback-free pass: on standalone `requireExactStandaloneParserLayout`
+(`src/codegen/program-abi-fnctor-planning.ts`) pins the observation to the
+exact `input/$constructor/$__fnctorProto/$bag` layout and to
+`supportsConstruction === false` ("nullable/get-only"), and the whole seam
+observes a constructor **after legacy built it** — `fnctor.new` lowers to a
+call of legacy's `__fnctor_<F>_new`. The constructor body is legacy by
+construction, so the unit always counts as `ir_legacy_units`. Widening that
+contract is a #3521-owner change and still leaves the body legacy.
 
-Acceptance: `Test262Error` and `$DONOTEVALUATE` IR-emitted; first
-**non-zero `ir_only_pass`** on the addition slice.
+What legacy actually emits on standalone for the harness shape (measured,
+`function E(m) { this.message = m || ""; }` + `new E(...)`):
+
+| site | legacy lowering |
+|---|---|
+| `new K(args)` with a dynamic callee value | callee → externref, proto = `ref.null.extern` (driver falls back to `__extern_get(callee, "prototype")`), args → externref, `call __native_construct_<N>` (`reserveNativeConstructDriver`, N ≤ 8; a `$__ta_ctor` arm is added when `ctx.moduleUsesDynTaView`) — `tryCompileNativeConstructFromValue`, `src/codegen/expressions/new-super.ts` |
+| `this` inside a function reachable as a value | `global.get $__current_this` (`ensureCurrentThisGlobal`), null → globalThis |
+| `m \|\| ""` on externref | truthiness test + select, result externref |
+| `this.message = v` | dynamic member set |
+| `E` itself as a value (`throw new Test262Error`, `E.prototype.toString = …`) | the canonical function object (Stage 2 `fn.object`) |
+
+So Stage 3 decomposes into IR arms that compose with Stages 1/2 and A's
+item 1, none of which touches the #3521 seam:
+
+1. **S3a `dyn.construct`** (C, this worktree): `new <dynamic callee>(args)`
+   with every argument dynamic, arity ≤ 8. Host-strategy lowering = exactly
+   the legacy sequence above, calling the same `__native_construct_<N>`
+   driver through a thin `ensureIrDynamicConstructHelper(ctx, N)` wrapper so
+   the `$__ta_ctor` arm stays legacy-built; pre-registered in
+   `preregisterDynamicSupport`. Backend capability
+   `native-dynamic-construct` (standalone|wasi). The selector admits only a
+   callee that is a dynamic scope name (parameter / dynamic local); the
+   legacy special arms (`%Function%` intrinsic, Proxy value, bound value,
+   runtime-eval callable result, `funcConstructorForCallee`) are refused
+   through one selection-option predicate so legacy keeps those sites.
+2. **S3b dynamic `||` / `&&` value** (C): `dyn.truthy` + conditional with a
+   dynamic result (the `logical-value-unsupported` bucket, 6,530 tests on
+   main).
+3. **S3c `this` as a dynamic value** (C, after S3a): a function whose `this`
+   is used dynamically reads `$__current_this` at entry (null → globalThis
+   on the sloppy harness) — one `dyn.this` kind; `this.message = v` is then
+   A's `dyn.member_set` on an externref receiver (item 1), and `this
+   instanceof E` is Stage 2's function-object identity.
+4. **Composition** (after Stage 2 lands): `throw new Test262Error(m)` =
+   `dyn.construct` with the `fn.object` callee; `Test262Error.prototype
+   .toString = function () {…}` = Stage 2 `dyn.member_set` on the function
+   object's `.prototype`.
+
+Acceptance unchanged: `Test262Error` and `$DONOTEVALUATE` IR-emitted; first
+**non-zero `ir_only_pass`** on the addition slice (needs 1–4, Stage 2 and
+item 1 together).
 
 ### Stage 4 — script top-level residue (item 5; `<module-init>`)
 

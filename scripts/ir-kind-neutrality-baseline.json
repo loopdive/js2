@@ -1,17 +1,17 @@
 {
-  "generated": "2026-10-20",
+  "generated": "2026-10-21",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
     "jsInCore": 0
   },
   "counts": {
-    "total": 90,
+    "total": 91,
     "neutral": 55,
-    "js": 32,
+    "js": 33,
     "unresolved": 3,
     "core": 58,
-    "dialect": 32,
+    "dialect": 33,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -173,6 +173,13 @@
       "why": "Materializes a typed constant; the operation is fixed by the IrConst payload's own type.",
       "evidence": ["src/ir/core/nodes.ts#0701bace61ad"],
       "residual": "Value model, not operation: IrConst carries BOTH `null` and `undefined` — the ECMAScript two-sentinel model, i.e. the JsTag.Null / JsTag.Undefined partitions (src/ir/js-tag.ts). Owned by #3954 phase 1 (TagDomain), not by the dialect split."
+    },
+    "dyn.construct": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynConstruct",
+      "why": "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#f6c79febcad4"]
     },
     "dyn.eq": {
       "verdict": "js",

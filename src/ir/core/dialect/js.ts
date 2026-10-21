@@ -205,6 +205,24 @@ export interface IrInstrDynObjectTag extends IrInstrBase {
 }
 
 /**
+ * `dyn.construct{callee, args}` — `new callee(...args)` (§13.3.5.1
+ * EvaluateNew) where the constructor is a runtime VALUE on the boxed-any
+ * carrier (#7106 S3a). Callee and every argument are dynamic carriers,
+ * evaluated callee-first then left to right exactly once; the result is the
+ * constructed object as a dynamic carrier. Lowering delegates to the SAME
+ * ordinary-[[Construct]] driver legacy calls for a dynamic constructor value
+ * (`__native_construct_<N>`, including its `$__ta_ctor` arm), so an IR caller
+ * and a legacy caller construct byte-for-byte the same instance.
+ */
+export interface IrInstrDynConstruct extends IrInstrBase {
+  readonly kind: "dyn.construct";
+  /** The constructor value carrier (`dynamic`). */
+  readonly callee: IrValueId;
+  /** The argument carriers (`dynamic`), in source order. */
+  readonly args: readonly IrValueId[];
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

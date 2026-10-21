@@ -134,6 +134,8 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
     case "dyn.object_tag":
     case "dyn.to_number":
       return { ...instr, value: resolve(instr.value) };
+    case "dyn.construct":
+      return { ...instr, callee: resolve(instr.callee), args: mapIds(instr.args, resolve) };
     case "dyn.eq":
     case "string.concat":
     case "string.eq":

@@ -754,6 +754,18 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
     }
+    case "dyn.construct": {
+      let changed = false;
+      const callee = mapId(rename, inst.callee);
+      changed ||= callee !== inst.callee;
+      const args = inst.args.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      if (!changed) return inst;
+      return { ...inst, callee, args };
+    }
     case "fnctor.new": {
       let changed = false;
       const captureArgs = inst.captureArgs.map((value) => {

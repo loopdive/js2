@@ -132,6 +132,7 @@ export type {
   IrInstrDynToString,
   IrInstrDynJsonStringify,
   IrInstrDynObjectTag,
+  IrInstrDynConstruct,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,

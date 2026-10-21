@@ -615,6 +615,7 @@ function implicitSupportRequirement(
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.construct":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":

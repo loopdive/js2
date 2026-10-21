@@ -717,6 +717,22 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S3a — `new callee(...args)` over dynamic carriers; result dynamic. */
+  emitDynConstruct(callee: IrValueId, args: readonly IrValueId[]): IrValueId {
+    for (const [label, v] of [["callee", callee] as const, ...args.map((a, i) => [`arg${i}`, a] as const)]) {
+      if (this.typeOf(v).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynConstruct ${label} operand ${v} is not dynamic (#7106 S3a) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.construct", callee, args: [...args], result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(

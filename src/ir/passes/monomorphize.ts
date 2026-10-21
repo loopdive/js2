@@ -799,6 +799,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.object_tag":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":

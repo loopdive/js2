@@ -625,6 +625,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly resolveLocalClassExpression?: IrLocalClassExpressionResolver | IrLegacyLocalClassExpressionResolver;
   /**
+   * (#7106 S3a) Is `new <callee>(…)` on this identifier the PLAIN dynamic
+   * constructor-value construct (legacy's ordinary `__native_construct_<N>`
+   * driver), i.e. none of legacy's special arms (`%Function%` intrinsic,
+   * Proxy value, bound value, runtime-eval callable, compiled fnctor) claim
+   * the site? Absent → the selector never admits a dynamic construct.
+   */
+  readonly dynamicConstructCalleeIsPlain?: (callee: ts.Identifier) => boolean;
+  /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
    * An explicit false prevents an ambient Date snapshot from being claimed
@@ -642,7 +650,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "legacy-numeric-array-global"
       | "number-to-string"
       | "native-json-codec"
-      | "native-object-tostring-tag",
+      | "native-object-tostring-tag"
+      | "native-dynamic-construct",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -1555,6 +1564,11 @@ let currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "
 // #3053 U2 current-run capability for dynamic member reads; sound-default true.
 let currentDynMemberReadBuildable = true;
 let currentDynamicRuntimeBuildable = true;
+// (#7106 S3a) The current subject's dynamic-typed PARAMETER names: the only
+// callees `new <name>(…)` may construct through `dyn.construct`.
+let currentDynamicParamNames = new Set<string>();
+/** Mirrors `IR_DYNAMIC_CONSTRUCT_MAX_ARITY` (`codegen/ir-dynamic-construct.ts`): the fixed-arity driver family. */
+const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = 8;
 // #2949 S5.P follow-up — dynamic member reads used by equality require the
 // canonical boxed-any parameter ABI. A top-level function is eligible only
 // when every source reference to it is a direct identifier call; value uses
@@ -1914,6 +1928,7 @@ function whyNotIrClaimable(
   // the move-only scan). Non-empty ⇒ the claim is additionally gated on
   // `dynamicUsesAreMoveOnly` below.
   const dynNames = new Set<string>();
+  currentDynamicParamNames = new Set<string>();
   // Method bodies and constructor bodies see `this` as an implicit local;
   // mark it so a `return this;` / `this.field` reference passes the
   // identifier-in-scope check at Phase-1 expression position.
@@ -1971,6 +1986,7 @@ function whyNotIrClaimable(
     if (directMutationNames.has(p.name.text)) currentMutableSlotNames.add(p.name.text);
     // #2949 slice 2 — collect dynamic-typed param names for the move-only scan.
     recordDynamicParamKind(p.name.text, paramResolved, dynNames);
+    if (paramResolved === "dynamic") currentDynamicParamNames.add(p.name.text);
     if (currentStableFunctionCallSubject !== null && paramResolved === "dynamic") {
       currentStableDynamicRootNames.add(p.name.text);
     }
@@ -2777,6 +2793,8 @@ function dynamicUsesAreMoveOnly(
     e = unwrap(e);
     if (e.kind === ts.SyntaxKind.ThisKeyword) return currentStableFunctionCallSubject !== null;
     if (ts.isIdentifier(e)) return dynNames.has(e.text);
+    // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
+    if (dynamicConstructCallee(e) !== null) return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
       return calleeReturnIsDynamic(e.expression.text, typeMap);
     }
@@ -2879,6 +2897,22 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isIdentifier(e)) {
       return dynNames.has(e.text) === expectDyn;
+    }
+    // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: every
+    // argument is a dynamic carrier (a concrete one boxes like a member-store
+    // value); the result is dynamic.
+    if (ts.isNewExpression(e) && dynamicConstructCallee(e) !== null) {
+      if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
+      for (const argument of e.arguments ?? []) {
+        const dynamic = isDynShaped(argument);
+        const concrete = unwrap(argument);
+        // A scalar-typed parameter (propagation gave it f64/bool/string) boxes
+        // through `boxConcreteToDynamic` exactly like a literal operand.
+        const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
+        if (!dynamic && !boxableParam && !concreteDynamicAssignmentOperandIsBuildable(concrete)) return false;
+        if (!scanExpr(argument, dynamic)) return false;
+      }
+      return true;
     }
     if (ts.isCallExpression(e)) {
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
@@ -9471,6 +9505,39 @@ function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boole
   );
 }
 
+/**
+ * (#7106 S3a) The `new <callee>(…)` shape `dyn.construct` admits: a direct,
+ * non-spread construct of the current subject's dynamic-typed PARAMETER, at
+ * most `IR_DYNAMIC_CONSTRUCT_MAX_ARITY` arguments, on a lane with the
+ * host-free construct driver, and on a site legacy lowers through that same
+ * ordinary driver (`dynamicConstructCalleeIsPlain`). Returns the callee
+ * identifier, else null.
+ */
+function dynamicConstructCallee(expr: ts.Expression): ts.Identifier | null {
+  if (!ts.isNewExpression(expr) || !ts.isIdentifier(expr.expression)) return null;
+  if (!currentDynamicParamNames.has(expr.expression.text)) return null;
+  if ((expr.typeArguments?.length ?? 0) !== 0) return null;
+  const args = expr.arguments ?? [];
+  if (args.length > IR_DYNAMIC_CONSTRUCT_MAX_ARITY || args.some((a) => ts.isSpreadElement(a))) return null;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-construct") !== true) return null;
+  if (currentSelectionOptions?.dynamicConstructCalleeIsPlain?.(expr.expression) !== true) return null;
+  return expr.expression;
+}
+
+/** The parameter names of the function-like node enclosing `node` (empty at top level). */
+function enclosingFunctionParameterNames(node: ts.Node): ReadonlySet<string> {
+  for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+    if (ts.isFunctionLike(cur)) {
+      const names = new Set<string>();
+      for (const p of (cur as ts.FunctionLikeDeclaration).parameters) {
+        if (ts.isIdentifier(p.name)) names.add(p.name.text);
+      }
+      return names;
+    }
+  }
+  return new Set();
+}
+
 function phase1FnctorNewExpression(
   expr: ts.NewExpression,
   scope: ReadonlySet<string>,
@@ -9498,6 +9565,14 @@ function phase1NewExpression(
   if (promiseDelay) {
     for (const capture of promiseDelay.executorCaptureNames) {
       if (!scope.has(capture)) return shapeNo("expr-promise-delay-capture-scope", expr);
+    }
+    return true;
+  }
+  // (#7106 S3a) `new <dynamic param>(args)`: the dynamic move-only scan owns
+  // the argument carriers; here the arguments only need to be Phase-1.
+  if (dynamicConstructCallee(expr) !== null) {
+    for (const arg of expr.arguments ?? []) {
+      if (!isPhase1Expr(arg, scope, localClasses)) return shapeNo("expr-new-dynamic-construct-arg", arg);
     }
     return true;
   }
@@ -11325,6 +11400,15 @@ export function buildLocalCallGraph(
           // registered as a host import by the legacy
           // `collectUsedExternImports` pass with a stable signature too.
           // Either case → not external; walk into args for nested calls.
+          if (node.arguments) {
+            for (const a of node.arguments) visit(a);
+          }
+          return;
+        }
+        // (#7106 S3a) `new <parameter>(…)` is a dynamic construct lowering
+        // (`dyn.construct`), not a call edge; the selector's per-function
+        // arms decide whether the parameter is dynamic-typed.
+        if (ts.isIdentifier(node.expression) && enclosingFunctionParameterNames(node).has(node.expression.text)) {
           if (node.arguments) {
             for (const a of node.arguments) visit(a);
           }

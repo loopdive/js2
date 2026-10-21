@@ -972,6 +972,29 @@ function verifyInstrStructure(
       });
     }
   }
+  // #7106 S3a — dyn.construct: callee and every argument dynamic, result dynamic.
+  if (instr.kind === "dyn.construct") {
+    for (const [label, operand] of [
+      ["callee", instr.callee] as const,
+      ...instr.args.map((a, i) => [`arg${i}`, a] as const),
+    ]) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.construct ${label} must be a dynamic IrType, got ${operandIr.kind} (#7106 S3a)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || instr.resultType.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.construct result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3a)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   // #7106 S1b — dyn.json_stringify serialises the boxed-any carrier: operand dynamic.
   if (instr.kind === "dyn.json_stringify") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
@@ -1332,6 +1355,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "dyn.object_tag":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":
@@ -1919,6 +1944,9 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "dyn.to_string": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106)" },
   "dyn.json_stringify": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106 S1b)" },
   "dyn.object_tag": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#7106 S1c)" },
+  "dyn.construct": {
+    skip: "checked-elsewhere: callee/args/result all-dynamic rules in verifyInstrStructure (#7106 S3a)",
+  },
   "dyn.to_number": { skip: "checked-elsewhere: operand-must-be-dynamic rule in verifyInstrStructure (#2949 S5.3)" },
   "dyn.eq": { skip: "checked-elsewhere: both-operands-dynamic rule in verifyInstrStructure (#2949 S5.2)" },
   "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },

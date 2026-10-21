@@ -177,6 +177,8 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "extern.call":
     case "class.new":
     case "fnctor.new":
+    // #7106 S3a — runs an arbitrary user constructor body.
+    case "dyn.construct":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
@@ -485,6 +487,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "class.set" ||
     i.kind === "class.new" ||
     i.kind === "fnctor.new" ||
+    i.kind === "dyn.construct" || // #7106 S3a — the constructor body runs for its effects
     // #3000-E: super(...) runs the parent `_init` (writes parent fields on self);
     // super.method() invokes the parent method body — both arbitrary effects, and
     // super_init is void-result so DCE MUST keep it (and its operands) live via
