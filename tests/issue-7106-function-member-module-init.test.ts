@@ -94,7 +94,10 @@ describe("#7106 exact function-member module initializer admission", () => {
 
   it("unprepared physical function target", async () => {
     const result = await compile(
-      "function subject(): number { return arguments.length; }\nsubject.equal = function (a, b) { return a === b; };\nexport function run(): number { return subject.equal(1, 1) ? 1 : 0; }",
+      // `arguments[0]` keeps `subject` an UNPREPARED physical target: since #7106 S1e
+      // `arguments.length` alone is IR-claimable, and a claimed subject with implicit
+      // (unprepared) dynamic support is a separate planner case — see the issue file.
+      "function subject(): number { return arguments[0]; }\nsubject.equal = function (a, b) { return a === b; };\nexport function run(): number { return subject.equal(1, 1) ? 1 : 0; }",
       OPTIONS,
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);

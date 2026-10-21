@@ -29,6 +29,7 @@ assignee: "ttraenkler/claude-c"
 flat-dir-budget-allow:
   - src/codegen/ir-string-carrier.ts # 2026-10-21 (#7106 S1c): the dyn.string_carrier wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
+  - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
@@ -151,6 +152,21 @@ Acceptance: `formatIdentityFreeValue` and `formatSimpleValue` are
 IR-emitted in the addition slice (currently 48/48 legacy each).
 
 ### Stage 2 — function objects (item 4; `assert`, `compareArray`, `<module-init>` calls)
+
+**Composition note (C, 2026-10-21 07:50Z, #6816 successor):** a top-level
+function that is BOTH a function-object subject (`subject.equal = …`) AND
+IR-claimed with an implicit-support kind the prepared path has no symbolic
+ref for (`dyn.arguments_length`, measured; `dyn.construct` /
+`dyn.string_carrier` are the same class) fails hard at
+`program-abi-source-callable-planning` (`duplicate-slot-locator: retained
+source callable … is not the exact allocator owned by …`) instead of
+declining. #6816's "unprepared physical function target" test used
+`arguments.length` as its unprepared shape and now reads `arguments[0]`;
+the planner case itself is open for Stage 2's owner: either declare prepared
+support for the three #7106 wrappers in `prepared-dynamic-support.ts` or
+decline the function-object preparation when the subject's component has
+incomplete dependencies. No harness unit hits it today (`assert` /
+`compareArray` are not IR-claimed).
 
 1. New dialect kind `fn.object{funcRef}` — "the function object for this
    declared function", lowered to legacy's lazy `$FnObject` global (reuse the
