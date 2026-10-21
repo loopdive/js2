@@ -20,6 +20,7 @@ export const DIALECT_NAMES = Object.freeze(
     "IrInstrDynJsonStringify",
     "IrInstrDynObjectTag",
     "IrInstrDynConstruct",
+    "IrInstrDynStringCarrier",
     "IrInstrExternCall",
     "IrInstrExternNew",
     "IrInstrExternProp",

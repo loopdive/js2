@@ -132,6 +132,7 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return { ...instr, value: resolve(instr.value) };
     case "dyn.construct":

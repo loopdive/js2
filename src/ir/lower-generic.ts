@@ -1894,6 +1894,25 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitObjectToStringTag(dynamicScratch.toNumber)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.string_carrier": {
+        // #7106 S1c — checked native-string carrier recovery, legacy's return ladder.
+        const valueIrType = typeOf(instr.value);
+        if (valueIrType.kind !== "dynamic") {
+          throw new Error(
+            `ir/lower: dyn.string_carrier operand must be dynamic, got ${valueIrType.kind} (${func.name})`,
+          );
+        }
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.string_carrier (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitStringCarrier()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.construct": {
         // #7106 S3a — `new <dynamic callee>(<dynamic args>)` through the lane's
         // ordinary-[[Construct]] driver; callee then args, source order.
@@ -3827,6 +3846,7 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.construct":

@@ -223,6 +223,20 @@ export interface IrInstrDynConstruct extends IrInstrBase {
 }
 
 /**
+ * `dyn.string_carrier{value}` — the checked recovery of the native string
+ * carrier from a boxed-any value (#7106 S1c): legacy's `coerceType(externref →
+ * $AnyString)` ladder (`ref.test $AnyString` → cast; a boxed `new String(…)`
+ * wrapper's [[StringData]]; the `$AnyValue` tag-5 payload; null otherwise),
+ * which legacy emits for `return <dynamic>` into a string-registered result.
+ * NOT ToString — no user `toString`/`valueOf` runs. Result `string`.
+ */
+export interface IrInstrDynStringCarrier extends IrInstrBase {
+  readonly kind: "dyn.string_carrier";
+  /** The dynamic carrier to recover a native string from. */
+  readonly value: IrValueId;
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a

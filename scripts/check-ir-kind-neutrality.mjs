@@ -811,6 +811,11 @@ const VERDICTS = {
       { file: path.join(DIALECT_DIR, "js.ts"), quote: "the `[object Tag]` classifier) over a boxed-any carrier" },
     ],
   },
+  "dyn.string_carrier": {
+    verdict: "js",
+    why: "ECMAScript String value recovery from a boxed-any carrier (a primitive string or a String wrapper's [[StringData]], §10.4.3), through the coercion ladder shared with legacy; not ToString.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the checked recovery of the native string" }],
+  },
   "dyn.construct": {
     verdict: "js",
     why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",

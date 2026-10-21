@@ -8432,6 +8432,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/ir-string-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR dyn.string_carrier support (#7106 S1c): the wrapper over legacy's externref→$AnyString coercion ladder; moves with the coercion-engine split."
+    },
+    {
       "path": "src/codegen/ir-dynamic-construct.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

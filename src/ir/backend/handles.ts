@@ -362,6 +362,14 @@ export interface IrDynamicLowering {
    */
   emitConstruct(arity: number): readonly Instr[];
   /**
+   * (#7106 S1c) Carrier on the stack → the lane's string carrier (null when
+   * the value holds no native string), through the SAME `coerceType(externref
+   * → $AnyString)` ladder legacy emits for a dynamic value returned into a
+   * string-registered result (`__ir_string_carrier`). Throws where the
+   * `native-string-carrier-coercion` capability does not hold.
+   */
+  emitStringCarrier(): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,

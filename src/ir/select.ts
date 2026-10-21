@@ -651,7 +651,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "number-to-string"
       | "native-json-codec"
       | "native-object-tostring-tag"
-      | "native-dynamic-construct",
+      | "native-dynamic-construct"
+      | "native-string-carrier-coercion",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -1567,6 +1568,13 @@ let currentDynamicRuntimeBuildable = true;
 // (#7106 S3a) The current subject's dynamic-typed PARAMETER names: the only
 // callees `new <name>(…)` may construct through `dyn.construct`.
 let currentDynamicParamNames = new Set<string>();
+// (#7106 S1c) The current subject resolves a STRING return: a dynamic value in
+// return position recovers its carrier through `dyn.string_carrier`.
+let currentFnReturnsString = false;
+// (#7106 S1c) Catch bindings of the current subject: a thrown payload is ALWAYS
+// the boxed-any carrier, never a callback-boundary parameter carrier, so a
+// member read off one is safe in equality even in a value-used function.
+let currentCatchBoundNames = new Set<string>();
 /** Mirrors `IR_DYNAMIC_CONSTRUCT_MAX_ARITY` (`codegen/ir-dynamic-construct.ts`): the fixed-arity driver family. */
 const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = 8;
 // #2949 S5.P follow-up — dynamic member reads used by equality require the
@@ -1887,6 +1895,7 @@ function whyNotIrClaimable(
   // #2949 slice 2 — true when the return position resolved `dynamic`
   // (unannotated + lattice unknown/dynamic). Feeds the move-only scan below.
   let isDynamicReturn = false;
+  currentFnReturnsString = false; // (#7106 S1c) set below when the return resolves string
   if (!isGenerator) {
     if (ts.isConstructorDeclaration(fn)) {
       // Constructors have no source-level return type — they always return
@@ -1919,6 +1928,7 @@ function whyNotIrClaimable(
       if (returnResolved === null) return "return-type-not-resolvable";
       isVoidReturn = returnResolved === "void";
       isDynamicReturn = returnResolved === "dynamic";
+      currentFnReturnsString = returnResolved === "string";
     }
   }
 
@@ -1929,6 +1939,7 @@ function whyNotIrClaimable(
   // `dynamicUsesAreMoveOnly` below.
   const dynNames = new Set<string>();
   currentDynamicParamNames = new Set<string>();
+  currentCatchBoundNames = new Set<string>();
   // Method bodies and constructor bodies see `this` as an implicit local;
   // mark it so a `return this;` / `this.field` reference passes the
   // identifier-in-scope check at Phase-1 expression position.
@@ -2658,6 +2669,12 @@ function subtreeTouchesDynamic(root: ts.Node, dynNames: ReadonlySet<string>): bo
 
 function dynamicMemberEqualityOperandIsBuildable(candidate: ts.Expression): boolean {
   const isMember = ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate);
+  // (#7106 S1c) `err.name === 'TypeError'` on a catch binding: the receiver is
+  // the thrown carrier itself, so the callback-boundary carrier concern below
+  // does not apply whatever the function's value uses are.
+  if (isMember && ts.isIdentifier(candidate.expression) && currentCatchBoundNames.has(candidate.expression.text)) {
+    return true;
+  }
   return (
     !isMember ||
     (currentDynMemberEqualitySubject !== null &&
@@ -3310,6 +3327,19 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isReturnStatement(s)) {
       if (!s.expression) return true;
+      // (#7106 S1c) `return <dynamic>` into a string-registered result: legacy
+      // recovers the carrier (`coerceType(externref → $AnyString)`); the IR
+      // mirrors it with `dyn.string_carrier` — assert.js's `formatSimpleValue`
+      // returning its `basic` local.
+      if (
+        !returnIsDynamic &&
+        currentFnReturnsString &&
+        currentDynamicRuntimeBuildable &&
+        isDynShaped(s.expression) &&
+        currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+      ) {
+        return scanExpr(s.expression, true);
+      }
       if (!returnIsDynamic) return scanExpr(s.expression, false);
       if (isDynShaped(s.expression)) return scanExpr(s.expression, true);
       const concrete = unwrap(s.expression);
@@ -3414,8 +3444,10 @@ function dynamicUsesAreMoveOnly(
       for (const inner of s.tryBlock.statements) if (!scanStmt(inner)) return false;
       if (s.catchClause) {
         const binding = s.catchClause.variableDeclaration?.name;
-        if (binding !== undefined && ts.isIdentifier(binding)) dynNames.add(binding.text);
-        else if (binding !== undefined) return false;
+        if (binding !== undefined && ts.isIdentifier(binding)) {
+          dynNames.add(binding.text);
+          currentCatchBoundNames.add(binding.text);
+        } else if (binding !== undefined) return false;
         for (const inner of s.catchClause.block.statements) if (!scanStmt(inner)) return false;
       }
       if (s.finallyBlock) for (const inner of s.finallyBlock.statements) if (!scanStmt(inner)) return false;

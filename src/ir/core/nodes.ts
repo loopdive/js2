@@ -33,6 +33,7 @@ import type {
   IrInstrDynJsonStringify,
   IrInstrDynObjectTag,
   IrInstrDynConstruct,
+  IrInstrDynStringCarrier,
   IrInstrExternCall,
   IrInstrExternNew,
   IrInstrExternProp,
@@ -1654,6 +1655,7 @@ export type {
   IrInstrDynJsonStringify,
   IrInstrDynObjectTag,
   IrInstrDynConstruct,
+  IrInstrDynStringCarrier,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,
@@ -1701,6 +1703,7 @@ export type IrInstr =
   | IrInstrDynJsonStringify
   | IrInstrDynObjectTag
   | IrInstrDynConstruct
+  | IrInstrDynStringCarrier
   | IrInstrDynToNumber
   | IrInstrDynEq
   | IrInstrDynMemberGet
@@ -2066,6 +2069,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "dyn.json_stringify":
     case "dyn.object_tag":
     case "dyn.construct":
+    case "dyn.string_carrier":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2241,6 +2245,7 @@ export function mapNestedBuffers(
     case "dyn.json_stringify":
     case "dyn.object_tag":
     case "dyn.construct":
+    case "dyn.string_carrier":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2354,6 +2359,7 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.to_string":
     case "dyn.json_stringify":
     case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
     case "dyn.construct":

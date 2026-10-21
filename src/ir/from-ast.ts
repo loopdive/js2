@@ -6475,6 +6475,16 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
     return cx.builder.emitDynMemberGet(recv, key);
   }
+  // (#7106 S1c) A raw externref receiver — the catch binding (`err.name`), a
+  // host handle — is the host carrier unboxed: box it into the canonical
+  // dynamic carrier (identity on the host strategy, `__any_from_extern` on
+  // gc) and take the same unified reader. Admitted by the selector only for
+  // catch bindings today (`currentCatchBoundNames`).
+  if (asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true) {
+    const boxedRecv = cx.builder.emitBox(recv, irDynamic());
+    const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));
+    return cx.builder.emitDynMemberGet(boxedRecv, key);
+  }
 
   demoteToLegacy(
     "property-access-unsupported",
@@ -11041,6 +11051,13 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   if (declared?.kind === "string") {
     const actualT = cx.builder.typeOf(value);
     const isExternShaped = actualT.kind === "dynamic" || asVal(actualT)?.kind === "externref";
+    // (#7106 S1c) A dynamic carrier returned into a native-string result
+    // recovers its string exactly as legacy's return site does
+    // (`coerceType(externref → $AnyString)`): `dyn.string_carrier`. The
+    // selector admits the site only where the capability holds.
+    if (actualT.kind === "dynamic" && cx.resolver?.stringIsExternref?.() !== true) {
+      return cx.builder.emitDynStringCarrier(value);
+    }
     if (isExternShaped && cx.resolver?.stringIsExternref?.() !== true) {
       throw new IrUnsupportedError(
         "return-type-legacy-coupling",
