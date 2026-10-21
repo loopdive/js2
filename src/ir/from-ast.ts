@@ -13965,6 +13965,78 @@ function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "ob
   return tag;
 }
 
+/**
+ * (#7106 Stage 4) The selector's `dynamicConditionalValueArms` shape: an arm
+ * bound to a dynamic carrier and a primitive-literal arm. Each arm runs only in
+ * its own branch (short-circuit), the literal is boxed into the carrier there,
+ * and the join is bare dynamic. `null` = not this shape.
+ */
+function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId | null {
+  const bindingIsDynamic = (arm: ts.Expression): boolean => {
+    let e = arm;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    if (!ts.isIdentifier(e)) return false;
+    const binding = cx.scope.get(e.text);
+    const logical =
+      binding?.kind === "slot"
+        ? (binding.asType ?? binding.type)
+        : binding?.kind === "local"
+          ? binding.type
+          : undefined;
+    return logical?.kind === "dynamic";
+  };
+  const isLiteral = (arm: ts.Expression): boolean => {
+    let e = arm;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    return (
+      ts.isStringLiteral(e) ||
+      ts.isNoSubstitutionTemplateLiteral(e) ||
+      ts.isNumericLiteral(e) ||
+      e.kind === ts.SyntaxKind.TrueKeyword ||
+      e.kind === ts.SyntaxKind.FalseKeyword
+    );
+  };
+  const trueDynamic = bindingIsDynamic(expr.whenTrue);
+  const falseDynamic = bindingIsDynamic(expr.whenFalse);
+  if (!trueDynamic && !falseDynamic) return null;
+  if ((!trueDynamic && !isLiteral(expr.whenTrue)) || (!falseDynamic && !isLiteral(expr.whenFalse))) return null;
+  const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
+  const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
+  if (cond === null) {
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
+  }
+  const lowerArm = (arm: ts.Expression, armCx: LowerCtx): IrValueId => {
+    const value = lowerExpr(arm, armCx, irDynamic());
+    const type = cx.builder.typeOf(value);
+    if (type.kind === "dynamic") return value;
+    const boxed = boxConcreteToDynamic(value, type, arm, armCx);
+    if (boxed === null) {
+      demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: conditional arm has no carrier in ${cx.funcName}`);
+    }
+    return boxed;
+  };
+  const branchScope = new Map(cx.scope);
+  const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+  let whenTrue!: IrValueId;
+  const thenBody = cx.builder.collectBodyInstrs(() => {
+    whenTrue = lowerArm(expr.whenTrue, thenCx);
+  });
+  const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+  let whenFalse!: IrValueId;
+  const elseBody = cx.builder.collectBodyInstrs(() => {
+    whenFalse = lowerArm(expr.whenFalse, elseCx);
+  });
+  joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
+  return cx.builder.emitIfElse({
+    cond,
+    then: thenBody,
+    thenValue: whenTrue,
+    else: elseBody,
+    elseValue: whenFalse,
+    resultType: irDynamic(),
+  });
+}
+
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
@@ -13974,6 +14046,8 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
   if (folded !== undefined) {
     return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
   }
+  const dynamicJoin = tryLowerDynamicConditionalValue(expr, cx);
+  if (dynamicJoin !== null) return dynamicJoin;
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {

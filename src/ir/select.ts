@@ -6109,6 +6109,35 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
  * declaration point.
  */
 let currentMemberClosureHasDynamicParams = false;
+
+/**
+ * (#7106 Stage 4) A conditional VALUE whose one arm is a dynamic parameter
+ * (of the subject or of a planned member closure) and whose other arm is a
+ * primitive literal (or a second such parameter): each arm is lowered in its
+ * own branch, the literal boxed into the carrier, and the join is dynamic —
+ * assert.compareArray's `message === undefined ? '' : message`.
+ */
+function dynamicConditionalValueArms(expr: ts.ConditionalExpression): boolean {
+  if (!currentDynamicRuntimeBuildable) return false;
+  const dynamicArm = (arm: ts.Expression): boolean => {
+    const e = unwrapPhase1Parens(arm);
+    return ts.isIdentifier(e) && (currentDynamicParamNames.has(e.text) || currentClosureDynamicParamNames.has(e.text));
+  };
+  const literalArm = (arm: ts.Expression): boolean => {
+    const e = unwrapPhase1Parens(arm);
+    return (
+      ts.isStringLiteral(e) ||
+      ts.isNoSubstitutionTemplateLiteral(e) ||
+      ts.isNumericLiteral(e) ||
+      e.kind === ts.SyntaxKind.TrueKeyword ||
+      e.kind === ts.SyntaxKind.FalseKeyword
+    );
+  };
+  const trueDynamic = dynamicArm(expr.whenTrue);
+  const falseDynamic = dynamicArm(expr.whenFalse);
+  if (!trueDynamic && !falseDynamic) return false;
+  return (trueDynamic || literalArm(expr.whenTrue)) && (falseDynamic || literalArm(expr.whenFalse));
+}
 // (#7106 Stage 4) The planned member closure's dynamic parameter names.
 let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
 
@@ -10464,6 +10493,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // dead arm).
     const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTag(id, scope));
     if (folded !== undefined) return isPhase1Expr(folded ? expr.whenTrue : expr.whenFalse, scope, localClasses);
+    // (#7106 Stage 4) `message === undefined ? '' : message` — a dynamic
+    // parameter arm and a literal arm join on the dynamic carrier.
+    if (dynamicConditionalValueArms(expr)) {
+      return (
+        isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
+        isPhase1Expr(expr.whenTrue, scope, localClasses) &&
+        isPhase1Expr(expr.whenFalse, scope, localClasses)
+      );
+    }
     const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
     const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
     const truePrimitive = classifyPrimitive?.(expr.whenTrue);
