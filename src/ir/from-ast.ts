@@ -2142,6 +2142,30 @@ function denseArrayReductionPlan(stmts: readonly ts.Statement[]): DenseArrayRedu
   };
 }
 
+/**
+ * The terminator after a tail `switch` / loop / `try`: control that falls out
+ * of the construct reaches the function's implicit return. Void → the empty
+ * return; (#7106 S1b) dynamic → the carrier's `undefined` (#7104's
+ * `dyn.undefined`), which is what the selector admits for a dynamic-return
+ * function whose tail `switch` has no `default` (assert.js's
+ * `formatIdentityFreeValue` on a Symbol or object matches no clause); any
+ * other return type → the selector proved nothing falls out, so the
+ * instruction is unreachable. Measured 2026-10-21 (#6811 merge group): the
+ * dynamic arm used to be `unreachable` too, and every `assert.deepEqual` on a
+ * non-primitive trapped — 8 ES5 harness self-tests.
+ */
+function terminateTailFallOut(cx: LowerCtx): void {
+  if (cx.returnType === null) {
+    cx.builder.terminate({ kind: "return", values: [] });
+    return;
+  }
+  if (cx.returnType.kind === "dynamic") {
+    cx.builder.terminate({ kind: "return", values: [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)] });
+    return;
+  }
+  cx.builder.terminate({ kind: "unreachable" });
+}
+
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
   if (stmts.length < 1) {
     // #7104 — an empty dynamic-return body returns the carrier's undefined.
@@ -2782,7 +2806,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   //     throw-tail arm uses).
   if (ts.isSwitchStatement(stmt)) {
     lowerSwitchStatement(stmt, { ...cx, scope: new Map(cx.scope) });
-    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    terminateTailFallOut(cx);
     return;
   }
   // #5165 S1 — a function ENDING in a C-style loop. Identical
@@ -2798,7 +2822,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     if (ts.isWhileStatement(stmt)) lowerWhileStatement(stmt, loopCx);
     else if (ts.isForStatement(stmt)) lowerForStatement(stmt, loopCx);
     else lowerDoStatement(stmt, loopCx);
-    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    terminateTailFallOut(cx);
     return;
   }
   // #5165 S3 — a function ENDING in a `try`. Same `emitTry` lowering as the
@@ -2806,7 +2830,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   // return) or `tryAllPathsTerminate` (nothing falls out at all).
   if (ts.isTryStatement(stmt)) {
     lowerTryStatement(stmt, { ...cx, scope: new Map(cx.scope) });
-    cx.builder.terminate(cx.returnType === null ? { kind: "return", values: [] } : { kind: "unreachable" });
+    terminateTailFallOut(cx);
     return;
   }
   demoteToLegacy(

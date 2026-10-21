@@ -173,6 +173,46 @@ describe("#7106 S1 — String(<dynamic>) through dyn.to_string", () => {
     expect(await call(result.binary, "ok")).toBe(7);
   });
 
+  it("S1b: a tail switch with no default returns undefined when nothing matches (the deepEqual Symbol case)", async () => {
+    // Measured 2026-10-21 on the #6811 merge group: `assert.deepEqual(s1, s1)`
+    // with a Symbol reached `formatIdentityFreeValue`'s no-match fall-out,
+    // which lowered to `unreachable` — 8 ES5 harness self-tests trapped.
+    // Untyped script like the harness: the legacy caller keeps calling the IR
+    // body through the projected externref ABI.
+    const result = await compile(
+      `
+        function isNegativeZero(v) { return v === 0 && 1 / v === -Infinity; }
+        function formatIdentityFreeValue(value) {
+          switch (value === null ? 'null' : typeof value) {
+            case 'string':
+              return typeof JSON !== "undefined" ? JSON.stringify(value) : '"' + value + '"';
+            case 'number':
+              if (isNegativeZero(value)) return '-0';
+            case 'boolean':
+            case 'undefined':
+            case 'null':
+              return String(value);
+          }
+        }
+        export function ok() {
+          var n = 0;
+          if (formatIdentityFreeValue({}) === undefined) n += 1;
+          if (formatIdentityFreeValue(Symbol()) === undefined) n += 2;
+          if (formatIdentityFreeValue("a") === '"a"') n += 4;
+          return n;
+        }
+      `,
+      { ...OPTIONS, allowJs: true, fileName: "issue-7106-s1b-nomatch.js" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    const irBodies = (result.irOutcomes ?? [])
+      .filter((o) => o.kind === "emitted" && o.irBodyEmitted)
+      .map((o) => o.displayName);
+    expect(irBodies, JSON.stringify(result.irOutcomes, null, 2)).toContain("formatIdentityFreeValue");
+    expect(await call(result.binary, "ok")).toBe(7);
+  });
+
   it("S1c: Object.prototype.toString.call(<dynamic>) through the standalone classifier", async () => {
     const result = await compileStandalone(
       `
