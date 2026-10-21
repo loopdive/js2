@@ -151,7 +151,7 @@ describe("#3519 typed IR terminal outcomes", () => {
     const result = await compile(
       `export function find(): number {
         const values = [10, 20, 30];
-        return values.indexOf(20);
+        return values.lastIndexOf(20);
       }`,
       { fileName: "array-method-selector.ts", trackIrOutcomes: true },
     );

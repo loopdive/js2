@@ -188,6 +188,7 @@ import {
   planI32ArrayElements,
   tryLowerVecPush,
 } from "./array-element-lowering.js";
+import { lowerVecSearchOrJoinCall } from "./array-methods/vec-search-join.js";
 import {
   emitPreparedAsyncAwait,
   preparedAsyncAwaitResultType,
@@ -9855,6 +9856,9 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     }
     return r;
   }
+
+  const vecSearchJoin = lowerVecSearchOrJoinCall(expr, methodName, recv, recvType, cx, resolveIrVecType, lowerExpr);
+  if (vecSearchJoin !== undefined) return vecSearchJoin;
 
   const vecPush = tryLowerVecPush(expr, methodName, recv, recvType, statementPosition, cx, {
     lowerExpr: (expression, expected) => lowerExpr(expression, cx, expected),
