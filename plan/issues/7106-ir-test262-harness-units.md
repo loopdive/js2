@@ -414,12 +414,14 @@ carrier, `Object.getOwnPropertyNames/Descriptor` into the carrier) should
 be designed against that contract rather than ahead of it. `verifyProperty`
 also needs `assert(...)`/`assert.sameValue(...)` (Stage 2) on every path.
 
-Open divergence recorded for the next slice: legacy types `dyn + "!"` as a
-STRING result (`(result (ref null $AnyString))`) while the lattice says
-`dynamic`; a function mixing `return label + "!"` and `return label` is
-withdrawn at parity. Mirroring legacy means `+` with a string-literal
-operand infers `string` in the propagator and the return goes through
-`dyn.string_carrier`/concat.
+Measured again 04:35Z, correcting the note above: a function mixing
+`return o + "!"` and `return o` (or `return "x"` / `return String(o)` with a
+dynamic return) registers `(result externref)` in BOTH front-ends and ships
+an IR body; so does a lone `return o + "!"` (`(ref null $AnyString)` in
+both). The earlier `labelOf` withdrawal came from the test program's shape,
+not from `+`. The one mismatch measured is `{string, number literal}`
+returns (`if (d) return o + "!"; return 1;`: IR and legacy pick different
+result slots) — not a harness shape, left as is.
 
 ## Ownership
 
