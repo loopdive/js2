@@ -429,6 +429,28 @@ After the slice `verifyProperty` stops on
 `__hasOwnProperty(desc, 'enumerable') && desc.enumerable !== undefined` —
 the uncurried-alias tail below. Census unchanged at 6 IR units.
 
+**CI finding on the S1f PR (#6821, 10:16Z): a claim-then-demote channel the
+`undefined` arm opened.** `quality` failed `check:host-import-policy`
+(native-first imports 458 > 452). Bisected per probe: `functionCall` and
+`functionApply` (`add.call(undefined, 6)` / `add.apply(undefined, [8])` in a
+`(): number` body) went 0 → 3 imports each. With `undefined` Phase-1, Stage
+2's function-object member arm (`functionObjectMemberCallIsBuildable`)
+admitted the whole call — it accepts ANY member call on a stable top-level
+function value and lowers it through the dynamic closed dispatch with a
+DYNAMIC result — so `run` was claimed, failed at verify (`return[0] type
+dynamic not assignable to declared result f64`) and demoted with the
+dynamic runtime already prepared into the module (3 `__str_*` imports,
+~50 helpers, `__fn_value_add`; module 2.2× larger). On main the same shape
+with `null` is also claimed and demotes at build, earlier, leaving nothing
+behind. Fix (one selector arm): `fn.call(...)`/`fn.apply(...)` on a direct
+callable (`knownCallableArity` known) now reaches the existing
+`function-invocation-method-unsupported` refusal BEFORE the function-object
+member arm. Probe back to 452; gc/standalone bytes identical to the S1e
+reference. Remaining Stage 2 gap, recorded not fixed: the function-object
+member arm still admits a dynamic-result call in a concrete-result function
+(`add.foo(x)` with `(): number`) — the move-only scan does not run for such
+bodies, so the result position is only checked at verify.
+
 **Measured 04:10Z, the next item-1 tail (NOT started — Stage-2-adjacent):**
 propertyHelper's uncurried aliases `__hasOwnProperty`, `__propertyIsEnumerable`,
 `__push`, `__join` (`var __x = Function.prototype.call.bind(Builtin.prototype.m)`)

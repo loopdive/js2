@@ -74,3 +74,29 @@ describe("#7106 S1f — the global undefined as a dynamic value", () => {
     expect(await call(result.binary, "ok")).toBe(1);
   });
 });
+
+describe("#7106 S1f — `fn.call(undefined, …)` on a direct callable stays on legacy before claim", () => {
+  it("refuses the invocation method ahead of the function-object member arm and prepares no dynamic runtime", async () => {
+    // The host-import-policy `functionCall` probe, compiled with the compiler's
+    // default (native-first) options: before this guard the selector claimed
+    // `run`, the dynamic member-call lowering produced a DYNAMIC result for an
+    // f64 declaration, and the claim demoted at verify with the dynamic runtime
+    // (3 string imports) already prepared into the module.
+    const result = await compile(
+      `
+        function add(value: number): number { return value + 1; }
+        export function run(): number { return add.call(undefined, 6); }
+        export function runApply(): number { return add.apply(undefined, [8]); }
+      `,
+      { fileName: "s1f-function-call-probe.ts", trackIrOutcomes: true },
+    );
+    expect(result.success).toBe(true);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect(result.hostImportInventory ?? []).toEqual([]);
+    expect(irBodies(result)).not.toContain("run");
+    expect(irBodies(result)).not.toContain("runApply");
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.run as () => number)()).toBe(7);
+    expect((instance.exports.runApply as () => number)()).toBe(9);
+  });
+});

@@ -10372,6 +10372,22 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       isExpressionBuildable: (argument) => isPhase1Expr(argument, scope, localClasses),
     });
     if (superMethodVerdict !== undefined) return superMethodVerdict;
+    // (#7106 item 1, S1f) `fn.call(...)` / `fn.apply(...)` on a DIRECT callable
+    // must reach the invocation-method refusal below BEFORE the function-object
+    // member arm: that arm admits any member call on a stable top-level
+    // function value and lowers it through the dynamic closed dispatch with a
+    // DYNAMIC result, which can never satisfy a concrete declared result. The
+    // `undefined` value arm made `add.call(undefined, 6)` fully Phase-1, and
+    // the claim then demoted at verify — AFTER the dynamic runtime had been
+    // prepared into the module (measured: +3 host imports and ~50 helpers in
+    // the `functionCall`/`functionApply` host-import-policy probes).
+    if (
+      ts.isPropertyAccessExpression(expr.expression) &&
+      (expr.expression.name.text === "call" || expr.expression.name.text === "apply") &&
+      knownCallableArity(expr.expression.expression, scope) !== undefined
+    ) {
+      return capabilityNo("function-invocation-method-unsupported", "expr-function-invocation-method", expr);
+    }
     const functionObjectCall = functionObjectMemberCallIsBuildable(
       expr,
       currentSelectionOptions?.functionObjectValues,
