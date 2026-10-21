@@ -57,6 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
+import { uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -3136,6 +3137,24 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn) return false;
         if (isDynShaped(toStringArg)) return currentDynamicRuntimeBuildable && scanExpr(toStringArg, true);
         return scanExpr(toStringArg, false);
+      }
+      // (#7106 S1g) the uncurried Object.prototype aliases: a concrete bool
+      // result; receiver and key are carriers (a concrete key boxes).
+      if (
+        e.arguments.length === 2 &&
+        uncurriedObjectAliasMethod(e.expression, (name) => dynNames.has(name)) !== undefined
+      ) {
+        if (expectDyn || !currentDynamicRuntimeBuildable) return false;
+        for (const argument of e.arguments) {
+          if (ts.isSpreadElement(argument)) return false;
+          if (isDynShaped(argument)) {
+            if (!scanExpr(argument, true)) return false;
+          } else {
+            const concrete = unwrap(argument);
+            if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+          }
+        }
+        return true;
       }
       // Direct call to a (possibly) top-level function. A dyn-NAMED callee
       // (`x()` where x is dynamic) is calling a dynamic value — slice 3.
@@ -9608,6 +9627,29 @@ function declaredExpressionHasExactFamily(
   ) {
     return true;
   }
+  // (#7106 S1g) `a && b` / `a || b` of two exact booleans is exactly boolean
+  // (`stringCheck && __hasOwnProperty(o, n) && __propertyIsEnumerable(o, n)`);
+  // the checker widens the nested operand to `any` through the alias call.
+  if (
+    expected === "boolean" &&
+    ts.isBinaryExpression(candidate) &&
+    (candidate.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      candidate.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    return (
+      declaredExpressionHasExactFamily(candidate.left, "boolean", scope) &&
+      declaredExpressionHasExactFamily(candidate.right, "boolean", scope)
+    );
+  }
+  // (#7106 S1g) the uncurried Object.prototype predicates are exactly boolean.
+  if (
+    expected === "boolean" &&
+    ts.isCallExpression(candidate) &&
+    candidate.arguments.length === 2 &&
+    uncurriedObjectAliasMethod(candidate.expression, (name) => scope.has(name)) !== undefined
+  ) {
+    return true;
+  }
   const classifier = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
   const classified = classifier?.(expression);
   if (classified !== undefined) return classified === expected;
@@ -10319,6 +10361,25 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     );
   }
   if (ts.isCallExpression(expr)) {
+    // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
+    // `__propertyIsEnumerable(obj, name)` aliases: the lane's own-property
+    // provider over two carriers (legacy's `call-object-builtins.ts` arm).
+    if (
+      expr.arguments.length === 2 &&
+      !expr.questionDotToken &&
+      !expr.arguments.some(ts.isSpreadElement) &&
+      uncurriedObjectAliasMethod(expr.expression, (name) => scope.has(name)) !== undefined
+    ) {
+      if (
+        !currentDynamicRuntimeBuildable ||
+        currentSelectionOptions?.supportsBackendCapability?.("native-own-property-test") !== true
+      ) {
+        return capabilityNo("call-resolution-unsupported", "expr-call-uncurried-object-alias-lane", expr);
+      }
+      return (
+        isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
+      );
+    }
     // (#7106 S1e) A direct call to a local function that reads `arguments`
     // needs no `__argc` publication from an IR caller: the direct-call plan
     // is exact-arity (from-ast demotes any other count), and the callee's
@@ -11718,6 +11779,15 @@ export function buildLocalCallGraph(
             // planning and are neither a source call-graph edge nor an
             // arbitrary ambient function. Still visit arguments so nested
             // local/external calls retain their ordinary classification.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (
+            node.arguments.length === 2 &&
+            uncurriedObjectAliasMethod(node.expression, (name) => localBindings.names.has(name)) !== undefined
+          ) {
+            // (#7106 S1g) propertyHelper's uncurried Object.prototype aliases
+            // lower to the lane's own-property provider (`dyn.own_property`),
+            // not a call edge; the per-function arms decide the lane.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {

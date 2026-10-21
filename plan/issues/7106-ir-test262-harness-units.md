@@ -448,6 +448,36 @@ carrier, `Object.getOwnPropertyNames/Descriptor` into the carrier) should
 be designed against that contract rather than ahead of it. `verifyProperty`
 also needs `assert(...)`/`assert.sameValue(...)` (Stage 2) on every path.
 
+### Item 1, S1g slice — 2026-10-21 10:50Z (C, measured)
+
+The uncurried aliases `__hasOwnProperty` / `__propertyIsEnumerable` (a
+top-level `var` initialised to `Function.prototype.call.bind(Object.prototype.M)`
+with no writes, certified by `src/ir/uncurried-object-alias.ts`) called with
+two arguments lower to the 36th dialect kind `dyn.own_property{receiver, key,
+test}` — an i32 bool over the dynamic carrier, reaching legacy's own
+`__hasOwnProperty` / `__propertyIsEnumerable` natives (the same
+`ensureLateImport` helpers `call-object-builtins.ts` uses, so the answer is
+legacy's by construction). Capability `native-own-property-test` (wasmgc,
+non-fast, standalone|wasi). The call is exactly boolean for the selector's
+family check, which now also recurses through `&&`/`||` of two exact booleans
+(`stringCheck && __hasOwnProperty(o, n) && __propertyIsEnumerable(o, n)`);
+`var hadValue = __hasOwnProperty(o, n)` keeps its i32 slot because the
+unboxed-local proof accepts the certified alias call as a boolean
+initializer (the checker types it `any`). A shadowed or reassigned alias
+and a one-argument call stay on legacy before claim. gc/standalone bytes
+identical to the S1e reference.
+
+Measured on the harness: `both`/`absent`/`had`/`enumerable` shapes claim and
+run; the census stays at 6 IR units because every alias-using harness unit
+has a second blocker — `verifyProperty` → `isWritable(obj, name)`
+(under-arity direct call, 4 formals), `isWritable` → a module-binding alias
+in a conditional (`__isArray(obj) && … ? nonIndexNumericPropertyName : …`),
+`isEnumerable` → `for (var x in obj)` with a value-used head, `isConfigurable`
+→ `delete obj[name]`, the `verify*` family → `new Test262Error` (Stage 3c).
+`var g = __hasOwnProperty(o, n); return g;` in a DYNAMIC-return function is
+not admitted (the scan's return arm wants a dynamic carrier, `g` is i32); not
+a harness shape, recorded only.
+
 Measured again 04:35Z, correcting the note above: a function mixing
 `return o + "!"` and `return o` (or `return "x"` / `return String(o)` with a
 dynamic return) registers `(result externref)` in BOTH front-ends and ships

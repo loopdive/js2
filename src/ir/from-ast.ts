@@ -258,6 +258,7 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
+import { uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -7738,6 +7739,30 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
 
+  // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
+  // `__propertyIsEnumerable(obj, name)`: both operands as carriers, then the
+  // lane's provider — exactly legacy's lowering, never the generic bound call.
+  const ownPropertyTest =
+    expr.arguments.length === 2 ? uncurriedObjectAliasMethod(expr.expression, (name) => cx.scope.has(name)) : undefined;
+  if (ownPropertyTest !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
+    const carriers: IrValueId[] = [];
+    for (const argument of expr.arguments) {
+      let value = lowerExpr(argument, cx, irDynamic());
+      const actual = cx.builder.typeOf(value);
+      if (actual.kind !== "dynamic") {
+        const boxed = boxConcreteToDynamic(value, actual, argument, cx);
+        if (boxed === null) {
+          demoteToLegacy(
+            "operand-coercion-unsupported",
+            `ir/from-ast: ${ownPropertyTest} alias operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
+          );
+        }
+        value = boxed;
+      }
+      carriers.push(value);
+    }
+    return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, ownPropertyTest);
+  }
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
 
@@ -14462,7 +14487,16 @@ function proveUnboxedNumberLocal(decl: ts.VariableDeclaration, boundType: IrType
   // i32 arm (#2790): the OTHER sound i32 brand is a provable `boolean`, kept
   // unboxed and boxed via `__box_boolean` (#2785) at the escape edge. Anything
   // else i32 (`any` / mixed union — no determinable brand) → demote.
-  return isProvablyBoolean(tsType);
+  if (isProvablyBoolean(tsType)) return true;
+  // (#7106 S1g) `var had = __hasOwnProperty(o, n)`: the checker types the
+  // uncurried alias call `any`, but the certified Object.prototype predicate
+  // is boolean by construction (`dyn.own_property` → i32 bool).
+  return (
+    decl.initializer !== undefined &&
+    ts.isCallExpression(decl.initializer) &&
+    decl.initializer.arguments.length === 2 &&
+    uncurriedObjectAliasMethod(decl.initializer.expression, (name) => cx.scope.has(name)) !== undefined
+  );
 }
 
 /**
