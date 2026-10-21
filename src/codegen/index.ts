@@ -216,6 +216,8 @@ import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_R
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import {
   planIrImportedCalls,
+  preparedMemberInit,
+  preparedModuleInitEvaluationMatchesStatement,
   recordIrOverlayPreparationFailure,
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
@@ -2550,6 +2552,7 @@ export interface IrOverlayPlan {
   /** Checker-certified source-unit and ambient-host call sites, keyed by exact AST node. */
   readonly importedCalls: Map<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues: Map<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+  readonly functionMemberClosures?: import("../ir/function-member-closure-plan.js").IrFunctionMemberClosures;
   /** Exact ambient addEventListener void arrows admitted by B2/Calendar. */
   readonly hostVoidCallbacks: Map<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   /** Exact ambient Date snapshot constructors and getter uses admitted by Calendar. */
@@ -2907,6 +2910,25 @@ interface IrOverlayPlanningOptions {
   readonly countedStringAppendProof?: { readonly loop: ts.ForStatement; readonly plan: IrCountedStringAppendPlan };
 }
 
+/** Build one source's canonical value and fnctor resolver services in their original order. */
+function planIrOverlaySourceResolverState(
+  ctx: CodegenContext,
+  ast: TypedAST,
+  identityContext: IrPlanningIdentityContext,
+  options: IrOverlayPlanningOptions,
+) {
+  const state = planIrFunctionValueResolverState(
+    ctx,
+    identityContext,
+    options,
+    () => makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
+    irVal,
+  );
+  const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
+  const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
+  return { ...state, resolveFnctorAdmission, resolveFnctorPropagationAdmission };
+}
+
 function planIrOverlay(
   ctx: CodegenContext,
   ast: TypedAST,
@@ -2918,13 +2940,13 @@ function planIrOverlay(
     legacyImportedFunctions,
     identityResolver,
     functionObjectValues,
+    functionMemberClosures,
+    functionValueSelectionOptions,
     nestedClassFieldCallProofs,
     nestedClassFieldCallAdmission,
-  } = planIrFunctionValueResolverState(ctx, identityContext, options, () =>
-    makeIrResolver(ast.checker, identityContext, options.resolver ?? options.importedFunctions),
-  );
-  const resolveFnctorAdmission = makeIrFnctorAdmissionResolver(ctx, ast.checker, identityContext);
-  const resolveFnctorPropagationAdmission = makeIrFnctorPropagationAdmissionResolver(ctx, ast.checker, identityContext);
+    resolveFnctorAdmission,
+    resolveFnctorPropagationAdmission,
+  } = planIrOverlaySourceResolverState(ctx, ast, identityContext, options);
   let identityMaps: irOverlayIdentity.IrOverlayIdentityMaps;
   try {
     if (readEnv("JS2WASM_TEST_INJECT_IR_TYPEMAP_THROW") === "1") {
@@ -3196,9 +3218,7 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
-      ...(functionObjectValues
-        ? { functionObjectValues: irOverlayIdentity.projectIrOverlayImportedResolver(functionObjectValues) }
-        : {}),
+      ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
       // carrier, which is already externref and can feed the shared
@@ -3560,6 +3580,7 @@ function planIrOverlay(
     declByName,
     importedCalls,
     topLevelFunctionValues,
+    ...(functionMemberClosures ? { functionMemberClosures } : {}),
     ...calendarLoweringPlans,
     promiseDelays,
     suspendingAsyncUnitIds: collectPreparedIrAsyncOwners(ctx, identityPlan, safeSelection.funcs),
@@ -4234,34 +4255,6 @@ interface PreparedLexicalModuleInitEvidence {
   readonly invocationKind: Extract<IrModuleInitInvocationKind, "wasm-start" | "deferred-export" | "wasi-start-export">;
 }
 
-function preparedModuleInitEvaluationMatchesStatement(
-  sourceId: IrSourceId,
-  sourceFile: ts.SourceFile,
-  statement: ts.Statement,
-  evaluation: IrModuleInitEvaluationEntry,
-  sourceOrdinal: number,
-  kind: Extract<IrModuleInitEvaluationEntry["kind"], "variable-initializer" | "statement">,
-  bindingIds: readonly IrBindingId[],
-): boolean {
-  const statementOrdinal = sourceFile.statements.indexOf(statement);
-  const start = statement.getStart(sourceFile);
-  return (
-    statement.getSourceFile() === sourceFile &&
-    statementOrdinal >= 0 &&
-    evaluation.key === `${sourceId}:eval:${sourceOrdinal}` &&
-    evaluation.kind === kind &&
-    evaluation.sourceOrdinal === sourceOrdinal &&
-    evaluation.statementOrdinal === statementOrdinal &&
-    evaluation.nestedOrdinal === 0 &&
-    evaluation.start === start &&
-    evaluation.end === statement.end &&
-    evaluation.classId === null &&
-    evaluation.legacyKey === `statement:${start}:${statement.end}` &&
-    evaluation.bindingIds.length === bindingIds.length &&
-    evaluation.bindingIds.every((bindingId, index) => bindingId === bindingIds[index])
-  );
-}
-
 function preparedExactLexicalDeclaration(
   ctx: CodegenContext,
   sourceId: IrSourceId,
@@ -4472,6 +4465,22 @@ function isPreparedExactScalarModuleAssignment(
     binding.tdzBindingId !== null &&
     binding.start === declaration.getStart(sourceFile) &&
     binding.end === declaration.end
+  );
+}
+
+/** Keep lexical admission first; member-only admission proves no scalar storage. */
+function preparedExactModuleInit(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: IrOverlayPlan,
+  selection: Pick<IrSelection, "funcs" | "moduleInit">,
+  planning: IrModuleInitPlanningEvidence | undefined,
+): PreparedLexicalModuleInitEvidence | undefined {
+  return (
+    preparedExactLexicalModuleInit(ctx, sourceFile, selection, planning, plan.identityPlan.identityContext) ??
+    preparedMemberInit(ctx, sourceFile, plan, selection, planning, (node) =>
+      requireIrPlanningOwnerUnitId(plan.identityPlan.identityContext, node),
+    )
   );
 }
 
@@ -4812,12 +4821,12 @@ function planIrFirstBodyRouting(
   };
   const timerRouting = irTimerShim.inspectIrCompilerTimerShimRouting(plan);
   const hasLateFeaturePreparation = timerRouting.hasOtherLateFeaturePreparation;
-  const preliminaryModuleInit = preparedExactLexicalModuleInit(
+  const preliminaryModuleInit = preparedExactModuleInit(
     ctx,
     sourceFile,
+    plan,
     preliminarySelection,
     moduleInitPlanning,
-    plan.identityPlan.identityContext,
   );
   const selectedClassIds = selectPreparedClassMemberUnitIds(ctx, preliminarySelection, plan.identityPlan);
   // Preserve the established late-feature gate for ordinary members and
@@ -4854,7 +4863,9 @@ function planIrFirstBodyRouting(
         // (#4508) A module-binding reader may only stay a prepared candidate
         // when the module-init that owns its storage joins the same sealed
         // transaction.
-        preparedStorageTerminalUnitIds: new Set(preliminaryModuleInit ? [preliminaryModuleInit.unitId] : []),
+        preparedStorageTerminalUnitIds: new Set(
+          preliminaryModuleInit?.globalBindingIds.size ? [preliminaryModuleInit.unitId] : [],
+        ),
       })
     : {
         freeFunctionNames: new Set<string>(),
@@ -4967,12 +4978,12 @@ function planIrFirstBodyRouting(
     const finalModuleInit =
       preliminaryModuleInit === undefined
         ? undefined
-        : preparedExactLexicalModuleInit(
+        : preparedExactModuleInit(
             ctx,
             sourceFile,
-            preparedSelection,
+            plan,
+            { ...preparedSelection, funcs: preparedFreeFunctionNames },
             moduleInitPlanning,
-            plan.identityPlan.identityContext,
           );
     const prepareModuleInit = finalModuleInit !== undefined;
     if (preparedFreeFunctionNames.size === 0 && finalClassMemberNames.size === 0 && !prepareModuleInit) {

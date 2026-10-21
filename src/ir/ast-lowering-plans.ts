@@ -401,6 +401,7 @@ export interface IrIntegrationLoweringPlans {
   readonly directCalls: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly importedCalls: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
   readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+  readonly functionMemberClosures?: import("./function-member-closure-plan.js").IrFunctionMemberClosures;
   readonly hostVoidCallbacks: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;

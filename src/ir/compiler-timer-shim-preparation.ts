@@ -44,7 +44,15 @@ interface PreparedCompilerTimerShimDynamicShape {
   readonly dynamicCarrierRef: IrTypeRef;
 }
 
-type PreparedTimerDynamicHelperName = "__box_number" | "__unbox_number" | "__to_primitive" | "__to_number";
+type PreparedTimerDynamicHelperName =
+  | "__box_number"
+  | "__unbox_number"
+  | "__to_primitive"
+  | "__to_number"
+  | "__box_boolean"
+  | "__is_truthy"
+  | "__typeof"
+  | "__extern_strict_eq";
 
 export interface CompilerTimerShimLateSealTransaction {
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
@@ -230,6 +238,46 @@ function prepareCompilerTimerShimDynamicShapes(
   return shapes;
 }
 
+/** Exact provider evidence for the existing standalone externref ToNumber lowering. */
+export function prepareStandaloneDynamicToNumberSupport(
+  ctx: CodegenContext,
+  callableImports: ReadonlyMap<string, Import>,
+): readonly IrFuncRef[] | undefined {
+  if (!ctx.standalone) return undefined;
+  const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
+  const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
+  if (!selected) return undefined;
+  const toPrimitive = exactPreparedDynamicHelperRef(
+    ctx,
+    callableImports,
+    "__to_primitive",
+    selected.toPrimitive,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const unboxNumber = exactPreparedDynamicHelperRef(
+    ctx,
+    callableImports,
+    "__unbox_number",
+    selected.unboxNumber,
+    [{ kind: "externref" }],
+    [{ kind: "f64" }],
+  );
+  const fusedToNumber =
+    selected.fusedToNumber === undefined
+      ? undefined
+      : exactPreparedDynamicHelperRef(
+          ctx,
+          callableImports,
+          "__to_number",
+          selected.fusedToNumber,
+          [{ kind: "externref" }],
+          [{ kind: "f64" }],
+        );
+  if (!toPrimitive || !unboxNumber || (selected.fusedToNumber !== undefined && !fusedToNumber)) return undefined;
+  return fusedToNumber ? [fusedToNumber, toPrimitive, unboxNumber] : [toPrimitive, unboxNumber];
+}
+
 function prepareCompilerTimerShimDynamicInstructionSupport(
   ctx: CodegenContext,
   shapes: ReadonlyMap<IrUnitId, PreparedCompilerTimerShimDynamicShape>,
@@ -239,38 +287,8 @@ function prepareCompilerTimerShimDynamicInstructionSupport(
   for (const shape of shapes.values()) {
     let conversionCallables: readonly IrFuncRef[] | undefined;
     if (ctx.standalone) {
-      const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
-      const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
-      if (!selected) continue;
-      const toPrimitive = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__to_primitive",
-        selected.toPrimitive,
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      const unboxNumber = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__unbox_number",
-        selected.unboxNumber,
-        [{ kind: "externref" }],
-        [{ kind: "f64" }],
-      );
-      const fusedToNumber =
-        selected.fusedToNumber === undefined
-          ? undefined
-          : exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              "__to_number",
-              selected.fusedToNumber,
-              [{ kind: "externref" }],
-              [{ kind: "f64" }],
-            );
-      if (!toPrimitive || !unboxNumber || (selected.fusedToNumber !== undefined && !fusedToNumber)) continue;
-      conversionCallables = fusedToNumber ? [fusedToNumber, toPrimitive, unboxNumber] : [toPrimitive, unboxNumber];
+      conversionCallables = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
+      if (!conversionCallables) continue;
     } else {
       const unboxNumber = exactPreparedDynamicHelperRef(
         ctx,

@@ -4,17 +4,39 @@
 // supplies its current recursive/coercion operations; this module never imports it.
 import { ts } from "../ts-api.js";
 import type { IrFunctionBuilder } from "./builder.js";
-import type { IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
+import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
+import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
 import type { IrUnitId } from "./identity.js";
 import { JS_TAG_IDS } from "./runtime/js-tag-domain.js";
 import { asVal, irDynamic, irVal, type IrType, type IrValueId } from "./nodes.js";
 import { demoteToLegacy } from "./outcomes.js";
 
+/** Source-owned plan values shared by top-level and lifted lowering contexts. */
+export interface FunctionValueLoweringPlans {
+  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
+  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+  readonly functionMemberClosures?: IrFunctionMemberClosures;
+}
+
+/** Keep all own keys, read order, and plan identities when forwarding a context. */
+export function projectFunctionValueLoweringPlans(source: FunctionValueLoweringPlans | undefined): {
+  readonly importedCalls: FunctionValueLoweringPlans["importedCalls"];
+  readonly topLevelFunctionValues: FunctionValueLoweringPlans["topLevelFunctionValues"];
+  readonly functionMemberClosures: FunctionValueLoweringPlans["functionMemberClosures"];
+} {
+  return {
+    importedCalls: source?.importedCalls,
+    topLevelFunctionValues: source?.topLevelFunctionValues,
+    functionMemberClosures: source?.functionMemberClosures,
+  };
+}
+
 export interface FunctionObjectLoweringHost {
   readonly builder: IrFunctionBuilder;
   readonly ownerUnitId: IrUnitId;
   readonly funcName: string;
+  readonly dynamicCarrierIsExternref: () => boolean;
   readonly requireOwner: (ownerUnitId: IrUnitId) => void;
   readonly lowerExpression: (source: ts.Expression) => IrValueId;
   readonly boxConcrete: (value: IrValueId, type: IrType, source: ts.Expression) => IrValueId | null;
@@ -185,6 +207,23 @@ export function lowerFunctionObjectPropertyWrite(
   source: ts.Expression,
   cx: FunctionObjectLoweringHost,
 ): void {
+  if (cx.dynamicCarrierIsExternref()) {
+    const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(name));
+    const value = functionObjectDynamicValue(cx.lowerExpression(source), source, cx);
+    const externalReceiver = cx.builder.emitCall(
+      irRuntimeFuncRef(cx.symbols.IR_DYN_CALL_VALUE_FN),
+      [receiver],
+      irVal({ kind: "externref" }),
+    );
+    const externalValue = cx.builder.emitCall(
+      irRuntimeFuncRef(cx.symbols.IR_DYN_CALL_VALUE_FN),
+      [value],
+      irVal({ kind: "externref" }),
+    );
+    if (externalReceiver === null || externalValue === null) throw new Error("native write projection returned void");
+    cx.builder.emitCall(irRuntimeFuncRef("__extern_set_strict"), [externalReceiver, key, externalValue], null);
+    return;
+  }
   const key = cx.builder.emitBox(cx.builder.emitStringConst(name), irDynamic(JS_TAG_IDS.String));
   const value = functionObjectDynamicValue(cx.lowerExpression(source), source, cx);
   cx.builder.emitDynMemberSet(receiver, key, value);

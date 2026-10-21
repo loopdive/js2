@@ -98,6 +98,11 @@ import {
   superMethodCallIsBuildable,
 } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
+import {
+  closureLiteralIsBuildable,
+  closureLiteralDefaultParamStart as plannedClosureDefaultStart,
+  closureParameterTypeIsBuildable,
+} from "./select-closure-literal.js";
 import type { IrAmbientClassCallResolver, IrHostVoidCallbackResolver } from "./host-extern.js";
 import type { IrPromiseDelayResolver } from "./promise-delay.js";
 import {
@@ -365,6 +370,7 @@ export interface IrModuleInitAssessment {
 export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** Exact stable same-source function bindings, only at property receiver sites. */
   readonly functionObjectValues?: IrImportedFunctionResolver;
+  readonly functionMemberClosures?: import("./function-member-closure-plan.js").IrFunctionMemberClosures;
   readonly experimentalIR?: boolean;
   /**
    * Exact shared #3518 proof for a counted string append loop. When omitted,
@@ -5966,66 +5972,16 @@ function isPhase1NestedFunc(
  * Slice 3 (#1169c): shape-check an arrow / function-expression
  * initializer used as a `const` closure binding.
  */
-function closureNumericDefaultInitializerIsIrSafe(
-  initializer: ts.Expression,
-  availableParamNames: ReadonlySet<string>,
-  ownParamNames: ReadonlySet<string>,
-  outerScope: ReadonlySet<string>,
-): boolean {
-  const candidate = unwrapProjectionExpression(initializer);
-  if (ts.isNumericLiteral(candidate)) return true;
-  if (ts.isIdentifier(candidate)) {
-    if (availableParamNames.has(candidate.text)) return true;
-    return !ownParamNames.has(candidate.text) && outerScope.has(candidate.text) && expressionIsProvenNumber(candidate);
-  }
-  if (
-    ts.isPrefixUnaryExpression(candidate) &&
-    (candidate.operator === ts.SyntaxKind.PlusToken || candidate.operator === ts.SyntaxKind.MinusToken)
-  ) {
-    return closureNumericDefaultInitializerIsIrSafe(candidate.operand, availableParamNames, ownParamNames, outerScope);
-  }
-  return (
-    ts.isBinaryExpression(candidate) &&
-    (candidate.operatorToken.kind === ts.SyntaxKind.PlusToken ||
-      candidate.operatorToken.kind === ts.SyntaxKind.MinusToken ||
-      candidate.operatorToken.kind === ts.SyntaxKind.AsteriskToken ||
-      candidate.operatorToken.kind === ts.SyntaxKind.SlashToken) &&
-    closureNumericDefaultInitializerIsIrSafe(candidate.left, availableParamNames, ownParamNames, outerScope) &&
-    closureNumericDefaultInitializerIsIrSafe(candidate.right, availableParamNames, ownParamNames, outerScope)
-  );
-}
-
 function closureLiteralDefaultParamStart(
   parameters: readonly ts.ParameterDeclaration[],
   allowNumericDefaultSuffix: boolean,
   outerScope: ReadonlySet<string>,
 ): number | null {
-  let firstDefault = parameters.length;
-  const availableParamNames = new Set<string>();
-  const ownParamNames = new Set<string>();
-  for (const parameter of parameters) {
-    if (ts.isIdentifier(parameter.name)) ownParamNames.add(parameter.name.text);
-    else collectPatternNames(parameter.name, ownParamNames);
-  }
-  for (let index = 0; index < parameters.length; index++) {
-    const parameter = parameters[index]!;
-    if (!parameter.initializer) {
-      if (firstDefault !== parameters.length) return null;
-    } else if (
-      !allowNumericDefaultSuffix ||
-      !ts.isIdentifier(parameter.name) ||
-      parameter.type?.kind !== ts.SyntaxKind.NumberKeyword ||
-      !closureNumericDefaultInitializerIsIrSafe(parameter.initializer, availableParamNames, ownParamNames, outerScope)
-    ) {
-      return null;
-    } else if (firstDefault === parameters.length) {
-      firstDefault = index;
-    }
-    if (ts.isIdentifier(parameter.name) && parameter.type?.kind === ts.SyntaxKind.NumberKeyword) {
-      availableParamNames.add(parameter.name.text);
-    }
-  }
-  return firstDefault;
+  return plannedClosureDefaultStart(parameters, allowNumericDefaultSuffix, outerScope, {
+    unwrapProjectionExpression,
+    expressionIsProvenNumber,
+    collectPatternNames,
+  });
 }
 
 function exactCallableArity(arity: number): CallableArityRange {
@@ -6063,55 +6019,99 @@ function isPhase1ClosureLiteral(
   localClasses: ReadonlySet<string>,
   allowNumericDefaultSuffix = false,
 ): boolean {
-  const body = expr.body;
-  if (!body) return shapeNo("closure-body-missing", expr);
-  if ("asteriskToken" in expr && expr.asteriskToken) return shapeNo("closure-generator", expr); // generator
-  if (expr.modifiers && expr.modifiers.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword))
-    return shapeNo("closure-async", expr);
-  if (expr.typeParameters && expr.typeParameters.length > 0) return shapeNo("closure-type-params", expr);
+  const plan = ts.isFunctionExpression(expr)
+    ? currentSelectionOptions?.functionMemberClosures?.resolve(expr)
+    : undefined;
+  return closureLiteralIsBuildable(expr, scope, localClasses, allowNumericDefaultSuffix, plan, {
+    shapeNo,
+    annotationToResolvedKind,
+    closureLiteralDefaultParamStart,
+    isPhase1ClosureParameterTypeNode,
+    isPhase1BindingPattern,
+    collectPatternNames,
+    enterProjectionBindingScope,
+    recordCallableProjection,
+    isExpressionBuildable: isPhase1Expr,
+    isStatementListBuildable: isPhase1StatementList,
+    restoreProjectionBindings,
+    withClosureState: withFunctionMemberClosureState,
+  });
+}
 
-  if (!expr.type || annotationToResolvedKind(expr.type) === null)
-    return shapeNo("closure-return-type", expr.type ?? expr);
-
-  const inner = new Set(scope);
-  if (ts.isFunctionExpression(expr) && expr.name) {
-    if (inner.has(expr.name.text)) return shapeNo("closure-name-shadow", expr.name);
-    inner.add(expr.name.text);
-  }
-  const defaultParamStart = closureLiteralDefaultParamStart(expr.parameters, allowNumericDefaultSuffix, scope);
-  if (defaultParamStart === null) return shapeNo("closure-param-default", expr);
-  for (const p of expr.parameters) {
-    if (p.questionToken || p.dotDotDotToken) return shapeNo("closure-param-shape", p);
-    if (!p.type || !isPhase1ClosureParameterTypeNode(p.type, p, expr))
-      return shapeNo("closure-param-type", p.type ?? p);
-    if (ts.isIdentifier(p.name)) {
-      if (inner.has(p.name.text)) return shapeNo("closure-param-shadow", p.name);
-      inner.add(p.name.text);
-      continue;
-    }
-    if (!isPhase1BindingPattern(p.name, inner)) return shapeNo("closure-param-name", p.name);
-    collectPatternNames(p.name, inner);
-  }
-
-  const projectionBindings = enterProjectionBindingScope(expr.parameters);
-  if (ts.isFunctionExpression(expr) && expr.name) {
-    recordCallableProjection(expr.name.text, { min: defaultParamStart, max: expr.parameters.length }, expr.type);
-  }
-  const outerMutableSlotNames = currentMutableSlotNames;
+/** New RHS facts never borrow module-init, caller-return, class or mutable-slot authority. */
+function withFunctionMemberClosureState<T>(
+  plan: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan | undefined,
+  callback: () => T,
+): T {
+  const mutableSlots = currentMutableSlotNames;
   currentMutableSlotNames = new Set();
-
-  // ArrowFunction with concise body: must be a Phase-1 expression.
-  // ArrowFunction / FunctionExpression with block body: Phase-1 tail
-  // statement list.
-  try {
-    if (ts.isArrowFunction(expr) && !ts.isBlock(body)) {
-      return isPhase1Expr(body, inner, localClasses) || shapeNo("closure-concise-body", body);
+  if (!plan) {
+    try {
+      return callback();
+    } finally {
+      currentMutableSlotNames = mutableSlots;
     }
-    if (!ts.isBlock(body)) return shapeNo("closure-body-kind", body);
-    return isPhase1StatementList(body.statements, inner, localClasses) || shapeNo("closure-body", body);
+  }
+  const outer = [
+    currentSelectionSubject,
+    currentSubjectIsModuleInit,
+    currentSubjectFunctionName,
+    currentSubjectReturnsBoolean,
+    currentFnIsGenerator,
+    currentFnIsVoidReturn,
+    currentFnIsDynamicReturn,
+    currentFnIsAsync,
+    currentDynMemberEqualitySubject,
+    currentDynEqualityBoxableParamNames,
+    currentNumericParamNames,
+    currentStableFunctionCallSubject,
+    currentStableDynamicRootNames,
+    currentClaimClassName,
+    currentNestedFunctionNames,
+    currentLexicalValueBindingNames,
+  ] as const;
+  currentSelectionSubject = null;
+  currentSubjectIsModuleInit = false;
+  currentSubjectFunctionName = null;
+  currentSubjectReturnsBoolean = true;
+  currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
+  currentDynMemberEqualitySubject = null;
+  currentDynEqualityBoxableParamNames = new Set();
+  currentNumericParamNames = new Set();
+  for (let index = 0; index < plan.expression.parameters.length; index++) {
+    const name = plan.expression.parameters[index]!.name;
+    if (!ts.isIdentifier(name) || plan.dynamicParameterIndices.has(index)) continue;
+    currentDynEqualityBoxableParamNames.add(name.text);
+    const type = plan.signature.params[index]!;
+    if (type.kind === "val" && type.val.kind === "f64") currentNumericParamNames.add(name.text);
+  }
+  currentStableFunctionCallSubject = null;
+  currentStableDynamicRootNames = new Set();
+  currentClaimClassName = null;
+  currentNestedFunctionNames = new Set();
+  currentLexicalValueBindingNames = new Set();
+  try {
+    return callback();
   } finally {
-    currentMutableSlotNames = outerMutableSlotNames;
-    restoreProjectionBindings(projectionBindings);
+    [
+      currentSelectionSubject,
+      currentSubjectIsModuleInit,
+      currentSubjectFunctionName,
+      currentSubjectReturnsBoolean,
+      currentFnIsGenerator,
+      currentFnIsVoidReturn,
+      currentFnIsDynamicReturn,
+      currentFnIsAsync,
+      currentDynMemberEqualitySubject,
+      currentDynEqualityBoxableParamNames,
+      currentNumericParamNames,
+      currentStableFunctionCallSubject,
+      currentStableDynamicRootNames,
+      currentClaimClassName,
+      currentNestedFunctionNames,
+      currentLexicalValueBindingNames,
+    ] = outer;
+    currentMutableSlotNames = mutableSlots;
   }
 }
 
@@ -6137,37 +6137,14 @@ function isPhase1ClosureParameterTypeNode(
   parameter: ts.ParameterDeclaration,
   owner: Phase1ClosureLiteral,
 ): boolean {
-  if (ts.isFunctionTypeNode(node)) {
-    return (
-      irClosureSignatureFromFunctionTypeNode(node) !== null &&
-      closureParameterHasExactImmediateInternalSource(parameter, owner)
-    );
-  }
-  const primitive = annotationToResolvedKind(node);
-  if (primitive === "f64" || primitive === "bool" || primitive === "string") return true;
-  if (ts.isArrayTypeNode(node)) return node.elementType.kind === ts.SyntaxKind.NumberKeyword;
-  if (!ts.isTypeLiteralNode(node) || node.members.length === 0) return false;
-  const names = new Set<string>();
-  for (const member of node.members) {
-    if (
-      !ts.isPropertySignature(member) ||
-      member.questionToken ||
-      !member.type ||
-      (member.type.kind !== ts.SyntaxKind.NumberKeyword &&
-        member.type.kind !== ts.SyntaxKind.BooleanKeyword &&
-        member.type.kind !== ts.SyntaxKind.StringKeyword)
-    ) {
-      return false;
-    }
-    const name = ts.isIdentifier(member.name)
-      ? member.name.text
-      : ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
-        ? member.name.text
-        : null;
-    if (name === null || names.has(name)) return false;
-    names.add(name);
-  }
-  return true;
+  return closureParameterTypeIsBuildable(
+    node,
+    parameter,
+    owner,
+    annotationToResolvedKind,
+    (type) => irClosureSignatureFromFunctionTypeNode(type) !== null,
+    closureParameterHasExactImmediateInternalSource,
+  );
 }
 
 /**

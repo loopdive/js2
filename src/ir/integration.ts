@@ -22,6 +22,8 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import { notePreparedFunctionMemberClosures } from "./function-member-closure-plan.js";
+import { projectFunctionValueLoweringPlans } from "./function-object-lowering.js";
 import {
   irStringCompareDemand,
   irStringEqDemand,
@@ -999,6 +1001,7 @@ function prepareClosureTransaction(input: {
   readonly deferPublication?: boolean;
   readonly preparedModuleCallableAliasDescriptor?: IrIntegrationOptions["preparedModuleCallableAliasDescriptor"];
   readonly onSealFailure: PreparedComponentSealFailureHandler;
+  readonly functionMemberClosures?: import("./function-member-closure-plan.js").IrFunctionMemberClosures;
 }): PreparedClosureTransaction {
   const refCells = new RefCellRegistry(input.ctx);
   let resolveValType: (type: IrType) => ValType = (type) => lowerPreparedClosureSupportType(input.ctx, type, refCells);
@@ -1011,6 +1014,7 @@ function prepareClosureTransaction(input: {
     input.originalArtifactUnitIds,
     registry,
   );
+  notePreparedFunctionMemberClosures(input.functionMemberClosures, input.entries, closureSupport.instructionRefs);
   const classAccessorWritebacks = prepareClassAccessorWritebackEvidence(input.ctx, input.entries, input.inventory);
   const timerTransaction = prepareCompilerTimerShimLateSealTransaction({
     ctx: input.ctx,
@@ -3220,8 +3224,7 @@ export function compileIrPathFunctions(
           paramTypeOverrides: o?.params,
           returnTypeOverride: o?.returnType,
           calleeTypes,
-          importedCalls: loweringPlans?.importedCalls,
-          topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
+          ...projectFunctionValueLoweringPlans(loweringPlans),
           hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
           hostDateSnapshots: loweringPlans?.hostDateSnapshots,
           hostDateGetters: loweringPlans?.hostDateGetters,
@@ -3456,8 +3459,7 @@ export function compileIrPathFunctions(
                   returnTypeOverride,
                 }),
           calleeTypes,
-          importedCalls: loweringPlans?.importedCalls,
-          topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
+          ...projectFunctionValueLoweringPlans(loweringPlans),
           hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
           hostDateSnapshots: loweringPlans?.hostDateSnapshots,
           hostDateGetters: loweringPlans?.hostDateGetters,
@@ -3657,8 +3659,7 @@ export function compileIrPathFunctions(
                     returnTypeOverride,
                   }),
             calleeTypes,
-            importedCalls: loweringPlans?.importedCalls,
-            topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
+            ...projectFunctionValueLoweringPlans(loweringPlans),
             hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
             hostDateSnapshots: loweringPlans?.hostDateSnapshots,
             hostDateGetters: loweringPlans?.hostDateGetters,
@@ -3852,8 +3853,7 @@ export function compileIrPathFunctions(
         moduleInitUnit: true,
         moduleBindings,
         calleeTypes,
-        importedCalls: sourceLoweringPlans?.importedCalls,
-        topLevelFunctionValues: sourceLoweringPlans?.topLevelFunctionValues,
+        ...projectFunctionValueLoweringPlans(sourceLoweringPlans),
         hostVoidCallbacks: sourceLoweringPlans?.hostVoidCallbacks,
         hostDateSnapshots: sourceLoweringPlans?.hostDateSnapshots,
         hostDateGetters: sourceLoweringPlans?.hostDateGetters,
@@ -4842,6 +4842,7 @@ export function compileIrPathFunctions(
       !runGlobalPreparation(() => {
         preparedClosure = prepareClosureTransaction({
           ctx,
+          functionMemberClosures: loweringPlans?.functionMemberClosures,
           entries: healthyForLower,
           originalArtifactUnitIds,
           inventory: moduleBindingIdentityContext.inventory,
@@ -9066,6 +9067,7 @@ function preregisterDynamicSupport(
   // provider materializes the object runtime. `__unbox_number` comes from the
   // union family in every lane.
   let usesOrdinaryToPrimitiveObjectRuntime = false;
+  let usesFunctionMemberStrictSet = false;
   let usesRuntimeUnboxNumber = false;
   // (#4461) The host-free `Map` carrier and the native undefined predicate.
   // Both are REAL Wasm functions on this lane, so they are reserved here —
@@ -9134,6 +9136,9 @@ function preregisterDynamicSupport(
             const dynamicNeed = irDynamicRuntimeNeedForSymbol(symbol);
             if (dynamicNeed !== undefined) dynamicRuntimeNeeds.add(dynamicNeed);
             switch (symbol) {
+              case "__extern_set_strict":
+                usesFunctionMemberStrictSet = true;
+                break;
               case "__new_plain_object":
               case "__extern_set":
               case "__to_primitive":
@@ -9255,6 +9260,10 @@ function preregisterDynamicSupport(
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
     if (dynamicRuntimeNeeds.has("member-call"))
       observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
+  }
+  if (usesFunctionMemberStrictSet && nativeSemanticProviders && !ctx.fast) {
+    ensureObjectRuntime(ctx);
+    observeNativeRuntimeProvider(ctx, "__extern_set_strict");
   }
   if (!usesDynamicOps) return;
   if (usesToNumber && ctx.standalone) {

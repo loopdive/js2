@@ -29,6 +29,7 @@
 import {
   exactPreparedDynamicHelperRef,
   isDynamicInstruction,
+  prepareStandaloneDynamicToNumberSupport,
   resolveIrDynamicCarrierType,
   type CodegenContext,
 } from "./compiler-timer-shim-preparation.js";
@@ -45,7 +46,7 @@ import {
 import type { PreparedDynamicInstructionSupportEvidence } from "./prepared-instruction-support.js";
 import type { Import, ValType } from "./types.js";
 import { irRuntimeFuncRef } from "./callable-bindings.js";
-import { jsTagToStaticType } from "./js-tag.js";
+import { JsTag, jsTagToStaticType } from "./js-tag.js";
 import { jsTagOf } from "./runtime/js-tag-domain.js";
 
 /** The owning integration observes its existing canonical box dispatcher. */
@@ -155,6 +156,52 @@ export function prepareDynamicInstructionSupportForUnits(input: {
       for (const root of block.instrs) {
         forEachInstrDeep(root, (instr) => {
           if (!isDynamicInstruction(instr)) return;
+          // The certified function-object producer uses the existing native
+          // externref operations. Name their ACTUAL lowering providers, with
+          // exact physical signatures, before dependency discovery. Unsupported
+          // operations still invalidate the whole terminal sidecar below.
+          if (
+            native &&
+            functionObjects &&
+            ctx.standalone &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.to_number"
+          ) {
+            const refs = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
+            if (refs === undefined) nameable = false;
+            else planned.set(instr, refs);
+            return;
+          }
+          if (
+            native &&
+            functionObjects &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            (instr.kind === "dyn.truthy" || instr.kind === "dyn.typeof" || (instr.kind === "dyn.eq" && !instr.loose))
+          ) {
+            const name =
+              instr.kind === "dyn.truthy"
+                ? "__is_truthy"
+                : instr.kind === "dyn.typeof"
+                  ? "__typeof"
+                  : "__extern_strict_eq";
+            const params: readonly ValType[] =
+              instr.kind === "dyn.eq" ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
+            const results: readonly ValType[] =
+              instr.kind === "dyn.typeof" ? [{ kind: "externref" }] : [{ kind: "i32" }];
+            const ref = exactPreparedDynamicHelperRef(
+              ctx,
+              callableImports,
+              name,
+              ctx.funcMap.get(name),
+              params,
+              results,
+            );
+            if (ref === undefined) nameable = false;
+            else planned.set(instr, [ref]);
+            return;
+          }
           if (native && functionObjects && (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")) {
             const name = instr.kind === "dyn.member_get" ? "__dyn_member_get" : "__dyn_member_set";
             const handle = ctx.funcMap.get(name);
@@ -185,6 +232,24 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             }
             if (!ctx.fast && (from.kind === "externref" || from.kind === "ref" || from.kind === "ref_null")) {
               planned.set(instr, []); // Backend identity/extern.convert_any: no callable.
+              return;
+            }
+            if (!ctx.fast && carrierValType.kind === "externref" && from.kind === "i32") {
+              // Same refinement split as makeDynamicLowering.emitBox: Boolean
+              // i32 uses __box_boolean; an unrefined i32 first converts to f64
+              // and uses __box_number. The conversion itself calls no helper.
+              const boolean = instr.toType.tag === JsTag.Boolean;
+              const name = boolean ? "__box_boolean" : "__box_number";
+              const ref = exactPreparedDynamicHelperRef(
+                ctx,
+                callableImports,
+                name,
+                ctx.funcMap.get(name),
+                [{ kind: boolean ? "i32" : "f64" }],
+                [{ kind: "externref" }],
+              );
+              if (ref === undefined) nameable = false;
+              else planned.set(instr, [ref]);
               return;
             }
             if (ctx.fast) {

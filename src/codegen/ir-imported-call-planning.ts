@@ -9,12 +9,13 @@ import type {
 import { planIrNestedClassFieldCalls } from "../ir/class-field-call-planning.js";
 import type { MultiPreparedFunctionValueSupportReceipt } from "./multi-prepared-scalar-leaf.js";
 import { collectIrClassInstanceInitializers } from "../ir/class-instance-initializers.js";
-import { irArgcGlobalRef, irSupportGlobalRef } from "../ir/abi-bindings.js";
+import { irArgcGlobalRef, irSupportGlobalRef, irTypeBindingKey } from "../ir/abi-bindings.js";
 import { irImportFuncRef, irSupportFuncRef, irUnitFuncRef, sameIrCallableBinding } from "../ir/callable-bindings.js";
 import type { IrAmbientClassCallResolver } from "../ir/host-extern.js";
 import type { IrIdentityImportedFunctionResolver, IrImportedFunctionResolver } from "../ir/imported-functions.js";
-import type { IrUnitId, IrNestedClassFieldCallAdmission } from "../ir/identity.js";
+import type { IrBindingId, IrSourceId, IrUnitId, IrNestedClassFieldCallAdmission } from "../ir/identity.js";
 import type { IrType } from "../ir/nodes.js";
+import type { IrModuleInitEvaluationEntry, IrModuleInitPlanningEvidence } from "../ir/module-init-plan.js";
 import { classifyIrFailure, IrInvariantError, IrUnsupportedError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { LatticeType } from "../ir/propagate.js";
 import {
@@ -39,6 +40,9 @@ import { definedFuncAt, funcSignatureOf } from "./func-space.js";
 import { sourceFunctionDeclarationForHandle } from "./program-abi-source-callable-planning.js";
 import { localGlobalIdx } from "./registry/imports.js";
 import { planProgramAbiFunctionValue } from "./program-abi-planning.js";
+import { makeIrFunctionMemberClosures } from "./function-member-closure-planning.js";
+import { computeClosureWrapperSig } from "./closures.js";
+import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 
 /** Apply the same live-binding exclusions as the canonical direct value reader. */
 export function makeIrFunctionObjectValueResolver(
@@ -844,6 +848,33 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
               ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
               : undefined;
           if (target?.legacyProjection === "unambiguous") {
+            const claim = identity.functionClaims.find((candidate) => candidate.unitId === target.targetUnitId);
+            const returnNode = effectiveIrReturnTypeNode(target.declaration);
+            // Missing flow evidence is not a dynamic signature. Leave this
+            // occurrence to the existing compatibility route without minting
+            // canonical support for an unsupported exact receiver plan.
+            if (
+              target.declaration.parameters.some(
+                (parameter, index) =>
+                  effectiveIrParamTypeNode(parameter) === undefined && claim?.typeEntry.params[index] === undefined,
+              ) ||
+              (returnNode === undefined && claim?.typeEntry.returnType === undefined)
+            )
+              return;
+            const params = target.declaration.parameters.map((parameter, index) =>
+              resolvePositionType(
+                effectiveIrParamTypeNode(parameter),
+                claim?.typeEntry.params[index],
+                classShapeSidecar,
+              ),
+            );
+            const signature = {
+              params,
+              returnType:
+                returnNode?.kind === ts.SyntaxKind.VoidKeyword
+                  ? null
+                  : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
+            };
             const funcIdx = ctx.programAbiSourceCallables?.handleForUnit(target.targetUnitId);
             const prepared =
               funcIdx === undefined ? null : ensureFuncClosureSingletonAccessor(ctx, target.targetName, funcIdx);
@@ -859,22 +890,6 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
                 "canonical function-object support unavailable",
               );
             }
-            const claim = identity.functionClaims.find((candidate) => candidate.unitId === target.targetUnitId);
-            const params = target.declaration.parameters.map((parameter, index) =>
-              resolvePositionType(
-                effectiveIrParamTypeNode(parameter),
-                claim?.typeEntry.params[index],
-                classShapeSidecar,
-              ),
-            );
-            const returnNode = effectiveIrReturnTypeNode(target.declaration);
-            const signature = {
-              params,
-              returnType:
-                returnNode?.kind === ts.SyntaxKind.VoidKeyword
-                  ? null
-                  : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
-            };
             const plan = {
               ownerName,
               ownerUnitId,
@@ -939,6 +954,7 @@ export function planIrFunctionValueResolverState(
     readonly resolver?: IrIdentityImportedFunctionResolver;
   },
   resolveIdentity: () => IrIdentityImportedFunctionResolver,
+  valueType: (type: ValType) => IrType,
 ) {
   const identityImportedFunctions = options.importedFunctions;
   const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
@@ -951,6 +967,14 @@ export function planIrFunctionValueResolverState(
     ctx.runtimeEvalGlobalFunctionBindings !== true
       ? makeIrFunctionObjectValueResolver(ctx, identityResolver)
       : undefined;
+  const functionMemberClosures = functionObjectValues
+    ? makeIrFunctionMemberClosures(ctx, identityContext, functionObjectValues, {
+        computeSignature: (expression) => computeClosureWrapperSig(ctx, expression),
+        dynamicCarrierIsExternref: () => resolveIrDynamicCarrierType(ctx).kind === "externref",
+        valueType,
+        typeBindingKey: irTypeBindingKey,
+      })
+    : undefined;
   // (#3522 F4) Validate the complete dormant F3 proof and derive the single
   // immutable admitted-class marker BEFORE local class-expression resolution
   // and identity selection. Every downstream consumer carries this object; none
@@ -967,6 +991,15 @@ export function planIrFunctionValueResolverState(
     legacyImportedFunctions,
     identityResolver,
     functionObjectValues,
+    functionMemberClosures,
+    // Preserve the old projection's exact evaluation point at the selector call.
+    functionValueSelectionOptions: () =>
+      functionObjectValues
+        ? {
+            functionObjectValues: irOverlayIdentity.projectIrOverlayImportedResolver(functionObjectValues),
+            ...(functionMemberClosures ? { functionMemberClosures } : {}),
+          }
+        : {},
     nestedClassFieldCallProofs,
     nestedClassFieldCallAdmission,
   };
@@ -1058,4 +1091,194 @@ export function prepareTopLevelFunctionValueTargetSupport(
     );
   }
   return receipts;
+}
+
+export function preparedModuleInitEvaluationMatchesStatement(
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.Statement,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  kind: Extract<IrModuleInitEvaluationEntry["kind"], "variable-initializer" | "statement">,
+  bindingIds: readonly IrBindingId[],
+): boolean {
+  const statementOrdinal = sourceFile.statements.indexOf(statement);
+  const start = statement.getStart(sourceFile);
+  return (
+    statement.getSourceFile() === sourceFile &&
+    statementOrdinal >= 0 &&
+    evaluation.key === `${sourceId}:eval:${sourceOrdinal}` &&
+    evaluation.kind === kind &&
+    evaluation.sourceOrdinal === sourceOrdinal &&
+    evaluation.statementOrdinal === statementOrdinal &&
+    evaluation.nestedOrdinal === 0 &&
+    evaluation.start === start &&
+    evaluation.end === statement.end &&
+    evaluation.classId === null &&
+    evaluation.legacyKey === `statement:${start}:${statement.end}` &&
+    evaluation.bindingIds.length === bindingIds.length &&
+    evaluation.bindingIds.every((bindingId, index) => bindingId === bindingIds[index])
+  );
+}
+
+interface PreparedMemberInitEvidence {
+  readonly unitId: IrUnitId;
+  readonly globalBindingIds: ReadonlySet<IrBindingId>;
+  readonly invocationKind: "wasm-start" | "deferred-export";
+}
+
+/** Admit only a closed population of current, canonical function-object RHS writes. */
+export function preparedMemberInit(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: {
+    readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+    readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+    readonly functionMemberClosures?: ReturnType<typeof makeIrFunctionMemberClosures>;
+  },
+  selection: Pick<IrSelection, "funcs" | "moduleInit">,
+  planning: IrModuleInitPlanningEvidence | undefined,
+  sourceOwnerUnitId: (node: ts.Node) => IrUnitId,
+): PreparedMemberInitEvidence | undefined {
+  const identity = plan.identityPlan.identityContext;
+  if (
+    ctx.fast ||
+    !ctx.nativeStrings ||
+    !ctx.standalone ||
+    ctx.wasi ||
+    ctx.strictNoHostImports ||
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    ctx.runtimeEvalGlobalFunctionBindings === true ||
+    identity.sourceFileBySourceId.size !== 1 ||
+    ctx.programAbiSession?.inventory !== identity.inventory ||
+    ctx.programAbiSourceCallables?.identityContext !== identity ||
+    !plan.functionMemberClosures ||
+    !planning ||
+    selection.moduleInit?.reason !== null ||
+    selection.moduleInit.stmtCount === 0
+  ) {
+    return undefined;
+  }
+  const sourceId = identity.sourceIdBySourceFile.get(sourceFile);
+  const unitId = identity.moduleInitUnitIdBySourceFile.get(sourceFile);
+  const terminal = unitId === undefined ? undefined : identity.terminalByUnitId.get(unitId);
+  const population = identity.moduleInitPopulationBySourceFile.get(sourceFile);
+  const invocationKind = planning.plan.invocation.kind;
+  if (
+    sourceId === undefined ||
+    unitId === undefined ||
+    !terminal ||
+    !population ||
+    identity.sourceFileBySourceId.get(sourceId) !== sourceFile ||
+    identity.moduleInitUnitIdBySourceId.get(sourceId) !== unitId ||
+    identity.unitByUnitId.get(unitId) !== terminal ||
+    terminal.kind !== "module-init" ||
+    terminal.sourceId !== sourceId ||
+    terminal.terminalOwnerId !== unitId ||
+    planning.plan.sourceId !== sourceId ||
+    planning.plan.unitId !== unitId ||
+    !planning.plan.executable ||
+    planning.plan.gaps.length !== 0 ||
+    planning.plan.bindings.length !== 0 ||
+    planning.plan.liveSeeds.length !== 0 ||
+    !planning.parity.aligned ||
+    !planning.plan.invocation.exactlyOnce ||
+    planning.plan.invocation.target !== "standalone" ||
+    (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") ||
+    (ctx.deferTopLevelInit ? invocationKind !== "deferred-export" : invocationKind !== "wasm-start") ||
+    population.length === 0 ||
+    selection.moduleInit.stmtCount !== population.length ||
+    planning.plan.evaluations.length !== population.length ||
+    planning.parity.plannedEntryCount !== population.length ||
+    planning.parity.legacyEntryCount !== population.length
+  ) {
+    return undefined;
+  }
+  // No class static work, import/re-export/default work, variable storage, or
+  // unknown top-level operation can borrow this function-member certificate.
+  const currentPopulation: ts.ExpressionStatement[] = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isExpressionStatement(statement)) currentPopulation.push(statement);
+    else if (
+      !(ts.isFunctionDeclaration(statement) && statement.name && statement.body) &&
+      !ts.isEmptyStatement(statement) &&
+      !ts.isInterfaceDeclaration(statement) &&
+      !ts.isTypeAliasDeclaration(statement)
+    ) {
+      return undefined;
+    }
+  }
+  if (
+    currentPopulation.length !== population.length ||
+    currentPopulation.some((statement, ordinal) => statement !== population[ordinal])
+  ) {
+    return undefined;
+  }
+  for (let ordinal = 0; ordinal < population.length; ordinal++) {
+    const statement = currentPopulation[ordinal];
+    const evaluation = planning.plan.evaluations[ordinal];
+    if (
+      !statement ||
+      !evaluation ||
+      statement.parent !== sourceFile ||
+      !preparedModuleInitEvaluationMatchesStatement(
+        sourceId,
+        sourceFile,
+        statement,
+        evaluation,
+        ordinal,
+        "statement",
+        [],
+      )
+    ) {
+      return undefined;
+    }
+    const assignment = statement.expression;
+    if (
+      !ts.isBinaryExpression(assignment) ||
+      assignment.parent !== statement ||
+      assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+      !ts.isPropertyAccessExpression(assignment.left) ||
+      assignment.left.parent !== assignment ||
+      assignment.left.questionDotToken ||
+      !ts.isIdentifier(assignment.left.expression) ||
+      !ts.isIdentifier(assignment.left.name) ||
+      !ts.isFunctionExpression(assignment.right) ||
+      assignment.right.parent !== assignment
+    ) {
+      return undefined;
+    }
+    const receiver = assignment.left.expression;
+    const value = plan.topLevelFunctionValues.get(receiver);
+    if (
+      !hasPreparedFunctionObjectReference(ctx, receiver, value, plan.identityPlan, unitId, sourceOwnerUnitId) ||
+      value?.target.binding.kind !== "unit"
+    ) {
+      return undefined;
+    }
+    const targetUnitId = value.target.binding.unitId;
+    const claim = plan.identityPlan.functionClaims.find((entry) => entry.unitId === targetUnitId);
+    if (!claim || !selection.funcs.has(claim.legacyName) || !plan.identityPlan.safeFunctionUnitIds.has(targetUnitId)) {
+      return undefined;
+    }
+    const rhs = plan.functionMemberClosures.resolve(assignment.right);
+    const sourceUnit = rhs ? identity.unitByUnitId.get(rhs.sourceUnitId) : undefined;
+    if (
+      !rhs ||
+      rhs.expression !== assignment.right ||
+      rhs.ownerUnitId !== unitId ||
+      !sourceUnit ||
+      sourceUnit.terminal ||
+      sourceUnit.kind !== "function-expression" ||
+      sourceUnit.sourceId !== sourceId ||
+      sourceUnit.terminalOwnerId !== unitId ||
+      sourceUnit.lexicalOwnerId !== unitId ||
+      identity.declarationByUnitId.get(rhs.sourceUnitId) !== assignment.right ||
+      !rhs.isCurrent()
+    ) {
+      return undefined;
+    }
+  }
+  // No module lexical binding is certified or minted by this initializer.
+  return { unitId, globalBindingIds: new Set<IrBindingId>(), invocationKind };
 }

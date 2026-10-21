@@ -332,7 +332,12 @@ export function projectIrIntegrationLoweringPlans(
     readonly fnctorParameterPreselectionIsCurrent?: IrIntegrationLoweringPlans["fnctorParameterPreselectionIsCurrent"];
   } & Pick<
     IrIntegrationLoweringPlans,
-    "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
+    | "importedCalls"
+    | "topLevelFunctionValues"
+    | "functionMemberClosures"
+    | "hostVoidCallbacks"
+    | "promiseDelays"
+    | "suspendingAsyncUnitIds"
   >,
   selection: {
     readonly funcs: ReadonlySet<string>;
@@ -469,6 +474,7 @@ export function projectIrIntegrationLoweringPlans(
     directCallSignaturesByUnitId: callableSignaturesByUnitId,
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
+    ...(plan.functionMemberClosures ? { functionMemberClosures: plan.functionMemberClosures } : {}),
     hostVoidCallbacks: plan.hostVoidCallbacks,
     hostDateSnapshots: new Map(
       [...(plan.hostDateSnapshots ?? [])].filter(([, hostDate]) => activeOwnerUnitIds.has(hostDate.ownerUnitId)),

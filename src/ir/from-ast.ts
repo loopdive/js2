@@ -151,7 +151,6 @@ import {
   type IrCountedStringAppendLoweringPlan,
   type IrImportedCallLoweringPlan,
   type IrImportedOptionalParamPlan,
-  type IrTopLevelFunctionValueLoweringPlan,
   type ModuleBindingGlobal,
 } from "./ast-lowering-plans.js";
 export type {
@@ -1119,7 +1118,7 @@ function withNodeSourceSite<T>(scope: FrontendSourceScope, node: ts.Node, run: (
   }
 }
 
-export interface AstToIrOptions {
+export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPlans {
   readonly sourceMap?: IrFunctionSourceMapContext;
   readonly exported?: boolean;
   /** Explicit string-typed unary numeric conversion; omission keeps historical lowering. */
@@ -1208,8 +1207,6 @@ export interface AstToIrOptions {
   /** Exact native-string runtime boundaries keyed by AST call site. */
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** (#3214) Exact imported-call, function-value, and host-callback AST-site plans. */
-  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
-  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
@@ -1828,8 +1825,7 @@ export function lowerFunctionAstToIr(
     directCalls: options.directCalls,
     fnctorParameterPreselection: options.fnctorParameterPreselection,
     fnctorNativeStringBoundaries: options.fnctorNativeStringBoundaries,
-    importedCalls: options.importedCalls,
-    topLevelFunctionValues: options.topLevelFunctionValues,
+    ...functionObjects.projectFunctionValueLoweringPlans(options),
     hostVoidCallbacks: options.hostVoidCallbacks,
     hostDateSnapshots: options.hostDateSnapshots,
     hostDateGetters: options.hostDateGetters,
@@ -2929,7 +2925,7 @@ interface NestedCapture {
   readonly withField?: { readonly name: string; readonly type: IrType };
 }
 
-interface LowerCtx extends FrontendSourceScope {
+interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLoweringPlans {
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
   readonly booleanReturnBuilder?: IrFunctionBuilder;
@@ -2947,8 +2943,6 @@ interface LowerCtx extends FrontendSourceScope {
   readonly directCalls?: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>;
   readonly fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan;
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
-  readonly importedCalls?: ReadonlyMap<ts.CallExpression, IrImportedCallLoweringPlan>;
-  readonly topLevelFunctionValues?: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
   readonly hostVoidCallbacks?: ReadonlyMap<ts.ArrowFunction, IrHostVoidCallbackLoweringPlan>;
   readonly hostDateSnapshots?: ReadonlyMap<ts.NewExpression, IrHostDateSnapshotLoweringPlan>;
   readonly hostDateGetters?: ReadonlyMap<ts.CallExpression, IrHostDateGetterLoweringPlan>;
@@ -7493,6 +7487,8 @@ function functionObjectLoweringHost(cx: LowerCtx): functionObjects.FunctionObjec
     builder: cx.builder,
     ownerUnitId: cx.ownerUnitId,
     funcName: cx.funcName,
+    dynamicCarrierIsExternref: () =>
+      cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver.resolveDynamic?.()?.kind === "externref",
     requireOwner: (ownerUnitId) =>
       requireMatchingLoweringPlanOwner("top-level function value", ownerUnitId, cx.ownerUnitId, cx.funcName),
     lowerExpression: (source) => lowerExpr(source, cx, irDynamic()),
@@ -15985,6 +15981,14 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerClosureExpression(expr, cx));
+  const memberPlan = ts.isFunctionExpression(expr) ? cx.functionMemberClosures?.resolve(expr) : undefined;
+  if (memberPlan) {
+    if (!memberPlan.isCurrent() || memberPlan.ownerUnitId !== cx.ownerUnitId)
+      demoteToLegacy("body-shape-rejected", "function-member closure source proof is stale");
+    return lowerClosureExpressionWithSignature(expr, memberPlan.signature, new Set(), cx, {
+      functionMemberClosure: memberPlan,
+    });
+  }
   // Inference is owned by the actual checker and confined to descriptor
   // literals and their nested closures. Other closure admission is unchanged.
   let descriptorOwner: ts.Node | undefined = expr.parent;
@@ -16258,6 +16262,7 @@ function lowerClosureExpressionWithSignature(
     exact?.allowConciseVoidBody === true,
     exact?.hostOneShot === true,
     exact?.domCallbackAuthority,
+    exact?.functionMemberClosure,
   );
   cx.lifted.push(lifted);
   recordSourceMapDerived(cx, liftedIdentity, expr);
@@ -16377,8 +16382,7 @@ function liftNestedFunction(
     ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
-    importedCalls: cx.importedCalls,
-    topLevelFunctionValues: cx.topLevelFunctionValues,
+    ...functionObjects.projectFunctionValueLoweringPlans(cx),
     hostVoidCallbacks: cx.hostVoidCallbacks,
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
@@ -16447,6 +16451,7 @@ function liftClosureBody(
   allowConciseVoidBody = false,
   hostOneShot = false,
   domCallbackAuthority?: import("./nodes.js").IrDomCallbackAuthority,
+  functionMemberClosure?: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
 ): IrFunction {
   const body = expr.body;
   if (!body) {
@@ -16495,6 +16500,29 @@ function liftClosureBody(
   }
 
   builder.openBlock();
+  if (functionMemberClosure) {
+    if (
+      !functionMemberClosure.isCurrent() ||
+      functionMemberClosure.sourceUnitId !== liftedIdentity.unitId ||
+      functionMemberClosure.expression !== expr ||
+      functionMemberClosure.signature !== signature ||
+      captures.length !== 0
+    )
+      demoteToLegacy("body-shape-rejected", "function-member closure entry proof diverged");
+    for (const index of functionMemberClosure.dynamicParameterIndices) {
+      const parameter = expr.parameters[index]!;
+      const binding = ts.isIdentifier(parameter.name) ? scope.get(parameter.name.text) : undefined;
+      if (binding?.kind !== "local" || binding.type.kind !== "val" || binding.type.val.kind !== "externref")
+        demoteToLegacy("body-shape-rejected", "function-member closure raw parameter ABI diverged");
+      const bindParameter = (): void => {
+        const dynamic = builder.emitCall(irRuntimeFuncRef(IR_DYN_CALL_BOX_FN), [binding.value], irDynamic());
+        if (dynamic === null) throw new Error("function-member closure entry adapter returned void");
+        scope.set((parameter.name as ts.Identifier).text, { kind: "local", value: dynamic, type: irDynamic() });
+      };
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
+      else bindParameter();
+    }
+  }
 
   // Read each capture out of __self. captureFieldTypes is parallel to
   // captures; lifted body sees captures at index 0..N-1.
@@ -16514,8 +16542,7 @@ function liftClosureBody(
     ...numericProjectionOptions(cx),
     calleeTypes: cx.calleeTypes,
     directCalls: cx.directCalls,
-    importedCalls: cx.importedCalls,
-    topLevelFunctionValues: cx.topLevelFunctionValues,
+    ...functionObjects.projectFunctionValueLoweringPlans(cx),
     hostVoidCallbacks: cx.hostVoidCallbacks,
     hostDateSnapshots: cx.hostDateSnapshots,
     hostDateGetters: cx.hostDateGetters,
