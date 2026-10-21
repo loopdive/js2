@@ -26,6 +26,8 @@ assignee: "ttraenkler/claude-c"
 # wrapper (`src/ir/integration.ts` → `codegen/ir-dynamic-construct.ts`) and the
 # selector option reads legacy's callee predicates from the same module, which
 # joins the SCC (it imports the construct-driver modules).
+flat-dir-budget-allow:
+  - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
   - ir->codegen: 77 # 2026-10-21 (#7106 S3a): integration.ts pre-registers the dynamic-construct wrapper
   - largestSccSize: 722 # 2026-10-21 (#7106 S3a): codegen/ir-dynamic-construct.ts joins the SCC
