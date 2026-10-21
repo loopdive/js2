@@ -38,6 +38,7 @@ func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/select.ts::whyNotIrClaimable
+  - src/ir/from-ast.ts::lowerCall
 ---
 
 # IR: under-arity direct calls
