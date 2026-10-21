@@ -17,6 +17,62 @@ import { ts } from "../ts-api.js";
 import { closeIrBlockedComponentByIdentity } from "./ir-overlay-finalize.js";
 import { collectLocalCallEdgesByIdentity, irFirstBodyIsProvenLowerable, type ValueDomain } from "./ir-first-gate.js";
 
+export function identifierIsRuntimeFunctionValueReference(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (!parent) return false;
+  if (ts.isCallExpression(parent) && parent.expression === identifier) return false;
+  // The direct owner already lowers an immediately invoked `.call` / `.apply`
+  // without retaining a generic runtime function value. Preparing singleton
+  // support for this receiver alone would keep the JS-string bridge and the
+  // whole generic closure surface alive in an otherwise tiny optimized module.
+  if (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === identifier &&
+    (parent.name.text === "call" || parent.name.text === "apply") &&
+    ts.isCallExpression(parent.parent) &&
+    parent.parent.expression === parent
+  ) {
+    return false;
+  }
+  if (
+    ((ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent)) &&
+      parent.name === identifier) ||
+    (ts.isVariableDeclaration(parent) && parent.name === identifier) ||
+    (ts.isParameter(parent) && parent.name === identifier) ||
+    ((ts.isPropertyAccessExpression(parent) || ts.isPropertyAssignment(parent)) && parent.name === identifier) ||
+    (ts.isBindingElement(parent) && (parent.name === identifier || parent.propertyName === identifier)) ||
+    (ts.isLabeledStatement(parent) && parent.label === identifier) ||
+    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) && parent.label === identifier) ||
+    ts.isImportSpecifier(parent) ||
+    ts.isExportSpecifier(parent)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * The checker oracle can retain a declaration node from a sibling Program
+ * snapshot while selection walks the structurally identical current source.
+ * Compare the stable source site as well as object identity so incremental
+ * compilation cannot silently lose an otherwise exact declaration match.
+ */
+export function sameDeclarationSite(left: ts.Declaration, right: ts.Declaration): boolean {
+  if (left === right) return true;
+  return (
+    left.kind === right.kind &&
+    left.pos === right.pos &&
+    left.end === right.end &&
+    left.getSourceFile().fileName === right.getSourceFile().fileName
+  );
+}
+
 export interface IrExactFunctionClaim {
   readonly unitId: IrUnitId;
   readonly legacyName: string;
