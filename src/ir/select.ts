@@ -2821,6 +2821,17 @@ function dynamicUsesAreMoveOnly(
     ) {
       return true;
     }
+    // (#7106 S3b) `dyn || v` / `dyn && v` produce a dynamic value (the
+    // left operand or the boxed right operand).
+    if (
+      currentDynamicRuntimeBuildable &&
+      ts.isBinaryExpression(e) &&
+      (e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        e.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
+      isDynShaped(e.left)
+    ) {
+      return true;
+    }
     if (ts.isConditionalExpression(e) && isDynShaped(e.whenTrue) && isDynShaped(e.whenFalse)) {
       return true;
     }
@@ -3074,6 +3085,15 @@ function dynamicUsesAreMoveOnly(
         (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken)
       ) {
         return scanExpr(e.left, leftIsDyn) && scanExpr(e.right, rightIsDyn);
+      }
+      // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: `dyn.truthy` on the
+      // left carrier selects the left carrier or the (boxed) right operand.
+      if ((op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) && leftIsDyn) {
+        if (!currentDynamicRuntimeBuildable || !expectDyn) return false;
+        if (!scanExpr(e.left, true)) return false;
+        if (rightIsDyn) return scanExpr(e.right, true);
+        const concrete = unwrap(e.right);
+        return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
       }
       // Plain assignment re-binds; scan the RHS against the LHS's dyn-ness.
       if (e.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(e.left)) {
@@ -9524,6 +9544,22 @@ function dynamicConstructCallee(expr: ts.Expression): ts.Identifier | null {
   return expr.expression;
 }
 
+/**
+ * (#7106 S3b) The `dyn || v` / `dyn && v` VALUE shape: the left operand is
+ * one of the subject's dynamic-typed parameters and the right operand is a
+ * dynamic parameter or a boxable concrete operand (`m || ""`). The dynamic
+ * move-only scan re-validates the carriers; from-ast lowers it with
+ * `dyn.truthy` + a dynamic-result `if`.
+ */
+function dynamicLogicalValueOperands(expr: ts.BinaryExpression): boolean {
+  if (!currentDynamicRuntimeBuildable) return false;
+  const left = unwrapPhase1Parens(expr.left);
+  if (!ts.isIdentifier(left) || !currentDynamicParamNames.has(left.text)) return false;
+  const right = unwrapPhase1Parens(expr.right);
+  if (ts.isIdentifier(right) && currentDynamicParamNames.has(right.text)) return true;
+  return concreteDynamicAssignmentOperandIsBuildable(right);
+}
+
 /** The parameter names of the function-like node enclosing `node` (empty at top level). */
 function enclosingFunctionParameterNames(node: ts.Node): ReadonlySet<string> {
   for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
@@ -9868,8 +9904,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       if (
-        !declaredExpressionHasExactFamily(expr.left, "boolean", scope) ||
-        !declaredExpressionHasExactFamily(expr.right, "boolean", scope)
+        (!declaredExpressionHasExactFamily(expr.left, "boolean", scope) ||
+          !declaredExpressionHasExactFamily(expr.right, "boolean", scope)) &&
+        !dynamicLogicalValueOperands(expr)
       ) {
         return capabilityNo("logical-value-unsupported", "expr-logical-value-family", expr);
       }
@@ -11302,6 +11339,7 @@ export function assessModuleInit(
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
+  currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
   for (const stmt of population) {
     if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";

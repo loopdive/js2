@@ -14717,7 +14717,7 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   // `IrInstrIf` so it runs only on the branch that needs it. Handled before
   // the eager operand lowering below, like `??`.
   if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
-    return lowerLogicalAndOr(expr, op, cx);
+    return lowerLogicalAndOr(expr, op, cx, hint);
   }
 
   // (#3144) `x instanceof C` with a LOCAL-class RHS — intercepted before the
@@ -15256,14 +15256,51 @@ function lowerNullish(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): Ir
  * right operand is lowered into its own body buffer (only the taken branch
  * runs it) and the two arms are combined with a structured `IrInstrIf`.
  */
-function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx): IrValueId {
+function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
-    return withNodeSourceSite(cx, expr, () => lowerLogicalAndOr(expr, op, cx));
+    return withNodeSourceSite(cx, expr, () => lowerLogicalAndOr(expr, op, cx, hint));
   const isAnd = op === ts.SyntaxKind.AmpersandAmpersandToken;
   const opName = isAnd ? "&&" : "||";
 
-  const rawLhs = lowerExpr(expr.left, cx, irVal({ kind: "i32" }));
+  const rawLhs = lowerExpr(expr.left, cx, hint?.kind === "dynamic" ? irDynamic() : irVal({ kind: "i32" }));
   const lhsType = cx.builder.typeOf(rawLhs);
+  // (#7106 S3b) `dyn || v` / `dyn && v` as a VALUE: §13.13.1 — evaluate the
+  // left carrier once, ToBoolean it, and select it or the (boxed) right
+  // operand. Only a boolean position (an `if` condition, a boolean return:
+  // the `i32` hint) keeps the ToBoolean'd `i32` form below. The selector
+  // admits only a dynamic-parameter left operand with a dynamic or boxable
+  // right operand.
+  const booleanPosition = hint !== undefined && asVal(hint)?.kind === "i32";
+  if (lhsType.kind === "dynamic" && !booleanPosition) {
+    const cond = cx.builder.emitDynTruthy(rawLhs);
+    const skippedScope = new Map(cx.scope);
+    const rhsCx: LowerCtx = { ...cx, scope: new Map(skippedScope) };
+    let rhs!: IrValueId;
+    const rhsBody = cx.builder.collectBodyInstrs(() => {
+      let rawRhs = lowerExpr(expr.right, rhsCx, irDynamic());
+      const rhsType = cx.builder.typeOf(rawRhs);
+      if (rhsType.kind !== "dynamic") {
+        const boxed = boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx);
+        if (boxed === null) {
+          demoteToLegacy(
+            "logical-value-unsupported",
+            `ir/from-ast: operator '${opName}' right operand of ${describeIrType(rhsType)} has no dynamic carrier in ${cx.funcName}`,
+          );
+        }
+        rawRhs = boxed;
+      }
+      rhs = rawRhs;
+    });
+    joinScopeStringEncodingFacts(cx.scope, [rhsCx.scope, skippedScope]);
+    return cx.builder.emitIfElse({
+      cond,
+      then: isAnd ? rhsBody : [],
+      thenValue: isAnd ? rhs : rawLhs,
+      else: isAnd ? [] : rhsBody,
+      elseValue: isAnd ? rawLhs : rhs,
+      resultType: irDynamic(),
+    });
+  }
   const lhs =
     lhsType.kind === "dynamic" ? cx.builder.emitDynTruthy(rawLhs) : asVal(lhsType)?.kind === "i32" ? rawLhs : null;
   if (lhs === null) {
@@ -15287,6 +15324,11 @@ function lowerLogicalAndOr(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx: Low
       rhs = cx.builder.emitDynTruthy(rawRhs);
     } else if (asVal(rhsType)?.kind === "i32") {
       rhs = rawRhs;
+    } else if (lhsType.kind === "dynamic" && boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx) !== null) {
+      // (#7106 S3b) `if (dyn || "")`: a boxable concrete right operand in a
+      // boolean position is ToBoolean'd through its dynamic carrier, exactly
+      // as the value form selects it.
+      rhs = cx.builder.emitDynTruthy(boxConcreteToDynamic(rawRhs, rhsType, expr.right, cx)!);
     } else {
       demoteToLegacy(
         "logical-value-unsupported",
