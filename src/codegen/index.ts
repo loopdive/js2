@@ -3055,6 +3055,7 @@ function planIrOverlay(
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
             scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
+            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
           },
           identityContext,
         );
@@ -4221,6 +4222,19 @@ export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.Var
  */
 export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
   return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
+}
+
+/**
+ * (#7125) The sole-home slot when legacy allocated it as the native-string
+ * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
+ * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
+ * IR binds it as a `string` module binding. Host strings use `externref`,
+ * which is the dynamic home instead.
+ */
+export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  const type = scriptVarHomeSlot(ctx, declaration)?.type;
+  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
 }
 
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
