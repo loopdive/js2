@@ -35,6 +35,7 @@ import type {
   IrInstrDynConstruct,
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
+  IrInstrDynPublishArgc,
   IrInstrDynOwnProperty,
   IrInstrExternCall,
   IrInstrExternNew,
@@ -1659,6 +1660,7 @@ export type {
   IrInstrDynConstruct,
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
+  IrInstrDynPublishArgc,
   IrInstrDynOwnProperty,
   IrInstrDynToNumber,
   IrInstrDynEq,
@@ -1709,6 +1711,7 @@ export type IrInstr =
   | IrInstrDynConstruct
   | IrInstrDynStringCarrier
   | IrInstrDynArgumentsLength
+  | IrInstrDynPublishArgc
   | IrInstrDynOwnProperty
   | IrInstrDynToNumber
   | IrInstrDynEq
@@ -2077,6 +2080,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "dyn.construct":
     case "dyn.string_carrier":
     case "dyn.arguments_length":
+    case "dyn.publish_argc":
     case "dyn.own_property":
     case "dyn.to_number":
     case "dyn.eq":
@@ -2255,6 +2259,7 @@ export function mapNestedBuffers(
     case "dyn.construct":
     case "dyn.string_carrier":
     case "dyn.arguments_length":
+    case "dyn.publish_argc":
     case "dyn.own_property":
     case "dyn.to_number":
     case "dyn.eq":
@@ -2375,6 +2380,7 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.construct":
       return [instr.callee, ...instr.args];
     case "dyn.arguments_length":
+    case "dyn.publish_argc":
       return [];
     case "dyn.own_property":
       return [instr.receiver, instr.key];
