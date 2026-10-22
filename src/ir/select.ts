@@ -545,6 +545,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
   readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
   /**
+   * (#7106 module-init lever A) The f64 constant a `Number.<CONST>` /
+   * `Math.<CONST>` read folds to — legacy's own tables, read through the
+   * bridge. Absent → the read is never folded.
+   */
+  readonly ambientNamespaceConstant?: (expr: ts.PropertyAccessExpression) => number | undefined;
+  /**
    * Exact, source-qualified admission for the one future fnctor shape whose
    * constructor stores an unconditional `this.input: string`.  The resolver
    * owns declaration identity, approved/reserved gate evidence, direct-site
@@ -3575,6 +3581,10 @@ function dynamicUsesAreMoveOnly(
       );
     }
     if (ts.isPropertyAccessExpression(e)) {
+      // (#7106 module-init lever A) a namespace constant is a concrete f64.
+      if (ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text) && ambientNamespaceConstantRead(e)) {
+        return !expectDyn;
+      }
       // #3053 U2 / #2949 S5.P — the claim-flip. A named read off a DYNAMIC
       // receiver (`dyn.name`) routes through `__dyn_member_get` (U0/U1) and
       // yields a `dynamic` result, so it is a valid MOVE exactly where a dynamic
@@ -7887,6 +7897,17 @@ function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | 
  * in assert.js). Shadowing is settled by the checker-backed ambient predicate
  * and the module-binding resolver, never by name alone.
  */
+/**
+ * (#7106 module-init lever A) `Number.<CONST>` / `Math.<CONST>` on the
+ * UNSHADOWED ambient namespace: a concrete f64 the lowerer folds to legacy's
+ * constant. A local binding of the name is the caller's `scope` question; a
+ * module-level one is settled by the checker-backed ambient predicate.
+ */
+function ambientNamespaceConstantRead(expr: ts.PropertyAccessExpression): boolean {
+  if (!ts.isIdentifier(expr.expression) || !selectorSeesAmbientBinding(expr.expression)) return false;
+  return currentSelectionOptions?.ambientNamespaceConstant?.(expr) !== undefined;
+}
+
 function ambientTypeofTag(expr: ts.TypeOfExpression, scope: ReadonlySet<string>): "object" | "function" | undefined {
   const operand = expr.expression;
   return ts.isIdentifier(operand) ? ambientTypeofIdentifierTag(operand, scope) : undefined;
@@ -11302,6 +11323,10 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPropertyAccessExpression(expr)) {
     // (#7106 S1e) `arguments.length` — the invocation's actual argument count.
     if (phase1ArgumentsLengthRead(expr, scope)) return true;
+    // (#7106 module-init lever A) `Number.MAX_VALUE`, `Math.PI`, … — a constant.
+    if (ts.isIdentifier(expr.expression) && !scope.has(expr.expression.text) && ambientNamespaceConstantRead(expr)) {
+      return true;
+    }
     // #3000 — accept private-field reads (`this.#x`). A PrivateIdentifier is a
     // valid class-instance field access; from-ast lowers it to `class.get` on
     // the mangled `__priv_x` slot. Non-class receivers with a private name are

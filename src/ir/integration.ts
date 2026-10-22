@@ -109,6 +109,7 @@ import {
   irDynamicConstructHelperName,
 } from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
+import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
 import {
   ensureIrNativeMapAdapters,
   IR_NATIVE_MAP_GET_NUM_FN,
@@ -2553,6 +2554,7 @@ export function compileIrPathFunctions(
       isRegExpExpression,
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
@@ -6909,6 +6911,7 @@ function makeFromAstResolver(
       return irImportFuncRef("env", "__extern_eval");
     },
     isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+    ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
     isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
     isHoleyArrayElementStore: (expr) => {
       if (!ts.isIdentifier(expr.expression)) return false;
@@ -10646,4 +10649,16 @@ function observePreparedDynamicBoxHelpers(
     refs.push(ref);
   }
   return refs;
+}
+
+/**
+ * (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>`
+ * read folds to, from legacy's own tables (`builtin-value-read.ts`) — the one
+ * answer the selector option and the from-ast resolver share. Pure syntax:
+ * whether the identifier is the unshadowed ambient namespace is the caller's
+ * question (scope + the ambient predicate), as for every ambient arm.
+ */
+export function irAmbientNamespaceConstant(expr: ts.PropertyAccessExpression): number | undefined {
+  if (!ts.isIdentifier(expr.expression) || !ts.isIdentifier(expr.name)) return undefined;
+  return builtinNamespaceConstantValue(expr.expression.text, expr.name.text);
 }
