@@ -16302,6 +16302,30 @@
       "layer": "ir-analysis"
     },
     {
+      "path": "src/compiler/prepared-pipeline-boundary.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate TypeScript/safe-mode frontend validation and diagnostic capture from source-free prepared output-profile association before compiler-layer activation."
+    },
+    {
+      "path": "src/compiler/test262-prepared-entry.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate strict Test262 request capture and frontend analysis from prepared-program orchestration and optional legacy API delegation before compiler-layer activation."
+    },
+    {
+      "path": "src/compiler/test262-prepared-runtime.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate Test262 engine/import lifecycle integration from source-free final-artifact evidence; retain the existing JavaScript adapter dependency as explicit migration debt."
+    },
+    {
       "path": "src/compiler/ir-program-presentation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
