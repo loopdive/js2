@@ -154,9 +154,15 @@ of two existing nonliteral dynamic imports. Current main `35684e82081715a8edd431
 provider conflict retains main's new native undefined support and the common
 exact member-helper binding. Post-merge qualification passes **211/211 in six
 files**, including the landed return-union and uninitialized-variable controls;
-types and all source ratchets pass. Byte/base-failure comparisons above refer
-to the dependency predecessor before this main integration and must not be
-restated as a fresh current-main comparison. Fresh-context adversarial review remains
+types and all source ratchets pass. Fresh exact base (dependencies plus that
+main, no issue7138 implementation) is `5be710863aad5c0a9d7d22e41e7c82bed2739da3`.
+The five old kernel/Set suites measure **65 passes / 22 failures on each side**;
+all 22 failure blocks, not only names/counts, match after path normalization.
+The fresh byte comparison again has **58/60 identical records** and exactly the
+two WASI hash pairs recorded above. Fresh i32 qualification passes **135/135**.
+Fresh current-main effect probes reproduce the open controls below; the source
+and generated-runtime gaps remain explicit rather than accepted as JS results.
+Fresh-context adversarial review remains
 required before release; no predecessor head, HOLD or queue entry changed.
 
 ### Open semantic controls — publication is pending
