@@ -150,8 +150,13 @@ and with `LOC_GATE_BASE=upstream/main`, without a new allowance. The inherited
 console dependency's documented cycle allowance remains unchanged. Compiler
 inventory is valid but architecture remains incomplete; the preservation-only
 reachability contract passes while strict modeled closure remains OPEN because
-of two existing nonliteral dynamic imports. Current main has been fetched, not
-yet merged into this working diff. Fresh-context adversarial review remains
+of two existing nonliteral dynamic imports. Current main `35684e82081715a8edd4315c6ab92c9e34d0b364` is integrated. The sole
+provider conflict retains main's new native undefined support and the common
+exact member-helper binding. Post-merge qualification passes **211/211 in six
+files**, including the landed return-union and uninitialized-variable controls;
+types and all source ratchets pass. Byte/base-failure comparisons above refer
+to the dependency predecessor before this main integration and must not be
+restated as a fresh current-main comparison. Fresh-context adversarial review remains
 required before release; no predecessor head, HOLD or queue entry changed.
 
 ### Open semantic controls — publication is pending
