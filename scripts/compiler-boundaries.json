@@ -12270,6 +12270,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/dynamic-method-call-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Naming and routing contract for the per-(method, arity) dynamic method-call wrappers; move with the other IR runtime-symbol contracts when ir-core is split from frontend inventory."
+    },
+    {
       "path": "src/ir/dynamic-number-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14876,6 +14884,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/object-model/ir-dynamic-method-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "IR runtime wrapper built from legacy's any-receiver emitters over a fixed template; replace with a native brand-dispatch runtime when the backend owns method dispatch."
     },
     {
       "path": "src/codegen/builtin-subclass-receiver.ts",

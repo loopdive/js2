@@ -1,12 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // #7117 — a method call on a dynamic receiver (`x.toString()`, `s.toUpperCase()`,
-// `list.indexOf(2)`) lowers through the IR's generic `__ir_dyn_method_call_N` →
-// `__extern_method_call`. On the host lane that is the real JS call. Off it, the
-// native object runtime dispatches open-`$Object` methods only and answers
-// `undefined` for a primitive or vec receiver, where legacy dispatches by
-// brand. Measured on origin/main before this fix: all three functions were IR
-// bodies on standalone and `run()` returned 101010 where node returns 111111.
+// `list.indexOf(2)`) lowered through the IR's generic `__ir_dyn_method_call_N` →
+// `__extern_method_call`. Off the host lane the native object runtime
+// dispatches open-`$Object` methods only and answers `undefined` for a
+// primitive or vec receiver, where legacy dispatches by brand. Measured on
+// origin/main before the stopgap: all three functions were IR bodies on
+// standalone and `run()` returned 101010 where node returns 111111. The
+// stopgap kept them legacy; the #7106 Stage 4 brand-dispatch wrapper
+// `__ir_dyn_mcall_<m>_<n>` now lowers them as IR bodies, exactly.
 import { describe, expect, it } from "vitest";
 
 import { compile, type CompileResult } from "../src/index.js";
@@ -48,7 +50,7 @@ async function run(result: CompileResult, host: boolean): Promise<number> {
 }
 
 describe("#7117 — IR dynamic method calls off the host lane", () => {
-  it("keeps the functions legacy on standalone, so the results match node", async () => {
+  it("lowers the functions as IR bodies through the brand-dispatch wrapper on standalone, matching node", async () => {
     const result = await compile(SOURCE, {
       fileName: "test.js",
       allowJs: true,
@@ -56,7 +58,10 @@ describe("#7117 — IR dynamic method calls off the host lane", () => {
       skipSemanticDiagnostics: true,
       trackIrOutcomes: true,
     } as Parameters<typeof compile>[1]);
-    for (const name of ["t", "u", "k"]) expect(emitted(result, name), name).toBe(false);
+    for (const name of ["t", "u", "k"]) expect(emitted(result, name), name).toBe(true);
+    for (const helper of ["toString_0", "toUpperCase_0", "indexOf_1"]) {
+      expect(result.wat ?? "", helper).toContain(`(func $__ir_dyn_mcall_${helper} `);
+    }
     expect(node()).toBe(111111);
     expect(await run(result, false)).toBe(111111);
   }, 35_000);
@@ -82,7 +87,7 @@ export function run() {
     expect(await run(result, false)).toBe(11);
   }, 35_000);
 
-  it("leaves the host lane, whose __extern_method_call is the real JS call, unchanged", async () => {
+  it("matches node on the default JS lane (the native regime, which takes the wrapper too)", async () => {
     const result = await compile(SOURCE, {
       fileName: "test.js",
       allowJs: true,

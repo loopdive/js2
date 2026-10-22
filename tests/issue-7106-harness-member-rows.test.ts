@@ -8,12 +8,12 @@
 //   - row 3, sta.js's `Test262Error.prototype.toString = function () { return
 //     "Test262Error: " + this.message; }`: the chained `F.p.x = fn` store, a
 //     STRING result and a closure that binds its own `this` at entry.
-// Every result is checked against node. Two harness lines are still selector
-// refusals, and the honest harness census below pins them: row 2
-// (`compareArray.format`'s `Array.prototype.map.call(…)` body) and
-// assert.compareArray's `message = message.toString();`, a method call on a
-// dynamic receiver, which #7110 keeps legacy (the IR's dynamic method call has
-// no primitive/vec brand arms on the host-free lanes).
+// Every result is checked against node. One harness line is still a selector
+// refusal, and the honest harness census below pins it: row 2
+// (`compareArray.format`'s `Array.prototype.map.call(…)` body). assert.js's
+// `message = message.toString();`, a method call on a dynamic receiver, was
+// the other until the #7106 Stage 4 brand-dispatch wrapper
+// (`__ir_dyn_mcall_<m>_<n>`) gave the IR legacy's primitive/vec arms.
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
@@ -142,16 +142,13 @@ assert.notSameValue(1, 2);
   const ROW_2 = `return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]";`;
   const SYMBOL_MESSAGE = `message = message.toString();`;
 
-  /** `stub` replaces the two refused harness lines with IR-buildable twins. */
+  /** `stub` replaces the refused harness line (row 2) with an IR-buildable twin. */
   function assemble(source: string, stub: boolean): string {
     const assembled = assembleOriginalHarness(source, parseMeta(source) as never).primary.source;
     expect(assembled).toContain(ROW_2);
+    // No longer stubbed: the wrapper lowers it (and it ships IR below).
     expect(assembled).toContain(SYMBOL_MESSAGE);
-    return stub
-      ? assembled
-          .replace(ROW_2, `return "[" + String(arrayLike) + "]";`)
-          .replace(SYMBOL_MESSAGE, `message = String(message);`)
-      : assembled;
+    return stub ? assembled.replace(ROW_2, `return "[" + String(arrayLike) + "]";`) : assembled;
   }
 
   async function compileHarness(source: string) {
@@ -175,13 +172,13 @@ assert.notSameValue(1, 2);
     exports.test?.();
   }
 
-  it("the unstubbed harness keeps <module-init> legacy", async () => {
+  it("the unstubbed harness keeps <module-init> legacy, on row 2 alone", async () => {
     const result = await compileHarness(assemble(BODY, false));
     expect(result.success).toBe(true);
-    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "body-shape-rejected" });
+    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "array-method-unsupported" });
   }, 60_000);
 
-  it("with the two refused lines stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
+  it("with row 2 stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
     const assembled = assemble(BODY, true);
     vm.runInContext(assembled, vm.createContext({ console }));
     const result = await compileHarness(assembled);

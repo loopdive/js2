@@ -67,6 +67,7 @@ import {
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
+import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
@@ -853,6 +854,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
+   * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
+   * wrapper (host-free, non-fast lanes).
+   */
+  dynamicMethodCallWrapper?(method: string, arity: number): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -9713,15 +9720,31 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       return result;
     }
-    if (expr.arguments.length > 1 || expr.arguments.some(ts.isSpreadElement)) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
       throw new IrUnsupportedError(
         "method-call-unsupported",
         "build",
-        `ir/from-ast: dynamic method .${methodName}(...) supports at most one non-spread argument (${cx.funcName})`,
+        `ir/from-ast: dynamic method .${methodName}(...) has a spread argument (${cx.funcName})`,
       );
     }
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String));
-    const dynamicArgs: IrValueId[] = [recv, key];
+    const arity = expr.arguments.length;
+    // (#7106 Stage 4) Off the host lanes a built-in method name (and any wider
+    // call) takes the call's [[Get]] plus legacy's brand dispatch, wrapped per
+    // (method, arity). The selector admits a built-in on the generic call only
+    // where `host-dynamic-method-call` holds.
+    const wrapped =
+      irDynamicMethodCallNeedsWrapper(methodName, arity) &&
+      cx.resolver?.dynamicMethodCallWrapper?.(methodName, arity) === true;
+    if (!wrapped && arity > 1) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: dynamic method .${methodName}/${arity} has no brand-dispatch wrapper on this lane (${cx.funcName})`,
+      );
+    }
+    const dynamicArgs: IrValueId[] = wrapped
+      ? [recv]
+      : [recv, cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String))];
     for (const argument of expr.arguments) {
       const value = lowerExpr(argument, cx, irDynamic());
       const valueType = cx.builder.typeOf(value);
@@ -9735,7 +9758,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       dynamicArgs.push(dynamicValue);
     }
-    const target = expr.arguments.length === 0 ? IR_DYN_METHOD_CALL_0_FN : IR_DYN_METHOD_CALL_1_FN;
+    const target = wrapped
+      ? irDynamicMethodCallHelperName(methodName, arity)
+      : arity === 0
+        ? IR_DYN_METHOD_CALL_0_FN
+        : IR_DYN_METHOD_CALL_1_FN;
     const result = cx.builder.emitCall(irRuntimeFuncRef(target), dynamicArgs, irDynamic());
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.

@@ -93,6 +93,11 @@ import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import {
+  ensureIrDynamicMethodCallHelper,
+  irDynamicMethodCallWrapperLane,
+} from "../codegen/object-model/ir-dynamic-method-call.js";
+import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
+import {
   ensureIrArgumentsLengthHelper,
   ensureIrPublishArgcHelper,
   IR_ARGUMENTS_LENGTH_HELPER,
@@ -6969,6 +6974,9 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    dynamicMethodCallWrapper(method: string, arity: number) {
+      return irDynamicMethodCallWrapperLane(ctx) && irDynamicMethodCallIsNameable(method, arity);
+    },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (
         fnctorParameterPreselection?.nativeStringReplaceCall === call &&
@@ -9132,6 +9140,8 @@ function preregisterDynamicSupport(
   let usesDynObjectTag = false;
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
   const dynConstructArities = new Set<number>();
+  // (#7106 Stage 4) dynamic-receiver method calls through the brand-dispatch wrappers.
+  const dynamicMethodCallWrappers = new Map<string, { readonly method: string; readonly arity: number }>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
@@ -9212,6 +9222,8 @@ function preregisterDynamicSupport(
             const symbol = i.target.binding.symbol;
             const dynamicNeed = irDynamicRuntimeNeedForSymbol(symbol);
             if (dynamicNeed !== undefined) dynamicRuntimeNeeds.add(dynamicNeed);
+            const methodWrapper = parseIrDynamicMethodCallHelperName(symbol);
+            if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9353,6 +9365,18 @@ function preregisterDynamicSupport(
         throw new Error(`ir/integration: dyn.construct arity ${arity} has no host-free construct wrapper (#7106 S3a)`);
       }
       observeNativeRuntimeProvider(ctx, irDynamicConstructHelperName(arity));
+    }
+    flushLateImportShifts(ctx, null);
+  }
+  if (dynamicMethodCallWrappers.size > 0) {
+    // (#7106 Stage 4) One wrapper per (method, arity), built from legacy's own
+    // any-receiver call emitter, so its closed-dispatch reservations are
+    // shared with legacy sites and filled at finalize like theirs.
+    for (const [symbol, { method, arity }] of [...dynamicMethodCallWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (ensureIrDynamicMethodCallHelper(ctx, method, arity) === undefined) {
+        throw new Error(`ir/integration: ${symbol} has no host-free brand-dispatch wrapper (#7106 Stage 4)`);
+      }
+      observeNativeRuntimeProvider(ctx, symbol);
     }
     flushLateImportShifts(ctx, null);
   }
