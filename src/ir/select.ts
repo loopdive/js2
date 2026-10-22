@@ -693,7 +693,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-construct"
       | "native-string-carrier-coercion"
       | "native-arguments-length"
-      | "native-own-property-test",
+      | "native-own-property-test"
+      | "host-dynamic-method-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -2904,6 +2905,20 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
  * result position and every argument bridge before the selector claims the
  * function.
  */
+/**
+ * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
+ * On the host lane `__extern_method_call` is the real JS call. Off it, the
+ * native object runtime dispatches only open-`$Object` methods and answers
+ * `undefined` for primitive / vec / … receivers (`list.join(", ")` measured),
+ * where legacy dispatches by brand; only the string runtime's own `charCodeAt`
+ * fast path stays exact there.
+ */
+function dynamicMethodCallIsExact(name: string): boolean {
+  return (
+    name === "charCodeAt" || currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true
+  );
+}
+
 function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
   return (
     currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
@@ -3199,6 +3214,7 @@ function dynamicUsesAreMoveOnly(
         if (!currentDynMemberReadBuildable || !expectDyn || (e.arguments.length > 1 && !narrowStringReplace)) {
           return false;
         }
+        if (!narrowStringReplace && !dynamicMethodCallIsExact(e.expression.name.text)) return false;
         if (!scanExpr(e.expression.expression, true)) return false;
         if (narrowStringReplace) {
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
