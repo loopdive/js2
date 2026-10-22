@@ -1677,7 +1677,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // standalone-only: in gc/host mode the host `__extern_*` JS imports own these
   // paths and ToPropertyKey the key themselves, so registering this helper there
   // would only shift funcMap indices — host output stays byte-identical.
-  if (ctx.standalone) {
+  if (ctx.standalone || ctx.wasi) {
     const numToStringIdx = ctx.funcMap.get("number_toString")!;
     const unboxNumberIdx = ctx.funcMap.get("__unbox_number")!;
     const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;

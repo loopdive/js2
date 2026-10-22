@@ -44,6 +44,8 @@ async function compileAndRun(
   const logs: number[] = [];
   const result = await compile(source, {
     fileName: "test.ts",
+    // These controls pass real JavaScript objects and observe host console logs.
+    semanticProviders: "host-assisted",
     experimentalIR,
     trackIrOutcomes: true,
     ...options,
@@ -100,13 +102,14 @@ async function expectThreeWayParity(
 /** Bare-selector claim set, with the resolver certificates stubbed explicitly. */
 function selectionFor(
   source: string,
-  certificates: { dynamicReceiver?: boolean; hostStringCarrier?: boolean } = {},
+  certificates: { dynamicReceiver?: boolean; hostStringCarrier?: boolean; nativeKeyCarrier?: boolean } = {},
 ): ReadonlySet<string> {
   const sf = ts.createSourceFile("test.ts", source, ts.ScriptTarget.Latest, true);
   return planIrCompilation(sf, {
     experimentalIR: true,
     isDynamicForInReceiver: () => certificates.dynamicReceiver === true,
     forInHeadValueIsHostString: certificates.hostStringCarrier === true,
+    nativeDynamicInBuildable: certificates.nativeKeyCarrier === true,
   }).funcs;
 }
 
@@ -292,12 +295,14 @@ describe("#5164 S3 — bounded dynamic-lane `in` selection", () => {
   it("claims ONLY behind BOTH resolver certificates", () => {
     const both = { dynamicReceiver: true, hostStringCarrier: true };
     expect(selectionFor(DYNAMIC_IN, both).has("hasX")).toBe(true);
-    // The dynamic-carrier certificate alone is not enough: a native-strings
-    // lane cannot coerce the key to externref, so it must reject PRE-claim.
+    // A native key needs its own boxer/runtime certificate; a dynamic receiver
+    // alone still does not prove the key boundary.
     expect(selectionFor(DYNAMIC_IN, { dynamicReceiver: true }).has("hasX")).toBe(false);
     // …and the host-string carrier alone says nothing about the receiver.
     expect(selectionFor(DYNAMIC_IN, { hostStringCarrier: true }).has("hasX")).toBe(false);
     expect(selectionFor(DYNAMIC_IN, {}).has("hasX")).toBe(false);
+    expect(selectionFor(DYNAMIC_IN, { dynamicReceiver: true, nativeKeyCarrier: true }).has("hasX")).toBe(true);
+    expect(selectionFor(DYNAMIC_IN, { nativeKeyCarrier: true }).has("hasX")).toBe(false);
   });
 
   it("keeps legacy's comma-key static fold out of the accept set", () => {
@@ -324,7 +329,7 @@ describe("#5164 S3 — bounded dynamic-lane `in` selection", () => {
     expect(ir.exports.proxyHas!()).toBeTruthy();
   });
 
-  it("rejects pre-claim on the native-strings lanes (standalone / wasi)", async () => {
+  it("emits native in with the certified key/receiver carriers (standalone / wasi)", async () => {
     for (const target of ["standalone", "wasi"] as const) {
       const result = await compile(DYNAMIC_IN, {
         fileName: "test.ts",
@@ -336,7 +341,7 @@ describe("#5164 S3 — bounded dynamic-lane `in` selection", () => {
       const emitted = new Set(
         (result.irOutcomes ?? []).filter((outcome) => outcome.kind === "emitted").map((o) => o.displayName),
       );
-      expect(emitted.has("hasX"), `${target} keeps \`in\` legacy-owned`).toBe(false);
+      expect(emitted.has("hasX"), `${target} emits native \`in\``).toBe(true);
       expect(result.irPostClaimErrors ?? [], `${target} has no post-claim demotion`).toStrictEqual([]);
     }
   });
