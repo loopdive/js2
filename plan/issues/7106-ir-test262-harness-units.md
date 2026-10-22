@@ -1363,3 +1363,77 @@ for (let k = 1; k <= 12; k++) {
 ```
 
 </details>
+
+## `<module-init>` next lever — ambient `Number` constants and `Number(v)` (plan, 2026-10-22)
+
+**Measured (integrated stack #6858 + #6851 + #6862 + #6874, standalone, 80
+ES5-style files, 2026-10-22 15:05Z).** 9 tests are legacy-free and pass; of
+the 71 others, `<module-init>` stops at `expr-ident-not-in-scope «Number»` in
+37, «Array» 11, «Math» 4, «Boolean» 3. The harness is no longer the blocker:
+the test bodies read ambient namespaces. Corpus greps over the nine sampled
+directories: `Number(` 684, `Number.POSITIVE_INFINITY` 133,
+`Number.NEGATIVE_INFINITY` 130, `Number.MAX_VALUE` 123, `Number.NaN` 113,
+`Number.MIN_VALUE` 70, `Number.prototype` 114 (the last is a different lever).
+
+### Arm A — `Number.<CONST>` / `Math.<CONST>` fold
+
+- **Legacy.** `compilePropertyAccess` folds the read to `f64.const` from
+  `NUMBER_CONSTANT_VALUES` / `MATH_CONSTANT_VALUES`
+  (`codegen/builtin-value-read.ts`, the single source of truth shared with the
+  reflective element-access fold). The IR must read the SAME tables — no second
+  list, and no `Number.*` text match in the IR.
+- **IR.** One selection option, `ambientNamespaceConstant(expr:
+  ts.PropertyAccessExpression): number | undefined`, implemented in the bridge
+  (`ir/integration.ts` and the production site in `codegen/index.ts`, like
+  `selfGuardedConstructorValue`) from those tables; the identifier must be the
+  unshadowed ambient `Number` / `Math` (`selectorSeesAmbientBinding` + the
+  caller's `scope`, as the toString-tag arm). Selector: one predicate
+  `ambientNamespaceConstantRead(expr)` used at the three sites (Phase-1
+  property-access arm — before the generic receiver walk that refuses the
+  identifier; the move-only scan — a concrete f64, never dyn-shaped; the
+  external-call walk — not a call). from-ast: `lowerPropertyAccess` asks the
+  resolver first and emits the f64 constant.
+- **Acceptance.** `Number.MAX_VALUE`, `Number.NaN`, `Number.POSITIVE_INFINITY`,
+  `Math.PI` in `<module-init>` and in functions ship IR bodies, byte-identical
+  constants to legacy; a shadowed `Number` (parameter, `var Number`, module
+  binding) stays on the generic path; node parity on a probe that compares
+  each constant.
+
+### Arm B — `Number(v)` on the ambient `Number`
+
+- **Legacy** (`codegen/expressions/call-identifier.ts`): zero args → `0`;
+  a symbol operand throws `TypeError`; a string → `__str_to_number`; an array →
+  ToPrimitive then StringToNumber; otherwise the generic ToNumber protocol.
+- **IR.** Mirror `tryLowerAmbientStringToStringCall` (`String(v)`, S1): a
+  dynamic operand → `dyn.to_number` (exists since S5.3; standalone lowers it to
+  `__any_to_f64`); `f64` → identity; boolean → `f64.convert_i32_u`; string →
+  the `emitUnaryToNumber` unary `+` already uses (no new coercion vocabulary —
+  the #2108 drift gate counts helper lookups); zero args → `f64.const 0`.
+  Selector: `ambientNumberToNumberCall` beside `ambientStringToStringCall`;
+  **fold both into one `ambientCoercionCall(expr, "String" | "Number")`** so
+  the one-argument-ambient-constructor-call walk exists once; the scan treats
+  the result as concrete f64 (`expectDyn` false; a dynamic operand needs
+  `currentDynamicRuntimeBuildable`).
+- **Measure first — parity of `__any_to_f64` with legacy's `Number(obj)`.**
+  Legacy runs the full ToPrimitive protocol on an object carrier
+  (`Number({ valueOf() { return 7; } })`, `Number([5])`, `Number("0x10")`,
+  `Number(null)`, `Number(undefined)`, `Number(true)`, `Number(Symbol())` must
+  throw). Probe `function f(x) { return Number(x); }` legacy vs IR on each
+  before admitting a dynamic operand; where `__any_to_f64` differs, the arm
+  admits only operands the scan proves primitive, and the difference is filed.
+- **Acceptance.** The sampled `Number(…)` sites in module-init claim; the
+  probe above answers like node on both lanes; `check:ir-fallbacks` flat.
+
+### Also measured, smaller
+
+- `expr-math-call-shape` ×4: variadic / zero-arg `Math.max()` / `Math.max({})`
+  — `IR_MATH_METHOD_TABLE` is arity-exact; a separate arm.
+- propertyHelper.js units ×11 (`verifyProperty`, `isWritable`, …): the
+  standing propertyHelper lever.
+- `vardecl-var-kind` ×4 (`var n = Number.prototype.toString(1)`): the
+  `Number.prototype` member-call family, not this lever.
+
+**Size.** Horizon S–M for an Opus lane: `select.ts` (+~60 LOC in three
+existing arms), `from-ast.ts` (+~40), one option in the two bridge sites, a
+node-compared test per arm. No new IR kind, no new runtime symbol.
+
