@@ -22,6 +22,11 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import {
+  nativeConsoleOutputAvailable,
+  ensureIrNativeConsoleProvider,
+  IR_NATIVE_CONSOLE_SYMBOLS,
+} from "../codegen/helpers/ir-native-console.js";
 import { notePreparedFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { projectFunctionValueLoweringPlans } from "./function-object-lowering.js";
 import {
@@ -147,13 +152,8 @@ import {
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
-import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import {
-  ensureNativeStringHelpers,
-  standaloneConsoleSinkAvailable,
-  STANDALONE_STDOUT_APPEND_FN,
-} from "../codegen/native-strings.js";
+import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -181,6 +181,7 @@ import { isBooleanType, isNumberType, isStringType } from "../checker/type-mappe
 import {
   addFuncType,
   getArrTypeIdxFromVec,
+  getOrRegisterHoleyArrayType,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
 } from "../codegen/registry/types.js";
@@ -196,7 +197,7 @@ import {
   irNativeNumberToFixedAvailable,
   irNativeNumberToStringAvailable,
 } from "../codegen/number-format-native.js"; // #4462 — host-free Number formatting for the IR string carrier
-import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import { IR_NATIVE_PROMISE_DELAY_FN } from "./promise-delay-lowering.js";
 import {
   ensureHostCharCodeAtGuarded,
@@ -2561,7 +2562,7 @@ export function compileIrPathFunctions(
       // narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
       supportsLiteralStringReplace: true,
       ...(loweringPlans?.fnctorNativeStringBoundaries
         ? {
@@ -7259,11 +7260,9 @@ function makeFromAstResolver(
     nativeNumberToFixedAvailable(): boolean {
       return irNativeNumberToFixedAvailable(ctx);
     },
-    // (#4462) Standalone's host-free console sink (#3469). Minted in the
-    // pre-body window, which precedes both IR planning and body lowering, so
-    // `funcMap` presence is the same fact at claim time and at build time.
-    standaloneConsoleSinkAvailable(): boolean {
-      return standaloneConsoleSinkAvailable(ctx);
+    // Planning and lowering share the native output-provider capability.
+    nativeConsoleOutputAvailable(): boolean {
+      return nativeConsoleOutputAvailable(ctx);
     },
     // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
     // relocated. Native strings iterate via the `__str_charAt` counter loop;
@@ -7549,12 +7548,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseDelayProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_ASYNC_PROMISE_ALL_NATIVE_FN) {
     index = ensureIrNativePromiseAllProvider(ctx);
-  } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
-    // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
-    // owns it and runs in the pre-body window so the funcidx is final. Absence is
-    // a claim/capability disagreement, which the `null` turns into the standard
-    // "cannot materialize callable provider" invariant rather than a silent miss.
-    index = ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null;
+  } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
+    index = ensureIrNativeConsoleProvider(ctx, symbol);
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
