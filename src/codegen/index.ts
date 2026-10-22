@@ -1,9 +1,10 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { irNativeNumericFieldType } from "./declarations/ir-native-numeric-field.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
@@ -1871,7 +1872,7 @@ function buildIrClassShapes(
       else return; // computed / string-literal / numeric names → leave to ValType path
       if (astFieldIr.has(mangled)) return;
       const tsType = ctx.checker.getTypeAtLocation(tsNode);
-      const ir = tsTypeToClassPositionIr(ctx, tsType, lookup);
+      const ir = irNativeNumericFieldType(ctx.oracle, tsNode) ?? tsTypeToClassPositionIr(ctx, tsType, lookup);
       if (ir) astFieldIr.set(mangled, ir);
     };
     // #3000-E: the legacy `structFields` for a subclass is `[...parentFields,

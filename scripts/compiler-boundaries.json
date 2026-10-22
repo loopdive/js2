@@ -5013,6 +5013,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-native-numeric-field.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7137",
+      "nextBoundary": "Source-qualified native numeric field projection; move with exact class-layout preparation."
+    },
+    {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12084,6 +12092,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
+    },
+    {
+      "path": "src/ir/numeric-slot-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7137",
+      "nextBoundary": "Producer numeric slot/domain conversions reuse canonical bitwise IR; move with source-language lowering."
     },
     {
       "path": "src/ir/boolean-brand.ts",
