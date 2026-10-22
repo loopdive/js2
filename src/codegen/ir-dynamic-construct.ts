@@ -51,7 +51,7 @@ import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explic
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
-import { isSelfGuardedConstructor } from "./helpers/self-guarded-constructor.js";
+import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
 
@@ -342,7 +342,7 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
  * which strictness? `undefined` = not on this lane / not this shape.
  */
 export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean | undefined {
-  if (!ctx.standalone || ctx.fast) return undefined;
+  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return undefined;
   if (!isSelfGuardedConstructor(fn)) return undefined;
   return isStrictFunction(fn, ctx.inferModuleStrictArguments);
 }
@@ -353,7 +353,7 @@ export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDec
  * the fnctor machinery, never reassigned, never a generator?
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
-  if (!ctx.standalone || ctx.fast) return false;
+  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);

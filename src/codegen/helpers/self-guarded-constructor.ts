@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
 
 /**
  * (#7106 S3c-b) Is `decl` a top-level SELF-GUARDED constructor —
@@ -41,6 +42,20 @@ export function isSelfGuardedConstructor(decl: ts.Node): decl is ts.FunctionDecl
   if (!ts.isReturnStatement(guard) || guard.expression === undefined) return false;
   const returned = unwrapParens(guard.expression);
   return ts.isNewExpression(returned) && isIdentifierNamed(returned.expression, name);
+}
+
+/**
+ * Does this compile keep self-guarded constructors out of the fnctor machinery?
+ * Standalone only, and never when runtime eval may share the realm (#7106 S3c
+ * regression, merge group pr-6844): there the identifier reads through the
+ * global-binding adapter, so an instance's `constructor` is the raw function
+ * and `e.constructor === Test262Error` fails. Legacy's fnctor path keeps the
+ * two identical, so such programs stay on it.
+ */
+export function selfGuardedConstructorsLeaveFnctor(ctx: CodegenContext): boolean {
+  const plan = ctx.runtimeEvalBoundaryPlan;
+  if (!ctx.standalone || plan === undefined) return false;
+  return ctx.runtimeEvalProviderAbsent === true || !plan.sharedRealmMayContainCanonicalValues;
 }
 
 function isNotThisInstanceOf(condition: ts.Expression, name: string): boolean {

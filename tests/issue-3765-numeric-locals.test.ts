@@ -175,7 +175,7 @@ describe("#3765 — a provably-numeric local gets an f64 slot", () => {
   });
 
   it("keeps a grounded numeric local unboxed through a numeric switch", async () => {
-    const { wat, binary } = await build(`
+    const result = await build(`
       function classify(input) {
         var ch = input.charCodeAt(0);
         switch (ch) {
@@ -186,15 +186,26 @@ describe("#3765 — a provably-numeric local gets an f64 slot", () => {
         }
       }
       export function main() { return classify("A"); }
+      export function newline() { return classify("\\n"); }
+      export function space() { return classify(" "); }
+      export function other() { return classify("z"); }
     `);
+    const { wat, binary } = result;
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    // #7133 lets this literal-union return use IR. Copy propagation puts
+    // the numeric value directly in the switch slot, so `$ch` need not exist.
+    // Pin the emitted IR body, unboxed comparisons and every branch instead.
+    expect(result.irCompiledFuncs).toContain("classify");
     const body = readWat(wat!).body("classify");
-    expect(readWat(wat!).localType("classify", "ch")).toBe("f64");
     expect(body).toMatch(/f64\.eq/);
     expect(body).not.toMatch(/call \$__box_number/);
     expect(body).not.toMatch(/call \$__typeof_number/);
     expect(body).not.toMatch(/call \$__unbox_number/);
     const { exports } = await WebAssembly.instantiate(await WebAssembly.compile(binary!), {});
     expect((exports as { main: () => number }).main()).toBe(3);
+    expect((exports as { newline: () => number }).newline()).toBe(1);
+    expect((exports as { space: () => number }).space()).toBe(2);
+    expect((exports as { other: () => number }).other()).toBe(4);
   });
 
   it("keeps an inferred numeric parameter unboxed through a numeric switch", async () => {
