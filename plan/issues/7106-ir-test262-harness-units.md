@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 priority: high
 horizon: l
 feasibility: hard
@@ -618,3 +618,29 @@ A transparent exact-input selector observation records the original `assert._isS
 Three unchanged initializer/timer suites produce 53 passes and six failures on both the final candidate and the clean main-based apply-repair control. Those failures and all assertions are retained for CI and owner disposition.
 
 The receiving PR remains held for lead C's dependency and admission order, including the separately qualified apply-preparation prerequisite in #6814. Normal hooks, protected CI and existing floors remain required. No full Stage 2, Linear backend or full conformance qualification is claimed, and no baseline, allowance or architectural exemption is part of this work.
+
+## `delete` reached a wrong IR lowering — selector refusal (2026-10-22, measured)
+
+Found while planning the propertyHelper `isConfigurable` arm.
+- **Old lowering.** Slice 11 (#1169n) admitted `delete <expr>` in
+  `isPhase1Expr` and lowered it to the operand's side effects plus a constant
+  `true`. The IR has no delete operation, so a claimed `delete` removed nothing
+  and never threw.
+- **Reachable on origin/main.** In a module (strict code),
+  `function f(): number { const a = [1, 2]; return delete (a as any).length ? 1 : 0; }`
+  is IR-claimed and returns `1` on standalone and gc, where node and the
+  direct path throw a TypeError.
+- Statement-position `delete` (`body-exprstmt-other`) and deletes on dynamic
+  parameters (`move-only[concrete]`) were already refused.
+
+**Fix.**
+- The selector refuses every `delete` with `expr-delete-no-ir-lowering`. This
+  subsumes the #2726 module-global `delete this.x` refusal.
+- from-ast's arm now demotes instead of answering a constant.
+- The #1169n case that asserted the claim now asserts the refusal.
+- The playground corpus has no `delete`, so `check:ir-fallbacks` is unchanged.
+- **The `isConfigurable` arm carries the real dynamic delete later.**
+
+**Still wrong on the direct path (not changed here).** Legacy's
+`delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
+readable. That is the same on the base and on legacy-only compiles.
