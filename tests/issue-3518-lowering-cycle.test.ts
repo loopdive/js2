@@ -196,6 +196,7 @@ describe("lowering cycle separation", () => {
     const graph = valueClosure();
     // Exact 549b value graph plus the frozen D1 legality analysis owner.
     // Compatibility forwards preserve identities; pin every edge occurrence.
+    // #6920 A-C1 successor of the 33-module / 13-generic-out-edge pin: + type-only leaf vector-representation.ts.
     expect(graph.modules).toEqual([
       "src/backend/wasmgc/lowering/dynamic-scratch.ts",
       "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
@@ -204,6 +205,7 @@ describe("lowering cycle separation", () => {
       "src/ir/analysis/effects.ts",
       "src/ir/analysis/nested-stackification.ts",
       "src/ir/backend/legality.ts",
+      "src/ir/backend/vector-representation.ts",
       "src/ir/backend/wasm-int32-coercion.ts",
       "src/ir/backend/wasm-math-minmax.ts",
       "src/ir/callable-bindings.ts",
@@ -238,6 +240,7 @@ describe("lowering cycle separation", () => {
       "src/ir/analysis/backend-legality.ts -> src/ir/core/types.ts",
       "src/ir/core/types.ts -> src/ir/core/tag-refinement.ts",
       "src/ir/core/types.ts -> src/ir/core/binding-key-primitives.ts",
+      "src/ir/lower-generic.ts -> src/ir/backend/vector-representation.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-int32-coercion.ts",
       "src/ir/backend/wasm-int32-coercion.ts -> src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
       "src/ir/lower-generic.ts -> src/ir/backend/wasm-math-minmax.ts",
@@ -271,7 +274,7 @@ describe("lowering cycle separation", () => {
       "src/ir/core/string-runtime.ts -> src/ir/core/string-callables.ts",
     ]);
     expect(graph.modules).toContain("src/shared/contracts/identity-values.ts");
-    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(13);
+    expect(graph.edges.filter((edge) => edge.startsWith(genericPath + " -> "))).toHaveLength(14);
   });
 
   it.each(forbidden)("rejects an injected reverse edge through a barrel to %s", (target) => {

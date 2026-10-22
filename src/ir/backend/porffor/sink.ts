@@ -17,7 +17,7 @@ import type {
   IrClosureLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
-  IrVecLowering,
+  IrVecBackendLowering,
   LinearVecLowering,
   PlannedObjectLowering,
 } from "../handles.js";
@@ -254,7 +254,7 @@ function irTypeSlot(type: IrType): PorfforValueSlot {
   }
 }
 
-type VecLayout = IrVecLowering | LinearVecLowering;
+type VecLayout = IrVecBackendLowering;
 
 function asPlannedObject(layout: IrObjectStructLowering | IrClassLowering): PlannedObjectLowering {
   if (!("linearMemory" in layout)) {

@@ -67,6 +67,7 @@ function linearVec(elementValType: ValType): LinearVecLowering {
   const layout = planLinearVectorLayout(irVal(elementValType));
   const operations = defaultOperationsForLayout(layout);
   return {
+    valueType: { kind: "i32" },
     elementValType,
     linearMemory: {
       layout,
@@ -162,11 +163,10 @@ describe("#1714 LinearEmitter ops execute correctly against the linear layout", 
         (br $loop)))
     (local.get $acc)))
 `;
-    // @ts-expect-error — wabt has no bundled types
     const wabtMod = await (await import("wabt")).default();
     const parsed = wabtMod.parseWat("vec.wat", wat, { mutable_globals: true });
     const { buffer } = parsed.toBinary({});
-    const { instance } = await WebAssembly.instantiate(buffer, {});
+    const { instance } = await WebAssembly.instantiate(Uint8Array.from(buffer).buffer, {});
     const mem = new DataView((instance.exports.mem as WebAssembly.Memory).buffer);
     // Lay out the array at ptr=0 per the linear layout.
     mem.setUint32(8, 3, true); // len
@@ -269,7 +269,9 @@ describe("#2954 LinearEmitter core-op families are byte-identical to WasmGc", ()
       () => linear.emitCallRef(),
       () => linear.emitThrow(),
       () => linear.emitTry(),
-      () => linear.emitVecNewFixed(),
+      () => Reflect.apply(linear.emitVecNewFixed, linear, []),
+      // Fixed construction must refuse when its runtime provider is absent.
+      () => new LinearEmitter().emitVecNewFixed(linVec, 0, 0, 0, []),
     ]) {
       expect(call).toThrow(/LinearEmitter:/);
     }
@@ -376,7 +378,7 @@ describe("#2954 whole-function lowering through LinearEmitter runs in linear mem
     const gcFn = lowerIrFunctionToWasm(ir, resolver, new WasmGcEmitter()).func;
     expect(linFn.body).toEqual(gcFn.body);
     const binary = emitBinary(singleFuncModule(linFn, params, results));
-    const { instance } = await WebAssembly.instantiate(binary, {});
+    const { instance } = await WebAssembly.instantiate(Uint8Array.from(binary).buffer, {});
     return instance.exports[name] as (...a: number[]) => number;
   }
 
