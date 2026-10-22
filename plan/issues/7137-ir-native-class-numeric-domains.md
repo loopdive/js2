@@ -13,6 +13,7 @@ task_type: bug
 area: ir
 goal: ir-full-coverage
 parent: 3518
+depends_on: [7136]
 assignee: "ttraenkler/codex-session-b"
 loc-budget-allow:
   # 2026-10-22: +1 import binds the extracted source-qualified field projection.
@@ -85,10 +86,9 @@ The source-local effect fixture now uses a previously initialized instance
 counter and an IR-emitted `this.take()` method. Explicit parent/derived
 constructors also exercise inherited field domains with complete constructor
 ownership. These are positive controls; the original implicit-inheritance
-refusal remains a separately named known-open test. It records Parent_new's
-late preparation refusal and run's retained legacy body, rather than claiming
-that the implicit constructor family is fully migrated. Original failure logs
-are preserved.
+refusal was retained as a known-open witness at that stage. The dependency
+correction below replaces it with a positive ownership control. Original
+failure logs are preserved.
 
 The three class-field read sites are audited: ordinary reads and destructuring
 widen uint32 values into source Number space; compound updates read the field
@@ -150,3 +150,32 @@ from PR #6872 to the corrected value. The own numeric branch will incorporate
 that durable predecessor head, leaving the Console PR head untouched, and will
 require #6872 to land before release. The numeric commit remains independently
 reviewable from base 709f0f550d; the combined branch is requalified afterward.
+
+
+Predecessor integration uses exact PR #6872 head
+`775b4c95a22344b26c42cc377295fab51647bf62`; its head is unchanged. The independent
+numeric fix is commit `d5f37a1c99de5578f7aa299fcf278ad7ca66e2f9` from base 709f0f550d.
+The merge resolves only adjacent imports and preserves both implementations.
+The two console known-open witnesses now assert 4294967295 and a genuine IR
+constructor. Combined qualification passes **213/213 registrations in seven
+files**. This branch depends on #7136 and must not be released before PR #6872.
+Fresh-context adversarial review is still required before release.
+
+
+Combined validation also passes **140/140 registrations with i32 inference**.
+The final combined byte corpus has precisely the Console predecessor's two
+already-qualified WASI changes (classes/algorithms); all other 58 records match
+base. No additional numeric-fix drift appears. Typecheck, lint and normal source
+ratchets pass. Inventory and preservation contracts remain bounded; strict
+closure and full IR retirement are not certified.
+
+A separate mixed-boundary probe remains open: `read(v: any): number { return
+v.value; }` called with `new C()` where `C.value: u32 = 4294967295` returns
+2147483647 through the legacy constructor and -1 after the IR constructor fix.
+The candidate read is refused for `param-type-not-resolvable`; its caller is
+refused for `return-type-not-resolvable`, with no post-claim errors. The old
+physical dynamic-member read does not preserve the unsigned field domain.
+This is not a supported IR-owned consumer or a completed native semantic
+boundary. It requires the remaining dynamic ABI/shared member-read migration;
+it is not silently counted among the qualified field operations or a Test262
+gain. Direct-AST body emitters remain frozen. Full goal completion stays open.

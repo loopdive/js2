@@ -168,16 +168,18 @@ for (const target of ["standalone", "wasi"] as const) {
       });
     }
 
-    // Exact base already saturates the shared constructor's u32 field to 2147483647.
-    // Keep the semantic regression visible; this is not a passing console control.
-    it("KNOWN OPEN: constructor saturates an unsigned native field above INT32_MAX", async () => {
+    // #7137 preserves the unsigned source domain through the native field slot.
+    it("renders an unsigned native field above INT32_MAX without fallback", async () => {
       const source = `type u32 = number; class C { value: u32 = 4294967295; }
         export function main(): void { console.log((new C()).value); }`;
       const { result, stdout } = await execute(source, target, true, "main");
       expect(result.irOutcomes?.find((o) => o.displayName === "main")).toMatchObject({ irBodyEmitted: true });
       expect(result.irPostClaimErrors ?? []).toEqual([]);
-      // Correct output is 4294967295. A constructor repair must flip this witness.
-      expect(stdout).toBe("2147483647\n");
+      expect(result.irOutcomes?.find((o) => o.displayName === "C_new")).toMatchObject({
+        irBodyEmitted: true,
+        legacyBodyEmitted: false,
+      });
+      expect(stdout).toBe("4294967295\n");
     });
 
     it("evaluates the dynamic source expression once", async () => {
