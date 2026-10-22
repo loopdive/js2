@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
-import { parameterHasDynamicExternrefAbi } from "../src/codegen/ir-dynamic-parameter-abi.js";
+import { parameterHasDynamicExternrefAbi } from "../src/codegen/declarations/ir-dynamic-parameter-abi.js";
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import type { ValType } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";

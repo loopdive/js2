@@ -229,7 +229,7 @@ import {
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
 } from "./ir-imported-call-planning.js";
-import { parameterHasDynamicExternrefAbi } from "./ir-dynamic-parameter-abi.js";
+import { parameterHasDynamicExternrefAbi } from "./declarations/ir-dynamic-parameter-abi.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,

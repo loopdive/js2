@@ -36,7 +36,7 @@ with their owners. This task does not change existing PR heads or queue state.
 - `src/ir/native-in.ts` owns native key boxing, receiver validation and the
   ordered ToPropertyKey/HasProperty call. Reuse the IR boxer, callable pack,
   canonical TypeError constructor and native property-search engine.
-- `src/codegen/ir-dynamic-parameter-abi.ts` owns the existing physical externref
+- `src/codegen/declarations/ir-dynamic-parameter-abi.ts` owns the existing physical externref
   slot proof for JSDoc and explicit-any caller boundaries. The planner wires
   the proof; it does not duplicate it inline or broaden the fast carrier.
 - Selection requires both receiver and native-key capabilities. The existing
@@ -183,3 +183,8 @@ The repaired head passes **83/83 focused tests in six files**, including the
 real JSDoc query's positive control and its absent-evidence rejection.
 Typecheck, lint, LOC/function budgets and the import-cycle ratchet pass.
 No new cycle/budget allowance is used for the repair.
+
+The next CI quality step exposed flat-directory growth in `src/codegen`.
+The ABI proof now lives under the existing `declarations` owner, with the same
+logic and tests. The flat-directory and import-cycle gates pass without new
+allowances; this relocation does not move source-body compilation into legacy.
