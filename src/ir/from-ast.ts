@@ -1279,6 +1279,12 @@ export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPla
    */
   readonly moduleInitUnit?: boolean;
   /**
+   * (#7106 S3c) The function reads its own `this` through `dyn.current_this`
+   * (codegen's `functionThisStrictness`, the same answer the selector used);
+   * the value is the function code's strictness. Absent → `this` is unbound.
+   */
+  readonly ambientThisStrict?: boolean;
+  /**
    * (#3142 Slice 2) Module-scope bindings → the Wasm global the legacy
    * backend allocated for each (`__mod_<name>`, plus the `__tdz_<name>`
    * flag when legacy tracks one). A top-level `let`/`const` declaration
@@ -1830,6 +1836,7 @@ export function lowerFunctionAstToIr(
       ? { argumentsLength: {} }
       : {}),
     booleanReturnBuilder: options.booleanReturnBoundary === fn ? builder : undefined,
+    ...(options.ambientThisStrict === undefined ? {} : { functionCodeStrict: options.ambientThisStrict }),
     scope,
     funcName: name,
     ownerUnitId: options.ownerUnitId,
@@ -1922,6 +1929,14 @@ export function lowerFunctionAstToIr(
   // (#7106 S1e) `arguments.length` is read at ENTRY, before any nested call
   // can clobber the call site's published count — exactly legacy's prologue.
   if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
+  // (#7106 S3c) OrdinaryCallBindThis binds `this` once, at entry.
+  if (options.ambientThisStrict !== undefined && ts.isFunctionDeclaration(fn) && !options.moduleInitUnit) {
+    scope.set("this", {
+      kind: "local",
+      value: builder.emitDynCurrentThis(options.ambientThisStrict),
+      type: irDynamic(),
+    });
+  }
   if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
   checkLogicalVectorConsumption(cx);
@@ -2673,6 +2688,15 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
     cx.builder.terminate({ kind: "return", values: [vCoerced] });
     return;
   }
+  // (#7106 S3c) A dynamic-return function falling out of a trailing
+  // expression statement: lower it exactly as a mid-body statement, then the
+  // implicit `return undefined` (the selector checked the same pair).
+  if (cx.returnType?.kind === "dynamic" && ts.isExpressionStatement(stmt)) {
+    if (!lowerStatementListPrefix([stmt], 0, cx)) {
+      terminateImplicitSourceReturn(cx, [cx.builder.emitDynUndefined(JS_TAG_IDS.Undefined)]);
+    }
+    return;
+  }
   // Slice 14 (#1228) — void function tail: any non-return statement that
   // doesn't terminate the function falls through to an implicit return.
   // We accept ExpressionStatement (e.g., `f();`) as a tail in void
@@ -2992,6 +3016,8 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly promiseDelays?: IrPromiseDelayLoweringPlans;
   readonly countedStringAppends?: ReadonlyMap<ts.ForStatement, IrCountedStringAppendLoweringPlan>;
   readonly consumedCountedStringAppends: IrCountedStringAppendLoweringPlan[];
+  /** (#7106 S3c) The function code's strictness, when the lowering was told it (an ambient-`this` subject). */
+  readonly functionCodeStrict?: boolean;
   /** (#7106 S1e) The entry-time `arguments.length` value of this top-level function, when its body reads it. */
   readonly argumentsLength?: { value?: IrValueId };
   readonly identityContext?: IrPlanningIdentityContext;
@@ -8227,7 +8253,10 @@ function lowerNewExpression(expr: ts.NewExpression, cx: LowerCtx): IrValueId {
   // admitted only a dynamic-typed parameter callee; every argument becomes a
   // dynamic carrier (concrete operands box exactly like a member-store value).
   const calleeBinding = cx.scope.get(className);
-  if (calleeBinding?.kind === "local" && calleeBinding.type.kind === "dynamic") {
+  // (#7106 S3c) …or a self-guarded constructor VALUE (its function-object plan).
+  const functionValueCallee =
+    calleeBinding === undefined && cx.topLevelFunctionValues?.get(expr.expression) !== undefined;
+  if ((calleeBinding?.kind === "local" && calleeBinding.type.kind === "dynamic") || functionValueCallee) {
     const callee = lowerExpr(expr.expression, cx, irDynamic());
     if (cx.builder.typeOf(callee).kind !== "dynamic") {
       throw new IrUnsupportedError(
@@ -10493,8 +10522,33 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
 
-  if (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) {
+  if (
+    (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) ||
+    functionObjects.isPreparedFunctionObjectChainedWrite(lhs.expression, cx.topLevelFunctionValues)
+  ) {
     functionObjects.lowerFunctionObjectPropertyWrite(recv, fieldName, expr.right, functionObjectLoweringHost(cx));
+    return;
+  }
+
+  // (#7106 S3c) `<dynamic>.name = v` in a function whose code strictness the
+  // lowering knows (an ambient-`this` subject): `dyn.member_set` with the name
+  // boxed as a string key, PutValue's strict/sloppy failure rule preserved.
+  if (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined && ts.isIdentifier(lhs.name)) {
+    const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
+    let value = lowerExpr(expr.right, cx, irDynamic());
+    const valueType = cx.builder.typeOf(value);
+    if (valueType.kind !== "dynamic") {
+      const boxed = boxConcreteToDynamic(value, valueType, expr.right, cx);
+      if (boxed === null) {
+        throw new IrUnsupportedError(
+          "operand-coercion-unsupported",
+          "build",
+          `ir/from-ast: dynamic member-store value of ${describeIrType(valueType)} has no dynamic carrier (${cx.funcName})`,
+        );
+      }
+      value = boxed;
+    }
+    cx.builder.emitDynMemberSet(recv, key, value, !cx.functionCodeStrict);
     return;
   }
 
@@ -14683,6 +14737,26 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
       `ir/from-ast: instanceof RHS "${className}" is shadowed by a local (${cx.funcName})`,
     );
   }
+  // (#7106 S3c) `<dynamic> instanceof F` for a self-guarded constructor F: the
+  // selector admitted it only behind F's function-object plan, whose exact
+  // unit target names the per-function prototype the chain walk reads.
+  const functionValue = cx.topLevelFunctionValues?.get(expr.right);
+  if (functionValue) {
+    requireMatchingLoweringPlanOwner(
+      "top-level function value",
+      functionValue.ownerUnitId,
+      cx.ownerUnitId,
+      cx.funcName,
+    );
+    const lhs = lowerExpr(expr.left, cx, irDynamic());
+    if (cx.builder.typeOf(lhs).kind !== "dynamic") {
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: instanceof ${className} operand lost its dynamic carrier (${cx.funcName})`,
+      );
+    }
+    return cx.builder.emitDynInstanceOfFunction(lhs, functionValue.target);
+  }
   const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
   if (wrapperPlan) {
     const lhs = lowerExpr(expr.left, cx, irDynamic());
@@ -16026,7 +16100,9 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   // Proven boolean i32 → tag-4 box; without the refinement the i32 would box
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
-  if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
+  // (#7106 census arm 4) The `irBool` brand is the same proof (#4503): a
+  // lattice-`bool` parameter slot carries it.
+  if (tv.kind === "i32" && (irTypeIsBoolean(t) || expressionIsDefinitelyBoolean(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the

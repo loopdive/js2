@@ -14,7 +14,7 @@ import { irImportFuncRef, irSupportFuncRef, irUnitFuncRef, sameIrCallableBinding
 import type { IrAmbientClassCallResolver } from "../ir/host-extern.js";
 import type { IrIdentityImportedFunctionResolver, IrImportedFunctionResolver } from "../ir/imported-functions.js";
 import type { IrBindingId, IrSourceId, IrUnitId, IrNestedClassFieldCallAdmission } from "../ir/identity.js";
-import type { IrType } from "../ir/nodes.js";
+import type { IrClosureSignature, IrType } from "../ir/nodes.js";
 import type { IrModuleInitEvaluationEntry, IrModuleInitPlanningEvidence } from "../ir/module-init-plan.js";
 import { classifyIrFailure, IrInvariantError, IrUnsupportedError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { LatticeType } from "../ir/propagate.js";
@@ -23,6 +23,8 @@ import {
   certifyImportedIrCall,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
+  isFunctionObjectChainedWrite,
+  functionObjectStoreRoot,
   type IrSelection,
 } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
@@ -43,6 +45,7 @@ import { planProgramAbiFunctionValue } from "./program-abi-planning.js";
 import { makeIrFunctionMemberClosures } from "./function-member-closure-planning.js";
 import { computeClosureWrapperSig } from "./closures.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+import { irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 
 /** Apply the same live-binding exclusions as the canonical direct value reader. */
 export function makeIrFunctionObjectValueResolver(
@@ -200,6 +203,24 @@ export function recordIrOverlayPreparationFailure(
     );
   }
   plan.preparationFailuresByUnitId.set(unitId, failure);
+}
+
+/**
+ * (#7106 census arm 4) The signature of a RECEIVER-only function-object plan
+ * whose target carries no parameter/result evidence. Only the IR type of the
+ * accessor's result reads it (`callable<S>`, which lowers to externref for
+ * every `S`), and that value is boxed into the dynamic carrier at once; every
+ * member call/write on it dispatches dynamically. All-dynamic is the one
+ * signature that claims nothing about the target's real ABI.
+ */
+function isFunctionObjectStoredValue(node: ts.Identifier, resolver: IrIdentityImportedFunctionResolver): boolean {
+  const root = functionObjectStoreRoot(node);
+  return root !== undefined && resolver.resolveTopLevelFunctionValueTarget(root)?.legacyProjection === "unambiguous";
+}
+
+function opaqueReceiverSignature(declaration: ts.FunctionDeclaration): IrClosureSignature {
+  const dynamic: IrType = { kind: "dynamic" };
+  return { params: declaration.parameters.map(() => dynamic), returnType: dynamic };
 }
 
 function ambientHostValType(type: IrType | null): ValType | null | undefined {
@@ -842,39 +863,57 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             ((ts.isCallExpression(use) && use.expression === access) ||
               (ts.isBinaryExpression(use) &&
                 use.left === access &&
-                use.operatorToken.kind === ts.SyntaxKind.EqualsToken));
+                use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+              isFunctionObjectChainedWrite(access));
+          // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
+          // callee (`dyn.construct`) or the `x instanceof F` operand
+          // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
+          const isSelfGuardedValue =
+            ((ts.isNewExpression(access) && access.expression === node) ||
+              (ts.isBinaryExpression(access) &&
+                access.right === node &&
+                access.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) &&
+            irSelfGuardedConstructorValue(ctx, node);
+          // (#7106 census arm 3) A top-level function STORED on a function
+          // object (`F.x = G`): its value is boxed into the dynamic carrier and
+          // written through the receiver's dynamic member write, exactly like
+          // a receiver-only use — the signature is never read.
+          const isStoredValue = isFunctionObjectStoredValue(node, functionObjectValues);
           const target =
-            isReceiver && options.sourceOwnerUnitId(node) === ownerUnitId
+            (isReceiver || isSelfGuardedValue || isStoredValue) && options.sourceOwnerUnitId(node) === ownerUnitId
               ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
               : undefined;
           if (target?.legacyProjection === "unambiguous") {
             const claim = identity.functionClaims.find((candidate) => candidate.unitId === target.targetUnitId);
             const returnNode = effectiveIrReturnTypeNode(target.declaration);
-            // Missing flow evidence is not a dynamic signature. Leave this
-            // occurrence to the existing compatibility route without minting
-            // canonical support for an unsupported exact receiver plan.
-            if (
+            const missingEvidence =
               target.declaration.parameters.some(
                 (parameter, index) =>
                   effectiveIrParamTypeNode(parameter) === undefined && claim?.typeEntry.params[index] === undefined,
               ) ||
-              (returnNode === undefined && claim?.typeEntry.returnType === undefined)
-            )
-              return;
-            const params = target.declaration.parameters.map((parameter, index) =>
-              resolvePositionType(
-                effectiveIrParamTypeNode(parameter),
-                claim?.typeEntry.params[index],
-                classShapeSidecar,
-              ),
-            );
-            const signature = {
-              params,
-              returnType:
-                returnNode?.kind === ts.SyntaxKind.VoidKeyword
-                  ? null
-                  : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
-            };
+              (returnNode === undefined && claim?.typeEntry.returnType === undefined);
+            // Missing flow evidence is not a dynamic signature, so a VALUE use
+            // (the S3c self-guarded constructor) stays on the compatibility
+            // route. A receiver-only use never reads the signature: the
+            // accessor's externref is boxed straight into the dynamic carrier
+            // and every member call/write dispatches dynamically, so it gets
+            // the opaque all-dynamic signature (#7106 census arm 4).
+            if (missingEvidence && !isReceiver && !isStoredValue) return;
+            const signature = missingEvidence
+              ? opaqueReceiverSignature(target.declaration)
+              : {
+                  params: target.declaration.parameters.map((parameter, index) =>
+                    resolvePositionType(
+                      effectiveIrParamTypeNode(parameter),
+                      claim?.typeEntry.params[index],
+                      classShapeSidecar,
+                    ),
+                  ),
+                  returnType:
+                    returnNode?.kind === ts.SyntaxKind.VoidKeyword
+                      ? null
+                      : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
+                };
             const funcIdx = ctx.programAbiSourceCallables?.handleForUnit(target.targetUnitId);
             const prepared =
               funcIdx === undefined ? null : ensureFuncClosureSingletonAccessor(ctx, target.targetName, funcIdx);

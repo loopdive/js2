@@ -58,6 +58,7 @@ import { fnctorDeclFromSymbol, lateAssignedFunctionExpression } from "./fnctor-c
 import { resolveWasmType } from "./index.js";
 import { readEnv } from "../env.js";
 import { callGrownFieldNames } from "./fnctor-call-grown-fields.js"; // (#6973 stage 2)
+import { isSelfGuardedConstructor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
 
 /** Classification of a `new F()` fnctor allocation site. */
 export type FnctorGateClass =
@@ -1671,7 +1672,9 @@ export function analyzeFnctorEscapeGate(
       continue;
     }
     const decl = fnctorDeclFromSymbol(ctorSym, checker);
-    if (decl) ctorDeclByName.set(ctorSym.name, decl);
+    // (#7106 S3c) A self-guarded constructor stays an ordinary function value (`isSelfGuardedConstructor`).
+    if (standalone === true && decl && isSelfGuardedConstructor(decl)) refuse(ctorSym.name, "self-guarded-constructor");
+    else if (decl) ctorDeclByName.set(ctorSym.name, decl);
   }
 
   // 2. Build a per-binding-symbol index of identifier uses across the program,

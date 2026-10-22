@@ -46,6 +46,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
+import { isSelfGuardedConstructor } from "./helpers/self-guarded-constructor.js";
 
 /** Per-`ts.Symbol` memo; entries die with the program the symbols came from. */
 const cache = new WeakMap<ts.Symbol, ts.FunctionExpression | null>();
@@ -202,4 +203,16 @@ function calleeFnctorDecl(ctx: CodegenContext, ident: ts.Identifier): ts.Node | 
 export function funcConstructorForCallee(ctx: CodegenContext, ident: ts.Identifier): FuncConstructorEntry | undefined {
   const entry = ctx.funcConstructorMap.get(ident.text);
   return entry !== undefined && calleeFnctorDecl(ctx, ident) !== undefined ? entry : undefined;
+}
+
+/**
+ * (#7106 S3c-b) Does `new <ident>` name a self-guarded constructor that the
+ * standalone lane keeps out of the fnctor machinery? Such a site constructs
+ * from F's runtime value (the native construct driver), matching the escape
+ * gate's refusal, so no `__fnctor_F` struct or ctor is ever registered.
+ */
+export function calleeIsStandaloneSelfGuardedConstructor(ctx: CodegenContext, ident: ts.Identifier): boolean {
+  if (!ctx.standalone) return false;
+  const decl = calleeFnctorDecl(ctx, ident);
+  return decl !== undefined && isSelfGuardedConstructor(decl);
 }
