@@ -1,20 +1,192 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ts } from "../ts-api.js";
+import { forEachChild, ts } from "../ts-api.js";
+import { collectPatternBindingNames, isFunctionScopeBoundary } from "./analysis/ast-scope.js";
 import {
   irPreparedNestedOrdinaryClass,
   irPreparedNestedOrdinaryClassBindingName,
   type IrClassId,
+  type IrSourceId,
   type IrNestedClassFieldCallAdmission,
 } from "./identity.js";
 import type { IrClassShape } from "./nodes.js";
 import {
   requireIrPlanningSourceId,
+  requireIrPlanningClassRecord,
   throwIrPlanningIdentityInvariant as planningInvariant,
   rethrowIrPlanningIdentityInvariant as rethrowPlanningInvariant,
   type IrPlanningIdentityContext,
 } from "./planning-identity.js";
 import { unwrapParenthesizedExpression as unwrapParens } from "./select-expression-structure.js";
+
+/** One source binding, not one runtime class evaluation or a carrier proof. */
+export interface IrClassValueBinding {
+  readonly classId: IrClassId;
+  readonly sourceId: IrSourceId;
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+  readonly kind: "declaration" | "class-name";
+  readonly mutable: boolean;
+}
+
+export type IrClassValueBindingResolver = (identifier: ts.Identifier) => IrClassValueBinding | undefined;
+
+function classForSymbol(
+  symbol: ts.Symbol | undefined,
+  context: IrPlanningIdentityContext,
+): { readonly classId: IrClassId; readonly declaration: ts.ClassDeclaration | ts.ClassExpression } | undefined {
+  if (!symbol) return undefined;
+  const symbolDeclarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])];
+  if (
+    symbolDeclarations.some(
+      (declaration) =>
+        declaration !== undefined &&
+        !ts.isClassDeclaration(declaration) &&
+        !ts.isClassExpression(declaration) &&
+        !ts.isInterfaceDeclaration(declaration) &&
+        !ts.isTypeAliasDeclaration(declaration) &&
+        !ts.isModuleDeclaration(declaration),
+    )
+  )
+    return undefined;
+  const declarations = symbolDeclarations.filter(
+    (declaration, index, all): declaration is ts.ClassDeclaration | ts.ClassExpression =>
+      declaration !== undefined &&
+      (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) &&
+      all.indexOf(declaration) === index,
+  );
+  if (declarations.length !== 1) return undefined;
+  const declaration = declarations[0]!;
+  const classId = context.classIdByDeclaration.get(declaration);
+  return classId !== undefined && context.declarationByClassId.get(classId) === declaration
+    ? { classId, declaration }
+    : undefined;
+}
+
+function requireClassResolutionSource(context: IrPlanningIdentityContext, sourceFile: ts.SourceFile): IrSourceId {
+  const sourceId = requireIrPlanningSourceId(context, sourceFile);
+  if (context.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+    return planningInvariant(
+      "source-record-mismatch",
+      `local-class source ${sourceFile.fileName} does not resolve back to the exact planning SourceFile`,
+    );
+  }
+  return sourceId;
+}
+
+function assertLocalClassExpressionSource(
+  context: IrPlanningIdentityContext,
+  sourceFile: ts.SourceFile,
+  expression: ts.Expression,
+): void {
+  const actual = expression.getSourceFile();
+  requireClassResolutionSource(context, actual);
+  if (actual !== sourceFile) {
+    planningInvariant(
+      "source-record-mismatch",
+      `local-class expression source ${actual.fileName} is outside ${sourceFile.fileName}`,
+    );
+  }
+}
+
+/** Diagnostics-off symbols can hide collisions in one lexical statement list. */
+function hasCompetingClassBinding(declaration: ts.ClassDeclaration): boolean {
+  if (!declaration.name) return false;
+  const name = declaration.name.text;
+  const parent = declaration.parent;
+  const scope = ts.isCaseClause(parent) || ts.isDefaultClause(parent) ? parent.parent : parent;
+  if (!ts.isSourceFile(scope) && !ts.isBlock(scope) && !ts.isModuleBlock(scope) && !ts.isCaseBlock(scope)) return true;
+  const bindsName = (binding: ts.BindingName): boolean => {
+    for (const candidate of collectPatternBindingNames(binding)) if (candidate === name) return true;
+    return false;
+  };
+  if (ts.isBlock(scope)) {
+    const owner = scope.parent;
+    if (isFunctionScopeBoundary(owner) && (owner as ts.SignatureDeclaration).parameters.some((p) => bindsName(p.name)))
+      return true;
+    if (ts.isCatchClause(owner) && owner.variableDeclaration && bindsName(owner.variableDeclaration.name)) return true;
+  }
+  const statements = ts.isCaseBlock(scope)
+    ? scope.clauses.flatMap((clause) => [...clause.statements])
+    : scope.statements;
+  let conflict = false;
+  const visit = (node: ts.Node, direct: boolean): void => {
+    if (conflict || node === declaration) return;
+    if (isFunctionScopeBoundary(node) || ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      if (direct && (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name?.text === name)
+        conflict = true;
+      return;
+    }
+    // A namespace may augment this class; its body has independent bindings.
+    if (ts.isModuleDeclaration(node)) return;
+    if (ts.isVariableDeclarationList(node)) {
+      if (direct || (node.flags & ts.NodeFlags.BlockScoped) === 0)
+        conflict = node.declarations.some((candidate) => bindsName(candidate.name));
+      return;
+    }
+    if (direct && ts.isVariableStatement(node)) {
+      visit(node.declarationList, true);
+      return;
+    }
+    if (direct && ts.isImportDeclaration(node) && node.importClause) {
+      const clause = node.importClause;
+      const bindings = clause.namedBindings;
+      conflict =
+        clause.name?.text === name ||
+        (bindings !== undefined &&
+          (ts.isNamespaceImport(bindings)
+            ? bindings.name.text === name
+            : bindings.elements.some((e) => e.name.text === name)));
+      return;
+    }
+    if (direct && (ts.isImportEqualsDeclaration(node) || ts.isEnumDeclaration(node))) {
+      conflict = node.name.text === name;
+      return;
+    }
+    forEachChild(node, (child) => visit(child, false));
+  };
+  for (const statement of statements) visit(statement, true);
+  return conflict;
+}
+
+/** Resolve lexical class bindings without confusing them with instance types. */
+export function makeIrClassValueBindingResolver(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  context: IrPlanningIdentityContext,
+): IrClassValueBindingResolver {
+  const sourceId = requireClassResolutionSource(context, sourceFile);
+  return (identifier) => {
+    assertLocalClassExpressionSource(context, sourceFile, identifier);
+    try {
+      const identity = classForSymbol(checker.getSymbolAtLocation(identifier), context);
+      if (!identity || identity.declaration.getSourceFile() !== sourceFile) return undefined;
+      const { classId, declaration } = identity;
+      if (ts.isClassDeclaration(declaration) && hasCompetingClassBinding(declaration)) return undefined;
+      requireIrPlanningClassRecord(context, declaration);
+      let inner = ts.isClassExpression(declaration);
+      // The declaration name initializes the outer binding. Uses in the
+      // definition (including nested closures) capture the inner class name.
+      if (identifier !== declaration.name) {
+        for (let parent: ts.Node | undefined = identifier.parent; parent; parent = parent.parent) {
+          if (parent === declaration) {
+            inner = true;
+            break;
+          }
+        }
+      }
+      return Object.freeze({
+        classId,
+        sourceId,
+        declaration,
+        kind: inner ? "class-name" : "declaration",
+        mutable: !inner,
+      });
+    } catch (error) {
+      rethrowPlanningInvariant(error);
+      return undefined;
+    }
+  };
+}
 
 export type IrLegacyLocalClassExpressionResolver = (expression: ts.Expression) => string | undefined;
 
@@ -166,13 +338,7 @@ export function makeIrIdentityLocalClassExpressionResolver(
   /** (#3522 F4) The one proof-derived admitted-class marker; never recomputed here. */
   fieldCallAdmission?: IrNestedClassFieldCallAdmission,
 ): IrLocalClassExpressionResolver {
-  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
-  if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
-    return planningInvariant(
-      "source-record-mismatch",
-      `local-class source ${sourceFile.fileName} does not resolve back to the exact planning SourceFile`,
-    );
-  }
+  const sourceId = requireClassResolutionSource(identityContext, sourceFile);
 
   interface ProjectedClass extends IrLocalClassExpressionIdentity {
     readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
@@ -232,31 +398,11 @@ export function makeIrIdentityLocalClassExpressionResolver(
     projectedByClassId.set(candidate.classId, candidate);
   }
 
-  const assertExpressionSource = (expression: ts.Expression): void => {
-    const expressionSource = expression.getSourceFile();
-    const expressionSourceId = requireIrPlanningSourceId(identityContext, expressionSource);
-    if (expressionSource !== sourceFile || expressionSourceId !== sourceId) {
-      planningInvariant(
-        "source-record-mismatch",
-        `local-class expression source ${expressionSource.fileName} is outside ${sourceFile.fileName}`,
-      );
-    }
-  };
-
   const projectedClassForSymbol = (symbol: ts.Symbol | undefined): ProjectedClass | undefined => {
-    if (!symbol) return undefined;
-    const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
-      (declaration, index, all): declaration is ts.ClassDeclaration | ts.ClassExpression =>
-        declaration !== undefined &&
-        (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) &&
-        all.indexOf(declaration) === index,
-    );
-    if (declarations.length !== 1) return undefined;
-    const declaration = declarations[0]!;
-    const classId = identityContext.classIdByDeclaration.get(declaration);
-    if (classId === undefined || identityContext.declarationByClassId.get(classId) !== declaration) return undefined;
-    const projected = projectedByClassId.get(classId);
-    return projected?.declaration === declaration ? projected : undefined;
+    const identity = classForSymbol(symbol, identityContext);
+    if (!identity) return undefined;
+    const projected = projectedByClassId.get(identity.classId);
+    return projected?.declaration === identity.declaration ? projected : undefined;
   };
 
   const exactProjectedType = (expression: ts.Expression): ProjectedClass | undefined => {
@@ -348,7 +494,7 @@ export function makeIrIdentityLocalClassExpressionResolver(
   };
 
   return (expression) => {
-    assertExpressionSource(expression);
+    assertLocalClassExpressionSource(identityContext, sourceFile, expression);
     const projected = resolveExpression(expression, new Set());
     return projected ? { classId: projected.classId, legacyName: projected.legacyName } : undefined;
   };

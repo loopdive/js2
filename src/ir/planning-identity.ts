@@ -111,6 +111,38 @@ export function rethrowIrPlanningIdentityInvariant(error: unknown): void {
   if (error instanceof IrPlanningIdentityInvariantError) throw error;
 }
 
+/** Validate a source class against the complete authoritative identity record. */
+export function requireIrPlanningClassRecord(
+  context: IrPlanningIdentityContext,
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): IrClassRecord {
+  const sourceFile = declaration.getSourceFile();
+  const sourceId = context.sourceIdBySourceFile.get(sourceFile);
+  if (sourceId === undefined || context.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+    return throwIrPlanningIdentityInvariant(
+      "source-record-mismatch",
+      `class declaration comes from stale source ${sourceFile.fileName}`,
+    );
+  }
+  const classId = context.classIdByDeclaration.get(declaration);
+  const record = context.inventory.classes.find((candidate) => candidate.id === classId);
+  if (
+    classId === undefined ||
+    context.declarationByClassId.get(classId) !== declaration ||
+    !record ||
+    record.sourceId !== sourceId ||
+    record.declarationKind !== (ts.isClassDeclaration(declaration) ? "declaration" : "expression") ||
+    record.declarationStart !== declaration.getStart(sourceFile) ||
+    record.declarationEnd !== declaration.end
+  ) {
+    return throwIrPlanningIdentityInvariant(
+      "class-record-mismatch",
+      `class ${declaration.name?.text ?? "<anonymous>"} is not its exact authoritative declaration`,
+    );
+  }
+  return record;
+}
+
 /** Runtime read-only map: callers do not receive a mutable Map behind the type. */
 class IrReadonlyMap<K, V> implements ReadonlyMap<K, V> {
   readonly #backingMap: ReadonlyMap<K, V>;

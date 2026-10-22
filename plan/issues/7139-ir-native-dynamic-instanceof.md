@@ -425,3 +425,98 @@ The class-instance resolver extraction preserves its old symbol/source/ClassId
 checks and deliberately introduces no constructor-binding singleton shortcut.
 The published operator head and all held predecessor heads remain unchanged;
 this is an unpublished local implementation checkpoint under the full goal.
+
+### Class lexical binding identity plan (2026-10-22)
+
+Native JavaScript controls establish two different source bindings for a named
+class declaration: the mutable outer lexical binding and the immutable inner
+class-name binding retained by methods/closures. Reassigning the outer name
+does not change the inner constructor; an inner assignment throws TypeError.
+Named class expressions own only their inner class-name binding; the receiving
+variable stays with the ordinary variable-binding planner. Heritage and
+computed-key reads of the inner name are still in TDZ.
+
+Implement this source distinction in `ir/class-binding-resolution.ts`, sharing
+the existing exact symbol/declaration/ClassId join with instance resolution.
+The complete class record validator moves from codegen into the existing
+planning-identity owner and is shared by the class-shape and binding planners.
+The selector consumes the new exact binding evidence to report a source-located
+class-value producer gap, replacing an accidental generic not-in-scope result.
+It must not treat the evidence as a materialized constructor or instance,
+allocate singleton storage, or admit an incomplete producer. The new resolver
+will be the binding identity input to the executable class-definition plan;
+module/activation storage and fresh evaluation identities remain required.
+
+Quality acceptance: one symbol-to-class join, exact source/ClassId validation,
+no source name authority or alias de-aliasing, no extra runtime registry, and
+no new direct AST semantics. Test inner/outer shadowing, named expressions,
+repeated nested evaluations' stable source identity, stale source/class maps,
+ambiguous declarations and source-located capability outcomes. Preserve the
+full lifecycle red suite; a new refusal code is not semantic completion.
+
+Adversarial identity review found that diagnostics-off symbols may separate
+class/variable collisions, merge class/function collisions, and split duplicate
+classes across switch clauses. Resolve ambiguity from the enclosing statement
+list (all switch clauses share one CaseBlock), including hoisted `var` and
+function-body/catch parameters. Reuse the existing pure AST binding-pattern
+collector and function-scope boundary predicate in `analysis/ast-scope.ts`; do
+not introduce another destructuring walk. Runtime value declarations in a
+merged checker symbol disqualify the shared class join; type-only merges and
+namespace augmentation do not establish a second class identity. Test genuine
+block shadows and type/interface merges alongside the rejected collisions.
+
+The bare identifier selection arm is split from the oversized expression
+selector without changing arm ordering. The paired exact/compatibility shape projections
+are grouped in `codegen/ir-class-shapes.ts`, retaining the same provisional
+population; resolver factories keep their original order in `planIrOverlay`.
+This avoids an added value-import edge while shrinking that function. Neither
+oversized function receives a growth allowance.
+
+### Class binding identity checkpoint qualification (2026-10-22)
+
+The resolver distinguishes mutable declaration bindings from immutable inner
+class-name bindings, using exact source/ClassId/declaration records. It refuses
+diagnostics-off value collisions across a shared lexical scope, including
+variables/destructuring, functions, imports, enums, switch clauses, hoisted
+`var`, and function/catch parameters. Valid block shadows and interface or
+namespace augmentation retain identity. The old instance resolver still rejects
+constructor objects. The selector now reports the producer gap before claim;
+this is binding metadata and diagnostic work, not executable class semantics.
+
+Fresh-context adversarial review found the scope and enum gaps above; all were
+fixed and re-reviewed. Independent qualification: 100/100 targeted assertions
+plus extra scope and instance probes, and a token comparison of the extracted
+identifier arm. Evidence: `.tmp/review-class-binding-identity/`. The attempted
+resolver grouping added a codegen-to-IR value edge and failed the cycle gate;
+the final grouping contains only shape projections and preserves factory order.
+No new size or cycle allowances were added.
+
+Executed checks (groups overlap and are not summed as distinct coverage):
+
+- Identity/outcome controls: 37/37; the combined seven-file native operator,
+  identity and source-validation run: 224/224.
+- i32 native concrete/protocol/`in`: 172/172.
+- Standard gc corpus: 14/14 byte-identical to the exact parent checkpoint.
+- Older module-binding suite: 41/55 pass, the same fourteen failing names and
+  full assertion texts as parent `7165772057a6a39057fdb6ace67e88f63850fb14`.
+- Full class-value lifecycle suite remains **38/80 pass, 42/80 fail**: twelve
+  native value failures and thirty sole-IR-ownership failures.
+- Typecheck, configured Biome lint, default/explicit-main-base size gates,
+  coercion/oracle/cycle/layering/flat-directory/retirement checks pass. The
+  preservation audit passes 6/6 full and cut witnesses; its strict closure is
+  still open for the two inherited nonliteral dynamic imports.
+
+Additional six-source/two-target class-name probes agree with JavaScript for
+inner reads/writes (6/12 native value rows); heritage, computed-key and `typeof`
+TDZ probes remain wrong (6/12 rows return 10 instead of ReferenceError result 1).
+All twelve `run` functions remain legacy-owned. The updated probe instantiates
+with only WASI imports and records actual module imports, which are empty for
+all twelve binaries. The computed-key WASI compile nevertheless reports a
+forbidden `env.__to_property_key` diagnostic while `success` is true; that row
+is explicitly unqualified. Raw evidence: `.tmp/7139-class-inner-semantics-native.jsonl`.
+
+The next required work remains executable class-definition state, source
+binding storage/TDZ, fresh evaluation identity and retained lexical environments
+through the canonical runtime and PreparedIrProgram. The lifecycle denominator
+and the full IR migration acceptance remain unchanged. This checkpoint stays
+local; published PR heads and HOLDs are unchanged.

@@ -180,9 +180,10 @@ import {
 } from "../ir/promise-delay-lowering.js";
 import {
   makeIrArrayElementFamilyClassifier,
+  makeIrClassValueBindingResolver,
+  makeIrLocalClassExpressionResolver,
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
-  makeIrLocalClassExpressionResolver,
   makeIrModuleBindingResolver,
   makeIrPrimitiveExpressionClassifier,
   makeIrRegExpExpressionPredicate,
@@ -264,6 +265,7 @@ import {
 } from "./ir-overlay-outcomes.js";
 import {
   collectIrClassShapeDeclarations,
+  projectIrClassSelectionShapes,
   createIrClassShapeSidecar,
   orderIrClassShapeDeclarationsForProjection,
   projectIrClassCallableTarget,
@@ -3096,10 +3098,7 @@ function planIrOverlay(
     { kind: "selection-candidate" },
     nestedClassFieldCallAdmission,
   );
-  const selectionClassShapes = selectionClassShapeSidecar.legacyProjection;
-  const selectionClassShapesById = new Map(
-    [...selectionClassShapeSidecar.byClassId].map(([classId, entry]) => [classId, entry.shape] as const),
-  );
+  const { selectionClassShapes, selectionClassShapesById } = projectIrClassSelectionShapes(selectionClassShapeSidecar);
   const resolveLocalClassExpression = makeIrLocalClassExpressionResolver(
     ast.checker,
     ast.sourceFile,
@@ -3305,6 +3304,7 @@ function planIrOverlay(
         ctx.programAbiClassCallables?.functionForUnit(unitId) !== undefined,
       ...irTimerShim.preparedTimerShimSelectionOption(timerShim),
       resolveLocalClassExpression,
+      resolveClassValueBinding: makeIrClassValueBindingResolver(ast.checker, ast.sourceFile, identityContext),
       supportsSymbolicMathHelpers: true,
       supportsLiteralStringReplace: true,
       // (#4462) Host-free capabilities. Both are the SAME predicates the

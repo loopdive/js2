@@ -133,6 +133,7 @@ import type {
   IrLegacyLocalClassExpressionResolver,
   IrLegacyModuleBindingResolver,
   IrLocalClassExpressionResolver,
+  IrClassValueBindingResolver,
   IrModuleBindingResolver,
   IrPrimitiveExpressionFamily,
   IrStableFunctionCallPlan,
@@ -669,6 +670,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * proofs below.
    */
   readonly resolveLocalClassExpression?: IrLocalClassExpressionResolver | IrLegacyLocalClassExpressionResolver;
+  /** Lexical constructor binding identity, never evidence of a value carrier. */
+  readonly resolveClassValueBinding?: IrClassValueBindingResolver;
   /**
    * (#7106 S3a) Is `new <callee>(…)` on this identifier the PLAIN dynamic
    * constructor-value construct (legacy's ordinary `__native_construct_<N>`
@@ -10207,6 +10210,100 @@ function functionObjectCallIsPhase1(
   );
 }
 
+/** Select bare value reads after dedicated call, member and constructor routes. */
+function isPhase1Identifier(
+  expr: ts.Identifier,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  // Identifier may name either a param/local (scope) or a function
+  // (only valid as the callee of a CallExpression, handled below).
+  // A bare identifier that isn't in scope is not a valid Phase-1 expr —
+  // UNLESS it resolves to an ambient host global (#2856, JS-host lane
+  // only; see `hostExternCapability`): the receiver in
+  // `document.getElementById(...)`, `console.log(...)`, `document.body`.
+  // The checker-backed resolver settles shadowing: a user binding named
+  // `document` resolves to the USER declaration, not the lib global, so
+  // this arm never hijacks a module-scope/local shadow. `localClasses` is
+  // excluded for symmetry with the legacy user-class-shadows-extern rule
+  // (#1284).
+  // Resolve by declaration identity before consulting the selector's flat
+  // scope-name set. This prevents a leaked sibling `for (let i)` name from
+  // impersonating a module-level `i` (#3343). A real local/parameter resolves
+  // to its own declaration and returns undefined here, then the scope arm wins.
+  if (expr.text === "undefined" && currentModuleBindingResolver?.isDirectModuleBinding(expr)) {
+    return shapeNo("expr-module-undefined-shadow", expr);
+  }
+  if (currentModuleBindingResolver?.(expr) !== undefined) return true;
+  if (isUnrepresentableModuleBinding(expr)) {
+    return shapeNo("expr-module-storage-unrepresentable", expr);
+  }
+  // (#7106 item 1) the global `undefined` (unshadowed) as a VALUE — a call
+  // argument, a member-store value, a logical operand: the dynamic carrier's
+  // undefined (`dyn.undefined`, #7104), where the capability holds. Equality
+  // and return positions already have their own arms.
+  if (
+    isUnshadowedUndefinedIdentifier(expr, scope) &&
+    currentDynamicRuntimeBuildable &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+  ) {
+    return true;
+  }
+  // #7104 — the global numeric constants `Infinity` / `NaN` (unshadowed):
+  // f64 constants on every lane, exactly as legacy's identifier arm.
+  if (
+    (expr.text === "Infinity" || expr.text === "NaN") &&
+    !scope.has(expr.text) &&
+    currentModuleBindingResolver?.isDirectModuleBinding(expr) !== true
+  ) {
+    return true;
+  }
+  const classValueBinding = currentSelectionOptions?.resolveClassValueBinding?.(expr);
+  if (classValueBinding) {
+    return capabilityNo("class-value-binding-unsupported", `expr-class-value-${classValueBinding.kind}`, expr);
+  }
+  if (scope.has(expr.text)) {
+    // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
+    // a first-class IR value. The class-declaration and `const C = class {…}`
+    // arms add the name to `scope` so the dedicated `new C(...)`,
+    // `C.staticMember` and `x instanceof C` arms can consume it — those arms
+    // resolve the binding themselves and never reach this generic identifier
+    // accept. Anything that DOES reach here is a bare value use
+    // (`const Alias = C;`, `return C;`, passing `C` as an argument), which
+    // `ir/from-ast` cannot represent: it reports
+    // "identifier \"C\" is not in scope" as a POST-CLAIM build error, after
+    // the class members have already been claimed and emitted — the exact
+    // split-ownership state R3 exists to prevent. Reject the owner here, at
+    // selection, so the whole class withdraws with it.
+    return currentPreparedClassBindingNames.has(expr.text) ? shapeNo("expr-prepared-class-binding-value", expr) : true;
+  }
+  if (
+    currentHostGlobalResolver !== null &&
+    !localClasses.has(expr.text) &&
+    currentHostGlobalResolver(expr) !== undefined
+  ) {
+    return true;
+  }
+  // (#4576) A certified standalone `document` is a provider-owned global
+  // read, not a generic host-global admission. Node identity proves this
+  // exact occurrence is the receiver of `document.body` or the registered
+  // `document.createElement(tag)` call in the closed plan.
+  if (standaloneDomOperation(expr)?.kind === "global-get") return true;
+  // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
+  // call shape the builder lowers. Checked before the reject arm below, which
+  // would otherwise bucket it as target-unserviceable.
+  if (namesHostFreeConsoleSurface(expr, localClasses)) return true;
+  // (#4457) "Names a host global this target cannot service" is owned by the
+  // target's capability policy, not by IR shape coverage — see the reason's
+  // union comment.
+  if (namesDeferredHostSurface(expr, localClasses)) {
+    return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
+  }
+  if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
+    return true;
+  return shapeNo("expr-ident-not-in-scope", expr);
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -10268,92 +10365,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // here is shape-only acceptance.
   if (ts.isStringLiteral(expr)) return true;
   if (expr.kind === ts.SyntaxKind.NullKeyword) return true;
-  if (ts.isIdentifier(expr)) {
-    // Identifier may name either a param/local (scope) or a function
-    // (only valid as the callee of a CallExpression, handled below).
-    // A bare identifier that isn't in scope is not a valid Phase-1 expr —
-    // UNLESS it resolves to an ambient host global (#2856, JS-host lane
-    // only; see `hostExternCapability`): the receiver in
-    // `document.getElementById(...)`, `console.log(...)`, `document.body`.
-    // The checker-backed resolver settles shadowing: a user binding named
-    // `document` resolves to the USER declaration, not the lib global, so
-    // this arm never hijacks a module-scope/local shadow. `localClasses` is
-    // excluded for symmetry with the legacy user-class-shadows-extern rule
-    // (#1284).
-    // Resolve by declaration identity before consulting the selector's flat
-    // scope-name set. This prevents a leaked sibling `for (let i)` name from
-    // impersonating a module-level `i` (#3343). A real local/parameter resolves
-    // to its own declaration and returns undefined here, then the scope arm wins.
-    if (expr.text === "undefined" && currentModuleBindingResolver?.isDirectModuleBinding(expr)) {
-      return shapeNo("expr-module-undefined-shadow", expr);
-    }
-    if (currentModuleBindingResolver?.(expr) !== undefined) return true;
-    if (isUnrepresentableModuleBinding(expr)) {
-      return shapeNo("expr-module-storage-unrepresentable", expr);
-    }
-    // (#7106 item 1) the global `undefined` (unshadowed) as a VALUE — a call
-    // argument, a member-store value, a logical operand: the dynamic carrier's
-    // undefined (`dyn.undefined`, #7104), where the capability holds. Equality
-    // and return positions already have their own arms.
-    if (
-      isUnshadowedUndefinedIdentifier(expr, scope) &&
-      currentDynamicRuntimeBuildable &&
-      currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
-    ) {
-      return true;
-    }
-    // #7104 — the global numeric constants `Infinity` / `NaN` (unshadowed):
-    // f64 constants on every lane, exactly as legacy's identifier arm.
-    if (
-      (expr.text === "Infinity" || expr.text === "NaN") &&
-      !scope.has(expr.text) &&
-      currentModuleBindingResolver?.isDirectModuleBinding(expr) !== true
-    ) {
-      return true;
-    }
-    if (scope.has(expr.text)) {
-      // (#3522) A prepared nested class binding is a CONSTRUCTOR IDENTITY, not
-      // a first-class IR value. The class-declaration and `const C = class {…}`
-      // arms add the name to `scope` so the dedicated `new C(...)`,
-      // `C.staticMember` and `x instanceof C` arms can consume it — those arms
-      // resolve the binding themselves and never reach this generic identifier
-      // accept. Anything that DOES reach here is a bare value use
-      // (`const Alias = C;`, `return C;`, passing `C` as an argument), which
-      // `ir/from-ast` cannot represent: it reports
-      // "identifier \"C\" is not in scope" as a POST-CLAIM build error, after
-      // the class members have already been claimed and emitted — the exact
-      // split-ownership state R3 exists to prevent. Reject the owner here, at
-      // selection, so the whole class withdraws with it.
-      return currentPreparedClassBindingNames.has(expr.text)
-        ? shapeNo("expr-prepared-class-binding-value", expr)
-        : true;
-    }
-    if (
-      currentHostGlobalResolver !== null &&
-      !localClasses.has(expr.text) &&
-      currentHostGlobalResolver(expr) !== undefined
-    ) {
-      return true;
-    }
-    // (#4576) A certified standalone `document` is a provider-owned global
-    // read, not a generic host-global admission. Node identity proves this
-    // exact occurrence is the receiver of `document.body` or the registered
-    // `document.createElement(tag)` call in the closed plan.
-    if (standaloneDomOperation(expr)?.kind === "global-get") return true;
-    // (#4462) …unless it is `console` in a lane that HAS a host-free sink and a
-    // call shape the builder lowers. Checked before the reject arm below, which
-    // would otherwise bucket it as target-unserviceable.
-    if (namesHostFreeConsoleSurface(expr, localClasses)) return true;
-    // (#4457) "Names a host global this target cannot service" is owned by the
-    // target's capability policy, not by IR shape coverage — see the reason's
-    // union comment.
-    if (namesDeferredHostSurface(expr, localClasses)) {
-      return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
-    }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
-      return true;
-    return shapeNo("expr-ident-not-in-scope", expr);
-  }
+  if (ts.isIdentifier(expr)) return isPhase1Identifier(expr, scope, localClasses);
   // #1370 Phase A — `this` reference inside a method or constructor body.
   // The selector marks `this` as an in-scope binding for class members
   // (see `whyNotIrClaimable` with `isMethod=true`); accept the keyword

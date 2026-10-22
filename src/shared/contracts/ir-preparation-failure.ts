@@ -47,6 +47,7 @@ export type IrFallbackReason =
   | "constructor-resolution-unsupported"
   | "constructor-arity-unsupported"
   | "class-projection-unsupported"
+  | "class-value-binding-unsupported"
   | "class-member-unsupported"
   | "external-call" // calls a non-local identifier (parseInt, etc.)
   | "call-graph-closure" // local caller/callee not claimed

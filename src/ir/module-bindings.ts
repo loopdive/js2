@@ -28,12 +28,15 @@ export type IrPrimitiveExpressionFamily = "number" | "boolean" | "string";
 export type IrDeclaredPrimitiveExpressionFamily = IrPrimitiveExpressionFamily | "primitive-union";
 
 export {
+  makeIrClassValueBindingResolver,
   makeIrLocalClassExpressionResolver,
   makeIrLegacyLocalClassExpressionResolver,
   makeIrIdentityLocalClassExpressionResolver,
   projectIrLocalClassExpressionResolverToLegacy,
 } from "./class-binding-resolution.js";
 export type {
+  IrClassValueBinding,
+  IrClassValueBindingResolver,
   IrLegacyLocalClassExpressionResolver,
   IrLocalClassExpressionIdentity,
   IrLocalClassExpressionResolver,
