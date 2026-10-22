@@ -2275,6 +2275,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/console-output.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-unit-inventory.ts",
       "state": "clean",
       "layer": "foundation"
@@ -5013,6 +5018,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-native-numeric-field.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7137",
+      "nextBoundary": "Source-qualified native numeric field projection; move with exact class-layout preparation."
+    },
+    {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7205,6 +7218,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/ir-native-console.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7136",
+      "nextBoundary": "Move native console provider materialization with Program ABI preparation; formatting and output kernels remain shared."
+    },
+    {
+      "path": "src/codegen/helpers/uint32-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Canonical integer conversion provider; move its physical resource allocation with Program ABI preparation."
+    },
+    {
       "path": "src/codegen/ir-native-map.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7275,6 +7304,30 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/vec-element-boxing.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Separate context-bound boxer lookup from physical element boxing instructions."
+    },
+    {
+      "path": "src/ir/ast-source-facts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "Source AST/oracle forwarding still depends on frontend and mixed from-ast types; no clean-boundary claim."
+    },
+    {
+      "path": "src/codegen/declarations/prepared-signatures.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Prepared signature vocabulary and exact allocated physical slot proof; separate context-bound vector type registration."
     },
     {
       "path": "src/codegen/ir-prepared-free-functions.ts",
@@ -12102,6 +12155,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/numeric-slot-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7137",
+      "nextBoundary": "Producer numeric slot/domain conversions reuse canonical bitwise IR; move with source-language lowering."
+    },
+    {
       "path": "src/ir/boolean-brand.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12508,6 +12569,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/console-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7136",
+      "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
     },
     {
       "path": "src/ir/host-free-runtime.ts",
@@ -13324,6 +13393,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/select-dynamic-members.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "AST member-selection gates extracted from the structural selector; lower with the common frontend policy."
     },
     {
       "path": "src/ir/select-expression-structure.ts",
@@ -14198,6 +14275,11 @@
     },
     {
       "path": "src/wasm/physical/module-reservations.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/numeric-carriers.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },

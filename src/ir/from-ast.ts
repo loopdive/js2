@@ -35,6 +35,13 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import {
+  coerceIrNumeric,
+  numericFieldSourceValue,
+  isNumericIrSlot,
+  numericFieldUpdate,
+} from "./numeric-slot-coercion.js";
+import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -207,7 +214,7 @@ import {
   stringElementReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
-import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_CONSOLE_METHODS, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
   allocateLiftedFunctionArtifact,
@@ -524,13 +531,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   nativeNumberToFixedAvailable?(): boolean;
   /**
-   * (#4462) Does this lane have the host-free console sink (#3469's
-   * `__stdout_append`)? Consulted by the console capability row
+   * Does this lane have native console output? Consulted by its capability row
    * (`consoleSurfaceCapability`) on BOTH sides of the claim boundary, so a
-   * standalone module that never minted the sink defers rather than claiming a
-   * call with nothing to lower to.
+   * target without an output provider defers before claiming a call.
    */
-  standaloneConsoleSinkAvailable?(): boolean;
+  nativeConsoleOutputAvailable?(): boolean;
   /**
    * (#2955 slice 5) Strategy query: how does this mode iterate a
    * `string`-typed for-of iterable? `"char-loop"` = the native fast path
@@ -1132,6 +1137,8 @@ export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPla
   readonly stringNumericCoercion?: "number-boundary";
   /** Explicit semantic f64 throw boxing; provider admission remains a separate preparation decision. */
   readonly numericThrow?: "number-boundary";
+  /** Selected semantic return boundary; omitted by unqualified entry paths. */
+  readonly dynamicNumericReturn?: "number-boundary";
   /** Authoritative identity for the main artifact and exact feature-plan owner. */
   readonly ownerUnitId: IrUnitId;
   /**
@@ -1548,8 +1555,14 @@ function lowerConstructorBody(
 }
 
 /** Preserve explicit numeric projections across top-level and lifted contexts. */
-function numericProjectionOptions(options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow">) {
-  return { stringNumericCoercion: options.stringNumericCoercion, numericThrow: options.numericThrow };
+function numericProjectionOptions(
+  options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow" | "dynamicNumericReturn">,
+) {
+  return {
+    stringNumericCoercion: options.stringNumericCoercion,
+    numericThrow: options.numericThrow,
+    dynamicNumericReturn: options.dynamicNumericReturn,
+  };
 }
 
 export function lowerFunctionAstToIr(
@@ -2704,47 +2717,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   // We accept ExpressionStatement (e.g., `f();`) as a tail in void
   // functions and synthesize the implicit return.
   if (cx.returnType === null && ts.isExpressionStatement(stmt)) {
-    if (ts.isCallExpression(stmt.expression)) {
-      lowerDiscardedExpression(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(stmt.expression.left)
-    ) {
-      lowerIdentifierAssignment(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: property-store assignment as a void tail — the SET accessor
-    // body shape `set name(v) { this.#name = v; }`. Route through the SAME
-    // `lowerPropertyAssignment` the non-tail statement path uses (see
-    // `lowerStatementList`), so a setter's lone assignment produces bytes
-    // identical to the mid-body case, then synthesize the implicit return.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(stmt.expression.left)
-    ) {
-      lowerPropertyAssignment(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: element-store assignment as a void tail (`arr[i] = v;` as the
-    // final statement of a void function) — mirror the non-tail element-store
-    // arm for select↔build parity.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(stmt.expression.left)
-    ) {
-      lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    lowerDiscardedExpression(stmt.expression, cx);
+    lowerStmt(stmt, cx);
     cx.builder.terminate({ kind: "return", values: [] });
     return;
   }
@@ -3000,6 +2973,7 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly booleanReturnBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
+  readonly dynamicNumericReturn?: AstToIrOptions["dynamicNumericReturn"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -4567,9 +4541,9 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
     }
     const v =
       sourceType.kind === "class"
-        ? cx.builder.emitClassGet(source, propName, field.type)
+        ? numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(source, propName, field.type))
         : cx.builder.emitObjectGet(source, propName, field.type);
-    cx.scope.set(localName, { kind: "local", value: v, type: field.type });
+    cx.scope.set(localName, { kind: "local", value: v, type: cx.builder.typeOf(v) });
   }
 }
 
@@ -4665,49 +4639,6 @@ function isPrimitiveTypeNode(node: ts.TypeNode): boolean {
     node.kind === ts.SyntaxKind.BooleanKeyword ||
     node.kind === ts.SyntaxKind.StringKeyword
   );
-}
-
-/**
- * (#3673) Bridge a plain numeric SSA value to a plain numeric target type.
- *
- * A native type annotation (`pos: i32`, `#323`) makes a class field or a local
- * a Wasm `i32` while the surrounding JS-typed expressions still produce `f64`.
- * `this.pos = 0` therefore hands an `f64` const to an `i32` field, which the
- * assignment sites used to reject outright — so an `i32`-annotated class threw
- * out of `from-ast` and (under the #2138 IR-first gate) failed the compile.
- *
- * This inserts exactly the conversion the LEGACY path inserts at the same seam
- * (`coerceType` in `codegen/type-coercion.ts`): saturating truncation when
- * narrowing, signed/unsigned widening when widening. It deliberately handles
- * ONLY unbranded i32/f32/f64 scalars — a `boolean`/`symbol`-branded i32 keeps
- * its brand-specific boxing rules and must not be silently reinterpreted, and
- * every non-`val` type (string/object/closure/…) still falls through to the
- * caller's mismatch error.
- *
- * Returns `null` when no sound conversion applies, so callers keep their
- * existing "reject and fall back" behaviour.
- */
-function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValueId | null {
-  const from = cx.builder.typeOf(value);
-  if (from.kind !== "val" || target.kind !== "val") return null;
-  const f = from.val;
-  const t = target.val;
-  // Brands are load-bearing at the box seam — never coerce across them.
-  if (f.kind === "i32" && (f.boolean || f.symbol)) return null;
-  if (t.kind === "i32" && (t.boolean || t.symbol)) return null;
-  if (f.kind === t.kind) return null; // caller's equality check already covers this
-  if (f.kind === "f64" && t.kind === "i32") {
-    return cx.builder.emitUnary("i32.trunc_sat_f64_s", value, irVal({ kind: "i32" }));
-  }
-  if (f.kind === "i32" && t.kind === "f64") {
-    // `signed === false` marks the uint32 domain (#1126). Widening it needs
-    // `f64.convert_i32_u`, which the IR unop set does not carry — bail rather
-    // than emit the signed conversion, which would read `-1 >>> 0` back as -1
-    // instead of 2^32-1 (`tests/issue-1817`).
-    if (from.signed === false) return null;
-    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-  }
-  return null;
 }
 
 /** Short debug string for IrType, used in error messages. */
@@ -6420,7 +6351,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         `ir/from-ast: class ${recvType.shape.className} has no field "${propName}" in ${cx.funcName}`,
       );
     }
-    return cx.builder.emitClassGet(recv, propName, field.type);
+    return numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(recv, propName, field.type));
   }
 
   if (recvType.kind === "extern") {
@@ -6846,6 +6777,17 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  * out of slice 2's scope and throw, so the function falls back to
  * legacy.
  */
+/** Box through the same canonical boundary used by dynamic calls and returns. */
+function lowerDynamicStoreOperand(expression: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(expression, cx, irDynamic());
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  return (
+    boxConcreteToDynamic(value, type, expression, cx) ??
+    demoteToLegacy("element-store-unsupported", `dynamic store operand has no certified carrier (${cx.funcName})`)
+  );
+}
+
 /**
  * (#2856 C2) Lower an element STORE `arr[i] = v;` in statement position —
  * the write dual of `lowerElementAccess`'s vec arm. Dispatches to the
@@ -6862,6 +6804,7 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  * (externref objects, strings), packed/exotic element kinds, and value
  * types that don't coerce to the element type.
  */
+
 function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
     withMutationSourceSite(cx, lhs, () => lowerElementStore(lhs, rhs, cx));
@@ -6889,35 +6832,8 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
   if (recvType.kind === "dynamic") {
-    const key = lowerExpr(lhs.argumentExpression, cx, irDynamic());
-    if (cx.builder.typeOf(key).kind !== "dynamic") {
-      throw new IrUnsupportedError(
-        "element-store-unsupported",
-        "build",
-        `ir/from-ast: dynamic member-store key is not dynamic (${cx.funcName})`,
-      );
-    }
-    let value = lowerExpr(rhs, cx, irDynamic());
-    const valueType = cx.builder.typeOf(value);
-    if (valueType.kind !== "dynamic") {
-      const candidate = peelParensExpr(rhs);
-      if (!ts.isStringLiteralLike(candidate) || candidate.text !== "true") {
-        throw new IrUnsupportedError(
-          "element-store-unsupported",
-          "build",
-          `ir/from-ast: concrete dynamic member-store value is outside the #3795 conflict marker (${cx.funcName})`,
-        );
-      }
-      const boxed = boxConcreteToDynamic(value, valueType, rhs, cx);
-      if (boxed === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: dynamic member-store conflict marker has no dynamic carrier (${cx.funcName})`,
-        );
-      }
-      value = boxed;
-    }
+    const key = lowerDynamicStoreOperand(lhs.argumentExpression, cx);
+    const value = lowerDynamicStoreOperand(rhs, cx);
     cx.builder.emitDynMemberSet(recv, key, value);
     return;
   }
@@ -8716,62 +8632,12 @@ function lowerNativeNumberToString(value: IrValueId, funcName: string, cx: Lower
   return r;
 }
 
-/**
- * (#4462) Render one already-lowered `console.<m>` argument to `IrType.string`
- * for the host-free sink.
- *
- * Dispatch is on the LOWERED IR type, not the checker type — deliberately, and
- * for the same reason `emitStandaloneStdoutAppendValue` dispatches on the
- * compiled ValType (#3469): the static type of a `console.log` argument can be
- * `any` while the value that actually arrives is a native string. Carriers with
- * no host-free rendering demote through the typed UNSUPPORTED channel rather
- * than silently printing nothing.
- */
-function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName: string): IrValueId {
-  const valueType = cx.builder.typeOf(value);
-  if (valueType.kind === "string") return value;
-  if (valueType.kind === "val" && valueType.val.kind === "f64") {
-    if (cx.resolver?.nativeNumberToStringAvailable?.() !== true) {
-      throw new IrUnsupportedError(
-        "primitive-method-unsupported",
-        "build",
-        `ir/from-ast: console.${methodName} numeric argument needs a host-free number formatter (${cx.funcName})`,
-      );
-    }
-    return lowerNativeNumberToString(value, cx.funcName, cx);
-  }
-  if (irTypeIsBoolean(valueType)) return lowerBooleanToString(cx.builder, value);
-  // A number that propagation narrowed to i32 is still a number; widen and use
-  // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
-  if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
-    const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-    return lowerHostFreeConsoleArgument(widened, cx, methodName);
-  }
-  throw new IrUnsupportedError(
-    "method-call-unsupported",
-    "build",
-    `ir/from-ast: console.${methodName} argument of type ${describeIrType(valueType)} has no host-free rendering (${cx.funcName})`,
-  );
-}
-
-/**
- * (#4462) `console.<m>(arg)` with NO JS host: render the argument to the native
- * string carrier and append it to the in-module `__stdout_acc` rope — #3469's
- * sink, the one legacy already uses at `--target standalone`, kept host-free so
- * #2961's import-leak gate stays green.
- *
- * The trailing newline is CONCATENATED rather than appended by a second call, so
- * one console call produces one rope node. Output is identical to legacy's
- * append-arg-then-append-"\n" either way; this just costs one call instead of
- * two. Statement-position only, so there is no value to return.
- */
+/** Evaluate the source once; native rendering and newline/channel emission share one module. */
 function lowerHostFreeConsoleCall(argExpr: ts.Expression, cx: LowerCtx, methodName: string): null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== argExpr)
     return withNodeSourceSite(cx, argExpr, () => lowerHostFreeConsoleCall(argExpr, cx, methodName));
-  const argVal = lowerExpr(argExpr, cx, { kind: "string" });
-  const rendered = lowerHostFreeConsoleArgument(argVal, cx, methodName);
-  const line = cx.builder.emitStringConcat(rendered, cx.builder.emitStringConst("\n"));
-  cx.builder.emitCall(irRuntimeFuncRef(IR_CONSOLE_SINK_APPEND_FN), [line], null);
+  const value = lowerExpr(argExpr, cx, { kind: "string" });
+  lowerNativeConsoleLine(cx.builder, value, methodName, cx.resolver?.nativeNumberToStringAvailable?.() === true);
   return null;
 }
 
@@ -8863,7 +8729,7 @@ function tryLowerConsoleMethodCall(
     cx.resolver?.consoleArgVariant !== undefined
   ) {
     const jsHost = cx.resolver?.jsHostExterns?.() === true;
-    const hostFreeSink = cx.resolver?.standaloneConsoleSinkAvailable?.() === true;
+    const hostFreeSink = cx.resolver?.nativeConsoleOutputAvailable?.() === true;
     assertNotDeferred(consoleSurfaceCapability(jsHost, hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
@@ -10560,25 +10426,10 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     return;
   }
 
-  // (#7106 S3c) `<dynamic>.name = v` in a function whose code strictness the
-  // lowering knows (an ambient-`this` subject): `dyn.member_set` with the name
-  // boxed as a string key, PutValue's strict/sloppy failure rule preserved.
-  if (recvType.kind === "dynamic" && cx.functionCodeStrict !== undefined && ts.isIdentifier(lhs.name)) {
+  if (recvType.kind === "dynamic") {
     const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
-    let value = lowerExpr(expr.right, cx, irDynamic());
-    const valueType = cx.builder.typeOf(value);
-    if (valueType.kind !== "dynamic") {
-      const boxed = boxConcreteToDynamic(value, valueType, expr.right, cx);
-      if (boxed === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: dynamic member-store value of ${describeIrType(valueType)} has no dynamic carrier (${cx.funcName})`,
-        );
-      }
-      value = boxed;
-    }
-    cx.builder.emitDynMemberSet(recv, key, value, !cx.functionCodeStrict);
+    const value = lowerDynamicStoreOperand(expr.right, cx);
+    cx.builder.emitDynMemberSet(recv, key, value, cx.functionCodeStrict === false);
     return;
   }
 
@@ -10624,7 +10475,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     const rawValue = lowerExpr(expr.right, cx, fieldType);
     const newValue = irTypeEquals(cx.builder.typeOf(rawValue), fieldType)
       ? rawValue
-      : (coerceIrNumeric(rawValue, fieldType, cx) ?? rawValue);
+      : (coerceIrNumeric(cx.builder, rawValue, fieldType) ?? rawValue);
     const newValueType = cx.builder.typeOf(newValue);
     if (!irTypeEquals(newValueType, fieldType)) {
       demoteToLegacy(
@@ -10707,7 +10558,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
  *  - `++`/`--` in statement position is the same lowering with a synthetic
  *    `1` RHS — the discarded result makes prefix and postfix identical.
  *
- * Restricted to PLAIN f64 fields on object / class shapes. Accessor-backed
+ * Restricted to plain numeric fields on object / class shapes. Accessor-backed
  * properties and extern receivers turn the read and the write into CALLS whose
  * re-entrancy this desugaring does not model, so they demote TYPED (the
  * function falls back to the legacy body rather than being approximated).
@@ -10758,11 +10609,11 @@ function lowerPropertyCompound(
     );
   }
   const fieldType = field.type;
-  if (asVal(fieldType)?.kind !== "f64") {
+  if (!isNumericIrSlot(fieldType)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write to non-f64 field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write to non-numeric field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
     );
   }
   // (2) READ — strictly before the RHS.
@@ -10771,23 +10622,21 @@ function lowerPropertyCompound(
       ? cx.builder.emitClassGet(recv, fieldName, fieldType)
       : cx.builder.emitObjectGet(recv, fieldName, fieldType);
   // (3) RHS — a synthetic `1` for `++`/`--`.
-  const rhsValue =
-    rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, fieldType);
-  if (asVal(cx.builder.typeOf(rhsValue))?.kind !== "f64") {
+  const rhsValue = rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, IR_F64);
+  if (!isNumericIrSlot(cx.builder.typeOf(rhsValue))) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write RHS must be numeric (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
   // (4) binop, then (5) the write tail.
-  const result = cx.builder.emitBinary(binop, oldValue, rhsValue, IR_F64);
-  if (!irTypeEquals(cx.builder.typeOf(result), fieldType)) {
+  const result = numericFieldUpdate(cx.builder, oldValue, rhsValue, fieldType, binop);
+  if (result === null) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property result ${describeIrType(cx.builder.typeOf(result))} does not match field ` +
-        `${describeIrType(fieldType)} in ${cx.funcName}`,
+      `ir/from-ast: compound property result cannot convert to ${describeIrType(fieldType)} in ${cx.funcName}`,
     );
   }
   if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
@@ -11043,7 +10892,7 @@ function lowerCheckedClassFieldSet(
   // JavaScript expressions remain number-valued at the source boundary.
   const newValue = irTypeEquals(cx.builder.typeOf(rawValue), field.type)
     ? rawValue
-    : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
+    : (coerceIrNumeric(cx.builder, rawValue, field.type) ?? rawValue);
   const newValueType = cx.builder.typeOf(newValue);
   if (!irTypeEquals(newValueType, field.type)) {
     demoteToLegacy(
@@ -11289,6 +11138,8 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   if (declared && declared.kind === "val" && declared.val.kind === "f64") {
     const actualT = cx.builder.typeOf(value);
     const actualV = asVal(actualT);
+    if (actualT.kind === "dynamic" && cx.dynamicNumericReturn === "number-boundary")
+      return cx.builder.emitDynToNumber(value);
     if (actualV && actualV.kind === "externref") {
       // (#4461 / #3526 F1-S1) Both lanes own a `__unbox_number` with the same
       // `(externref) -> f64` signature; only the PROVIDER differs (host import
@@ -11303,7 +11154,7 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
         return cx.builder.emitIntrinsic("js.number.unbox", [value]);
       }
     }
-    return value;
+    return coerceIrNumeric(cx.builder, value, declared) ?? value;
   }
   // Only the externref (TS `any`) declared-result case can mismatch here;
   // native scalar / matching-ref returns already line up via the hint.
@@ -16144,12 +15995,13 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   if (t.kind === "string") {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
   }
+  if (t.kind === "class") return cx.builder.emitBox(cx.builder.emitCoerceToExternref(v), irDynamic(JS_TAG_IDS.Object));
   const tv = asVal(t);
   if (!tv) return null;
   // Proven boolean i32 → tag-4 box; without the refinement the i32 would box
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
-  if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
+  if (tv.kind === "i32" && (tv.boolean === true || expressionIsDefinitelyBoolean(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the

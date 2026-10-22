@@ -9,6 +9,8 @@
 // since they are used only by this subsystem. Called by the compile driver
 // (generateModule), which imports these back.
 
+import { ensureToUint32Helper } from "./helpers/uint32-coercion.js";
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
@@ -796,7 +798,8 @@ function buildSetterStore(
     if (ft.kind === "f64" || ft.kind === "i32") {
       // Caller guarantees unboxNumIdx is defined for these arms (bucket filter).
       then.push({ op: "call", funcIdx: unboxNumIdx! });
-      if (ft.kind === "i32") then.push({ op: "i32.trunc_sat_f64_s" });
+      if (ft.kind === "i32")
+        then.push(ft.uint32 ? { op: "call", funcIdx: ensureToUint32Helper(ctx) } : { op: "i32.trunc_sat_f64_s" });
       then.push({ op: "struct.set", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx });
       then.push(...markWrote);
       return then;
@@ -1393,7 +1396,7 @@ function buildGetterExtract(
     if (ft.kind === "f64") {
       // Already f64 — nothing to do
     } else if (ft.kind === "i32") {
-      then.push({ op: "f64.convert_i32_s" });
+      then.push(i32NumberWidening(ft));
     } else {
       then.push({ op: "drop" });
       then.push({ op: "f64.const", value: 0 });
@@ -1434,7 +1437,7 @@ function buildGetterExtract(
       // The raw i32 is already on the stack; `__box_boolean(i32) -> externref`.
       then.push({ op: "call", funcIdx: boxBoolIdx });
     } else if (ft.kind === "i32") {
-      then.push({ op: "f64.convert_i32_s" });
+      then.push(i32NumberWidening(ft));
       if (boxNumIdx !== undefined) {
         then.push({ op: "call", funcIdx: boxNumIdx });
       } else {
