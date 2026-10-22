@@ -1409,6 +1409,23 @@ export function assessIrImplicitConstructorSubject(
  */
 let earlyReturnLoopDepth = 0;
 let earlyReturnBarrierDepth = 0;
+// (#7106 Stage 4) Selection is inside a planned function-member closure body.
+let currentInPlannedMemberClosure = false;
+
+/**
+ * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers,
+ * and the IR's dynamic method call (`__ir_dyn_method_call_N` →
+ * `__extern_method_call`) has no brand arms for primitives or vecs on the
+ * host-free lanes: it answers `undefined` where legacy dispatches by brand
+ * (`list.join(", ")`, `n.toString()`, `sym.toString()` — measured). Such a call
+ * stays legacy; a string-literal receiver keeps its native string method.
+ */
+function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
+  if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
+  let receiver: ts.Expression = expr.expression.expression;
+  while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+  return !ts.isStringLiteralLike(receiver);
+}
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
 // #7104 — true when the return position resolved `dynamic`: bare `return;`,
@@ -6546,7 +6563,16 @@ function isPhase1ClosureLiteral(
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,
-    isStatementListBuildable: isPhase1StatementList,
+    // (#7106 Stage 4) A planned void-result member closure admits bare
+    // `return;` exactly like a void top-level function.
+    isStatementListBuildable: (statements, inner, classes) =>
+      isPhase1StatementList(
+        statements,
+        inner,
+        classes,
+        false,
+        plan !== undefined && plan.signature.returnType === null,
+      ),
     restoreProjectionBindings,
     withClosureState: withFunctionMemberClosureState,
   });
@@ -6587,8 +6613,17 @@ function withFunctionMemberClosureState<T>(
   currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentSubjectFunctionName = null;
-  currentSubjectReturnsBoolean = true;
+  // (#7106 Stage 4) The closure is its own function: an enclosing subject's
+  // return context (module-init's barrier, an outer loop) does not apply to
+  // its body; a `return` there exits the closure.
+  const outerEarlyReturn = [earlyReturnLoopDepth, earlyReturnBarrierDepth] as const;
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 0;
+  const outerInPlannedClosure = currentInPlannedMemberClosure;
+  currentInPlannedMemberClosure = true;
+  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
+  currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set();
   currentNumericParamNames = new Set();
@@ -6625,6 +6660,8 @@ function withFunctionMemberClosureState<T>(
       currentNestedFunctionNames,
       currentLexicalValueBindingNames,
     ] = outer;
+    [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
+    currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
 }
@@ -10644,6 +10681,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     const functionObjectCall = functionObjectCallIsPhase1(expr, scope, localClasses);
     if (functionObjectCall !== undefined) return functionObjectCall;
+    if (plannedClosureDynamicMethodCall(expr)) return shapeNo("closure-member-dynamic-method", expr);
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer
     // enforces that the receiver is a class instance whose shape carries
