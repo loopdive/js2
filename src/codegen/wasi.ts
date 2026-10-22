@@ -8,6 +8,7 @@
 // helpers/consts for their external callers (node-fs-api, deno-api, builtins,
 // async-scheduler, linear-uint8-codegen).
 
+import { CONSOLE_METHOD_NAMES } from "../shared/contracts/console-output.js";
 import { ts, forEachChild } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -211,7 +212,7 @@ export function registerWasiImports(ctx: CodegenContext, sourceFile: ts.SourceFi
       if (
         ts.isIdentifier(propAccess.expression) &&
         propAccess.expression.text === "console" &&
-        ["log", "warn", "error"].includes(propAccess.name.text)
+        CONSOLE_METHOD_NAMES.has(propAccess.name.text)
       ) {
         needsFdWrite = true;
         // #1493: console.warn/error must route to fd=2 (stderr), not fd=1 (stdout).
