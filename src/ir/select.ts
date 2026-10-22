@@ -2554,8 +2554,12 @@ function resolveReturnType(
   // into a `() -> externref` claim that withdraws on `abi-signature-parity`
   // (every test262 harness helper, measured 2026-10-20). Mirror legacy here so
   // the claim carries legacy's ABI; a value-returning body keeps its lattice fact.
+  // A class method follows the same rule: legacy registers its slot from the
+  // checker's `void`, and methods never carry a lattice entry (`mapped` is
+  // undefined), so without this arm every value-less JS method was refused as
+  // `return-type-not-resolvable`.
   if (
-    ts.isFunctionDeclaration(fn) &&
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) &&
     fn.body &&
     (mapped === undefined || mapped.kind === "unknown" || mapped.kind === "dynamic") &&
     !irFunctionBodyReturnsValue(fn.body)
