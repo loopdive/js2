@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { forEachChild, ts } from "../ts-api.js";
-import type { IrImportedFunctionResolver } from "./imported-functions.js";
+import type { IrImportedFunctionResolver, IrResolvedFunctionTarget } from "./imported-functions.js";
 
 export function unwrapTypeErasedExpression(expr: ts.Expression): ts.Expression | undefined {
   return ts.isAsExpression(expr) ||
@@ -32,24 +32,140 @@ export function isAffineThreeDeepElementAccess(expr: ts.ElementAccessExpression)
   return indexHasMultiply;
 }
 
-export function isFunctionObjectReceiver(
+/**
+ * Return the declaration's effective parameter type node.
+ *
+ * For TypeScript this is the ordinary `param.type`. For JavaScript, the TS
+ * parser/checker boundary exposes a standard `@param {T}` annotation through
+ * `getJSDocType` while deliberately leaving `param.type` unset. Keeping this
+ * lookup in one helper prevents the selector and the shared AST-to-IR
+ * signature resolver from disagreeing about the same source declaration. No
+ * comment text is parsed and no synthetic annotation is attached to the AST.
+ */
+export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
+}
+
+/**
+ * Return the declaration's effective return type node, including a JavaScript
+ * JSDoc `@returns {T}` annotation when present.
+ *
+ * The caller still applies the existing narrow primitive/object/dynamic
+ * mapping. In particular, this helper does not turn an unannotated, `any`,
+ * union, or otherwise unsupported signature into a primitive claim.
+ */
+export function effectiveIrReturnTypeNode(
+  fn: ts.FunctionDeclaration | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+): ts.TypeNode | undefined {
+  return fn.type ?? ts.getJSDocReturnType(fn);
+}
+
+function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
-): boolean {
+): IrResolvedFunctionTarget | undefined {
   const access = node.parent;
   if (
     !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
     access.expression !== node ||
     access.questionDotToken !== undefined
   )
-    return false;
+    return;
   const use = access.parent;
   if (
     !(ts.isCallExpression(use) && use.expression === access) &&
-    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) &&
+    !isFunctionObjectChainedWrite(access)
   )
-    return false;
-  return resolver?.resolveTopLevelFunctionValue(node) !== undefined;
+    return;
+  return resolver?.resolveTopLevelFunctionValue(node);
+}
+
+/**
+ * (#7106 census arm 3) `F.p.x = v` — the function object's `F.p` member READ is
+ * the receiver of a member WRITE (`Test262Error.prototype.toString = …`). `F`
+ * is still only a dynamic receiver: `F.p` is a dynamic member get on the boxed
+ * function object, and the write a dynamic member set on its result.
+ */
+export function isFunctionObjectChainedWrite(
+  access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): boolean {
+  const store = access.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    ts.isPropertyAccessExpression(store) &&
+    ts.isIdentifier(store.name) &&
+    store.expression === access &&
+    store.questionDotToken === undefined &&
+    ts.isBinaryExpression(store.parent) &&
+    store.parent.left === store &&
+    store.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  );
+}
+
+/**
+ * A stable top-level function used ONLY as the receiver of a member call or
+ * member write. (#7108-successor arm, #7106 census arm 4) No signature
+ * evidence is required: such a use lowers to the canonical function object
+ * boxed into the dynamic carrier (`objectReceiver` plan), and the planner
+ * mints that plan with an opaque signature when the target is unannotated —
+ * the signature only types the accessor's externref result before the box.
+ */
+export function isFunctionObjectReceiver(
+  node: ts.Identifier,
+  resolver: IrImportedFunctionResolver | undefined,
+): boolean {
+  return resolveFunctionObjectReceiver(node, resolver) !== undefined;
+}
+
+/**
+ * (#7106 census arm 3) `F.x = G` / `F[k] = G`: a stable top-level function `G`
+ * stored on a function-object receiver `F`. The value is boxed into the dynamic
+ * carrier and written through the receiver's dynamic member write — like a
+ * receiver-only use it never reads `G`'s signature, so it needs no evidence.
+ */
+export function isFunctionObjectStoredValue(
+  node: ts.Identifier,
+  resolver: IrImportedFunctionResolver | undefined,
+): boolean {
+  const root = functionObjectStoreRoot(node);
+  return (
+    root !== undefined &&
+    resolveFunctionObjectReceiver(root, resolver) !== undefined &&
+    resolver?.resolveTopLevelFunctionValue(node) !== undefined
+  );
+}
+
+/**
+ * The receiver identifier `F` when `node` is the stored value of `F.x = node`,
+ * `F[k] = node` or the chained `F.p.x = node` (see
+ * {@link isFunctionObjectChainedWrite}); otherwise `undefined`. Syntax only —
+ * the selector and the planner each apply their own resolver to `F` and `node`.
+ */
+export function functionObjectStoreRoot(node: ts.Identifier): ts.Identifier | undefined {
+  const assignment = node.parent;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.right !== node ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  )
+    return undefined;
+  const store = assignment.left;
+  if (!(ts.isPropertyAccessExpression(store) || ts.isElementAccessExpression(store)) || store.questionDotToken)
+    return undefined;
+  if (ts.isIdentifier(store.expression)) return store.expression;
+  const chained = store.expression;
+  return ts.isPropertyAccessExpression(chained) &&
+    ts.isIdentifier(chained.expression) &&
+    chained.questionDotToken === undefined &&
+    isFunctionObjectChainedWrite(chained)
+    ? chained.expression
+    : undefined;
 }
 
 export function functionObjectMemberCallIsBuildable(
@@ -58,11 +174,12 @@ export function functionObjectMemberCallIsBuildable(
   isExpressionBuildable: (expression: ts.Expression) => boolean,
 ): boolean | undefined {
   const functionAccess = expr.expression;
-  if (
+  const target =
     (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess)) &&
-    ts.isIdentifier(functionAccess.expression) &&
-    isFunctionObjectReceiver(functionAccess.expression, resolver)
-  ) {
+    ts.isIdentifier(functionAccess.expression)
+      ? resolveFunctionObjectReceiver(functionAccess.expression, resolver)
+      : undefined;
+  if (target && (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess))) {
     if (functionAccess.questionDotToken || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
       return false;
     if (ts.isElementAccessExpression(functionAccess) && !isExpressionBuildable(functionAccess.argumentExpression))

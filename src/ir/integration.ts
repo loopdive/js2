@@ -65,7 +65,7 @@ import {
   undefinedAnyValueInstrs,
   undefinedExternInstrs,
 } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic; (#7104) dyn.undefined
-import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
+import { ensureDynMemberGet, ensureDynMemberSet, ensureDynMemberSetSloppy } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
@@ -99,9 +99,16 @@ import {
   IR_PUBLISH_ARGC_HELPER,
 } from "../codegen/ir-arguments-length.js";
 import {
+  ensureIrCurrentThisHelper,
   ensureIrDynamicConstructHelper,
+  ensureIrInstanceOfFunctionHelper,
+  IR_CURRENT_THIS_SLOPPY_HELPER,
+  IR_CURRENT_THIS_STRICT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
+  irFunctionThisStrictness,
+  irInstanceOfFunctionHelperName,
+  irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
@@ -2538,6 +2545,8 @@ export function compileIrPathFunctions(
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
+      functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -3229,10 +3238,12 @@ export function compileIrPathFunctions(
           );
         }
         const o = effectiveOverride(name);
+        const ambientThisStrict = irFunctionThisStrictness(ctx, stmt); // (#7106 S3c)
         const lowered = lowerFunctionAstToIr(stmt, {
           exported: hasExportModifier(stmt),
           funcName: name,
           ownerUnitId,
+          ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }),
           directCalls: directCallsFor(stmt, ownerUnitId),
           fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
           fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
@@ -8903,6 +8914,8 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.construct") return true;
   if (instr.kind === "dyn.string_carrier") return true;
   if (instr.kind === "dyn.arguments_length") return true;
+  if (instr.kind === "dyn.current_this") return true;
+  if (instr.kind === "dyn.instanceof_fn") return true;
   if (instr.kind === "dyn.publish_argc") return true;
   if (instr.kind === "dyn.own_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
@@ -9071,6 +9084,7 @@ function preregisterDynamicSupport(
   let usesToNumber = false;
   let usesMemberGet = false;
   let usesMemberSet = false;
+  let usesSloppyMemberSet = false; // (#7106 S3c)
   // (#3143) A from-ast lowering can emit a DIRECT named call to a member of the
   // `addUnionImports` family (`__box_number` / `__unbox_number` / `__box_boolean`
   // / …) rather than a `box`/`unbox` IR instruction — e.g. `coerceToExpectedExtern`
@@ -9119,6 +9133,9 @@ function preregisterDynamicSupport(
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
   let usesDynArgumentsLength = false;
+  // (#7106 S3c) `dyn.current_this` / `dyn.instanceof_fn` call receiver wrappers.
+  const currentThisStrictness = new Set<boolean>();
+  const instanceOfFunctions = new Set<string>();
   // (#7106 S1i) `dyn.publish_argc` calls the caller-side argc wrapper.
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
@@ -9137,12 +9154,15 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
+          if (i.kind === "dyn.current_this") currentThisStrictness.add(i.strict);
+          if (i.kind === "dyn.instanceof_fn") instanceOfFunctions.add(i.target.name);
           if (i.kind === "dyn.publish_argc") usesDynPublishArgc = true;
           if (i.kind === "dyn.own_property") ownPropertyTests.add(i.test);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
           if (usesDynMemberSet(i)) usesMemberSet = true;
+          if (i.kind === "dyn.member_set" && i.sloppy === true) usesSloppyMemberSet = true;
           // (#3526 F1-S1, widened by F1-S2) The number and boolean boundaries
           // reach Phase 3 as semantic `intrinsic`s whose frozen providers carry
           // the SAME physical targets the old direct calls used. Provider
@@ -9285,6 +9305,22 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
+  }
+  if ((currentThisStrictness.size > 0 || instanceOfFunctions.size > 0) && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 S3c) legacy's receiver ladder and per-function chain walk, wrapped.
+    for (const strict of [...currentThisStrictness].sort()) {
+      if (ensureIrCurrentThisHelper(ctx, strict) === undefined) {
+        throw new Error("ir/integration: dyn.current_this has no receiver wrapper on this lane (#7106 S3c)");
+      }
+      observeNativeRuntimeProvider(ctx, strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER);
+    }
+    for (const functionName of [...instanceOfFunctions].sort()) {
+      if (ensureIrInstanceOfFunctionHelper(ctx, functionName) === undefined) {
+        throw new Error(`ir/integration: dyn.instanceof_fn has no chain-walk wrapper for ${functionName} (#7106 S3c)`);
+      }
+      observeNativeRuntimeProvider(ctx, irInstanceOfFunctionHelperName(functionName));
+    }
+    flushLateImportShifts(ctx, null);
   }
   if (usesDynPublishArgc && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     if (ensureIrPublishArgcHelper(ctx) === undefined) {
@@ -9458,6 +9494,9 @@ function preregisterDynamicSupport(
       flushLateImportShifts(ctx, null);
     }
     ensureDynMemberSet(ctx);
+    if (usesSloppyMemberSet && !ensureDynMemberSetSloppy(ctx)) {
+      throw new Error("ir/integration: a sloppy dyn.member_set has no __extern_set store on this lane (#7106 S3c)");
+    }
   }
 }
 
@@ -9579,6 +9618,12 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
           "ir/integration: dyn.arguments_length is not lowerable on the fast $AnyValue carrier (#7106 S1e)",
         );
       },
+      emitCurrentThis(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.current_this is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
+      },
+      emitInstanceOfFunction(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.instanceof_fn is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
+      },
       emitPublishArgc(): readonly Instr[] {
         throw new Error("ir/integration: dyn.publish_argc is not lowerable on the fast $AnyValue carrier (#7106 S1i)");
       },
@@ -9677,7 +9722,12 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         ctx.usesDynMemberGet = true;
         return [callHelper("__dyn_member_get")];
       },
-      emitMemberSet(): readonly Instr[] {
+      emitMemberSet(sloppy: boolean): readonly Instr[] {
+        if (sloppy) {
+          throw new Error(
+            "ir/integration: a sloppy dyn.member_set is not lowerable on the fast $AnyValue carrier (#7106 S3c)",
+          );
+        }
         return [callHelper("__dyn_member_set")];
       },
     };
@@ -9750,6 +9800,20 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.arguments_length needs the host-free argc protocol (#7106 S1e)");
       }
       return [{ op: "i32.const", value: formals } as Instr, callImport(IR_ARGUMENTS_LENGTH_HELPER)];
+    },
+    emitCurrentThis(strict: boolean): readonly Instr[] {
+      // (#7106 S3c) legacy's `__current_this` ladder, wrapped once per strictness.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.current_this needs the host-free receiver protocol (#7106 S3c)");
+      }
+      return [callImport(strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER)];
+    },
+    emitInstanceOfFunction(functionName: string): readonly Instr[] {
+      // (#7106 S3c) carrier on the stack → legacy's per-function chain walk.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.instanceof_fn needs the host-free chain walk (#7106 S3c)");
+      }
+      return [callImport(irInstanceOfFunctionHelperName(functionName))];
     },
     emitPublishArgc(count: number): readonly Instr[] {
       // (#7106 S1i) legacy's `emitSetArgc` for an under-arity direct call, wrapped once.
@@ -9925,8 +9989,8 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       ctx.usesDynMemberGet = true;
       return [callImport("__dyn_member_get")];
     },
-    emitMemberSet(): readonly Instr[] {
-      return [callImport("__dyn_member_set")];
+    emitMemberSet(sloppy: boolean): readonly Instr[] {
+      return [callImport(sloppy ? "__dyn_member_set_sloppy" : "__dyn_member_set")];
     },
   };
 }

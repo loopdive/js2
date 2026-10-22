@@ -69,7 +69,10 @@ describe("#7106 item 1 — compareArray's selector blockers", () => {
     expect(await call(result.binary, "ok")).toBe(31);
   });
 
-  it("refuses the member call on an UNTYPED function object before claim (no plan evidence)", async () => {
+  // (#7106 census arm 4) A receiver-only use needs no signature evidence: the
+  // planner mints the boxed receiver plan with an opaque signature, so the
+  // member call on an UNTYPED function object is claimed and runs.
+  it("claims the member call on an UNTYPED function object (receiver-only use)", async () => {
     const untyped = `
       function assert(c, m) { if (!c) { throw new Error(m); } }
       assert._isSameValue = function (a, b) { return a === b; };
@@ -80,7 +83,7 @@ describe("#7106 item 1 — compareArray's selector blockers", () => {
     });
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const o = outcome(result, "compareArray");
-    expect(o?.irBodyEmitted).not.toBe(true);
+    expect(o?.irBodyEmitted).toBe(true);
     expect((result.irPostClaimErrors ?? []).filter((e) => e.func === "compareArray")).toEqual([]);
     // plain `===`: -0 equals 0 and NaN differs from NaN, so only the first three bits.
     expect(await call(result.binary, "ok")).toBe(7);

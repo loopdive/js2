@@ -250,7 +250,12 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             return;
           }
           if (native && functionObjects && (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")) {
-            const name = instr.kind === "dyn.member_get" ? "__dyn_member_get" : "__dyn_member_set";
+            const name =
+              instr.kind === "dyn.member_get"
+                ? "__dyn_member_get"
+                : instr.sloppy === true
+                  ? "__dyn_member_set_sloppy"
+                  : "__dyn_member_set";
             const handle = ctx.funcMap.get(name);
             if (handle === undefined) {
               nameable = false;
