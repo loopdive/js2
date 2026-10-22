@@ -76,7 +76,7 @@ import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
-  observeIrFunctionObjectCallProviders,
+  observeIrDynamicRuntimeProviders,
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
@@ -9457,8 +9457,7 @@ function preregisterDynamicSupport(
   if (dynamicRuntimeNeeds.size > 0) {
     addUnionImports(ctx);
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
-    if (dynamicRuntimeNeeds.has("member-call"))
-      observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
+    observeIrDynamicRuntimeProviders(dynamicRuntimeNeeds, (symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
   if (usesFunctionMemberStrictSet && nativeSemanticProviders && !ctx.fast) {
     ensureObjectRuntime(ctx);

@@ -14766,7 +14766,11 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
     );
   }
   if (ts.isConditionalExpression(candidate)) {
-    return expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx);
+    // The canonical mixed-primitive producer joins boxed arms as dynamic.
+    return (
+      mixedPrimitiveConditionalClaim(candidate, cx) !== null ||
+      (expressionProducesDynamic(candidate.whenTrue, cx) && expressionProducesDynamic(candidate.whenFalse, cx))
+    );
   }
   return (
     ts.isBinaryExpression(candidate) &&

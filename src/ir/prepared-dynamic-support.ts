@@ -186,10 +186,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             return;
           }
           if (
-            native &&
-            functionObjects &&
-            !ctx.fast &&
-            carrierValType.kind === "externref" &&
+            unitExternref &&
             (instr.kind === "dyn.truthy" || instr.kind === "dyn.typeof" || (instr.kind === "dyn.eq" && !instr.loose))
           ) {
             const name =

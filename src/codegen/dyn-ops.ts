@@ -703,8 +703,13 @@ export function irDynamicRuntimeNeedForSymbol(symbol: string): IrDynamicRuntimeN
   return undefined;
 }
 
-/** Observe only the actual function-object call helpers, after reservation. */
-export function observeIrFunctionObjectCallProviders(observe: (symbol: string) => void): void {
+/** Observe the reserved providers requested by the prepared runtime calls. */
+export function observeIrDynamicRuntimeProviders(
+  needs: ReadonlySet<IrDynamicRuntimeNeed>,
+  observe: (symbol: string) => void,
+): void {
+  if (needs.has("add")) observe(IR_DYN_ADD_FN);
+  if (!needs.has("member-call")) return;
   for (const symbol of [
     IR_DYN_CALL_BOX_FN,
     IR_DYN_CALL_VALUE_FN,
