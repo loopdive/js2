@@ -15445,6 +15445,12 @@ export {
   IR_DYN_INSTANCEOF_HELPER,
   irDynamicInstanceOfRoutesGeneric,
 } from "./ir-dynamic-instanceof.js";
+// (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
+export {
+  buildModuleInitPrologueCall,
+  moduleInitPrologueMayEmit,
+  retireModuleInitPrologueHelper,
+} from "./declarations/module-init-prologue.js";
 export type {
   ClosureInfo,
   CodegenContext,

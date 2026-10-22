@@ -42,7 +42,7 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
-  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way
+  - largestSccSize: 727 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
 # dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
 # dynamic-delete statement arm.
@@ -977,6 +977,69 @@ Found while planning the propertyHelper `isConfigurable` arm.
 **Still wrong on the direct path (not changed here).** Legacy's
 `delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
 readable. That is the same on the base and on legacy-only compiles.
+
+## GDI prologue for an IR-claimed `<module-init>` (2026-10-22)
+
+**Bug.** The IR patch replaced the whole `__module_init` body, and the direct
+emitter's GlobalDeclarationInstantiation prologue went with it. On standalone,
+`function f() { return 1; } let k = 2; if (k !== 2) { throw "#1"; }` claimed
+`<module-init>` and never called `__defineProperty_value` for `f`: a claimed
+script stopped publishing its top-level functions on the global object. The
+same drop hit module `var` undefined seeds (#4489) and the #2931 live-binding
+seeds. The integration refused the claim outright when live-binding seeds
+existed, and had no guard for the other parts.
+
+**Fix.**
+- `compileModuleInitBody`'s prologue moved verbatim into
+  `src/codegen/declarations/module-init-prologue.ts`
+  (`emitModuleInitPrologue`). The direct body still inlines it. A binary-hash
+  A/B over 18 lane×shape compiles (standalone/gc/wasi; with and without
+  functions/vars; script and module) is identical.
+- For a claimed initializer, `buildModuleInitPrologueCall` (re-exported by the
+  `codegen/index.ts` facade, which the bridge already imports, so the IR
+  layering count is unchanged) runs the same
+  emitter into a fresh `__module_init` context, installs the result as a
+  private `[] -> []` helper `__module_init_prologue`, and the patch prepends
+  `call` to the IR body, inside the WASI guard. An empty prologue mints
+  nothing, so an initializer with no instantiation work stays byte-identical.
+  The inliner usually folds the helper back into `__module_init`.
+- **Why a separate helper rather than a splice.** The prologue keeps its own
+  locals, so no local remapping against the IR body is needed.
+- **Why it is built during preparation.** The helper is built in
+  `compileIrPathFunctions` before the callable-provider pre-registration flush,
+  which is before the resolver exists and before any IR body is lowered. The
+  emitters can register late helpers or imports, and a late-import shift
+  reaches only installed functions and `ctx.currentFunc`. It never reaches a
+  lowered body waiting in the patch queue, or a funcIdx the resolver has
+  already captured.
+- One code path covers both single-source routes: the post-direct overlay (the
+  direct body is emitted, then replaced) and the prepared component (the direct
+  body is never compiled).
+- An emitter failure withdraws only that initializer, as a soft
+  `module-init-legacy-coupling` Unsupported. The direct body carries its own
+  prologue, so it is a correct fallback.
+- A helper whose initializer was not installed is emptied
+  (`retireUninstalledModuleInitPrologues`).
+- **Live-binding refusal retired** for those routes, because the helper now
+  seeds them. Measured: a module whose function swaps `g` after init returns
+  `412` (same as node) with the claimed initializer. With the prologue call
+  removed, the same build traps on the unseeded binding.
+- **The allocator-sealed multi-source routes** (`preparedModuleInitBatch`,
+  `deferPreparedPublication`) cannot mint the helper. There the refusal is
+  widened to the whole prologue via `moduleInitPrologueMayEmit`, a conservative
+  predicate that is never false when an emitter has work.
+- **Static class initializers keep their refusal.** They are body content,
+  not prologue.
+
+**Tests.** `tests/issue-7106-module-init-gdi-prologue.test.ts`. 8 of the 11
+cases fail on the base (file-copy A/B). The other 3 are run-like-node smoke
+cases and the no-helper control.
+
+**Not verified.** The coordinator's script `var` repro
+(`if (y !== undefined) { throw "#5"; } var y = 1;`) needs the separate
+script-var gate. A local approximation of that gate still rejected the source
+with `expr-ident-not-in-scope «y»`, so this repro was not run. The module
+analog, which goes through the same `emitModuleVarUndefinedSeeds`, is covered.
 
 ## Harness unit blocker census (2026-10-21)
 

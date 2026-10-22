@@ -52,6 +52,7 @@ type PreparedTimerDynamicHelperName =
   | "__box_boolean"
   | "__is_truthy"
   | "__typeof"
+  | "__typeof_undefined"
   | "__extern_strict_eq";
 
 export interface CompilerTimerShimLateSealTransaction {
