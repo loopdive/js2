@@ -72,6 +72,45 @@ describe("#7118 — ambient intrinsics as IR values", () => {
     }
   }
 
+  // (#7127) Once the module's brand companion is seeded (here by an
+  // `Object.getPrototypeOf` call in a legacy function), a
+  // `<Receiver>.prototype.<method>` value read is exact through the IR and claims.
+  const SEEDED = "function seed(o) { return Object.getPrototypeOf(o); }\n";
+  const SEEDED_READS: Record<string, string> = {
+    errorToString: `if (typeof Error.prototype.toString !== "function") { throw "#11"; }`,
+    inheritedIdentity: `if (Array.prototype.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "#12"; }`,
+    ownIdentity: `if (Array.prototype.toString === Object.prototype.toString) { throw "#13"; }`,
+    functionCall: `if (typeof Function.prototype.call !== "function") { throw "#14"; }`,
+    absentMember: `if (Number.prototype.push !== undefined) { throw "#15"; }`,
+  };
+  for (const [name, body] of Object.entries(SEEDED_READS)) {
+    const source = SEEDED + body;
+    it(`node agrees: seeded ${name}`, () => {
+      expect(() => new Function(source)()).not.toThrow();
+    });
+    for (const target of ["standalone", undefined] as const) {
+      it(`seeded ${name} claims <module-init> and runs (${target ?? "gc"})`, async () => {
+        const { claimed } = await run(target, source);
+        expect(claimed).toBe(true);
+      });
+    }
+  }
+  // …while the shapes legacy or the IR still answer wrongly stay refused.
+  const SEEDED_REFUSED: Record<string, string> = {
+    protoConstructor: `if (TypeError.prototype.constructor !== TypeError) { throw "#16"; }`,
+    inheritedCall: `if (typeof TypeError.call !== "function") { throw "#17"; }`,
+    functionProto: `if (typeof Function.prototype !== "function") { throw "#18"; }`,
+    dataMember: `if (Error.prototype.message !== "") { throw "#19"; }`,
+  };
+  for (const [name, body] of Object.entries(SEEDED_REFUSED)) {
+    for (const target of ["standalone", undefined] as const) {
+      it(`seeded ${name} stays legacy and answers as node does (${target ?? "gc"})`, async () => {
+        const { claimed } = await run(target, SEEDED + body);
+        expect(claimed).toBe(false);
+      });
+    }
+  }
+
   for (const target of ["standalone", undefined] as const) {
     it(`a failing intrinsic check still throws from the IR body (${target ?? "gc"})`, async () => {
       await expect(run(target, `if (typeof Object !== "object") { throw "#neg"; }`)).rejects.toThrow();
