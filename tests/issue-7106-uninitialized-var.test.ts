@@ -70,7 +70,7 @@ describe("#7106 Stage 4 — `var x;` as the dynamic undefined", () => {
   }, 35_000);
 
   it("prepares a module-init member closure that declares `var seen, other;`", async () => {
-    const source = `function subject() { return 0; }
+    const source = `/** @returns {number} */ function subject() { return 0; }
 subject.check = function (value, message) {
   var seen, other;
   if (value === undefined) {

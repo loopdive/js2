@@ -41,7 +41,7 @@ function node(source: string): number {
 
 describe("#7106 Stage 4 — harness member-closure shapes", () => {
   it("plans a throw-only member closure as void", async () => {
-    const source = `function subject() { return 0; }
+    const source = `/** @returns {number} */ function subject() { return 0; }
 subject.thrower = function (message) { throw message; };
 export function run() {
   var n = 0;
@@ -56,7 +56,7 @@ export function run() {
   }, 35_000);
 
   it("joins a dynamic parameter and a literal in a conditional value", async () => {
-    const source = `function subject() { return 0; }
+    const source = `/** @returns {number} */ function subject() { return 0; }
 subject.cmp = function (actual, expected, message) {
   message = message === undefined ? '' : message;
   if (actual === expected) return;
