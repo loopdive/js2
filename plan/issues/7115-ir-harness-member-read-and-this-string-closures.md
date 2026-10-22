@@ -21,6 +21,10 @@ assignee: "ttraenkler/session-d"
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
+# 2026-10-22 (re-merge after #6829 landed): this PR's scan-arm growth was granted
+# by the #7106 issue file while #6829 sat in its diff; restated here (stranded grants).
+func-budget-allow:
+  - src/ir/select.ts::scanExprInner
 ---
 
 # IR: function-object member reads, string and `this` member closures
