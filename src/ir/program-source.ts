@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import * as sourceClassDefinitions from "./program/source-class-definitions.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
@@ -16,7 +17,7 @@ import {
   type IrFunctionSourceMapContext,
   type IrSourceMapNodeProjection,
 } from "./from-ast.js";
-import { buildIrUnitInventory, getIrInventoryScannerMetadata, type BuildIrUnitInventoryOptions } from "./identity.js";
+import { getIrInventoryScannerMetadata, type BuildIrUnitInventoryOptions } from "./identity.js";
 import type { IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
 import type {
   IrUnitInventory,
@@ -1597,18 +1598,17 @@ export function prepareIrProgramSources(
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
-  const inventory = buildIrUnitInventory(input.sourceFiles, {
-    ...input.inventoryOptions,
-    entrySource: input.entrySource,
-    checker: input.checker,
-  });
-  if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
-  const identity = buildIrPlanningIdentityContext(inventory);
+  const { inventory, identity } = sourceClassDefinitions.prepareIrSourceDefinitionPopulation(
+    input,
+    sourceMapRequest === undefined ? undefined : sourceMapPreflightScannerTree,
+  );
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
   const sourceMapCatalog =
     sourceMapRequest === undefined
       ? undefined
       : buildPreparedSourceMapCatalog(sourceFiles, inventory, sourceMapRequest, identity);
+  const definitionFailure = sourceClassDefinitions.unloweredSourceClassDefinition(identity);
+  if (definitionFailure) return definitionFailure;
   const derivedSourceRows = sourceMapRequest === undefined ? undefined : new Map<IrUnitId, IrSourceMapDerivedSource>();
   const startup: IrModuleInitPlan[] = [];
   const allocations = new AllocSiteRegistry();

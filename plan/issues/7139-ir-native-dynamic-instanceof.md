@@ -809,3 +809,77 @@ missing semantics. No public PR head, HOLD, queue or existing test was changed.
 Machine evidence: `.tmp/7139-class-prepared-checkpoint-evidence.json`; root logs
 `.tmp/7139-class-prepared-*`; fresh review
 `.tmp/review-class-prepared-adversarial/REVIEW.md`.
+
+### Source-definition coverage failure discovered after Prepared allocation
+
+Against local `3d0a65dfec75c65c3854a8f6e3d768e53b1b2eef`, two genuine source
+programs prepare, accept, emit and run while silently omitting definition work:
+
+```ts
+let trace: number = 0;
+class C extends (trace = 7, null) {}
+export function run(): number { return trace; }
+```
+
+The second uses `class C { [(trace = 7, "x")]: number; }`. Both native JavaScript
+oracles are 7; both Prepared artifacts return 0. Evidence:
+`.tmp/7139-class-definition-omission-probe.jsonl` (2/2 executed wrong answers).
+The class records exist, but the source producer iterates function terminals
+and treats unowned implicit constructor support as no executable source work.
+This is a false complete-population claim, not an allocation-leaf limitation.
+
+Before further class lowering, add an explicit source-definition coverage
+check to the actual whole-source producer. It must inspect the authoritative
+class inventory and exact declaration/constructor association; missing or stale
+scanner data is an invariant, not an empty pass. Ambient declarations are
+erased and remain allowed. Share the existing identical ambient-context
+predicate from identity and method-name planning in one AST analysis owner.
+For an executable class whose definition has no producer, return a stable
+source-located `class-definition-execution-unsupported` result anchored to its
+actual original constructor unit (including a currently unowned support unit).
+This failure does not fabricate a terminal/body or use a display name as an ID.
+
+This is an explicit temporary producer gap while the real definition sequence
+is implemented. It must not be called class frontend completion, nor relaxed
+by ignoring empty declarations or by presence of an unrelated allocation leaf.
+Do not alter the typed-input constructed-IR path, legacy compilation, source
+M0 accounting or public switches just to hide the bad artifact. Keep original
+and additional lifecycle requirements and actual true-linear work in scope.
+Regression controls must show actual 7-valued JavaScript oracles, pre-fix wrong
+artifacts, precise refusals for unused/declaration/expression/nested/derived
+forms, ambient positive controls, and an ordinary complete source replay.
+After this coverage defect is closed, resume the executable class definition
+producer and canonical Call/TDZ errors; unsupported is not the final goal.
+
+### Source-definition coverage repair qualification (local)
+
+The source entrypoint now refuses missing executable class definitions instead
+of sealing the smaller function-only population as complete. Ambient ancestry
+is shared with the original identity/method-name callers. The refusal uses the
+exact existing constructor record, including support records; it issues no new
+terminal or body receipt. Requested source-map catalog validation still runs
+before this semantic refusal. Fresh review found an intermediate ordering bug
+and independently confirmed its correction.
+
+- Focused source/map/constructed-allocation/validation regressions: **65/65**.
+  The final source-specific suite is **12/12**, including coherent malformed
+  maps and a genuine ambient source program executing 7 with zero imports.
+- Identity and binding controls: **72 pass / 4 fail / 76**. All four failures
+  reproduce against the exact parent `3d0a65dfec75c65c3854a8f6e3d768e53b1b2eef`;
+  their complete failure sections are identical (module-init outcome parity,
+  two Iterator controls, timer R0 status). Existing tests/baselines are intact.
+  The control loads the three changed source owners directly from that parent
+  through a scratch Vitest loader, with SHA-256 provenance in the raw log.
+- Existing WasmGC artifact comparisons: **14/14 byte-identical** against the
+  qualified parent checkpoint; both experimental-IR settings are included.
+- All eight quality gates pass; no new growth grant or baseline edit.
+- Fresh review: no unresolved findings; independently reproduced both parent
+  0-versus-7 wrong answers, checked 18 executable-class forms, five ordinary/
+  ambient execution controls, five authentic locators and six corruption cases.
+
+Evidence: `.tmp/7139-class-definition-coverage-*` and
+`.tmp/review-class-definition-coverage/REVIEW.md`. This fixes a silent omission,
+not class-definition execution. The 140-case lifecycle and true-linear
+qualification remain open; the next work is the actual shared definition
+producer, lexical environments and canonical Call/TDZ errors. Public heads,
+HOLDs, queue and existing tests remain unchanged.
