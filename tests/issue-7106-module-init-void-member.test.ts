@@ -44,7 +44,10 @@ function node(source: string): number {
   return new Function(`"use strict";\n${source.replace(/\bexport /g, "")}\nreturn run();`)() as number;
 }
 
-const SAME_VALUE = `function subject() { return 0; }
+// Every fixture's receiver carries JSDoc return evidence: since #6828 a
+// function-object member call (`subject.is(…)`) needs it until census arm 4
+// (#6831) admits evidence-free receivers.
+const SAME_VALUE = `/** @returns {number} */ function subject() { return 0; }
 subject.is = function (a, b) { return a === b; };
 subject.same = function (actual, expected, message) {
   try {
@@ -96,7 +99,7 @@ describe("#7106 Stage 4 — void-result function-member closures in <module-init
   }, 35_000);
 
   it("a member closure's early return does not inherit module-init's return barrier", async () => {
-    const source = `function subject() { return 0; }
+    const source = `/** @returns {number} */ function subject() { return 0; }
 subject.check = function (a, b) { if (a === b) { return; } throw a; };
 export function run() {
   var n = 0;
@@ -111,7 +114,7 @@ export function run() {
   }, 35_000);
 
   it("keeps a closure that returns a value or reads `this` off the void plan", async () => {
-    const source = `function subject() { return 0; }
+    const source = `/** @returns {number} */ function subject() { return 0; }
 subject.self = function (a) { if (a === 1) { return; } this.x = a; };
 export function run() { subject.self(1); return 1; }`;
     const result = await compile(source, OPTIONS);
@@ -125,7 +128,7 @@ describe("#7106 Stage 4 — method calls on a member closure's dynamic receivers
     // Measured before the refusal: the IR body answered `undefined` for every
     // one of these (`__extern_method_call` only dispatches open-`$Object`
     // methods), while node and legacy agree on 111.
-    const source = `function subject() { return 0; }
+    const source = `/** @returns {number} */ function subject() { return 0; }
 subject.check = function (list, n, sym) {
   if (list.join(", ") !== "1, 2") throw "join";
   if (n.toString() !== "5") throw "number";
@@ -147,7 +150,7 @@ describe("#7106 Stage 4 — an abandoned lifted member closure", () => {
   it("rebinds the source unit to the legacy allocation when its owner fails preparation", async () => {
     vi.stubEnv("JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE", "1");
     try {
-      const source = `function subject() { return 0; }
+      const source = `/** @returns {number} */ function subject() { return 0; }
 subject.equal = function (a, b) { return a === b; };
 export function run() { return subject.equal(1, 1) ? 1 : 0; }`;
       const result = await compile(source, OPTIONS);
