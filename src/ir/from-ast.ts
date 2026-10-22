@@ -42,7 +42,8 @@ import {
   numericFieldUpdate,
 } from "./numeric-slot-coercion.js";
 import { lowerNativeConsoleLine } from "./console-lowering.js";
-import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
+import { lowerNativeIn } from "./native-in.js";
+import { boxNativeValue } from "./native-value-carrier.js";
 import { lowerNativeInstanceof } from "./native-instanceof.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -14586,7 +14587,7 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
     keyType.kind === "dynamic"
       ? rawKey
       : nativeKey
-        ? boxNativeInKey(
+        ? boxNativeValue(
             cx.builder,
             rawKey,
             cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(expr.left) : undefined,
@@ -14610,26 +14611,33 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
 }
 
 /**
- * (#3144) `value instanceof C` where `C` names a locally-declared class.
- * Class-typed LHS → `class.instanceof` (runtime `__tag` compare against C's
- * tag + descendant tags — exactly legacy `compileInstanceOf`'s non-null-ref
- * path). LHS representations that can never hold a user-class instance
- * (unboxed scalars, strings, plain-object structs, internal closures) fold to
- * constant false with the operand still evaluated for effects (legacy
- * parity: `drop; i32.const 0`). Everything else (boundary callables/externref,
- * dynamic, union, boxed, vec refs) demotes cleanly to legacy, which has the
- * full dynamic `__instanceof_dyn` path.
+ * Native value operands use the complete runtime protocol and actual SSA
+ * carriers. Exact static constructor, wrapper and class plans retain their
+ * existing routes; the static class route checks tags or folds a proven
+ * non-instance to false after evaluating its left operand.
  */
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
-  if (
-    cx.resolver?.stringIsExternref?.() === false &&
-    expressionProducesDynamic(expr.left, cx) &&
-    expressionProducesDynamic(expr.right, cx)
-  ) {
-    const value = lowerExpr(expr.left, cx, irDynamic());
-    const target = lowerExpr(expr.right, cx, irDynamic());
+  const staticName =
+    ts.isIdentifier(expr.right) && cx.scope.get(expr.right.text) === undefined ? expr.right.text : undefined;
+  const functionValue = ts.isIdentifier(expr.right) ? cx.topLevelFunctionValues?.get(expr.right) : undefined;
+  const wrapperPlan =
+    !functionValue && staticName ? cx.resolver?.standaloneWrapperInstanceOfPlan?.(staticName) : undefined;
+  const targetShape = !functionValue && !wrapperPlan && staticName ? cx.classShapes?.get(staticName) : undefined;
+  // Source admission is selection's proof; physical boxing uses the actual
+  // SSA types. Re-predicting expression shapes here loses composed values.
+  if (cx.resolver?.stringIsExternref?.() === false && !functionValue && !wrapperPlan && !targetShape) {
+    const operand = (expression: ts.Expression): IrValueId => {
+      const value = lowerExpr(expression, cx, irVal({ kind: "externref" }));
+      return boxNativeValue(
+        cx.builder,
+        value,
+        cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(expression) : undefined,
+      );
+    };
+    const value = operand(expr.left);
+    const target = operand(expr.right);
     return lowerNativeInstanceof(cx.builder, value, target);
   }
   if (!ts.isIdentifier(expr.right)) {
@@ -14650,7 +14658,6 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   // (#7106 S3c) `<dynamic> instanceof F` for a self-guarded constructor F: the
   // selector admitted it only behind F's function-object plan, whose exact
   // unit target names the per-function prototype the chain walk reads.
-  const functionValue = cx.topLevelFunctionValues?.get(expr.right);
   if (functionValue) {
     requireMatchingLoweringPlanOwner(
       "top-level function value",
@@ -14667,7 +14674,6 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     }
     return cx.builder.emitDynInstanceOfFunction(lhs, functionValue.target);
   }
-  const wrapperPlan = cx.resolver?.standaloneWrapperInstanceOfPlan?.(className) ?? null;
   if (wrapperPlan) {
     const lhs = lowerExpr(expr.left, cx, irDynamic());
     const lt = cx.builder.typeOf(lhs);
@@ -14719,7 +14725,6 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
       `ir/from-ast: wrapper instanceof cannot normalize ${describeIrType(lt)} to anyref (${cx.funcName})`,
     );
   }
-  const targetShape = cx.classShapes?.get(className);
   if (!targetShape) {
     demoteToLegacy(
       "operand-coercion-unsupported",

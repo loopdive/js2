@@ -359,3 +359,69 @@ The goal remains the full acceptance of epic 3518, including one portable
 PreparedIrProgram, both backends, source-located Unsupported, one production
 policy and direct frontend deletion. The 32-row audit neither reduces that
 scope nor claims classes complete.
+
+### Concrete operand transport follow-up (local, 2026-10-22)
+
+The class-binding extraction first moves the existing exact instance resolver
+into `ir/class-binding-resolution.ts`; the compatibility module reexports it.
+Shared planning invariant errors and parenthesis traversal have one owner.
+The class-value lifecycle acceptance stays red until executable binding and
+class-evaluation state is implemented. No class singleton read is admitted.
+
+A separately measured operator step reuses the native `in` value adapter as
+`ir/native-value-carrier.ts`, shared by `in` and `instanceof`, rather than
+adding a third boxing decision tree. The source-expression evidence belongs
+in the existing `select-expression-structure.ts` and is consumed by both
+selection walks. Lowering retains existing exact static plans, then uses the
+actual SSA operand types instead of predicting dynamic syntax a second time. Admit a primitive/null operand only when the
+other operand has the existing native dynamic carrier proof. Preserve static
+constructor and wrapper routes. Test real standalone/WASI execution, both
+operand orders, error timing and exact IR body ownership; qualify the i32
+domain and existing protocol/`in` controls. Quality acceptance: no duplicate
+boxing implementation, no added direct AST semantics, no budget grants, and
+no change to standard gc bytes. This does not complete class value producers
+or the full migration.
+
+### Concrete operand checkpoint qualification (2026-10-22)
+
+The local child now admits native dynamic/primitive pairs, shares the native
+value adapter with `in`, and preserves signed/unsigned numeric values through
+`coerceIrNumeric`. Both operands evaluate once before operator validation.
+Lowering consumes actual SSA types after exact static plans are considered;
+it does not repeat selection's dynamic-expression prediction.
+
+Fresh-context adversarial review found a logical-operand selection/build
+mismatch and a prepared-support gap that emitted both bodies for logical /
+`typeof` operands. Both are fixed. The existing `unitExternref` certificate
+now covers truthy/typeof/strict-equality sidecars without requiring an unrelated
+function-object call; exact physical provider signature checks remain intact.
+Independent re-review reports no blocking correctness/quality findings, with
+7/7 identity/extraction tests plus native logical/typeof/equality, unsigned
+carrier and exception-order probes. Evidence: `.tmp/review-concrete-*.log`.
+
+Executed qualification (overlapping groups are stated separately):
+
+- 255/255 tests across concrete operands (70), complete protocol (54), native
+  `in` (48), resource demand (18), exact class identity (4), source validation
+  (53) and compatibility dynamic support (8).
+- Native unsigned-member/numeric-domain neighbors: 151/151.
+- i32 domain: concrete/protocol/native-`in` 172/172.
+- Standard gc corpus: 14/14 exact-parent byte hashes unchanged.
+- Older module-binding suite: final candidate and exact parent both have
+  41/55 passes and the same fourteen failing names and full assertion texts.
+- Typecheck, configured Biome lint (7319 files), default and explicit `dc3`
+  size budgets, coercion/oracle/cycle/layering/flat-directory/retirement gates
+  pass. No new grants, baseline edits or direct AST semantic arms.
+- Preservation audit passes 6/6 full and cut source witnesses. Strict closure
+  remains open for the two inherited nonliteral dynamic imports; deletion is
+  not certified. An attempted ESLint invocation found no ESLint configuration;
+  it is not a qualification result. The configured Biome command passes.
+
+The full class-value lifecycle suite was rerun: **38/80 pass, 42/80 fail**.
+All twelve native value failures remain, alongside thirty IR ownership
+failures. The shadow-value case gains sole IR ownership from the corrected
+strict-equality support; no class producer semantics are claimed complete.
+The class-instance resolver extraction preserves its old symbol/source/ClassId
+checks and deliberately introduces no constructor-binding singleton shortcut.
+The published operator head and all held predecessor heads remain unchanged;
+this is an unpublished local implementation checkpoint under the full goal.

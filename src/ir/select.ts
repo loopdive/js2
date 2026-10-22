@@ -102,6 +102,7 @@ import {
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
+  nativeInstanceofValueOperands,
 } from "./select-expression-structure.js";
 
 export { effectiveIrParamTypeNode, effectiveIrReturnTypeNode } from "./select-expression-structure.js";
@@ -3429,11 +3430,13 @@ function dynamicUsesAreMoveOnly(
       if (
         op === ts.SyntaxKind.InstanceOfKeyword &&
         !expectDyn &&
-        leftIsDyn &&
-        rightIsDyn &&
-        currentSelectionOptions?.nativeDynamicExternrefBuildable === true
+        currentSelectionOptions?.nativeDynamicExternrefBuildable === true &&
+        nativeInstanceofValueOperands(e, {
+          dynamic: isDynShaped,
+          primitive: (operand) => currentSelectionOptions?.classifyPrimitiveExpression?.(operand),
+        })
       ) {
-        return scanExpr(e.left, true) && scanExpr(e.right, true);
+        return scanExpr(e.left, leftIsDyn) && scanExpr(e.right, rightIsDyn);
       }
       // (#7106 S3c) `<dynamic> instanceof F` → `dyn.instanceof_fn`: a concrete i32.
       if (
@@ -8052,8 +8055,10 @@ function selectorPrimitiveWrapperOrGenericBinary(
   if (
     binOp === ts.SyntaxKind.InstanceOfKeyword &&
     currentSelectionOptions?.nativeDynamicExternrefBuildable === true &&
-    currentSelectionOptions.isDynamicForInReceiver?.(expr.left) === true &&
-    currentSelectionOptions.isDynamicForInReceiver?.(expr.right) === true
+    nativeInstanceofValueOperands(expr, {
+      dynamic: (operand) => currentSelectionOptions?.isDynamicForInReceiver?.(operand) === true,
+      primitive: (operand) => currentSelectionOptions?.classifyPrimitiveExpression?.(operand),
+    })
   ) {
     return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
   }
