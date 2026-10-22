@@ -1,17 +1,17 @@
 {
-  "generated": "2026-10-21",
+  "generated": "2026-10-22",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
     "jsInCore": 0
   },
   "counts": {
-    "total": 96,
+    "total": 97,
     "neutral": 55,
-    "js": 38,
+    "js": 39,
     "unresolved": 3,
     "core": 58,
-    "dialect": 38,
+    "dialect": 39,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -243,6 +243,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynOwnProperty",
       "why": "ECMAScript Object.prototype.hasOwnProperty (§20.1.3.2, [[GetOwnProperty]] ≠ undefined) / propertyIsEnumerable (§20.1.3.4) over a boxed-any receiver and key, through the providers legacy uses for the propertyHelper uncurried aliases.",
       "evidence": ["src/ir/core/dialect/js.ts#24683110e305"]
+    },
+    "dyn.publish_argc": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynPublishArgc",
+      "why": "The caller half of the ECMAScript arguments count: a direct call site publishes the number of arguments it actually passes (§10.4.4.6 sets \"length\" to that count), through the call-site count protocol shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#e6d73a2f1ca9"]
     },
     "dyn.string_carrier": {
       "verdict": "js",

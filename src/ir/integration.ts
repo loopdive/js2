@@ -92,20 +92,23 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
-import { ensureIrArgumentsLengthHelper, IR_ARGUMENTS_LENGTH_HELPER } from "../codegen/ir-arguments-length.js";
+import {
+  ensureIrArgumentsLengthHelper,
+  ensureIrPublishArgcHelper,
+  IR_ARGUMENTS_LENGTH_HELPER,
+  IR_PUBLISH_ARGC_HELPER,
+} from "../codegen/ir-arguments-length.js";
 import {
   ensureIrCurrentThisHelper,
+  ensureIrDynamicConstructHelper,
   ensureIrInstanceOfFunctionHelper,
   IR_CURRENT_THIS_SLOPPY_HELPER,
   IR_CURRENT_THIS_STRICT_HELPER,
+  irDynamicConstructCalleeIsPlain,
+  irDynamicConstructHelperName,
   irFunctionThisStrictness,
   irInstanceOfFunctionHelperName,
   irSelfGuardedConstructorValue,
-} from "../codegen/ir-dynamic-construct.js";
-import {
-  ensureIrDynamicConstructHelper,
-  irDynamicConstructCalleeIsPlain,
-  irDynamicConstructHelperName,
 } from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
@@ -8913,6 +8916,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.arguments_length") return true;
   if (instr.kind === "dyn.current_this") return true;
   if (instr.kind === "dyn.instanceof_fn") return true;
+  if (instr.kind === "dyn.publish_argc") return true;
   if (instr.kind === "dyn.own_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
   // ToNumber helper (`__any_to_f64` gc / `__unbox_number` host), so it requires
@@ -9132,6 +9136,8 @@ function preregisterDynamicSupport(
   // (#7106 S3c) `dyn.current_this` / `dyn.instanceof_fn` call receiver wrappers.
   const currentThisStrictness = new Set<boolean>();
   const instanceOfFunctions = new Set<string>();
+  // (#7106 S1i) `dyn.publish_argc` calls the caller-side argc wrapper.
+  let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
@@ -9150,6 +9156,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
           if (i.kind === "dyn.current_this") currentThisStrictness.add(i.strict);
           if (i.kind === "dyn.instanceof_fn") instanceOfFunctions.add(i.target.name);
+          if (i.kind === "dyn.publish_argc") usesDynPublishArgc = true;
           if (i.kind === "dyn.own_property") ownPropertyTests.add(i.test);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
@@ -9314,6 +9321,13 @@ function preregisterDynamicSupport(
       observeNativeRuntimeProvider(ctx, irInstanceOfFunctionHelperName(functionName));
     }
     flushLateImportShifts(ctx, null);
+  }
+  if (usesDynPublishArgc && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    if (ensureIrPublishArgcHelper(ctx) === undefined) {
+      throw new Error("ir/integration: dyn.publish_argc has no argc-protocol wrapper on this lane (#7106 S1i)");
+    }
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_PUBLISH_ARGC_HELPER);
   }
   if (ownPropertyTests.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     // (#7106 S1g) exactly legacy's registration for the uncurried aliases
@@ -9610,6 +9624,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       emitInstanceOfFunction(): readonly Instr[] {
         throw new Error("ir/integration: dyn.instanceof_fn is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
       },
+      emitPublishArgc(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.publish_argc is not lowerable on the fast $AnyValue carrier (#7106 S1i)");
+      },
       emitOwnPropertyTest(): readonly Instr[] {
         throw new Error("ir/integration: dyn.own_property is not lowerable on the fast $AnyValue carrier (#7106 S1g)");
       },
@@ -9797,6 +9814,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.instanceof_fn needs the host-free chain walk (#7106 S3c)");
       }
       return [callImport(irInstanceOfFunctionHelperName(functionName))];
+    },
+    emitPublishArgc(count: number): readonly Instr[] {
+      // (#7106 S1i) legacy's `emitSetArgc` for an under-arity direct call, wrapped once.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.publish_argc needs the host-free argc protocol (#7106 S1i)");
+      }
+      return [{ op: "i32.const", value: count } as Instr, callImport(IR_PUBLISH_ARGC_HELPER)];
     },
     emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[] {
       // (#7106 S1g) receiver + key already on the stack as externref.

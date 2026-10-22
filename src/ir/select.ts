@@ -1860,6 +1860,7 @@ function whyNotIrClaimable(
   preAbiEvidence?: IrStructuralSelectorAccessorAbiEvidence,
 ): IrFallbackReason | null {
   prepareDynamicEqualitySubject(fn, isMethod);
+  currentClaimTypeMap = typeMap;
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   typedShapeRejectReason = null;
@@ -2692,6 +2693,9 @@ let currentDynScanDecls: ReadonlyMap<string, ts.FunctionDeclaration> | null = nu
 // `arguments.length` arm: only ITS own body (not a nested function's) reads
 // the prologue count the IR emits at that function's entry.
 let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
+// (#7106 S1i) The TypeMap of the subject being claimed, so the call arm can
+// resolve a callee's MISSING formals with the same verdict its own claim uses.
+let currentClaimTypeMap: TypeMap | undefined;
 
 /** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
 export function functionBodyReferencesArguments(body: ts.Node): boolean {
@@ -2737,6 +2741,60 @@ function calleeParamResolvedKind(calleeName: string, argIdx: number, typeMap: Ty
   const p = decl.parameters[argIdx];
   if (!p || !ts.isIdentifier(p.name)) return null;
   return resolveParamType(p, typeMap?.get(calleeName)?.params[argIdx]);
+}
+
+/**
+ * (#7106 S1i) A direct call to a top-level JS function with FEWER arguments
+ * than its fixed formals (propertyHelper's `isWritable(obj, name)`, 4 formals).
+ * Legacy pads every missing formal with the canonical `undefined`
+ * (`pushDefaultValue` → `emitUndefinedValue` on an externref slot) and, when
+ * the callee reads `arguments`, publishes `__argc = actual` first. The IR
+ * mirrors exactly that: the missing formals must all be the dynamic carrier
+ * (padded with `dyn.undefined`; a concrete formal would take legacy's `0`
+ * sentinel, which is not `undefined` and stays legacy), and an
+ * arguments-reading callee additionally needs the host-free argc protocol
+ * (`dyn.publish_argc`). Over-arity calls stay legacy (they need `__extras_argv`).
+ */
+function underArityDirectCallIsBuildable(
+  calleeName: string,
+  declaration: ts.FunctionDeclaration,
+  actualArity: number,
+): boolean {
+  if (actualArity > declaration.parameters.length) return false;
+  if (!currentDynamicRuntimeBuildable || declaration.asteriskToken || !declaration.body) return false;
+  if (declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return false;
+  for (let i = actualArity; i < declaration.parameters.length; i++) {
+    if (!calleeParamIsDynamic(calleeName, i, currentClaimTypeMap)) return false;
+  }
+  // A callee that can reach direct `eval` consumes `__argc` even without a
+  // lexical `arguments` read (legacy's `reachesDirectEval`); keep it legacy.
+  if (subtreeMentionsIdentifier(declaration.body, "eval")) return false;
+  if (!directCallPublishesArgc(declaration)) return true;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
+}
+
+/**
+ * (#7106 S1i) Does an under-arity direct call to `declaration` have to publish
+ * `__argc`? Exactly when the callee's own entry prologue consumes it — its
+ * body reads its own `arguments` (legacy's `needsImplicitArgumentsObject` for
+ * fixed formals; a formal named `arguments` is excluded by
+ * `hasFixedIrParameters`' identifier check only when it shadows, so test it).
+ */
+function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === text) found = true;
+    else forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
+}
+
+export function directCallPublishesArgc(declaration: ts.FunctionDeclaration): boolean {
+  if (!declaration.body) return false;
+  if (declaration.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
+  return functionBodyReferencesArguments(declaration.body);
 }
 
 function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeMap | undefined): boolean {
@@ -11067,7 +11125,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       const declaration = currentDynScanDecls?.get(calleeName);
       if (declaration && hasFixedIrParameters(declaration.parameters)) {
-        if (actualArity !== null && actualArity !== declaration.parameters.length) {
+        if (
+          actualArity !== null &&
+          actualArity !== declaration.parameters.length &&
+          (expr.arguments.some(ts.isSpreadElement) ||
+            !underArityDirectCallIsBuildable(calleeName, declaration, actualArity))
+        ) {
           return capabilityNo("call-arity-unsupported", "expr-direct-call-arity", expr);
         }
       }

@@ -52,6 +52,7 @@ export type {
   IrInstrDynArgumentsLength,
   IrInstrDynCurrentThis,
   IrInstrDynInstanceOfFunction,
+  IrInstrDynPublishArgc,
   IrInstrDynOwnProperty,
   IrInstrDynToNumber,
   IrInstrDynEq,

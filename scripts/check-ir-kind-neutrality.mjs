@@ -836,6 +836,11 @@ const VERDICTS = {
     why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) against a known function constructor's prototype object, shared with legacy's per-function prototype.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "OrdinaryHasInstance (§7.3.20) walks" }],
   },
+  "dyn.publish_argc": {
+    verdict: "js",
+    why: 'The caller half of the ECMAScript arguments count: a direct call site publishes the number of arguments it actually passes (§10.4.4.6 sets "length" to that count), through the call-site count protocol shared with legacy.',
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "publishes the number of arguments actually passed" }],
+  },
   "dyn.construct": {
     verdict: "js",
     why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",
