@@ -4158,6 +4158,27 @@ function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: 
   lowerArrayPattern(pattern, source, cx);
 }
 
+/** (#7106) A first bare script `var x;`: the module-init prologue seeded the
+ * slot, so the declaration only brings the slot into scope. */
+function bindUninitializedModuleVar(d: ts.VariableDeclaration, name: string, cx: LowerCtx): boolean {
+  const binding = cx.moduleBindings?.get(name);
+  if (!binding || (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return false;
+  requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
+  cx.scope.set(name, { kind: "moduleGlobal", globalRef: binding.globalRef, type: binding.type });
+  return true;
+}
+
+/** (#7106) A repeated top-level script `var` is the same `__mod_<name>` slot:
+ * its initializer is a write, and a bare `var x;` repeat is a no-op. */
+function isRedeclaredModuleVar(d: ts.VariableDeclaration, name: string, cx: LowerCtx): boolean {
+  const lexical = ts.NodeFlags.Let | ts.NodeFlags.Const;
+  return (
+    (d.parent.flags & lexical) === 0 &&
+    cx.moduleBindings?.has(name) === true &&
+    cx.scope.get(name)?.kind === "moduleGlobal"
+  );
+}
+
 /**
  * Slice 8a (#1169g): decompose `const { a, b: x } = obj` into per-leaf
  * `object.get` reads. The source must lower to an IrType.object; class
@@ -4214,7 +4235,10 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     );
   }
   const name = d.name.text;
-  if (cx.scope.has(name)) {
+  const redeclaredModuleVar = isRedeclaredModuleVar(d, name, cx);
+  if (redeclaredModuleVar && !d.initializer) return;
+  if (!d.initializer && !redeclaredModuleVar && bindUninitializedModuleVar(d, name, cx)) return;
+  if (cx.scope.has(name) && !redeclaredModuleVar) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
   }
   if (!d.initializer) {
@@ -13396,6 +13420,13 @@ function lowerEarlyReturn(stmt: ts.ReturnStatement, cx: LowerCtx): void {
   cx.builder.emitEarlyReturn(coerceReturnValue(v, cx, stmt.expression));
 }
 
+/** (#7106) A dynamic module slot (`var o = undefined; o = 4`) takes the boxed value. */
+function boxForDynamicModuleStorage(value: IrValueId, target: IrType, rhs: ts.Expression, cx: LowerCtx): IrValueId {
+  const type = cx.builder.typeOf(value);
+  if (target.kind !== "dynamic" || type.kind === "dynamic") return value;
+  return boxConcreteToDynamic(value, type, rhs, cx) ?? value;
+}
+
 /**
  * Lower `<id> = <expr>` where `<id>` is a slot-bound identifier.
  * Throws if the binding isn't a slot — mutation of a `local` would
@@ -13421,7 +13452,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
         );
       }
       requireMatchingModuleBindingOwner(writable, cx.ownerUnitId, cx.funcName);
-      const newValue = lowerExpr(rhs, cx, writable.type);
+      const newValue = boxForDynamicModuleStorage(lowerExpr(rhs, cx, writable.type), writable.type, rhs, cx);
       const newType = cx.builder.typeOf(newValue);
       if (!moduleStorageCompatible(newType, writable.type)) {
         demoteToLegacy(
@@ -13440,7 +13471,7 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
   }
   // (#3142 Slice 2) Module-scope binding — write the legacy global.
   if (binding.kind === "moduleGlobal") {
-    const newValue = lowerExpr(rhs, cx, binding.type);
+    const newValue = boxForDynamicModuleStorage(lowerExpr(rhs, cx, binding.type), binding.type, rhs, cx);
     const newType = cx.builder.typeOf(newValue);
     if (!moduleStorageCompatible(newType, binding.type)) {
       demoteToLegacy(
@@ -13623,6 +13654,25 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
       cx.builder.emitRefCellSet(storage.value, result);
     }
     cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
+    return;
+  }
+  // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned
+  // `message` parameter): GetValue(lhs) first, then the RHS, then the SAME
+  // dynamic `+` the binary operator lowers through (`IR_DYN_ADD_FN`).
+  if (compoundOp === ts.SyntaxKind.PlusEqualsToken && logicalType.kind === "dynamic" && storage.kind === "slot") {
+    const lhs = cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
+    const rhsValue = lowerExpr(rhs, cx, logicalType);
+    const rhsType = cx.builder.typeOf(rhsValue);
+    const dynamicRhs = rhsType.kind === "dynamic" ? rhsValue : boxConcreteToDynamic(rhsValue, rhsType, rhs, cx);
+    if (dynamicRhs === null) {
+      demoteToLegacy(
+        "compound-assign-unsupported",
+        `ir/from-ast: dynamic "${id.text} +=" operand ${describeIrType(rhsType)} has no carrier (${cx.funcName})`,
+      );
+    }
+    const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [lhs, dynamicRhs], irDynamic());
+    if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
+    cx.builder.emitSlotWrite(storage.slotIndex, added);
     return;
   }
   const slotValType = asVal(logicalType);
@@ -17041,6 +17091,35 @@ function liftClosureBody(
       };
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
+    }
+    // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
+    // `sameValue`) reads through mutable storage, seeded from its entry value
+    // — the same slot model a top-level function's reassigned parameter uses.
+    const reassigned = ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>();
+    for (const parameter of expr.parameters) {
+      if (!ts.isIdentifier(parameter.name) || !reassigned.has(parameter.name.text)) continue;
+      const binding = scope.get(parameter.name.text);
+      if (binding?.kind !== "local") demoteToLegacy("body-shape-rejected", "function-member closure parameter binding");
+      const name = parameter.name.text;
+      const seed = (): void => {
+        const representation = resolveIrSlotRepresentation(binding.type, cx.resolver, liftedName);
+        if (!representation) {
+          demoteToLegacy(
+            "param-shape-rejected",
+            `ir/from-ast: mutable parameter "${name}" has no slot (${liftedName})`,
+          );
+        }
+        const slotIndex = builder.declareSlot(name, representation.storageType);
+        builder.emitSlotWrite(slotIndex, binding.value);
+        scope.set(name, {
+          kind: "slot",
+          slotIndex,
+          type: representation.bindingType,
+          ...(representation.asType ? { asType: representation.asType } : {}),
+        });
+      };
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, seed);
+      else seed();
     }
   }
 

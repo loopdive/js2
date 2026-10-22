@@ -1436,6 +1436,23 @@ export function assessIrImplicitConstructorSubject(
  */
 let earlyReturnLoopDepth = 0;
 let earlyReturnBarrierDepth = 0;
+// (#7106 Stage 4) Selection is inside a planned function-member closure body.
+let currentInPlannedMemberClosure = false;
+
+/**
+ * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers,
+ * and the IR's dynamic method call (`__ir_dyn_method_call_N` →
+ * `__extern_method_call`) has no brand arms for primitives or vecs on the
+ * host-free lanes: it answers `undefined` where legacy dispatches by brand
+ * (`list.join(", ")`, `n.toString()`, `sym.toString()` — measured). Such a call
+ * stays legacy; a string-literal receiver keeps its native string method.
+ */
+function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
+  if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
+  let receiver: ts.Expression = expr.expression.expression;
+  while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+  return !ts.isStringLiteralLike(receiver);
+}
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
 // #7104 — true when the return position resolved `dynamic`: bare `return;`,
@@ -6332,7 +6349,26 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       continue;
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
-    if (scope.has(d.name.text)) return shapeNo("vardecl-shadow", d.name);
+    // (#7106) A repeated script `var` resolves to the binding's FIRST
+    // declaration: it is a write to that slot (or, without an initializer, a
+    // no-op), never a new binding.
+    const redeclaredModuleVar =
+      currentSubjectIsModuleInit &&
+      !isLexical &&
+      scope.has(d.name.text) &&
+      ts.isSourceFile(stmt.parent) &&
+      currentModuleBindingResolver?.(d.name)?.declaration !== undefined &&
+      currentModuleBindingResolver(d.name)!.declaration !== d;
+    if (redeclaredModuleVar && !d.initializer) continue;
+    if (scope.has(d.name.text) && !redeclaredModuleVar) return shapeNo("vardecl-shadow", d.name);
+    // (#7106) A bare script `var x;` is a no-op at its position: the module-init
+    // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
+    if (!d.initializer && currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent)) {
+      if (currentModuleBindingResolver?.(d.name) === undefined) return shapeNo("vardecl-noinit", d);
+      clearProjectionBinding(d.name.text);
+      scope.add(d.name.text);
+      continue;
+    }
     if (!d.initializer) return shapeNo("vardecl-noinit", d);
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
@@ -6672,7 +6708,16 @@ function isPhase1ClosureLiteral(
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,
-    isStatementListBuildable: isPhase1StatementList,
+    // (#7106 Stage 4) A planned void-result member closure admits bare
+    // `return;` exactly like a void top-level function.
+    isStatementListBuildable: (statements, inner, classes) =>
+      isPhase1StatementList(
+        statements,
+        inner,
+        classes,
+        false,
+        plan !== undefined && plan.signature.returnType === null,
+      ),
     restoreProjectionBindings,
     withClosureState: withFunctionMemberClosureState,
   });
@@ -6713,8 +6758,17 @@ function withFunctionMemberClosureState<T>(
   currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentSubjectFunctionName = null;
-  currentSubjectReturnsBoolean = true;
+  // (#7106 Stage 4) The closure is its own function: an enclosing subject's
+  // return context (module-init's barrier, an outer loop) does not apply to
+  // its body; a `return` there exits the closure.
+  const outerEarlyReturn = [earlyReturnLoopDepth, earlyReturnBarrierDepth] as const;
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 0;
+  const outerInPlannedClosure = currentInPlannedMemberClosure;
+  currentInPlannedMemberClosure = true;
+  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
+  currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set();
   currentNumericParamNames = new Set();
@@ -6751,6 +6805,8 @@ function withFunctionMemberClosureState<T>(
       currentNestedFunctionNames,
       currentLexicalValueBindingNames,
     ] = outer;
+    [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
+    currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
 }
@@ -10814,6 +10870,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     const functionObjectCall = functionObjectCallIsPhase1(expr, scope, localClasses);
     if (functionObjectCall !== undefined) return functionObjectCall;
+    if (plannedClosureDynamicMethodCall(expr)) return shapeNo("closure-member-dynamic-method", expr);
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer
     // enforces that the receiver is a class instance whose shape carries
@@ -11946,6 +12003,11 @@ export function assessModuleInit(
   // genuinely contains an update-retyped module binding. The exact binding
   // resolver rejects same-named locals and ordinary narrow module globals, so
   // unrelated modules retain the existing conservative `var` demotion.
+  // (#7106) A SCRIPT opens it unconditionally: every test262 body is a script
+  // whose top-level `var`s live in the same `__mod_<name>` slots, and the
+  // resolver (with codegen's `admitScriptVar` predicate) still refuses each
+  // declaration it cannot place as `vardecl-module-storage-unrepresentable`.
+  const scriptVarGate = currentModuleBindingResolver !== null && !ts.isExternalModule(sourceFile);
   let hasDynamicModuleUpdate = false;
   const findDynamicModuleUpdate = (node: ts.Node): void => {
     if (hasDynamicModuleUpdate) return;
@@ -11961,9 +12023,8 @@ export function assessModuleInit(
     forEachChild(node, findDynamicModuleUpdate);
   };
   findDynamicModuleUpdate(sourceFile);
-  currentIrSafeVarDeclarationLists = hasDynamicModuleUpdate
-    ? collectIrSafeModuleVarDeclarationLists(population)
-    : new Set();
+  currentIrSafeVarDeclarationLists =
+    scriptVarGate || hasDynamicModuleUpdate ? collectIrSafeModuleVarDeclarationLists(population) : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();

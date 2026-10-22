@@ -85,6 +85,50 @@ function closedScalarBodyKey(
     : undefined;
 }
 
+/**
+ * (#7106 Stage 4) The VOID-result body proof: assert.js's `assert.sameValue =
+ * function (actual, expected, message) { … }` — oracle return `void`, legacy
+ * physical result none. The body is NOT restricted to scalar returns (its
+ * buildability is the IR selector's own decision, over an empty outer scope);
+ * this proof only refuses what would transfer authority the plan does not
+ * carry — `this`/`super`/`arguments`/`new.target`, a nested function or class
+ * (captures), `yield`/`await` — and a `return <value>` (the ABI has no
+ * result). The key records every node plus each identifier's resolved
+ * declaration, so `isCurrent` sees a rebinding as staleness.
+ */
+function openVoidBodyKey(expression: ts.FunctionExpression, oracle: CodegenContext["oracle"]): string | undefined {
+  const facts: Array<string | number> = [];
+  let ok = true;
+  const visit = (node: ts.Node): void => {
+    if (!ok) return;
+    facts.push(node.kind, node.pos, node.end);
+    if (
+      node.kind === ts.SyntaxKind.ThisKeyword ||
+      node.kind === ts.SyntaxKind.SuperKeyword ||
+      ts.isMetaProperty(node) ||
+      ts.isFunctionLike(node) ||
+      ts.isClassLike(node) ||
+      ts.isYieldExpression(node) ||
+      ts.isAwaitExpression(node) ||
+      (ts.isReturnStatement(node) && node.expression !== undefined)
+    ) {
+      ok = false;
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (node.text === "arguments" || node.text === "eval") {
+        ok = false;
+        return;
+      }
+      const declaration = oracle.valueDeclarationOf(node);
+      facts.push(node.text, declaration === undefined ? -1 : declaration.pos);
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const statement of expression.body.statements) visit(statement);
+  return ok && expression.body.statements.length > 0 ? JSON.stringify(facts) : undefined;
+}
+
 /** Guard cached oracle facts with the exact captured AST before querying them. */
 function captureMemberClosureSyntax(expression: ts.FunctionExpression): () => boolean {
   const nodes: Array<{
@@ -211,18 +255,19 @@ function planMemberClosure(
   // parameter declaration joins and canonical physical ABI are checked below;
   // no declaration identity is invented from the registry-free signature fact.
   const oracleSignature = ctx.oracle.signatureOf(expression);
+  const returnsVoid = oracleSignature?.returns.kind === "void";
   if (
     !oracleSignature ||
     oracleSignature.declaredArity !== expression.parameters.length ||
     oracleSignature.params.length !== expression.parameters.length ||
-    oracleSignature.returns.kind !== "boolean"
+    (oracleSignature.returns.kind !== "boolean" && !returnsVoid)
   )
     return;
   const physical = operations.computeSignature(expression);
   if (
     physical.hasRestParam ||
     physical.params.length !== expression.parameters.length ||
-    physical.returnType?.kind !== "i32"
+    (returnsVoid ? physical.returnType !== null : physical.returnType?.kind !== "i32")
   )
     return;
   const parameters = new Set<ts.ParameterDeclaration>();
@@ -259,7 +304,9 @@ function planMemberClosure(
     else if (!(actual.kind === "number" && slot.kind === "f64") && !(actual.kind === "boolean" && slot.kind === "i32"))
       return;
   }
-  const bodyKey = closedScalarBodyKey(expression, ctx.oracle, parameters);
+  const bodyKeyOf = (): string | undefined =>
+    returnsVoid ? openVoidBodyKey(expression, ctx.oracle) : closedScalarBodyKey(expression, ctx.oracle, parameters);
+  const bodyKey = bodyKeyOf();
   if (bodyKey === undefined) return;
   const sourceText = source.text;
   const syntaxIsCurrent = captureMemberClosureSyntax(expression);
@@ -267,7 +314,7 @@ function planMemberClosure(
   const memberText = memberName.text;
   const signature: IrClosureSignature = Object.freeze({
     params: Object.freeze(physical.params.map((type) => operations.valueType(Object.freeze({ ...type })))),
-    returnType: operations.valueType(Object.freeze({ ...physical.returnType })),
+    returnType: physical.returnType === null ? null : operations.valueType(Object.freeze({ ...physical.returnType })),
   });
   const key = physicalKey(physical.params, physical.returnType);
   return Object.freeze({
@@ -318,18 +365,19 @@ function planMemberClosure(
         current.ownerUnitId !== ownerUnitId ||
         current.sourceUnitId !== sourceUnitId ||
         resolver.resolveTopLevelFunctionValueTarget(receiver)?.declaration !== target.declaration ||
-        closedScalarBodyKey(expression, ctx.oracle, parameters) !== bodyKey ||
+        bodyKeyOf() !== bodyKey ||
         current.dynamicParameterIndices.size !== dynamicParameterIndices.size ||
         [...dynamicParameterIndices].some((index) => !current.dynamicParameterIndices.has(index))
       )
         return false;
       const currentParams = current.signature.params;
+      const currentResult = current.signature.returnType;
       return (
         currentParams.every((type) => type.kind === "val") &&
-        current.signature.returnType?.kind === "val" &&
+        (currentResult === null || currentResult.kind === "val") &&
         physicalKey(
           currentParams.map((type) => (type as Extract<typeof type, { kind: "val" }>).val),
-          current.signature.returnType.val,
+          currentResult === null ? null : currentResult.val,
         ) === key
       );
     },
@@ -380,8 +428,8 @@ export function makeIrFunctionMemberClosures(
         return type.val;
       });
       const result = plan.signature.returnType;
-      if (result?.kind !== "val") throw new Error("function-member closure has no physical result");
-      const wrapper = peekFuncRefWrapperTypes(ctx, params, [result.val]);
+      if (result !== null && result.kind !== "val") throw new Error("function-member closure has no physical result");
+      const wrapper = peekFuncRefWrapperTypes(ctx, params, result === null ? [] : [result.val]);
       const actual = ctx.irUnitFuncMap.get(plan.sourceUnitId);
       const session = ctx.programAbiSession;
       if (
