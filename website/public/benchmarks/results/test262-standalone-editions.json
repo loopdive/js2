@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4344,
-    "fail": 1248,
-    "ce": 200,
+    "fail": 1247,
+    "ce": 201,
     "skip": 0,
     "total": 5792,
     "pct": 75,
@@ -2241,8 +2241,8 @@
       {
         "name": "class-fields-private",
         "pass": 951,
-        "fail": 165,
-        "ce": 17,
+        "fail": 164,
+        "ce": 18,
         "skip": 0,
         "total": 1133,
         "pct": 84
@@ -2466,8 +2466,8 @@
       {
         "name": "class-fields-private-in",
         "pass": 11,
-        "fail": 6,
-        "ce": 2,
+        "fail": 5,
+        "ce": 3,
         "skip": 0,
         "total": 19,
         "pct": 58
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4578,
+    "pass": 4580,
     "fail": 197,
-    "ce": 146,
+    "ce": 144,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4479,
+        "pass": 4481,
         "fail": 106,
-        "ce": 26,
+        "ce": 24,
         "skip": 0,
         "total": 4611,
         "pct": 97
