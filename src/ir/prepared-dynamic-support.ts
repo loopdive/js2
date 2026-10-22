@@ -156,6 +156,29 @@ export function prepareDynamicInstructionSupportForUnits(input: {
       for (const root of block.instrs) {
         forEachInstrDeep(root, (instr) => {
           if (!isDynamicInstruction(instr)) return;
+          // The final IR may use arguments.length in the function-object
+          // target itself, without a local __ir_dyn_call_box. Its existing
+          // argc wrapper is reserved before dependency discovery; attach that
+          // exact provider rather than treating a registered helper as proof.
+          if (
+            native &&
+            (ctx.standalone || ctx.wasi) &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.arguments_length"
+          ) {
+            const ref = exactPreparedDynamicHelperRef(
+              ctx,
+              callableImports,
+              "__ir_arguments_length",
+              ctx.funcMap.get("__ir_arguments_length"),
+              [{ kind: "i32" }],
+              [{ kind: "f64" }],
+            );
+            if (ref === undefined) nameable = false;
+            else planned.set(instr, [ref]);
+            return;
+          }
           // The certified function-object producer uses the existing native
           // externref operations. Name their ACTUAL lowering providers, with
           // exact physical signatures, before dependency discovery. Unsupported
