@@ -102,12 +102,23 @@ The fix:
 
 ## Census after this slice
 
-On the merge of #6834 and #6833, S11.6.1_A2.1_T1 has 9 units with 1 legacy,
-`<module-init>`, and its only harness blocker is row 2:
-`array-method-unsupported` on `Array.prototype.map.call(arrayLike, String)`.
-With row 2 masked, the blocker becomes the test body's `var x = 1;`.
+On the merge of #6834 and #6833, S11.6.1_A2.1_T1 still has 9 units with 1
+legacy, `<module-init>`. Rows 1 and 3 no longer block it. Two harness lines
+still do, and both are selector refusals:
 
-With row 2's body stubbed to `"[" + String(arrayLike) + "]"`:
+- assert.compareArray's `message = message.toString();` (assert.js:151):
+  `closure-member-dynamic-method`. This refusal is #7110's fix (2026-10-22),
+  cascaded up the stack. The IR's dynamic method call answers `undefined` for
+  primitive and vec receivers on the host-free lanes, where legacy
+  dispatches by brand. Before the fix this closure was admitted and silently
+  wrong whenever `message` was a Symbol.
+- Row 2's `Array.prototype.map.call(arrayLike, String).join(", ")`, refused
+  the same way.
+
+With both lines masked, the blocker becomes the test body's `var x = 1;`.
+
+With both lines stubbed (`message = String(message);` and
+`return "[" + String(arrayLike) + "]";`):
 - `built-ins/Math/abs/S15.8.2.1_A1.js` has **0 legacy units**: every harness
   function and `<module-init>` ship IR bodies.
 - Six of 34 Math tests (abs, max, floor, sign) are fully IR, and the runner
@@ -118,6 +129,9 @@ With row 2's body stubbed to `"[" + String(arrayLike) + "]"`:
 
 ## Not done here
 
+- **`message.toString()` (assert.js:151)** needs a dynamic method call with
+  legacy's brand dispatch (or an exact `toString` arm). That is scoped
+  separately, together with row 2.
 - **Row 2.** Its body needs `Array.prototype.map.call(arrayLike, String)` and
   `.join(", ")` in the IR. That is scoped separately.
 - **Test-body residue seen in the sample:** `var` declarations (#7114), `Math`
@@ -134,6 +148,6 @@ With row 2's body stubbed to `"[" + String(arrayLike) + "]"`:
 `tests/issue-7106-harness-member-rows.test.ts`:
 - Row 1 and row 3 shapes are IR `<module-init>` bodies and match node.
 - An approved-fnctor prototype method stays legacy.
-- On the honest harness, row 2 is the one remaining blocker.
-- With row 2 stubbed, every unit is IR, the run agrees with node, and a
+- On the honest harness, `<module-init>` stays legacy (the two refused lines).
+- With both lines stubbed, every unit is IR, the run agrees with node, and a
   wrong expectation still throws.
