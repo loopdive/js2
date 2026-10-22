@@ -597,6 +597,8 @@ function isValueIdentifier(identifier: ts.Identifier): boolean {
   return true;
 }
 
+const READ_OR_PUSH_METHODS: ReadonlySet<string> = new Set(["push", "indexOf", "includes", "join"]);
+
 function isSafeAliasUse(expression: ts.Expression): boolean {
   let current: ts.Expression = expression;
   for (;;) {
@@ -624,7 +626,13 @@ function isSafeAliasUse(expression: ts.Expression): boolean {
     if (ts.isElementAccessExpression(parent) && parent.expression === current) return true;
     if (ts.isPropertyAccessExpression(parent) && parent.expression === current) {
       if (parent.name.text === "length") return true;
-      return parent.name.text === "push" && ts.isCallExpression(parent.parent) && parent.parent.expression === parent;
+      // (#7108) indexOf / includes / join only READ the elements, so like
+      // `push` they neither escape the vector nor add element evidence.
+      return (
+        READ_OR_PUSH_METHODS.has(parent.name.text) &&
+        ts.isCallExpression(parent.parent) &&
+        parent.parent.expression === parent
+      );
     }
     return false;
   }
