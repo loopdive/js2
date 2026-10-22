@@ -89,6 +89,7 @@ import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid, widenLocalToNullable } fr
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
 import { compileHostInstanceOf, compileIdentifier, resolveInstanceOfRHS } from "./expressions/identifiers.js";
+import { instanceofRhsShadowsModuleName } from "./expressions/instanceof-shadowed-rhs.js"; // (#7121)
 import { tryEmitNullishReceiverMemberRead } from "./nullish-receiver-coercible.js"; // (#4484 B) §7.3.2
 import { emitLazyClassObjectGet } from "./expressions/extern.js";
 import { compileThisKeyword } from "./expressions/this-keyword.js"; // (#4190, #4203, #4555)
@@ -1276,7 +1277,10 @@ function compileExpressionInner(
       return assignResult;
     }
     if (expr.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword) {
-      const rhsResult = resolveInstanceOfRHS(ctx, expr.right);
+      // (#7121) a shadowing parameter / local is not the class its name keys
+      const rhsResult = instanceofRhsShadowsModuleName(ctx, expr.right)
+        ? undefined
+        : resolveInstanceOfRHS(ctx, expr.right);
       if (!rhsResult) {
         return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }

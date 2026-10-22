@@ -126,6 +126,7 @@ import {
 } from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
 import { tryEmitStandaloneConsoleValue } from "../standalone-console-object.js";
+import { instanceofRhsShadowsModuleName } from "./instanceof-shadowed-rhs.js"; // (#7121)
 import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
 import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
@@ -3099,6 +3100,9 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // name the builtin dispatch below folds statically (to `false`), so the
   // non-callable arm inside `emitDynamicInstanceOf` was never reached
   // (`S11.8.6_A6_T2`, measured fail→pass).
+  // (#7121) a shadowing parameter / local skips the NAME-keyed arms below
+  if (instanceofRhsShadowsModuleName(ctx, expr.right)) return emitDynamicInstanceOf(ctx, fctx, expr);
+
   {
     const namespaceThrow = tryEmitNonCallableRhsThrow(ctx, fctx, expr);
     if (namespaceThrow) return namespaceThrow;
