@@ -11,9 +11,9 @@
   "compileTimeoutCases": 21,
   "verifiedExecutionCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-10-22T18:57:22.215Z",
-  "baseline_generated_at": "2026-10-22T18:57:22.215Z",
-  "baseline_sha": "dc3a066330a47f210632f507189849846d24e752",
+  "timestamp": "2026-10-22T20:25:00.625Z",
+  "baseline_generated_at": "2026-10-22T20:25:00.625Z",
+  "baseline_sha": "f49b1b6de8130733f781c5bab27bf16b3e939ae2",
   "oracle_version": 15,
   "mode": {
     "target": "standalone",
@@ -1779,9 +1779,9 @@
         "sample_files": [
           "test/built-ins/Temporal/Duration/prototype/round/roundingincrement-days-large.js",
           "test/built-ins/Temporal/PlainMonthDay/from/argument-string-calendar-case-insensitive.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/since/roundingmode-expand.js",
           "test/built-ins/Temporal/Duration/prototype/round/valid-increments.js",
-          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js"
+          "test/built-ins/Temporal/Duration/prototype/subtract/precision-no-floating-point-loss.js",
+          "test/built-ins/Temporal/PlainDate/prototype/toLocaleString/return-string.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: round to 1e8-# days with plain relativeTo: days result: Expected SameValue(«#», «#») to be true",
@@ -2598,8 +2598,8 @@
           "ES2020": 17,
           "ES2018": 12,
           "ES2024": 15,
-          "ES2023": 5,
           "ES2015": 14,
+          "ES2023": 5,
           "ES2022": 19,
           "ES2019": 14,
           "ES2021": 13,
