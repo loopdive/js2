@@ -46,6 +46,9 @@ import-cycles-allow:
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
 # dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
 # dynamic-delete statement arm.
+# 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
+# self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
+# stands down when runtime eval may share the realm.
 func-budget-allow:
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/select.ts::isPhase1StatementListInScope
@@ -72,6 +75,8 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
   - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/core/nodes.ts

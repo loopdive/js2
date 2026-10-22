@@ -300,6 +300,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
+import { isAmbientIntrinsicName } from "./values/ambient-intrinsics.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -831,6 +832,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isDirectModuleBinding?(node: ts.Identifier): boolean;
   /** True when the identifier resolves to an ambient declaration-file symbol. */
   isAmbientBinding?(node: ts.Identifier): boolean;
+  /** (#7118) Every declaration of the identifier's symbol is a lib one. */
+  isLibOnlyBinding?(node: ts.Identifier): boolean;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
@@ -5157,6 +5160,13 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
         }
         return r;
       }
+    }
+    // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
+    // global object (selector-admitted on the host-free lanes only).
+    if (!p && isAmbientIntrinsicName(expr.text) && cx.resolver?.isLibOnlyBinding?.(expr) === true) {
+      const realm = cx.builder.emitDynGlobalObject();
+      const key = cx.builder.emitBox(cx.builder.emitStringConst(expr.text), irDynamic(JS_TAG_IDS.String));
+      return cx.builder.emitDynMemberGet(realm, key);
     }
     if (!p)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);

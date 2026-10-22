@@ -266,6 +266,17 @@ export interface IrInstrDynCurrentThis extends IrInstrBase {
 }
 
 /**
+ * `dyn.global_object` — the realm's global object (§9.3.1 [[GlobalObject]];
+ * the value of `globalThis`, §19.1.1) (#7106). The SAME object legacy's
+ * `emitNativeGlobalThisObject` yields, so an IR read of an ambient global
+ * (`TypeError`, `Object`) through it sees the realm's own bindings. Result
+ * `dynamic`. No operands.
+ */
+export interface IrInstrDynGlobalObject extends IrInstrBase {
+  readonly kind: "dyn.global_object";
+}
+
+/**
  * `dyn.instanceof_fn{value, target}` — `value instanceof F` (§13.10.2) where F
  * is a known top-level function constructor of this module (#7106 S3c):
  * OrdinaryHasInstance (§7.3.20) walks `value`'s prototype chain for

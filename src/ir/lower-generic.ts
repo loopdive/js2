@@ -1941,6 +1941,18 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitCurrentThis(instr.strict)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.global_object": {
+        // #7106 — the realm's global object (legacy's `emitNativeGlobalThisObject`).
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.global_object (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitGlobalObject()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.instanceof_fn": {
         // #7106 S3c — OrdinaryHasInstance against F's per-function prototype.
         const dyn = resolver.resolveDynamicLowering?.();
@@ -3939,6 +3951,7 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.callee, ...instr.args];
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
     case "dyn.instanceof":

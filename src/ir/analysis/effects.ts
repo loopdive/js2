@@ -184,6 +184,8 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "dyn.arguments_length":
     // #7106 S3c — reads the receiver protocol global; runs no user code.
     case "dyn.current_this":
+    // #7106 — reads the realm's global object; runs no user code.
+    case "dyn.global_object":
     // #7106 S3c — reads F.prototype (lazily materialised) and walks the chain.
     case "dyn.instanceof_fn":
     // #7106 — the generic runtime operator: reads `target.prototype` (an

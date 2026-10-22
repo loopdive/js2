@@ -50,7 +50,7 @@ import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explic
 import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
-import { isSelfGuardedConstructor } from "./helpers/self-guarded-constructor.js";
+import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
 
@@ -306,6 +306,24 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
   return publishReceiverHelper(ctx, helper, [externref]);
 }
 
+export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
+
+/**
+ * (#7106) Reserve the realm-global-object wrapper `dyn.global_object` calls:
+ * legacy's own `globalThis` read (`emitGlobalObjectAsThis`, the sloppy-`this`
+ * fallback), so an IR read of an ambient global sees the realm's bindings.
+ */
+export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const helper = receiverHelperContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
+  emitGlobalObjectAsThis(ctx, helper);
+  flushLateImportShifts(ctx, null);
+  return publishReceiverHelper(ctx, helper, [externref]);
+}
+
 /**
  * Reserve (once per function) the `value instanceof F` wrapper
  * `dyn.instanceof_fn` calls. Returns the function index, or undefined when the
@@ -341,7 +359,7 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
  * which strictness? `undefined` = not on this lane / not this shape.
  */
 export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean | undefined {
-  if (!ctx.standalone || ctx.fast) return undefined;
+  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return undefined;
   if (!isSelfGuardedConstructor(fn)) return undefined;
   return isStrictFunction(fn, ctx.inferModuleStrictArguments);
 }
@@ -352,7 +370,7 @@ export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDec
  * the fnctor machinery, never reassigned, never a generator?
  */
 export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
-  if (!ctx.standalone || ctx.fast) return false;
+  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
