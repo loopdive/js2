@@ -306,6 +306,24 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
   return publishReceiverHelper(ctx, helper, [externref]);
 }
 
+export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
+
+/**
+ * (#7106) Reserve the realm-global-object wrapper `dyn.global_object` calls:
+ * legacy's own `globalThis` read (`emitGlobalObjectAsThis`, the sloppy-`this`
+ * fallback), so an IR read of an ambient global sees the realm's bindings.
+ */
+export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const helper = receiverHelperContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
+  emitGlobalObjectAsThis(ctx, helper);
+  flushLateImportShifts(ctx, null);
+  return publishReceiverHelper(ctx, helper, [externref]);
+}
+
 /**
  * Reserve (once per function) the `value instanceof F` wrapper
  * `dyn.instanceof_fn` calls. Returns the function index, or undefined when the
