@@ -84,6 +84,27 @@ stays true.
 Out of scope (unchanged): a runtime non-callable target still answers
 `false` instead of throwing (#2916 "no wrong throws").
 
+## Measured (2026-10-22)
+
+**Rows.** With the fix, on standalone and default gc, every row in the
+problem table answers as node. `Object.create(TypeError.prototype) instanceof
+TypeError` stays true. The test fails on exactly those rows with the fix
+reverted.
+
+**Conformance sample.** 150 files, `runTest262File` on standalone, one process at a time, in batches of 40. Before and after were measured on the same base (8b707ede0f): the fix's three source files were reverted for the before-run.
+
+| group | files | pass before | pass after |
+| --- | --- | --- | --- |
+| `language/expressions/instanceof` (all) | 43 | 25 | 25 |
+| `built-ins/Function/prototype/Symbol.hasInstance` (all) | 11 | 7 | 7 |
+| `built-ins/NativeErrors` (seeded sample) | 26 | 24 | 24 |
+| `built-ins/Error` (seeded sample) | 26 | 19 | 19 |
+| `built-ins/AggregateError` (seeded sample) | 4 | 2 | 2 |
+| random, whole suite (seeded) | 40 | 27 | 27 |
+| **total** | **150** | **104** | **104** |
+
+No status flips, and no changed failure reason in any of the 150 files. The fix is conformance-neutral on this sample. The test262 files in scope use a literal constructor name, which takes the name-based path the fix does not touch. The gain is in programs that pass an error constructor as a value, as in #7106's `dyn.instanceof` and the propertyHelper arm that waits on this PR.
+
 ## Acceptance criteria
 
 - The rows above answer as node on standalone and default gc. Every other
