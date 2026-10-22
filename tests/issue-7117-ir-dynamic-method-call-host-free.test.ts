@@ -61,6 +61,27 @@ describe("#7117 — IR dynamic method calls off the host lane", () => {
     expect(await run(result, false)).toBe(111111);
   }, 35_000);
 
+  it("keeps a USER method name on the IR path, where the open-$Object dispatch is exact", async () => {
+    const source = `function label(o) {
+  return o.label();
+}
+export function run() {
+  var n = 0;
+  if (label({ label: function () { return "a"; } }) === "a") n += 1;
+  if (label({ x: 1, label: function () { return "b"; } }) === "b") n += 10;
+  return n;
+}`;
+    const result = await compile(source, {
+      fileName: "test.js",
+      allowJs: true,
+      target: "standalone",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+    } as Parameters<typeof compile>[1]);
+    expect(emitted(result, "label")).toBe(true);
+    expect(await run(result, false)).toBe(11);
+  }, 35_000);
+
   it("leaves the host lane, whose __extern_method_call is the real JS call, unchanged", async () => {
     const result = await compile(SOURCE, {
       fileName: "test.js",

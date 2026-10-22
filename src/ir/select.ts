@@ -71,6 +71,7 @@ import {
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./builtin-method-names.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -2977,15 +2978,15 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 /**
  * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
  * On the host lane `__extern_method_call` is the real JS call. Off it, the
- * native object runtime dispatches only open-`$Object` methods and answers
- * `undefined` for primitive / vec / … receivers (`list.join(", ")` measured),
- * where legacy dispatches by brand; only the string runtime's own `charCodeAt`
- * fast path stays exact there.
+ * native object runtime dispatches open-`$Object` / instance / closure methods
+ * but answers `undefined` for a primitive or vec receiver (`list.join(", ")`
+ * measured), where legacy dispatches by brand. So a BUILT-IN prototype method
+ * name is refused there — except `charCodeAt`, the string runtime's exact fast
+ * path — while a user method name (`o.inc()`) keeps its open dispatch.
  */
 function dynamicMethodCallIsExact(name: string): boolean {
-  return (
-    name === "charCodeAt" || currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true
-  );
+  if (name === "charCodeAt" || !BUILTIN_PROTOTYPE_METHOD_NAMES.has(name)) return true;
+  return currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
 }
 
 function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
