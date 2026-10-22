@@ -95,6 +95,7 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
+  isFunctionObjectMemberRead,
   isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -106,6 +107,7 @@ export {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   isFunctionObjectChainedWrite,
+  isFunctionObjectMemberRead,
   functionObjectStoreRoot,
 } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
@@ -6237,6 +6239,53 @@ function dynamicConditionalValueArms(expr: ts.ConditionalExpression): boolean {
 }
 // (#7106 Stage 4) The planned member closure's dynamic parameter names.
 let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+// (#7106 Stage 4) The planned member closure's `var x = F.member;` locals: each
+// holds the dynamic carrier for its whole life (one declaration, never stored).
+let currentClosureFunctionObjectReadLocals: ReadonlySet<string> = new Set();
+
+/**
+ * (#7106 Stage 4) The `var` locals of `fn`'s own body that are initialized by a
+ * function-object member read (`var format = compareArray.format;`) and are
+ * never written again — no second declaration, assignment, update or nested
+ * function capture (a nested function is refused by every member-closure plan).
+ */
+function functionObjectReadLocals(fn: ts.FunctionExpression): ReadonlySet<string> {
+  const candidates = new Map<string, number>();
+  const written = new Set<string>();
+  const parameters = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+  const visit = (node: ts.Node): void => {
+    if (node !== fn.body && ts.isFunctionLike(node)) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const read =
+        node.initializer !== undefined &&
+        (ts.isPropertyAccessExpression(node.initializer) || ts.isElementAccessExpression(node.initializer)) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        isFunctionObjectMemberRead(node.initializer) &&
+        isFunctionObjectReceiver(node.initializer.expression, currentSelectionOptions?.functionObjectValues);
+      candidates.set(node.name.text, read ? (candidates.get(node.name.text) ?? 0) + 1 : Number.POSITIVE_INFINITY);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left)
+    )
+      written.add(node.left.text);
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand)
+    )
+      written.add(node.operand.text);
+    forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return new Set(
+    [...candidates].flatMap(([name, count]) =>
+      count === 1 && !written.has(name) && !parameters.has(name) ? [name] : [],
+    ),
+  );
+}
 
 /**
  * (#7106 Stage 4) `func()` — a bare call through one of the current function's
@@ -6251,7 +6300,8 @@ let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
 function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
   const callee = expr.expression;
   if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
-  const closureParam = currentClosureDynamicParamNames.has(callee.text);
+  const closureParam =
+    currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text);
   if (!closureParam && !currentDynamicParamNames.has(callee.text)) return false;
   if (!currentDynamicRuntimeBuildable) return false;
   if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-value-call") !== true) return false;
@@ -6668,6 +6718,18 @@ function isPhase1ClosureLiteral(
   const plan = ts.isFunctionExpression(expr)
     ? currentSelectionOptions?.functionMemberClosures?.resolve(expr)
     : undefined;
+  // (#7106 Stage 4) `this` is read through `dyn.current_this` (legacy's ladder);
+  // a string result recovers a dynamic return through `dyn.string_carrier`.
+  if (
+    plan?.thisStrict !== undefined &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-current-this") !== true
+  )
+    return shapeNo("closure-member-this", expr);
+  if (
+    plan?.signature.returnType?.kind === "string" &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") !== true
+  )
+    return shapeNo("closure-member-string-result", expr);
   return closureLiteralIsBuildable(expr, scope, localClasses, allowNumericDefaultSuffix, plan, {
     shapeNo,
     annotationToResolvedKind,
@@ -6740,6 +6802,8 @@ function withFunctionMemberClosureState<T>(
   const outerClosureDynamic = currentMemberClosureHasDynamicParams;
   currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
   const outerClosureDynamicNames = currentClosureDynamicParamNames;
+  const outerClosureReadLocals = currentClosureFunctionObjectReadLocals;
+  currentClosureFunctionObjectReadLocals = functionObjectReadLocals(plan.expression);
   currentClosureDynamicParamNames = new Set(
     [...plan.dynamicParameterIndices].flatMap((index) => {
       const name = plan.expression.parameters[index]?.name;
@@ -6750,7 +6814,9 @@ function withFunctionMemberClosureState<T>(
     plan.expression,
     new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
   );
-  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
+  // Only an i32 (boolean) plan returns booleans; a string plan returns strings.
+  currentSubjectReturnsBoolean =
+    plan.signature.returnType?.kind === "val" && plan.signature.returnType.val.kind === "i32";
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
   currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
@@ -6793,6 +6859,7 @@ function withFunctionMemberClosureState<T>(
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
     currentMemberClosureHasDynamicParams = outerClosureDynamic;
     currentClosureDynamicParamNames = outerClosureDynamicNames;
+    currentClosureFunctionObjectReadLocals = outerClosureReadLocals;
     currentMutableSlotNames = mutableSlots;
   }
 }

@@ -14953,6 +14953,11 @@ function peelParensExpr(e: ts.Expression): ts.Expression {
 
 function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   const candidate = peelParensExpr(expr);
+  // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
+  if (candidate.kind === ts.SyntaxKind.ThisKeyword) {
+    const binding = cx.scope.get("this");
+    return binding?.kind === "local" && binding.type.kind === "dynamic";
+  }
   if (ts.isIdentifier(candidate)) {
     const binding = cx.scope.get(candidate.text);
     if (!binding) return false;
@@ -14965,6 +14970,9 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   }
   if (ts.isCallExpression(candidate)) {
     if (ts.isIdentifier(candidate.expression)) {
+      // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
+      // returns whatever the called value returns: the carrier.
+      if (cx.scope.has(candidate.expression.text)) return expressionProducesDynamic(candidate.expression, cx);
       return cx.calleeTypes?.get(candidate.expression.text)?.returnType?.kind === "dynamic";
     }
     return (
@@ -17096,6 +17104,16 @@ function liftClosureBody(
       };
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
+    }
+    // (#7106 Stage 4) OrdinaryCallBindThis binds `this` once, at entry: the
+    // receiver the caller installed, else legacy's unbound answer.
+    const thisStrict = functionMemberClosure.thisStrict;
+    if (thisStrict !== undefined) {
+      const bindThis = (): void => {
+        scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(thisStrict), type: irDynamic() });
+      };
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
+      else bindThis();
     }
     // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
     // `sameValue`) reads through mutable storage, seeded from its entry value
