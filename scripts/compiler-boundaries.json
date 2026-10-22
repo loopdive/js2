@@ -11766,6 +11766,22 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/array-methods/selection.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7108-ir-array-search-join",
+      "nextBoundary": "Checker-backed element-family proof plus syntactic selector admission; move the checker query behind the frontend oracle and keep the pure admission rules in ir-core."
+    },
+    {
+      "path": "src/ir/array-methods/vec-search-join.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7108-ir-array-search-join",
+      "nextBoundary": "Source-node driven lowering into symbolic IR (vec/slot/loop/string ops); separate the AST argument walk from the representation-neutral scan builder."
+    },
+    {
       "path": "src/ir/array-element-lowering.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -177,6 +177,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
+  makeIrArrayElementFamilyClassifier,
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrLocalClassExpressionResolver,
@@ -3061,6 +3062,7 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
@@ -3259,6 +3261,7 @@ function planIrOverlay(
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
+      classifyArrayElementFamily,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
