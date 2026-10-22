@@ -98,6 +98,12 @@ import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
+import { irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
+import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-call.js";
+import {
+  ensureIrArrayPrototypeBorrowHelper,
+  irArrayPrototypeBorrowWrapperLane,
+} from "../codegen/array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   ensureIrArgumentsLengthHelper,
   ensureIrPublishArgcHelper,
@@ -2566,6 +2572,7 @@ export function compileIrPathFunctions(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      arrayPrototypeBorrowMethod: (method, arity) => irArrayPrototypeBorrowAdmitted(ctx, method, arity), // (#7106 compareArray.format)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -7009,6 +7016,9 @@ function makeFromAstResolver(
     dynamicMethodCallWrapper(method: string, arity: number) {
       return irDynamicMethodCallWrapperLane(ctx) && irDynamicMethodCallIsNameable(method, arity);
     },
+    arrayPrototypeBorrowWrapper(method: string, arity: number) {
+      return irArrayPrototypeBorrowAdmitted(ctx, method, arity);
+    },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (
         fnctorParameterPreselection?.nativeStringReplaceCall === call &&
@@ -9174,6 +9184,8 @@ function preregisterDynamicSupport(
   const dynConstructArities = new Set<number>();
   // (#7106 Stage 4) dynamic-receiver method calls through the brand-dispatch wrappers.
   const dynamicMethodCallWrappers = new Map<string, { readonly method: string; readonly arity: number }>();
+  // (#7106 compareArray.format) `Array.prototype.<m>.call(…)` borrows through the template wrappers.
+  const arrayPrototypeBorrowWrappers = new Map<string, { readonly method: string; readonly arity: number }>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
@@ -9258,6 +9270,8 @@ function preregisterDynamicSupport(
             if (dynamicNeed !== undefined) dynamicRuntimeNeeds.add(dynamicNeed);
             const methodWrapper = parseIrDynamicMethodCallHelperName(symbol);
             if (methodWrapper !== undefined) dynamicMethodCallWrappers.set(symbol, methodWrapper);
+            const borrowWrapper = parseIrArrayPrototypeBorrowHelperName(symbol);
+            if (borrowWrapper !== undefined) arrayPrototypeBorrowWrappers.set(symbol, borrowWrapper);
             switch (symbol) {
               case "__extern_set_strict":
                 usesFunctionMemberStrictSet = true;
@@ -9423,6 +9437,18 @@ function preregisterDynamicSupport(
     for (const [symbol, { method, arity }] of [...dynamicMethodCallWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
       if (ensureIrDynamicMethodCallHelper(ctx, symbol, method, arity) === undefined) {
         throw new Error(`ir/integration: ${symbol} has no host-free brand-dispatch wrapper (#7106 Stage 4)`);
+      }
+      observeNativeRuntimeProvider(ctx, symbol);
+    }
+    flushLateImportShifts(ctx, null);
+  }
+  if (arrayPrototypeBorrowWrappers.size > 0) {
+    // (#7106 compareArray.format) One wrapper per (method, arity), built from
+    // legacy's own borrow compiler over a template, so its reservations are
+    // shared with legacy sites and filled at finalize like theirs.
+    for (const [symbol, { method, arity }] of [...arrayPrototypeBorrowWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      if (ensureIrArrayPrototypeBorrowHelper(ctx, symbol, method, arity) === undefined) {
+        throw new Error(`ir/integration: ${symbol} has no host-free Array.prototype borrow wrapper (#7106)`);
       }
       observeNativeRuntimeProvider(ctx, symbol);
     }
@@ -10732,4 +10758,14 @@ function observePreparedDynamicBoxHelpers(
     refs.push(ref);
   }
   return refs;
+}
+
+/**
+ * (#7106 compareArray.format) The one admission the selector option and the
+ * from-ast resolver read for `Array.prototype.<method>.call(recv, …arity
+ * args)`: codegen's lane + legacy-borrow question and the IR contract's
+ * nameable (method, arity).
+ */
+export function irArrayPrototypeBorrowAdmitted(ctx: CodegenContext, method: string, arity: number): boolean {
+  return irArrayPrototypeBorrowWrapperLane(ctx, method) && irWrapperSymbolIsNameable(method, arity);
 }

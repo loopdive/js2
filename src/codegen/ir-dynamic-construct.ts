@@ -221,7 +221,8 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-function receiverHelperContext(
+/** A fresh helper `FunctionContext` over externref-style params (shared by the IR's template-built wrappers). */
+export function receiverHelperContext(
   name: string,
   params: { name: string; type: ValType }[],
   returnType: ValType,
@@ -241,7 +242,8 @@ function receiverHelperContext(
   };
 }
 
-function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
+/** Register the finished helper as a defined function under its name; returns its index. */
+export function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
   const typeIdx = addFuncType(
     ctx,
     helper.params.map((param) => param.type),
@@ -401,6 +403,25 @@ export function irDynamicMethodCallWrapperLane(ctx: CodegenContext): boolean {
   return noJsHost(ctx) && !ctx.fast;
 }
 
+/**
+ * Parse a template function `text` in its own detached file and return the
+ * expressions of its `count` expression statements. A template is a runtime
+ * operation, not source: legacy's checker queries on its nodes answer
+ * "unknown" — the facts of an `any` site — so the emitters take their dynamic
+ * arms. Throws when the text does not hold exactly `count` statements.
+ */
+export function parseDetachedTemplate(fileName: string, text: string, count: number): readonly ts.Expression[] {
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
+  const fn = file.statements[0];
+  const statements = fn && ts.isFunctionDeclaration(fn) ? fn.body?.statements : undefined;
+  const expressions = (statements ?? []).flatMap((statement) =>
+    ts.isExpressionStatement(statement) ? [statement.expression] : [],
+  );
+  if (expressions.length !== count)
+    throw new Error(`ir/template: ${fileName} did not parse (${expressions.length}/${count})`);
+  return expressions;
+}
+
 /** `recv.m`, `f.call(recv, a0, …)` and `recv.m(a0, …)`, parsed in a detached file. */
 function dynamicMethodCallTemplate(
   method: string,
@@ -413,19 +434,16 @@ function dynamicMethodCallTemplate(
     `  ${DMC_METHOD_VALUE}.call(${[DMC_RECEIVER, ...args].join(", ")});\n` +
     `  ${DMC_RECEIVER}.${method}(${args.join(", ")});\n` +
     `}`;
-  const file = ts.createSourceFile("__ir_dyn_mcall.js", text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
-  const fn = file.statements[0];
-  const statements = fn && ts.isFunctionDeclaration(fn) ? fn.body?.statements : undefined;
-  const expressions = (statements ?? []).flatMap((statement) =>
-    ts.isExpressionStatement(statement) ? [statement.expression] : [],
-  );
-  if (expressions.length !== 3)
-    throw new Error(`ir/dynamic-method-call: template did not parse for ${method}/${arity}`);
-  return [expressions[0]!, expressions[1]!, expressions[2]!];
+  const [read, own, branded] = parseDetachedTemplate("__ir_dyn_mcall.js", text, 3);
+  return [read!, own!, branded!];
 }
 
-/** Compile one template expression as an externref value onto `helper.body`. */
-function compileDynamicMethodCallPiece(ctx: CodegenContext, helper: FunctionContext, expression: ts.Expression): void {
+/** Compile one template expression as an externref value onto `helper.body` (undefined for a void result). */
+export function compileTemplateExpressionAsExternref(
+  ctx: CodegenContext,
+  helper: FunctionContext,
+  expression: ts.Expression,
+): void {
   const externref: ValType = { kind: "externref" };
   const result = compileExpression(ctx, helper, expression, externref);
   if (result === null || (result as unknown) === VOID_RESULT) emitUndefined(ctx, helper);
@@ -464,7 +482,7 @@ export function ensureIrDynamicMethodCallHelper(
 
   ensureLateImport(ctx, "__is_callable", [externref], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, helper);
-  compileDynamicMethodCallPiece(ctx, helper, read);
+  compileTemplateExpressionAsExternref(ctx, helper, read);
   helper.body.push({ op: "local.set", index: methodValue });
   const isCallable = ctx.funcMap.get("__is_callable");
   if (isCallable === undefined) throw new Error("ir/dynamic-method-call: __is_callable is not registered");
@@ -478,7 +496,7 @@ export function ensureIrDynamicMethodCallHelper(
   helper.savedBodies.push(outer);
   const branches = [own, branded].map((expression) => {
     helper.body = [];
-    compileDynamicMethodCallPiece(ctx, helper, expression);
+    compileTemplateExpressionAsExternref(ctx, helper, expression);
     const branch = helper.body;
     helper.savedBodies.push(branch);
     parked.push(branch);

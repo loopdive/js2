@@ -33,14 +33,19 @@ assignee: "ttraenkler/claude-c"
 # construct driver) and `analyzeFnctorEscapeGate` (refuse the fnctor struct);
 # `dyn-read.ts` gains the sloppy twin of `__dyn_member_set` beside its strict
 # sibling. No new import edge: the wrappers live in ir-dynamic-construct.ts.
+# 2026-10-22 (compareArray.format): `Array.prototype.<m>.call(recv, …)` lowers
+# as one call to the `__ir_arr_borrow_<m>_<n>` wrapper; integration.ts
+# pre-registers it from `codegen/array/ir-array-prototype-borrow.ts` (one more
+# two-way ir→codegen edge, that module joins the SCC — it imports legacy's
+# borrow compiler and the shared template-wrapper pieces).
 flat-dir-budget-allow:
   - src/codegen/ir-string-carrier.ts # 2026-10-21 (#7106 S1c): the dyn.string_carrier wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
-  - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
-  - largestSccSize: 725 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it
+  - ir->codegen: 80 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
+  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
 func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
@@ -1466,3 +1471,44 @@ for (let k = 1; k <= 12; k++) {
 ```
 
 </details>
+
+## `compareArray.format` — the `Array.prototype.<m>.call(recv, …)` arm (built 2026-10-22)
+
+The integrated census above names one blocker in 238 of 266 compiled tests:
+assert.js:179, `Array.prototype.map.call(arrayLike, String).join(", ")`. The
+layer-by-layer measurement reduced it to a single question — the IR has no
+exact value for `Array.prototype.map` (#7123) — and the plan's second candidate
+is what is built: the whole borrow is ONE reflective call, and the method value
+is never materialized.
+
+**Modules (one concern each, no duplicated AST walk).**
+
+| piece | module | reuse |
+| --- | --- | --- |
+| shape + naming contract (`matchArrayPrototypeBorrowCall`, `__ir_arr_borrow_<m>_<n>`) | `src/ir/array-prototype-borrow-call.ts` | the per-(method, arity) symbol helpers now shared with the #7119 wrapper (`irWrapperSymbol` / `parseIrWrapperSymbol`, lifted out of `dynamic-method-call-names.ts`) |
+| wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | `receiverHelperContext`, `parseDetachedTemplate`, `compileTemplateExpressionAsExternref`, `publishReceiverHelper` — exported from `ir-dynamic-construct.ts`, where the #7119 wrapper now uses the same generalized template parser |
+| admission | `arrayPrototypeBorrowCompilesHostFree` in `array-prototype-borrow.ts` (legacy's `ARRAY_METHODS` minus its standalone refusals) → `irArrayPrototypeBorrowIsWrappable` (the one predicate the selector option, the from-ast resolver and the finalize registration read) | no second method list |
+| selector | `ambientArrayPrototypeBorrowCall` beside `ambientObjectToStringTagCall`; the same three sites (move-only scan, Phase-1, external-call walk) plus `isDynShaped` (the result is the carrier) and one Phase-1 arm so a method call ON the result is a dynamic-receiver call, whatever the checker types the borrow | the #7119 wrapper carries `.join` on the result |
+| from-ast | `lowerArrayPrototypeBorrowCall`, intercepted before receiver lowering like the `Object.prototype.toString.call` arm; argument boxing shared with the dynamic method call through the new `lowerDynamicOperands` (one loop, was two) | — |
+
+**Semantics.** The wrapper is legacy's `compileArrayPrototypeCall` over the
+template `Array.prototype.<m>.call(recv, a0, …)` with externref parameters, so
+the receiver takes the `any`-receiver arm — the array-like loop a legacy site
+with an untyped receiver takes. A shadowed `Array` (parameter, local, module
+binding) never reaches the arm: the identifier must be the unshadowed ambient
+binding (`selectorSeesAmbientBinding` + scope, as the toString-tag arm).
+
+**Measured (standalone, `tests/issue-7106-ir-array-prototype-borrow.test.ts`,
+compared with node):** `map`+`String`-shaped callback then `.join`, `join`,
+`reduce` with an initial value, `filter` then `.join`, `some` through `String(…)`
+— IR bodies calling `__ir_arr_borrow_{map_1,join_1,reduce_2,filter_1,some_1}`,
+answers equal to node for an array-like, a real array and `[]`.
+
+**Left out, on purpose.** (1) `push` and the standalone-refused borrows (legacy
+refuses them loudly; the wrapper would turn that diagnostic into an integration
+error). (2) A member READ off the result (`….length`) keeps the checker's typing
+of the borrow (`any[]`), so from-ast's `+` demotes it (`string/number`) — a
+safe demote, measured, not a miscompile; the harness unit only calls `.join`.
+(3) The real `compareArray.format` also needs `String` as a value (#7118,
+#6846) — this branch carries the arm and its test; the harness measurement is
+on the integrated stack.

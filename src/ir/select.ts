@@ -72,6 +72,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import { irDynamicMethodCallIsNameable, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
+import { type ArrayPrototypeBorrowCall, matchArrayPrototypeBorrowCall } from "./array-prototype-borrow-call.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -691,6 +692,13 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * `dyn.instanceof_fn`? Absent → never.
    */
   readonly selfGuardedConstructorValue?: (ident: ts.Identifier) => boolean;
+  /**
+   * (#7106 compareArray.format) May the IR lower
+   * `Array.prototype.<method>.call(recv, …arity args)` through the
+   * `__ir_arr_borrow_<m>_<n>` wrapper codegen builds from legacy's borrow
+   * compiler? Absent → never.
+   */
+  readonly arrayPrototypeBorrowMethod?: (method: string, arity: number) => boolean;
   /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
@@ -3124,6 +3132,8 @@ function dynamicUsesAreMoveOnly(
     ) {
       return true;
     }
+    // (#7106 compareArray.format) the borrow wrapper answers the dynamic carrier.
+    if (ts.isCallExpression(e) && !dynNames.has("Array") && ambientArrayPrototypeBorrowCall(e) !== null) return true;
     // (#7106 item 1) `assert._isSameValue(x, y)`: a member call on a stable
     // top-level function object (Stage 2) lowers through the dynamic closed
     // dispatch and produces a dynamic value.
@@ -3273,6 +3283,13 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn) return false;
         if (isDynShaped(objectTagArg)) return currentDynamicRuntimeBuildable && scanExpr(objectTagArg, true);
         return currentDynamicRuntimeBuildable && scanExpr(objectTagArg, false);
+      }
+      // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)` → one
+      // reflective wrapper call: a dynamic result, every operand a carrier.
+      const arrayBorrow = dynNames.has("Array") ? null : ambientArrayPrototypeBorrowCall(e);
+      if (arrayBorrow !== null) {
+        if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
+        return [arrayBorrow.receiver, ...arrayBorrow.args].every((operand) => scanExpr(operand, isDynShaped(operand)));
       }
       const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
       if (receiverFirstMethod !== undefined) {
@@ -8117,6 +8134,21 @@ function ambientObjectToStringTagCall(expr: ts.CallExpression): ts.Expression | 
 }
 
 /**
+ * (#7106 compareArray.format) The exact `Array.prototype.<m>.call(recv, …)`
+ * borrow on the UNSHADOWED ambient `Array`, for a method legacy's borrow
+ * compiler builds host-free, on a lane with the template wrappers. Returns
+ * the matched shape, else null. A local `Array` binding is the caller's
+ * `scope` question; a module-level one is settled by the ambient predicate.
+ */
+function ambientArrayPrototypeBorrowCall(expr: ts.CallExpression): ArrayPrototypeBorrowCall | null {
+  const borrow = matchArrayPrototypeBorrowCall(expr);
+  if (borrow === undefined || !selectorSeesAmbientBinding(borrow.root)) return null;
+  if (currentSelectionOptions?.supportsBackendCapability?.("dynamic-method-call-wrapper") !== true) return null;
+  if (currentSelectionOptions.arrayPrototypeBorrowMethod?.(borrow.method, borrow.args.length) !== true) return null;
+  return borrow;
+}
+
+/**
  * (#7106 S1b) `typeof <ambient global>` folds to a constant tag when the
  * identifier is the UNSHADOWED ambient binding (`typeof JSON !== "undefined"`
  * in assert.js). Shadowing is settled by the checker-backed ambient predicate
@@ -11160,6 +11192,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // (#7106 S1c) `Object.prototype.toString.call(v)`: standalone classifier lanes only.
       const objectTagArg = scope.has("Object") ? null : ambientObjectToStringTagCall(expr);
       if (objectTagArg !== null) return isPhase1Expr(objectTagArg, scope, localClasses);
+      // (#7106 compareArray.format) `Array.prototype.<m>.call(recv, …)`: borrow-wrapper lanes only.
+      const arrayBorrow = scope.has("Array") ? null : ambientArrayPrototypeBorrowCall(expr);
+      if (arrayBorrow !== null) {
+        return [arrayBorrow.receiver, ...arrayBorrow.args].every((operand) =>
+          isPhase1Expr(operand, scope, localClasses),
+        );
+      }
       // (#1371) Whitelist f64 Math ops; the ambient receiver is not in scope, so the
       // generic receiver check below would reject these. Recognise the shape
       // here and accept it; the lowerer in from-ast.ts emits a plain unary
@@ -11229,6 +11268,18 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const provenReceiverFamily = currentSelectionOptions?.classifyPrimitiveExpression?.(builtinReceiver);
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
       const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
+      // (#7106 compareArray.format) A method call ON a borrow result
+      // (`Array.prototype.map.call(…).join(", ")`): the receiver is the dynamic
+      // carrier, whatever the checker types the borrow, so it takes the generic
+      // dynamic-receiver call (the move-only scan admits the method).
+      if (
+        ts.isCallExpression(builtinReceiver) &&
+        !scope.has("Array") &&
+        ambientArrayPrototypeBorrowCall(builtinReceiver) !== null
+      ) {
+        if (!isPhase1Expr(builtinReceiver, scope, localClasses)) return false;
+        return expr.arguments.every((arg) => !ts.isSpreadElement(arg) && isPhase1Expr(arg, scope, localClasses));
+      }
       if (currentSelectionOptions?.isArrayExpression?.(builtinReceiver) === true) {
         const searchJoin = isPhase1ArraySearchOrJoin(expr, scope, localClasses);
         if (searchJoin !== undefined) return searchJoin;
@@ -12416,6 +12467,12 @@ export function buildLocalCallGraph(
           const objectTagArg = ambientObjectToStringTagCall(node);
           if (objectTagArg !== null) {
             visit(objectTagArg);
+            return;
+          }
+          // (#7106 compareArray.format) …and `Array.prototype.<m>.call(recv, …)`.
+          const arrayBorrow = ambientArrayPrototypeBorrowCall(node);
+          if (arrayBorrow !== null) {
+            for (const operand of [arrayBorrow.receiver, ...arrayBorrow.args]) visit(operand);
             return;
           }
           // (#1371) Special case: `Math.<whitelisted>(arg)` lowers to a
