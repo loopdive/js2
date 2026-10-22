@@ -883,3 +883,88 @@ not class-definition execution. The 140-case lifecycle and true-linear
 qualification remain open; the next work is the actual shared definition
 producer, lexical environments and canonical Call/TDZ errors. Public heads,
 HOLDs, queue and existing tests remain unchanged.
+
+### Executable TDZ prerequisite: shared native error constructors
+
+The next class-definition path needs actual lexical initialization guards and
+an actual throwing class Call entry. The existing ReferenceError declaration
+and standalone runtime provider already exist, but complete Prepared acceptance
+cannot materialize their callable. A genuine source TDZ program prepares and
+then refuses at that physical boundary (recorded in the class error probe).
+Implement that missing constructor through the existing native error owner,
+not a parallel error carrier or a test-side resolver.
+
+Target structure before code: generalize `backend/wasmgc/resources/native-errors.ts`
+by error kind while preserving the existing TypeError recipe/order/body. Its
+constructor token has a generic name; all existing consumers retain TypeError
+requirements. Add declarative recipe support to that same owner. A sibling
+`backend/wasmgc/program/native-error-abi.ts` selects ReferenceError calls from
+the existing complete program/projection demand census, validates the selected
+canonical provider and exact callable contract, and contributes the actual
+literal/resource/ABI binding. Native string resource composition owns the
+canonical name literal and the error pack; it must authenticate/fill/reconcile
+all declared tokens through the existing ledger. Share the IR throw helper
+with the module TDZ guard instead of adding class-only exception machinery.
+
+Prove actual source prepare/accept/emit/instantiate/run with a TDZ read caught
+before initialization and an ordinary read after initialization, including
+codec replay and opaque Error name/tag/message probes on a copy only. Require
+zero imports and retain original source/unit accounting. Negative controls
+must reject wrong provider/signature, stale/copy resource ownership and modified
+constructor body. Preserve existing TypeError behavior and existing gc/host
+bytes, with no new giant-file growth grants. This prerequisite is not class
+frontend completion; all original class and true-linear criteria remain open.
+
+The cycle gate rejects backend-to-codegen tag imports and backend ownership of
+the semantic ABI selector. Keep the existing tag catalog once below both
+consumers in `runtime/contracts/builtin-type-tags.ts`, with the old codegen
+path as a compatibility reexport. Put demand/provider/ABI selection in
+`ir/program/native-error-setup.ts`; backend composition imports that semantic
+owner. The generic resource owner uses its existing backend declaration/data
+comparison helper, removing the old backend-to-IR comparison edge rather than
+adding a growth grant. Preserve the old TypeError API as a delegating adapter;
+ignore unrelated extra requirement fields as before and force TypeError there.
+
+### Executable native TDZ qualification (local)
+
+A genuine source program now prepares, accepts, emits, instantiates and returns
+**173**: the pre-initialization read throws/catches, then the initialized read
+returns 3. Its actual standalone WasmGC artifact is **438 bytes / zero imports /
+3 source units**. Original and decoded snapshots run under both string-storage
+settings. Two separate abrupt evaluations return the JavaScript oracle **123**;
+an uncaught startup TDZ propagates as a language exception. A test-only copy
+captures the actual startup-thrown object and reads its **ReferenceError** name,
+brand **-16**, absent message and fresh identity. Guarded fresh-process replay
+has no frontend/TypeScript modules and reencodes identically.
+
+- Five-file focused run: **100/100** (74 unchanged error/invocation owner tests,
+  14 new source/owner tests and 12 class-source coverage controls).
+- New source/owner tests also pass **14/14** in the default numeric domain.
+- Existing constructed class allocation/replay/realm validation: **16/16**.
+- Broader adjacent source/runtime/map controls: **87 pass / 3 fail / 90**.
+  All three failures reproduce against exact parent
+  `cd54ee26d774c6b316cef27064b5a38b308b66f1`, with identical complete failure
+  sections: two verifier-facade spy assertions and one fresh-child facade-load
+  assertion. Parent loader applied all seven changed tracked source owners;
+  the fresh child's callable-declaration graph is unchanged by this patch.
+- The one stale typed-preparation TDZ refusal assertion is replaced with actual
+  normal and decoded/reversed-source execution returning **132 twice**. All
+  original unit/global/detachment/order checks remain. No frozen owner tests,
+  fixture receipts, source hashes, or baseline files are rewritten.
+- Existing gc artifacts: **14/14 byte-identical**. Typecheck, lint, LOC/function
+  budgets, import cycles, IR dialect/layering and flat-directory gates pass.
+  No new growth grants; giant source/physical drivers shrink.
+
+The shared native Error constructor owner preserves the TypeError facade and
+canonical body, with the tag catalog below both consumers. Fresh review caught
+an extra-kind substitution through the TypeError facade; it is fixed by the
+facade's own explicit TypeError requirements, preserving original key/dependency
+identity checks. Review now has no unresolved findings, with 29 independent
+controls and a qualified exact-parent comparison.
+
+Evidence: `.tmp/7139-class-tdz-*` and `.tmp/review-native-tdz/REVIEW.md` (including
+`parent-comparison.json`). This is a necessary executable lexical-binding
+prerequisite. Source ClassDefinitionEvaluation, inner/outer class environment
+production, actual class Call TypeError/Construct execution, descriptors,
+standard realm completion and true linear remain open. No public head, HOLD,
+queue, or existing process was changed or cancelled.

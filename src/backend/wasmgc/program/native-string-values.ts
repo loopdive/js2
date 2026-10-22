@@ -18,6 +18,18 @@ import {
 } from "./native-realm-literals.js";
 import { nativeStringInvocationRequirements } from "./native-invocation-abi.js";
 import { selectNativeBooleans, type NativeBooleanSelection } from "./native-primitive-boundary-abi.js";
+import { selectNativeErrorConstructorRequirements } from "../../../ir/program/native-error-setup.js";
+import { BUILTIN_TYPE_TAGS } from "../../../runtime/contracts/builtin-type-tags.js";
+import {
+  declareNativeErrorConstructor,
+  reserveNativeErrorConstructor,
+  requireNativeErrorConstructor,
+  fillNativeErrorConstructor,
+  requireCompletedNativeErrorConstructor,
+  type NativeErrorConstructorRequirements,
+  type NativeErrorConstructorReservations,
+  type NativeErrorConstructorDependencies,
+} from "../resources/native-error-constructor.js";
 import type { PreparedIrProgramFailure } from "../../../ir/program/prepared-contracts.js";
 import {
   collectNativeStringValueDemands,
@@ -112,6 +124,7 @@ export interface NativeStringValuePhysicalPlan {
   readonly mode: "literals" | "number-boundary" | "realm-bootstrap";
   readonly booleans?: NativeBooleanSelection;
   readonly output?: NativeStringOutputPhysicalPlan;
+  readonly error?: NativeErrorConstructorRequirements;
   readonly literalRequirements: NativeStringLiteralRequirements;
   readonly literalUses: readonly { readonly demandIndex: number; readonly cacheKey: string }[];
   readonly declarations: readonly NativeStringValueDeclaration[];
@@ -141,6 +154,7 @@ export interface NativeStringValueReservations {
   readonly strings: NativeStringLiteralReservations;
   readonly flatten?: NativeStringFlattenReservations;
   readonly output?: NativeStringOutputReservations;
+  readonly error?: NativeErrorConstructorReservations;
   readonly number?: {
     readonly flatten: NativeStringFlattenReservations;
     readonly scanner: NativeStringNumberReservations;
@@ -230,6 +244,7 @@ export function planNativeStringValuePhysical(
     emptyIdentity: options.stringConcatEmptyIdentity ?? true,
   });
   if ("kind" in outputRequirements) return outputRequirements;
+  const error = selectNativeErrorConstructorRequirements(demands);
   const invocation =
     !!invocationRequirements ||
     demands.occurrences.some((row, index) => {
@@ -306,7 +321,7 @@ export function planNativeStringValuePhysical(
     literals.push({ value: i.value, encoding });
     uses.push({ demandIndex: index, cacheKey: selection.key });
   }
-  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat) return { kind: "none" };
+  if (!numeric && !realmLiterals && !uses.length && !outputRequirements.binaryConcat && !error) return { kind: "none" };
   const entry = demands.program.inventory.sources.find((row) => row.kind === "entry");
   if (!entry) fail("missing canonical entry source");
   const key = "native-string-values:v1:" + JSON.stringify(entry.id);
@@ -321,6 +336,7 @@ export function planNativeStringValuePhysical(
   if (invocation) literals.push({ value: "TypeError" }, { value: "Value is not callable" });
   if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
   if (realmLiterals) literals.push(...realmLiterals.literals);
+  if (error) literals.push({ value: error.kind });
   const literalRequirements = { key, utf8Storage: options.utf8Storage, literals };
   const values = numeric || realmLiterals ? declareNativeValueResources(entry.id) : undefined;
   const booleanType = values?.declarations.find((row) => row.role[0] === "values" && row.role[1] === "boolean");
@@ -335,6 +351,7 @@ export function planNativeStringValuePhysical(
       ? [declareNativeBooleanResources(key + ":booleans", booleanType.key, boolean.selection)]
       : []),
     ...(output ? [output] : []),
+    ...(error ? [declareNativeErrorConstructor(error)] : []),
   ];
   return {
     kind: "planned",
@@ -345,6 +362,7 @@ export function planNativeStringValuePhysical(
       mode: numeric ? "number-boundary" : realmLiterals ? "realm-bootstrap" : "literals",
       ...(boolean.selection ? { booleans: boolean.selection } : {}),
       ...(output ? { output } : {}),
+      ...(error ? { error } : {}),
       literalRequirements,
       literalUses: uses,
       declarations: recipes.flatMap((recipe) => recipe.declarations),
@@ -359,6 +377,7 @@ interface Owner {
   readonly input: NativeStringValueReservationInput;
   readonly snapshot: unknown;
   readonly rows: readonly NativeStringValueResourceRow[];
+  readonly errorDependencies?: NativeErrorConstructorDependencies;
   filled: boolean;
 }
 const owners = new WeakMap<NativeStringValueReservations, Owner>();
@@ -407,6 +426,7 @@ function ownerFor(tx: PhysicalModuleReservations, pack: NativeStringValueReserva
     fail("changed retained realm literal identities");
   assertNativeStringValueReservationInput(owner.input);
   nativeStringLiteralReservationInventory(tx, pack.strings);
+  if (pack.error) requireNativeErrorConstructor(tx, pack.error, owner.input.plan.error!, owner.errorDependencies!);
   if (pack.output) nativeStringOutputReservationInventory(tx, pack.output, owner.input.plan.output!);
   if (pack.number)
     requireNativeStringNumberReservations(tx, pack.number.scanner, owner.input.valueRequirements!, pack.strings);
@@ -464,11 +484,19 @@ export function reserveNativeStringValueResources(
     input.plan.output && input.outputRequirements && flatten
       ? reserveNativeStringOutputResources(tx, input.outputRequirements, input.plan.output, { strings, flatten })
       : undefined;
+  const errorDependencies = input.plan.error
+    ? Object.freeze({ strings, tag: BUILTIN_TYPE_TAGS[input.plan.error.kind] })
+    : undefined;
+  const error =
+    errorDependencies && input.plan.error
+      ? reserveNativeErrorConstructor(tx, input.plan.error, errorDependencies)
+      : undefined;
   const pack = Object.freeze({
     strings,
     ...(flatten ? { flatten } : {}),
     ...(number ? { number } : {}),
     ...(output ? { output } : {}),
+    ...(error ? { error } : {}),
   });
   const census = nativeStringLiteralReservationInventory(tx, strings);
   const rows: NativeStringValueResourceRow[] = [];
@@ -514,6 +542,10 @@ export function reserveNativeStringValueResources(
       else fn(row);
     }
   }
+  if (error) {
+    type(error.type);
+    fn(error.construct);
+  }
   // Producers own the captured tokens; recipe order must not be reconstructed
   // by grouping all globals before all materializers (which loses interleaving).
   const byKey = new Map(rows.map((row) => [row.key, row]));
@@ -534,6 +566,7 @@ export function reserveNativeStringValueResources(
     input: Object.freeze({ ...input }),
     snapshot: freezePreparedIrValue(input.demands),
     rows: Object.freeze(orderedRows),
+    ...(errorDependencies ? { errorDependencies } : {}),
     filled: false,
   });
   return pack;
@@ -561,6 +594,7 @@ export function fillNativeStringValueResources(
     if (pack.number.booleans) fillNativeBooleanResources(tx, pack.number.booleans);
   }
   if (pack.output) fillNativeStringOutputResources(tx, pack.output);
+  if (pack.error) fillNativeErrorConstructor(tx, pack.error);
   owner.filled = true;
 }
 export function publishNativeStringValueOutput(
@@ -577,6 +611,8 @@ export function requireCompletedNativeStringValues(
   const owner = ownerFor(tx, pack);
   if (!owner.filled) fail("incomplete native string value resources");
   requireCompletedNativeStringLiterals(tx, pack.strings);
+  if (pack.error)
+    requireCompletedNativeErrorConstructor(tx, pack.error, owner.input.plan.error!, owner.errorDependencies!);
   if (pack.flatten) requireCompletedNativeStringFlatten(tx, pack.flatten, pack.strings);
   if (pack.output) requireCompletedNativeStringOutput(tx, pack.output);
   if (pack.number) {

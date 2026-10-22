@@ -21,7 +21,8 @@ import {
   nativeInvocationSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
-import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { nativeStringOutputInputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { nativeErrorAbiBindings } from "./program/native-error-setup.js";
 import {
   nativeBooleanAbiBindings,
   nativeNumberBinding,
@@ -694,17 +695,8 @@ function nativeStringSetup(
     if (binding) add(binding);
   }
   nativeBooleanAbiBindings(input, baseOrder).forEach(add);
-  if (input.plan.output) {
-    if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
-    const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
-    if (offset < 0) nativeInvalid("output recipe is detached from aggregate declarations");
-    for (const binding of nativeStringOutputAbiBindings(
-      input.outputRequirements,
-      input.plan.output,
-      baseOrder + offset,
-    ))
-      add(binding);
-  }
+  nativeErrorAbiBindings(input, baseOrder).forEach(add);
+  nativeStringOutputInputAbiBindings(input, baseOrder).forEach(add);
   const seen = new Set<string>();
   for (const [index, declaration] of input.plan.declarations.entries()) {
     if (seen.has(declaration.key)) nativeInvalid("duplicate resource declaration key");

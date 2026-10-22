@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { emitNativeReferenceError } from "./native-errors.js";
 //
 // AST → IR lowering.
 //
@@ -4725,20 +4726,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
     const tdz = cx.builder.emitGlobalGet(binding.tdzGlobalRef, irVal({ kind: "i32" }));
     const cond = cx.builder.emitUnary("i32.eqz", tdz, irVal({ kind: "i32" }));
     const thenBody = cx.builder.collectBodyInstrs(() => {
-      const nullExt = cx.builder.emitConst(
-        { kind: "null", ty: irVal({ kind: "externref" }) },
-        irVal({ kind: "externref" }),
-      );
-      const referenceError = cx.builder.emitCall(
-        irRuntimeFuncRef("__new_ReferenceError"),
-        [nullExt],
-        irVal({ kind: "externref" }),
-      );
-      if (referenceError === null) {
-        // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-        throw new Error(`ir/from-ast: ReferenceError constructor returned no value (${cx.funcName})`);
-      }
-      cx.builder.emitThrow(referenceError);
+      emitNativeReferenceError(cx.builder);
     });
     cx.builder.emitIfStmt({ cond, then: thenBody, else: [] });
   }
