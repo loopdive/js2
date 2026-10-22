@@ -8,7 +8,8 @@
 //   - a repeated `var x` is one binding — the first declaration is canonical
 //     and each later one is a write (or, bare, a no-op);
 //   - a `var` whose sole-home slot legacy allocated as `externref` binds as a
-//     `dynamic` module binding (the IR dynamic carrier off fast mode).
+//     `dynamic` module binding (the IR dynamic carrier off fast mode);
+//   - a bare `var x;` is a no-op: the module-init prologue seeded the slot.
 
 import { describe, expect, it } from "vitest";
 
@@ -31,6 +32,9 @@ const CASES: Record<string, string> = {
   readByFunction: `var x = 1; function f() { return x; } var x = 2; if (f() !== 2) { throw "#4"; }`,
   heterogeneous: `var x = 1; var x = "s"; if (x !== "s") { throw "#5"; }`,
   dynamicWrites: `var o = undefined; o = 4; if (o !== 4) { throw "#6"; } o = true; if (o !== true) { throw "#7"; }`,
+  // The module-init prologue (#6837) seeds a script `var` before any statement.
+  uninitialized: `var n, m = 2; if (n !== undefined || m !== 2) { throw "#8"; } n = 3; if (n !== 3) { throw "#9"; }`,
+  readBeforeDeclaration: `if (y !== undefined) { throw "#10"; } var y = 1; if (y !== 1) { throw "#11"; }`,
 };
 
 async function runModuleInit(target: "standalone" | undefined, source: string): Promise<string[]> {
@@ -56,10 +60,11 @@ describe("#7106 — script `var` declarations in <module-init>", () => {
   }
 
   it("keeps a var merged with a function declaration on legacy", async () => {
-    const result = await compile(`var g = 1; function g() { return 2; } if (g !== 1) { throw "#8"; }`, {
+    const result = await compile(`var g = 1; function g() { return 2; } if (g !== 1) { throw "#12"; }`, {
       ...OPTIONS,
       target: "standalone",
     });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const init = (result.irOutcomes ?? []).find((o) => o.displayName === "<module-init>");
     expect(init?.irBodyEmitted).not.toBe(true);
   });

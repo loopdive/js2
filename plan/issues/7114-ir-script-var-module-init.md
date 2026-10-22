@@ -67,24 +67,28 @@ literal 13, string 6.
    `resolveIrDynamicCarrierType`, so the IR binds such a `var` as a `dynamic`
    module binding whatever its checker type. Writes to a dynamic module slot
    box the concrete value (`boxForDynamicModuleStorage`).
+4. **Bare `var x;`.** A first declaration without an initializer is a no-op
+   that brings the prologue-seeded slot into scope
+   (`bindUninitializedModuleVar`).
 
 ## Merge order
 
-Merge **after the GDI-prologue PR** (`claude/7106-module-init-gdi-prologue`).
-An IR-claimed `<module-init>` currently replaces legacy's whole body,
-including the GlobalDeclarationInstantiation prologue:
-- `emitModuleVarUndefinedSeeds`;
-- `emitScriptGlobalFunctionBindings` and `emitScriptGlobalVarBindings`, which
-  publish declarations on the realm object.
+Stacked on #6837 (`claude/7106-module-init-gdi-prologue`). An IR-claimed
+`<module-init>` used to replace legacy's whole body, including the
+GlobalDeclarationInstantiation prologue: `var` `undefined` seeds and the
+realm-object publication of script functions and vars. #6837 runs that
+prologue before the IR statements. This slice relies on it twice: a read
+before the declaration sees the seeded `undefined`, and a bare `var x;` is a
+no-op at its position.
 
-Opening the gate makes far more script `<module-init>` units claimable.
-`if (y !== undefined) throw…; var y = 1;` reads an unseeded `externref` slot
-until the prologue is preserved.
+#6837 also retires the live-function-binding refusal. That exposed a merged
+`var g` / `function g`: under the checker the script `var` has its own symbol,
+but the binding and its slot belong to the function. Codegen's
+sole-home predicate now refuses a name that is also a function binding, or a
+slot that is not legacy's `__mod_<name>`.
 
 ## Not in this slice
 
-- `var x;` as the **first** declaration (`vardecl-noinit`). It becomes a no-op
-  once the prologue's `undefined` seed survives.
 - Object-, array-, class- and `Date`-typed script vars. Legacy gives these a
   typed struct slot, not `externref`, and the IR has no module-binding kind for
   reference structs yet (the same gap blocks `let`/`const`).
@@ -93,9 +97,10 @@ until the prologue is preserved.
 ## Acceptance
 
 `tests/issue-7106-script-var.test.ts`: unique, redeclared, read-by-function,
-heterogeneous and dynamic-write vars claim `<module-init>` and run on
+heterogeneous, dynamic-write, uninitialized and read-before-declaration vars
+claim `<module-init>` and run on
 standalone and gc, and a failing check still throws. A `var` merged with a
-function declaration stays legacy. `check:ir-fallbacks` OK. Neighbour suites
+function declaration compiles and stays legacy. `check:ir-fallbacks` OK. Neighbour suites
 (#2949, #3142, #3523, #4208, #4489, #4491, #5289, #6894, #6937, #7105, #7106):
 no new failures. All 48 failures there reproduce identically on unmodified
 `src`.

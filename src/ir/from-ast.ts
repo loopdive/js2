@@ -4124,6 +4124,16 @@ function lowerBindingPattern(pattern: ts.BindingPattern, source: IrValueId, cx: 
   lowerArrayPattern(pattern, source, cx);
 }
 
+/** (#7106) A first bare script `var x;`: the module-init prologue seeded the
+ * slot, so the declaration only brings the slot into scope. */
+function bindUninitializedModuleVar(d: ts.VariableDeclaration, name: string, cx: LowerCtx): boolean {
+  const binding = cx.moduleBindings?.get(name);
+  if (!binding || (d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return false;
+  requireMatchingModuleBindingOwner(binding, cx.ownerUnitId, cx.funcName);
+  cx.scope.set(name, { kind: "moduleGlobal", globalRef: binding.globalRef, type: binding.type });
+  return true;
+}
+
 /** (#7106) A repeated top-level script `var` is the same `__mod_<name>` slot:
  * its initializer is a write, and a bare `var x;` repeat is a no-op. */
 function isRedeclaredModuleVar(d: ts.VariableDeclaration, name: string, cx: LowerCtx): boolean {
@@ -4193,6 +4203,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   const name = d.name.text;
   const redeclaredModuleVar = isRedeclaredModuleVar(d, name, cx);
   if (redeclaredModuleVar && !d.initializer) return;
+  if (!d.initializer && !redeclaredModuleVar && bindUninitializedModuleVar(d, name, cx)) return;
   if (cx.scope.has(name) && !redeclaredModuleVar) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
   }
