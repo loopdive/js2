@@ -86,6 +86,7 @@ import {
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
+  scriptVarSlotIsDynamicHome,
   scriptVarSlotIsSoleHome,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
@@ -2386,6 +2387,7 @@ export function compileIrPathFunctions(
     // (#7105) Must agree with the selector-side option: a script `var` the
     // selector admitted is written here through the same slot predicate.
     admitScriptVar: (declaration: ts.VariableDeclaration) => scriptVarSlotIsSoleHome(ctx, declaration),
+    scriptVarDynamicHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
