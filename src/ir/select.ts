@@ -7395,6 +7395,18 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
 function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   if (!expressionTouchesTrackedModuleValue(candidate)) return true;
+  // (#7106 S1g) A certified uncurried Object.prototype predicate alias call
+  // (`__hasOwnProperty(o, k)`) lowers to a boolean `dyn.own_property`. Since
+  // #7114 a script's top-level alias `var` is a tracked module binding. The
+  // callee resolving to that binding means it is not shadowed.
+  if (
+    ts.isCallExpression(candidate) &&
+    candidate.arguments.length === 2 &&
+    moduleBinding(candidate.expression) !== undefined &&
+    uncurriedObjectAliasMethod(candidate.expression, () => false) !== undefined
+  ) {
+    return true;
+  }
   if (moduleBinding(candidate)) return isDirectBooleanModuleBinding(candidate);
   if (moduleScalarAliasFamily(candidate)) return moduleScalarAliasFamily(candidate) === "boolean";
   if (isModuleMapGetAlias(candidate)) return false;
