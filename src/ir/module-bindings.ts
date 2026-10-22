@@ -844,6 +844,12 @@ export interface IrModuleBindingResolverOptions {
    * mode). Such a binding resolves as `dynamic` whatever its checker type.
    */
   readonly scriptVarDynamicHome?: (declaration: ts.VariableDeclaration) => boolean;
+  /**
+   * (#7125) Codegen's predicate for a script `var` whose sole-home slot is the
+   * native-string carrier `(ref null $AnyString)`. Such a string-typed binding
+   * resolves as `string`, the exact storage the `string` arm resolves.
+   */
+  readonly scriptVarStringHome?: (declaration: ts.VariableDeclaration) => boolean;
 }
 
 const selectedTopLevelAccessorUnitIdsByContext = new WeakMap<IrPlanningIdentityContext, ReadonlySet<IrUnitId>>();
@@ -942,7 +948,7 @@ function uniqueTopLevelVariableDeclaration(
 function directTopLevelDeclaration(
   node: ts.Identifier,
   checker: ts.TypeChecker,
-  scriptVar?: Pick<IrModuleBindingResolverOptions, "admitScriptVar" | "scriptVarDynamicHome">,
+  scriptVar?: Pick<IrModuleBindingResolverOptions, "admitScriptVar" | "scriptVarDynamicHome" | "scriptVarStringHome">,
 ): ts.VariableDeclaration | undefined {
   const sourceFile = node.getSourceFile();
   const script = !ts.isExternalModule(sourceFile);
@@ -968,7 +974,8 @@ function directTopLevelDeclaration(
   if (
     !dynamicHome &&
     (declaredType.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike)) === 0 &&
-    !updateRetypesModuleBinding(checker, declaration)
+    !updateRetypesModuleBinding(checker, declaration) &&
+    !(script && isScriptStringHome(declaration, declaredType, checker, scriptVar))
   ) {
     return undefined;
   }
@@ -987,6 +994,38 @@ function directTopLevelDeclaration(
     (candidate) => isDirectTopLevelVariableDeclaration(candidate, sourceFile) || isJsExpandoTarget(candidate),
   );
   return script && allDirectVars ? declaration : undefined;
+}
+
+/** (#7125) A string-typed script `var` in codegen's native-string sole-home
+ * slot: exactly the `string` arm's storage, so the binding resolves as one. */
+function isScriptStringHome(
+  declaration: ts.VariableDeclaration,
+  declaredType: ts.Type,
+  checker: ts.TypeChecker,
+  options: Pick<IrModuleBindingResolverOptions, "scriptVarStringHome"> | undefined,
+): boolean {
+  return (
+    (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0 &&
+    !ts.isExternalModule(declaration.getSourceFile()) &&
+    isModuleStringStorageType(declaredType, checker) &&
+    options?.scriptVarStringHome?.(declaration) === true
+  );
+}
+
+/** (#3523 R4-M1) `let`/`const` only — every legacy arm that widens a string
+ * `var` slot widens it to `externref` — except (#7125) a SCRIPT `var` whose
+ * slot codegen confirmed is the native-string carrier itself: no widening
+ * happened, so `resolveModuleBindingGlobal`'s agreement check cannot disagree. */
+function moduleStringStorageAdmitted(
+  declaration: ts.VariableDeclaration,
+  declaredType: ts.Type,
+  checker: ts.TypeChecker,
+  options: IrModuleBindingResolverOptions,
+  isModuleVar: boolean,
+): boolean {
+  return isModuleVar
+    ? isScriptStringHome(declaration, declaredType, checker, options)
+    : isModuleStringStorageType(declaredType, checker);
 }
 
 /** (#7106) A script `var` in codegen's externref sole-home slot is the dynamic
@@ -2213,7 +2252,7 @@ export function makeIrLegacyModuleBindingResolver(
     // native lane is NOT the string carrier. That disagreement is only
     // reportable as a hard Program ABI invariant, never as a demote, so the
     // arm is excluded by construction rather than re-derived here.
-    if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
+    if (!valueKind && moduleStringStorageAdmitted(declaration, declaredType, checker, options, isModuleVar)) {
       valueKind = { kind: "string" } as const;
     }
     // (#5289) An `any`/`unknown` module binding. ONE kind for both lanes,

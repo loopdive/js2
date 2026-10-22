@@ -79,10 +79,16 @@ permissions:
 
 concurrency:
   group: auto-enqueue
-  # Idempotent sweep: the latest run enqueues every mergeable PR, so a burst of
-  # triggers should collapse to the most-recent run rather than serial-running
-  # each one (#2519 — cut redundant workflow runs). Safe to cancel in-flight.
-  cancel-in-progress: true
+  # Idempotent sweep: a burst of triggers collapses to one running sweep plus
+  # ONE pending (GitHub replaces an older pending run with the newer one), so
+  # redundant runs stay cut (#2519) without cancelling the in-flight sweep.
+  # NEVER `cancel-in-progress: true` here: a sweep takes ~1.5-2 min, and during
+  # a busy CI window `workflow_run` completions arrive faster than that, so
+  # every run was cancelled by its successor and nothing was enqueued for 30+
+  # minutes (2026-10-22, CLEAN PRs #6829/#6843/#6850 stranded). Same rule as
+  # CLAUDE.md's npm-compat lesson: never cancel-in-progress a job longer than
+  # its own trigger interval.
+  cancel-in-progress: false
 
 jobs:
   enqueue:
