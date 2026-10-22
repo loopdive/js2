@@ -87,6 +87,9 @@ import {
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
   scriptVarSlotIsSoleHome,
+  buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
+  moduleInitPrologueMayEmit,
+  retireModuleInitPrologueHelper,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -273,6 +276,12 @@ import {
   type IrUnitId,
 } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
+import {
+  prepareModuleInitPrologueCalls,
+  retireUninstalledModuleInitPrologues,
+  withModuleInitPrologue,
+  type ModuleInitPrologueCalls,
+} from "./module-init-prologue-patch.js"; // (#7106) GDI prologue for a claimed <module-init>
 import {
   buildIrPlanningIdentityContext,
   buildIrLegacyUnitProjection,
@@ -3810,6 +3819,8 @@ export function compileIrPathFunctions(
             } as PreparedModuleInitBuildInput,
           ]
         : [];
+  const moduleInitSourceByUnitId = new Map<IrUnitId, ts.SourceFile>(); // (#7106) prologue source
+  const moduleInitPrologueUnavailable = !!(options?.preparedModuleInitBatch || options?.deferPreparedPublication);
   for (const moduleInitInput of moduleInitBuildSources) {
     const moduleInitSourceFile = moduleInitInput.sourceFile;
     const moduleInitSelection = moduleInitInput.selection;
@@ -3851,11 +3862,13 @@ export function compileIrPathFunctions(
           "module-init: static class initializers present — legacy body carries them",
         );
       }
-      if ((ctx.liveFuncBindingGlobals?.size ?? 0) > 0) {
+      // (#7106) The GDI prologue (incl. #2931 live-binding seeds) is replayed
+      // for a claimed initializer — except on the allocator-sealed routes.
+      if (moduleInitPrologueUnavailable && moduleInitPrologueMayEmit(ctx, moduleInitSourceFile)) {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
           "build",
-          "module-init: live function-binding seeds present — legacy body carries them",
+          "module-init: GDI prologue (function/var bindings, seeds) present on a route that cannot replay it — legacy body carries it",
         );
       }
       const population =
@@ -3920,6 +3933,7 @@ export function compileIrPathFunctions(
           })),
         );
         if (!anyLiftedFailed) {
+          moduleInitSourceByUnitId.set(result.main.unitId, moduleInitSourceFile);
           built.push({
             artifactUnitId: result.main.unitId,
             terminalOwnerUnitId: moduleInitSourceOwner.unitId,
@@ -4854,6 +4868,17 @@ export function compileIrPathFunctions(
   ) {
     return finishReport();
   }
+  // (#7106) Before the trailing late-import flush below and before the
+  // resolver exists — see module-init-prologue-patch.ts. The multi-source
+  // batch/detached routes are allocator-sealed and keep their bodies as-is.
+  const moduleInitPrologueCalls: ModuleInitPrologueCalls = moduleInitPrologueUnavailable
+    ? new Map()
+    : prepareModuleInitPrologueCalls(
+        healthyForLower,
+        (unitId) => moduleInitSourceByUnitId.get(unitId),
+        (sourceFile) => buildModuleInitPrologueCall(ctx, sourceFile),
+        (entry, error) => markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "resolve"),
+      );
   recordOwnerPreparationFailures(
     failures,
     failedOwners,
@@ -5624,6 +5649,8 @@ export function compileIrPathFunctions(
           );
           continue;
         }
+        // (#7106) GDI prologue first, inside the WASI guard like the direct body's.
+        finalBody = withModuleInitPrologue(finalBody, moduleInitPrologueCalls, entry.artifactUnitId);
         // (#3523 R4 gap 3) WASI idempotence, as CONSTRUCTION rather than splice.
         //
         // `applyModuleInitGuard` makes `__module_init` re-entrant-safe by
@@ -5806,6 +5833,9 @@ export function compileIrPathFunctions(
       }
     }
     preparedCountedStringAppendReceipts.push(...associatedCountedReceipts);
+    retireUninstalledModuleInitPrologues(moduleInitPrologueCalls, installedArtifactUnitIds, (funcIdx) =>
+      retireModuleInitPrologueHelper(ctx, funcIdx),
+    );
 
     // (#3551) Stub orphaned empty slots. Two slot families can be stranded
     // BODYLESS when their owner fails after allocation (at lower time or via
@@ -9153,6 +9183,8 @@ function preregisterDynamicSupport(
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
+  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
+  let usesOwnPropertyDescriptor = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9235,6 +9267,9 @@ function preregisterDynamicSupport(
                 break;
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
+                break;
+              case "__getOwnPropertyDescriptor":
+                usesOwnPropertyDescriptor = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
               case IR_NATIVE_MAP_NEW_FN:
@@ -9355,6 +9390,17 @@ function preregisterDynamicSupport(
         [{ kind: "i32", boolean: true }],
       );
     }
+    flushLateImportShifts(ctx, null);
+  }
+  if (usesOwnPropertyDescriptor && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 propertyHelper) exactly legacy's registration for the stored
+    // alias (`call-object-builtins.ts`): `(externref, externref) -> externref`.
+    ensureLateImport(
+      ctx,
+      "__getOwnPropertyDescriptor",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
     flushLateImportShifts(ctx, null);
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {

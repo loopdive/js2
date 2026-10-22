@@ -261,7 +261,7 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -7827,23 +7827,25 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const ownPropertyTest =
     expr.arguments.length === 2 ? uncurriedObjectAliasMethod(expr.expression, (name) => cx.scope.has(name)) : undefined;
   if (ownPropertyTest !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
-    const carriers: IrValueId[] = [];
-    for (const argument of expr.arguments) {
-      let value = lowerExpr(argument, cx, irDynamic());
-      const actual = cx.builder.typeOf(value);
-      if (actual.kind !== "dynamic") {
-        const boxed = boxConcreteToDynamic(value, actual, argument, cx);
-        if (boxed === null) {
-          demoteToLegacy(
-            "operand-coercion-unsupported",
-            `ir/from-ast: ${ownPropertyTest} alias operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
-          );
-        }
-        value = boxed;
-      }
-      carriers.push(value);
-    }
+    const carriers = lowerAliasCarrierOperands(expr.arguments, ownPropertyTest, cx);
     return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, ownPropertyTest);
+  }
+  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias:
+  // both operands as carriers, then the object runtime's native provider — a
+  // dynamic descriptor (or undefined), exactly legacy's
+  // `tryCompileStoredObjectBuiltinCall` lowering.
+  const descriptorAlias =
+    expr.arguments.length === 2
+      ? storedObjectStaticAliasMethod(expr.expression, (name) => cx.scope.has(name))
+      : undefined;
+  if (descriptorAlias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
+    const carriers = lowerAliasCarrierOperands(expr.arguments, descriptorAlias, cx);
+    const descriptor = cx.builder.emitCall(irRuntimeFuncRef("__getOwnPropertyDescriptor"), carriers, irDynamic());
+    if (descriptor === null) {
+      // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
+      throw new Error(`ir/from-ast: __getOwnPropertyDescriptor produced no value in ${cx.funcName}`);
+    }
+    return descriptor;
   }
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
@@ -8158,6 +8160,31 @@ function lowerClosureCall(
  * it as mutable), wrap it here and rebind `cx.scope[name]` so subsequent
  * outer reads/writes go through the cell.
  */
+/**
+ * (#7106 S1g / propertyHelper) Lower the operands of a certified Object alias
+ * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
+ * parity: the selector admits only boxable operands) when one cannot box.
+ */
+function lowerAliasCarrierOperands(args: ts.NodeArray<ts.Expression>, aliasName: string, cx: LowerCtx): IrValueId[] {
+  const carriers: IrValueId[] = [];
+  for (const argument of args) {
+    let value = lowerExpr(argument, cx, irDynamic());
+    const actual = cx.builder.typeOf(value);
+    if (actual.kind !== "dynamic") {
+      const boxed = boxConcreteToDynamic(value, actual, argument, cx);
+      if (boxed === null) {
+        demoteToLegacy(
+          "operand-coercion-unsupported",
+          `ir/from-ast: ${aliasName} alias operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
+        );
+      }
+      value = boxed;
+    }
+    carriers.push(value);
+  }
+  return carriers;
+}
+
 function lowerNestedFuncCall(
   binding: {
     kind: "nestedFunc";
