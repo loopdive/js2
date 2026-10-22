@@ -18,9 +18,31 @@ assignee: "ttraenkler/lead-c"
 # 2026-10-22: the lowering resolver gains one forwarding method
 # (`isLibOnlyBinding`, beside `isAmbientBinding`), and module-bindings.ts the
 # lib-only predicate those two resolvers expose.
+# 2026-10-22 (after #6829 landed): the growth below was granted by the #7106
+# issue file while #6829 sat in this PR's diff; with #6829 on main that file
+# left the diff, so the grants are restated here (CLAUDE.md "stranded grants").
+# `dyn.intrinsic_value` is one more dialect kind threaded through node,
+# verifier, builder, lowering, pre-registration and the selector/from-ast arms.
 func-budget-allow:
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/integration.ts::makeDynamicLowering
+  - src/ir/integration.ts::preregisterDynamicSupport
+  - src/ir/runtime/verify.ts::verifyInstrStructure
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
+  - src/ir/select.ts::isPhase1Expr
+  - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/integration.ts::makeFromAstResolver
 loc-budget-allow:
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/ir/lower-generic.ts
+  - src/ir/from-ast.ts
+  - src/ir/builder.ts
+  - src/ir/runtime/verify.ts
+  - src/ir/core/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
   - src/ir/module-bindings.ts
 ---
 

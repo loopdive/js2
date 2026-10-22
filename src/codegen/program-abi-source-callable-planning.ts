@@ -508,6 +508,20 @@ export class ProgramAbiSourceCallableRegistry {
 
     const expectedBindingId = irUnitCallableBindingId(unitId);
     if (session.hasPlan(expectedBindingId)) {
+      // A lifted IR artifact (a function-member closure planned for its owner's
+      // prepared component) whose owner then failed preparation is abandoned:
+      // the owner's legacy body re-allocates the same source unit, and that
+      // live allocation is the callable the binding must locate.
+      const abandoned = this.ctx.irUnitFuncMap?.get(unitId);
+      if (
+        abandoned !== undefined &&
+        abandoned !== canonical.func &&
+        abandoned.typeIdx === canonical.func.typeIdx &&
+        session.hasLocator(expectedBindingId, abandoned)
+      ) {
+        session.replaceDefinedFunctionLocator(expectedBindingId, abandoned, canonical.func);
+        this.ctx.irUnitFuncMap?.delete(unitId);
+      }
       if (!session.hasLocator(expectedBindingId, canonical.func)) {
         throw new ProgramAbiInvariantError(
           "duplicate-slot-locator",
