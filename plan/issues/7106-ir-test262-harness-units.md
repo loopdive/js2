@@ -1020,6 +1020,29 @@ dynamic carrier, not a vec.
    claimable, and check the 10 single-blocker files from #6859 against
    legacy and node.
 
+**Feasibility of the plan's lowering (measured, 2026-10-22).** The arm
+would wrap legacy's `compileArrayPrototypeCall` in a per-(method, arity)
+helper, `__ir_arr_call_<m>_<n>`. It compiles a detached template
+`Array.prototype.<m>.call(recv, a0, …)` over externref parameters, as #7119's
+`__ir_dyn_mcall_*` wrappers do. Legacy's emission with every argument dynamic
+(the wrapper's situation) answers like node for array-likes
+(`{length:2,0:"a",1:"b"}`), real arrays and `arguments` with `map`+`String`,
+`join`, `slice` and `forEach`. It answers wrong for a **string receiver** in
+all four (#7131). The arm is not built yet. Next steps:
+- the codegen helper (template + `ensureLateImport` discipline, as
+  `ensureIrDynamicMethodCallHelper`);
+- a selector arm on the exact `Array.prototype.<m>.call(…)` callee, with the
+  admission the coordinator gave: `Array`, `Array.prototype` and
+  `Array.prototype.<m>` are never written, `Array` is lib-only, the lane is
+  host-free non-fast, and `<m>` is a built-in method name;
+- from-ast boxing of the arguments;
+- integration pre-registration by helper-name prefix.
+
+One open question: compare the wrapper against legacy AT THE SITE. A literal
+`String` callback may take a static path in legacy that differs from the
+wrapper's dynamic-callback path. A difference counts only when it is worse
+than legacy.
+
 **Found on the way (legacy, not IR).** `[1, null, "y"].join(", ")` through a
 dynamic receiver does not answer node's `"1, , y"` in IR or legacy. Join
 should map null/undefined elements to empty strings. `compareArray.format`
