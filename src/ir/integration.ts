@@ -88,6 +88,7 @@ import {
   TYPED_ARRAY_NAMES,
   scriptVarSlotIsDynamicHome,
   scriptVarSlotIsSoleHome,
+  scriptVarSlotIsStringHome,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
@@ -2398,6 +2399,7 @@ export function compileIrPathFunctions(
     // selector admitted is written here through the same slot predicate.
     admitScriptVar: (declaration: ts.VariableDeclaration) => scriptVarSlotIsSoleHome(ctx, declaration),
     scriptVarDynamicHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
+    scriptVarStringHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsStringHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -2532,7 +2534,7 @@ export function compileIrPathFunctions(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
-  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);

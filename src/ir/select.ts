@@ -2630,8 +2630,12 @@ function resolveReturnType(
   // into a `() -> externref` claim that withdraws on `abi-signature-parity`
   // (every test262 harness helper, measured 2026-10-20). Mirror legacy here so
   // the claim carries legacy's ABI; a value-returning body keeps its lattice fact.
+  // A class method follows the same rule: legacy registers its slot from the
+  // checker's `void`, and methods never carry a lattice entry (`mapped` is
+  // undefined), so without this arm every value-less JS method was refused as
+  // `return-type-not-resolvable`.
   if (
-    ts.isFunctionDeclaration(fn) &&
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) &&
     fn.body &&
     (mapped === undefined || mapped.kind === "unknown" || mapped.kind === "dynamic") &&
     !irFunctionBodyReturnsValue(fn.body)
@@ -10175,19 +10179,6 @@ function collectDirectNestedFunctionNames(body: ts.Block): Set<string> {
 }
 
 /**
- * The IR delete lowerer returns constant true and has no global binding
- * attributes. Keep direct module-init `delete this.name` on legacy until the IR
- * owns the GlobalEnvironmentRecord model (#2726).
- */
-function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boolean {
-  return (
-    currentSubjectIsModuleInit &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.expression.kind === ts.SyntaxKind.ThisKeyword
-  );
-}
-
-/**
  * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
  * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
  * binding (`selfGuardedConstructorValue`: the declaration itself, never
@@ -11718,19 +11709,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     return true;
   }
-  // Slice 11 (#1169n) — `delete <expr>` and `void <expr>`. Both are
-  // accepted at the selector level when their operand is a Phase-1
-  // expression. Lowering emits:
-  //   - `delete obj.prop`     → const `true` (most deletes succeed
-  //                              syntactically; runtime rejection is
-  //                              rare at the IR-claim shape).
-  //   - `void <expr>`         → lower expr for side effects, push
-  //                              `f64 NaN` (the undefined sentinel
-  //                              the IR uses in f64-typed contexts).
-  if (ts.isDeleteExpression(expr))
-    return isUnsupportedModuleGlobalObjectDelete(expr)
-      ? shapeNo("expr-delete-module-global-object", expr)
-      : isPhase1Expr(expr.expression, scope, localClasses);
+  // (#7106) `delete <expr>` stays on the direct path. The IR has no delete
+  // operation: Slice 11 (#1169n) lowered it to the operand's side effects plus
+  // a constant `true`, which removed nothing and never failed. A claimed
+  // `delete` was therefore wrong wherever that shows — the property survives
+  // the delete, and `delete arr.length` in strict code answers `true` instead
+  // of throwing a TypeError. Refuse every form until a real dynamic delete
+  // lands (propertyHelper's `isConfigurable` arm).
+  if (ts.isDeleteExpression(expr)) return shapeNo("expr-delete-no-ir-lowering", expr);
+  // Slice 11 (#1169n) — `void <expr>`: lower expr for side effects, push
+  // `f64 NaN` (the undefined sentinel the IR uses in f64-typed contexts).
   if (ts.isVoidExpression(expr)) {
     return isPhase1Expr(expr.expression, scope, localClasses);
   }
