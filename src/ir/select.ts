@@ -146,6 +146,7 @@ import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
+import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -545,6 +546,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
+  /** (#7108) Checker element family of an array receiver; absent ⇒ no array search/join claims. */
+  readonly classifyArrayElementFamily?: (expr: ts.Expression) => IrArrayElementFamily | undefined;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
   readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
   /**
@@ -711,7 +714,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
-      | "native-dynamic-value-call",
+      | "native-dynamic-value-call"
+      | "host-dynamic-method-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -2970,6 +2974,20 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
  * result position and every argument bridge before the selector claims the
  * function.
  */
+/**
+ * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
+ * On the host lane `__extern_method_call` is the real JS call. Off it, the
+ * native object runtime dispatches only open-`$Object` methods and answers
+ * `undefined` for primitive / vec / … receivers (`list.join(", ")` measured),
+ * where legacy dispatches by brand; only the string runtime's own `charCodeAt`
+ * fast path stays exact there.
+ */
+function dynamicMethodCallIsExact(name: string): boolean {
+  return (
+    name === "charCodeAt" || currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true
+  );
+}
+
 function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
   return (
     currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
@@ -3254,6 +3272,7 @@ function dynamicUsesAreMoveOnly(
         if (!currentDynMemberReadBuildable || !expectDyn || (e.arguments.length > 1 && !narrowStringReplace)) {
           return false;
         }
+        if (!narrowStringReplace && !dynamicMethodCallIsExact(e.expression.name.text)) return false;
         if (!scanExpr(e.expression.expression, true)) return false;
         if (narrowStringReplace) {
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
@@ -10351,6 +10370,30 @@ function phase1IndirectEvalStatementVerdict(
   return undefined;
 }
 
+/**
+ * (#7108) indexOf / includes / join over a number or string vec: `undefined`
+ * when the call is not one of those methods, else the Phase-1 verdict.
+ */
+function isPhase1ArraySearchOrJoin(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const verdict = selectVecSearchOrJoin(expr, {
+    elementFamily: currentSelectionOptions?.classifyArrayElementFamily,
+    argumentFamily: (argument) =>
+      currentSelectionOptions?.classifyPrimitiveExpression?.(argument) ??
+      (expressionIsProvenNumber(argument) ? "number" : expressionIsProvenString(argument) ? "string" : undefined),
+  });
+  if (verdict === undefined) return undefined;
+  if (!verdict.admitted) return capabilityNo("array-method-unsupported", verdict.arm, verdict.node);
+  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
+  return (
+    isPhase1Expr(receiver, scope, localClasses) &&
+    expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses))
+  );
+}
+
 function functionObjectCallIsPhase1(
   expr: ts.CallExpression,
   scope: ReadonlySet<string>,
@@ -11115,6 +11158,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
       const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
       if (currentSelectionOptions?.isArrayExpression?.(builtinReceiver) === true) {
+        const searchJoin = isPhase1ArraySearchOrJoin(expr, scope, localClasses);
+        if (searchJoin !== undefined) return searchJoin;
         const isHoleyFilter =
           expr.expression.name.text === "filter" &&
           currentSelectionOptions.supportsHoleyArrayFilter === true &&
