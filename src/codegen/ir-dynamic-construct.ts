@@ -220,7 +220,8 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-function receiverHelperContext(
+/** A fresh helper `FunctionContext` whose parameters are addressable by name. */
+export function receiverHelperContext(
   name: string,
   params: { name: string; type: ValType }[],
   returnType: ValType,
@@ -240,7 +241,8 @@ function receiverHelperContext(
   };
 }
 
-function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
+/** Register the finished helper as a defined function under its name; returns its index. */
+export function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
   const typeIdx = addFuncType(
     ctx,
     helper.params.map((param) => param.type),

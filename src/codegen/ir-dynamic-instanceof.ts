@@ -28,14 +28,13 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { CodegenContext } from "./context/types.js";
 import { isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { publishReceiverHelper, receiverHelperContext } from "./ir-dynamic-construct.js";
 import { noJsHost } from "./js-errors.js";
 import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
 import { identifierIsWrittenTo, moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js";
-import { addFuncType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
 
 export const IR_DYN_INSTANCEOF_HELPER = "__ir_dyn_instanceof";
@@ -170,36 +169,17 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
 
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
-  const helper: FunctionContext = {
-    name: IR_DYN_INSTANCEOF_HELPER,
-    params: [
+  const helper = receiverHelperContext(
+    IR_DYN_INSTANCEOF_HELPER,
+    [
       { name: "value", type: externref },
       { name: "target", type: externref },
     ],
-    locals: [],
-    localMap: new Map(),
-    returnType: i32,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
+    i32,
+  );
   helper.body.push({ op: "local.get", index: 0 }, { op: "local.get", index: 1 }, { op: "call", funcIdx: ordinary });
   emitInstanceofThrowGuard(ctx, helper);
   // The guard's TypeError may register late imports that shift baked indices.
   flushLateImportShifts(ctx, helper);
-
-  const typeIdx = addFuncType(ctx, [externref, externref], [i32]);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(IR_DYN_INSTANCEOF_HELPER, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: IR_DYN_INSTANCEOF_HELPER,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
+  return publishReceiverHelper(ctx, helper, [i32]);
 }

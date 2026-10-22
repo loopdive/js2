@@ -20,13 +20,12 @@
 
 import type { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import type { CodegenContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
+import { publishReceiverHelper, receiverHelperContext } from "./ir-dynamic-construct.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
-import { addFuncType } from "./registry/types.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
 export const IR_DYN_DELETE_STRICT_HELPER = "__ir_dyn_delete_strict";
@@ -55,22 +54,14 @@ export function ensureIrDynamicDeleteHelper(ctx: CodegenContext, strict: boolean
 
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
-  const helper: FunctionContext = {
+  const helper = receiverHelperContext(
     name,
-    params: [
+    [
       { name: "receiver", type: externref },
       { name: "key", type: externref },
     ],
-    locals: [],
-    localMap: new Map(),
-    returnType: i32,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
+    i32,
+  );
   // 1. RequireObjectCoercible(base), exactly legacy's guard on the receiver.
   emitExternrefDestructureGuard(ctx, helper, 0);
   // 2. OrdinaryDelete through the lane's provider.
@@ -97,10 +88,5 @@ export function ensureIrDynamicDeleteHelper(ctx: CodegenContext, strict: boolean
   }
   // Late imports the guard or the throw registered mid-body shift every baked index.
   flushLateImportShifts(ctx, helper);
-
-  const typeIdx = addFuncType(ctx, [externref, externref], [i32]);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: helper.locals, body: helper.body, exported: false });
-  return funcIdx;
+  return publishReceiverHelper(ctx, helper, [i32]);
 }
