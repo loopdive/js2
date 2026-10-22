@@ -4973,6 +4973,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/module-init-prologue.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
       "path": "src/codegen/declarations/module-var-undefined-seed.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -5742,6 +5750,14 @@
     },
     {
       "path": "src/codegen/expressions/inlined-call-receiver.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/expressions/instanceof-shadowed-rhs.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -7171,6 +7187,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/declarations/ir-dynamic-parameter-abi.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7135",
+      "nextBoundary": "Physical parameter-slot proof reads the shared codegen context; migrate with Program ABI preparation."
     },
     {
       "path": "src/codegen/ir-legacy-caller-abi.ts",
@@ -12710,6 +12734,14 @@
       "nextBoundary": "Pure startup data lives in ir/program/startup.ts. Separate the remaining AST/checker builder and source verifier from the legacy parity observer before frontend placement; preserve algorithms and old type exports."
     },
     {
+      "path": "src/ir/module-init-prologue-patch.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/module-init.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12748,6 +12780,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-in.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7135",
+      "nextBoundary": "JavaScript producer emits canonical boxing and runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
     },
     {
       "path": "src/ir/outcomes.ts",

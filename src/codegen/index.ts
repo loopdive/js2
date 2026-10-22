@@ -231,6 +231,7 @@ import {
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
 } from "./ir-imported-call-planning.js";
+import { parameterHasDynamicExternrefAbi } from "./declarations/ir-dynamic-parameter-abi.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,
@@ -315,6 +316,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
@@ -3056,13 +3058,15 @@ function planIrOverlay(
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
+            scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
+            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
           },
           identityContext,
         );
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
-  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
@@ -3177,9 +3181,7 @@ function planIrOverlay(
     let allPositionsAreExplicitNumbers = true;
     for (const parameter of declaration.parameters) {
       const explicitType = effectiveIrParamTypeNode(parameter);
-      // (#7106 item 1) A JSDoc position legacy registered as externref is a
-      // dynamic projection, not an annotation (the resolver below answers it).
-      if (explicitType && !(jsDocParamIsExternrefCandidate(parameter) && legacyParamSlotIsExternref(ctx, parameter))) {
+      if (explicitType && !parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate)) {
         if (explicitType.kind !== ts.SyntaxKind.NumberKeyword) allPositionsAreExplicitNumbers = false;
         continue;
       }
@@ -3247,11 +3249,9 @@ function planIrOverlay(
         const fact = ctx.oracle.typeFactOf(receiver);
         return fact.kind === "any" || fact.kind === "unknown";
       },
-      // #2952 slice 6c — reading the enumerated key in the body needs the
-      // head slot (an externref from the #2964 helpers) to BE the string
-      // carrier. That holds exactly when `resolveString()` yields externref,
-      // i.e. when native strings are off.
+      // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -4211,22 +4211,53 @@ function compileMultiIrOverlaySource(
  * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
  */
 export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(declaration.name)) return false;
+  const slot = scriptVarHomeSlot(ctx, declaration);
+  return slot !== undefined && slot.type.kind !== "externref";
+}
+
+/**
+ * (#7106) The same sole-home slot when legacy allocated it as `externref`
+ * (`var o = new Object()`, `var n;`, a function-valued `var`): off fast mode
+ * that is exactly `resolveIrDynamicCarrierType`, so the IR binds it as a
+ * `dynamic` module binding. Fast mode's dynamic carrier is `$AnyValue`, so it
+ * stays excluded.
+ */
+export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
+}
+
+/**
+ * (#7125) The sole-home slot when legacy allocated it as the native-string
+ * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
+ * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
+ * IR binds it as a `string` module binding. Host strings use `externref`,
+ * which is the dynamic home instead.
+ */
+export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  const type = scriptVarHomeSlot(ctx, declaration)?.type;
+  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
+}
+
+function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
+  if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const plan = ctx.runtimeEvalBoundaryPlan;
-  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return false;
+  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return undefined;
   if (
     (ctx.standalone || ctx.wasi) &&
     ctx.runtimeEvalProviderAbsent !== true &&
     plan.sharedRealmMayContainCanonicalValues
   ) {
-    return false;
+    return undefined;
   }
-  if (ctx.sloppyImplicitGlobals.has(name)) return false;
+  if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g`: the checker gives the script
+  // `var` its own symbol, but the binding (and its slot) is the function's.
+  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
-  if (globalIdx === undefined) return false;
-  const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-  return global !== undefined && global.type.kind !== "externref";
+  const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+  return global?.name === `__mod_${name}` ? global : undefined;
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
@@ -15438,6 +15469,12 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
+export {
+  buildModuleInitPrologueCall,
+  moduleInitPrologueMayEmit,
+  retireModuleInitPrologueHelper,
+} from "./declarations/module-init-prologue.js";
 export type {
   ClosureInfo,
   CodegenContext,

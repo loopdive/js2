@@ -15,6 +15,26 @@ area: ir
 goal: ir-full-coverage
 parent: 7106
 assignee: "ttraenkler/lead-c-remote"
+# 2026-10-22 (re-merge after #6829 landed): this PR stacks on #6846 (#7118), whose
+# `dyn.intrinsic_value` growth was granted by the #7106 issue file while #6829 sat
+# in the diff; restated here until #6846 lands (CLAUDE.md "stranded grants").
+func-budget-allow:
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/integration.ts::makeDynamicLowering
+  - src/ir/integration.ts::preregisterDynamicSupport
+  - src/ir/runtime/verify.ts::verifyInstrStructure
+  - src/ir/passes/inline-small.ts::renameInstrOperands
+  - src/ir/select.ts::isPhase1Expr
+loc-budget-allow:
+  - src/ir/select.ts
+  - src/ir/integration.ts
+  - src/ir/lower-generic.ts
+  - src/ir/from-ast.ts
+  - src/ir/builder.ts
+  - src/ir/runtime/verify.ts
+  - src/ir/core/nodes.ts
+  - src/ir/prepared-component-dependencies.ts
 ---
 
 ## Problem
