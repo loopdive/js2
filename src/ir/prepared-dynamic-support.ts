@@ -234,6 +234,21 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             else planned.set(instr, [ref]);
             return;
           }
+          // (#7106 Stage 4) `var x;` / missing-member reads produce the
+          // carrier's undefined: on the native-string externref lane that is
+          // the extern-wrapped `$undefined` singleton (`emitUndefined`), a
+          // backend sequence that calls nothing.
+          if (
+            native &&
+            functionObjects &&
+            !ctx.fast &&
+            ctx.nativeStrings &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.undefined"
+          ) {
+            planned.set(instr, []);
+            return;
+          }
           if (native && functionObjects && (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")) {
             const name =
               instr.kind === "dyn.member_get"
