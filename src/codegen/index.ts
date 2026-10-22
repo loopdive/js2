@@ -5,6 +5,7 @@ import {
 } from "./global-environment.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
+import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -3067,6 +3068,13 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  // (#7106 module-init lever B) the same source-bound `Number(v)` plan from-ast
+  // lowers through `js.number.from-value`, file-wide (see integration.ts).
+  const numberConversion = prepareNumberConversionResolver(
+    ast.checker,
+    [ast.sourceFile],
+    [...ast.sourceFile.statements],
+  );
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
@@ -3270,6 +3278,7 @@ function planIrOverlay(
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,

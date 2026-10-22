@@ -551,6 +551,14 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly ambientNamespaceConstant?: (expr: ts.PropertyAccessExpression) => number | undefined;
   /**
+   * (#7106 module-init lever B) Is this `Number(…)` call the source-bound
+   * conversion plan from-ast lowers through `js.number.from-value` (the
+   * canonical ambient `Number`, never rebound in the file; no spread)? The
+   * same `prepareNumberConversionResolver` answer, so the claim is 1:1 with
+   * the producer. Absent → never.
+   */
+  readonly preparedNumberCall?: (call: ts.CallExpression) => boolean;
+  /**
    * Exact, source-qualified admission for the one future fnctor shape whose
    * constructor stores an unconditional `this.input: string`.  The resolver
    * owns declaration identity, approved/reserved gate evidence, direct-site
@@ -700,7 +708,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-string-carrier-coercion"
       | "native-arguments-length"
       | "native-own-property-test"
-      | "native-own-property-descriptor",
+      | "native-own-property-descriptor"
+      | "native-number-conversion",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -3263,6 +3272,17 @@ function dynamicUsesAreMoveOnly(
         if (expectDyn) return false;
         if (isDynShaped(toStringArg)) return currentDynamicRuntimeBuildable && scanExpr(toStringArg, true);
         return scanExpr(toStringArg, false);
+      }
+      // (#7106 module-init lever B) `Number(v)` → a concrete f64; a dynamic
+      // operand crosses as the carrier (the plan already settles shadowing).
+      const toNumberArgs = dynNames.has("Number") ? null : preparedNumberConversionCall(e);
+      if (toNumberArgs !== null) {
+        if (expectDyn) return false;
+        return toNumberArgs.every((argument) =>
+          isDynShaped(argument)
+            ? currentDynamicRuntimeBuildable && scanExpr(argument, true)
+            : scanExpr(argument, false),
+        );
       }
       // (#7106 S1g) the uncurried Object.prototype aliases: a concrete bool
       // result; receiver and key are carriers (a concrete key boxes).
@@ -7825,6 +7845,19 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
  * a spread). The #5092 mixed-conditional arm is consulted FIRST by every
  * caller, so this only sees the shapes that arm declined.
  */
+/**
+ * (#7106 module-init lever B) `Number(…)` under the source-bound conversion
+ * plan, on a lane with the host-free provider: its arguments (the first
+ * converts, the rest run for effect — exactly `lowerPreparedNumberCall`), else
+ * null. A concrete f64 result.
+ */
+function preparedNumberConversionCall(expr: ts.CallExpression): readonly ts.Expression[] | null {
+  if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "Number") return null;
+  if (expr.arguments.some(ts.isSpreadElement)) return null;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-number-conversion") !== true) return null;
+  return currentSelectionOptions.preparedNumberCall?.(expr) === true ? expr.arguments : null;
+}
+
 function ambientStringToStringCall(expr: ts.CallExpression): ts.Expression | null {
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "String" || expr.arguments.length !== 1)
     return null;
@@ -11184,6 +11217,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // buildable); a concrete primitive operand folds inline in from-ast.
     const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
     if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
+    // (#7106 module-init lever B) `Number(v)` under the source-bound plan.
+    const toNumberArgs = scope.has("Number") ? null : preparedNumberConversionCall(expr);
+    if (toNumberArgs !== null) return toNumberArgs.every((argument) => isPhase1Expr(argument, scope, localClasses));
     // Only the await arm admits local async callees; other uses stay direct.
     if (isUnpreparedAsyncCallee(expr, scope, currentAsyncDeclNames, currentSelectionOptions)) {
       return shapeNo("expr-async-callee-not-awaited", expr);
@@ -12111,6 +12147,12 @@ export function buildLocalCallGraph(
           const toStringArg = ambientStringToStringCall(node);
           if (toStringArg !== null) {
             visit(toStringArg);
+            return;
+          }
+          // (#7106 module-init lever B) …and `Number(v)` under its plan.
+          const toNumberArgs = preparedNumberConversionCall(node);
+          if (toNumberArgs !== null) {
+            for (const argument of toNumberArgs) visit(argument);
             return;
           }
           const imported = certifyImportedIrCall(node, currentSelectionOptions?.importedFunctions);
