@@ -32,8 +32,8 @@ flat-dir-budget-allow:
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
-  - ir->codegen: 80 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (GDI prologue): ir/module-init-prologue-patch.ts replays codegen/declarations/module-init-prologue.ts
-  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): the prologue split out of declarations.ts and its IR patch helper join it
+  - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
+  - largestSccSize: 725 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it
 func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
@@ -636,7 +636,9 @@ existed, and had no guard for the other parts.
   (`emitModuleInitPrologue`). The direct body still inlines it. A binary-hash
   A/B over 18 lane×shape compiles (standalone/gc/wasi; with and without
   functions/vars; script and module) is identical.
-- For a claimed initializer, `buildModuleInitPrologueCall` runs the same
+- For a claimed initializer, `buildModuleInitPrologueCall` (re-exported by the
+  `codegen/index.ts` facade, which the bridge already imports, so the IR
+  layering count is unchanged) runs the same
   emitter into a fresh `__module_init` context, installs the result as a
   private `[] -> []` helper `__module_init_prologue`, and the patch prepends
   `call` to the IR body, inside the WASI guard. An empty prologue mints

@@ -87,6 +87,9 @@ import {
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
   scriptVarSlotIsSoleHome,
+  buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
+  moduleInitPrologueMayEmit,
+  retireModuleInitPrologueHelper,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -262,7 +265,6 @@ import {
 } from "./identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
 import {
-  moduleInitPrologueMayEmit,
   prepareModuleInitPrologueCalls,
   retireUninstalledModuleInitPrologues,
   withModuleInitPrologue,
@@ -4853,9 +4855,9 @@ export function compileIrPathFunctions(
   const moduleInitPrologueCalls: ModuleInitPrologueCalls = moduleInitPrologueUnavailable
     ? new Map()
     : prepareModuleInitPrologueCalls(
-        ctx,
         healthyForLower,
         (unitId) => moduleInitSourceByUnitId.get(unitId),
+        (sourceFile) => buildModuleInitPrologueCall(ctx, sourceFile),
         (entry, error) => markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "resolve"),
       );
   recordOwnerPreparationFailures(
@@ -5812,7 +5814,9 @@ export function compileIrPathFunctions(
       }
     }
     preparedCountedStringAppendReceipts.push(...associatedCountedReceipts);
-    retireUninstalledModuleInitPrologues(ctx, moduleInitPrologueCalls, installedArtifactUnitIds);
+    retireUninstalledModuleInitPrologues(moduleInitPrologueCalls, installedArtifactUnitIds, (funcIdx) =>
+      retireModuleInitPrologueHelper(ctx, funcIdx),
+    );
 
     // (#3551) Stub orphaned empty slots. Two slot families can be stranded
     // BODYLESS when their owner fails after allocation (at lower time or via

@@ -15,18 +15,14 @@
  * still waiting in the patch queue, nor a funcIdx the lowering resolver has
  * already captured. So the helper is built during preparation, before the
  * resolver exists and before any IR body is lowered.
+ *
+ * The codegen side (building and emptying a helper) is injected by the bridge,
+ * `integration.ts`, so this module adds no IR -> codegen edge.
  */
 import type { ts } from "../ts-api.js";
-import {
-  buildModuleInitPrologueCall,
-  retireModuleInitPrologueHelper,
-} from "../codegen/declarations/module-init-prologue.js";
-import type { CodegenContext } from "../codegen/context/types.js";
 import type { IrUnitId } from "./identity.js";
 import { IrUnsupportedError } from "./outcomes.js";
 import type { Instr } from "./types.js";
-
-export { moduleInitPrologueMayEmit } from "../codegen/declarations/module-init-prologue.js";
 
 interface ModuleInitPrologueEntry {
   readonly artifactUnitId: IrUnitId;
@@ -37,16 +33,17 @@ interface ModuleInitPrologueEntry {
 export type ModuleInitPrologueCalls = ReadonlyMap<IrUnitId, Instr & { readonly op: "call" }>;
 
 /**
- * Build the prologue helper of every claimed initializer in `entries`. An
- * initializer whose prologue is empty gets no helper and no call, so its patch
- * stays byte-identical. An emitter failure withdraws only that initializer's
- * claim (`fail`), always as a soft Unsupported: the direct body, which carries
- * its own prologue, is a correct fallback, so it must never fail the compile.
+ * Build the prologue helper of every claimed initializer in `entries` with
+ * `build` (`buildModuleInitPrologueCall`). An initializer whose prologue is
+ * empty gets no helper and no call, so its patch stays byte-identical. An
+ * emitter failure withdraws only that initializer's claim (`fail`), always as
+ * a soft Unsupported: the direct body, which carries its own prologue, is a
+ * correct fallback, so it must never fail the compile.
  */
 export function prepareModuleInitPrologueCalls<E extends ModuleInitPrologueEntry>(
-  ctx: CodegenContext,
   entries: readonly E[],
   sourceOf: (unitId: IrUnitId) => ts.SourceFile | undefined,
+  build: (sourceFile: ts.SourceFile) => Instr | undefined,
   fail: (entry: E, error: unknown) => void,
 ): ModuleInitPrologueCalls {
   const calls = new Map<IrUnitId, Instr & { readonly op: "call" }>();
@@ -55,7 +52,7 @@ export function prepareModuleInitPrologueCalls<E extends ModuleInitPrologueEntry
     const sourceFile = sourceOf(entry.artifactUnitId);
     if (sourceFile === undefined) continue;
     try {
-      const call = buildModuleInitPrologueCall(ctx, sourceFile);
+      const call = build(sourceFile);
       if (call?.op === "call") calls.set(entry.artifactUnitId, call);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -79,16 +76,15 @@ export function withModuleInitPrologue(body: Instr[], calls: ModuleInitPrologueC
 }
 
 /**
- * Empty the helper of every initializer whose IR body was not installed (its
- * owner failed after preparation). Nothing calls such a helper; emptying it
- * keeps the dead copy out of the binary without disturbing any function index.
+ * Empty (`retire`) the helper of every initializer whose IR body was not
+ * installed (its owner failed after preparation). Nothing calls such a helper.
  */
 export function retireUninstalledModuleInitPrologues(
-  ctx: CodegenContext,
   calls: ModuleInitPrologueCalls,
   installed: ReadonlySet<IrUnitId>,
+  retire: (funcIdx: number) => void,
 ): void {
   for (const [unitId, call] of calls) {
-    if (!installed.has(unitId)) retireModuleInitPrologueHelper(ctx, call.funcIdx);
+    if (!installed.has(unitId)) retire(call.funcIdx);
   }
 }
