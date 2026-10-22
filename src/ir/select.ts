@@ -140,6 +140,7 @@ import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
+import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -539,6 +540,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
+  /** (#7108) Checker element family of an array receiver; absent ⇒ no array search/join claims. */
+  readonly classifyArrayElementFamily?: (expr: ts.Expression) => IrArrayElementFamily | undefined;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
   readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
   /**
@@ -10056,6 +10059,30 @@ function phase1IndirectEvalStatementVerdict(
   return undefined;
 }
 
+/**
+ * (#7108) indexOf / includes / join over a number or string vec: `undefined`
+ * when the call is not one of those methods, else the Phase-1 verdict.
+ */
+function isPhase1ArraySearchOrJoin(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const verdict = selectVecSearchOrJoin(expr, {
+    elementFamily: currentSelectionOptions?.classifyArrayElementFamily,
+    argumentFamily: (argument) =>
+      currentSelectionOptions?.classifyPrimitiveExpression?.(argument) ??
+      (expressionIsProvenNumber(argument) ? "number" : expressionIsProvenString(argument) ? "string" : undefined),
+  });
+  if (verdict === undefined) return undefined;
+  if (!verdict.admitted) return capabilityNo("array-method-unsupported", verdict.arm, verdict.node);
+  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
+  return (
+    isPhase1Expr(receiver, scope, localClasses) &&
+    expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses))
+  );
+}
+
 function functionObjectCallIsPhase1(
   expr: ts.CallExpression,
   scope: ReadonlySet<string>,
@@ -10800,6 +10827,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
       const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
       if (currentSelectionOptions?.isArrayExpression?.(builtinReceiver) === true) {
+        const searchJoin = isPhase1ArraySearchOrJoin(expr, scope, localClasses);
+        if (searchJoin !== undefined) return searchJoin;
         const isHoleyFilter =
           expr.expression.name.text === "filter" &&
           currentSelectionOptions.supportsHoleyArrayFilter === true &&
