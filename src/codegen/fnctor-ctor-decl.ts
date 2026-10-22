@@ -46,7 +46,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
-import { isSelfGuardedConstructor } from "./helpers/self-guarded-constructor.js";
+import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 
 /** Per-`ts.Symbol` memo; entries die with the program the symbols came from. */
 const cache = new WeakMap<ts.Symbol, ts.FunctionExpression | null>();
@@ -212,7 +212,7 @@ export function funcConstructorForCallee(ctx: CodegenContext, ident: ts.Identifi
  * gate's refusal, so no `__fnctor_F` struct or ctor is ever registered.
  */
 export function calleeIsStandaloneSelfGuardedConstructor(ctx: CodegenContext, ident: ts.Identifier): boolean {
-  if (!ctx.standalone) return false;
+  if (!selfGuardedConstructorsLeaveFnctor(ctx)) return false;
   const decl = calleeFnctorDecl(ctx, ident);
   return decl !== undefined && isSelfGuardedConstructor(decl);
 }

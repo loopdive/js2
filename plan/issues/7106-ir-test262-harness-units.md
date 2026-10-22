@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 priority: high
 horizon: l
 feasibility: hard
@@ -41,6 +41,9 @@ flat-dir-budget-allow:
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
   - largestSccSize: 724 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC
+# 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
+# self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
+# stands down when runtime eval may share the realm.
 func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
@@ -65,6 +68,8 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
   - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
