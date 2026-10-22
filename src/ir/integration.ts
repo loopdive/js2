@@ -87,6 +87,11 @@ import {
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
   scriptVarSlotIsSoleHome,
+  ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -6969,6 +6974,10 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    // (#7106 propertyHelper) the wrapper a dynamic delete at this site calls.
+    dynamicDeleteSymbol(site: ts.DeleteExpression) {
+      return ctx.fast ? undefined : irDynamicDeleteHelperName(irDeleteSiteIsStrict(site));
+    },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (
         fnctorParameterPreselection?.nativeStringReplaceCall === call &&
@@ -9143,6 +9152,8 @@ function preregisterDynamicSupport(
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
+  // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
+  const dynDeleteStrictness = new Set<boolean>();
   // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
   let usesOwnPropertyDescriptor = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
@@ -9230,6 +9241,10 @@ function preregisterDynamicSupport(
                 usesOwnPropertyDescriptor = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
+              case IR_DYN_DELETE_STRICT_HELPER:
+              case IR_DYN_DELETE_SLOPPY_HELPER:
+                dynDeleteStrictness.add(symbol === IR_DYN_DELETE_STRICT_HELPER);
+                break;
               case IR_NATIVE_MAP_NEW_FN:
               case IR_NATIVE_MAP_GET_NUM_FN:
               case IR_NATIVE_MAP_SET_NUM_FN:
@@ -9327,6 +9342,16 @@ function preregisterDynamicSupport(
         throw new Error(`ir/integration: dyn.instanceof_fn has no chain-walk wrapper for ${functionName} (#7106 S3c)`);
       }
       observeNativeRuntimeProvider(ctx, irInstanceOfFunctionHelperName(functionName));
+    }
+    flushLateImportShifts(ctx, null);
+  }
+  if (dynDeleteStrictness.size > 0 && !ctx.fast) {
+    // (#7106 propertyHelper) legacy's generic externref delete arm, wrapped.
+    for (const strict of [...dynDeleteStrictness].sort()) {
+      if (ensureIrDynamicDeleteHelper(ctx, strict) === undefined) {
+        throw new Error("ir/integration: dynamic delete has no __delete_property provider on this lane (#7106)");
+      }
+      observeNativeRuntimeProvider(ctx, irDynamicDeleteHelperName(strict));
     }
     flushLateImportShifts(ctx, null);
   }

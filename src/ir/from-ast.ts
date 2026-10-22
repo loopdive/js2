@@ -853,6 +853,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 propertyHelper) The runtime wrapper a dynamic `delete` at `site`
+   * calls (strict / sloppy, decided like legacy's `compileDeleteExpression`),
+   * or undefined where the dynamic carrier is not an externref.
+   */
+  dynamicDeleteSymbol?(site: ts.DeleteExpression): string | undefined;
 }
 
 export type IrSourceMapNodeProjection =
@@ -2381,6 +2387,14 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
     // still surface as an unsupported shape rather than being lowered as
     // an ordinary value.
     if (!expressionStatementMutatesAtTopLevel(s.expression)) {
+      lowerDiscardedExpression(s.expression, cx);
+      return false;
+    }
+    // (#7106 propertyHelper) a dropped dynamic delete — the selector admits
+    // exactly `dynamicDeleteStatementOperand`; `lowerExpr`'s delete arm lowers it.
+    let dropped: ts.Expression = s.expression;
+    while (ts.isParenthesizedExpression(dropped)) dropped = dropped.expression;
+    if (ts.isDeleteExpression(dropped)) {
       lowerDiscardedExpression(s.expression, cx);
       return false;
     }
@@ -5240,6 +5254,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // Slice 11 (#1169n) used to answer a constant `true` here, which removed
   // nothing and never threw. Fail closed if a delete ever reaches lowering.
   if (ts.isDeleteExpression(expr)) {
+    const dynamicDelete = lowerDynamicDelete(expr, cx);
+    if (dynamicDelete !== null) return dynamicDelete;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: delete has no IR lowering in ${cx.funcName}`);
   }
   // Slice 11 (#1169n) — `void <expr>`. Lower the operand for side
@@ -8092,11 +8108,49 @@ function lowerClosureCall(
  * outer reads/writes go through the cell.
  */
 /**
+ * (#7106 propertyHelper) `delete <dyn>.name` / `delete <dyn>[key]` on a
+ * dynamic receiver: the receiver and the (boxed) key as carriers, then the
+ * site's runtime wrapper — legacy's generic externref delete arm
+ * (`codegen/ir-dynamic-delete.ts`). Returns the delete's boolean, or null when
+ * the operand is not that shape (the caller demotes).
+ */
+function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
+  let operand: ts.Expression = expr.expression;
+  while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+  let receiverExpr: ts.Expression;
+  let keyExpr: ts.Expression | undefined;
+  let keyName: string | undefined;
+  if (ts.isPropertyAccessExpression(operand) && ts.isIdentifier(operand.name) && !operand.questionDotToken) {
+    receiverExpr = operand.expression;
+    keyName = operand.name.text;
+  } else if (ts.isElementAccessExpression(operand) && !operand.questionDotToken) {
+    receiverExpr = operand.expression;
+    keyExpr = operand.argumentExpression;
+  } else {
+    return null;
+  }
+  const symbol = cx.resolver?.dynamicDeleteSymbol?.(expr);
+  if (symbol === undefined) return null;
+  const receiver = lowerExpr(receiverExpr, cx, irDynamic());
+  if (cx.builder.typeOf(receiver).kind !== "dynamic") return null;
+  const key =
+    keyName !== undefined
+      ? cx.builder.emitBox(cx.builder.emitStringConst(keyName), irDynamic(JS_TAG_IDS.String))
+      : lowerAliasCarrierOperands([keyExpr!], "delete", cx)[0]!;
+  const result = cx.builder.emitCall(irRuntimeFuncRef(symbol), [receiver, key], irVal({ kind: "i32", boolean: true }));
+  if (result === null) {
+    // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: dynamic delete produced no value in ${cx.funcName}`);
+  }
+  return result;
+}
+
+/**
  * (#7106 S1g / propertyHelper) Lower the operands of a certified Object alias
  * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
  * parity: the selector admits only boxable operands) when one cannot box.
  */
-function lowerAliasCarrierOperands(args: ts.NodeArray<ts.Expression>, aliasName: string, cx: LowerCtx): IrValueId[] {
+function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: string, cx: LowerCtx): IrValueId[] {
   const carriers: IrValueId[] = [];
   for (const argument of args) {
     let value = lowerExpr(argument, cx, irDynamic());

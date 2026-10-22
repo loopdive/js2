@@ -15429,6 +15429,14 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
+export {
+  ensureIrDynamicDeleteHelper,
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+} from "./ir-dynamic-delete.js";
 export type {
   ClosureInfo,
   CodegenContext,
