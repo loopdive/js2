@@ -272,3 +272,90 @@ remaining rows (`7139-reviewed-program-census.jsonl`). The independent reviewer
 log is `review7139-recheck.log`; final standard byte evidence is
 `7139-closed-review-gc-bytes.jsonl`; i32 evidence is
 `7139-closed-review-i32.log` (**72/72**).
+
+## Class-value lifecycle follow-up, exact parent 4e325e2f81
+
+The next unpublished branch is
+`codex/7139-ir-native-instanceof-values-20261022`; PR 6882 remains unchanged at
+`4e325e2f81a9240f8e3f87a3fdab4eed5a11ff6e`. This is further work on the open
+issue, not completion of its producer/caller acceptance.
+
+A Node-oracle / real native-start audit of **16 source forms × two targets =
+32 rows** found **20/32** correct values and **12/32** wrong values. All 32
+sources compile; the wrong rows are not compile failures or missing host
+imports. The six wrong forms fail on both standalone and WASI:
+
+| Source form | JavaScript | Current native |
+| --- | ---: | ---: |
+| Effectful two-operand class check |112|101|
+| Repeated uncaptured nested class evaluation, identity equality |0|1|
+| Repeated captured nested class evaluation, identity equality |0|1|
+| Read class through a function before its declaration; catch ReferenceError |1|10 (no throw)|
+| Reassign class binding, then read it through a function |1|10 (old value)|
+| Assign null to class binding, then read it through a function |1|0 (old value)|
+
+The 20 matching rows include returned/aliased/forwarded classes, same-layout
+negative identity, explicit/inferred returns, parameter shadowing, post-definition
+initialization and prototype identity. They still do not prove IR migration:
+class-producing functions remain rejected by selection, and even the matching
+shadow control retains a direct body before its IR overlay.
+
+`tests/issue-7139-ir-class-value-lifecycle.test.ts` and its 16-case fixture make
+this a positive acceptance suite, not a test pinning an old bail. They assert 16
+independent JavaScript oracles, 32 actual native values and 32 source-function
+ownership controls. **Current red baseline: 44 failed / 36 passed out of 80**:
+12 semantic failures + 32 IR-only ownership failures; the 36 passes are 16 Node
+oracles + 20 native values. These tests are unfinished work and must not be
+presented as passing or published in the operator PR. Raw 32-row provenance is
+`.tmp/7139-class-values-base-4e325.jsonl`; suite output is
+`.tmp/7139-class-value-lifecycle-baseline-tests.log`.
+
+### Revised implementation constraints from the counterexamples
+
+A direct `global.get __class_C`, or a wrapper that merely calls
+`emitLazyClassObjectGet`, is insufficient as the general class-value producer.
+The existing runtime singleton is the canonical materializer for a stable
+class evaluation, but **the source binding is not a constant singleton**. A
+new IR arm must not copy the current TDZ, reassignment or repeated-evaluation
+bugs into the prepared program.
+
+1. Reuse the existing exact class projection / checker symbol join in
+   `ir/module-bindings.ts` and `ir-class-shapes.ts`. Do not create a second
+   name-based class resolver. The current identity resolver deliberately models
+   instance expressions, rejecting constructor signatures; any extension must
+   distinguish instance and constructor values explicitly and preserve source,
+   declaration, ClassId and shadow checks.
+2. Model the lexical source binding and its initialization/write state through
+   the existing module/local binding owners. `IrModuleBindingIdentity` currently
+   covers VariableDeclaration only. Class value reads cannot bypass TDZ or
+   mutable binding storage through a constant class-shape lookup. A class
+   definition that affects observable value state must remain in the executable
+   source population / prepared program; no new module-init exception.
+3. Materialization retains one canonical native semantic owner. Static
+   top-level singleton transport can reuse its existing runtime algorithm,
+   with exact Program ABI callable/global observations. Repeated class
+   definition evaluation needs fresh constructor/prototype identity and a
+   retained lexical environment; it cannot reuse the same per-declaration
+   global on every activation. Preserve the relationship between Construct,
+   prototype Get, methods and captured source cells.
+4. The prepared IR must carry every value/binding/effect dependency and exact
+   source/class identity before backend emission. Runtime registration may
+   allocate representation resources, but may not reconstruct source AST or
+   infer an owner from a helper/global display name. Both backends consume
+   that same semantic plan; unsupported backend capability is typed.
+5. Reuse existing native value boxing / direct-call ABI owners for constructor
+   values and operands. No second tag decision tree: `boxConcreteToDynamic`
+   and the native `in` key boundary already cover overlapping families and
+   must be reconciled before adding another boxer. Primitive concrete operands
+   are also still missing from native `instanceof` admission; retain these in
+   the open full operator/producer scope.
+6. Keep the known first-class class identities, initialization/capture controls,
+   mutable bindings, source-order operands, i32 domains, exact-parent controls
+   and standard gc bytes in qualification. New capability admission requires
+   real carrier evidence; an any annotation, a same-spelled class or a new bail
+   assertion is insufficient. Preserve all public PR heads while work is local.
+
+The goal remains the full acceptance of epic 3518, including one portable
+PreparedIrProgram, both backends, source-located Unsupported, one production
+policy and direct frontend deletion. The 32-row audit neither reduces that
+scope nor claims classes complete.
