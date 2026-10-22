@@ -55,10 +55,14 @@ describe("#7124 unmasked module-init census", () => {
       JS2WASM_IR_MODULE_INIT_ALL_REJECTS: "1",
     });
     const labels = outcome.detail!.split(" | ").map((label) => label.split(":")[0]);
+    // Since #6835 (#7114) a script `var` is admitted as module storage, so the
+    // two declarations now reject on their own shapes: the `{}` initializer has
+    // no representable module slot, and a function-expression initializer is a
+    // closure binding.
     expect(labels).toEqual([
-      "body-shape-rejected@vardecl-var-kind",
+      "body-shape-rejected@vardecl-module-storage-unrepresentable",
       "call-resolution-unsupported@expr-object-define-property-target",
-      "body-shape-rejected@vardecl-var-kind",
+      "body-shape-rejected@vardecl-let-closure",
       "call-resolution-unsupported@expr-local-call-target",
     ]);
   }, 120_000);
