@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-session-b",
   "requested_by": "ttraenkler/codex-session-b",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-10-22T12:02:26Z",
-  "claimed_at": "2026-10-22T12:02:26Z",
-  "updated_at": "2026-10-22T12:02:26Z",
-  "write_id": "33967-oapj68oz",
-  "pr_scan": "ok"
+  "branch": "codex/7137-ir-native-class-numeric-domains-20261022",
+  "claimed_at": "2026-10-22T12:04:43Z",
+  "updated_at": "2026-10-22T12:04:43Z",
+  "write_id": "38514-5arfitiq"
 }
