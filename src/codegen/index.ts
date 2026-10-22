@@ -1,9 +1,10 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
-// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
@@ -656,7 +657,6 @@ import {
   flatStringType,
   nativeStringType,
   nativeStringTypeNullable,
-  standaloneConsoleSinkAvailable,
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { emitStandaloneDomStringBoundary } from "./dom-string-boundary.js";
@@ -3306,7 +3306,7 @@ function planIrOverlay(
       // so this only adds the native-string lanes.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,

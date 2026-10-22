@@ -123,7 +123,7 @@ export { collectModuleInitPopulation, makeModuleInitSynthetic, MODULE_INIT_UNIT_
 import { binaryOpCapability, domSurfaceCapability, hostExternCapability, prefixOpCapability } from "./capability.js";
 import type { IrStandaloneDomCapabilityPlan, IrStandaloneDomOperation } from "./dom-capability.js";
 import { isDirectStandaloneDomMemberCall } from "./dom-boundary.js";
-import { isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
+import { hostFreeConsoleArgument, isHostFreeConsoleCallReceiver } from "./host-free-runtime.js";
 import { isPristineEs5IntrinsicIsFrozenCall } from "./object-integrity.js";
 import { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-bindings.js";
 import type {
@@ -576,13 +576,13 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   /** Backend owns bounded-literal f64.toFixed → abstract-string formatting. */
   readonly supportsNumberToFixed?: boolean;
   /**
-   * (#4462) The active backend has the HOST-FREE console sink (#3469's
-   * `__stdout_acc` rope + `__stdout_append`), so `console.<m>(arg)` has
+   * The active backend has native console output (standalone rope or WASI
+   * fd_write), so the supported `console.<m>(arg)` shape has
    * something to lower to without a JS host. Read together with
    * {@link isHostFreeConsoleCallReceiver} — availability alone is not a claim
    * licence; the call shape must also be one the builder lowers.
    */
-  readonly supportsStandaloneConsoleSink?: boolean;
+  readonly supportsNativeConsoleOutput?: boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -1601,7 +1601,7 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
  * has always been able to print through the #3469 sink — legacy does it today.
  *
  * Three conjuncts, each load-bearing:
- *   1. the backend actually minted the sink (`supportsStandaloneConsoleSink`) —
+ *   1. the backend can materialize output (`supportsNativeConsoleOutput`) —
  *      a standalone module without native strings has no sink and must defer;
  *   2. the identifier really is the ambient global, per the same checker-backed
  *      resolver + `localClasses` shadow rule the ACCEPT arm above uses;
@@ -1609,7 +1609,7 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
  *      a post-claim demote.
  */
 function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
-  if (currentSelectionOptions?.supportsStandaloneConsoleSink !== true) return false;
+  if (currentSelectionOptions?.supportsNativeConsoleOutput !== true) return false;
   if (expr.text !== "console" || localClasses.has("console")) return false;
   if (currentDeferredHostGlobalResolver === null || currentDeferredHostGlobalResolver(expr) === undefined) return false;
   return isHostFreeConsoleCallReceiver(expr);
@@ -3245,10 +3245,10 @@ function dynamicUsesAreMoveOnly(
         }
         return true;
       }
-      // (#7106 S1) `String(<dynamic>)` → `dyn.to_string`: a concrete string
-      // result, lowered through the lane's `__extern_toString`; a concrete
-      // operand folds inline. Not on the fast $AnyValue strategy.
-      const toStringArg = dynNames.has("String") ? null : ambientStringToStringCall(e);
+      // String conversion and native console rendering consume one carrier.
+      const toStringArg =
+        hostFreeConsoleArgument(e, (id) => namesHostFreeConsoleSurface(id, new Set())) ??
+        (dynNames.has("String") ? null : ambientStringToStringCall(e));
       if (toStringArg !== null) {
         if (expectDyn) return false;
         if (isDynShaped(toStringArg)) return currentDynamicRuntimeBuildable && scanExpr(toStringArg, true);
