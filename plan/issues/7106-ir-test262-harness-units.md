@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 priority: high
 horizon: l
 feasibility: hard
@@ -41,6 +41,9 @@ flat-dir-budget-allow:
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
   - largestSccSize: 724 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC
+# 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
+# self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
+# stands down when runtime eval may share the realm.
 func-budget-allow:
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
@@ -65,6 +68,8 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
   - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
@@ -678,3 +683,130 @@ A transparent exact-input selector observation records the original `assert._isS
 Three unchanged initializer/timer suites produce 53 passes and six failures on both the final candidate and the clean main-based apply-repair control. Those failures and all assertions are retained for CI and owner disposition.
 
 The receiving PR remains held for lead C's dependency and admission order, including the separately qualified apply-preparation prerequisite in #6814. Normal hooks, protected CI and existing floors remain required. No full Stage 2, Linear backend or full conformance qualification is claimed, and no baseline, allowance or architectural exemption is part of this work.
+
+## Harness unit blocker census (2026-10-21)
+
+Measured by session D on main `2ea607da3f` merged locally with #6821
+(`claude/7106-item1-tail` @ `049471b350`) and #6825. #6821 is included because
+it is already in the queue. Lanes: standalone and gc. Harness: the honest
+original-harness assembly (`assembleOriginalHarness`), compiled the way the CI
+lane compiles it (`allowJs`, `scriptGoal`, `deferTopLevelInit`,
+`hostBridge: "always"`, `trackIrOutcomes`, `JS2WASM_IR_SHAPE_DIAG=1`). Corpus:
+all 48 tests in `language/expressions/addition/`. None of them has `includes:`,
+so the harness is the js2wasm prelude, assert.js (which carries `compareArray`)
+and sta.js. propertyHelper does not appear in this directory.
+
+Out of scope as instructed: `Test262Error`, `assert`, `compareArray`.
+
+### Terminal units
+
+- **Already IR on both lanes:** `isNegativeZero`, `isPrimitive`,
+  `formatIdentityFreeValue`, `formatSimpleValue`, `$DONOTEVALUATE`
+  (47/48 tests).
+- **The one in-scope legacy harness unit is `<module-init>`.** Every
+  `assert.* = function …` closure sits inside it as a non-terminal
+  function-expression unit.
+- **Exception: S11.6.1_A1.** Its body makes direct `eval` calls, so every
+  harness unit falls back with `resolve:late-preparation-unsupported` ("the
+  linked runtime-eval callable carrier is still owned by the direct
+  frontend"), and `assert` reads as `expr-ident-not-in-scope`. That is a
+  separate arm for eval tests.
+
+### `<module-init>` harness statements
+
+Each harness statement's own first blocker was collected with every statement
+evaluated independently. This is a local census-only patch that keeps walking
+past the first failing statement; it is not committed. Standalone and gc agree
+on every row.
+
+- **Pass in place:** `var print = function …`, `var $262 = {…}` and
+  `assert._isSameValue = function …`. The last one has the Stage 2 boolean
+  member-closure plan.
+- **"Twin" column:** the closure body re-measured as a top-level
+  `function __fx_<path>(…) { … }` copy. Its parameters are dynamic and it has
+  no callers, which is what a general member-closure plan would hand the body
+  walk. Arms are listed in walk order. Each later entry is the first blocker of
+  the next failing statement, or the dynamic move-only scan (`move-only`).
+
+| statement | first blocker in `<module-init>` (48 tests) | what comes next (twin) |
+| --- | --- | --- |
+| `assert.sameValue = function …` | `closure-return-type` (no member-closure plan: return is not boolean, body not closed-scalar) | `new Test262Error` ×2 (`constructor-resolution-unsupported`) → `function-object-member-evidence` on `assert._isSameValue(actual, expected)` (and `assert._toString(…)`) |
+| `assert.notSameValue = function …` | `closure-return-type` | `new Test262Error` → `function-object-member-evidence` (`assert._isSameValue`) |
+| `assert.throws = function …` | `closure-return-type` | `vardecl-var-kind` (`var expectedName, actualName;`, a function-local `var` list without initialisers) → `new Test262Error` ×2 → `call-resolution-unsupported` `expr-local-call-target «func»` (calling a dynamic param) → move-only `message` (`message += …` on a dynamic) |
+| `assert.compareArray = function …` | `closure-return-type` | `operand-coercion-unsupported` `expr-mixed-conditional-proof` (`message === undefined ? '' : message`) → `expr-ident-not-in-scope «compareArray»` (`var format = compareArray.format`, a function-object member read as a value) → `call-resolution-unsupported` `expr-local-call-target «format»` → move-only `message` |
+| `compareArray.format = function …` | `closure-return-type` | `array-method-unsupported` (`….join(", ")` on the `any[]` result of `Array.prototype.map.call`; outside #7108's number/string domain) → `expr-ident-not-in-scope «Array»` (ambient `Array.prototype.map.call` as a value, measured on a separate probe) → move-only `arrayLike` |
+| `Test262Error.thrower = function …` | `closure-return-type` | `new Test262Error(message)` (`constructor-resolution-unsupported`; move-only flags the same `new` with a dynamic argument) |
+| `Test262Error.prototype.toString = function …` | `expr-ident-not-in-scope «Test262Error»` (S3c-a, function value as a receiver chain) | `closure-return-type` (no plan) → `this.message` in a prototype-method closure (the twin cannot model `this`; it reports `unattributed-arm:helper-internal`) |
+| `assert._formatIdentityFreeValue = formatIdentityFreeValue;` | `expr-ident-not-in-scope «formatIdentityFreeValue»` (top-level function as a bare value, the RHS of a member write) | none visible. The RHS is an IR-claimed function and the receiver write is the existing function-object write arm. |
+| `assert._toString = formatSimpleValue;` | `expr-ident-not-in-scope «formatSimpleValue»` (same arm) | none visible (same reasoning) |
+
+Prelude closures, which are not part of the module-init failure set (twins only):
+
+- **`print`:** move-only `value` (`console.log` of a dynamic) on standalone;
+  `host-surface-unavailable «console»` on gc.
+- **`$262.IsHTMLDDA` and `$262.gc`:** IR.
+- **`$262.detachArrayBuffer`:** `expr-ident-not-in-scope «structuredClone»`
+  → move-only `buffer.__detached__` (a member write on a dynamic).
+- **`$262.createRealm`:** `vardecl-let-closure` (`var mkerr = function () {…}`)
+  → `expr-ident-not-in-scope «globalThis»` → `«$262»` → move-only
+  `return realm`.
+- **`$262.evalScript`:** `expr-binary-op-instanceof` (`error instanceof
+  ReferenceError`) → move-only on the `__js2wasm_global_script_eval` return.
+
+### Ranked arms (harness `<module-init>` statements)
+
+| rank | arm | first blocker for | on the path of | owner / note |
+| ---: | --- | --- | --- | --- |
+| 1 | **General member-closure plan.** An untyped `F.x = function (…) {…}` RHS on a function-object receiver gets dynamic params and a void/dynamic return, and the ordinary body walk runs. Today `planMemberClosure` admits only boolean-returning closed-scalar bodies, and only on standalone/WASI. | 6 | 7 (adds `prototype.toString`) | Stage 2 owner. It unblocks nothing on its own: every closure has a body blocker behind it. |
+| 2 | `new Test262Error(…)` from a closure body (S3c-b) | 0 | 4 (`sameValue`, `notSameValue`, `throws`, `thrower`), plus the first test-body blocker in 17/48 tests | D (S3c-b) |
+| 3 | Top-level function as a bare value (S3c-a): RHS of a member write, receiver chain `F.prototype.x =` | 3 | 3 | D (S3c-a). On its own it should clear `_formatIdentityFreeValue` and `_toString`. |
+| 4 | Member call on the legacy, untyped `assert` (`function-object-member-evidence`). Needs `assert` as an IR claim, or the planner's claim route mirrored in the selector (#6821 S1h note, #6823). | 0 | 2 (`sameValue`, `notSameValue`) | Stage 2 / #6823 |
+| 5 | Calling a dynamic value (`func()`, `format(…)`) | 0 | 2 (`throws`, `compareArray`) | open |
+| 6 | Dynamic string accumulation (`message += ' '`, `m === undefined ? '' : m`) | 0 | 2 (`throws`, `compareArray`) | open; item 1 family |
+| 7 | Function-object member READ as a value (`compareArray.format`) | 0 | 1 | Stage 2 |
+| 8 | Function-local `var a, b;` without initialisers | 0 | 1 (`throws`) | #7105 family |
+| 9 | `this` in a prototype-method closure | 0 | 1 (`prototype.toString`) | after S3c |
+| 10 | `Array.prototype.map.call(x, String)` plus `join` over `any[]` | 0 | 1 (`compareArray.format`) | array-methods follow-up to #7108 |
+| — | Runtime-eval linked callable carrier (eval tests) | whole harness in 1/48 tests | — | separate |
+
+**Minimum sets to finish a closure.** These are inferred from the twin order;
+the later arms in each set were not verified by patching. All of `<module-init>`
+also needs the test-body arms below.
+
+- `thrower`: arms 1 + 2.
+- `sameValue` and `notSameValue`: arms 1 + 2 + 4.
+- `throws`: arms 1 + 2 + 5 + 6 + 8.
+- `compareArray`: arms 1 + 5 + 6 + 7, plus the call to the legacy `assert`.
+- `format`: arms 1 + 10 + the `Array` ambient value.
+- `prototype.toString`: arms 3 + 1 + 9.
+- `_formatIdentityFreeValue` and `_toString`: arm 3.
+
+### Test-body statements in `<module-init>` (for completeness, standalone)
+
+First failing test-body statement per test (48 tests):
+
+| tests | arm |
+| ---: | --- |
+| 17 | `constructor-resolution-unsupported` `new Test262Error` |
+| 11 | `vardecl-var-kind` (script `var x = 1`) |
+| 7 | `expr-ident-not-in-scope «Number»` (ambient `Number.*` value) |
+| 3 | `body-exprstmt-other` |
+| 3 | BigInt literal (`expr-unhandled`) |
+| 2 | `objectlit-ordinary-to-primitive-method` |
+| 2 | `expr-ident-not-in-scope «TypeError»` |
+| 1 each | `«f1»`, `expr-binary-op-=`, `objectlit-empty` |
+
+Arms touching the most tests anywhere in the body: `new Test262Error` 19,
+`vardecl-var-kind` 12, `Number` 8, `TypeError` 7, `new Boolean/Number/String` 5
+each.
+
+### Method notes
+
+- **The "next" arm is approximate.** The census tool skips the whole failing
+  top-level statement, so a second blocker inside the same statement is only
+  visible when the move-only scan reports it.
+- **The twins model a general member-closure plan.** They give the body
+  dynamic params; they do not model `this`, captured outer bindings, or a
+  closure's return-type authority.
+- **Nothing was implemented.** The instrumentation lived only in the local
+  probe build.

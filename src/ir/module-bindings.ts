@@ -598,6 +598,8 @@ export function makeIrPrimitiveExpressionClassifier(
 
 export type IrModuleBindingValueKind = bindingValue.IrModuleBindingValueKind;
 export { isIrModuleMapValueKind, isIrModuleReferenceValueKind } from "./module-binding-value-kinds.js";
+// (#7108) Re-exported so the codegen driver reaches it over its existing edge to this module.
+export { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 
 /** Name-compatible binding evidence used only by the pre-R1 planning seam. */
 export interface IrLegacyModuleBindingIdentity {

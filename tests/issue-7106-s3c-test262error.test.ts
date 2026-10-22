@@ -108,6 +108,19 @@ describe("#7106 S3c — the self-guarded Test262Error ships an IR body", () => {
     expect(await call(strict.binary, "ok")).toBe(3);
   });
 
+  it("stands down when runtime eval may share the realm", async () => {
+    // A dynamic-source `new Function` reads `Test262Error` through the
+    // global-binding adapter; only legacy's fnctor path keeps
+    // `e.constructor === Test262Error` (merge-queue regression, 3 ES5 rows).
+    const result = await compile(HARNESS + `function g(s) { return new Function("return " + s)(); }\n` + PROBE, {
+      ...OPTIONS,
+      fileName: "issue-7106-s3c-shared-realm.js",
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.wat ?? "").toContain("__fnctor_Test262Error");
+    expect(result.wat ?? "").not.toContain("__ir_current_this");
+  });
+
   it("leaves an ordinary fnctor (no self-guard) on its typed struct", async () => {
     const result = await compile(
       `
