@@ -11451,11 +11451,17 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   // selector's `forInHeadValueIsHostString` gate keeps head-value uses off
   // the IR path entirely (fail-closed, not claim-then-demote).
   const headIsHostString = cx.resolver?.resolveString?.()?.kind === "externref";
+  // (#7106 propertyHelper) On a native-strings lane the key externref IS the
+  // non-fast dynamic carrier of the key string (`emitBox` of a native string
+  // is `extern.convert_any`), so the head reads as `dynamic` — the selector's
+  // `forInHeadValueIsDynamicCarrier` admits exactly this lane.
+  const headIsDynamicCarrier = !headIsHostString && cx.resolver?.dynamicCarrierIsExternref?.() === true;
   bodyScope.set(declaration.name.text, {
     kind: "slot",
     slotIndex: keySlot,
     type: externref,
     ...(headIsHostString ? { asType: { kind: "string" } as IrType } : {}),
+    ...(headIsDynamicCarrier ? { asType: irDynamic() } : {}),
   });
   const bodyCx: LowerCtx = {
     ...cx,

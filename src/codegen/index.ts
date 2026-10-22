@@ -3248,6 +3248,10 @@ function planIrOverlay(
       // carrier. That holds exactly when `resolveString()` yields externref,
       // i.e. when native strings are off.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      // (#7106 propertyHelper) …and on a native-strings lane the same externref
+      // IS the non-fast dynamic carrier of the key string, so the head can be
+      // read as a dynamic value instead.
+      forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),

@@ -629,6 +629,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * fail-closed as the slice-5 receiver certificate.
    */
   readonly forInHeadValueIsHostString?: boolean;
+  /**
+   * (#7106 propertyHelper) true when a for-in enumerated key can be bound as a
+   * DYNAMIC head value: a native-strings lane on the non-fast carrier, where
+   * the #2964 key helpers' externref IS the dynamic carrier of the key string
+   * (`emitBox` of a native string is `extern.convert_any`). The head then
+   * joins the move-only scan's dynamic names. propertyHelper's `isEnumerable`
+   * compares the key against its dynamic `name`.
+   */
+  readonly forInHeadValueIsDynamicCarrier?: boolean;
   /** (#3214 A+B1) Checker-backed imports; omitted by host-free and bare selector callers. */
   readonly importedFunctions?: IrImportedFunctionResolver;
   /** (#3657) Checker-certified class-member calls to same-file primitive host stubs. */
@@ -2125,7 +2134,8 @@ function whyNotIrClaimable(
     isDynamicReturn ||
     currentStableFunctionCallSubject !== null ||
     containsReceiverFirstDynamicMethodCall(body) ||
-    bodyCallsDynamicParamCallee(body, typeMap)
+    bodyCallsDynamicParamCallee(body, typeMap) ||
+    containsDynamicCarrierForInHead(body)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
@@ -3700,12 +3710,17 @@ function dynamicUsesAreMoveOnly(
       return scanStmt(s.statement);
     }
     if (ts.isForInStatement(s)) {
-      return (
-        currentSelectionOptions?.isDynamicForInReceiver?.(s.expression) === true &&
-        isDynShaped(s.expression) &&
-        scanExpr(s.expression, true) &&
-        scanStmt(s.statement)
-      );
+      if (
+        currentSelectionOptions?.isDynamicForInReceiver?.(s.expression) !== true ||
+        !isDynShaped(s.expression) ||
+        !scanExpr(s.expression, true)
+      ) {
+        return false;
+      }
+      // (#7106 propertyHelper) a dynamic-carrier head value is a dynamic name.
+      const head = dynamicCarrierForInHead(s);
+      if (head !== undefined) dynNames.add(head);
+      return scanStmt(s.statement);
     }
     // #2952 slice 6c — a LABEL wraps a statement without changing its value
     // flow. Without this arm the labelled statement fell into the
@@ -5401,6 +5416,38 @@ function classifyForInHeadUse(
   return { used, written, captured, redeclared };
 }
 
+/**
+ * (#7106 propertyHelper) The head name of a `for (var k in <dyn>)` whose body
+ * READS `k`, on a lane where that head is a dynamic carrier
+ * (`forInHeadValueIsDynamicCarrier`); undefined otherwise.
+ */
+function dynamicCarrierForInHead(stmt: ts.ForInStatement): string | undefined {
+  if (currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true) return undefined;
+  if (currentSelectionOptions?.forInHeadValueIsHostString === true) return undefined;
+  const init = stmt.initializer;
+  if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) return undefined;
+  const name = init.declarations[0]!.name;
+  if (!ts.isIdentifier(name)) return undefined;
+  return classifyForInHeadUse(stmt.statement, name.text).used ? name.text : undefined;
+}
+
+/** True when `body` (not nested functions) holds a dynamic-carrier for-in head. */
+function containsDynamicCarrierForInHead(body: ts.Block): boolean {
+  if (currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== body && isFunctionLike(node)) return;
+    if (ts.isForInStatement(node) && dynamicCarrierForInHead(node) !== undefined) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return found;
+}
+
 function isPhase1ForInStatement(
   stmt: ts.ForInStatement,
   scope: ReadonlySet<string>,
@@ -5433,7 +5480,10 @@ function isPhase1ForInStatement(
   // too: a closure over the head would need the ref-cell capture path.
   const headUse = classifyForInHeadUse(stmt.statement, headName);
   if (headUse.used) {
-    if (currentSelectionOptions?.forInHeadValueIsHostString !== true) {
+    if (
+      currentSelectionOptions?.forInHeadValueIsHostString !== true &&
+      currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true
+    ) {
       return shapeNo("forin-head-value-used", stmt.statement);
     }
     if (headUse.written) return shapeNo("forin-head-value-written", stmt.statement);
