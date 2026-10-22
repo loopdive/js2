@@ -107,3 +107,33 @@ export function ensureIrArgumentsLengthHelper(ctx: CodegenContext): number | und
   });
   return funcIdx;
 }
+
+export const IR_PUBLISH_ARGC_HELPER = "__ir_publish_argc";
+
+/**
+ * (#7106 S1i) Reserve (once) the caller-side wrapper `dyn.publish_argc` calls:
+ * `__ir_publish_argc(count: i32)` sets `__argc = count`, exactly legacy's
+ * `emitSetArgc` at an under-arity direct call (`min(actual, formals)` is the
+ * actual count there). The callee's entry prologue consumes and clears it.
+ * Returns the function index, or undefined off the host-free lanes.
+ */
+export function ensureIrPublishArgcHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get(IR_PUBLISH_ARGC_HELPER);
+  if (existing !== undefined) return existing;
+  const argcGlobalIdx = ensureArgcGlobal(ctx);
+  const typeIdx = addFuncType(ctx, [{ kind: "i32" }], []);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(IR_PUBLISH_ARGC_HELPER, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: IR_PUBLISH_ARGC_HELPER,
+    typeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "global.set", index: argcGlobalIdx },
+    ],
+    exported: false,
+  });
+  return funcIdx;
+}
