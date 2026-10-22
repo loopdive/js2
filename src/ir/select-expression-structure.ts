@@ -253,3 +253,42 @@ export function superMethodCallIsBuildable(
   }
   return undefined;
 }
+
+/**
+ * (#7129) The one primitive kind every value `return` of `body` yields when
+ * each is a bare literal (`return 42`, `return -1`, `return 'A'`), else `null`. That literal set is exactly what the checker widens to
+ * `number` / `string` for an unannotated signature, so the kind equals the
+ * legacy-registered slot. A bare `return;` or any other expression (a call, an
+ * identifier, a template with substitutions) answers `null`. Boolean literals
+ * are deliberately excluded: the class-method slot legacy registers for an
+ * inferred `boolean` does not match the IR's bool signature (typeIdx parity
+ * mismatch, measured 2026-10-22), so such a method stays legacy.
+ */
+export function uniformLiteralReturnKind(body: ts.Block): "f64" | "string" | null {
+  let kind: "f64" | "string" | null = null;
+  let ok = true;
+  const literalKind = (expr: ts.Expression): "f64" | "string" | null => {
+    while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+    if (
+      ts.isPrefixUnaryExpression(expr) &&
+      (expr.operator === ts.SyntaxKind.MinusToken || expr.operator === ts.SyntaxKind.PlusToken)
+    )
+      return ts.isNumericLiteral(expr.operand) ? "f64" : null;
+    if (ts.isNumericLiteral(expr)) return "f64";
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return "string";
+    return null;
+  };
+  const visit = (node: ts.Node): void => {
+    if (!ok) return;
+    if (ts.isReturnStatement(node)) {
+      const next = node.expression ? literalKind(node.expression) : null;
+      if (next === null || (kind !== null && kind !== next)) ok = false;
+      else kind = next;
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return ok ? kind : null;
+}
