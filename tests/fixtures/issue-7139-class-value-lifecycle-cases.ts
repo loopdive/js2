@@ -87,4 +87,28 @@ export const classValueLifecycleCases = [
       "class C{}function read():any{return C;}export function run():number{return read().prototype===C.prototype?1:0;}",
     expected: 1,
   },
+  {
+    name: "retainedCapturedInstances",
+    source:
+      "function make(n:number):any{class C{m():number{return n;}}return C;}export function run():number{const A=make(1),B=make(2);const a=new A(),b=new B();return a.m()*100+b.m()*10+a.m();}",
+    expected: 121,
+  },
+  {
+    name: "mutableCapturedBindings",
+    source:
+      "function make(seed:number):any{let n=seed;class C{next():number{return n++;}}return C;}export function run():number{const A=make(1),B=make(10);const a=new A(),b=new B();return a.next()*100+b.next()*10+a.next();}",
+    expected: 202,
+  },
+  {
+    name: "freshPrototypes",
+    source:
+      "function make():any{class C{}return C;}export function run():number{const A=make(),B=make();return A.prototype===B.prototype?1:0;}",
+    expected: 0,
+  },
+  {
+    name: "crossEvaluationInstances",
+    source:
+      "function make():any{class C{}return C;}export function run():number{const A=make(),B=make();const a=new A(),b=new B();return(a instanceof A?1:0)+(a instanceof B?10:0)+(b instanceof A?100:0)+(b instanceof B?1000:0);}",
+    expected: 1001,
+  },
 ] as const;

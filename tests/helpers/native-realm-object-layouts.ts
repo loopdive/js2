@@ -88,6 +88,10 @@ export function reserveRealmAnchorControls(f: Pick<ReturnType<typeof realmLayout
     results: [],
   });
   const state = tx.reserveFunction("control:state", "controlState", { params: [], results: [ext] });
+  const stateWithPrototype = tx.reserveFunction("control:state-with-prototype", "controlStateWithPrototype", {
+    params: [ext],
+    results: [ext],
+  });
   const prototype = tx.reserveFunction("control:state-prototype", "controlStatePrototype", {
     params: [ext],
     results: [ext],
@@ -100,6 +104,7 @@ export function reserveRealmAnchorControls(f: Pick<ReturnType<typeof realmLayout
   return {
     initialize,
     state,
+    stateWithPrototype,
     prototype,
     realm,
     setPrototype,
@@ -116,6 +121,10 @@ export function reserveRealmAnchorControls(f: Pick<ReturnType<typeof realmLayout
       tx.fillFunction(state, {
         locals: [],
         body: [{ op: "call", funcIdx: pack.sourceInitializer.handle }, { op: "extern.convert_any" }],
+      });
+      tx.fillFunction(stateWithPrototype, {
+        locals: [],
+        body: [get(0), { op: "call", funcIdx: pack.prototypeInitializer.handle }, { op: "extern.convert_any" }],
       });
       for (const [fieldIdx, token] of [prototype, realm].entries())
         tx.fillFunction(token, {
@@ -134,7 +143,14 @@ export function reserveRealmAnchorControls(f: Pick<ReturnType<typeof realmLayout
           { op: "struct.set", typeIdx: pack.types.state.typeIndex, fieldIdx: 0 },
         ],
       });
-      for (const [name, token] of Object.entries({ initialize, state, prototype, realm, setPrototype }))
+      for (const [name, token] of Object.entries({
+        initialize,
+        state,
+        stateWithPrototype,
+        prototype,
+        realm,
+        setPrototype,
+      }))
         tx.defineExport("control:export:" + name, name, token);
     },
   };

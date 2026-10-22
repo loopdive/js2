@@ -25,6 +25,7 @@ for (const fixture of classValueLifecycleCases) {
           skipSemanticDiagnostics: true,
         });
         expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+        expect(result.errors.filter((error) => error.severity === "error")).toEqual([]);
         const module = new WebAssembly.Module(result.binary);
         expect(WebAssembly.Module.imports(module).filter((entry) => entry.module !== "wasi_snapshot_preview1")).toEqual(
           [],
@@ -61,6 +62,24 @@ for (const fixture of classValueLifecycleCases) {
           expect(rows![0].directBodyEmissions, name).toBe(0);
         }
         expect(result.irPostClaimErrors).toEqual([]);
+      });
+      it("owns the inventoried class members and support through IR", () => {
+        const audit = result.irBodyRouteAudit;
+        expect(audit).toBeDefined();
+        expect(audit!.structurallyComplete).toBe(true);
+        expect(audit!.violations).toEqual([]);
+        expect(audit!.classCount).toBeGreaterThan(0);
+        const units = audit!.dispositions.filter((row) => row.unitKind.startsWith("class-"));
+        expect(units.length).toBeGreaterThan(0);
+        expect(
+          units.filter((row) => row.disposition !== "terminal-ir" && row.disposition !== "owned-support-ir-owner"),
+        ).toEqual([]);
+        expect(
+          audit!.legacyEntries.filter(
+            (entry) =>
+              entry.entryPoint === "compileClassBodies" || entry.entryPoint === "compileNestedClassDeclaration",
+          ),
+        ).toEqual([]);
       });
     });
   }

@@ -520,3 +520,83 @@ binding storage/TDZ, fresh evaluation identity and retained lexical environments
 through the canonical runtime and PreparedIrProgram. The lifecycle denominator
 and the full IR migration acceptance remain unchanged. This checkpoint stays
 local; published PR heads and HOLDs are unchanged.
+
+### Executable class evaluation foundation (2026-10-22)
+
+Fresh-context architecture review confirms that a fresh instance-shaped
+struct is not a class constructor: existing compatibility runtime readers
+identify constructors through singleton globals. The target producer instead
+uses the canonical source-closure header, a private Construct-closure payload,
+a per-evaluation bag/prototype and retained lexical cells. The concrete design
+is retained in `.tmp/7139-class-evaluation-design.md`; the full lifecycle
+acceptance remains required, including actual method capture values rather
+than only distinct returned constructor identities.
+
+First remove the fixed-prototype limitation in the existing realm-state
+allocator: `runtime/wasmgc/values/realm-object-layouts.ts` owns one explicit
+prototype state-allocation body. `backend/wasmgc/resources/native-realm-object-layouts.ts`
+declares/reserves/fills that helper and the existing source initializer delegates
+to it using its canonical function prototype anchor. No duplicate state layout,
+prototype registry or source-closure capture implementation is introduced. The
+new helper permits null as an explicit prototype operand while requiring an
+initialized realm; it does not validate ClassHeritage or certify intrinsic
+population. Test fresh states, retained prototype operands, null, independent
+realms, displaced reservations, canonical fill/header tampering and genuine
+source closure execution. Update all issuer token/completion/inventory checks
+for both initializer slots.
+
+This is a shared executable runtime prerequisite, not the accepted class-value
+vertical milestone. Class lowering, both source bindings, constructor dispatch,
+prototype descriptors, retained method captures and source M0 work remain open.
+The full goal also requires true linear execution: target `wasi` here still uses
+WasmGC and is not proof of the linear consumer.
+
+The original sixteen-case/eighty-assertion lifecycle population is retained.
+Four added sources exercise actual retained method calls, mutable independent
+captures, fresh prototype identity and cross-evaluation instanceof. Separate
+assertions inspect the exhaustive class-unit route census and physical class
+walker entries; function-name checks alone did not cover class members/support.
+Fatal compile diagnostics are now asserted independently of `success`, following
+the measured computed-key WASI diagnostic inconsistency. Report original and
+added populations separately; no runtime gains are attributed to this harness
+change.
+
+### Explicit-prototype realm-state checkpoint qualification (2026-10-22)
+
+The canonical realm-state allocator now accepts the evaluated prototype operand;
+the existing genuine source-closure initializer delegates with its function
+prototype anchor. Both helpers participate in reservation authentication,
+canonical completion and inventory. Calls retain stable function handles even
+when imports displace physical indices. This changes state allocation plumbing,
+not class-definition execution or heritage validation.
+
+Fresh-context adversarial review found no remaining blocking correctness,
+ownership or code-quality findings after the negative-header assertions were
+corrected. Independent checks: 41/41 allocator tests; 74/74 adjacent source,
+requirements and wrapper tests; an imported-index probe covering eight exact
+prototype operands, fresh state, retained realm identity after reinitialization,
+null anchors and signature tampering. Evidence is retained under
+`.tmp/review-class-realm-state-*.log`.
+
+Executed qualification (overlapping groups are not summed):
+
+- Root realm/source/declaration controls: 91/91 across three files.
+- Native concrete/protocol and class identity/outcome controls: 161/161.
+- Standard gc corpus: 14/14 byte-identical to parent
+  `a6c229b55ffa78b4613595af94033926b602d31d`.
+- Typecheck, configured Biome lint, default and explicit-main-base size gates,
+  coercion/oracle/cycle/layering/flat-directory/retirement checks pass. No new
+  growth grants or baseline edits. Preservation witnesses pass 6/6 full and
+  cut; strict closure remains open for the two inherited nonliteral imports.
+- Expanded lifecycle suite: **42/140 pass, 98/140 fail**. The original eighty
+  assertions remain **38 pass, 42 fail** (twelve native values and thirty IR
+  ownership assertions). Added retained-method/prototype sources contribute
+  four passing JavaScript controls and sixteen native/ownership failures.
+  All forty added exhaustive class-unit census assertions fail. These failures
+  expose missing execution and ownership; they are not allocator regressions
+  or class migration gains.
+
+This remains an unpublished local prerequisite checkpoint. Executable class
+values, lexical TDZ/cells, retained method captures, constructor dispatch,
+prototype descriptors, source M0 and true linear execution remain required.
+Published predecessor heads, HOLDs and the queue are unchanged.

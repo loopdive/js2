@@ -39,7 +39,7 @@ for (const displaced of [false, true])
       const inventory = nativeRealmObjectLayoutReservationInventory(r.f.tx, r.f.pack);
       expect(inventory.types).toHaveLength(4);
       expect(inventory.globals).toHaveLength(2);
-      expect(inventory.functions).toHaveLength(1);
+      expect(inventory.functions).toHaveLength(2);
       expect(() => r.instance().state!()).toThrow(WebAssembly.RuntimeError);
       const partial = r.instance();
       partial.initialize!(null);
@@ -63,6 +63,40 @@ for (const displaced of [false, true])
         expect(Object.is(a.prototype!(first), value)).toBe(true);
         expect(Object.is(a.prototype!(second), prototype)).toBe(true);
       }
+    });
+    it("allocates retained per-evaluation prototype state without changing the function prototype anchor", () => {
+      const a = r.instance(),
+        b = r.instance();
+      const functionPrototype = { kind: "function prototype" };
+      const firstPrototype = { evaluation: 1 },
+        secondPrototype = { evaluation: 2 };
+      expect(() => a.stateWithPrototype!(firstPrototype)).toThrow(WebAssembly.RuntimeError);
+      a.initialize!(functionPrototype);
+      b.initialize!(functionPrototype);
+      const first = a.stateWithPrototype!(firstPrototype),
+        second = a.stateWithPrototype!(secondPrototype);
+      const other = b.stateWithPrototype!(firstPrototype);
+      expect(Object.is(first, second)).toBe(false);
+      expect(a.prototype!(first)).toBe(firstPrototype);
+      expect(a.prototype!(second)).toBe(secondPrototype);
+      expect(a.prototype!(a.state!())).toBe(functionPrototype);
+      expect(a.realm!(first)).toBe(a.realm!(second));
+      expect(Object.is(a.realm!(first), b.realm!(other))).toBe(false);
+      a.setPrototype!(first, secondPrototype);
+      expect(a.prototype!(first)).toBe(secondPrototype);
+      expect(a.prototype!(second)).toBe(secondPrototype);
+      expect(a.prototype!(other)).toBe(firstPrototype);
+    });
+    it("accepts explicit null prototypes with an initialized realm independently from the function anchor", () => {
+      const a = r.instance();
+      expect(() => a.stateWithPrototype!(null)).toThrow(WebAssembly.RuntimeError);
+      a.initialize!(null);
+      const first = a.stateWithPrototype!(null),
+        second = a.stateWithPrototype!(null);
+      expect(Object.is(first, second)).toBe(false);
+      expect(a.prototype!(first)).toBeNull();
+      expect(a.realm!(first)).toBe(a.realm!(second));
+      expect(() => a.state!()).toThrow(WebAssembly.RuntimeError);
     });
     it("retains the six-field storage prefix and places state only on concrete ordinary carriers", () => {
       const { objects, pack } = r.f;
@@ -183,13 +217,18 @@ describe("realm carrier issuer boundaries", () => {
     expect(() => fillNativeRealmObjectLayouts(second.tx, second.pack)).toThrow(/already filled|completed|duplicate/);
     expect(() => requireCompletedNativeRealmObjectLayouts(second.tx, second.pack)).toThrow();
   });
-  it.each(["body", "locals"])("refuses ledger-completed valid-Wasm wrong initializer %s", (kind) => {
+  it.each([
+    ["sourceInitializer", "body"],
+    ["sourceInitializer", "locals"],
+    ["prototypeInitializer", "body"],
+    ["prototypeInitializer", "locals"],
+  ] as const)("refuses ledger-completed valid-Wasm wrong %s %s", (role, kind) => {
     const f = realmLayoutFixture(),
       original = f.tx.fillFunction.bind(f.tx);
     f.tx.fillFunction = (token, definition) =>
       original(
         token,
-        token !== f.pack.sourceInitializer
+        token !== f.pack[role]
           ? definition
           : kind === "locals"
             ? { ...definition, locals: [{ name: "wrong", type: i32 }] }
@@ -207,13 +246,21 @@ describe("realm carrier issuer boundaries", () => {
     expect(() => new WebAssembly.Module(emitBinary(f.module) as BufferSource)).not.toThrow();
     expect(() => requireCompletedNativeRealmObjectLayouts(f.tx, f.pack)).toThrow(/noncanonical anchor or initializer/);
   });
-  it("refuses post-fill body mutation", () => {
+  it.each(["sourceInitializer", "prototypeInitializer"] as const)("refuses changed %s headers before fill", (role) => {
+    const f = realmLayoutFixture();
+    f.pack[role].object.name = "foreign initializer";
+    expect(() => requireNativeRealmObjectLayouts(f.tx, f.pack)).toThrow(/altered function descriptor/);
+    expect(f.tx.state).toBe("failed");
+    const fresh = realmLayoutFixture();
+    expect(requireNativeRealmObjectLayouts(fresh.tx, fresh.pack)).toBe(fresh.pack);
+  });
+  it.each(["sourceInitializer", "prototypeInitializer"] as const)("refuses post-fill %s body mutation", (role) => {
     const f = realmLayoutFixture();
     f.tx.freezeReservations();
     fillNativeRealmObjectLayouts(f.tx, f.pack);
-    f.pack.sourceInitializer.object.body.push({ op: "nop" });
+    f.pack[role].object.body.push({ op: "nop" });
     expect(() => requireCompletedNativeRealmObjectLayouts(f.tx, f.pack)).toThrow(
-      "physical module reservations: altered completed function realm-layout:sourceInitializer",
+      "physical module reservations: altered completed function realm-layout:" + role,
     );
   });
 });

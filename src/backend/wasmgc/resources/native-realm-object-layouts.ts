@@ -12,6 +12,7 @@ import {
   createRealmObjectPrototypeDeclaration,
   createRealmOrdinaryObjectDeclaration,
   buildRealmSourceStateInitializer,
+  buildRealmObjectStateInitializer,
 } from "../../../runtime/wasmgc/values/realm-object-layouts.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -40,9 +41,15 @@ export interface NativeRealmObjectLayoutReservations {
   };
   /** Exact slots borrowed by the eventual singleton population owner. */
   readonly anchors: { readonly realm: GlobalReservation; readonly functionPrototype: GlobalReservation };
+  readonly prototypeInitializer: FunctionReservation;
   readonly sourceInitializer: FunctionReservation;
   readonly completionScope: "realm-carrier-state-only";
 }
+const initializerNames = {
+  prototypeInitializer: "__realm_object_state",
+  sourceInitializer: "__realm_source_state",
+} as const;
+const initializerRoles = ["prototypeInitializer", "sourceInitializer"] as const;
 const typeRoles = ["identity", "state", "objectPrototype", "ordinary"] as const;
 const dependencyRoles = ["objects", "objectPlan"] as const;
 function fail(detail: string): never {
@@ -108,10 +115,17 @@ export function declareNativeRealmObjectLayouts(key: string, objectKey: string, 
       mutable: true,
     },
     {
+      key: key + ":prototypeInitializer",
+      role: ["realm-carrier", "prototype-state-initializer"],
+      space: "function",
+      name: initializerNames.prototypeInitializer,
+      signature: { params: [{ kind: "externref" }], results: [{ kind: "ref", typeKey: state }] },
+    },
+    {
       key: key + ":sourceInitializer",
       role: ["realm-carrier", "source-state-initializer"],
       space: "function",
-      name: "__realm_source_state",
+      name: initializerNames.sourceInitializer,
       signature: { params: [], results: [{ kind: "ref", typeKey: state }] },
     },
   ];
@@ -132,7 +146,7 @@ interface Owner {
   readonly sourcePlan: NativeResourceRecipe;
   readonly plan: NativeResourceRecipe;
   readonly tokens: readonly (TypeReservation | GlobalReservation | FunctionReservation)[];
-  readonly initializerType: number;
+  readonly initializerHeaders: ReadonlyMap<FunctionReservation, { readonly name: string; readonly typeIdx: number }>;
   filled: boolean;
 }
 const owners = new WeakMap<NativeRealmObjectLayoutReservations, Owner>();
@@ -164,6 +178,7 @@ export function reserveNativeRealmObjectLayouts(
       realm: requireNativeDeclaredReservation(records, key + ":realm", "global"),
       functionPrototype: requireNativeDeclaredReservation(records, key + ":functionPrototype", "global"),
     }),
+    prototypeInitializer: requireNativeDeclaredReservation(records, key + ":prototypeInitializer", "function"),
     sourceInitializer: requireNativeDeclaredReservation(records, key + ":sourceInitializer", "function"),
     completionScope: "realm-carrier-state-only" as const,
   });
@@ -178,9 +193,14 @@ export function reserveNativeRealmObjectLayouts(
       ...typeRoles.map((role) => types[role]),
       pack.anchors.realm,
       pack.anchors.functionPrototype,
-      pack.sourceInitializer,
+      ...initializerRoles.map((role) => pack[role]),
     ]),
-    initializerType: pack.sourceInitializer.object.typeIdx,
+    initializerHeaders: new Map(
+      initializerRoles.map((role) => [
+        pack[role],
+        { name: initializerNames[role], typeIdx: pack[role].object.typeIdx },
+      ]),
+    ),
     filled: false,
   });
   return pack;
@@ -217,7 +237,7 @@ export function requireNativeRealmObjectLayouts(
     ...typeRoles.map((role) => pack.types[role]),
     pack.anchors.realm,
     pack.anchors.functionPrototype,
-    pack.sourceInitializer,
+    ...initializerRoles.map((role) => pack[role]),
   ];
   if (owner.tokens.some((token, index) => token !== tokens[index])) fail("substituted reservation token");
   const types = new Map([
@@ -228,7 +248,8 @@ export function requireNativeRealmObjectLayouts(
     if (tx.state !== "reserving") tx.physicalIndex(token);
     else if (token.kind === "type") tx.assertTypeReservation(token);
     if (token.kind === "function") {
-      if (token.object.name !== "__realm_source_state" || token.object.typeIdx !== owner.initializerType)
+      const expected = owner.initializerHeaders.get(token);
+      if (!expected || token.object.name !== expected.name || token.object.typeIdx !== expected.typeIdx)
         fail("changed initializer signature/header");
     } else
       compareNativeResourceDeclarationShape(
@@ -247,12 +268,17 @@ export function requireNativeRealmObjectLayouts(
   return pack;
 }
 
-function initializer(tx: PhysicalModuleReservations, pack: NativeRealmObjectLayoutReservations) {
-  return buildRealmSourceStateInitializer({
-    realmGlobal: tx.physicalIndex(pack.anchors.realm),
-    prototypeGlobal: tx.physicalIndex(pack.anchors.functionPrototype),
-    stateType: tx.physicalIndex(pack.types.state),
-  });
+function initializers(tx: PhysicalModuleReservations, pack: NativeRealmObjectLayoutReservations) {
+  return {
+    prototypeInitializer: buildRealmObjectStateInitializer({
+      realmGlobal: tx.physicalIndex(pack.anchors.realm),
+      stateType: tx.physicalIndex(pack.types.state),
+    }),
+    sourceInitializer: buildRealmSourceStateInitializer({
+      prototypeGlobal: tx.physicalIndex(pack.anchors.functionPrototype),
+      initializeState: pack.prototypeInitializer.handle,
+    }),
+  };
 }
 export function fillNativeRealmObjectLayouts(
   tx: PhysicalModuleReservations,
@@ -263,7 +289,8 @@ export function fillNativeRealmObjectLayouts(
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
   tx.fillGlobal(pack.anchors.realm, [{ op: "ref.null", typeIdx: pack.types.identity.typeIndex }]);
   tx.fillGlobal(pack.anchors.functionPrototype, [{ op: "ref.null.extern" }]);
-  tx.fillFunction(pack.sourceInitializer, initializer(tx, pack));
+  const bodies = initializers(tx, pack);
+  for (const role of initializerRoles) tx.fillFunction(pack[role], bodies[role]);
   owner.filled = true;
 }
 
@@ -274,16 +301,22 @@ export function requireCompletedNativeRealmObjectLayouts(
 ): NativeRealmObjectLayoutReservations {
   requireNativeRealmObjectLayouts(tx, pack);
   if (!owners.get(pack)!.filled) fail("missing canonical initializer fill");
-  for (const token of [pack.anchors.realm, pack.anchors.functionPrototype, pack.sourceInitializer])
+  for (const token of [
+    pack.anchors.realm,
+    pack.anchors.functionPrototype,
+    ...initializerRoles.map((role) => pack[role]),
+  ])
     tx.assertCompletedReservation(token);
+  const bodies = initializers(tx, pack);
   if (
     preparedIrDataMismatch(pack.anchors.realm.object.init, [
       { op: "ref.null", typeIdx: pack.types.identity.typeIndex },
     ]) ||
     preparedIrDataMismatch(pack.anchors.functionPrototype.object.init, [{ op: "ref.null.extern" }]) ||
-    preparedIrDataMismatch(
-      { locals: pack.sourceInitializer.object.locals, body: pack.sourceInitializer.object.body },
-      initializer(tx, pack),
+    initializerRoles.some(
+      (role) =>
+        preparedIrDataMismatch({ locals: pack[role].object.locals, body: pack[role].object.body }, bodies[role]) !==
+        undefined,
     )
   )
     fail("noncanonical anchor or initializer completion");
@@ -299,6 +332,6 @@ export function nativeRealmObjectLayoutReservationInventory(
     plan: owners.get(pack)!.plan,
     types: Object.freeze(typeRoles.map((role) => pack.types[role])),
     globals: Object.freeze([pack.anchors.realm, pack.anchors.functionPrototype]),
-    functions: Object.freeze([pack.sourceInitializer]),
+    functions: Object.freeze(initializerRoles.map((role) => pack[role])),
   });
 }
