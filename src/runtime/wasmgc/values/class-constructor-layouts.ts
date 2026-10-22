@@ -24,12 +24,16 @@ export function createClassConstructorDeclaration(rootKey: string, stateKey: str
 /** Inputs: Call funcref, source arity, populated own bag, Construct closure, parent. */
 export function buildClassConstructorAllocation(binding: {
   readonly classType: number;
+  readonly closureRootType: number;
   readonly initializeState: FuncHandle;
 }): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [],
     body: [
-      ...[0, 1, 2, 3, 4].map((index) => ({ op: "local.get" as const, index })),
+      ...[0, 1, 2, 3].map((index) => ({ op: "local.get" as const, index })),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: binding.closureRootType },
+      { op: "local.get", index: 4 },
       { op: "call", funcIdx: binding.initializeState },
       { op: "struct.new", typeIdx: binding.classType },
       { op: "extern.convert_any" },

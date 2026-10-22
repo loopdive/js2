@@ -71,8 +71,17 @@ import {
 } from "./native-object-descriptors.js";
 import { requireNativeStringLiteral } from "./native-string-literals.js";
 
+import {
+  requireNativeRealmObjectState,
+  requireCompletedNativeRealmObjectState,
+  bindNativeRealmObjectBootstrap,
+  requireNativeRealmObjectBootstrap,
+  type NativeRealmObjectStateReservations,
+} from "./native-realm-object-layouts.js";
+
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
+  readonly realmState?: NativeRealmObjectStateReservations;
   readonly requests: NativeBuiltinFunctionRequests;
   readonly closures: NativeClosureReservations;
   readonly closurePlan: NativeClosureDeclarationPlan;
@@ -161,12 +170,17 @@ function same(a: unknown, b: unknown, detail: string): void {
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
   if (
-    Object.keys(d).length !== 5 ||
+    Object.keys(d).length !== (Object.hasOwn(d, "realmState") ? 6 : 5) ||
     Object.keys(d).some(
-      (key) => !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies"].includes(key),
+      (key) =>
+        !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "realmState"].includes(key),
     )
   )
     fail("unexpected dependency input");
+  if (Object.hasOwn(d, "realmState")) {
+    if (!d.realmState) fail("realm state requires an issued owner");
+    requireNativeRealmObjectState(tx, d.realmState);
+  }
   requireNativeBuiltinFunctionRequests(tx, d.requests);
   const input = nativeBuiltinFunctionRequestDependencies(tx, d.requests),
     dd = d.descriptorDependencies;
@@ -359,11 +373,14 @@ export function reserveNativeBuiltinFunctionResources(
     descriptorInventory: inventory,
     filled: false,
   });
+  if (d.realmState) bindNativeRealmObjectBootstrap(tx, d.realmState, functions.initialize);
   return pack;
 }
 function current(tx: PhysicalModuleReservations, pack: NativeBuiltinFunctionReservations): Owner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied builtin owner");
+  if (owner.dependencies.realmState)
+    requireNativeRealmObjectBootstrap(tx, owner.dependencies.realmState, pack.functions.initialize);
   assertBuiltinFunctionDataRecord(owner.dependencies);
   for (const key of Object.keys(owner.identities) as (keyof NativeBuiltinFunctionDependencies)[])
     if (owner.dependencies[key] !== owner.identities[key]) fail("substituted dependency identity");
@@ -395,6 +412,7 @@ function completedDependencies(
   pack: NativeBuiltinFunctionReservations,
   owner: Owner,
 ): void {
+  if (owner.dependencies.realmState) requireCompletedNativeRealmObjectState(tx, owner.dependencies.realmState);
   requireCompletedNativeObjectDescriptors(
     tx,
     owner.dependencies.descriptors,
@@ -452,6 +470,15 @@ function operands(
     objectTypeIdx: lookup.layouts.object.typeIndex,
     vectorTypeIdx: input.arguments.carrier.typeIndex,
     vectorArrayTypeIdx: input.arguments.array.typeIndex,
+    ...(owner.dependencies.realmState
+      ? {
+          stateAnchors: {
+            realm: tx.physicalIndex(owner.dependencies.realmState.anchors.realm),
+            functionPrototype: tx.physicalIndex(owner.dependencies.realmState.anchors.functionPrototype),
+            identityType: tx.physicalIndex(owner.dependencies.realmState.types.identity),
+          },
+        }
+      : {}),
     realm: tx.physicalIndex(pack.globals.realm),
     objectPrototype: tx.physicalIndex(pack.globals.objectPrototype),
     state: tx.physicalIndex(pack.globals.state),

@@ -15,8 +15,8 @@ import {
   type NativeSourceClosureTypes,
 } from "./native-source-closures.js";
 import {
-  requireCompletedNativeRealmObjectLayouts,
-  type NativeRealmObjectLayoutReservations,
+  requireCompletedNativeRealmObjectState,
+  type NativeRealmObjectStateReservations,
 } from "./native-realm-object-layouts.js";
 import {
   assertNativeResourceDataMatches,
@@ -56,7 +56,7 @@ export function declareNativeClassValues(key: string, rootKey: string, stateKey:
           { kind: "funcref" },
           { kind: "i32" },
           { kind: "externref" },
-          { kind: "ref", typeKey: rootKey },
+          { kind: "externref" },
           { kind: "externref" },
         ],
         results: [{ kind: "externref" }],
@@ -71,7 +71,7 @@ export function declareNativeClassValues(key: string, rootKey: string, stateKey:
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly source: NativeSourceClosureTypes;
-  readonly realm: NativeRealmObjectLayoutReservations;
+  readonly realm: NativeRealmObjectStateReservations;
   readonly key: string;
   readonly sourcePlan: NativeResourceRecipe;
   readonly plan: NativeResourceRecipe;
@@ -120,12 +120,12 @@ export function reserveNativeClassValues(
   tx: PhysicalModuleReservations,
   key: string,
   source: NativeSourceClosureTypes,
-  expectedPlan: NativeResourceRecipe,
+  expectedPlan?: NativeResourceRecipe,
 ): NativeClassValueReservations {
   if (tx.state !== "reserving") fail("invalid reservation phase");
   const { realm, types } = prerequisites(tx, source);
   const plan = declareNativeClassValues(key, source.closures.root.key, realm.types.state.key);
-  assertNativeResourceDataMatches(expectedPlan, plan, "substituted declaration plan");
+  if (expectedPlan) assertNativeResourceDataMatches(expectedPlan, plan, "substituted declaration plan");
   tx.assertReservationKeysAvailable(plan.declarations.map((row) => row.key));
   const records = executeNativeResourceRecipe(tx, plan, types);
   const pack = Object.freeze({
@@ -138,7 +138,7 @@ export function reserveNativeClassValues(
     source,
     realm,
     key,
-    sourcePlan: expectedPlan,
+    sourcePlan: expectedPlan ?? plan,
     plan,
     type: pack.type,
     allocate: pack.allocate,
@@ -157,13 +157,14 @@ export function requireNativeClassValues(
 function allocationBody(tx: PhysicalModuleReservations, pack: NativeClassValueReservations, owner: Owner) {
   return buildClassConstructorAllocation({
     classType: tx.physicalIndex(pack.type),
+    closureRootType: tx.physicalIndex(owner.source.closures.root),
     initializeState: owner.realm.prototypeInitializer.handle,
   });
 }
 export function fillNativeClassValues(tx: PhysicalModuleReservations, pack: NativeClassValueReservations): void {
   const owner = requireOwner(tx, pack);
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
-  requireCompletedNativeRealmObjectLayouts(tx, owner.realm);
+  requireCompletedNativeRealmObjectState(tx, owner.realm);
   tx.fillFunction(pack.allocate, allocationBody(tx, pack, owner));
   owner.filled = true;
 }
@@ -173,7 +174,7 @@ export function requireCompletedNativeClassValues(
 ): NativeClassValueReservations {
   const owner = requireOwner(tx, pack);
   if (!owner.filled) fail("missing canonical fill");
-  requireCompletedNativeRealmObjectLayouts(tx, owner.realm);
+  requireCompletedNativeRealmObjectState(tx, owner.realm);
   tx.assertCompletedReservation(pack.allocate);
   assertNativeResourceDataMatches(
     allocationBody(tx, pack, owner),

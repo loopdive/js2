@@ -38,6 +38,7 @@ import {
   requireNativeRealmSourceClosureCallables,
   type NativeRealmSourceClosureCallables,
 } from "../backend/wasmgc/resources/native-source-closure-callables.js";
+import type { WasmFunction } from "../wasm/model/module-records.js";
 import type { Instr, ValType } from "../wasm/model/instructions.js";
 import { lowerIrFunctionBody } from "./lower-generic.js";
 import { wasmValueTypeConverter } from "./backend/wasm-lowering.js";
@@ -125,7 +126,11 @@ export function bindNativeSourceClosureUnits(
     if (slot.object.typeIdx !== shape.lowering.funcTypeIdx) fail("source slot does not use its exact lifted signature");
     return { unitId: unit.unitId, fn, slot };
   });
-  const referencedSlots = [...new Set(pack.requirements.allocations.map((row) => row.liftedUnitId))].map((id) => {
+  const referencedUnits = [
+    ...pack.requirements.allocations.map((row) => row.liftedUnitId),
+    ...(pack.requirements.classValues ?? []).map((row) => row.callUnitId),
+  ];
+  const referencedSlots = [...new Set(referencedUnits)].map((id) => {
     const row = rows.find((candidate) => candidate.unitId === id);
     if (!row) fail("source allocation target has no authenticated lifted unit slot");
     return row.slot;
@@ -270,4 +275,18 @@ export function requireCompletedNativeSourceClosures(
     tx.assertCompletedReservation(row.slot);
   }
   return pack;
+}
+
+/** Index each actual support owner once for both ABI ownership and emission receipts. */
+export function registerOwnedSupportFunctions(
+  nativeFunctions: Set<WasmFunction>,
+  supportFunctions: Map<WasmFunction, FunctionReservation>,
+  functions: readonly FunctionReservation[],
+): void {
+  for (const token of functions) {
+    if (nativeFunctions.has(token.object) || supportFunctions.has(token.object))
+      fail("support function has competing native owners");
+    nativeFunctions.add(token.object);
+    supportFunctions.set(token.object, token);
+  }
 }

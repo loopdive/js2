@@ -679,3 +679,133 @@ Machine-readable evidence: `.tmp/7139-class-value-checkpoint-evidence.json`;
 root logs `.tmp/7139-class-value-*`. Published heads, HOLDs and queue remain
 unchanged. Full class-definition execution and exact Prepared admission are
 required next; this checkpoint does not close the class milestone or #3518.
+
+### Next implementation: complete Prepared class-allocation admission
+
+Before code: extend the canonical callable catalog with one explicit
+`class.value.allocate` intrinsic binding and standalone WasmGC provider. Its
+policy-independent ABI is `(funcref, i32, extern, extern, extern) -> extern`;
+the semantic instruction still requires a typed Construct closure. Generic
+backend lowering erases that closure using the existing `emitToExternref`
+boundary; the canonical WasmGC allocator authenticates the root with a cast.
+This replaces the unpublished physical allocator's signature-dependent root
+parameter rather than inventing overloaded runtime symbols or another root
+semantic type. It makes the serialized callable ABI independent of individual
+capture layouts. Actual class [[Call]]/[[Construct]] semantics remain producer
+work, and this does not rename WASI into true linear.
+
+`ir/program/native-class-value-requirements.ts` must derive exact occurrences,
+allocation IDs and noncapturing lifted Call targets from the existing issued
+source-closure census; it must authenticate both semantic and projected views.
+`ir/program/native-class-value-setup.ts` owns the descriptive setup/ABI join.
+The existing physical planner and consumer reuse these modules and the issued
+class allocation resource instead of maintaining class-name lookups or a new
+registry. Supplemental ABI binding reconciliation should share the existing
+invocation binding path. Typed unsupported policy remains for non-WasmGC
+backends; malformed targets/provenance fail before physical emission.
+
+Qualification must execute the actual allocation instruction in a complete
+Prepared program, serialize/decode it, and replay it in a fresh process without
+frontend modules. Tampered Call signatures/captures, allocator identity, stale
+requirements and noncanonical allocation identities must fail. The source
+class frontend remains unclaimed until the full lifecycle sequence executes;
+all 140 lifecycle assertions remain in scope. Quality: no duplicate semantic
+walkers or comparators, no oversized-driver growth grant, no baseline edits.
+
+The first complete-consumer test failed during actual physical construction:
+source closure types had no issued realm-state owner. This is a real missing
+composition dependency, not a test expectation to bypass. Extend the existing
+native realm foundation with selected class-program carrier state and reuse it
+for source closures. The bootstrap must publish its **actual** allocated realm
+identity and Function.prototype into that state owner, and state construction
+must invoke the authenticated lazy bootstrap before reading either anchor.
+No second identity or substitute prototype is allocated for classes. Keep the
+existing `realmReady = 0`/bootstrap-only limitation honest: this connection does
+not certify the unimplemented complete standard intrinsic graph or ordinary
+object dispatch. Only programs demanding the new class allocation select the
+new carrier layouts; unselected resource order/bytes must stay unchanged.
+
+A second complete-consumer probe reached the existing heterogeneous-object
+coverage guard: opening the ordinary-object carrier is not admitted by that
+kernel. Preserve that guard. Split the realm **state-only** issuance surface
+from its optional ordinary-object subtype declarations, sharing the same
+canonical recipe/execution/ownership implementation. Classes/source closures
+need identity/state/anchors/initializers; they do not need to open ordinary
+object dispatch merely to retain those values. Existing full layout callers
+must still authenticate their extensible storage dependencies. The selected
+class realm foundation therefore reserves state only and borrows the actual
+builtin bootstrap values; ordinary layout reservation remains unchanged.
+
+Before qualification: reuse the existing source census for class occurrences
+instead of introducing a second requirements registry. The physical source
+invocation bridge owns class reservation/fill composition; the class setup
+module stays descriptive and introduces no new IR-to-backend value edge.
+Share the authenticated census description between planning and acceptance,
+and support-owner indexing between ABI ownership and emission receipts.
+Canonical feature/provider membership derives from the same closed semantic
+provider registry used by validation. This removes duplicate lists and shrinks
+the oversized planner/manifest drivers without grants or baseline edits.
+
+Composition refinement before code: the selected class-realm owner now owns
+the class carrier allocator's reservation/inventory/fill alongside its state.
+The consumer binds the allocator through that real realm inventory, and the
+existing source-invocation bridge only declares actual Call target references.
+This keeps class resource composition in the backend and removes the extra
+IR-to-backend import edge rather than adding a dependency-budget exception.
+
+### Prepared class-allocation checkpoint (2026-10-23)
+
+The actual `class.value.new` instruction now executes through complete Prepared
+acceptance and the consumer's one-argument emission. Its canonical allocator
+ABI is independent of capture layouts. The issued source census retains the
+Call target, exact signature, allocation provenance and evaluated operands.
+`bindNativeSourceClosureUnits` declares Call references used exclusively by
+class values; the permanent fixture contains no independent closure allocation
+that could mask an omitted `ref.func` declaration.
+
+The selected backend class-realm owner owns the carrier allocator together
+with state-only layout issuance. The canonical builtin bootstrap publishes
+its actual realm and Function.prototype singleton into these state anchors.
+The authenticated source closure initializer and explicit-prototype initializer
+invoke that bootstrap before reading anchors. Original unselected artifacts
+retain their byte order. The ordinary heterogeneous-object dispatch guard and
+bootstrap-only completion scope remain intact.
+
+Qualification against local parent `5fd2fc922bb76bdca70196a024a45ab67d93d84b`:
+
+- New permanent tests: **16/16 pass** (4 actual Prepared/codec executions,
+  6 malformed/issued-census controls, 6 state/bootstrap/completion controls).
+  The third execution uses the existing guarded fresh-process replay runner:
+  6/6 projected units emitted, 23,560 bytes, 4/4 scalar oracle calls, 926
+  module-load records, zero frontend/TypeScript modules, byte-identical
+  decode/re-encode. No host imports are used by the original artifact.
+  The fourth execution omits indirect calls entirely and verifies class
+  allocation with no native invocation resource selected.
+- After each original/decoded artifact executes, an explicitly instrumented
+  **copy** adds test-only getters. Actual retained Construct closures answer
+  10, 11 and 9 for distinct/repeated captures. Class and source state equal
+  the actual kernel realm/prototype values. Test-only bootstrap reset creates
+  a new identity for later allocations while old captures/state remain intact.
+  These inspection results are separate from unmodified-artifact execution.
+- Fresh adversarial review found the missing class-only function declaration
+  and preservation of instruction-only callback flags. Both are fixed. The
+  ordinary closure branch now passes its entire instruction to the shared
+  shape audit. New hostOneShot/DOM-authority census controls preserve the
+  boundary refusal; the final source-census suite passes **30/30**.
+- Existing native/runtime/resource regression run: **277/278 pass**. The sole
+  failure is the frozen physical-record declaration hash. The exact parent
+  record and exact parent receipt function reproduce it: actual `1e50d9cd...`,
+  pinned `490bf9a7...`, 15 declarations. No target record/test/baseline changed.
+- Existing WasmGC artifact hashes: **14/14 byte-identical**. Full class
+  lifecycle remains **42 pass / 98 fail / 140 total**, unchanged.
+- Typecheck, lint, LOC/function budgets, import cycles, IR dialect/layering
+  and flat-directory gates pass. No new growth grants or baseline edits.
+
+Full source class-definition evaluation, TDZ/order, descriptors, actual class
+Call TypeError behavior, full Construct semantics, standard realm graph
+completion and true linear remain unqualified. The constructed fixture's Call
+body is a marker and its explicit parent/bag are null; it does not claim those
+missing semantics. No public PR head, HOLD, queue or existing test was changed.
+Machine evidence: `.tmp/7139-class-prepared-checkpoint-evidence.json`; root logs
+`.tmp/7139-class-prepared-*`; fresh review
+`.tmp/review-class-prepared-adversarial/REVIEW.md`.

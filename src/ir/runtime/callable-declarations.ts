@@ -40,6 +40,13 @@ import {
   irOrdinaryObjectCallableDeclaration,
 } from "./ordinary-object-callables.js";
 
+import {
+  irClassValueAllocationDeclaration,
+  CLASS_VALUE_ALLOCATION_PROVIDER,
+  classValueAllocationProviderMismatch,
+  classValueAllocationPolicyMismatch,
+} from "./class-value-callable.js";
+
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 
 /** Policy-independent callable contracts; physical providers are selected by the manifest. */
@@ -104,7 +111,8 @@ export const REFERENCE_ERROR_RUNTIME_PROVIDERS: readonly RuntimeProviderDefiniti
 export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined {
   return ref.binding.kind === "runtime" && ref.binding.symbol === "__new_ReferenceError"
     ? REFERENCE_ERROR_DECLARATION
-    : (irNativeAsyncCallableDeclaration(ref) ??
+    : (irClassValueAllocationDeclaration(ref) ??
+        irNativeAsyncCallableDeclaration(ref) ??
         irVectorCallableDeclaration(ref) ??
         irOrdinaryObjectCallableDeclaration(ref) ??
         irNumberConversionCallableDeclaration(ref) ??
@@ -114,6 +122,7 @@ export function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableD
 
 /** Canonical symbolic callable families; physical materialization remains a separate obligation. */
 export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  CLASS_VALUE_ALLOCATION_PROVIDER,
   ...NATIVE_ASYNC_CALLABLE_RUNTIME_PROVIDERS,
   ...VECTOR_CALLABLE_RUNTIME_PROVIDERS,
   ...ORDINARY_OBJECT_RUNTIME_PROVIDERS,
@@ -122,6 +131,7 @@ export const SEMANTIC_CALLABLE_RUNTIME_PROVIDERS: readonly RuntimeProviderDefini
 
 export function semanticCallableProviderMismatch(provider: RuntimeProviderDefinition): string | undefined {
   return (
+    classValueAllocationProviderMismatch(provider) ??
     nativeAsyncProviderMismatch(provider) ??
     vectorProviderMismatch(provider) ??
     ordinaryObjectProviderMismatch(provider) ??
@@ -135,5 +145,7 @@ export function semanticCallablePolicyMismatch(
 ): string | undefined {
   return NATIVE_ASYNC_CALLABLE_RUNTIME_FEATURES.some((entry) => entry === feature)
     ? nativeAsyncCallablePolicyMismatch(feature, policy)
-    : (vectorCallablePolicyMismatch(feature, policy) ?? ordinaryObjectCallablePolicyMismatch(feature, policy));
+    : (classValueAllocationPolicyMismatch(feature, policy) ??
+        vectorCallablePolicyMismatch(feature, policy) ??
+        ordinaryObjectCallablePolicyMismatch(feature, policy));
 }

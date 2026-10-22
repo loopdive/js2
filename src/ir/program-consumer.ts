@@ -74,6 +74,7 @@ import {
 import { collectNativeStringValueDemands } from "./program/native-string-value-demands.js";
 import { reserveNativeRefCells } from "../backend/wasmgc/resources/native-ref-cells.js";
 import {
+  registerOwnedSupportFunctions,
   prepareNativeSourceClosureInput,
   beginNativeSourceClosureEmission,
   bindNativeSourceClosureUnits,
@@ -85,6 +86,7 @@ import {
 } from "./program-native-invocation.js";
 import {
   assertNativeSourceClosureRequirementsCurrent,
+  nativeSourceClosureDescription,
   type NativeSourceClosureRequirements,
 } from "./program/native-source-closure-requirements.js";
 import { assertNativeValueResourcePlanFor } from "./program/native-value-resources.js";
@@ -536,11 +538,11 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
     emissionFailed("source closure acceptance/physical plan mismatch");
   if (record.sourceClosures) {
     assertNativeSourceClosureRequirementsCurrent(record.sourceClosures);
-    const { demands, ...description } = record.sourceClosures;
+    const { demands } = record.sourceClosures;
     if (
       demands.program !== program ||
       demands.projection !== runtime ||
-      preparedIrDataMismatch(description, plan.sourceClosures) !== undefined
+      preparedIrDataMismatch(nativeSourceClosureDescription(record.sourceClosures), plan.sourceClosures) !== undefined
     )
       emissionFailed("source closure input differs from its accepted physical plan");
     const current = planPhysicalSetup(
@@ -636,6 +638,7 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
       ...(native?.bindings ?? []).map((binding) => binding.entry),
       ...(plan.nativeNumberFormat?.bindings ?? []).map((binding) => binding.entry),
       ...(plan.nativeInvocation?.bindings ?? []).map((binding) => binding.entry),
+      ...(plan.classValues?.bindings ?? []).map((binding) => binding.entry),
       ...(plan.hostNumberBoundary?.entries ?? []),
       ...(plan.asyncFrames?.entries ?? []),
     ]) {
@@ -1056,6 +1059,7 @@ function bindPhysicalAbi(
       ...native.bindings,
       ...(formatter?.bindings ?? []),
       ...(plan.nativeInvocation?.bindings ?? []),
+      ...(plan.classValues?.bindings ?? []),
     ]) {
       if (bound.has(binding.entry.id)) continue;
       const resource = resourcesByBinding.get(binding.entry.id);
@@ -1212,7 +1216,7 @@ function reconcileInvocationBindings(
   functions: readonly FunctionReservation[],
   { functionsByKey, resourcesByBinding }: NativeReconciliationContext,
 ): void {
-  for (const binding of plan.nativeInvocation?.bindings ?? []) {
+  for (const binding of [...(plan.nativeInvocation?.bindings ?? []), ...(plan.classValues?.bindings ?? [])]) {
     const token = functions.find((row) => row.key === binding.resourceKey);
     if (
       !token ||
@@ -1261,6 +1265,7 @@ function materializePhysicalProgram(
         reservations,
         record.sourceClosures,
         {
+          ...(realm?.classRealm ? { realmState: realm.classRealm.state } : {}),
           vectors: vectorTypes,
           vectorPlan: plan.vectors,
           ...(record.sourceClosures.refCells.length
@@ -1364,14 +1369,10 @@ function materializePhysicalProgram(
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
   if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
   const realmFunctions = realm ? nativeRealmReservationInventory(reservations, realm).functions : [];
-  for (const token of [...invocationFunctions, ...realmFunctions]) {
-    if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");
-    nativeFunctions.add(token.object);
-  }
-  reconcileInvocationBindings(plan, invocationFunctions, reconciliation);
-  const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
-  for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
+  registerOwnedSupportFunctions(nativeFunctions, supportFunctions, [...invocationFunctions, ...realmFunctions]);
+  reconcileInvocationBindings(plan, [...invocationFunctions, ...realmFunctions], reconciliation);
+  const asyncReservations = new Map<IrUnitId, PreparedAsyncFrameReservations>();
   for (const frame of plan.asyncFrames?.frames ?? []) {
     const entry = slots.get(frame.owner);
     if (!entry || !exceptionTag) emissionFailed("async frame has no reserved entry or exception tag");

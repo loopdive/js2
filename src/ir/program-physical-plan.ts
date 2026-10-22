@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { planNativeClassValueSetup, type NativeClassValueSetup } from "./program/native-class-value-setup.js";
 import { forEachSemanticIrInstruction } from "./core/nodes.js";
 import { directIrCallableReferences } from "./core/callable-operands.js";
 //
@@ -103,6 +104,7 @@ import { nativeRefCellScalarInner } from "./program/native-ref-cell-requirements
 import { planNativePromiseInventoryPreflight } from "./program-native-async-resources.js";
 import {
   planNativeSourceClosureRequirements,
+  nativeSourceClosureDescription,
   type NativeSourceClosureRequirements,
 } from "./program/native-source-closure-requirements.js";
 
@@ -256,6 +258,7 @@ export interface PhysicalSetupPlan {
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  readonly classValues?: NativeClassValueSetup;
   readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
@@ -1267,7 +1270,11 @@ export function planPhysicalSetup(
     ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
   );
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
-  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? [])];
+  const classValues = planNativeClassValueSetup(
+    sourceClosures,
+    invocationOrder + (nativeInvocation?.bindings.length ?? 0),
+  );
+  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? []), ...(classValues?.bindings ?? [])];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
     program,
@@ -1491,19 +1498,11 @@ export function planPhysicalSetup(
     numberRemainders,
     ...(sourceClosures
       ? {
-          sourceClosures: {
-            key: sourceClosures.key,
-            signatures: sourceClosures.signatures,
-            shapes: sourceClosures.shapes,
-            units: sourceClosures.units,
-            allocations: sourceClosures.allocations,
-            refCells: sourceClosures.refCells,
-            refCellAllocations: sourceClosures.refCellAllocations,
-            gaps: sourceClosures.gaps,
-          },
+          sourceClosures: nativeSourceClosureDescription(sourceClosures),
         }
       : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(classValues ? { classValues } : {}),
     ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),

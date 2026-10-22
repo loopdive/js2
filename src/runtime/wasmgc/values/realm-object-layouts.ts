@@ -89,10 +89,12 @@ export function createRealmSourceClosureType(
 export function buildRealmObjectStateInitializer(binding: {
   readonly realmGlobal: number;
   readonly stateType: number;
+  readonly initializeRealm?: FuncHandle;
 }): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [],
     body: [
+      ...(binding.initializeRealm ? [{ op: "call" as const, funcIdx: binding.initializeRealm }] : []),
       { op: "global.get", index: binding.realmGlobal },
       { op: "ref.is_null" },
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
@@ -108,10 +110,12 @@ export function buildRealmObjectStateInitializer(binding: {
 export function buildRealmSourceStateInitializer(binding: {
   readonly prototypeGlobal: number;
   readonly initializeState: FuncHandle;
+  readonly initializeRealm?: FuncHandle;
 }): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [],
     body: [
+      ...(binding.initializeRealm ? [{ op: "call" as const, funcIdx: binding.initializeRealm }] : []),
       { op: "global.get", index: binding.prototypeGlobal },
       { op: "ref.is_null" },
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },

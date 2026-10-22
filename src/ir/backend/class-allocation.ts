@@ -16,6 +16,7 @@ export function emitIrClassAllocation<S>(
     emitter.emitScalarConst("i32", instruction.signature.defaultParamStart ?? instruction.signature.params.length, out);
     emitValue(instruction.properties, out);
     emitValue(instruction.construct, out);
+    emitter.emitToExternref(out);
     emitValue(instruction.parent, out);
     emitter.emitCall(resolver.resolveFunc(instruction.allocator), out);
     return;
