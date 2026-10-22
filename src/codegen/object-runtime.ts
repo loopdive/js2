@@ -1,4 +1,7 @@
 import ts from "typescript";
+import { boxVecElementToExternref } from "./array/vec-element-boxing.js";
+export { boxVecElementToExternref } from "./array/vec-element-boxing.js";
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import { installableReceiverInstrs } from "./helpers/undefined-receiver.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
 import { classifyClosureDispatchRest } from "./closures/closure-dispatch-rest.js";
@@ -7528,113 +7531,6 @@ export function fillExternIsArray(ctx: CodegenContext): void {
 }
 
 /**
- * (#2190) Box one loaded `__vec_<elemKind>` element (already on the stack) up to
- * `externref`. Returns the box-op sequence, or `null` to tell the caller to skip
- * the arm for this carrier.
- *
- * SCOPE (regression-hardened, round 2): a non-null sequence is returned ONLY for
- * the two element kinds whose box op PROVABLY yields a fresh `externref` —
- * plain `f64` (`__box_number`) and plain `i32` (`f64.convert_i32_s` +
- * `__box_number`). EVERY other element kind, **including a literally-`externref`
- * element**, is skipped.
- *
- * Why skip `externref` too: the carriers keyed `"externref"` in `ctx.vecTypeMap`
- * are NOT uniformly `(array externref)`. Some are registered with a `ref`/
- * `ref_null` element override (e.g. the `arguments` object + closure-arg vecs via
- * `getOrRegisterVecType(ctx, "externref", refElem)` in function-body.ts /
- * closures.ts), and `getOrRegisterArrayType` rewrites a `ref` element to
- * `ref_null`. An identity arm for such a carrier left a `(ref null N)` on the
- * helper's `return` (`__extern_get_idx return[0] expected externref, got
- * (ref null N)`), emitting invalid Wasm for ~120 generator/async +
- * destructuring-rest + TypedArray modules and breaching the #2097 standalone
- * floor (-116). A number-only arm set has NO ref-returning path, so it stays
- * unconditionally valid across every carrier the proposal harness can register.
- * Non-number element indexing through the boundary (externref / string / GC-ref)
- * falls back to the prior null behaviour — no worse than pre-#2190 — and is
- * deferred to a follow-up.
- */
-export function boxVecElementToExternref(ctx: CodegenContext, elemType: ValType): Instr[] | null {
-  if (elemType.kind === "f64") {
-    const boxIdx = ctx.funcMap.get("__box_number");
-    if (boxIdx === undefined) return null;
-    return [{ op: "call", funcIdx: boxIdx }];
-  }
-  if (elemType.kind === "i32") {
-    // The `boolean`-tagged i32 variant must NOT box through `__box_number`
-    // (number box ≠ boolean box) — skip it (falls back to prior null behaviour).
-    if ((elemType as { boolean?: boolean }).boolean) return null;
-    const boxIdx = ctx.funcMap.get("__box_number");
-    if (boxIdx === undefined) return null;
-    return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx }];
-  }
-  // (#2162b) A carrier whose `data` array element is EXACTLY `externref` (read
-  // from `arrDef.element`, never the `"externref"` map key — see the scope note
-  // above and [[reference_vec_externref_key_not_uniform]]) needs only an
-  // identity pass-through: the loaded element is already an `externref`, so it
-  // satisfies the helper's `externref` return with no boxing. This is the
-  // canonical externref `$Vec` that `arr.entries()`/`.keys()`/`.values()` and
-  // the spread/`Array.from` materialization hand back. The dangerous variants
-  // the scope note warns about are the `ref`/`ref_null`-element carriers (the
-  // `arguments`/closure-arg vecs), which would leave a `(ref null N)` on the
-  // `externref` return — those stay skipped below.
-  if (elemType.kind === "externref") {
-    return [];
-  }
-  // (#2190 read-back, homogeneous string sub-array) A carrier whose `data`
-  // element is a GC *string* ref — `$AnyString` / `$NativeString`
-  // (`ctx.anyStrTypeIdx` / `ctx.nativeStrTypeIdx`) — is the inner vec of an
-  // `any[]` of homogeneous-string arrays (`[["a","b"]]`). Without an arm here,
-  // `__extern_get_idx(inner, i)` falls through to null, the caller's
-  // `ref.test $AnyString` then fails, and `struct.get` null-derefs on the
-  // `.length`/element read (the `e[0][0]` trap). `extern.convert_any` is the
-  // universal GC-ref → externref boxing; the consuming site re-tests/casts the
-  // returned externref back to `$AnyString`, so the round-trip is identity for a
-  // string element and null for an array hole. Scoped to the string GC types
-  // only — the `arguments`/closure-arg `(ref null N)` carriers the scope note
-  // warns about stay skipped (they are not string carriers) so this adds no
-  // behaviour to those paths.
-  if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-    const ti = (elemType as { typeIdx: number }).typeIdx;
-    // (#6651 G3) A tagged `$AnyValue` element is a BOX, not the JS value: project
-    // it by tag (`__any_to_extern`) so a vec reader hands on the value the
-    // element read (`any-value-element-read.ts`) does. `extern.convert_any` of
-    // the box leaked it — `ToNumber` and the `===` identity arm do not know it.
-    const anyToExtern = ti >= 0 && ti === ctx.anyValueTypeIdx ? ctx.funcMap.get("__any_to_extern") : undefined;
-    if (anyToExtern !== undefined) return [{ op: "call", funcIdx: anyToExtern }];
-    // (#3244) GENERALISED from the string-only arm this replaces. A homogeneous
-    // reference-element array — `[{ x: 777 }]` (element = object STRUCT ref) or a
-    // nested `[[10, 20, 30]]` (element = inner `__vec_<k>` STRUCT ref) — compiles
-    // to a typed `__vec_<structKind>` carrier, NOT `__vec_externref`. Boxing it
-    // to `any`/externref and reading an element back (`(a as any)[0].x`,
-    // `(a as any)[0][1]`, and the destructure-param inner object/array pattern)
-    // routes through `__extern_get_idx`; without an arm here the carrier was
-    // skipped → the element read fell to the null fallback → read back
-    // undefined/NaN (and the nested-pattern destructure then saw null → the
-    // "Cannot destructure null" trap). `extern.convert_any` is the universal
-    // GC-ref → externref boxing (identity round-trip: the consuming site
-    // re-tests/casts the returned externref back to the object/vec type, exactly
-    // as for a heterogeneous `__vec_externref` element or the string sub-array
-    // that the prior narrow arm handled — `$AnyString`/`$NativeString` are
-    // struct types, so they still match here).
-    //
-    // GUARD — only GC STRUCT/ARRAY referents are subtypes of `anyref`, the input
-    // `extern.convert_any` requires. A FUNC-typed ref (`funcref` hierarchy) is
-    // NOT an `anyref` subtype, so converting it is invalid Wasm; those carriers
-    // stay on the null fallback (the rare closure/funcref-element vec — never
-    // read positionally through the boundary in practice). An unknown/negative
-    // typeIdx also skips, conservatively.
-    if (ti >= 0) {
-      const referent = ctx.mod.types[ti];
-      if (referent && (referent.kind === "struct" || referent.kind === "array")) {
-        return [{ op: "extern.convert_any" }];
-      }
-    }
-  }
-  // other ref / ref_null / f32 / i64 / v128 → no arm (see scope note).
-  return null;
-}
-
-/**
  * (#3190) INVERSE of `boxVecElementToExternref`: coerce the externref `value` on
  * the stack DOWN to a carrier's `data` element type, for the standalone dynamic
  * STORE path (`(arr as any)[i] = v` → `__extern_set` → `fillExternSetVecArms`).
@@ -9148,7 +9044,7 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
  * reports the physical field.
  */
 export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if ((!ctx.standalone && !ctx.wasi) || ctx.anyStrTypeIdx < 0) return;
   const inheritedSetGetMissActive = inheritedSetAnyDirty(ctx);
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
@@ -9419,7 +9315,7 @@ export function fillClosedStructExternGetArms(ctx: CodegenContext): void {
     } else if (entry.fieldType.kind === "i32") {
       if (entry.jsBoolean) read.push({ op: "call", funcIdx: boxBooleanIdx! });
       else if (entry.fieldType.symbol === true) read.push({ op: "call", funcIdx: boxSymbolIdx! });
-      else read.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumberIdx! });
+      else read.push(i32NumberWidening(entry.fieldType), { op: "call", funcIdx: boxNumberIdx! });
     } else if (entry.fieldType.kind === "i64") {
       if (entry.fieldType.bigint) read.push({ op: "call", funcIdx: boxBigIntIdx! });
       else read.push({ op: "f64.convert_i64_s" }, { op: "call", funcIdx: boxNumberIdx! });
@@ -11131,7 +11027,7 @@ function boxClosedStructFieldToExternref(ctx: CodegenContext, fieldType: ValType
       if (boxSymbolIdx !== undefined) return [{ op: "call", funcIdx: boxSymbolIdx }];
     }
     const boxNumIdx = ctx.funcMap.get("__box_number");
-    return boxNumIdx === undefined ? null : [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];
+    return boxNumIdx === undefined ? null : [i32NumberWidening(fieldType), { op: "call", funcIdx: boxNumIdx }];
   }
   if (
     fieldType.kind === "anyref" ||

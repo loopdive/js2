@@ -84,7 +84,7 @@ export const NATIVE_TYPE_MAP: Record<string, ValType> = {
   i32: { kind: "i32", int32: true },
   u8: { kind: "i32" }, // unsigned 8-bit — stored as i32 (masked at boundaries)
   u16: { kind: "i32" }, // unsigned 16-bit — stored as i32 (masked at boundaries)
-  u32: { kind: "i32" }, // unsigned 32-bit — stored as i32
+  u32: { kind: "i32", uint32: true }, // unsigned 32-bit — stored as i32
   i8: { kind: "i32" }, // signed 8-bit — stored as i32
   i16: { kind: "i32" }, // signed 16-bit — stored as i32
   f32: { kind: "f32" },

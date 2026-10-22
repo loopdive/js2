@@ -1,3 +1,4 @@
+import { projectAstSourceFacts } from "./ast-source-facts.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Integration point between the legacy codegen pipeline and the IR path.
@@ -3247,6 +3248,8 @@ export function compileIrPathFunctions(
         }
         const o = effectiveOverride(name);
         const lowered = lowerFunctionAstToIr(stmt, {
+          dynamicNumericReturn:
+            !ctx.fast && ctx.targetProfile.environment !== "javascript" ? "number-boundary" : undefined,
           exported: hasExportModifier(stmt),
           funcName: name,
           ownerUnitId,
@@ -3271,11 +3274,7 @@ export function compileIrPathFunctions(
           allocRegistry,
           // #2780 (hybrid Row 6): thread the TS checker so `lowerArrayLiteral`
           // can discharge the widening-escape proof via `getContextualType`.
-          checker: ctx.checker,
-          oracle: ctx.oracle,
-          // #3765: share direct-codegen's grounded numeric-local oracle with IR.
-          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+          ...projectAstSourceFacts(ctx),
         });
         const result = prepareSuspendingAsyncLowering(
           lowered,
@@ -3499,10 +3498,7 @@ export function compileIrPathFunctions(
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
-          checker: ctx.checker,
-          oracle: ctx.oracle,
-          numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
-          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+          ...projectAstSourceFacts(ctx),
         };
         let result: LoweredFunctionResult;
         if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
@@ -3701,10 +3697,7 @@ export function compileIrPathFunctions(
             allocRegistry,
             // #2780 (hybrid Row 6): thread the TS checker for the
             // ArrayLiteral widening-escape proof in method bodies too.
-            checker: ctx.checker,
-            oracle: ctx.oracle,
-            numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-            hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+            ...projectAstSourceFacts(ctx),
           });
           if (result.main.unitId !== ownerUnitId) {
             throw new IrInvariantError(
@@ -3897,10 +3890,7 @@ export function compileIrPathFunctions(
         classShapes: moduleInitInput.classShapes ?? classShapes,
         resolver: fromAstResolver,
         allocRegistry,
-        checker: ctx.checker,
-        oracle: ctx.oracle,
-        numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-        hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+        ...projectAstSourceFacts(ctx),
       });
       if (result.main.unitId !== moduleInitUnitId) {
         throw new IrInvariantError(

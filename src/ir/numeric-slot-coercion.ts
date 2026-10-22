@@ -16,15 +16,20 @@ export function isNumericIrSlot(type: IrType): boolean {
 export function coerceIrNumeric(builder: IrFunctionBuilder, value: IrValueId, target: IrType): IrValueId | null {
   const from = builder.typeOf(value);
   if (!isNumericIrSlot(from) || !isNumericIrSlot(target) || from.kind !== "val" || target.kind !== "val") return null;
-  if (target.val.kind === "i32" && (target.signed === false || target.val.int32)) {
+  if (target.val.kind === "i32" && (target.signed === false || target.val.uint32 || target.val.int32)) {
     const zero = builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
-    return builder.emitBinary(target.signed === false ? "js.shr_u" : "js.bitor", value, zero, target);
+    return builder.emitBinary(
+      target.signed === false || target.val.uint32 ? "js.shr_u" : "js.bitor",
+      value,
+      zero,
+      target,
+    );
   }
   if (from.val.kind === "f64" && target.val.kind === "i32") {
     return builder.emitUnary("i32.trunc_sat_f64_s", value, target);
   }
   if (from.val.kind === "i32" && target.val.kind === "f64") {
-    if (from.signed === false) {
+    if (from.signed === false || from.val.uint32) {
       const zero = builder.emitConst({ kind: "i32", value: 0 }, irVal({ kind: "i32" }));
       return builder.emitBinary("js.shr_u", value, zero, target);
     }
@@ -36,7 +41,7 @@ export function coerceIrNumeric(builder: IrFunctionBuilder, value: IrValueId, ta
 /** A uint32 field's source value is nonnegative, regardless of its i32 storage bits. */
 export function numericFieldSourceValue(builder: IrFunctionBuilder, value: IrValueId): IrValueId {
   const type = builder.typeOf(value);
-  return type.kind === "val" && type.val.kind === "i32" && type.signed === false
+  return type.kind === "val" && type.val.kind === "i32" && (type.signed === false || type.val.uint32)
     ? (coerceIrNumeric(builder, value, F64) ?? value)
     : value;
 }

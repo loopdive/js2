@@ -7218,6 +7218,14 @@
       "nextBoundary": "Move native console provider materialization with Program ABI preparation; formatting and output kernels remain shared."
     },
     {
+      "path": "src/codegen/helpers/uint32-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Canonical integer conversion provider; move its physical resource allocation with Program ABI preparation."
+    },
+    {
       "path": "src/codegen/ir-native-map.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7288,6 +7296,30 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/vec-element-boxing.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Separate context-bound boxer lookup from physical element boxing instructions."
+    },
+    {
+      "path": "src/ir/ast-source-facts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "Source AST/oracle forwarding still depends on frontend and mixed from-ast types; no clean-boundary claim."
+    },
+    {
+      "path": "src/codegen/declarations/prepared-signatures.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Prepared signature vocabulary and exact allocated physical slot proof; separate context-bound vector type registration."
     },
     {
       "path": "src/codegen/ir-prepared-free-functions.ts",
@@ -13355,6 +13387,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/select-dynamic-members.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "AST member-selection gates extracted from the structural selector; lower with the common frontend policy."
+    },
+    {
       "path": "src/ir/select-expression-structure.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -14227,6 +14267,11 @@
     },
     {
       "path": "src/wasm/physical/module-reservations.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/numeric-carriers.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },

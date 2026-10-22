@@ -54,6 +54,7 @@
 //     before the IR runs (allocated by `collectClassDeclaration`). The
 //     `localClasses` set drives that exemption.
 
+import { scanDynamicMember } from "./select-dynamic-members.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
@@ -624,6 +625,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
   readonly isDynamicForInReceiver?: (receiver: ts.Expression) => boolean;
   /** #7135: native dynamic keys can be boxed into the certified externref receiver ABI. */
   readonly nativeDynamicInBuildable?: boolean;
+  /** Native non-fast boxed values have an exact externref preparation contract. */
+  readonly nativeDynamicExternrefBuildable?: boolean;
   /**
    * #2952 slice 6c — true only when a for-in enumerated key can be bound as an
    * `IrType.string` head VALUE, i.e. the active string carrier is the host
@@ -2149,8 +2152,8 @@ function whyNotIrClaimable(
     containsReceiverFirstDynamicMethodCall(body) ||
     bodyCallsDynamicParamCallee(body, typeMap)
   ) {
-    const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
-    if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
+    const strings = collectDynamicStringLocalWidening(fn, new Set(dynNames));
+    if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, strings, scope)) {
       return dynNames.size > 0 ? "param-type-not-resolvable" : "return-type-not-resolvable";
     }
   }
@@ -2992,7 +2995,9 @@ function dynamicUsesAreMoveOnly(
   returnIsDynamic: boolean,
   typeMap: TypeMap | undefined,
   dynamicStringLocals: ReadonlySet<string> = new Set(),
+  scope: ReadonlySet<string> = new Set(),
 ): boolean {
+  const returnIsNumber = fn.type?.kind === ts.SyntaxKind.NumberKeyword;
   const body = fn.body;
   if (!body) return false;
 
@@ -3146,7 +3151,13 @@ function dynamicUsesAreMoveOnly(
       //
       // Admission is exactly the operand family `boxConcreteToDynamic`
       // accepts, so the claim can never withdraw on a missing box.
-      if (!argumentIsDynamic && expectedKind === "dynamic" && concreteDynamicAssignmentOperandIsBuildable(unwrap(a))) {
+      if (
+        !argumentIsDynamic &&
+        expectedKind === "dynamic" &&
+        (concreteDynamicAssignmentOperandIsBuildable(unwrap(a)) ||
+          (currentSelectionOptions?.nativeDynamicExternrefBuildable === true &&
+            localClassNameForExpression(a, scope) !== null))
+      ) {
         if (!scanExpr(a, false)) return false;
         continue;
       }
@@ -3170,6 +3181,19 @@ function dynamicUsesAreMoveOnly(
   };
   const scanExprInner = (expr: ts.Expression, expectDyn: boolean): boolean => {
     const e = unwrap(expr);
+    const member = scanDynamicMember(e, expectDyn, {
+      native: currentSelectionOptions?.nativeDynamicExternrefBuildable === true,
+      stableStores: currentStableFunctionCallSubject !== null,
+      runtime: currentDynamicRuntimeBuildable,
+      reads: currentDynMemberReadBuildable,
+      boxableParameters: currentDynEqualityBoxableParamNames,
+      isDynamic: isDynShaped,
+      scan: scanExpr,
+      isNumber: expressionIsProvenNumber,
+      hasStoreRoot: stableDynamicStoreReceiverHasAdmittedRoot,
+      canBox: concreteDynamicAssignmentOperandIsBuildable,
+    });
+    if (member !== undefined) return member;
     if (e.kind === ts.SyntaxKind.ThisKeyword) {
       return currentStableFunctionCallSubject !== null && expectDyn;
     }
@@ -3351,38 +3375,6 @@ function dynamicUsesAreMoveOnly(
         selectorSupportsStandaloneWrapperInstanceOf(e.right)
       ) {
         return scanExpr(e.left, true);
-      }
-      // #3797 — statement-position stores used by Acorn's stable
-      // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
-      // checker-backed stable-call plan is the authority for exposing ambient
-      // `this`; the dynamic scan remains the authority for receiver/key/value
-      // representations. Keep value-producing assignments, optional stores,
-      // compound/update forms, and non-dynamic receivers outside the claim.
-      if (
-        op === ts.SyntaxKind.EqualsToken &&
-        !expectDyn &&
-        currentStableFunctionCallSubject !== null &&
-        ts.isExpressionStatement(e.parent) &&
-        e.parent.expression === e &&
-        (ts.isPropertyAccessExpression(e.left) || ts.isElementAccessExpression(e.left)) &&
-        e.left.questionDotToken === undefined &&
-        stableDynamicStoreReceiverHasAdmittedRoot(e.left.expression) &&
-        isDynShaped(e.left.expression)
-      ) {
-        if (!currentDynamicRuntimeBuildable || !scanExpr(e.left.expression, true)) return false;
-        if (ts.isElementAccessExpression(e.left)) {
-          const key = unwrap(e.left.argumentExpression);
-          if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) {
-            // Literal keys are boxed by the dynamic member-set producer.
-          } else if (ts.isIdentifier(key) && dynNames.has(key.text)) {
-            if (!scanExpr(key, true)) return false;
-          } else {
-            return false;
-          }
-        }
-        if (rightIsDyn) return scanExpr(e.right, true);
-        const concrete = unwrap(e.right);
-        return concreteDynamicAssignmentOperandIsBuildable(concrete) && scanExpr(concrete, false);
       }
       // #3795 — strict statement-position dynamic element write. Keep the
       // preclaim opening coupled to the exact Acorn family: direct dynamic
@@ -3576,47 +3568,7 @@ function dynamicUsesAreMoveOnly(
         scanExpr(e.condition, isDynShaped(e.condition)) && scanExpr(e.whenTrue, false) && scanExpr(e.whenFalse, false)
       );
     }
-    if (ts.isPropertyAccessExpression(e)) {
-      // #3053 U2 / #2949 S5.P — the claim-flip. A named read off a DYNAMIC
-      // receiver (`dyn.name`) routes through `__dyn_member_get` (U0/U1) and
-      // yields a `dynamic` result, so it is a valid MOVE exactly where a dynamic
-      // value is wanted (`expectDyn`): return of a dyn-returning fn, a dyn-param
-      // arg, a dyn alias/reassignment. from-ast's `lowerPropertyAccess` dyn arm
-      // ALWAYS boxes the named key (tag-5), so there is no key-shape gate here —
-      // the claim is 1:1 with the producer (never claim-then-demote).
-      if (isDynShaped(e.expression)) {
-        return currentDynMemberReadBuildable && expectDyn && scanExpr(e.expression, true);
-      }
-      // Concrete receiver: the existing typed member-read path (unchanged).
-      if (expectDyn) return false;
-      return scanExpr(e.expression, false);
-    }
-    if (ts.isElementAccessExpression(e)) {
-      // #3053 U2 / #2949 S5.P — an indexed read off a DYNAMIC receiver
-      // (`dyn[key]`) → `dynamic` result. from-ast's `lowerElementAccess` dyn arm
-      // produces a NON-NULL key (so it does NOT demote) ONLY for: a string-literal
-      // key (tag-5), a dynamic index (used as-is), or a numeric literal (tag-3).
-      // Restrict the scan to EXACTLY those key shapes so the claim is 1:1 with the
-      // producer — any other index (e.g. a bare i32 local, or dynamic arithmetic
-      // like `idx-1`) may box to null / has no dynamic-arith producer, which would
-      // claim-then-demote (a HARD error under JS2WASM_IR_FIRST). Result flows only
-      // to a dyn-accepting position (`expectDyn`).
-      if (isDynShaped(e.expression)) {
-        if (!currentDynMemberReadBuildable || !expectDyn) return false;
-        if (!scanExpr(e.expression, true)) return false;
-        const key = unwrap(e.argumentExpression);
-        if (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key)) return true;
-        if (ts.isIdentifier(key) && dynNames.has(key.text)) return true; // dynamic index → used as-is
-        // (#7106 item 1) a PROVEN-number index (`b[i]` in a counted loop):
-        // the producer lowers it f64 and boxes it tag-3 (`boxConcreteToDynamic`),
-        // so the key is never null.
-        if (expressionIsProvenNumber(key) && scanExpr(key, false)) return true;
-        return false; // any other index shape is out of the producer contract
-      }
-      // Concrete receiver: the existing typed element-read path (unchanged).
-      if (expectDyn) return false;
-      return scanExpr(e.expression, false) && scanExpr(e.argumentExpression, false);
-    }
+
     // Everything else (literals, templates, object/array literals, closures,
     // new-expressions, typeof, …): fine exactly when no dynamic value is
     // involved AND the position doesn't require one.
@@ -3653,6 +3605,14 @@ function dynamicUsesAreMoveOnly(
         currentDynamicRuntimeBuildable &&
         isDynShaped(s.expression) &&
         currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") === true
+      ) {
+        return scanExpr(s.expression, true);
+      }
+      if (
+        !returnIsDynamic &&
+        returnIsNumber &&
+        currentSelectionOptions?.nativeDynamicExternrefBuildable === true &&
+        isDynShaped(s.expression)
       ) {
         return scanExpr(s.expression, true);
       }
@@ -4079,7 +4039,10 @@ function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boo
   }
   return (
     (candidate.kind === ts.SyntaxKind.ThisKeyword && currentStableFunctionCallSubject !== null) ||
-    (ts.isIdentifier(candidate) && currentStableDynamicRootNames.has(candidate.text))
+    (ts.isIdentifier(candidate) &&
+      (currentStableDynamicRootNames.has(candidate.text) ||
+        (currentSelectionOptions?.nativeDynamicExternrefBuildable === true &&
+          currentDynamicParamNames.has(candidate.text))))
   );
 }
 

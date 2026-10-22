@@ -1137,6 +1137,8 @@ export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPla
   readonly stringNumericCoercion?: "number-boundary";
   /** Explicit semantic f64 throw boxing; provider admission remains a separate preparation decision. */
   readonly numericThrow?: "number-boundary";
+  /** Selected semantic return boundary; omitted by unqualified entry paths. */
+  readonly dynamicNumericReturn?: "number-boundary";
   /** Authoritative identity for the main artifact and exact feature-plan owner. */
   readonly ownerUnitId: IrUnitId;
   /**
@@ -1547,8 +1549,14 @@ function lowerConstructorBody(
 }
 
 /** Preserve explicit numeric projections across top-level and lifted contexts. */
-function numericProjectionOptions(options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow">) {
-  return { stringNumericCoercion: options.stringNumericCoercion, numericThrow: options.numericThrow };
+function numericProjectionOptions(
+  options: Pick<AstToIrOptions, "stringNumericCoercion" | "numericThrow" | "dynamicNumericReturn">,
+) {
+  return {
+    stringNumericCoercion: options.stringNumericCoercion,
+    numericThrow: options.numericThrow,
+    dynamicNumericReturn: options.dynamicNumericReturn,
+  };
 }
 
 export function lowerFunctionAstToIr(
@@ -2981,6 +2989,7 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
   readonly booleanReturnBuilder?: IrFunctionBuilder;
   readonly stringNumericCoercion?: AstToIrOptions["stringNumericCoercion"];
   readonly numericThrow?: AstToIrOptions["numericThrow"];
+  readonly dynamicNumericReturn?: AstToIrOptions["dynamicNumericReturn"];
   readonly logicalVectorTypes?: AstToIrOptions["logicalVectorTypes"];
   readonly logicalVectorConsumed?: Set<ts.Node>;
   readonly scope: Map<string, ScopeBinding>;
@@ -6763,6 +6772,17 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  * out of slice 2's scope and throw, so the function falls back to
  * legacy.
  */
+/** Box through the same canonical boundary used by dynamic calls and returns. */
+function lowerDynamicStoreOperand(expression: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(expression, cx, irDynamic());
+  const type = cx.builder.typeOf(value);
+  if (type.kind === "dynamic") return value;
+  return (
+    boxConcreteToDynamic(value, type, expression, cx) ??
+    demoteToLegacy("element-store-unsupported", `dynamic store operand has no certified carrier (${cx.funcName})`)
+  );
+}
+
 /**
  * (#2856 C2) Lower an element STORE `arr[i] = v;` in statement position —
  * the write dual of `lowerElementAccess`'s vec arm. Dispatches to the
@@ -6779,6 +6799,7 @@ function isProvenInBoundsIr(expr: ts.ElementAccessExpression, cx: LowerCtx): boo
  * (externref objects, strings), packed/exotic element kinds, and value
  * types that don't coerce to the element type.
  */
+
 function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
     withMutationSourceSite(cx, lhs, () => lowerElementStore(lhs, rhs, cx));
@@ -6806,35 +6827,8 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
   if (recvType.kind === "dynamic") {
-    const key = lowerExpr(lhs.argumentExpression, cx, irDynamic());
-    if (cx.builder.typeOf(key).kind !== "dynamic") {
-      throw new IrUnsupportedError(
-        "element-store-unsupported",
-        "build",
-        `ir/from-ast: dynamic member-store key is not dynamic (${cx.funcName})`,
-      );
-    }
-    let value = lowerExpr(rhs, cx, irDynamic());
-    const valueType = cx.builder.typeOf(value);
-    if (valueType.kind !== "dynamic") {
-      const candidate = peelParensExpr(rhs);
-      if (!ts.isStringLiteralLike(candidate) || candidate.text !== "true") {
-        throw new IrUnsupportedError(
-          "element-store-unsupported",
-          "build",
-          `ir/from-ast: concrete dynamic member-store value is outside the #3795 conflict marker (${cx.funcName})`,
-        );
-      }
-      const boxed = boxConcreteToDynamic(value, valueType, rhs, cx);
-      if (boxed === null) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: dynamic member-store conflict marker has no dynamic carrier (${cx.funcName})`,
-        );
-      }
-      value = boxed;
-    }
+    const key = lowerDynamicStoreOperand(lhs.argumentExpression, cx);
+    const value = lowerDynamicStoreOperand(rhs, cx);
     cx.builder.emitDynMemberSet(recv, key, value);
     return;
   }
@@ -10424,6 +10418,13 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     return;
   }
 
+  if (recvType.kind === "dynamic") {
+    const key = cx.builder.emitBox(cx.builder.emitStringConst(fieldName), irDynamic(JS_TAG_IDS.String));
+    const value = lowerDynamicStoreOperand(expr.right, cx);
+    cx.builder.emitDynMemberSet(recv, key, value);
+    return;
+  }
+
   if (recvType.kind === "class") {
     const field = recvType.shape.fields.find((f) => f.name === fieldName);
     if (!field) {
@@ -11129,6 +11130,8 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   if (declared && declared.kind === "val" && declared.val.kind === "f64") {
     const actualT = cx.builder.typeOf(value);
     const actualV = asVal(actualT);
+    if (actualT.kind === "dynamic" && cx.dynamicNumericReturn === "number-boundary")
+      return cx.builder.emitDynToNumber(value);
     if (actualV && actualV.kind === "externref") {
       // (#4461 / #3526 F1-S1) Both lanes own a `__unbox_number` with the same
       // `(externref) -> f64` signature; only the PROVIDER differs (host import
@@ -15964,12 +15967,13 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   if (t.kind === "string") {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.String));
   }
+  if (t.kind === "class") return cx.builder.emitBox(cx.builder.emitCoerceToExternref(v), irDynamic(JS_TAG_IDS.Object));
   const tv = asVal(t);
   if (!tv) return null;
   // Proven boolean i32 → tag-4 box; without the refinement the i32 would box
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
-  if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
+  if (tv.kind === "i32" && (tv.boolean === true || expressionIsDefinitelyBoolean(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the

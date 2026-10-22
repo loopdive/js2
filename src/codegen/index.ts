@@ -82,7 +82,7 @@ import {
 import { symbolShadowsBuiltinGlobal } from "../checker/builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction, WasmModule } from "../ir/types.js";
 import { createEmptyModule } from "../ir/types.js";
-import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
+import { ensureToUint32Helper } from "./helpers/uint32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
@@ -3251,6 +3251,7 @@ function planIrOverlay(
       // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
       nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
+      nativeDynamicExternrefBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -12286,25 +12287,7 @@ export const MATH_HOST_METHODS_2ARG = new Set(["pow", "atan2"]);
  * Implements ES §7.1.7: NaN/±Infinity → 0, otherwise trunc(x) modulo 2^32.
  */
 export function emitToUint32Helper(ctx: CodegenContext): void {
-  if (!ctx.needsToUint32) return;
-  if (ctx.funcMap.has("__toUint32")) return;
-  const typeIdx = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "i32" }]);
-  const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
-  ctx.funcMap.set("__toUint32", funcIdx);
-  const body: Instr[] = [{ op: "local.get", index: 0 }];
-  emitWasmInt32Coercion(body, { bits: 1, exponent: 2, significand: 3, magnitude: 4 });
-  ctx.mod.functions.push({
-    name: "__toUint32",
-    typeIdx,
-    locals: [
-      { name: "$to_uint32_bits", type: { kind: "i64" } },
-      { name: "$to_uint32_exponent", type: { kind: "i64" } },
-      { name: "$to_uint32_significand", type: { kind: "i64" } },
-      { name: "$to_uint32_magnitude", type: { kind: "i64" } },
-    ],
-    body,
-    exported: false,
-  });
+  if (ctx.needsToUint32) ensureToUint32Helper(ctx);
 }
 
 /** Known constructors handled natively (not needing __new_ imports) */

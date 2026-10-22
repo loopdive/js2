@@ -154,7 +154,7 @@ function untombstoneInstrs(
  * skipped). No-op when no closed struct declares a writable exposed field.
  */
 export function fillClosedStructExternSetArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if ((!ctx.standalone && !ctx.wasi) || ctx.anyStrTypeIdx < 0) return;
   const fn: WasmFunction | undefined = ctx.mod.functions.find((candidate) => candidate.name === "__extern_set");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");

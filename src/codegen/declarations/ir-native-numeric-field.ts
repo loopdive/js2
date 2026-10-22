@@ -11,6 +11,6 @@ export function irNativeNumericFieldType(oracle: TypeOracle, node: ts.Node): IrT
   const annotation = node.type;
   if (!native || native.kind !== "i32" || !annotation || !ts.isTypeReferenceNode(annotation)) return null;
   if (!ts.isIdentifier(annotation.typeName)) return null;
-  if (annotation.typeName.text === "u32") return { kind: "val", val: native, signed: false };
+  if (native.uint32) return { kind: "val", val: native, signed: false };
   return annotation.typeName.text === "i32" ? { kind: "val", val: native } : null;
 }
