@@ -630,6 +630,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * carrier, or an unproven receiver.
    */
   readonly isDynamicForInReceiver?: (receiver: ts.Expression) => boolean;
+  /** #7135: native dynamic keys can be boxed into the certified externref receiver ABI. */
+  readonly nativeDynamicInBuildable?: boolean;
   /**
    * #2952 slice 6c — true only when a for-in enumerated key can be bound as an
    * `IrType.string` head VALUE, i.e. the active string carrier is the host
@@ -8327,17 +8329,14 @@ function selectorDynamicLaneIn(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
-  // The key must reach `__extern_has` AS an externref, and that coercion only
-  // exists while the lane's string carrier IS the host externref (a string key
-  // passes through; a numeric one boxes via the host `__box_number` of the same
-  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
-  // externref host-arg position accepts — measured 2026-08-29: without this
-  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
-  // which is a post-claim demote of the whole lane rather than of a documented
-  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
-  // the same one, not a for-in-specific one, and an absent certificate (bare
-  // selector callers) reads as unproven and rejects.
-  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  // Host strings pass through the externref ABI. The native certificate
+  // supplies canonical boxing, receiver validation and ToPropertyKey instead.
+  // Missing certificates remain unproven for bare selector callers.
+  if (
+    currentSelectionOptions?.forInHeadValueIsHostString !== true &&
+    currentSelectionOptions?.nativeDynamicInBuildable !== true
+  )
+    return false;
   if (inKeyIsCommaExpression(expr.left)) return false;
   if (ts.isPrivateIdentifier(expr.left)) return false;
   return probeShape(

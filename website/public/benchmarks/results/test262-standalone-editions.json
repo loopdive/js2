@@ -2187,8 +2187,8 @@
   {
     "edition": "ES2022",
     "pass": 4344,
-    "fail": 1248,
-    "ce": 200,
+    "fail": 1247,
+    "ce": 201,
     "skip": 0,
     "total": 5792,
     "pct": 75,
@@ -2241,8 +2241,8 @@
       {
         "name": "class-fields-private",
         "pass": 951,
-        "fail": 165,
-        "ce": 17,
+        "fail": 164,
+        "ce": 18,
         "skip": 0,
         "total": 1133,
         "pct": 84
@@ -2466,8 +2466,8 @@
       {
         "name": "class-fields-private-in",
         "pass": 11,
-        "fail": 6,
-        "ce": 2,
+        "fail": 5,
+        "ce": 3,
         "skip": 0,
         "total": 19,
         "pct": 58

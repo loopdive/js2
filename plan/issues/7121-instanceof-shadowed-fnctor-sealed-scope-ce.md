@@ -1,9 +1,10 @@
 ---
 id: 7121
 title: "CE: `v instanceof F` with a parameter `F` shadowing a top-level `function F` mutates a sealed prepared scope"
-status: ready
+status: done
+completed: 2026-10-22
 created: 2026-10-22
-sprint: Backlog
+sprint: current
 priority: medium
 horizon: s
 feasibility: medium
@@ -12,6 +13,14 @@ task_type: implementation
 area: ir
 goal: crash-free
 related: [7106, 7120]
+# 2026-10-22: one shadow-gate call ahead of the name-keyed instanceof arms (logic lives in expressions/instanceof-shadowed-rhs.ts)
+loc-budget-allow:
+  - src/codegen/expressions/identifiers.ts
+  - src/codegen/expressions.ts
+# 2026-10-22: same gate call inside the two instanceof dispatchers
+func-budget-allow:
+  - src/codegen/expressions/identifiers.ts::compileHostInstanceOf
+  - src/codegen/expressions.ts::compileExpressionInner
 ---
 
 # CE: `instanceof` on a parameter that shadows a top-level function constructor
@@ -59,3 +68,32 @@ reach `emitDynamicInstanceOf`, the generic runtime operator.
   `probe(new F(), F)` / `probe({}, F)` answer as node.
 - The top-level-`F` arms still apply when the identifier really binds the
   top-level function.
+
+## Resolution (2026-10-22)
+
+Confirmed: the cause was the name-keyed dispatch. Stack of the CE:
+`tryEmitNativeUserCtorInstanceOf` → `emitFnctorProtoGet` →
+`ensureFuncClosureSingleton` observes `F`'s function-value trampoline while
+legacy compiles `probe`; `ProgramAbiSourceCallableRegistry.planRetained` then
+plans it into the sealed scope of the IR-compiled top-level `F`.
+
+It was a silent miscompile too, not only a CE: where the module did compile,
+`probe([], Array)` and `probe([], Object)` answered `false` (score `1` vs
+node's `10101`), because the shadowed name was answered as the top-level `F`.
+
+Fix: `src/codegen/expressions/instanceof-shadowed-rhs.ts`
+(`instanceofRhsShadowsModuleName`). An `instanceof` RHS identifier whose
+checker declaration is a parameter, catch variable or function-local
+`var`/`let`/`const`, and whose name also names a module-level declaration or
+a builtin global, skips every name-keyed arm (`resolveInstanceOfRHS` in
+`expressions.ts`, and the arms of `compileHostInstanceOf`) and goes to
+`emitDynamicInstanceOf`, which reads the binding's value.
+
+Left out on purpose: function-local `class`/`function` declarations that
+shadow a module-level name (the name tables register those by their own
+name); and a CLASS value reaching the generic operator answers `false` on
+every lane even unshadowed (`function probe(v, C) { return v instanceof C }`
+with `probe(new A(), A)`), which is a separate gap in the dynamic path.
+
+Test: `tests/issue-7121-instanceof-shadowed-ctor-name.test.ts`, standalone and
+default gc, with and without `experimentalIR`, compared to node.
