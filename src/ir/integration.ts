@@ -95,10 +95,6 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
-import {
-  ensureIrDynamicMethodCallHelper,
-  irDynamicMethodCallWrapperLane,
-} from "../codegen/object-model/ir-dynamic-method-call.js";
 import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
 import {
   ensureIrArgumentsLengthHelper,
@@ -109,6 +105,8 @@ import {
 import {
   ensureIrCurrentThisHelper,
   ensureIrDynamicConstructHelper,
+  ensureIrDynamicMethodCallHelper,
+  irDynamicMethodCallWrapperLane,
   ensureIrInstanceOfFunctionHelper,
   IR_CURRENT_THIS_SLOPPY_HELPER,
   IR_CURRENT_THIS_STRICT_HELPER,
@@ -9419,7 +9417,7 @@ function preregisterDynamicSupport(
     // any-receiver call emitter, so its closed-dispatch reservations are
     // shared with legacy sites and filled at finalize like theirs.
     for (const [symbol, { method, arity }] of [...dynamicMethodCallWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      if (ensureIrDynamicMethodCallHelper(ctx, method, arity) === undefined) {
+      if (ensureIrDynamicMethodCallHelper(ctx, symbol, method, arity) === undefined) {
         throw new Error(`ir/integration: ${symbol} has no host-free brand-dispatch wrapper (#7106 Stage 4)`);
       }
       observeNativeRuntimeProvider(ctx, symbol);

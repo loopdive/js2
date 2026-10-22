@@ -14910,14 +14910,6 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/object-model/ir-dynamic-method-call.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "backend-wasmgc",
-      "owner": "7106-item1-harness-units",
-      "nextBoundary": "IR runtime wrapper built from legacy's any-receiver emitters over a fixed template; replace with a native brand-dispatch runtime when the backend owns method dispatch."
-    },
-    {
       "path": "src/codegen/builtin-subclass-receiver.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

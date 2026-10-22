@@ -19,6 +19,7 @@ depends_on: [7117, 7115]
 # makeFromAstResolver), its reservation in preregisterDynamicSupport, the
 # from-ast routing in lowerMethodCall, the selector predicate and capability.
 loc-budget-allow:
+  - src/codegen/ir-dynamic-construct.ts # the wrapper builder joins the S3a/S3c wrappers
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/select.ts
@@ -73,7 +74,11 @@ IsCallable(f) ? f.call(recv, a0, …)   // an own / inherited method value
   checker type (measured: `i32.const 0`).
 - **A runtime operation, not source.** The template text is a function of
   (method, arity) alone and lives in its own detached source file. No source
-  expression is wrapped. This follows S3a's `__ir_dyn_construct_N`.
+  expression is wrapped. This follows S3a's `__ir_dyn_construct_N`, and the
+  builder lives beside it in `src/codegen/ir-dynamic-construct.ts`. The IR
+  names the wrapper and passes the name in, so the builder adds no
+  codegen→ir edge, and integration adds no new codegen import (the
+  import-cycles and ir-layering ratchets are unchanged).
 
 ### Routing (`src/ir/dynamic-method-call-names.ts`)
 
