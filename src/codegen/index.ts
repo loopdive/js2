@@ -5,7 +5,6 @@ import {
 } from "./global-environment.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
-import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
@@ -90,6 +89,7 @@ import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef
 import {
   compileIrPathFunctions,
   irAmbientNamespaceConstant, // (#7106 module-init lever A)
+  irNumberConversionPlan, // (#7106 module-init lever B)
   type IrIntegrationError,
   type IrIntegrationReport,
 } from "../ir/integration.js";
@@ -3072,13 +3072,7 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
-  // (#7106 module-init lever B) the same source-bound `Number(v)` plan from-ast
-  // lowers through `js.number.from-value`, file-wide (see integration.ts).
-  const numberConversion = prepareNumberConversionResolver(
-    ast.checker,
-    [ast.sourceFile],
-    [...ast.sourceFile.statements],
-  );
+  const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =

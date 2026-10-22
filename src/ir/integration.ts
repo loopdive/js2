@@ -2548,10 +2548,7 @@ export function compileIrPathFunctions(
     definedFunctionAt: (funcIdx) => definedFuncAt(ctx, funcIdx),
     fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
   });
-  // (#7106 module-init lever B) the same source-bound `Number(v)` plan the
-  // from-ast resolver answers, file-wide (its invalidation is file-wide, and a
-  // unit's calls are a subset of the file's).
-  const numberConversion = prepareNumberConversionResolver(ctx.checker, [sourceFile], [...sourceFile.statements]);
+  const numberConversion = irNumberConversionPlan(ctx.checker, sourceFile);
   const selected =
     selection ??
     planIrCompilation(sourceFile, {
@@ -7782,8 +7779,8 @@ function resolveAndObserveCallableProvider(
       index = nativeStrHelperHandle(ctx, symbol);
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_FROM_VALUE_FEATURE) {
-    // (#7106 module-init lever B) pre-registered at finalize (`ensureIrNumberFromValueHelper`).
-    index = ctx.funcMap.get(IR_NUMBER_FROM_VALUE_NATIVE_FN) ?? ensureIrNumberFromValueHelper(ctx);
+    // (#7106 module-init lever B) pre-registered at finalize; the helper answers its own index.
+    index = ensureIrNumberFromValueHelper(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_STRING_FN) {
     index = ensureIrNumberToStringProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_FIXED_FN) {
@@ -10759,4 +10756,18 @@ function observePreparedDynamicBoxHelpers(
 export function irAmbientNamespaceConstant(expr: ts.PropertyAccessExpression): number | undefined {
   if (!ts.isIdentifier(expr.expression) || !ts.isIdentifier(expr.name)) return undefined;
   return builtinNamespaceConstantValue(expr.expression.text, expr.name.text);
+}
+
+/**
+ * (#7106 module-init lever B) The source-bound `Number(v)` conversion plan,
+ * file-wide, for the selector option and the from-ast resolver alike: the
+ * plan's invalidation is file-wide, and a unit's calls are a subset of the
+ * file's, so one instance answers both planning sites exactly as
+ * `prepareSourceBuiltinResolvers` answers the IR program source.
+ */
+export function irNumberConversionPlan(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): ReturnType<typeof prepareNumberConversionResolver> {
+  return prepareNumberConversionResolver(checker, [sourceFile], [...sourceFile.statements]);
 }
