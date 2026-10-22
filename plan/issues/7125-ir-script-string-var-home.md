@@ -20,8 +20,12 @@ assignee: "ttraenkler/lead-c-remote"
 # sites; the resolver arm is two small helpers (`isScriptStringHome`,
 # `moduleStringStorageAdmitted`). Restated here (not only in #7114's file) so
 # the grant is not stranded when this PR is measured against main.
+func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
+  - src/ir/integration.ts::compileIrPathFunctions
 loc-budget-allow:
   - src/codegen/index.ts
+  - src/ir/integration.ts
   - src/ir/module-bindings.ts
 ---
 
