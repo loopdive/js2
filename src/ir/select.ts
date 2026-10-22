@@ -6379,7 +6379,26 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       continue;
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
-    if (scope.has(d.name.text)) return shapeNo("vardecl-shadow", d.name);
+    // (#7106) A repeated script `var` resolves to the binding's FIRST
+    // declaration: it is a write to that slot (or, without an initializer, a
+    // no-op), never a new binding.
+    const redeclaredModuleVar =
+      currentSubjectIsModuleInit &&
+      !isLexical &&
+      scope.has(d.name.text) &&
+      ts.isSourceFile(stmt.parent) &&
+      currentModuleBindingResolver?.(d.name)?.declaration !== undefined &&
+      currentModuleBindingResolver(d.name)!.declaration !== d;
+    if (redeclaredModuleVar && !d.initializer) continue;
+    if (scope.has(d.name.text) && !redeclaredModuleVar) return shapeNo("vardecl-shadow", d.name);
+    // (#7106) A bare script `var x;` is a no-op at its position: the module-init
+    // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
+    if (!d.initializer && currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent)) {
+      if (currentModuleBindingResolver?.(d.name) === undefined) return shapeNo("vardecl-noinit", d);
+      clearProjectionBinding(d.name.text);
+      scope.add(d.name.text);
+      continue;
+    }
     if (!d.initializer) return shapeNo("vardecl-noinit", d);
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
@@ -7406,6 +7425,18 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
 function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   if (!expressionTouchesTrackedModuleValue(candidate)) return true;
+  // (#7106 S1g) A certified uncurried Object.prototype predicate alias call
+  // (`__hasOwnProperty(o, k)`) lowers to a boolean `dyn.own_property`. Since
+  // #7114 a script's top-level alias `var` is a tracked module binding. The
+  // callee resolving to that binding means it is not shadowed.
+  if (
+    ts.isCallExpression(candidate) &&
+    candidate.arguments.length === 2 &&
+    moduleBinding(candidate.expression) !== undefined &&
+    uncurriedObjectAliasMethod(candidate.expression, () => false) !== undefined
+  ) {
+    return true;
+  }
   if (moduleBinding(candidate)) return isDirectBooleanModuleBinding(candidate);
   if (moduleScalarAliasFamily(candidate)) return moduleScalarAliasFamily(candidate) === "boolean";
   if (isModuleMapGetAlias(candidate)) return false;
@@ -12079,6 +12110,11 @@ export function assessModuleInit(
   // genuinely contains an update-retyped module binding. The exact binding
   // resolver rejects same-named locals and ordinary narrow module globals, so
   // unrelated modules retain the existing conservative `var` demotion.
+  // (#7106) A SCRIPT opens it unconditionally: every test262 body is a script
+  // whose top-level `var`s live in the same `__mod_<name>` slots, and the
+  // resolver (with codegen's `admitScriptVar` predicate) still refuses each
+  // declaration it cannot place as `vardecl-module-storage-unrepresentable`.
+  const scriptVarGate = currentModuleBindingResolver !== null && !ts.isExternalModule(sourceFile);
   let hasDynamicModuleUpdate = false;
   const findDynamicModuleUpdate = (node: ts.Node): void => {
     if (hasDynamicModuleUpdate) return;
@@ -12094,9 +12130,8 @@ export function assessModuleInit(
     forEachChild(node, findDynamicModuleUpdate);
   };
   findDynamicModuleUpdate(sourceFile);
-  currentIrSafeVarDeclarationLists = hasDynamicModuleUpdate
-    ? collectIrSafeModuleVarDeclarationLists(population)
-    : new Set();
+  currentIrSafeVarDeclarationLists =
+    scriptVarGate || hasDynamicModuleUpdate ? collectIrSafeModuleVarDeclarationLists(population) : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
