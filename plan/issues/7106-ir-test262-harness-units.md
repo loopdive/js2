@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-21
+updated: 2026-10-22
 priority: high
 horizon: l
 feasibility: hard
@@ -563,6 +563,80 @@ both). The earlier `labelOf` withdrawal came from the test program's shape,
 not from `+`. The one mismatch measured is `{string, number literal}`
 returns (`if (d) return o + "!"; return 1;`: IR and legacy pick different
 result slots) — not a harness shape, left as is.
+
+## propertyHelper.js, arm 1 — the stored `Object.getOwnPropertyDescriptor` alias (2026-10-22, measured)
+
+**Blocker.** propertyHelper.js reads descriptors through a stored static
+alias, `var __getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;`.
+The seven verify* helpers call it as `__getOwnPropertyDescriptor(obj,
+name).<attribute>`. The dynamic move-only scan had no arm for that call, so it
+refused it:
+- a `.writable` read off the call needs a dynamic receiver;
+- `!call.writable` scanned the dynamic `obj` against a concrete parameter slot.
+
+All seven reported `param-type-not-resolvable` with `move-only[dyn|concrete]`.
+
+**Arm.**
+- **Alias recognition.** `uncurried-object-alias.ts` now also certifies the
+  stored-static form, using the same no-write discipline as S1g: a top-level
+  `var`/`let`/`const` initialized with exactly `Object.getOwnPropertyDescriptor`,
+  with no other write to the name and no top-level `Object` binding. Legacy
+  certifies the same form (`resolveStoredObjectStaticMethod`).
+- **Selector.** The call is a dynamic producer in `isDynShaped`. In the
+  move-only scan, each operand is a carrier or a boxable concrete. The phase-1
+  shape arm checks the new capability `native-own-property-descriptor`
+  (host-free lanes, non-fast; the same lane predicate as S1g). The call-graph
+  scan treats the call as a provider, not a call edge.
+- **from-ast.** Both operands are lowered as carriers (the operand boxing is
+  shared with S1g as `lowerAliasCarrierOperands`), then a runtime call to
+  `__getOwnPropertyDescriptor` with a `dynamic` result.
+- **Integration.** Pre-registers the provider exactly as legacy does
+  (`ensureLateImport(…, [externref, externref], [externref])`) before Phase 3.
+- No new IR instruction; the call reuses the existing runtime-callable `call`.
+
+**Per-function census.** `built-ins/Array/prototype/map/length.js`, honest
+harness, standalone and gc (native-first) agree on every row. Measured on the
+#6833 stack; the arm itself is branched from origin/main.
+
+| function | before | after |
+| --- | --- | --- |
+| verifyWritable | `move-only[dyn]` `__getOwnPropertyDescriptor(obj, name).writable` | `call-graph-closure` (calls legacy `isWritable`) |
+| verifyNotWritable | `move-only[concrete]` `obj` | `call-graph-closure` (`isWritable`) |
+| verifyEnumerable | `move-only[dyn]` `….enumerable` | `call-graph-closure` (`isEnumerable`) |
+| verifyNotEnumerable | `move-only[concrete]` `obj` | `call-graph-closure` (`isEnumerable`) |
+| verifyConfigurable | `move-only[dyn]` `….configurable` | `call-graph-closure` (`isConfigurable`) |
+| verifyNotConfigurable | `move-only[concrete]` `obj` | `call-graph-closure` (`isConfigurable`) |
+| verifyProperty | `move-only[concrete]` `obj` | `move-only[concrete]` on the statement `assert.sameValue(originalDesc, undefined, …)` |
+
+**No IR body ships yet: this arm is necessary, not sufficient.**
+- The six deprecated helpers now fail only on their legacy `is*` callee.
+  Measured: with the three `is*` helpers replaced by claimable stubs, all six
+  ship IR bodies.
+- So the next arms are the `is*` helpers, in this order:
+  - `isEnumerable` (`forin-head-value-used`): unlocks `verifyEnumerable` and
+    `verifyNotEnumerable`;
+  - `isConfigurable` (`delete obj[name]`): unlocks the two configurable
+    helpers;
+  - `isWritable`: unlocks the two writable helpers.
+- **`isConfigurable` needs a real dynamic delete.** The IR's current `delete`
+  lowering evaluates the operand and returns `true` without deleting anything.
+  A claimed `isConfigurable` would therefore report every property as
+  configurable.
+
+**Tests.** `tests/issue-7106-prophelper-gopd-alias.test.ts`: descriptor checks
+shaped like the verify* helpers, compared with node.
+- Standalone, wasi and default gc (native-first, which projects to the
+  standalone regime) ship IR bodies.
+- The host-assisted gc lane refuses before claim.
+- A reassigned alias is not certified.
+- 3 of the 5 cases fail on the base.
+
+**Found, not fixed (direct path, identical on the base).**
+- On the host-assisted gc lane, the all-legacy probe answers 86 where node
+  answers 511: legacy's stored-alias descriptor reads come back falsy there.
+- A module-level reassignment of the alias
+  (`__getOwnPropertyDescriptor = function…`) is ignored by legacy, which still
+  calls the builtin (511 where node answers 86).
 
 ## Ownership
 
