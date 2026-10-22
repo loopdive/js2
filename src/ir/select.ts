@@ -12170,6 +12170,37 @@ function isPhase1BinaryOp(op: ts.SyntaxKind): boolean {
  *
  * (The helpers below are exported for Slice 2's integration.)
  */
+/**
+ * (#7124) Opt-in unmasked module-init census. `shapeNo` is first-wins and the
+ * assessment stops at the first rejected statement, so a harness statement
+ * that every test shares hides each test's own blockers. With
+ * `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1` (on top of `JS2WASM_IR_SHAPE_DIAG=1`)
+ * the walk records every rejected top-level statement as `<reason>@<arm>` and
+ * keeps going; the first reason still decides the unit, so the claim outcome
+ * is unchanged. A rejected `var`/`let`/`const` still enters scope so later
+ * reads are not double-counted as `expr-ident-not-in-scope`.
+ */
+const MODULE_INIT_ALL_REJECTS_ON = SHAPE_DIAG_ON && process.env.JS2WASM_IR_MODULE_INIT_ALL_REJECTS === "1";
+
+interface ModuleInitReject {
+  readonly reason: IrFallbackReason;
+  readonly label: string;
+}
+
+function recordMaskedModuleInitReject(
+  rejects: ModuleInitReject[],
+  reason: IrFallbackReason,
+  stmt: ts.Statement,
+  scope: Set<string>,
+): void {
+  rejects.push({ reason, label: `${reason}@${takeShapeRejectDetail() ?? "unattributed-arm"}` });
+  typedShapeRejectReason = null;
+  if (!ts.isVariableStatement(stmt)) return;
+  for (const declaration of stmt.declarationList.declarations) {
+    if (ts.isIdentifier(declaration.name)) scope.add(declaration.name.text);
+  }
+}
+
 export function assessModuleInit(
   sourceFile: ts.SourceFile,
   claimedFuncs: ReadonlySet<string>,
@@ -12229,15 +12260,27 @@ export function assessModuleInit(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
+  const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
     if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
+      if (maskedRejects) {
+        recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);
+        continue;
+      }
       const detail =
         reason === "body-shape-rejected" && SHAPE_DIAG_ON
           ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
           : undefined;
       return { stmtCount: population.length, reason, detail };
     }
+  }
+  if (maskedRejects?.length) {
+    return {
+      stmtCount: population.length,
+      reason: maskedRejects[0]!.reason,
+      detail: maskedRejects.map((entry) => entry.label).join(" | "),
+    };
   }
 
   // Gate 2 — call graph. The synthetic wrapper reuses `buildLocalCallGraph`
