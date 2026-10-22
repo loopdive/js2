@@ -616,6 +616,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly dynMemberReadBuildable?: boolean;
   /**
+   * (#7127) The module's builtin-prototype brand companion is seeded (legacy's
+   * `protoMemberDirty`), so a dynamic `<Builtin>.prototype.<method>` read finds
+   * the member. Undefined ⇒ false: such reads stay refused.
+   */
+  readonly builtinProtoCompanionSeeded?: boolean;
+  /**
    * #2952 slice 5 — certify that this exact `for (head in receiver)` source
    * expression uses the non-fast dynamic externref carrier. The callback is
    * checker-backed in production and absent for bare selector callers, so the
@@ -7770,7 +7776,7 @@ function isAmbientIntrinsicValue(
 ): boolean {
   return (
     isAmbientIntrinsicName(expr.text) &&
-    !isMemberReadReceiver(expr) &&
+    !isMemberReadReceiver(expr, currentSelectionOptions?.builtinProtoCompanionSeeded === true) &&
     !scope.has(expr.text) &&
     !localClasses.has(expr.text) &&
     currentModuleBindingResolver?.(expr) === undefined &&

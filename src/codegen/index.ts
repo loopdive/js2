@@ -3237,6 +3237,7 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
+      builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
