@@ -11605,6 +11605,14 @@
       "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
+      "path": "src/ir/builtin-method-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/alloc-registry.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
