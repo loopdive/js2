@@ -35,7 +35,7 @@ function node(source: string): number {
   return new Function(`"use strict";\n${source.replace(/\bexport /g, "")}\nreturn run();`)() as number;
 }
 
-const DYNAMIC_CALL = `function subject() { return 0; }
+const DYNAMIC_CALL = `/** @returns {number} */ function subject() { return 0; }
 subject.run = function (func, message) {
   try {
     func();
@@ -54,7 +54,7 @@ export function run() {
   return n + called * 10000000;
 }`;
 
-const THROWS = `function subject() { return 0; }
+const THROWS = `/** @returns {number} */ function subject() { return 0; }
 subject.throws = function (expectedErrorConstructor, func, message) {
   var expectedName, actualName;
   if (typeof func !== "function") {
