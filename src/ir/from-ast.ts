@@ -182,7 +182,7 @@ import {
   emitForwardingAwareLinearVecLen,
   emitSafeNarrowedI32VecGet,
   emitSafeVecGet,
-  emptyLiteralElementValType,
+  inferredEmptyArrayVecHint,
   isNarrowedI32Vec,
   lowerNarrowedI32Element as lowerNarrowedI32ElementWith,
   planI32ArrayElements,
@@ -4254,17 +4254,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
     if (inference?.kind === "rejected") {
       demoteToLegacy("body-shape-rejected", emptyArrayInferenceDiagnostic(inference, cx.funcName));
     }
-    if (inference?.kind === "resolved") {
-      const elementValType = emptyLiteralElementValType(d.initializer, cx);
-      const vec = cx.resolver?.resolveVecForElement?.(elementValType);
-      if (!vec) {
-        demoteToLegacy(
-          "body-shape-rejected",
-          `ir/from-ast: resolver cannot register inferred number[] vec for '${name}' (${cx.funcName})`,
-        );
-      }
-      inferredEmptyArrayHint = irVec(irVal(elementValType), true);
-    }
+    if (inference?.kind === "resolved") inferredEmptyArrayHint = inferredEmptyArrayVecHint(d.initializer, name, cx);
   }
   // (#3142 Slice 2) A module binding's hint is its GLOBAL's type — the
   // storage slot is fixed by the legacy allocation, so the initializer
@@ -5508,9 +5498,9 @@ function lowerArrayLiteral(expr: ts.ArrayLiteralExpression, cx: LowerCtx, hint: 
         `ir/from-ast: empty array literal needs a vec-typed hint to infer element type (${cx.funcName})`,
       );
     }
-    const elemVT = asVal(hintElemIr)!;
-    const vec = cx.resolver?.resolveVecForElement?.(elemVT);
-    if (!vec) {
+    const elemVT = asVal(hintElemIr) ?? (hintElemIr.kind === "string" ? cx.resolver?.resolveString?.() : undefined);
+    const vec = elemVT ? cx.resolver?.resolveVecForElement?.(elemVT) : undefined;
+    if (!elemVT || !vec) {
       demoteToLegacy(
         "array-representation-unsupported",
         `ir/from-ast: resolver cannot register vec for empty literal (${cx.funcName})`,
