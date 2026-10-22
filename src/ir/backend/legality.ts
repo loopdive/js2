@@ -30,7 +30,8 @@ export type IrBackendTargetCapability =
   | "native-string-carrier-coercion"
   | "native-arguments-length"
   | "native-own-property-test"
-  | "host-dynamic-method-call";
+  | "host-dynamic-method-call"
+  | "native-own-property-descriptor";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -117,6 +118,9 @@ export function supportsIrBackendTargetCapability(
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
     case "native-own-property-test":
+    // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
+    // alias reaches the object runtime's native `__getOwnPropertyDescriptor`.
+    case "native-own-property-descriptor":
       // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
       // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
       return (

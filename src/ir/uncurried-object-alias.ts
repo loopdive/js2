@@ -22,12 +22,26 @@ import { ts } from "../ts-api.js";
 
 export type UncurriedObjectAliasMethod = "hasOwnProperty" | "propertyIsEnumerable";
 
-const cache = new WeakMap<ts.SourceFile, ReadonlyMap<string, UncurriedObjectAliasMethod>>();
+/**
+ * (#7106 propertyHelper move-only arm) The STORED static form propertyHelper
+ * uses for the descriptor read — `var __getOwnPropertyDescriptor =
+ * Object.getOwnPropertyDescriptor;` — called as `__getOwnPropertyDescriptor(o,
+ * k)`. Legacy certifies the same initializer (`resolveStoredObjectStaticMethod`)
+ * and lowers the call to the lane's `__getOwnPropertyDescriptor(externref,
+ * externref) -> externref` provider.
+ */
+export type StoredObjectStaticAliasMethod = "getOwnPropertyDescriptor";
 
-function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, UncurriedObjectAliasMethod> {
+type ObjectAlias =
+  | { readonly form: "uncurried"; readonly method: UncurriedObjectAliasMethod }
+  | { readonly form: "stored-static"; readonly method: StoredObjectStaticAliasMethod };
+
+const cache = new WeakMap<ts.SourceFile, ReadonlyMap<string, ObjectAlias>>();
+
+function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, ObjectAlias> {
   const cached = cache.get(sourceFile);
   if (cached) return cached;
-  const candidates = new Map<string, UncurriedObjectAliasMethod>();
+  const candidates = new Map<string, ObjectAlias>();
   const declared = new Set<string>();
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
@@ -40,8 +54,15 @@ function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, Uncurrie
       }
       declared.add(name);
       const method = uncurriedObjectMethodOfInitializer(declaration.initializer);
-      if (method !== undefined) candidates.set(name, method);
+      if (method !== undefined) candidates.set(name, { form: "uncurried", method });
+      const staticMethod = storedObjectStaticMethodOfInitializer(declaration.initializer);
+      if (staticMethod !== undefined) candidates.set(name, { form: "stored-static", method: staticMethod });
     }
+  }
+  // A top-level binding of `Object` itself makes the initializer read a
+  // user value, not the builtin: no stored-static alias survives it.
+  if (declared.has("Object")) {
+    for (const [name, alias] of candidates) if (alias.form === "stored-static") candidates.delete(name);
   }
   // Any write to the name anywhere in the file (assignment, update, a
   // nested re-declaration) withdraws the alias: the identity is no longer
@@ -73,6 +94,14 @@ function collectAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, Uncurrie
   visit(sourceFile);
   cache.set(sourceFile, candidates);
   return candidates;
+}
+
+function storedObjectStaticMethodOfInitializer(
+  init: ts.Expression | undefined,
+): StoredObjectStaticAliasMethod | undefined {
+  if (!init || !ts.isPropertyAccessExpression(init) || init.questionDotToken) return undefined;
+  if (!ts.isIdentifier(init.expression) || init.expression.text !== "Object") return undefined;
+  return init.name.text === "getOwnPropertyDescriptor" ? "getOwnPropertyDescriptor" : undefined;
 }
 
 function uncurriedObjectMethodOfInitializer(init: ts.Expression | undefined): UncurriedObjectAliasMethod | undefined {
@@ -115,6 +144,23 @@ export function uncurriedObjectAliasMethod(
   callee: ts.Expression,
   shadowed: (name: string) => boolean,
 ): UncurriedObjectAliasMethod | undefined {
+  const alias = objectAliasOf(callee, shadowed);
+  return alias?.form === "uncurried" ? alias.method : undefined;
+}
+
+/**
+ * The `Object` static `callee` is an immutable module-level stored alias of
+ * (`var x = Object.getOwnPropertyDescriptor;`, no other write), or undefined.
+ */
+export function storedObjectStaticAliasMethod(
+  callee: ts.Expression,
+  shadowed: (name: string) => boolean,
+): StoredObjectStaticAliasMethod | undefined {
+  const alias = objectAliasOf(callee, shadowed);
+  return alias?.form === "stored-static" ? alias.method : undefined;
+}
+
+function objectAliasOf(callee: ts.Expression, shadowed: (name: string) => boolean): ObjectAlias | undefined {
   if (!ts.isIdentifier(callee) || shadowed(callee.text)) return undefined;
   const sourceFile = callee.getSourceFile();
   if (!sourceFile) return undefined;
