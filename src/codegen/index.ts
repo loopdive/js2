@@ -3062,7 +3062,7 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
-  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
