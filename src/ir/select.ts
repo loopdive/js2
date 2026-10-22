@@ -95,9 +95,15 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
+  type FunctionObjectTypeEvidence,
+  functionObjectHasTypeEvidence,
+  effectiveIrParamTypeNode,
+  effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
 } from "./select-expression-structure.js";
+
+export { effectiveIrParamTypeNode, effectiveIrReturnTypeNode } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import {
   closureLiteralIsBuildable,
@@ -1804,6 +1810,7 @@ function whyNotIrClaimable(
   preAbiEvidence?: IrStructuralSelectorAccessorAbiEvidence,
 ): IrFallbackReason | null {
   prepareDynamicEqualitySubject(fn, isMethod);
+  currentClaimTypeMap = typeMap;
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   typedShapeRejectReason = null;
@@ -2205,24 +2212,10 @@ function isIrClaimable(
 //   and was the last claim-then-demote channel for non-move any-uses.
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
-/**
- * Return the declaration's effective parameter type node.
- *
- * For TypeScript this is the ordinary `param.type`. For JavaScript, the TS
- * parser/checker boundary exposes a standard `@param {T}` annotation through
- * `getJSDocType` while deliberately leaving `param.type` unset. Keeping this
- * lookup in one helper prevents the selector and the shared AST-to-IR
- * signature resolver from disagreeing about the same source declaration. No
- * comment text is parsed and no synthetic annotation is attached to the AST.
- */
-export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
-  if (param.type) return param.type;
-  // A synthesized parameter (factory-built, no parent — the implicit-ctor
-  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
-  // and would throw. Its type comes from `paramTypeOverrides`.
-  if (param.parent === undefined) return undefined;
-  return ts.getJSDocType(param);
-}
+const functionObjectTypeEvidence: FunctionObjectTypeEvidence = Object.freeze({
+  parameterType: effectiveIrParamTypeNode,
+  returnType: effectiveIrReturnTypeNode,
+});
 
 /**
  * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
@@ -2248,20 +2241,6 @@ export function jsDocParamIsExternrefCandidate(param: ts.ParameterDeclaration): 
     jsDocType.kind !== ts.SyntaxKind.StringKeyword &&
     jsDocType.kind !== ts.SyntaxKind.BooleanKeyword
   );
-}
-
-/**
- * Return the declaration's effective return type node, including a JavaScript
- * JSDoc `@returns {T}` annotation when present.
- *
- * The caller still applies the existing narrow primitive/object/dynamic
- * mapping. In particular, this helper does not turn an unannotated, `any`,
- * union, or otherwise unsupported signature into a primitive claim.
- */
-export function effectiveIrReturnTypeNode(
-  fn: ts.FunctionDeclaration | ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-): ts.TypeNode | undefined {
-  return fn.type ?? ts.getJSDocReturnType(fn);
 }
 
 /**
@@ -2668,6 +2647,9 @@ let currentDynScanDecls: ReadonlyMap<string, ts.FunctionDeclaration> | null = nu
 // `arguments.length` arm: only ITS own body (not a nested function's) reads
 // the prologue count the IR emits at that function's entry.
 let currentArgumentsSubject: ts.FunctionDeclaration | null = null;
+// (#7106 S1i) The TypeMap of the subject being claimed, so the call arm can
+// resolve a callee's MISSING formals with the same verdict its own claim uses.
+let currentClaimTypeMap: TypeMap | undefined;
 
 /** Does `body` reference the `arguments` binding of its own function (arrows inherit it)? */
 export function functionBodyReferencesArguments(body: ts.Node): boolean {
@@ -2713,6 +2695,60 @@ function calleeParamResolvedKind(calleeName: string, argIdx: number, typeMap: Ty
   const p = decl.parameters[argIdx];
   if (!p || !ts.isIdentifier(p.name)) return null;
   return resolveParamType(p, typeMap?.get(calleeName)?.params[argIdx]);
+}
+
+/**
+ * (#7106 S1i) A direct call to a top-level JS function with FEWER arguments
+ * than its fixed formals (propertyHelper's `isWritable(obj, name)`, 4 formals).
+ * Legacy pads every missing formal with the canonical `undefined`
+ * (`pushDefaultValue` → `emitUndefinedValue` on an externref slot) and, when
+ * the callee reads `arguments`, publishes `__argc = actual` first. The IR
+ * mirrors exactly that: the missing formals must all be the dynamic carrier
+ * (padded with `dyn.undefined`; a concrete formal would take legacy's `0`
+ * sentinel, which is not `undefined` and stays legacy), and an
+ * arguments-reading callee additionally needs the host-free argc protocol
+ * (`dyn.publish_argc`). Over-arity calls stay legacy (they need `__extras_argv`).
+ */
+function underArityDirectCallIsBuildable(
+  calleeName: string,
+  declaration: ts.FunctionDeclaration,
+  actualArity: number,
+): boolean {
+  if (actualArity > declaration.parameters.length) return false;
+  if (!currentDynamicRuntimeBuildable || declaration.asteriskToken || !declaration.body) return false;
+  if (declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return false;
+  for (let i = actualArity; i < declaration.parameters.length; i++) {
+    if (!calleeParamIsDynamic(calleeName, i, currentClaimTypeMap)) return false;
+  }
+  // A callee that can reach direct `eval` consumes `__argc` even without a
+  // lexical `arguments` read (legacy's `reachesDirectEval`); keep it legacy.
+  if (subtreeMentionsIdentifier(declaration.body, "eval")) return false;
+  if (!directCallPublishesArgc(declaration)) return true;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-arguments-length") === true;
+}
+
+/**
+ * (#7106 S1i) Does an under-arity direct call to `declaration` have to publish
+ * `__argc`? Exactly when the callee's own entry prologue consumes it — its
+ * body reads its own `arguments` (legacy's `needsImplicitArgumentsObject` for
+ * fixed formals; a formal named `arguments` is excluded by
+ * `hasFixedIrParameters`' identifier check only when it shadows, so test it).
+ */
+function subtreeMentionsIdentifier(root: ts.Node, text: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isIdentifier(node) && node.text === text) found = true;
+    else forEachChild(node, visit);
+  };
+  visit(root);
+  return found;
+}
+
+export function directCallPublishesArgc(declaration: ts.FunctionDeclaration): boolean {
+  if (!declaration.body) return false;
+  if (declaration.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")) return false;
+  return functionBodyReferencesArguments(declaration.body);
 }
 
 function calleeParamIsDynamic(calleeName: string, argIdx: number, typeMap: TypeMap | undefined): boolean {
@@ -2957,12 +2993,9 @@ function dynamicUsesAreMoveOnly(
     // untyped legacy-owned function object (test262's `assert`) is refused
     // PRE-claim instead of demoting at lowering. Loosen when the planner's
     // claim-entry route can be mirrored (post Stage 3c, when `assert` claims).
+    // (#6823) The same evidence rule the Phase-1 member-call arm applies.
     const declaration = resolver?.resolveTopLevelFunctionValue(access.expression)?.declaration;
-    if (
-      declaration === undefined ||
-      declaration.parameters.some((parameter) => effectiveIrParamTypeNode(parameter) === undefined) ||
-      effectiveIrReturnTypeNode(declaration) === undefined
-    ) {
+    if (declaration === undefined || !functionObjectHasTypeEvidence(declaration, functionObjectTypeEvidence)) {
       shapeNo("function-object-member-evidence", e);
       return null;
     }
@@ -10031,6 +10064,19 @@ function isPhase1ArraySearchOrJoin(
   );
 }
 
+function functionObjectCallIsPhase1(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  return functionObjectMemberCallIsBuildable(
+    expr,
+    currentSelectionOptions?.functionObjectValues,
+    functionObjectTypeEvidence,
+    (expression) => isPhase1Expr(expression, scope, localClasses),
+  );
+}
+
 function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClasses: ReadonlySet<string>): boolean {
   if (
     (expressionTouchesModuleExtern(expr) || expressionTouchesModuleMapGetAlias(expr)) &&
@@ -10174,7 +10220,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
+    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
+      return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.
@@ -10546,11 +10593,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return capabilityNo("function-invocation-method-unsupported", "expr-function-invocation-method", expr);
     }
-    const functionObjectCall = functionObjectMemberCallIsBuildable(
-      expr,
-      currentSelectionOptions?.functionObjectValues,
-      (expression) => isPhase1Expr(expression, scope, localClasses),
-    );
+    const functionObjectCall = functionObjectCallIsPhase1(expr, scope, localClasses);
     if (functionObjectCall !== undefined) return functionObjectCall;
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer
@@ -11015,7 +11058,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
       const declaration = currentDynScanDecls?.get(calleeName);
       if (declaration && hasFixedIrParameters(declaration.parameters)) {
-        if (actualArity !== null && actualArity !== declaration.parameters.length) {
+        if (
+          actualArity !== null &&
+          actualArity !== declaration.parameters.length &&
+          (expr.arguments.some(ts.isSpreadElement) ||
+            !underArityDirectCallIsBuildable(calleeName, declaration, actualArity))
+        ) {
           return capabilityNo("call-arity-unsupported", "expr-direct-call-arity", expr);
         }
       }
