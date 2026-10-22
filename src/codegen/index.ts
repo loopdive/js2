@@ -15429,6 +15429,12 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
+export {
+  buildModuleInitPrologueCall,
+  moduleInitPrologueMayEmit,
+  retireModuleInitPrologueHelper,
+} from "./declarations/module-init-prologue.js";
 export type {
   ClosureInfo,
   CodegenContext,
