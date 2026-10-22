@@ -938,8 +938,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
       [externref],
       valueToExternBody,
     );
-    if (valueToExternIdx === undefined) return;
-    const dmsIdx = addDynHelper(
+    addDynHelper(
       ctx,
       "__dyn_member_set",
       [anyRefNull, anyRefNull, anyRefNull],
@@ -955,7 +954,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
         ...finishStrictSet(),
       ],
     );
-    if (dmsIdx !== undefined && readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
+    if (readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
       emitDynMemberSetNullishSelfTest(ctx);
       emitDynMemberSetPrivateNameSelfTest(ctx);
     }
@@ -969,7 +968,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
   ensureDynMemberGet(ctx);
   const peelHostIdx = ctx.funcMap.get("__carrier_recv_to_extern");
   if (peelHostIdx === undefined) return;
-  const dmsIdx = addDynHelper(
+  addDynHelper(
     ctx,
     "__dyn_member_set",
     [externref, externref, externref],
@@ -983,7 +982,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
       ...finishStrictSet(),
     ],
   );
-  if (dmsIdx !== undefined && readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
+  if (readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
     emitDynMemberSetNullishSelfTest(ctx);
     emitDynMemberSetPrivateNameSelfTest(ctx);
   }
