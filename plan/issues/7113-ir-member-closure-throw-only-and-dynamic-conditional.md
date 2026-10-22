@@ -77,3 +77,14 @@ joins a dynamic parameter with a string literal.
   READ (`expr-ident-not-in-scope «compareArray»`), followed by `format(…)` on
   a dynamic local. Both belong to Stage 2's function-object surface, so this
   slice leaves them for that owner.
+
+## Addendum (2026-10-22): `message.toString()`
+
+The #7110 dynamic-method refusal is merged into this branch. It refuses
+method calls on dynamic receivers inside planned member closures, because the
+IR's dynamic method call returns `undefined` for primitive and vec receivers.
+With it in place, the stripped-probe census stops at
+`assert.compareArray`'s `message = message.toString();` (assert.js:151,
+`closure-member-dynamic-method`), before reaching
+`var format = compareArray.format;`. This slice's two shapes, the throw-only
+plan and the dynamic-arm conditional, are unaffected.
