@@ -222,6 +222,160 @@ function captureMemberClosureSyntax(expression: ts.FunctionExpression): () => bo
     });
 }
 
+/**
+ * Where a planned closure literal sits, and what keeps that placement exact.
+ * The plan itself (ABI, body proof, `this`) does not depend on the anchor.
+ */
+interface ClosureAnchor {
+  /** The top-level function whose body owns the statement; undefined = `<module-init>`. */
+  readonly ownerDeclaration: ts.FunctionDeclaration | undefined;
+  /** `F.p.x = fn` — a chained prototype store (refused without the fnctor query). */
+  readonly chained: boolean;
+  /** The anchoring syntax and its function-object target are unchanged. */
+  isCurrent(): boolean;
+}
+
+/** The exact same-source top-level function value an identifier names, if any. */
+function exactTopLevelFunctionValue(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  name: ts.Identifier,
+): ReturnType<IrIdentityImportedFunctionResolver["resolveTopLevelFunctionValueTarget"]> {
+  const target = resolver.resolveTopLevelFunctionValueTarget(name);
+  if (
+    !target ||
+    target.legacyProjection !== "unambiguous" ||
+    target.declaration.getSourceFile() !== name.getSourceFile() ||
+    identity.declarationByUnitId.get(target.targetUnitId) !== target.declaration ||
+    ctx.reassignedFunctionDeclarations?.has(target.declaration)
+  )
+    return undefined;
+  return target;
+}
+
+/** A top-level function declaration (or `undefined` for the source file) owning `node`'s statement. */
+function topLevelStatementOwner(
+  statementOwner: ts.Node,
+): { readonly owner: ts.FunctionDeclaration | undefined } | undefined {
+  if (ts.isSourceFile(statementOwner)) return { owner: undefined };
+  return ts.isBlock(statementOwner) &&
+    ts.isFunctionDeclaration(statementOwner.parent) &&
+    statementOwner.parent.body === statementOwner &&
+    ts.isSourceFile(statementOwner.parent.parent)
+    ? { owner: statementOwner.parent }
+    : undefined;
+}
+
+/** `F.x = function …` or the chained `F.p.x = function …`, as a statement. */
+function memberAnchor(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  expression: ts.FunctionExpression,
+): ClosureAnchor | undefined {
+  const assignment = expression.parent;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.right !== expression ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !ts.isPropertyAccessExpression(assignment.left) ||
+    assignment.left.questionDotToken ||
+    !ts.isIdentifier(assignment.left.name) ||
+    !ts.isExpressionStatement(assignment.parent)
+  )
+    return;
+  // (`Test262Error.prototype.toString = …`, the store #7106 census arm 3 lowers).
+  const holder = assignment.left.expression;
+  const receiver = ts.isIdentifier(holder)
+    ? holder
+    : ts.isPropertyAccessExpression(holder) &&
+        !holder.questionDotToken &&
+        ts.isIdentifier(holder.name) &&
+        ts.isIdentifier(holder.expression)
+      ? holder.expression
+      : undefined;
+  if (!receiver) return;
+  const owner = topLevelStatementOwner(assignment.parent.parent);
+  if (!owner) return;
+  const access = assignment.left;
+  const target = exactTopLevelFunctionValue(ctx, identity, resolver, receiver);
+  if (!target) return;
+  const memberName = access.name;
+  const memberText = memberName.text;
+  return {
+    ownerDeclaration: owner.owner,
+    chained: holder !== receiver,
+    isCurrent() {
+      if (
+        expression.parent !== assignment ||
+        assignment.right !== expression ||
+        assignment.left !== access ||
+        access.expression !== holder ||
+        (holder !== receiver && (holder as ts.PropertyAccessExpression).expression !== receiver) ||
+        access.name !== memberName ||
+        memberName.text !== memberText
+      )
+        return false;
+      const current = resolver.resolveTopLevelFunctionValueTarget(receiver);
+      return current?.declaration === target.declaration && current.targetUnitId === target.targetUnitId;
+    },
+  };
+}
+
+/**
+ * (#7130) A closure literal passed as an argument to a call of a same-source
+ * top-level function value — `run(function () {…})` or the function-object
+ * member call `assert.throws(E, function () {…})` — in a statement of
+ * `<module-init>` or of a top-level function. The callee receives the
+ * closure as a value and calls it through the ordinary closure ABI, which the
+ * plan pins to legacy's own physical signature, so a legacy and an IR caller
+ * agree. Builtin callees (`arr.forEach(…)`) are not anchors: their callback
+ * lowering has its own contract.
+ */
+function argumentAnchor(
+  ctx: CodegenContext,
+  identity: IrPlanningIdentityContext,
+  resolver: IrIdentityImportedFunctionResolver,
+  expression: ts.FunctionExpression,
+): ClosureAnchor | undefined {
+  const call = expression.parent;
+  if (!ts.isCallExpression(call) || call.questionDotToken || call.typeArguments?.length) return;
+  const index = call.arguments.indexOf(expression);
+  if (index < 0) return;
+  const callee = call.expression;
+  const calleeName = ts.isIdentifier(callee)
+    ? callee
+    : ts.isPropertyAccessExpression(callee) &&
+        !callee.questionDotToken &&
+        ts.isIdentifier(callee.name) &&
+        ts.isIdentifier(callee.expression)
+      ? callee.expression
+      : undefined;
+  if (!calleeName) return;
+  const target = exactTopLevelFunctionValue(ctx, identity, resolver, calleeName);
+  if (!target) return;
+  // The owner is the nearest enclosing function, which must be top-level, or
+  // the file (`<module-init>`); the identity inventory re-checks it below.
+  let ownerNode: ts.Node = call.parent;
+  while (!ts.isSourceFile(ownerNode) && !ts.isFunctionLike(ownerNode)) {
+    if (ts.isClassLike(ownerNode)) return;
+    ownerNode = ownerNode.parent;
+  }
+  if (!ts.isSourceFile(ownerNode) && !(ts.isFunctionDeclaration(ownerNode) && ts.isSourceFile(ownerNode.parent)))
+    return;
+  return {
+    ownerDeclaration: ts.isSourceFile(ownerNode) ? undefined : ownerNode,
+    chained: false,
+    isCurrent() {
+      if (expression.parent !== call || call.arguments[index] !== expression || call.expression !== callee)
+        return false;
+      const current = resolver.resolveTopLevelFunctionValueTarget(calleeName);
+      return current?.declaration === target.declaration && current.targetUnitId === target.targetUnitId;
+    },
+  };
+}
+
 /** Exact raw-versus-logical adapter proof for one same-source member assignment. */
 function planMemberClosure(
   ctx: CodegenContext,
@@ -245,49 +399,11 @@ function planMemberClosure(
     (expression as { symbol?: ts.Symbol }).symbol === undefined
   )
     return;
-  const assignment = expression.parent;
-  if (
-    !ts.isBinaryExpression(assignment) ||
-    assignment.right !== expression ||
-    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-    !ts.isPropertyAccessExpression(assignment.left) ||
-    assignment.left.questionDotToken ||
-    !ts.isIdentifier(assignment.left.name) ||
-    !ts.isExpressionStatement(assignment.parent)
-  )
-    return;
-  // `F.x = function …` or the chained `F.p.x = function …`
-  // (`Test262Error.prototype.toString = …`, the store #7106 census arm 3 lowers).
-  const holder = assignment.left.expression;
-  const receiver = ts.isIdentifier(holder)
-    ? holder
-    : ts.isPropertyAccessExpression(holder) &&
-        !holder.questionDotToken &&
-        ts.isIdentifier(holder.name) &&
-        ts.isIdentifier(holder.expression)
-      ? holder.expression
-      : undefined;
-  if (!receiver) return;
-  const statementOwner = assignment.parent.parent;
-  const ownerDeclaration =
-    ts.isBlock(statementOwner) &&
-    ts.isFunctionDeclaration(statementOwner.parent) &&
-    statementOwner.parent.body === statementOwner &&
-    ts.isSourceFile(statementOwner.parent.parent)
-      ? statementOwner.parent
-      : undefined;
-  if (!ts.isSourceFile(statementOwner) && !ownerDeclaration) return;
-  const access = assignment.left;
-  const target = resolver.resolveTopLevelFunctionValueTarget(receiver);
   const source = expression.getSourceFile();
-  if (
-    !target ||
-    target.legacyProjection !== "unambiguous" ||
-    target.declaration.getSourceFile() !== source ||
-    identity.declarationByUnitId.get(target.targetUnitId) !== target.declaration ||
-    ctx.reassignedFunctionDeclarations?.has(target.declaration)
-  )
-    return;
+  const anchor =
+    memberAnchor(ctx, identity, resolver, expression) ?? argumentAnchor(ctx, identity, resolver, expression);
+  if (!anchor) return;
+  const ownerDeclaration = anchor.ownerDeclaration;
   const sourceUnitId = identity.unitIdByDeclaration.get(expression);
   const sourceUnit = sourceUnitId === undefined ? undefined : identity.unitByUnitId.get(sourceUnitId);
   const ownerUnitId = ownerDeclaration
@@ -342,7 +458,7 @@ function planMemberClosure(
   // Without the query (a bare service bundle), a chained `F.p.x` store is refused.
   const fnctorStruct = operations.fnctorPrototypeMethodStruct
     ? operations.fnctorPrototypeMethodStruct(expression)
-    : holder !== receiver
+    : anchor.chained
       ? "unknown"
       : undefined;
   if (fnctorStruct !== undefined) return;
@@ -393,8 +509,6 @@ function planMemberClosure(
   if (bodyKey === undefined) return;
   const sourceText = source.text;
   const syntaxIsCurrent = captureMemberClosureSyntax(expression);
-  const memberName = access.name;
-  const memberText = memberName.text;
   // A string result is the logical `string`: Program-ABI preparation attaches
   // the canonical carrier, which lowers to exactly legacy's `(ref $AnyString)`.
   const signature: IrClosureSignature = Object.freeze({
@@ -417,26 +531,13 @@ function planMemberClosure(
     isCurrent() {
       // Refuse stale captured source/target before invoking canonical ABI services.
       if (
-        expression.parent !== assignment ||
-        assignment.right !== expression ||
-        assignment.left !== access ||
-        access.expression !== holder ||
-        (holder !== receiver && (holder as ts.PropertyAccessExpression).expression !== receiver) ||
+        !anchor.isCurrent() ||
         source.text !== sourceText ||
-        access.name !== memberName ||
-        memberName.text !== memberText ||
         !syntaxIsCurrent() ||
         parameterNames.some(
           ([parameter, name, text], index) =>
             expression.parameters[index] !== parameter || parameter.name !== name || name.text !== text,
         )
-      )
-        return false;
-      const currentTarget = resolver.resolveTopLevelFunctionValueTarget(receiver);
-      if (
-        !currentTarget ||
-        currentTarget.declaration !== target.declaration ||
-        currentTarget.targetUnitId !== target.targetUnitId
       )
         return false;
       const current = planMemberClosure(ctx, identity, resolver, expression, operations);
@@ -451,12 +552,9 @@ function planMemberClosure(
             !ctx.oracle.declarationsOf(name).includes(parameter),
         ) ||
         source.text !== sourceText ||
-        assignment.left !== access ||
-        access.name !== memberName ||
-        memberName.text !== memberText ||
+        !anchor.isCurrent() ||
         current.ownerUnitId !== ownerUnitId ||
         current.sourceUnitId !== sourceUnitId ||
-        resolver.resolveTopLevelFunctionValueTarget(receiver)?.declaration !== target.declaration ||
         bodyKeyOf() !== bodyKey ||
         current.thisStrict !== thisStrict ||
         current.dynamicParameterIndices.size !== dynamicParameterIndices.size ||
