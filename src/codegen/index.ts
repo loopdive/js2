@@ -176,6 +176,7 @@ import {
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
 import {
+  makeIrArrayElementFamilyClassifier,
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrLocalClassExpressionResolver,
@@ -3060,6 +3061,7 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
@@ -3258,6 +3260,7 @@ function planIrOverlay(
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
+      classifyArrayElementFamily,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
@@ -15422,6 +15425,12 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
+export {
+  buildModuleInitPrologueCall,
+  moduleInitPrologueMayEmit,
+  retireModuleInitPrologueHelper,
+} from "./declarations/module-init-prologue.js";
 export type {
   ClosureInfo,
   CodegenContext,
