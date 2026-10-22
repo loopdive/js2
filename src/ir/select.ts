@@ -627,6 +627,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * carrier, or an unproven receiver.
    */
   readonly isDynamicForInReceiver?: (receiver: ts.Expression) => boolean;
+  /** #7135: native dynamic keys can be boxed into the certified externref receiver ABI. */
+  readonly nativeDynamicInBuildable?: boolean;
   /**
    * #2952 slice 6c — true only when a for-in enumerated key can be bound as an
    * `IrType.string` head VALUE, i.e. the active string carrier is the host
@@ -2637,8 +2639,12 @@ function resolveReturnType(
   // into a `() -> externref` claim that withdraws on `abi-signature-parity`
   // (every test262 harness helper, measured 2026-10-20). Mirror legacy here so
   // the claim carries legacy's ABI; a value-returning body keeps its lattice fact.
+  // A class method follows the same rule: legacy registers its slot from the
+  // checker's `void`, and methods never carry a lattice entry (`mapped` is
+  // undefined), so without this arm every value-less JS method was refused as
+  // `return-type-not-resolvable`.
   if (
-    ts.isFunctionDeclaration(fn) &&
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) &&
     fn.body &&
     (mapped === undefined || mapped.kind === "unknown" || mapped.kind === "dynamic") &&
     !irFunctionBodyReturnsValue(fn.body)
@@ -3717,7 +3723,13 @@ function dynamicUsesAreMoveOnly(
   };
   const scanStmtInner = (s: ts.Statement): boolean => {
     if (ts.isVariableStatement(s)) {
+      const lexical = (s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
       for (const d of s.declarationList.declarations) {
+        // (#7106 Stage 4) `var x;` holds the dynamic carrier's undefined.
+        if (ts.isIdentifier(d.name) && !d.initializer && uninitializedVarIsDynamicUndefined(d, lexical)) {
+          dynNames.add(d.name.text);
+          continue;
+        }
         if (!ts.isIdentifier(d.name) || !d.initializer) {
           if (subtreeTouchesDynamic(d, dynNames)) return false;
           continue;
@@ -6335,6 +6347,30 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
   return true;
 }
 
+/**
+ * (#7106 Stage 4) `var x;` — an untyped function-local `var` with no
+ * initializer is the dynamic carrier's `undefined` until assigned (legacy
+ * types the `any` binding `externref` and starts it undefined). Only where the
+ * function-local var proof already holds (the caller checked the list), the
+ * dynamic runtime is buildable, and the declaration is not inside a loop: a
+ * re-executed `var x;` keeps its value, while the IR initializes at the
+ * declaration point.
+ */
+let currentMemberClosureHasDynamicParams = false;
+
+function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
+  if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
+  // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
+  // scan runs and tracks the binding) or a planned member closure with one.
+  if (currentDynamicParamNames.size === 0 && !currentMemberClosureHasDynamicParams) return false;
+  if (!ts.isIdentifier(d.name) || d.type || ts.getJSDocType(d)) return false;
+  for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
+    if (ts.isFunctionLike(cur)) return true;
+    if (ts.isIterationStatement(cur, false)) return false;
+  }
+  return false;
+}
+
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
   const flags = stmt.declarationList.flags;
   const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -6391,15 +6427,23 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       currentModuleBindingResolver(d.name)!.declaration !== d;
     if (redeclaredModuleVar && !d.initializer) continue;
     if (scope.has(d.name.text) && !redeclaredModuleVar) return shapeNo("vardecl-shadow", d.name);
-    // (#7106) A bare script `var x;` is a no-op at its position: the module-init
-    // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
-    if (!d.initializer && currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent)) {
-      if (currentModuleBindingResolver?.(d.name) === undefined) return shapeNo("vardecl-noinit", d);
+    if (!d.initializer) {
+      // (#7106) A bare script `var x;` is a no-op at its position: the module-init
+      // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
+      // (#7111) An untyped function-local `var x;` is the dynamic carrier's
+      // `undefined`; that predicate refuses module-init, so the arms are disjoint.
+      const scriptVar = currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent);
+      if (
+        scriptVar
+          ? currentModuleBindingResolver?.(d.name) === undefined
+          : !uninitializedVarIsDynamicUndefined(d, isLexical)
+      ) {
+        return shapeNo("vardecl-noinit", d);
+      }
       clearProjectionBinding(d.name.text);
       scope.add(d.name.text);
       continue;
     }
-    if (!d.initializer) return shapeNo("vardecl-noinit", d);
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
     initializerScope.add(d.name.text);
@@ -6794,6 +6838,15 @@ function withFunctionMemberClosureState<T>(
   const outerEarlyReturn = [earlyReturnLoopDepth, earlyReturnBarrierDepth] as const;
   earlyReturnLoopDepth = 0;
   earlyReturnBarrierDepth = 0;
+  // (#7106 Stage 4) The closure's own function-local `var` proof — the
+  // subject's (module-init's) proof never covers the closure body.
+  const outerSafeVarLists = currentIrSafeVarDeclarationLists;
+  const outerClosureDynamic = currentMemberClosureHasDynamicParams;
+  currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
+  currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
+    plan.expression,
+    new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
+  );
   const outerInPlannedClosure = currentInPlannedMemberClosure;
   currentInPlannedMemberClosure = true;
   currentSubjectReturnsBoolean = plan.signature.returnType !== null;
@@ -6836,6 +6889,8 @@ function withFunctionMemberClosureState<T>(
       currentLexicalValueBindingNames,
     ] = outer;
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
+    currentIrSafeVarDeclarationLists = outerSafeVarLists;
+    currentMemberClosureHasDynamicParams = outerClosureDynamic;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
@@ -8211,17 +8266,14 @@ function selectorDynamicLaneIn(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
-  // The key must reach `__extern_has` AS an externref, and that coercion only
-  // exists while the lane's string carrier IS the host externref (a string key
-  // passes through; a numeric one boxes via the host `__box_number` of the same
-  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
-  // externref host-arg position accepts — measured 2026-08-29: without this
-  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
-  // which is a post-claim demote of the whole lane rather than of a documented
-  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
-  // the same one, not a for-in-specific one, and an absent certificate (bare
-  // selector callers) reads as unproven and rejects.
-  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  // Host strings pass through the externref ABI. The native certificate
+  // supplies canonical boxing, receiver validation and ToPropertyKey instead.
+  // Missing certificates remain unproven for bare selector callers.
+  if (
+    currentSelectionOptions?.forInHeadValueIsHostString !== true &&
+    currentSelectionOptions?.nativeDynamicInBuildable !== true
+  )
+    return false;
   if (inKeyIsCommaExpression(expr.left)) return false;
   if (ts.isPrivateIdentifier(expr.left)) return false;
   return probeShape(
@@ -10094,6 +10146,7 @@ function collectDirectNestedFunctionNames(body: ts.Block): Set<string> {
   return names;
 }
 
+/**
 /**
  * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
  * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
@@ -12089,6 +12142,37 @@ function isPhase1BinaryOp(op: ts.SyntaxKind): boolean {
  *
  * (The helpers below are exported for Slice 2's integration.)
  */
+/**
+ * (#7124) Opt-in unmasked module-init census. `shapeNo` is first-wins and the
+ * assessment stops at the first rejected statement, so a harness statement
+ * that every test shares hides each test's own blockers. With
+ * `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1` (on top of `JS2WASM_IR_SHAPE_DIAG=1`)
+ * the walk records every rejected top-level statement as `<reason>@<arm>` and
+ * keeps going; the first reason still decides the unit, so the claim outcome
+ * is unchanged. A rejected `var`/`let`/`const` still enters scope so later
+ * reads are not double-counted as `expr-ident-not-in-scope`.
+ */
+const MODULE_INIT_ALL_REJECTS_ON = SHAPE_DIAG_ON && process.env.JS2WASM_IR_MODULE_INIT_ALL_REJECTS === "1";
+
+interface ModuleInitReject {
+  readonly reason: IrFallbackReason;
+  readonly label: string;
+}
+
+function recordMaskedModuleInitReject(
+  rejects: ModuleInitReject[],
+  reason: IrFallbackReason,
+  stmt: ts.Statement,
+  scope: Set<string>,
+): void {
+  rejects.push({ reason, label: `${reason}@${takeShapeRejectDetail() ?? "unattributed-arm"}` });
+  typedShapeRejectReason = null;
+  if (!ts.isVariableStatement(stmt)) return;
+  for (const declaration of stmt.declarationList.declarations) {
+    if (ts.isIdentifier(declaration.name)) scope.add(declaration.name.text);
+  }
+}
+
 export function assessModuleInit(
   sourceFile: ts.SourceFile,
   claimedFuncs: ReadonlySet<string>,
@@ -12148,15 +12232,27 @@ export function assessModuleInit(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
+  const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
     if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
+      if (maskedRejects) {
+        recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);
+        continue;
+      }
       const detail =
         reason === "body-shape-rejected" && SHAPE_DIAG_ON
           ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
           : undefined;
       return { stmtCount: population.length, reason, detail };
     }
+  }
+  if (maskedRejects?.length) {
+    return {
+      stmtCount: population.length,
+      reason: maskedRejects[0]!.reason,
+      detail: maskedRejects.map((entry) => entry.label).join(" | "),
+    };
   }
 
   // Gate 2 — call graph. The synthetic wrapper reuses `buildLocalCallGraph`
