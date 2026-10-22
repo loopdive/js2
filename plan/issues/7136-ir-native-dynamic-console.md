@@ -149,3 +149,13 @@ sink, absent WASI syscall, non-native strings and a JavaScript environment fail
 closed; valid index-zero providers remain available; fast dynamic formatting
 and unknown bindings are refused. The 62-test runtime/scalar matrix also passes
 with `JS2WASM_IR_I32_DOMAIN=1` (60 controls plus two known-open witnesses).
+
+Final integration qualification: upstream `efa58fece8f01e72122d7f7f5a0e31a764ca92f0`
+is merged into this branch (integration `9bbbe452b74de7c1a4cc3d51f31320817f1a98a9`).
+The already-landed delete refusal remains present. The eight-file runtime matrix
+passes **112/112 registrations: 110 semantic/refusal/provider controls and two
+known-open constructor witnesses**. The 70-registration console file also
+passes with i32 inference enabled (68 controls, two known-open witnesses).
+Current-main LOC/function, flat-directory, IR-layering and import-cycle gates
+pass with only the exact dated grants above; inventory remains valid and
+architecture incomplete. Fresh-context adversarial review remains pending.
