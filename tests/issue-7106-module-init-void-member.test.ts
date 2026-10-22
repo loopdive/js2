@@ -120,6 +120,29 @@ export function run() { subject.self(1); return 1; }`;
   }, 35_000);
 });
 
+describe("#7106 Stage 4 — method calls on a member closure's dynamic receivers", () => {
+  it("stays legacy: the IR's dynamic method call has no primitive/vec brand arms", async () => {
+    // Measured before the refusal: the IR body answered `undefined` for every
+    // one of these (`__extern_method_call` only dispatches open-`$Object`
+    // methods), while node and legacy agree on 111.
+    const source = `function subject() { return 0; }
+subject.check = function (list, n, sym) {
+  if (list.join(", ") !== "1, 2") throw "join";
+  if (n.toString() !== "5") throw "number";
+  if (sym.toString() !== "Symbol(x)") throw "symbol";
+};
+export function run() {
+  var out = 0;
+  try { subject.check([1, 2], 5, Symbol("x")); out += 111; } catch (e) { out += 1; }
+  return out;
+}`;
+    const result = await compile(source, OPTIONS);
+    expect(row(result, "<module-init>").irBodyEmitted).toBe(false);
+    expect(node(source)).toBe(111);
+    expect(await initializeAndRun(result)).toBe(111);
+  }, 35_000);
+});
+
 describe("#7106 Stage 4 — an abandoned lifted member closure", () => {
   it("rebinds the source unit to the legacy allocation when its owner fails preparation", async () => {
     vi.stubEnv("JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE", "1");
