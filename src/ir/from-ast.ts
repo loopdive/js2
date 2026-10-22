@@ -5235,27 +5235,12 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   if (expr.kind === ts.SyntaxKind.RegularExpressionLiteral) {
     return lowerRegExpLiteral(expr, cx);
   }
-  // Slice 11 (#1169n) — `delete <expr>`. The IR-claim shape doesn't
-  // support property deletes that change runtime behavior (slice 11
-  // doesn't track per-instance prop existence). Most `delete` uses
-  // in IR-claimable functions delete properties that are statically
-  // known to exist (so the result is `true`), or delete unresolved
-  // refs (also `true`). We lower the operand for side effects (e.g.
-  // `delete f().x` must still call f) and then push the constant
-  // `true`.
+  // (#7106) `delete <expr>`: the selector refuses every form
+  // (`expr-delete-no-ir-lowering`) because the IR has no delete operation.
+  // Slice 11 (#1169n) used to answer a constant `true` here, which removed
+  // nothing and never threw. Fail closed if a delete ever reaches lowering.
   if (ts.isDeleteExpression(expr)) {
-    // Lower operand for side effects only — the result is unused.
-    // Property-access operand: lower the receiver (the .name part is
-    // statically resolved, so the access itself has no runtime effect
-    // on the IR-claim shape). Other operands lower via `lowerExpr`.
-    if (ts.isPropertyAccessExpression(expr.expression)) {
-      // Lower the receiver expression for side effects; ignore the
-      // produced SSA value (DCE drops it if pure).
-      void lowerExpr(expr.expression.expression, cx, irVal({ kind: "f64" }));
-    } else {
-      void lowerExpr(expr.expression, cx, irVal({ kind: "f64" }));
-    }
-    return cx.builder.emitConst({ kind: "bool", value: true }, irVal({ kind: "i32" }));
+    demoteToLegacy("body-shape-rejected", `ir/from-ast: delete has no IR lowering in ${cx.funcName}`);
   }
   // Slice 11 (#1169n) — `void <expr>`. Lower the operand for side
   // effects, then push the IR's f64 NaN sentinel as the result. The
