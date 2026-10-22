@@ -7181,6 +7181,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-dynamic-parameter-abi.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7135",
+      "nextBoundary": "Physical parameter-slot proof reads the shared codegen context; migrate with Program ABI preparation."
+    },
+    {
       "path": "src/codegen/ir-legacy-caller-abi.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12756,6 +12764,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/native-in.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7135",
+      "nextBoundary": "JavaScript producer emits canonical boxing and runtime callable bindings; separate runtime-provider preparation from pure IR contracts."
     },
     {
       "path": "src/ir/outcomes.ts",
