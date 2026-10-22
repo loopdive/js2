@@ -142,9 +142,40 @@ export function lowerFunctionObjectMemberCall(
         irDynamic(JS_TAG_IDS.String),
       );
   const callee = cx.builder.emitDynMemberGet(receiver, key);
+  return applyDynamicCallee(callee, receiver, expr.arguments, "Value is not callable", cx);
+}
+
+/**
+ * (#7106 Stage 4) A bare call through a dynamic value (`func()` in assert.js's
+ * `assert.throws`): no Reference base, so thisArgument is `undefined`
+ * (§13.3.6.2). The callee is evaluated first, then the arguments, then
+ * IsCallable — legacy's bare dynamic call order and its `called value is not a
+ * function` TypeError — and `__apply_closure` installs the undefined receiver
+ * as `__current_this` for the callee's duration, as legacy's bare-call
+ * receiver reset does.
+ */
+export function lowerDynamicValueCall(
+  expr: ts.CallExpression,
+  callee: IrValueId,
+  cx: FunctionObjectLoweringHost,
+): IrValueId {
+  if (expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) {
+    demoteToLegacy("call-resolution-unsupported", "optional/spread dynamic value call is unsupported");
+  }
+  const receiver = cx.builder.emitDynUndefined();
+  return applyDynamicCallee(callee, receiver, expr.arguments, "called value is not a function", cx);
+}
+
+function applyDynamicCallee(
+  callee: IrValueId,
+  receiver: IrValueId,
+  argumentSources: readonly ts.Expression[],
+  notCallableMessage: string,
+  cx: FunctionObjectLoweringHost,
+): IrValueId {
   const args = cx.builder.emitCall(irRuntimeFuncRef("__objvec_new"), [], irVal({ kind: "externref" }));
   if (args === null) throw new Error("native argument vector returned void");
-  for (const argument of expr.arguments) {
+  for (const argument of argumentSources) {
     const value = functionObjectDynamicValue(cx.lowerExpression(argument), argument, cx);
     const external = cx.builder.emitCall(
       irRuntimeFuncRef(cx.symbols.IR_DYN_CALL_ARGUMENT_FN),
@@ -168,7 +199,7 @@ export function lowerFunctionObjectMemberCall(
   const callable = cx.builder.emitCall(irRuntimeFuncRef("__is_callable"), [externalCallee], irVal({ kind: "i32" }));
   if (callable === null) throw new Error("native callable classifier returned void");
   const refusal = cx.builder.collectBodyInstrs(() => {
-    const message = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst("Value is not callable"));
+    const message = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(notCallableMessage));
     const error = cx.builder.emitCall(irRuntimeFuncRef("__new_TypeError"), [message], irVal({ kind: "externref" }));
     if (error === null) throw new Error("native TypeError constructor returned void");
     cx.builder.emitThrow(error);

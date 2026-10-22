@@ -80,10 +80,31 @@ function resolveFunctionObjectReceiver(
   if (
     !(ts.isCallExpression(use) && use.expression === access) &&
     !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) &&
-    !isFunctionObjectChainedWrite(access)
+    !isFunctionObjectChainedWrite(access) &&
+    !isFunctionObjectMemberRead(access)
   )
     return;
   return resolver?.resolveTopLevelFunctionValue(node);
+}
+
+/**
+ * (#7106 Stage 4) `var format = compareArray.format;` — a function object's
+ * member READ as the whole initializer of a `var`. Like a member call or write
+ * it is a receiver-only use: the boxed function object, then a dynamic member
+ * get. Only the declaration-initializer position: an update/delete operand or
+ * a destructuring target is not a plain read.
+ */
+export function isFunctionObjectMemberRead(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean {
+  const declaration = access.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    ts.isIdentifier(access.name) &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === access &&
+    ts.isIdentifier(declaration.name) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+  );
 }
 
 /**
