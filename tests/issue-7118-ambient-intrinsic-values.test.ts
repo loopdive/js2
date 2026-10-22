@@ -34,7 +34,6 @@ async function run(target: "standalone" | undefined, source: string): Promise<{ 
 // Each source throws unless the intrinsic read answers exactly as node does.
 const CASES: Record<string, string> = {
   typeofCtor: `if (typeof Object !== "function") { throw "#1"; } if (typeof RangeError !== "function") { throw "#2"; }`,
-  nameRead: `if (TypeError.name !== "TypeError") { throw "#3"; } if (Error.name !== "Error") { throw "#4"; }`,
   sameIdentity: `if (TypeError !== TypeError) { throw "#5"; } if (TypeError === RangeError) { throw "#6"; }`,
 };
 
@@ -47,6 +46,28 @@ describe("#7118 — ambient intrinsics as IR values", () => {
       it(`${name} claims <module-init> and runs (${target ?? "gc"})`, async () => {
         const { claimed } = await run(target, source);
         expect(claimed).toBe(true);
+      });
+    }
+  }
+
+  // (#7123) A member read off an intrinsic stays on the legacy path: through
+  // the IR's dynamic read these answered differently from legacy and node
+  // (legacy seeds no runtime companion for syntactic `<Builtin>.prototype.<m>`).
+  const MEMBER_READS: Record<string, string> = {
+    protoMethod: `if (typeof Error.prototype.toString !== "function") { throw "#7"; }`,
+    protoConstructor: `if (TypeError.prototype.constructor !== TypeError) { throw "#8"; }`,
+    inheritedCall: `if (typeof TypeError.call !== "function") { throw "#9"; }`,
+    functionProto: `if (typeof Function.prototype !== "function") { throw "#10"; }`,
+    nameRead: `if (TypeError.name !== "TypeError") { throw "#3"; } if (Error.name !== "Error") { throw "#4"; }`,
+  };
+  for (const [name, source] of Object.entries(MEMBER_READS)) {
+    it(`node agrees: ${name}`, () => {
+      expect(() => new Function(source)()).not.toThrow();
+    });
+    for (const target of ["standalone", undefined] as const) {
+      it(`${name} stays legacy and answers as node does (${target ?? "gc"})`, async () => {
+        const { claimed } = await run(target, source);
+        expect(claimed).toBe(false);
       });
     }
   }
