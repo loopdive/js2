@@ -111,7 +111,11 @@ export function collectIrSafeVarDeclarationLists(
 
   const safeDeclarations = new Set<ts.VariableDeclaration>();
   for (const declaration of varDeclarations) {
-    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+    if (!ts.isIdentifier(declaration.name)) continue;
+    // (#7106 Stage 4) An uninitialized `var x;` statement (assert.throws'
+    // `var expectedName, actualName;`) is held to the same reference rules;
+    // a for-head `var` without an initializer stays out.
+    if (!declaration.initializer && !ts.isVariableStatement(declaration.parent.parent)) continue;
     const name = declaration.name.text;
     if (bindingCounts.get(name) !== 1) continue;
 
