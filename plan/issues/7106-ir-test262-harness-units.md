@@ -1414,7 +1414,30 @@ directories: `Number(` 684, `Number.POSITIVE_INFINITY` 133,
   the one-argument-ambient-constructor-call walk exists once; the scan treats
   the result as concrete f64 (`expectDyn` false; a dynamic operand needs
   `currentDynamicRuntimeBuildable`).
-- **Measure first — parity of `__any_to_f64` with legacy's `Number(obj)`.**
+- **Measured 2026-10-22 16:00Z — the lowering exists, its provider does not.**
+  from-ast already lowers a source-bound `Number(v)` (`lowerPreparedNumberCall`
+  → intrinsic `js.number.from-value`, gated by
+  `frontend/builtins/prepare-number-conversion.ts`), but (1) the selector never
+  admits the call — the three sites above are missing, so `Number(1)` is an
+  `external-call` for `<module-init>` and a `move-only[concrete]` refusal for a
+  dynamic operand; (2) the plan is invalidated by ANY non-call use of `Number`
+  in the file (`Number.MAX_VALUE`, `new Number(x)`), which every sampled test
+  body has — relax to "a member-access receiver or a `new` callee keeps the
+  plan"; (3) the integration from-ast resolver (`makeFromAstResolver`) does not
+  carry `preparedNumberCall` (only the IR program-source resolver does); and
+  (4) **`js.number.from-value` has no `RuntimeProviderDefinition` on any lane**
+  — with (1)–(3) wired, every admitted call died at `runtime feature
+  js.number.from-value has no provider` (`ir/runtime/manifest.ts`). So the
+  arm is: a `native.js.number.from-value` provider (`runtime-callable` over a
+  template wrapper built from legacy's `Number(v)` emitter — the #7119 /
+  #6874 wrapper mechanics, `coercion-engine.ts#emitToNumber` for the
+  externref arm, Symbol → TypeError, BigInt → Number) plus the host provider,
+  registered like `REFERENCE_ERROR_RUNTIME_PROVIDERS`; then (1)–(3). The
+  wired-and-reverted (1)–(3) diff is in #6583's 16:00Z note. The old
+  `dyn.to_number` idea is withdrawn: `Number(v)` is ToNumeric with the full
+  ToPrimitive protocol, which the intrinsic's contract states and
+  `dyn.to_number` does not.
+- **Parity to measure once the provider exists — `Number(obj)`.**
   Legacy runs the full ToPrimitive protocol on an object carrier
   (`Number({ valueOf() { return 7; } })`, `Number([5])`, `Number("0x10")`,
   `Number(null)`, `Number(undefined)`, `Number(true)`, `Number(Symbol())` must
