@@ -39,9 +39,10 @@ flat-dir-budget-allow:
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
   - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
+  - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
-  - largestSccSize: 725 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it
+  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
 # dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
 # dynamic-delete statement arm.
@@ -813,6 +814,88 @@ body was claimed and then demoted at build ("unsupported body
 ExpressionStatement shape"), a post-claim error. Both dispatchers now share
 `lowerDroppedDelete`. A bare `{ … }` block holding a delete is still refused
 before the claim (a pre-existing block refusal, so the selector and from-ast agree).
+
+## `dyn.instanceof` — generic dynamic instanceof at legacy parity (2026-10-22, measured)
+
+**Why not the intrinsic RHS yet.** propertyHelper's `isConfigurable` and
+`isWritable` stop on `e instanceof TypeError`. Lowering that through legacy's
+generic runtime operator (`__instanceof_dynamic`), with `TypeError` read off
+the realm (#7118), changes answers relative to what legacy does today. Legacy
+compiles a literal `instanceof TypeError` to its name-based tag test instead.
+Measured on standalone and default gc, with the generic operator as `v
+instanceof C` (C a dynamic parameter):
+
+| left operand | `instanceof` | generic (legacy) | static name (legacy) | node |
+| --- | --- | --- | --- | --- |
+| `new TypeError()`, `RangeError`, `SyntaxError`, a caught TypeError | `Error` | false | true | true |
+| `class MyTE extends TypeError` instance | `TypeError` | false | true | true |
+| `Object.create(TypeError.prototype)` | `TypeError` | true | false | true |
+| `{}` | `{}` (not callable) | false, no throw | n/a | throws TypeError |
+| error vs its own type, plain object, primitive, `[]` vs `Array`/`Object` | | agree | agree | agree |
+
+Root cause: in standalone, `Object.getPrototypeOf(TypeError.prototype) ===
+Error.prototype` is false, so the chain walk never reaches `Error.prototype`.
+The coordinator chose (2026-10-22):
+- (c) now: this arm, a dynamic-PARAMETER right operand only, at exact legacy
+  parity;
+- (a) next: a legacy wrong-answer fix in `__instanceof_dynamic` for
+  Error-family targets, as its own issue and PR, measured;
+- the intrinsic right operand only after (a) lands. Not a second, name-based
+  `instanceof` path.
+
+**Arm.**
+- **Instruction.** `dyn.instanceof{value, target}` (JS dialect, 40 on this
+  base, 41 with #7118's `dyn.global_object`). Both operands dynamic, result
+  a boolean `i32`. Effects are call-like: a `prototype` accessor may run, and
+  a not-callable target throws.
+- **Wrapper.** `codegen/ir-dynamic-instanceof.ts` builds
+  `__ir_dyn_instanceof(externref, externref) -> i32`. It is exactly the tail
+  of legacy's `emitDynamicInstanceOf` on the host-free lanes:
+  `__instanceof_dynamic`, then `emitInstanceofThrowGuard`.
+- **Admission (`dynamicInstanceOfUse`).**
+  - The left operand is a dynamic parameter or `this`.
+  - The right operand is a bare dynamic parameter.
+  - Codegen's `irDynamicInstanceOfRoutesGeneric` must certify that legacy
+    reaches that same tail. Legacy dispatches the right operand on its NAME
+    first (class, fnctor, builtin and alias arms), and the selector runs
+    before those registries fill. So the predicate checks the names
+    themselves: no non-parameter declaration in the file binds the name, it
+    is not a builtin constructor name, it is never written, it is typed
+    `any`/`unknown`, and the module installs no callable `@@hasInstance`
+    (that module takes legacy's operator entry instead).
+  - Host-free lanes only, never the fast carrier.
+- **from-ast (`lowerDynamicInstanceOf`).** Lowers both carriers and emits the
+  instruction. The resolver asks the same predicate.
+
+**Diverges from node by design (#2916).** The IR answers exactly as legacy on
+every row, including the three where legacy's generic operator differs from
+node: an error-subclass instance against `Error`, a user `TypeError` subclass
+against `TypeError`, and a runtime non-callable target (false instead of a
+TypeError, the "no wrong throws" rule). The first two change with (a). The
+third stays until the runtime can tell a non-callable `$Object` from a class
+value.
+
+**Per-function census.** `map/length.js`, standalone: 12 of 25 units IR before
+and after, no unit changes. Every propertyHelper `instanceof` has an intrinsic
+right operand.
+
+**Tests.** `tests/issue-7106-ir-dyn-instanceof.test.ts`, 9 cases. Each row is
+compared with a legacy-only compile (`experimentalIR: false`) and with node:
+- on standalone and default gc: errors vs their own type, vs another type,
+  vs `Error` (residual row); a user subclass (residual row); a plain object;
+  primitives; `[]` vs `Array`/`Object`;
+- a callable target with a non-object `prototype`, which throws the
+  TypeError on both and in node;
+- the non-callable target (residual row);
+- a wasi validate;
+- refusals: a builtin-named parameter, a parameter name another declaration
+  binds, a written parameter, an `@@hasInstance` module, the host-assisted gc
+  lane.
+
+**Pre-existing, not this arm.** On the #6847 base, `function F() {}` plus
+`function probe(v, F) { return v instanceof F; }` fails the compile with
+"ABI draft … function-value-trampoline … would mutate sealed prepared scope".
+It is measured identical without this change.
 
 ## Ownership
 

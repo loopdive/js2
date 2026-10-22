@@ -7133,6 +7133,14 @@
       "nextBoundary": "IR dynamic delete support (#7106 propertyHelper): the per-strictness wrapper over legacy's generic externref delete arm; moves with the delete lowering's backend split."
     },
     {
+      "path": "src/codegen/ir-dynamic-instanceof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR generic dynamic instanceof support (#7106): the wrapper over legacy's generic runtime operator plus the legacy-routing predicate; moves with the instanceof lowering's backend split."
+    },
+    {
       "path": "src/codegen/ir-first-gate.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

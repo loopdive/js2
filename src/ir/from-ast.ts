@@ -859,6 +859,11 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * or undefined where the dynamic carrier is not an externref.
    */
   dynamicDeleteSymbol?(site: ts.DeleteExpression): string | undefined;
+  /**
+   * (#7106) Does legacy route this `<value> instanceof <parameter>` through its
+   * generic runtime operator? The same question the selector asked.
+   */
+  dynamicInstanceOfRoutesGeneric?(site: ts.BinaryExpression): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -14771,6 +14776,23 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
   return result;
 }
 
+/**
+ * (#7106) The generic `instanceof` over two dynamic carriers. The selector admits
+ * it only where legacy itself reaches its generic runtime operator
+ * (`dynamicInstanceOfUse`), so a non-dynamic operand here is selector drift.
+ */
+function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(expr.left, cx, irDynamic());
+  const target = lowerExpr(expr.right, cx, irDynamic());
+  if (cx.builder.typeOf(value).kind !== "dynamic" || cx.builder.typeOf(target).kind !== "dynamic") {
+    demoteToLegacy(
+      "operand-coercion-unsupported",
+      `ir/from-ast: dynamic instanceof operand lost its dynamic carrier (${cx.funcName})`,
+    );
+  }
+  return cx.builder.emitDynInstanceOf(value, target);
+}
+
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
@@ -14781,6 +14803,9 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
     );
   }
   const className = expr.right.text;
+  // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
+  // legacy's generic runtime operator (`dyn.instanceof`).
+  if (cx.resolver?.dynamicInstanceOfRoutesGeneric?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.

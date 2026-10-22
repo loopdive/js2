@@ -698,6 +698,12 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly selfGuardedConstructorValue?: (ident: ts.Identifier) => boolean;
   /**
+   * (#7106) Does legacy lower this `<value> instanceof <parameter>` through its
+   * generic runtime operator (`__instanceof_dynamic` + throw guard), the tail
+   * `dyn.instanceof` reproduces? Absent → never.
+   */
+  readonly dynamicInstanceOfRoutesGeneric?: (site: ts.BinaryExpression) => boolean;
+  /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
    * An explicit false prevents an ambient Date snapshot from being claimed
@@ -3381,6 +3387,10 @@ function dynamicUsesAreMoveOnly(
         selectorSupportsStandaloneWrapperInstanceOf(e.right)
       ) {
         return scanExpr(e.left, true);
+      }
+      // (#7106) `<dynamic> instanceof <dynamic parameter>` → `dyn.instanceof`: a concrete i32.
+      if (!expectDyn && dynamicInstanceOfUse(e)) {
+        return scanExpr(e.left, true) && scanExpr(e.right, true);
       }
       // (#7106 S3c) `<dynamic> instanceof F` → `dyn.instanceof_fn`: a concrete i32.
       if (
@@ -9998,6 +10008,23 @@ function dynamicDeleteStatementOperand(
   return { receiver, key };
 }
 
+/**
+ * (#7106) `<dynamic carrier> instanceof <dynamic parameter>` → `dyn.instanceof`,
+ * legacy's generic runtime operator. Admitted only where legacy itself routes the
+ * site there (`dynamicInstanceOfRoutesGeneric`), so the IR answers exactly as
+ * legacy does, including its #2916 residuals.
+ */
+function dynamicInstanceOfUse(expr: ts.BinaryExpression): boolean {
+  return (
+    expr.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+    currentDynamicRuntimeBuildable &&
+    ts.isIdentifier(expr.right) &&
+    currentDynamicParamNames.has(expr.right.text) &&
+    instanceOfLeftIsDynamicCarrier(expr.left) &&
+    currentSelectionOptions?.dynamicInstanceOfRoutesGeneric?.(expr) === true
+  );
+}
+
 /** (#7106 S3c) The left operand of a `dyn.instanceof_fn`: a dynamic carrier the scan can prove. */
 function instanceOfLeftIsDynamicCarrier(left: ts.Expression): boolean {
   const operand = unwrapPhase1Parens(left);
@@ -10589,6 +10616,11 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return capabilityNo("class-projection-unsupported", "expr-instanceof-class-shape", expr.right);
       }
       return isPhase1Expr(expr.left, scope, localClasses);
+    }
+    // (#7106) `<dynamic> instanceof <dynamic parameter>` → `dyn.instanceof`,
+    // legacy's generic runtime operator.
+    if (ts.isBinaryExpression(expr) && dynamicInstanceOfUse(expr)) {
+      return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
     }
     // (#7106 S3c) `<dynamic> instanceof F` for a self-guarded constructor F →
     // `dyn.instanceof_fn`, legacy's per-function chain walk.

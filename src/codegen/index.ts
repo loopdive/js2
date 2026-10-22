@@ -6,6 +6,7 @@ import {
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import { irDynamicInstanceOfRoutesGeneric } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -3270,6 +3271,7 @@ function planIrOverlay(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      dynamicInstanceOfRoutesGeneric: (site) => irDynamicInstanceOfRoutesGeneric(ctx, site), // (#7106)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
@@ -15437,6 +15439,12 @@ export {
   irDeleteSiteIsStrict,
   irDynamicDeleteHelperName,
 } from "./ir-dynamic-delete.js";
+// (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
+export {
+  ensureIrDynamicInstanceOfHelper,
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfRoutesGeneric,
+} from "./ir-dynamic-instanceof.js";
 export type {
   ClosureInfo,
   CodegenContext,
