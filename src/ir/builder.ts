@@ -55,8 +55,16 @@ import { defaultTagDomain } from "./producer.js";
 import type { TagDomain, TagId } from "./tag-domain.js";
 import type { IrStringConcatMode, IrStringEncoding } from "./string-runtime.js";
 import { INTRINSIC_DEFINITIONS, type IntrinsicId } from "./intrinsics.js";
+import { classValueNewMismatch } from "./class-value-contract.js";
 
 type CapturedBuilderSite = Extract<IrSiteId, { readonly origin: IrSourceMapOrigin }>;
+
+type AllocationInput = {
+  [K in "object.new" | "closure.new" | "class.new" | "class.value.new" | "refcell.new"]: Omit<
+    Extract<IrInstr, { kind: K }>,
+    "result" | "resultType" | "alloc"
+  >;
+}["object.new" | "closure.new" | "class.new" | "class.value.new" | "refcell.new"];
 
 interface OpenBlock {
   readonly id: IrBlockId;
@@ -188,6 +196,13 @@ export class IrFunctionBuilder {
    */
   private allocId(kind: AllocKind, type: IrType, site?: IrSiteId): AllocSiteId | undefined {
     return this.allocRegistry?.fresh(kind, type, site);
+  }
+
+  private emitAllocation(instruction: AllocationInput, kind: AllocKind, resultType: IrType): IrValueId {
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ ...instruction, result, resultType, alloc: this.allocId(kind, resultType) });
+    return result;
   }
 
   // --- params -------------------------------------------------------------
@@ -975,19 +990,7 @@ export class IrFunctionBuilder {
         `IrFunctionBuilder: object.new value count ${values.length} != shape field count ${shape.fields.length} (func ${this.id.name})`,
       );
     }
-    const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "object", shape };
-    this.valueTypes.set(result, resultType);
-    const alloc = this.allocId("object", resultType);
-    this.pushInstr({
-      kind: "object.new",
-      shape,
-      values: [...values],
-      result,
-      resultType,
-      alloc,
-    });
-    return result;
+    return this.emitAllocation({ kind: "object.new", shape, values: [...values] }, "object", { kind: "object", shape });
   }
 
   /**
@@ -1105,23 +1108,28 @@ export class IrFunctionBuilder {
         `IrFunctionBuilder: closure.new captureFieldTypes count ${captureFieldTypes.length} != captures count ${captures.length} (func ${this.id.name})`,
       );
     }
-    const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "closure", signature };
-    this.valueTypes.set(result, resultType);
-    const alloc = this.allocId("closure", resultType);
-    this.pushInstr({
-      kind: "closure.new",
-      liftedFunc,
-      signature,
-      captureFieldTypes: [...captureFieldTypes],
-      captures: [...captures],
-      ...(options.hostOneShot ? { hostOneShot: true } : {}),
-      ...(options.domCallbackAuthority ? { domCallbackAuthority: options.domCallbackAuthority } : {}),
-      result,
-      resultType,
-      alloc,
-    });
-    return result;
+    return this.emitAllocation(
+      {
+        kind: "closure.new",
+        liftedFunc,
+        signature,
+        captureFieldTypes: [...captureFieldTypes],
+        captures: [...captures],
+        ...(options.hostOneShot ? { hostOneShot: true } : {}),
+        ...(options.domCallbackAuthority ? { domCallbackAuthority: options.domCallbackAuthority } : {}),
+      },
+      "closure",
+      { kind: "closure", signature },
+    );
+  }
+
+  emitClassValueNew(
+    input: Omit<Extract<IrInstr, { kind: "class.value.new" }>, "kind" | "result" | "resultType" | "alloc">,
+  ): IrValueId {
+    const resultType: IrType = { kind: "callable", signature: input.signature };
+    const mismatch = classValueNewMismatch({ ...input, resultType }, (value) => this.typeOf(value));
+    if (mismatch) throw new Error(`IrFunctionBuilder: ${mismatch}`);
+    return this.emitAllocation({ kind: "class.value.new", ...input }, "closure", resultType);
   }
 
   /**
@@ -1169,18 +1177,7 @@ export class IrFunctionBuilder {
    * unwraps it back to the ValType at lowering time.
    */
   emitRefCellNew(value: IrValueId, inner: ValType): IrValueId {
-    const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "boxed", inner: irVal(inner) };
-    this.valueTypes.set(result, resultType);
-    const alloc = this.allocId("refcell", resultType);
-    this.pushInstr({
-      kind: "refcell.new",
-      value,
-      result,
-      resultType,
-      alloc,
-    });
-    return result;
+    return this.emitAllocation({ kind: "refcell.new", value }, "refcell", { kind: "boxed", inner: irVal(inner) });
   }
 
   /**
@@ -1239,22 +1236,16 @@ export class IrFunctionBuilder {
         `IrFunctionBuilder: class.new arg count ${args.length} != constructor arity ${shape.constructorParams.length} (func ${this.id.name}, class ${shape.className})`,
       );
     }
-    const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "class", shape };
-    this.valueTypes.set(result, resultType);
-    // The ctor body allocates internally (black-box per #1586 non-goals); the
-    // site is the constructing call, kind "object".
-    const alloc = this.allocId("object", resultType);
-    this.pushInstr({
-      kind: "class.new",
-      shape,
-      ...(shape.constructorTarget ? { target: shape.constructorTarget } : {}),
-      args: [...args],
-      result,
-      resultType,
-      alloc,
-    });
-    return result;
+    return this.emitAllocation(
+      {
+        kind: "class.new",
+        shape,
+        ...(shape.constructorTarget ? { target: shape.constructorTarget } : {}),
+        args: [...args],
+      },
+      "object",
+      { kind: "class", shape },
+    );
   }
 
   /**

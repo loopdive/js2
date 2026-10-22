@@ -1,4 +1,6 @@
 import { projectAstSourceFacts } from "./ast-source-facts.js";
+import { directIrCallableReferences } from "./core/callable-operands.js";
+import { forEachSemanticIrInstruction } from "./core/nodes.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Integration point between the legacy codegen pipeline and the IR path.
@@ -894,7 +896,12 @@ function mergePreparedScopeLookups(
 function exactAccessorWritebackGlobals(
   instrs: readonly IrInstr[],
   valueParam: IrValueId,
-): { readonly valueGlobalBindingId: IrBindingId; readonly tdzGlobalBindingId?: IrBindingId } | undefined {
+):
+  | {
+      readonly valueGlobalBindingId: IrBindingId;
+      readonly tdzGlobalBindingId?: IrBindingId;
+    }
+  | undefined {
   const write = instrs.at(-1);
   if (write?.kind !== "global.set" || write.target.binding.kind !== "source" || write.value !== valueParam) {
     return undefined;
@@ -5975,8 +5982,8 @@ function hasExportModifier(fn: ts.FunctionDeclaration): boolean {
 /**
  * (#3551) Scan an IR function for any exact unit-bound symbolic reference to
  * one of `unitIds`.
- * `IrFuncRef` has exactly two carriers in the instruction set — direct `call`
- * targets and `closure.new` lifted-func refs — and terminators carry none.
+ * Explicit calls and callable allocations retain their exact symbolic refs;
+ * terminators carry none.
  * Returns the first referenced unit and its compatibility label (for the
  * withdrawal detail), or undefined when the body references none of them.
  * Runtime/import/intrinsic/support bindings with a lookalike name are
@@ -5987,19 +5994,15 @@ export function findReferencedWithdrawnIrUnit(
   unitIds: ReadonlySet<IrUnitId>,
 ): { readonly unitId: IrUnitId; readonly name: string } | undefined {
   let found: { readonly unitId: IrUnitId; readonly name: string } | undefined;
-  for (const block of fn.blocks) {
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        if (found) return;
-        const ref =
-          nested.kind === "call" ? nested.target : nested.kind === "closure.new" ? nested.liftedFunc : undefined;
-        if (ref?.binding.kind === "unit" && unitIds.has(ref.binding.unitId)) {
-          found = { unitId: ref.binding.unitId, name: ref.name };
-        }
-      });
-      if (found) return found;
+  forEachSemanticIrInstruction(fn, (instruction) => {
+    if (found) return;
+    for (const ref of directIrCallableReferences(instruction)) {
+      if (ref.binding.kind === "unit" && unitIds.has(ref.binding.unitId)) {
+        found = { unitId: ref.binding.unitId, name: ref.name };
+        break;
+      }
     }
-  }
+  });
   return found;
 }
 
@@ -8282,12 +8285,8 @@ function recordOwnerPreparationFailures(
 
 function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
   switch (instr.kind) {
-    case "call":
-      return instr.target;
     case "intrinsic":
       return instr.provider?.kind === "callable" ? instr.provider.target : undefined;
-    case "closure.new":
-      return instr.liftedFunc;
     case "class.call":
     case "class.super_init":
     case "class.super_call":
@@ -8342,13 +8341,19 @@ function preregisterCallableProviders(
     for (const instrs of instructionBuffers) {
       for (const root of instrs) {
         forEachInstrDeep(root, (instr) => {
-          const ref = callableProviderRef(instr);
-          if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
-          try {
-            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
-          } catch (error) {
-            if (!failures.has(owner.unitId)) {
-              failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
+          const references = directIrCallableReferences(instr);
+          const provider = references.length ? undefined : callableProviderRef(instr);
+          for (const ref of provider ? [provider] : references) {
+            if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") continue;
+            try {
+              resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
+            } catch (error) {
+              if (!failures.has(owner.unitId)) {
+                failures.set(owner.unitId, {
+                  owner,
+                  outcome: classifyIrFailure(error, "resolve"),
+                });
+              }
             }
           }
         });

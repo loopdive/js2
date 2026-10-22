@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { forEachSemanticIrInstruction } from "./core/nodes.js";
+import { directIrCallableReferences } from "./core/callable-operands.js";
 //
 // #3518 package C — the backend consumer of the production `PreparedIrProgram`
 // (package A's schema, acceptance and emission types), in ONE module so that
@@ -210,10 +212,6 @@ function locate(program: PreparedIrProgram, unitId: IrUnitId, failure: IrPrepara
   return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
 }
 
-function instructionBuffers(fn: IrFunction) {
-  return [...fn.blocks.map((block) => block.instrs), ...(fn.asyncPlan?.states.map((state) => state.body) ?? [])];
-}
-
 function selectProjection(
   program: PreparedIrProgram,
   options: PreparedIrBackendOptions,
@@ -343,14 +341,10 @@ export function acceptPreparedIrProgram(
         missing = `${what} unit body ${ref.binding.unitId}, which the ${options.backend}:${options.target} projection does not carry`;
       }
     };
-    for (const buffer of instructionBuffers(fn)) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call") check(instruction.target, "calls");
-          else if (instruction.kind === "closure.new") check(instruction.liftedFunc, "captures");
-        });
-      }
-    }
+    forEachSemanticIrInstruction(fn, (instruction) => {
+      for (const reference of directIrCallableReferences(instruction))
+        check(reference, instruction.kind === "call" ? "calls" : "captures");
+    });
     if (missing !== undefined) {
       return locate(program, fn.unitId, {
         kind: "invariant",

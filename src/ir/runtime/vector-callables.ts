@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import { irCallableBindingKey, irIntrinsicFuncRef } from "../core/callable-bindings.js";
 import { forEachInstrDeep, type IrFunction, type IrValueId, type IrInstr } from "../core/nodes.js";
@@ -104,8 +105,11 @@ export function collectVectorCallableDemands(functions: readonly IrFunction[]): 
         for (const root of body)
           forEachInstrDeep(root, (instr) => {
             const position = ordinal++;
-            const ref =
-              instr.kind === "call" ? instr.target : instr.kind === "closure.new" ? instr.liftedFunc : undefined;
+            const ref = directIrCallableReferences(instr).find(
+              (reference) =>
+                (reference.binding.kind === "runtime" && reference.binding.symbol === SYMBOL) ||
+                irVectorCallableDeclaration(reference),
+            );
             if (!ref) return;
             if (ref.binding.kind === "runtime" && ref.binding.symbol === SYMBOL)
               throw new IrVectorCallableError(fn.unitId, "vector callable requires its exact intrinsic binding");

@@ -600,3 +600,82 @@ This remains an unpublished local prerequisite checkpoint. Executable class
 values, lexical TDZ/cells, retained method captures, constructor dispatch,
 prototype descriptors, source M0 and true linear execution remain required.
 Published predecessor heads, HOLDs and the queue are unchanged.
+
+### Executable constructor-value allocation structure (2026-10-22)
+
+Add `class.value.new` as a fresh allocation leaf, distinct from instance
+`class.new`. Its explicit inputs are the exact class Call stub binding,
+caller signature, captured Construct closure, actual constructor parent and
+already-populated own property bag. The result uses the existing native
+`callable` boundary representation; source/template identity remains with
+class-definition planning and the exact source Construct closure. The allocator
+is an explicit symbolic callable dependency, never a hidden codegen singleton.
+
+Core traversal, operand rewriting, effect/provenance checks, verification,
+prepared dependency collection and generic lowering must all see the new leaf.
+The existing callable/closure machinery owns signatures and captures; no new
+capture walker or binding registry. A canonical runtime layout beside closure
+layouts carries a private Construct-closure field and RealmObjectState. The
+Construct field has a mutable reference type so it cannot structurally alias
+immutable source captures or mutable integer builtin metadata. The reservation
+owner authenticates both prerequisite owners and the exact issued layout/body.
+
+Exercise real allocation and retained Construct closures, explicit prototypes,
+fresh identity, callable header behavior, displaced indices and tampering. The
+source frontend remains unclaimed until the complete class-definition sequence
+installs descriptors, bindings/TDZ and methods correctly. This leaf alone is not
+the class vertical milestone. Linear legality must report its actual missing
+function-reference/closure capability rather than treating WASI as linear.
+
+Core class node declarations now live in `core/class-nodes.ts`; shared callable
+reference and semantic-body visitors replace repeated scans. Allocation
+bookkeeping is shared by object, closure, class and ref-cell builders; class
+allocation lowering and operand remapping have their own owners. The neutrality
+verdict table must scan the canonical class module and classify the new explicit
+allocation leaf. A scratch-only classification refresh must preserve
+`unresolved` and `jsInCore`. The committed classification record remains
+unchanged under the main-only baseline-writer rule; the resulting record-drift
+gate failure must be reported until that publication dependency is resolved.
+Size/function/cycle/performance limits are not changed.
+
+
+### Allocation prerequisite qualification — 2026-10-22
+
+The executable allocation leaf is locally qualified against exact parent
+`dfa5a9936eea0c40e2f8dab2d18f3fa2bf4e68f0`. Its physical owner retains the
+actual Construct closure, parent and own bag, authenticates declarations and
+completion, and reports only `class-value-allocation-only`. Call in the test
+fixture is a marker stub, not the ECMAScript class-call TypeError behavior.
+The decoded variant replays the source donor before constructing the allocation
+IR; it is not class-leaf codec replay. Complete Prepared publication still
+refuses the leaf until exact Call/allocator ABI and resource planning exist.
+
+- Allocation tests 8/8, callable/retention/carrier/state contracts 8/8, canonical
+  class-kind population controls 5/5. Adjacent allocation/ownership/escape tests
+  28/28; older native concrete/protocol/class-binding controls 128/128.
+- Independent adversarial review: 208 tests across eight files pass. Initial
+  codec execution without V8 exnref support failed 1/27; the required engine
+  flag produces 27/27. Review and original failure logs remain in
+  `.tmp/review-class-value-leaf-audit/`. Four real defect groups were fixed:
+  refusal fallthrough, callable references, retained operand ownership and
+  embedded signature carrier rewrites. Later state/reference hardening has
+  permanent distinct-unit controls and root execution evidence.
+- Standard gc corpus is 14/14 byte-identical to exact parent. Typecheck,
+  configured lint, dialect, layering, cycle, flat-directory, optimization
+  retirement, coercion, oracle and default/current-main LOC/function gates
+  pass. The resource-data assertion shares the existing declaration owner's
+  exact comparator; it introduces no new backend-to-IR edge or growth grant.
+- Class lifecycle remains **42 passed / 98 failed / 140 total**. Neither full
+  source class support nor true-linear execution has improved in this slice.
+- Kind classification is 98 kinds, 56 neutral, 39 JS, 3 unresolved and zero
+  JS-in-core in the disposable refreshed record. The committed record is
+  unchanged: its ordinary gate reports record drift. In independently copied
+  exact-parent/candidate trees, scratch-only record refresh leaves the same
+  two frozen 85-kind historical assertions failing: parent 56/58 pass,
+  candidate 59/61 pass (three additional source-population controls). Those
+  assertions were retained; no history or semantic ratchet was relaxed.
+
+Machine-readable evidence: `.tmp/7139-class-value-checkpoint-evidence.json`;
+root logs `.tmp/7139-class-value-*`. Published heads, HOLDs and queue remain
+unchanged. Full class-definition execution and exact Prepared admission are
+required next; this checkpoint does not close the class milestone or #3518.

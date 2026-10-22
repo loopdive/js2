@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import type { PreparedIrRuntimeManifest } from "./contracts/prepared.js";
 export type { PreparedIrRuntimeManifest } from "./contracts/prepared.js";
@@ -823,8 +824,8 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
       const collectBuffer = (buffer: readonly IrInstr[]): void => {
         for (const root of buffer) {
           forEachInstrDeep(root, (instr) => {
-            if (instr.kind === "call" || instr.kind === "closure.new") {
-              const declaration = irRuntimeCallableDeclaration(instr.kind === "call" ? instr.target : instr.liftedFunc);
+            for (const reference of directIrCallableReferences(instr)) {
+              const declaration = irRuntimeCallableDeclaration(reference);
               if (
                 declaration &&
                 (declaration.feature === "error.reference.construct" ||

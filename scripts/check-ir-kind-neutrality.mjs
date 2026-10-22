@@ -179,6 +179,7 @@ import path from "node:path";
 import ts from "typescript";
 
 const NODES = "src/ir/core/nodes.ts";
+const CLASS_NODES = "src/ir/core/class-nodes.ts";
 const LEGACY_NODES = "src/ir/nodes.ts";
 const VALUE_REFERENCES = "src/ir/value-references.ts";
 const CORE_TYPES = "src/ir/core/types.ts";
@@ -516,22 +517,31 @@ const VERDICTS = {
 
   // ── core: classes ────────────────────────────────────────────────────────
   //
-  // #4551 calls this family "genuinely open — single-inheritance prototype
-  // flavoured, but shared with Java/Kotlin/Dart". The evidence sharpens that: it
-  // is not prototype-flavoured at all. `IrClassShape` is nominal (classId,
-  // fields, methods, constructorParams, one `parent`), instances are WasmGC
-  // structs with a hidden tag at slot 0, dispatch is a direct call to a resolved
-  // slot, and the JS-only machinery — prototype objects, `Symbol.hasInstance`,
-  // `new.target`, property descriptors, the derived-`this` TDZ — has no
-  // representation anywhere in the family. Where a JS class cannot be projected
-  // onto that model (an externref-backed parent), from-ast declines and demotes
-  // to legacy rather than widening the IR. Every member is neutral.
+  // Existing instance operators use nominal IrClassShape layouts and direct
+  // dispatch. Their neutral verdicts do not establish ECMAScript class
+  // definition semantics. The separate class.value.new leaf retains explicitly
+  // evaluated constructor storage/parent/Construct operands; it does not apply
+  // heritage, descriptor or binding protocols itself.
+  "class.value.new": {
+    verdict: "neutral",
+    why: "Allocates a callable carrier from explicit Call, Construct, own-storage and parent operands. Heritage validation, descriptors, TDZ and class evaluation order remain explicit producer work.",
+    residual:
+      "The existing callable signature/arity convention remains a value-model seam; this leaf does not certify a complete class definition or its Prepared resource ABI.",
+    evidence: [
+      {
+        file: "src/ir/backend/class-allocation.ts",
+        quote: "emitter.emitCall(resolver.resolveFunc(instruction.allocator), out);",
+      },
+      { file: CLASS_NODES, quote: "Fresh class constructor value; source captures live in its Construct closure." },
+      { file: CLASS_NODES, quote: "Explicit selected allocation provider; no ambient class-value resolver." },
+    ],
+  },
   "class.new": {
     verdict: "neutral",
     why: "Allocates a nominal class instance through the class-owned constructor wrapper. No `new.target`, no constructor-returns-object override.",
     evidence: [
       { file: CORE_TYPES, quote: "export interface IrClassShape {" },
-      { file: NODES, quote: "Construct a class instance through the class-owned AST-free" },
+      { file: CLASS_NODES, quote: "Construct a class instance through the class-owned AST-free" },
     ],
   },
   "class.super_init": {
@@ -540,27 +550,27 @@ const VERDICTS = {
       "Runs the parent's initializer on an ALREADY-ALLOCATED `self`. That is the C++/Java " +
       "allocate-then-initialize order, which is precisely NOT ECMAScript's derived-constructor " +
       "protocol (where the base creates `this` and it is in TDZ until `super()` returns).",
-    evidence: [{ file: NODES, quote: "Runs the PARENT class's" }],
+    evidence: [{ file: CLASS_NODES, quote: "Runs the PARENT class's" }],
   },
   "class.super_call": {
     verdict: "neutral",
     why: "Statically dispatches to the parent's method slot, bypassing the override — the same operation as Java's `super.m()`.",
-    evidence: [{ file: NODES, quote: "Static-dispatches" }],
+    evidence: [{ file: CLASS_NODES, quote: "Static-dispatches" }],
   },
   "class.get": {
     verdict: "neutral",
     why: "Struct field read by declared name.",
-    evidence: [{ file: NODES, quote: "Read a named field from a class instance." }],
+    evidence: [{ file: CLASS_NODES, quote: "Read a named field from a class instance." }],
   },
   "class.set": {
     verdict: "neutral",
     why: "Struct field write by declared name.",
-    evidence: [{ file: NODES, quote: "Write a named field on a class instance." }],
+    evidence: [{ file: CLASS_NODES, quote: "Write a named field on a class instance." }],
   },
   "class.call": {
     verdict: "neutral",
     why: "Virtual dispatch against the receiver's shape with the receiver prepended. Accessors are a member kind, shared with Kotlin/C#/Dart.",
-    evidence: [{ file: NODES, quote: "Invoke an instance method or accessor." }],
+    evidence: [{ file: CLASS_NODES, quote: "Invoke an instance method or accessor." }],
   },
   "class.instanceof": {
     verdict: "neutral",
@@ -569,12 +579,12 @@ const VERDICTS = {
       "statically `IrType.class`, and the test compares a hidden tag against the target's tag plus " +
       "its transitive children. No prototype chain walk, no `Symbol.hasInstance`, no TypeError on a " +
       "non-callable right-hand side. This is Java's `instanceof` / Kotlin's `is`.",
-    evidence: [{ file: NODES, quote: "compare against the TARGET class's tag + all descendant tags" }],
+    evidence: [{ file: CLASS_NODES, quote: "compare against the TARGET class's tag + all descendant tags" }],
   },
   "class.static_call": {
     verdict: "neutral",
     why: "Direct call to a static member slot, no receiver.",
-    evidence: [{ file: NODES, quote: "Static method call" }],
+    evidence: [{ file: CLASS_NODES, quote: "Static method call" }],
   },
 
   // ── core: slots ──────────────────────────────────────────────────────────
@@ -1062,6 +1072,7 @@ const dialectFiles = (() => {
 // Canonical sources are mandatory, not optional fallbacks to the facades.
 const sourceFiles = [
   NODES,
+  CLASS_NODES,
   LEGACY_NODES,
   VALUE_REFERENCES,
   CORE_TYPES,

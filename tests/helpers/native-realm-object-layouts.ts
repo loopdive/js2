@@ -43,9 +43,13 @@ export const as = (index: number, typeIdx: number): Instr[] => [
   { op: "ref.cast", typeIdx },
 ];
 
-export function realmLayoutFoundation(displaced = false, extensible = true) {
+export function realmLayoutFoundation(displaced = false, extensible = true, imports = false) {
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
+  if (imports) {
+    tx.reserveFunctionImport("control:import-function", "control", "noop", { params: [], results: [] });
+    tx.reserveGlobalImport("control:import-global", "control", "sentinel", i32, false);
+  }
   const prefix = displaced
     ? {
         type: tx.reserveType("control:prefix:type", {
@@ -68,8 +72,8 @@ export function realmLayoutFoundation(displaced = false, extensible = true) {
   );
   return { module, tx, prefix, requirements, objects, objectPlan, dependencies, plan };
 }
-export function realmLayoutFixture(displaced = false) {
-  const f = realmLayoutFoundation(displaced);
+export function realmLayoutFixture(displaced = false, imports = false) {
+  const f = realmLayoutFoundation(displaced, true, imports);
   const pack = reserveNativeRealmObjectLayouts(f.tx, "realm-layout", f.dependencies, f.plan);
   return { ...f, pack };
 }
@@ -173,8 +177,8 @@ export const STATE_SOURCE = `export function makeCaptured(seed: number): (value:
 export function makeEmpty(): (value: number) => number {
   return function empty(value: number): number { return value + 7; };
 }`;
-export function realmSourceFixture(displaced = false, decoded = false) {
-  const f = realmLayoutFixture(displaced),
+export function realmSourceFixture(displaced = false, decoded = false, imports = false) {
+  const f = realmLayoutFixture(displaced, imports),
     program = prepareGetterProgram(STATE_SOURCE, decoded);
   const projection = program.runtime[0]!,
     requirements = planNativeSourceClosureRequirements(program, projection);
@@ -195,9 +199,8 @@ export function realmSourceFixture(displaced = false, decoded = false) {
   return { ...f, program, projection, requirements, vectorPlan, vectors, carriers, source };
 }
 /** Both factory bodies and lifted bodies are lowered from the genuine retained source. */
-export function realmSourceRuntime(displaced = false, decoded = false) {
-  const f = realmSourceFixture(displaced, decoded),
-    { tx, source, requirements } = f;
+export function reserveRealmSourceExecution(f: ReturnType<typeof realmSourceFixture>) {
+  const { tx, source, requirements } = f;
   const slots = new Map<IrUnitId, FunctionReservation>(),
     signatures = new Map<IrUnitId, PhysicalFunctionSignature>();
   for (const unit of requirements.units) {
@@ -233,7 +236,11 @@ export function realmSourceRuntime(displaced = false, decoded = false) {
       }),
     };
   });
-  tx.freezeReservations();
+  return { f, slots, signatures, factories, controls, call, readers };
+}
+export function fillRealmSourceExecution(execution: ReturnType<typeof reserveRealmSourceExecution>) {
+  const { f, slots, signatures, factories, controls, call, readers } = execution;
+  const { tx, source } = f;
   bindNativeSourceClosureUnits(tx, source, slots);
   fillRealmLayoutFixture(f);
   controls.fill();
@@ -287,6 +294,14 @@ export function realmSourceRuntime(displaced = false, decoded = false) {
   tx.defineExport("control:export:call", "call", call);
   requireCompletedNativeSourceClosures(tx, source);
   requireCompletedNativeRealmObjectLayouts(tx, f.pack);
+  return resolver;
+}
+export function realmSourceRuntime(displaced = false, decoded = false) {
+  const f = realmSourceFixture(displaced, decoded),
+    { tx } = f;
+  const execution = reserveRealmSourceExecution(f);
+  tx.freezeReservations();
+  fillRealmSourceExecution(execution);
   tx.seal();
   const wasm = new WebAssembly.Module(emitBinary(f.module) as BufferSource);
   return { f, wasm, instance: () => new WebAssembly.Instance(wasm).exports as Record<string, (...args: any[]) => any> };

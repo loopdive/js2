@@ -388,6 +388,11 @@ export type NativeResourceDeclarationObservation =
       readonly signature: PhysicalFunctionSignature;
     };
 
+/** Authenticate recipe and completion data without exposing a Prepared-program dependency to resource owners. */
+export function assertNativeResourceDataMatches(expected: unknown, actual: unknown, detail: string): void {
+  if (preparedIrDataMismatch(expected, actual) !== undefined) fail(detail);
+}
+
 /** Descriptive comparison only: the caller authenticates inventory and reads actual module signatures. */
 export function compareNativeResourceDeclarationShape(
   tx: PhysicalModuleReservations,
@@ -422,5 +427,5 @@ export function compareNativeResourceDeclarationShape(
       signature: instantiateNativeDeclaredSignature(tx, declaration.signature, types),
     };
   }
-  if (preparedIrDataMismatch(observed, expected) !== undefined) fail("resource descriptor/signature mismatch");
+  assertNativeResourceDataMatches(expected, observed, "resource descriptor/signature mismatch");
 }

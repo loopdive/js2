@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { forEachSemanticIrInstruction } from "./core/nodes.js";
+import { directIrCallableReferences } from "./core/callable-operands.js";
 //
 // #3518 package C — the source-free PHYSICAL SETUP PLAN for one accepted
 // backend/target projection of a `PreparedIrProgram`.
@@ -1403,52 +1405,46 @@ export function planPhysicalSetup(
       formatter && fn === formatter.support.functions[0]
         ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
         : fn.unitId;
-    for (const buffer of [
-      ...fn.blocks.map((block) => block.instrs),
-      ...(fn.asyncPlan?.states.map((s) => s.body) ?? []),
-    ]) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call" || instruction.kind === "closure.new") {
-            const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
-            if (!reserved.has(irCallableBindingKey(ref.binding))) {
-              gaps.add(
-                `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
-            if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
-              gaps.add(
-                `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "intrinsic") {
-            const provider = instruction.provider;
-            if (!provider)
-              gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-            else if (
-              missingIntrinsicMaterialization(
-                instruction,
-                provider,
-                reserved,
-                projection,
-                nativeStrings,
-                hostNumberBoundary,
-              )
-            ) {
-              gaps.add(
-                `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "throw" || instruction.kind === "try") {
-            exceptionRequired = true;
+    forEachSemanticIrInstruction(fn, (instruction) => {
+      const references = directIrCallableReferences(instruction);
+      if (references.length) {
+        for (const ref of references) {
+          if (!reserved.has(irCallableBindingKey(ref.binding))) {
+            gaps.add(
+              `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
+              diagnosticUnit,
+            );
           }
-        });
+        }
+      } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
+        if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
+          gaps.add(
+            `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "intrinsic") {
+        const provider = instruction.provider;
+        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
+        else if (
+          missingIntrinsicMaterialization(
+            instruction,
+            provider,
+            reserved,
+            projection,
+            nativeStrings,
+            hostNumberBoundary,
+          )
+        ) {
+          gaps.add(
+            `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "throw" || instruction.kind === "try") {
+        exceptionRequired = true;
       }
-    }
+    });
   }
 
   const startup = planPhysicalStartup(program, bodies, exportNames, gaps);

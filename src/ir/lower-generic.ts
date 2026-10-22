@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { emitIrClassAllocation } from "./backend/class-allocation.js";
 //
 // IR → Wasm emission pass.
 //
@@ -2335,18 +2336,10 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       // Slice 4 (#1169d): class ops.
-      case "class.new": {
-        const cl = resolver.resolveClass?.(instr.shape);
-        if (!cl) {
-          throw new Error(`ir/lower: resolver cannot lower class ${instr.shape.className} (${func.name})`);
-        }
-        for (const a of instr.args) emitValue(a, out);
-        emitter.pushRaw(out, {
-          op: "call",
-          funcIdx: resolver.resolveFunc(instr.target ?? cl.constructorFunc),
-        });
+      case "class.value.new":
+      case "class.new":
+        emitIrClassAllocation(instr, resolver, emitter, emitValue, func.name, out);
         return;
-      }
       case "class.get": {
         const recvT = typeOf(instr.value);
         if (recvT.kind !== "class") {
@@ -3964,6 +3957,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "object.set":
       return [instr.value, instr.newValue];
     // Slice 3 (#1169c): closure / ref-cell ops.
+    case "class.value.new":
+      return [instr.properties, instr.construct, instr.parent];
     case "closure.new":
       return instr.captures;
     case "closure.cap":

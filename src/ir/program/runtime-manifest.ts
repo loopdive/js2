@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 /** Source-free runtime preparation and validated replay attachment. Physical helpers remain backend-owned. */
 import {
@@ -189,8 +190,8 @@ export function prepareWholeProgramRuntimeManifest(
         forEachInstrDeep(root, (instr) => {
           if (instr.kind === "intrinsic" && INTRINSIC_DEFINITIONS[instr.id])
             note(INTRINSIC_DEFINITIONS[instr.id].feature);
-          if (instr.kind === "call" || instr.kind === "closure.new") {
-            const declaration = irRuntimeCallableDeclaration(instr.kind === "call" ? instr.target : instr.liftedFunc);
+          for (const reference of directIrCallableReferences(instr)) {
+            const declaration = irRuntimeCallableDeclaration(reference);
             if (declaration) note(declaration.feature);
           }
         });

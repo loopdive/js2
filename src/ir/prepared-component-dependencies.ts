@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "./core/callable-operands.js";
+import { explicitIrClassShapes } from "./core/class-nodes.js";
 
 import {
   arePairedIrModuleGlobalBindingIds,
@@ -691,6 +693,8 @@ function implicitSupportRequirement(
       return instr.kind === "intrinsic" && !instr.provider
         ? `${instr.kind} has no provider from the frozen runtime manifest`
         : null;
+    case "class.value.new":
+      return "class.value.new requires its exact class-value physical resource owner";
     case "global.get":
     case "global.set":
     case "unary":
@@ -722,27 +726,6 @@ function implicitSupportRequirement(
       const exhaustive: never = instr;
       return `unknown IR instruction ${(exhaustive as { readonly kind?: unknown }).kind ?? "<missing>"}`;
     }
-  }
-}
-
-function explicitClassShapes(instr: IrInstr, valueTypes: ReadonlyMap<IrValueId, IrType>): readonly IrClassShape[] {
-  switch (instr.kind) {
-    case "class.new":
-    case "class.static_call":
-      return [instr.shape];
-    case "class.super_init":
-    case "class.super_call":
-      return [instr.parentShape];
-    case "class.instanceof":
-      return [instr.targetShape];
-    case "class.get":
-    case "class.set":
-    case "class.call": {
-      const receiver = valueTypes.get(instr.kind === "class.call" ? instr.receiver : instr.value);
-      return receiver?.kind === "class" ? [receiver.shape] : [];
-    }
-    default:
-      return [];
   }
 }
 
@@ -1416,7 +1399,7 @@ function collectFunctionEvidence(
     const classAccessorWriteback = input.classAccessorWritebacks?.get(terminalOwnerUnitId);
     forEachInstrDeep(instr, (nested) => {
       if (nested.resultType) collectType(nested.resultType);
-      for (const shape of explicitClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
+      for (const shape of explicitIrClassShapes(nested, valueTypes)) collectClassShape(shape, classes, seenTypes);
       const support = preparedInstructionSupport(
         nested,
         terminalOwnerUnitId,
@@ -1477,18 +1460,18 @@ function collectFunctionEvidence(
         if (nested.kind === "gen.setReturn" && nested.boxProvider) {
           recordExternalCallable(evidence, nested.boxProvider, input.abi, ownership);
         }
-      } else if (nested.kind === "closure.new") {
-        if (nested.liftedFunc.binding.kind === "unit") {
-          recordUnitReference(
-            evidence,
-            nested.liftedFunc.binding.unitId,
-            functionsByUnitId,
-            input.terminalUnitIds,
-            input.abi,
-            ownership,
-          );
-        } else {
-          recordExternalCallable(evidence, nested.liftedFunc, input.abi, ownership);
+      } else if (nested.kind === "closure.new" || nested.kind === "class.value.new") {
+        for (const target of directIrCallableReferences(nested)) {
+          if (target.binding.kind === "unit") {
+            recordUnitReference(
+              evidence,
+              target.binding.unitId,
+              functionsByUnitId,
+              input.terminalUnitIds,
+              input.abi,
+              ownership,
+            );
+          } else recordExternalCallable(evidence, target, input.abi, ownership);
         }
       } else if (nested.kind === "global.get" || nested.kind === "global.set") {
         recordGlobalReference(
@@ -1542,7 +1525,7 @@ function collectFunctionEvidence(
         nested.kind === "class.static_call" ||
         nested.kind === "class.new"
       ) {
-        const shape = explicitClassShapes(nested, valueTypes)[0];
+        const shape = explicitIrClassShapes(nested, valueTypes)[0];
         const target = nested.target;
         if (!target) {
           addFailure(evidence, {
