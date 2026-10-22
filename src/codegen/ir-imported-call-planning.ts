@@ -44,6 +44,7 @@ import { sourceFunctionDeclarationForHandle } from "./program-abi-source-callabl
 import { localGlobalIdx } from "./registry/imports.js";
 import { planProgramAbiFunctionValue } from "./program-abi-planning.js";
 import { makeIrFunctionMemberClosures } from "./function-member-closure-planning.js";
+import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
 import { computeClosureWrapperSig } from "./closures.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
@@ -1024,6 +1025,7 @@ export function planIrFunctionValueResolverState(
     ? makeIrFunctionMemberClosures(ctx, identityContext, functionObjectValues, {
         computeSignature: (expression) => computeClosureWrapperSig(ctx, expression),
         dynamicCarrierIsExternref: () => resolveIrDynamicCarrierType(ctx).kind === "externref",
+        fnctorPrototypeMethodStruct: (expression) => resolveLiftedMethodThisStruct(ctx, expression),
         valueType,
         typeBindingKey: irTypeBindingKey,
       })

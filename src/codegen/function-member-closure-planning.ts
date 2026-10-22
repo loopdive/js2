@@ -9,7 +9,6 @@ import type { TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { peekFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { noteFunctionValueInhabitant } from "./closures/closure-type-sources.js";
-import { resolveLiftedMethodThisStruct } from "./fnctor-escape-gate.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 
 function physicalKey(types: readonly ValType[], result: ValType | null): string {
@@ -340,7 +339,13 @@ function planMemberClosure(
   // (#7106 Stage 4) A prototype method of an approved fnctor stays legacy's:
   // legacy pins its `this` to the fnctor struct and may build a typed-`this`
   // twin plus direct-call trampolines for it (#3683), none of which the IR does.
-  if (resolveLiftedMethodThisStruct(ctx, expression) !== undefined) return;
+  // Without the query (a bare service bundle), a chained `F.p.x` store is refused.
+  const fnctorStruct = operations.fnctorPrototypeMethodStruct
+    ? operations.fnctorPrototypeMethodStruct(expression)
+    : holder !== receiver
+      ? "unknown"
+      : undefined;
+  if (fnctorStruct !== undefined) return;
   // Otherwise `this` is bound once at entry through `dyn.current_this` —
   // legacy's lifted-closure `__current_this` ladder — in an open-body plan.
   const readsThis = bodyReadsThis(expression);
@@ -479,6 +484,12 @@ export interface FunctionMemberClosureServices {
     hasRestParam: boolean;
   };
   dynamicCarrierIsExternref(): boolean;
+  /**
+   * (#7106 Stage 4) The `$__fnctor_F` struct legacy pins a prototype method's
+   * `this` to (`resolveLiftedMethodThisStruct`), injected so this planner
+   * stays outside the fnctor-gate import cycle.
+   */
+  fnctorPrototypeMethodStruct?(expression: ts.FunctionExpression): string | undefined;
 }
 interface FunctionMemberClosureOperations extends FunctionMemberClosureServices {
   valueType(type: ValType): IrType;
