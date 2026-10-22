@@ -1460,3 +1460,21 @@ directories: `Number(` 684, `Number.POSITIVE_INFINITY` 133,
 existing arms), `from-ast.ts` (+~40), one option in the two bridge sites, a
 node-compared test per arm. No new IR kind, no new runtime symbol.
 
+### Lever C — `new Number(x)` and `(new Number(x)).toString(radix)` (measured 2026-10-22, not a pass-rate lever yet)
+
+The 37 «Number» module-init blockers of the ES5 sample are
+`test/built-ins/Number/prototype/toString/*`: `new Number(…)` ×574 and
+`Number.prototype.toString(2)` ×112, every test `pass` on legacy standalone.
+The selector refuses `new Number(x)` (`expr-new-ctor-unknown`); from-ast's
+`lowerPrimitiveWrapperConstruction` (#4208 S4) builds it as `extern:Object`,
+whose method calls resolve through the extern-class registry (no `Object`
+entry → demote). The dynamic route is closed too: `function f(x) { return
+x.toString(2); }` answers wrong for `f(5)` and throws for `f(new Number(5))`,
+`f(new Boolean(true))`, `f(new String("ab"))` — on BOTH lanes (legacy's
+`any`-receiver brand dispatch; the #7119 wrapper reproduces it, except that it
+throws where legacy answers wrong for the Number wrapper). Legacy passes these
+tests only because the SITE knows the receiver's checker type. So lever C is a
+typed wrapper-object carrier in the IR (or a native `any`-receiver fix for
+`toString(radix)` and wrapper objects in legacy's runtime first) — a slice of
+its own, not an admission arm.
+
