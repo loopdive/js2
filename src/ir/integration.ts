@@ -284,6 +284,7 @@ import {
 } from "./prepared-callable-resolution.js";
 export { exactPreparedUnitCallableBindingId } from "./prepared-callable-resolution.js";
 import { prepareIrVectorSupport } from "./prepared-vector-support.js";
+import { makeIrArrayElementFamilyClassifier } from "./array-methods/selection.js";
 import {
   makeIrArrayExpressionPredicate,
   makeIrDeclaredPrimitiveExpressionClassifier,
@@ -2517,6 +2518,7 @@ export function compileIrPathFunctions(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
@@ -2541,6 +2543,7 @@ export function compileIrPathFunctions(
       classifyPrimitiveExpression,
       classifyDeclaredPrimitiveExpression,
       isArrayExpression,
+      classifyArrayElementFamily,
       isRegExpExpression,
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
@@ -9140,6 +9143,8 @@ function preregisterDynamicSupport(
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
+  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
+  let usesOwnPropertyDescriptor = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
   const dynamicRuntimeNeeds = new Set<IrDynamicRuntimeNeed>();
   for (const entry of fns) {
@@ -9220,6 +9225,9 @@ function preregisterDynamicSupport(
                 break;
               case "__unbox_number":
                 usesRuntimeUnboxNumber = true;
+                break;
+              case "__getOwnPropertyDescriptor":
+                usesOwnPropertyDescriptor = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
               case IR_NATIVE_MAP_NEW_FN:
@@ -9340,6 +9348,17 @@ function preregisterDynamicSupport(
         [{ kind: "i32", boolean: true }],
       );
     }
+    flushLateImportShifts(ctx, null);
+  }
+  if (usesOwnPropertyDescriptor && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 propertyHelper) exactly legacy's registration for the stored
+    // alias (`call-object-builtins.ts`): `(externref, externref) -> externref`.
+    ensureLateImport(
+      ctx,
+      "__getOwnPropertyDescriptor",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
     flushLateImportShifts(ctx, null);
   }
   if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
