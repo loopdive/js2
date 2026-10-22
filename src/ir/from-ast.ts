@@ -260,7 +260,7 @@ import {
 // `JsTag` enum import this file used to carry is gone: the producer names its
 // partitions through `JS_TAG_IDS` throughout.
 import { JS_TAG_IDS } from "./js-tag-domain.js";
-import { uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import {
   exactClosureLiftedName,
   tryLowerPromiseDelayCall,
@@ -7732,23 +7732,25 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   const ownPropertyTest =
     expr.arguments.length === 2 ? uncurriedObjectAliasMethod(expr.expression, (name) => cx.scope.has(name)) : undefined;
   if (ownPropertyTest !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
-    const carriers: IrValueId[] = [];
-    for (const argument of expr.arguments) {
-      let value = lowerExpr(argument, cx, irDynamic());
-      const actual = cx.builder.typeOf(value);
-      if (actual.kind !== "dynamic") {
-        const boxed = boxConcreteToDynamic(value, actual, argument, cx);
-        if (boxed === null) {
-          demoteToLegacy(
-            "operand-coercion-unsupported",
-            `ir/from-ast: ${ownPropertyTest} alias operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
-          );
-        }
-        value = boxed;
-      }
-      carriers.push(value);
-    }
+    const carriers = lowerAliasCarrierOperands(expr.arguments, ownPropertyTest, cx);
     return cx.builder.emitDynOwnProperty(carriers[0]!, carriers[1]!, ownPropertyTest);
+  }
+  // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias:
+  // both operands as carriers, then the object runtime's native provider — a
+  // dynamic descriptor (or undefined), exactly legacy's
+  // `tryCompileStoredObjectBuiltinCall` lowering.
+  const descriptorAlias =
+    expr.arguments.length === 2
+      ? storedObjectStaticAliasMethod(expr.expression, (name) => cx.scope.has(name))
+      : undefined;
+  if (descriptorAlias !== undefined && cx.resolver?.stringIsExternref?.() !== true) {
+    const carriers = lowerAliasCarrierOperands(expr.arguments, descriptorAlias, cx);
+    const descriptor = cx.builder.emitCall(irRuntimeFuncRef("__getOwnPropertyDescriptor"), carriers, irDynamic());
+    if (descriptor === null) {
+      // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
+      throw new Error(`ir/from-ast: __getOwnPropertyDescriptor produced no value in ${cx.funcName}`);
+    }
+    return descriptor;
   }
   const imported = cx.importedCalls?.get(expr);
   if (imported) return lowerImportedCall(expr, imported, cx, statementPosition);
@@ -8063,6 +8065,31 @@ function lowerClosureCall(
  * it as mutable), wrap it here and rebind `cx.scope[name]` so subsequent
  * outer reads/writes go through the cell.
  */
+/**
+ * (#7106 S1g / propertyHelper) Lower the operands of a certified Object alias
+ * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
+ * parity: the selector admits only boxable operands) when one cannot box.
+ */
+function lowerAliasCarrierOperands(args: ts.NodeArray<ts.Expression>, aliasName: string, cx: LowerCtx): IrValueId[] {
+  const carriers: IrValueId[] = [];
+  for (const argument of args) {
+    let value = lowerExpr(argument, cx, irDynamic());
+    const actual = cx.builder.typeOf(value);
+    if (actual.kind !== "dynamic") {
+      const boxed = boxConcreteToDynamic(value, actual, argument, cx);
+      if (boxed === null) {
+        demoteToLegacy(
+          "operand-coercion-unsupported",
+          `ir/from-ast: ${aliasName} alias operand of ${describeIrType(actual)} has no dynamic carrier in ${cx.funcName}`,
+        );
+      }
+      value = boxed;
+    }
+    carriers.push(value);
+  }
+  return carriers;
+}
+
 function lowerNestedFuncCall(
   binding: {
     kind: "nestedFunc";
@@ -13475,6 +13502,25 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     cx.scope.set(id.text, { ...storage, stringEncoding: proof.resultEncoding });
     return;
   }
+  // (#7106 Stage 4) `message += …` on a dynamic slot (assert.js's reassigned
+  // `message` parameter): GetValue(lhs) first, then the RHS, then the SAME
+  // dynamic `+` the binary operator lowers through (`IR_DYN_ADD_FN`).
+  if (compoundOp === ts.SyntaxKind.PlusEqualsToken && logicalType.kind === "dynamic" && storage.kind === "slot") {
+    const lhs = cx.builder.emitSlotReadAs(storage.slotIndex, logicalType);
+    const rhsValue = lowerExpr(rhs, cx, logicalType);
+    const rhsType = cx.builder.typeOf(rhsValue);
+    const dynamicRhs = rhsType.kind === "dynamic" ? rhsValue : boxConcreteToDynamic(rhsValue, rhsType, rhs, cx);
+    if (dynamicRhs === null) {
+      demoteToLegacy(
+        "compound-assign-unsupported",
+        `ir/from-ast: dynamic "${id.text} +=" operand ${describeIrType(rhsType)} has no carrier (${cx.funcName})`,
+      );
+    }
+    const added = cx.builder.emitCall(irRuntimeFuncRef(IR_DYN_ADD_FN), [lhs, dynamicRhs], irDynamic());
+    if (added === null) throw new Error(`ir/from-ast: dynamic '+=' produced no result in ${cx.funcName}`);
+    cx.builder.emitSlotWrite(storage.slotIndex, added);
+    return;
+  }
   const slotValType = asVal(logicalType);
   if (!slotValType || slotValType.kind !== "f64") {
     demoteToLegacy(
@@ -16869,6 +16915,35 @@ function liftClosureBody(
       };
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
+    }
+    // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
+    // `sameValue`) reads through mutable storage, seeded from its entry value
+    // — the same slot model a top-level function's reassigned parameter uses.
+    const reassigned = ts.isBlock(body) ? collectMutatedLetNamesFromBlock(body) : new Set<string>();
+    for (const parameter of expr.parameters) {
+      if (!ts.isIdentifier(parameter.name) || !reassigned.has(parameter.name.text)) continue;
+      const binding = scope.get(parameter.name.text);
+      if (binding?.kind !== "local") demoteToLegacy("body-shape-rejected", "function-member closure parameter binding");
+      const name = parameter.name.text;
+      const seed = (): void => {
+        const representation = resolveIrSlotRepresentation(binding.type, cx.resolver, liftedName);
+        if (!representation) {
+          demoteToLegacy(
+            "param-shape-rejected",
+            `ir/from-ast: mutable parameter "${name}" has no slot (${liftedName})`,
+          );
+        }
+        const slotIndex = builder.declareSlot(name, representation.storageType);
+        builder.emitSlotWrite(slotIndex, binding.value);
+        scope.set(name, {
+          kind: "slot",
+          slotIndex,
+          type: representation.bindingType,
+          ...(representation.asType ? { asType: representation.asType } : {}),
+        });
+      };
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, seed);
+      else seed();
     }
   }
 

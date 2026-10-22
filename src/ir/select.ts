@@ -57,7 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import { uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -693,7 +693,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-construct"
       | "native-string-carrier-coercion"
       | "native-arguments-length"
-      | "native-own-property-test",
+      | "native-own-property-test"
+      | "native-own-property-descriptor",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -1408,6 +1409,23 @@ export function assessIrImplicitConstructorSubject(
  */
 let earlyReturnLoopDepth = 0;
 let earlyReturnBarrierDepth = 0;
+// (#7106 Stage 4) Selection is inside a planned function-member closure body.
+let currentInPlannedMemberClosure = false;
+
+/**
+ * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers,
+ * and the IR's dynamic method call (`__ir_dyn_method_call_N` →
+ * `__extern_method_call`) has no brand arms for primitives or vecs on the
+ * host-free lanes: it answers `undefined` where legacy dispatches by brand
+ * (`list.join(", ")`, `n.toString()`, `sym.toString()` — measured). Such a call
+ * stays legacy; a string-literal receiver keeps its native string method.
+ */
+function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
+  if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
+  let receiver: ts.Expression = expr.expression.expression;
+  while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+  return !ts.isStringLiteralLike(receiver);
+}
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
 // #7104 — true when the return position resolved `dynamic`: bare `return;`,
@@ -2911,6 +2929,20 @@ function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly ari
   );
 }
 
+/**
+ * (#7106 propertyHelper) `alias(obj, name)` where `alias` is propertyHelper's
+ * immutable stored `Object.getOwnPropertyDescriptor` (see
+ * `uncurried-object-alias.ts`): exactly two plain arguments.
+ */
+function isStoredObjectDescriptorAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
+  return (
+    call.arguments.length === 2 &&
+    !call.questionDotToken &&
+    !call.arguments.some(ts.isSpreadElement) &&
+    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
+  );
+}
+
 function containsReceiverFirstDynamicMethodCall(body: ts.Block): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -3010,6 +3042,8 @@ function dynamicUsesAreMoveOnly(
     if (ts.isIdentifier(e)) return dynNames.has(e.text);
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
+    // (#7106 propertyHelper) the stored descriptor alias yields a carrier.
+    if (ts.isCallExpression(e) && isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
       return calleeReturnIsDynamic(e.expression.text, typeMap);
     }
@@ -3234,6 +3268,23 @@ function dynamicUsesAreMoveOnly(
           } else {
             const concrete = unwrap(argument);
             if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+          }
+        }
+        return true;
+      }
+      // (#7106 propertyHelper) `__getOwnPropertyDescriptor(obj, name)`: a
+      // dynamic result; each operand is a carrier or a boxable concrete.
+      if (isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) {
+        if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
+        for (const argument of e.arguments) {
+          if (isDynShaped(argument)) {
+            if (!scanExpr(argument, true)) return false;
+            continue;
+          }
+          const concrete = unwrap(argument);
+          const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
+          if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false)) {
+            return false;
           }
         }
         return true;
@@ -6512,7 +6563,16 @@ function isPhase1ClosureLiteral(
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,
-    isStatementListBuildable: isPhase1StatementList,
+    // (#7106 Stage 4) A planned void-result member closure admits bare
+    // `return;` exactly like a void top-level function.
+    isStatementListBuildable: (statements, inner, classes) =>
+      isPhase1StatementList(
+        statements,
+        inner,
+        classes,
+        false,
+        plan !== undefined && plan.signature.returnType === null,
+      ),
     restoreProjectionBindings,
     withClosureState: withFunctionMemberClosureState,
   });
@@ -6553,8 +6613,17 @@ function withFunctionMemberClosureState<T>(
   currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentSubjectFunctionName = null;
-  currentSubjectReturnsBoolean = true;
+  // (#7106 Stage 4) The closure is its own function: an enclosing subject's
+  // return context (module-init's barrier, an outer loop) does not apply to
+  // its body; a `return` there exits the closure.
+  const outerEarlyReturn = [earlyReturnLoopDepth, earlyReturnBarrierDepth] as const;
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 0;
+  const outerInPlannedClosure = currentInPlannedMemberClosure;
+  currentInPlannedMemberClosure = true;
+  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
+  currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set();
   currentNumericParamNames = new Set();
@@ -6591,6 +6660,8 @@ function withFunctionMemberClosureState<T>(
       currentNestedFunctionNames,
       currentLexicalValueBindingNames,
     ] = outer;
+    [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
+    currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
 }
@@ -10511,6 +10582,21 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
       );
     }
+    // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
+    // alias, `__getOwnPropertyDescriptor(obj, name)`: the object runtime's
+    // native provider over two carriers, a dynamic result (legacy's
+    // `tryCompileStoredObjectBuiltinCall` arm).
+    if (isStoredObjectDescriptorAliasCall(expr, (name) => scope.has(name))) {
+      if (
+        !currentDynamicRuntimeBuildable ||
+        currentSelectionOptions?.supportsBackendCapability?.("native-own-property-descriptor") !== true
+      ) {
+        return capabilityNo("call-resolution-unsupported", "expr-call-stored-object-static-alias-lane", expr);
+      }
+      return (
+        isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
+      );
+    }
     // (#7106 S1e) A direct call to a local function that reads `arguments`
     // needs no `__argc` publication from an IR caller: the direct-call plan
     // is exact-arity (from-ast demotes any other count), and the callee's
@@ -10582,6 +10668,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     const functionObjectCall = functionObjectCallIsPhase1(expr, scope, localClasses);
     if (functionObjectCall !== undefined) return functionObjectCall;
+    if (plannedClosureDynamicMethodCall(expr)) return shapeNo("closure-member-dynamic-method", expr);
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer
     // enforces that the receiver is a class instance whose shape carries
@@ -11935,6 +12022,10 @@ export function buildLocalCallGraph(
             // (#7106 S1g) propertyHelper's uncurried Object.prototype aliases
             // lower to the lane's own-property provider (`dyn.own_property`),
             // not a call edge; the per-function arms decide the lane.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (isStoredObjectDescriptorAliasCall(node, (name) => localBindings.names.has(name))) {
+            // (#7106 propertyHelper) likewise the stored descriptor alias.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
