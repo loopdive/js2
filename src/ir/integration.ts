@@ -5849,10 +5849,28 @@ export function compileIrPathFunctions(
     // only on a path that actually enters the orphaned artifact. Empty VOID
     // bodies are already valid Wasm (fall-through) — leave those as-is rather
     // than converting today's silent no-op into a trap.
-    const stubIfOrphanedEmpty = (unitId: IrUnitId, terminalOwnerUnitId: IrUnitId, funcIdx: number): void => {
+    const stubIfOrphanedEmpty = (
+      unitId: IrUnitId,
+      terminalOwnerUnitId: IrUnitId,
+      funcIdx: number,
+      loweredTypeIdx?: number,
+    ): void => {
       const orphan = definedFuncAt(ctx, funcIdx);
       if (!orphan || orphan.body.length > 0) return;
       const typeDef = ctx.mod.types[orphan.typeIdx];
+      // (#7132) A fresh slot (a lifted closure) whose owner failed in the
+      // cascade above never received its signature: it still carries the
+      // allocation placeholder type, which Program-ABI planning rejects for
+      // the whole module. Give it the signature its body was lowered against.
+      if ((!typeDef || typeDef.kind !== "func") && loweredTypeIdx !== undefined) {
+        if (ctx.mod.types[loweredTypeIdx]?.kind !== "func") return;
+        replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
+          ...orphan,
+          typeIdx: loweredTypeIdx,
+          body: [{ op: "unreachable" }],
+        });
+        return;
+      }
       if (!typeDef || typeDef.kind !== "func" || typeDef.results.length === 0) return;
       replaceUnitCallableAt(unitId, terminalOwnerUnitId, funcIdx, orphan, {
         ...orphan,
@@ -5866,7 +5884,12 @@ export function compileIrPathFunctions(
     }
     for (const patch of pendingPatches) {
       if (!options?.deferPreparedPublication && (atomicAborted || failedOwners.has(patch.entry.terminalOwnerUnitId))) {
-        stubIfOrphanedEmpty(patch.entry.artifactUnitId, patch.entry.terminalOwnerUnitId, patch.funcIdx);
+        stubIfOrphanedEmpty(
+          patch.entry.artifactUnitId,
+          patch.entry.terminalOwnerUnitId,
+          patch.funcIdx,
+          patch.wasmFunc.typeIdx,
+        );
       }
     }
 
