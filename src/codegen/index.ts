@@ -3054,13 +3054,15 @@ function planIrOverlay(
             allowBoundedTopLevelAccessorSelectionCandidates: true,
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
+            scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
+            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
           },
           identityContext,
         );
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
-  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
@@ -4207,22 +4209,53 @@ function compileMultiIrOverlaySource(
  * callbacks in `built-ins/Array/prototype/map`, 15/216 tests).
  */
 export function scriptVarSlotIsSoleHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(declaration.name)) return false;
+  const slot = scriptVarHomeSlot(ctx, declaration);
+  return slot !== undefined && slot.type.kind !== "externref";
+}
+
+/**
+ * (#7106) The same sole-home slot when legacy allocated it as `externref`
+ * (`var o = new Object()`, `var n;`, a function-valued `var`): off fast mode
+ * that is exactly `resolveIrDynamicCarrierType`, so the IR binds it as a
+ * `dynamic` module binding. Fast mode's dynamic carrier is `$AnyValue`, so it
+ * stays excluded.
+ */
+export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
+}
+
+/**
+ * (#7125) The sole-home slot when legacy allocated it as the native-string
+ * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
+ * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
+ * IR binds it as a `string` module binding. Host strings use `externref`,
+ * which is the dynamic home instead.
+ */
+export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  const type = scriptVarHomeSlot(ctx, declaration)?.type;
+  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
+}
+
+function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
+  if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
   const plan = ctx.runtimeEvalBoundaryPlan;
-  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return false;
+  if (plan === undefined || ctx.sloppyImplicitGlobals === undefined) return undefined;
   if (
     (ctx.standalone || ctx.wasi) &&
     ctx.runtimeEvalProviderAbsent !== true &&
     plan.sharedRealmMayContainCanonicalValues
   ) {
-    return false;
+    return undefined;
   }
-  if (ctx.sloppyImplicitGlobals.has(name)) return false;
+  if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g`: the checker gives the script
+  // `var` its own symbol, but the binding (and its slot) is the function's.
+  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
-  if (globalIdx === undefined) return false;
-  const global = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
-  return global !== undefined && global.type.kind !== "externref";
+  const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+  return global?.name === `__mod_${name}` ? global : undefined;
 }
 
 function recordSourceGlobalEnvironment(ctx: CodegenContext, sourceFile: ts.SourceFile): void {

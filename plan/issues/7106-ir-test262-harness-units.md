@@ -756,6 +756,32 @@ script-var gate. A local approximation of that gate still rejected the source
 with `expr-ident-not-in-scope «y»`, so this repro was not run. The module
 analog, which goes through the same `emitModuleVarUndefinedSeeds`, is covered.
 
+## `delete` reached a wrong IR lowering — selector refusal (2026-10-22, measured)
+
+Found while planning the propertyHelper `isConfigurable` arm.
+- **Old lowering.** Slice 11 (#1169n) admitted `delete <expr>` in
+  `isPhase1Expr` and lowered it to the operand's side effects plus a constant
+  `true`. The IR has no delete operation, so a claimed `delete` removed nothing
+  and never threw.
+- **Reachable on origin/main.** In a module (strict code),
+  `function f(): number { const a = [1, 2]; return delete (a as any).length ? 1 : 0; }`
+  is IR-claimed and returns `1` on standalone and gc, where node and the
+  direct path throw a TypeError.
+- Statement-position `delete` (`body-exprstmt-other`) and deletes on dynamic
+  parameters (`move-only[concrete]`) were already refused.
+
+**Fix.**
+- The selector refuses every `delete` with `expr-delete-no-ir-lowering`. This
+  subsumes the #2726 module-global `delete this.x` refusal.
+- from-ast's arm now demotes instead of answering a constant.
+- The #1169n case that asserted the claim now asserts the refusal.
+- The playground corpus has no `delete`, so `check:ir-fallbacks` is unchanged.
+- **The `isConfigurable` arm carries the real dynamic delete later.**
+
+**Still wrong on the direct path (not changed here).** Legacy's
+`delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
+readable. That is the same on the base and on legacy-only compiles.
+
 ## Harness unit blocker census (2026-10-21)
 
 Measured by session D on main `2ea607da3f` merged locally with #6821
@@ -882,3 +908,458 @@ each.
   closure's return-type authority.
 - **Nothing was implemented.** The instrumentation lived only in the local
   probe build.
+
+## Integrated-stack census, 2026-10-22
+
+**Answer:** on the whole in-flight stack, 0 of the 266 sampled tests that compile
+have zero legacy units, so `ir_only_pass` stays near 2. One harness statement
+gates everything: `compareArray.format`'s
+`Array.prototype.map.call(arrayLike, String).join(", ")` (assert.js:179) is
+refused in 238/266 tests. In 10 tests it is the only blocker, and 9 of those 10
+already pass. Fixing that statement alone should therefore give about +9 per
+300 tests, roughly **+1,450 `ir_only_pass`** on the 48,232-row corpus. No other
+single fix moves the number on its own.
+
+### Setup
+
+- **Integration branch.** Local only, never pushed. Built from `origin/main`
+  `55d7490c` by merging the heads of #6829, #6831, #6833, #6835, #6846, #6843,
+  #6847, #6845, #6830, #6832, #6834, #6839, #6851, #6848, #6850 and #6852.
+  All 16 merged.
+- **Conflicts.** All were additive and resolved by keeping both sides:
+  - capability unions in `src/ir/backend/legality.ts` and `select.ts`;
+  - resolver methods in `from-ast.ts` and `integration.ts`;
+  - `scripts/ir-kind-neutrality-baseline.json` entries (`dyn.global_object` and `dyn.instanceof`);
+  - this file's `largestSccSize` grant (taken at 727, both comment blocks kept).
+
+  One resolution was semantic. In `select.ts` `isPhase1VarDecl`, #6835's
+  script-`var` redeclaration/no-op arms run first, then #6830's
+  `uninitializedVarIsDynamicUndefined` arm for the remaining initializer-less
+  `var`s.
+- **Not included:** #6853 (#7123 refinement) and #6854 (#7125 string `var`
+  slots). Both were opened while this census ran.
+- **Sanity check.** `typecheck` is clean. The stack's own tests pass (64/65)
+  across 8 files: 7106-assert-member-calls, 7106-script-var, 7118,
+  7106-s3c-test262error, 7120, 7117, 7106-prophelper-isenumerable and 7124.
+  The one failure is
+  `issue-7124-module-init-all-rejects › records every rejected top-level statement`.
+  Its expected labels predate #6835: `var obj = {}` now reports
+  `vardecl-module-storage-unrepresentable` instead of `vardecl-var-kind`, and
+  `var g = function…` reports `vardecl-let-closure`. This is an interaction
+  between the two PRs, not a merge error. Whichever of #6852 and #6835 lands
+  second has to update that expectation.
+- **Census.** Standalone, with `N=300 SEED=11`, `JS2WASM_IR_SHAPE_DIAG=1` and
+  `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1`.
+  - The sample is a mulberry32 shuffle of `test262/test/**/*.js` (52,092
+    files; `staging/` and `_FIXTURE` files excluded), taking the first 300
+    files `shouldSkip` keeps (302 scanned).
+  - Each file is compiled the way the honest standalone lane compiles it:
+    `assembleOriginalHarness().primary`, `allowJs`, `target: "standalone"`,
+    `scriptGoal: isScriptGoal(…)`, `deferTopLevelInit`,
+    `hostBridge: "always"`, `validate: false` and `trackIrOutcomes`.
+  - A legacy unit counts the way `scripts/test262-worker.mjs`
+    `summarizeIrRoute` counts it: executable, with no IR body emitted.
+  - The census script is pasted at the end of this section. It is an
+    ungated, one-off probe, so it is not under `scripts/`.
+
+### Shape of the sample
+
+| | tests |
+| --- | ---: |
+| sampled | 300 |
+| compile error / no executable units (21 are negative syntax tests) | 34 |
+| compiled, IR ledger present | 266 |
+| … 0 legacy units | **0** |
+| … 1 blocker | 10 |
+| … 2 blockers | 32 |
+| … ≥3 blockers | 224 |
+| `<module-init>` claimed by IR | 0 |
+| only `<module-init>` legacy (every function unit is IR) | 128 |
+| at least one harness function unit legacy | 110 |
+| at least one test-defined function unit legacy | 62 |
+
+- **No real zero-legacy rows.** Every zero-legacy row in the raw output (23)
+  is a compile error with no executable units, so `runTest262File` had no
+  zero-legacy row to run. Such rows are not `ir_measured`, so they cannot
+  count toward `ir_only_pass` either.
+- **Volume.** There are 1,142 legacy units across the 266 compiled tests,
+  4.3 per test. `<module-init>` rejects 7.7 top-level statements per test
+  (median 4).
+- **What a blocker is.** Each legacy function unit counts as one blocker,
+  keyed by its owner file, reason and arm. Each rejected `<module-init>`
+  statement counts as one blocker, keyed by reason, arm, and whether its
+  text sits in the harness or in the test body. `expr-ident-not-in-scope` is
+  keyed by the identifier.
+
+### Shortest path: 1- and 2-blocker tests
+
+| tests | blocker (reason @ arm) | example |
+| ---: | --- | --- |
+| **10 (1-blocker)** | harness `<module-init>` `array-method-unsupported@expr-array-search-element-family` | `compareArray.format = function (arrayLike) { return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]"; }` |
+| 32 (2-blocker) | the same statement, plus one of the rows below | |
+| 9 + 1 | test `closure-return-type` | `assert.throws(RangeError, function() { new SharedArrayBuffer(0, { maxByteLength: -1 }); })` |
+| 3 | test `vardecl-module-storage-unrepresentable` | `var obj = { *method({ arrow = () => {} } = {}) { … } }` |
+| 2 | harness `array-method-unsupported` (`unattributed-arm`) | same statement, other arm |
+| 2 | test fn `destructuring-param-complex` | `function f([…] = …)` |
+| 1 each | `body-exprstmt-other` `() => 42`; ident `Number` / `Array` / `Object` / `Test262Error`; `expr-delete-no-ir-lowering` `delete x`; `expr-new-error-constructor` `new Error("hello")`; `expr-new-callee-nonident` `new Temporal.ZonedDateTime`; `expr-new-date-target` `new Date(0)`; BigInt literal; `new Boolean`; `throw-module-scalar-unboxed`; `for-init-var-kind`; `vardecl-init-expr`; `nontail-module-compound` `first += 1` | |
+
+**Conformance of the 1-blocker tests.** `runTest262File(…, "standalone")` was
+run on the integration branch, with the QuickJS provider built. 9/10 pass:
+- S9.3.1_A7
+- endsWith_Fail_2
+- 15.5.4.20-4-10
+- S11.8.4_A4.12_T2
+- S11.9.4_A3
+- `_implements`
+- `char`
+- S7.8.4_A4.1_T2
+- between-horizontal-tab
+
+`module-code/instn-resolve-empty-import.js` fails ("This statement should not
+be evaluated."), independent of the IR. So the IR-only gain from fixing this
+one statement is **9/300**, provided the IR body of `<module-init>` then runs
+correctly.
+
+### Most common blockers overall (tests carrying them, of 266)
+
+| tests | blocker | example |
+| ---: | --- | --- |
+| 238 | harness `<module-init>`: `compareArray.format`'s `.join` on the `any[]` result of `Array.prototype.map.call` | assert.js:179 |
+| 103 | test `vardecl-module-storage-unrepresentable` (script `var` whose `__mod_` slot is neither scalar nor the externref home: objects, arrays, class instances, closures) | `var executed = false` in an eval test, `var obj = {…}` |
+| 59 | test `closure-return-type` (function expression passed as an argument, e.g. to `assert.throws`) | `function() { f; }` |
+| 49 / 36 | harness prelude `var $262 = {…}` (`vardecl-module-storage-unrepresentable`) / `var print = function…` (`vardecl-let-closure`) | |
+| 46 | test `expr-module-scalar-method` | `jan31.subtract({ seconds: -30 })`, `f().next().then(…)` |
+| 42 / 40 / 30 / 20 | identifiers out of scope in `<module-init>`: `Object`, `Test262Error`, `Array`, `Function` (as receivers, refused by #7123, or `Test262Error` as a value) | |
+| 37 | doneprintHandle.js `$DONE` (`expr-binary-op-in` `'name' in error`) and `__consolePrintHandle__` (move-only `msg`) | every `flags: [async]` test |
+| 28 | the whole assert.js + sta.js harness, `late-preparation-unsupported` ("the linked runtime-eval callable carrier is still owned by the direct frontend") | tests with direct `eval` / `$262.evalScript` |
+
+### Which harness units are still legacy
+
+| file | tests (of 266) | units and arms |
+| --- | ---: | --- |
+| assert.js | 38 | In 28 tests (eval) every unit is legacy: `late-preparation-unsupported`, then `assert`/`compareArray` read `assert` out of scope. In 8 tests `assert` fails with `unknown class "Test262Error" in assert` (from-ast). In 6 tests `assert` fails with `call-graph-closure`. Outside these, assert.js's function units ship IR. |
+| sta.js | 36 | `Test262Error` `return-type-unresolved(lattice=dynamic)` in the 28 eval tests, `logical-value-family` (`message \|\| ""`) in 8; `$DONOTEVALUATE` eval carrier (28). |
+| doneprintHandle.js | 35 | `$DONE` (`'name' in error`) and `__consolePrintHandle__` (move-only `msg`). Blocks every async test. |
+| propertyHelper.js | 22 | about 14 units per test. Blockers: `isConfigurable` (`e instanceof TypeError`, ambient ctor RHS); `verifyAccessorProperty`/`verifyCallableProperty` (`logical-value-family`, `param-type-unresolved(desc)`); `verifyProperty`/`isWritable`/`verifyPrimordial*` (`vardecl-module-binding-alias`); `isEnumerable` (`expr-module-value-logical`); `verifyNot*` (`expr-module-value-not`); `verify{Writable,Enumerable,Configurable}` (`call-graph-closure`); `verifyEqualTo` (`abi-signature-parity`, IR typeIdx 182 ≠ legacy 97). |
+| temporalHelpers.js | 18 | `formatPropertyName` `param-shape-rejected` (plus most `<module-init>` Temporal statements). |
+| isConstructor.js | 6 | `Reflect` out of scope. |
+| testTypedArray.js | 5 | `Array`, `Int32Array`, `nonAtomicsFriendlyTypedArrayConstructors` out of scope; `\|\|` defaults; `++i`; function-local `var`. |
+| regExpUtils.js, asyncHelpers.js, detachArrayBuffer.js, resizableArrayBufferUtils.js, fnGlobalObject.js, promiseHelper.js | 1–5 each | not broken down |
+
+### Forecast
+
+The forecast greedily fixes the blocker class that most increases the number
+of zero-legacy tests, breaking ties by frequency. The corpus figure scales by
+48,232 / 300.
+
+| k | blocker class fixed | zero-legacy (of 266) | ≈ corpus |
+| ---: | --- | ---: | ---: |
+| 1 | harness `compareArray.format` statement | 10 (9 pass) | ~1,450 |
+| 2 | + test `closure-return-type` | 19 | ~3,050 |
+| 3 | + test `vardecl-module-storage-unrepresentable` | 23 | ~3,700 |
+| 4 | + `expr-new-callee-nonident` (`new Temporal.X`) | 27 | ~4,350 |
+| 5 | + `expr-module-scalar-method` | 30 | ~4,800 |
+| 6 | + ident `Temporal` | 35 | ~5,600 |
+| 7 | + `expr-new-ctor-unknown` | 39 | ~6,250 |
+| 8 | + test `vardecl-let-closure` | 43 | ~6,900 |
+| 9 | + ident `Object` | 46 | ~7,400 |
+| 10 | + ident `Test262Error` | 49 | ~7,900 |
+| 12 | + `vardecl-class-expression-unprepared`, `expr-module-storage-unrepresentable` | 57 | ~9,150 |
+
+**Why these are upper bounds.** A key from k ≥ 2 is an arm class, not one
+fix, and `closure-return-type` covers many distinct closure bodies. A
+`<module-init>` statement also reports only its first rejection, so a fixed
+arm can expose the next one inside the same statement. The "≈ corpus" column
+counts zero-legacy rows, not passes: `ir_only_pass` additionally needs
+PASS, which was 9/10 at k=1. Measure k ≥ 2 again after each step instead of
+trusting this table.
+
+### Next steps
+
+1. **`compareArray.format` (assert.js:179).** It is the sole blocker in 10/266
+   tests and present in 238/266. Size M. **Expected Δ: about +9/300, about
+   +1,450 `ir_only_pass`.** Three refusals sit inside the one statement,
+   probably in this order (only the first was observed directly):
+   - `.join(", ")` on the dynamic `any[]` result. Route it through #6851's
+     `__ir_dyn_mcall_join_1` wrapper instead of refusing on the element
+     family.
+   - `Array.prototype.map` as a member read off an ambient intrinsic. #7123
+     refuses this until the brand companion is seeded for
+     `<Builtin>.prototype` reads.
+   - `String` as a call argument value.
+
+   Before claiming the statement, verify that the IR body matches legacy on
+   `compareArray.format([1, "a", undefined])` output.
+2. **Test-body closures as call arguments (`closure-return-type`).** A general
+   closure plan with dynamic parameters and a dynamic/void return, the
+   Stage 2 "rank 1" arm, applied to argument position. 59/266 tests. Size L.
+   Expected Δ: +9/300 more once step 1 lands (k=2, about +1,450).
+3. **Script `var` storage beyond scalars.** Object, array, class-instance and
+   closure slots for `__mod_` (#7125 / #6854 covers strings; arrays and
+   `new C()` are listed there as left). This also unblocks the harness prelude
+   `$262`/`print`. 103 + 49 tests. Size L. Expected Δ: +4/300 after steps 1–2
+   (about +650), and it is a prerequisite for most of the ≥3-blocker tail.
+4. **Ambient identifiers as values and receivers** (`Object` 42,
+   `Test262Error` 40, `Array` 30, `Function` 20, `Temporal` 13). This means
+   lifting #7123's member-read refusal by seeding the companion and fixing
+   inherited `Function.prototype` reads in `__extern_get`, and admitting
+   `Test262Error` as a value. Size M. Expected Δ: +3 to +5/300 combined with
+   steps 1–3.
+5. **doneprintHandle.js** (`'name' in error`, move-only `msg`). Size S–M. On
+   its own Δ is 0, but it is the gate for all `flags: [async]` tests (35/266).
+6. **The runtime-eval linked callable carrier** (28/266 tests have the whole
+   harness legacy). Size L. Δ is 0 until steps 1–4 land: these tests also
+   need `eval` lowering.
+7. **propertyHelper.js** (22/266). The 14 units per test fall into 7 arm
+   families, listed in the harness table. Size L. Δ is 0 on its own: these
+   tests also carry the step 1–4 blockers.
+
+<details><summary>Census script (<code>.tmp/ir-census.mts</code>, run with <code>N=300 SEED=11 npx tsx .tmp/ir-census.mts &gt; census.json</code>)</summary>
+
+```ts
+// Unmasked IR legacy-unit census over a seeded standalone test262 sample.
+// N=300 SEED=11 npx tsx .tmp/ir-census.mts > .tmp/census.json
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+
+process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+process.env.JS2WASM_IR_MODULE_INIT_ALL_REJECTS = "1";
+
+const { compile } = await import("../src/index.ts");
+const { parseMeta, shouldSkip } = await import("../tests/test262-runner.ts");
+const { assembleOriginalHarness } = await import("../tests/test262-original-harness.ts");
+const { test262CompileSemanticProviders } = await import("../scripts/test262-lane.mjs");
+const { isScriptGoal } = await import("../scripts/test262-module-goal.mjs");
+
+const ROOT = join(process.cwd(), "test262");
+const N = Number(process.env.N ?? 300);
+const SEED = Number(process.env.SEED ?? 11);
+
+function walk(dir: string, out: string[]) {
+  for (const name of readdirSync(dir).sort()) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) {
+      if (name === "staging") continue;
+      walk(p, out);
+    } else if (name.endsWith(".js") && !name.includes("_FIXTURE")) out.push(p);
+  }
+}
+function mulberry32(a: number) {
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const all: string[] = [];
+walk(join(ROOT, "test"), all);
+const rnd = mulberry32(SEED);
+for (let i = all.length - 1; i > 0; i--) {
+  const j = Math.floor(rnd() * (i + 1));
+  [all[i], all[j]] = [all[j], all[i]];
+}
+
+// harness file -> declared function names (top-level `function f` and `x.f = function`)
+const harnessDecls = new Map<string, string>();
+for (const f of readdirSync(join(ROOT, "harness"))) {
+  if (!f.endsWith(".js")) continue;
+  const src = readFileSync(join(ROOT, "harness", f), "utf8");
+  for (const m of src.matchAll(/^\s*function\s*\*?\s*([A-Za-z_$][\w$]*)/gm)) if (!harnessDecls.has(m[1])) harnessDecls.set(m[1], f);
+  for (const m of src.matchAll(/([A-Za-z_$][\w$.]*)\s*=\s*function\b/g)) {
+    const leaf = m[1].split(".").pop()!;
+    if (!harnessDecls.has(leaf)) harnessDecls.set(leaf, f);
+  }
+}
+
+const rows: unknown[] = [];
+let scanned = 0;
+for (const file of all) {
+  if (rows.length >= N) break;
+  scanned++;
+  const source = readFileSync(file, "utf8");
+  const meta = parseMeta(source);
+  if (!meta.negative && shouldSkip(source, meta, file).skip) continue;
+  const rel = relative(ROOT, file);
+  const asm = assembleOriginalHarness(source, meta);
+  let result: any;
+  const t0 = Date.now();
+  try {
+    result = await compile(asm.primary.source, {
+      allowJs: true,
+      fileName: "test.js",
+      emitWat: false,
+      skipSemanticDiagnostics: true,
+      validate: false,
+      inferModuleStrictArguments: meta.flags?.includes("module") === true,
+      target: "standalone",
+      semanticProviders: test262CompileSemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
+      deferTopLevelInit: true,
+      scriptGoal: isScriptGoal(rel.replace(/^test\//, ""), meta),
+      hostBridge: "always",
+      trackIrOutcomes: true,
+    } as never);
+  } catch (e) {
+    rows.push({ file: rel, negative: !!meta.negative, compileThrew: String(e).slice(0, 200) });
+    continue;
+  }
+  const outcomes = (result.irOutcomes ?? []) as any[];
+  const legacy = outcomes
+    .filter((o) => o && o.kind !== "non-executable" && !o.irBodyEmitted)
+    .map((o) => {
+      const name = String(o.displayName ?? o.name ?? "?");
+      const leaf = name.split(".").pop()!;
+      const owner = name === "<module-init>" ? "module-init" : (harnessDecls.get(leaf) ?? "test");
+      const rejects =
+        name === "<module-init>" && typeof o.detail === "string"
+          ? o.detail.split(" | ").map((d: string) => {
+              const m = /^([^@:]+)@([^:]+):(\w+)\s*«([\s\S]*)»?$/.exec(d);
+              const text = m ? m[4].replace(/»$/, "") : d;
+              return {
+                reason: m?.[1] ?? o.code,
+                arm: m?.[2] ?? "?",
+                node: m?.[3] ?? "?",
+                text: text.slice(0, 160),
+                inTestBody: text.length > 0 && source.includes(text.slice(0, 60)),
+              };
+            })
+          : undefined;
+      return { name, owner, kind: o.kind, stage: o.stage, code: o.code, detail: rejects ? undefined : o.detail, rejects };
+    });
+  rows.push({
+    file: rel,
+    negative: !!meta.negative,
+    success: !!result.success,
+    units: outcomes.filter((o) => o && o.kind !== "non-executable").length,
+    legacy,
+    ms: Date.now() - t0,
+  });
+  if (rows.length % 25 === 0) process.stderr.write(`${rows.length}/${N} (scanned ${scanned})\n`);
+}
+process.stdout.write(JSON.stringify({ N, SEED, corpus: all.length, scanned, rows }, null, 1));
+```
+
+Analysis (`node .tmp/ir-census-analyze.mjs census.json`):
+
+```js
+// node .tmp/ir-census-analyze.mjs .tmp/census.json
+import { readFileSync } from "node:fs";
+const d = JSON.parse(readFileSync(process.argv[2], "utf8"));
+const norm = (t) => t.replace(/\s+/g, "");
+const ce = d.rows.filter((r) => !r.compileThrew && (!r.success || r.units === 0));
+const rows = d.rows.filter((r) => !r.compileThrew && r.success && r.units > 0);
+for (const r of rows) {
+  const src = norm(readFileSync(`test262/${r.file}`, "utf8"));
+  for (const u of r.legacy) for (const x of u.rejects ?? []) x.inTestBody = norm(x.text).length > 0 && src.includes(norm(x.text).slice(0, 50));
+}
+const threw = d.rows.filter((r) => r.compileThrew);
+
+// A blocker key: a legacy non-module-init unit is keyed by owner+code+arm(detail head);
+// each rejected module-init statement is keyed reason@arm, plus whether it is harness or test text.
+function unitArm(u) {
+  const m = /^([^:«]+)(?::\w+)?\s*(?:«([^»]*)»?)?/.exec(u.detail ?? "");
+  if (!m) return "";
+  return m[1].trim() === "expr-ident-not-in-scope" ? `${m[1].trim()}(${m[2]})` : m[1].trim();
+}
+function blockersOf(r) {
+  const keys = new Map();
+  for (const u of r.legacy) {
+    if (u.name === "<module-init>") {
+      if (!u.rejects) {
+        keys.set(`MI ${u.code}@${unitArm(u)}`, { ex: u.detail });
+        continue;
+      }
+      for (const x of u.rejects) {
+        if (x.arm === "expr-ident-not-in-scope") {
+          keys.set(`MI ${x.reason}@${x.arm}(${x.text})`, { ex: x.text });
+          continue;
+        }
+        const where = x.inTestBody ? "test" : "harness";
+        keys.set(`MI[${where}] ${x.reason}@${x.arm}`, { ex: x.text });
+      }
+    } else {
+      keys.set(`FN[${u.owner}] ${u.code}@${unitArm(u)}`, { ex: `${u.name}: ${u.detail ?? ""}`.slice(0, 140) });
+    }
+  }
+  return keys;
+}
+const hist = { 0: 0, 1: 0, 2: 0, "3+": 0 };
+const by = { 1: new Map(), 2: new Map() };
+const all = new Map();
+const perTest = [];
+for (const r of rows) {
+  const b = blockersOf(r);
+  perTest.push({ file: r.file, keys: [...b.keys()] });
+  const n = b.size;
+  hist[n >= 3 ? "3+" : n]++;
+  for (const [k, v] of b) {
+    const e = all.get(k) ?? { tests: 0, ex: v.ex };
+    e.tests++;
+    all.set(k, e);
+    if (n === 1 || n === 2) {
+      const m = by[n].get(k) ?? { tests: 0, ex: v.ex };
+      m.tests++;
+      by[n].set(k, m);
+    }
+  }
+}
+const top = (m, k = 25) => [...m].sort((a, b) => b[1].tests - a[1].tests).slice(0, k);
+console.log(`compiled rows=${rows.length} CE/no-units=${ce.length} (negative ${ce.filter((r) => r.negative).length}) compileThrew=${threw.length} corpus=${d.corpus} scanned=${d.scanned}`);
+console.log("legacy-units histogram:", JSON.stringify(hist));
+const zero = rows.filter((r) => r.legacy.length === 0).map((r) => r.file);
+console.log("zero-legacy:", JSON.stringify(zero));
+for (const n of [1, 2]) {
+  console.log(`\n== ${n}-blocker tests: ranked blockers`);
+  for (const [k, v] of top(by[n])) console.log(`${String(v.tests).padStart(4)}  ${k}  «${String(v.ex).slice(0, 100)}»`);
+}
+console.log("\n== all blockers, by tests carrying them");
+for (const [k, v] of top(all, 40)) console.log(`${String(v.tests).padStart(4)}  ${k}  «${String(v.ex).slice(0, 100)}»`);
+
+// harness units still legacy
+const hu = new Map();
+for (const r of rows)
+  for (const u of r.legacy)
+    if (u.owner !== "module-init" && u.owner !== "test") {
+      const k = `${u.owner}::${u.name} ${u.code}@${unitArm(u)}`;
+      const e = hu.get(k) ?? { tests: 0, ex: u.detail };
+      e.tests++;
+      hu.set(k, e);
+    }
+console.log("\n== harness units legacy");
+for (const [k, v] of top(hu, 40)) console.log(`${String(v.tests).padStart(4)}  ${k}  «${String(v.ex ?? "").slice(0, 90)}»`);
+
+// greedy forecast: fix top-k blockers (by tests unlocked) -> tests reaching zero
+const sets = perTest.map((t) => new Set(t.keys));
+const fixed = new Set();
+console.log("\n== greedy forecast (fix blocker -> cumulative zero-legacy tests)");
+const zero0 = sets.filter((s) => s.size === 0).length;
+console.log(`k=0  zero=${zero0}`);
+for (let k = 1; k <= 12; k++) {
+  let best = null;
+  let bestGain = -1;
+  const cands = new Map();
+  for (const s of sets) {
+    const rest = [...s].filter((x) => !fixed.has(x));
+    if (rest.length === 0) continue;
+    for (const x of rest) cands.set(x, (cands.get(x) ?? 0) + 0);
+  }
+  for (const x of cands.keys()) {
+    const f2 = new Set(fixed).add(x);
+    const gain = sets.filter((s) => s.size > 0 && [...s].every((y) => f2.has(y))).length;
+    const freq = sets.filter((s) => s.has(x)).length;
+    const score = gain * 1000 + freq;
+    if (score > bestGain) {
+      bestGain = score;
+      best = x;
+    }
+  }
+  if (!best) break;
+  fixed.add(best);
+  const z = sets.filter((s) => [...s].every((y) => fixed.has(y))).length;
+  console.log(`k=${k}  +${best}  zero=${z}  (~${Math.round((z / d.rows.length) * 48232)} of 48,232)`);
+}
+```
+
+</details>

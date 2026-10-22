@@ -60,7 +60,7 @@ import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
-import { BUILTIN_TYPE_TAGS, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
+import { collectErrorInstanceOfTags, isBuiltinSubtype, isBuiltinTypeName } from "../builtin-tags.js";
 import { ensureDateStruct } from "./builtins.js"; // (#1325) native $__Date struct for host-free `instanceof Date`
 import { ensureStandaloneRegExpStruct } from "../regexp-standalone.js"; // (#1325) native RegExp struct for host-free `instanceof RegExp`
 import { getOrRegisterPromiseType } from "../async-scheduler.js"; // (#1325) native $Promise struct for host-free `instanceof Promise`
@@ -137,37 +137,6 @@ import {
 } from "../module-namespace-value.js";
 
 const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
-
-/**
- * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
- * `instanceof <ctorName>` test in no-JS-host mode. For `instanceof Error` this
- * is every Error subtype tag; for `instanceof TypeError` it is TypeError's own
- * tag plus any descendant (none today). Mirrors `isBuiltinSubtype` over the
- * error portion of the BUILTIN_TYPE_TAGS registry.
- */
-function collectErrorInstanceOfTags(ctorName: string): number[] {
-  const errorNames = [
-    "Error",
-    "TypeError",
-    "RangeError",
-    "SyntaxError",
-    "URIError",
-    "EvalError",
-    "ReferenceError",
-    "AggregateError",
-    // (#3234) SuppressedError is an Error subclass (BUILTIN_PARENT). Included so
-    // `instanceof SuppressedError` matches its own tag, and `instanceof Error`
-    // also matches a native SuppressedError (built by the dispose driver).
-    "SuppressedError",
-  ] as const;
-  const tags: number[] = [];
-  for (const n of errorNames) {
-    if (isBuiltinSubtype(n, ctorName)) {
-      tags.push(BUILTIN_TYPE_TAGS[n]);
-    }
-  }
-  return tags;
-}
 
 /**
  * (#2188) Build the set of per-class brand ids (`classTagMap` values) that count
