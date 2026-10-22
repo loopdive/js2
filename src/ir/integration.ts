@@ -97,8 +97,7 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
-import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
-import { irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
+import { irWrapperSymbolIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
 import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-call.js";
 import {
   ensureIrArrayPrototypeBorrowHelper,
@@ -7014,7 +7013,7 @@ function makeFromAstResolver(
       return !ctx.fast;
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
-      return irDynamicMethodCallWrapperLane(ctx) && irDynamicMethodCallIsNameable(method, arity);
+      return irDynamicMethodCallWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
     },
     arrayPrototypeBorrowWrapper(method: string, arity: number) {
       return irArrayPrototypeBorrowAdmitted(ctx, method, arity);
@@ -9121,6 +9120,32 @@ function admitFunctionPrototypeCall(
   observeNativeRuntimeProvider(ctx, arm.symbol);
 }
 
+/** The (method, arity) a per-pair template wrapper symbol was named for. */
+type TemplateWrapperPair = { readonly method: string; readonly arity: number };
+type TemplateWrapperFamily = ReadonlyMap<string, TemplateWrapperPair>;
+
+/**
+ * Build every wrapper of one template family a unit calls, in symbol order,
+ * register each as a native provider, and settle the import shift once for
+ * the batch. A wrapper the lane cannot build is an invariant breach: the
+ * selector admitted the call only where codegen said it would build it.
+ */
+function buildTemplateWrapperFamily(
+  ctx: CodegenContext,
+  wrappers: TemplateWrapperFamily,
+  ensure: (ctx: CodegenContext, symbol: string, method: string, arity: number) => number | undefined,
+  family: string,
+): void {
+  if (wrappers.size === 0) return;
+  for (const [symbol, { method, arity }] of [...wrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (ensure(ctx, symbol, method, arity) === undefined) {
+      throw new Error(`ir/integration: ${symbol} has no host-free ${family} wrapper (#7106)`);
+    }
+    observeNativeRuntimeProvider(ctx, symbol);
+  }
+  flushLateImportShifts(ctx, null);
+}
+
 function preregisterDynamicSupport(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
@@ -9183,9 +9208,9 @@ function preregisterDynamicSupport(
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
   const dynConstructArities = new Set<number>();
   // (#7106 Stage 4) dynamic-receiver method calls through the brand-dispatch wrappers.
-  const dynamicMethodCallWrappers = new Map<string, { readonly method: string; readonly arity: number }>();
+  const dynamicMethodCallWrappers = new Map<string, TemplateWrapperPair>();
   // (#7106 compareArray.format) `Array.prototype.<m>.call(…)` borrows through the template wrappers.
-  const arrayPrototypeBorrowWrappers = new Map<string, { readonly method: string; readonly arity: number }>();
+  const arrayPrototypeBorrowWrappers = new Map<string, TemplateWrapperPair>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
@@ -9430,30 +9455,16 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (dynamicMethodCallWrappers.size > 0) {
-    // (#7106 Stage 4) One wrapper per (method, arity), built from legacy's own
-    // any-receiver call emitter, so its closed-dispatch reservations are
-    // shared with legacy sites and filled at finalize like theirs.
-    for (const [symbol, { method, arity }] of [...dynamicMethodCallWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      if (ensureIrDynamicMethodCallHelper(ctx, symbol, method, arity) === undefined) {
-        throw new Error(`ir/integration: ${symbol} has no host-free brand-dispatch wrapper (#7106 Stage 4)`);
-      }
-      observeNativeRuntimeProvider(ctx, symbol);
-    }
-    flushLateImportShifts(ctx, null);
-  }
-  if (arrayPrototypeBorrowWrappers.size > 0) {
-    // (#7106 compareArray.format) One wrapper per (method, arity), built from
-    // legacy's own borrow compiler over a template, so its reservations are
-    // shared with legacy sites and filled at finalize like theirs.
-    for (const [symbol, { method, arity }] of [...arrayPrototypeBorrowWrappers].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      if (ensureIrArrayPrototypeBorrowHelper(ctx, symbol, method, arity) === undefined) {
-        throw new Error(`ir/integration: ${symbol} has no host-free Array.prototype borrow wrapper (#7106)`);
-      }
-      observeNativeRuntimeProvider(ctx, symbol);
-    }
-    flushLateImportShifts(ctx, null);
-  }
+  // (#7106 Stage 4 / compareArray.format) One wrapper per (method, arity),
+  // each family built from legacy's own emitters over a template, so their
+  // reservations are shared with legacy sites and filled at finalize like theirs.
+  buildTemplateWrapperFamily(ctx, dynamicMethodCallWrappers, ensureIrDynamicMethodCallHelper, "brand-dispatch");
+  buildTemplateWrapperFamily(
+    ctx,
+    arrayPrototypeBorrowWrappers,
+    ensureIrArrayPrototypeBorrowHelper,
+    "Array.prototype borrow",
+  );
   if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     ensureObjectProtoToStringRuntimeHelper(ctx);
     flushLateImportShifts(ctx, null);

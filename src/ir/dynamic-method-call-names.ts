@@ -45,11 +45,6 @@ export function parseIrWrapperSymbol(
   return irWrapperSymbolIsNameable(method, arity) ? { method, arity } : undefined;
 }
 
-/** May the IR name a wrapper for `recv.<method>(…arity args)`? (Identifier-safe names only.) */
-export function irDynamicMethodCallIsNameable(method: string, arity: number): boolean {
-  return irWrapperSymbolIsNameable(method, arity);
-}
-
 /**
  * Does `recv.<method>(…arity args)` on a dynamic receiver need the wrapper?
  * The generic `__ir_dyn_method_call_0/1` → `__extern_method_call` serves a

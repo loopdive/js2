@@ -71,7 +71,7 @@ import {
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
-import { irDynamicMethodCallIsNameable, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
+import { irDynamicMethodCallNeedsWrapper, irWrapperSymbolIsNameable } from "./dynamic-method-call-names.js";
 import { type ArrayPrototypeBorrowCall, matchArrayPrototypeBorrowCall } from "./array-prototype-borrow-call.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
@@ -3007,7 +3007,7 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 function dynamicMethodCallIsAdmitted(name: string, arity: number): boolean {
   if (!irDynamicMethodCallNeedsWrapper(name, arity)) return true;
   const supports = currentSelectionOptions?.supportsBackendCapability;
-  if (irDynamicMethodCallIsNameable(name, arity) && supports?.("dynamic-method-call-wrapper") === true) return true;
+  if (irWrapperSymbolIsNameable(name, arity) && supports?.("dynamic-method-call-wrapper") === true) return true;
   return arity <= 1 && supports?.("host-dynamic-method-call") === true;
 }
 
