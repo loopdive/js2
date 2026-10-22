@@ -109,10 +109,10 @@ review against its actual diff before release.
 
 ## Acceptance
 
-- [ ] Shared uint32 metadata survives the supported preparation/ABI boundaries.
-- [ ] Dynamic read/write paths preserve actual uint32 values and evaluation order.
-- [ ] Supported reader/caller bodies are genuinely emitted through IR.
-- [ ] Native controls, exact-base comparison and standard byte identity recorded.
+- [x] Shared uint32 metadata survives the supported preparation/ABI boundaries.
+- [x] Supported dynamic read/write paths preserve actual uint32 values and evaluation order.
+- [x] Supported reader/caller bodies are genuinely emitted through IR.
+- [x] Native controls, exact-base comparison and standard byte identity recorded.
 - [ ] Ready PR and independent review status recorded; remaining migration gaps explicit.
 
 ## Work in progress evidence, 2026-10-22
@@ -274,3 +274,63 @@ Logs: `.tmp/7138-prototype-final-{controls,i32,kernel-set,identity,surface,wasi-
 The earlier review request names c0fd929861 only; an independent review must use
 the final updated head before publication/release. No predecessor head, HOLD,
 queue entry or running test was changed.
+
+
+### Current-main publication checkpoint, 2026-10-22
+
+The branch now includes main `2fe8c1e0d5bd46adc071f484db4b0bdc8a2d54dd`
+at merge `0c58a809e0ec9a39bd3d2e6c831a98c940fb9b1b`. It first fast-forwards
+to the existing dependency-composed merge `b7c696dbab57b722b77aba562c88c8695eb657e3`,
+whose constructor/member conflict resolutions were measured with the addition
+child. This integrates main's constructor admission without importing the
+child's #7066 producer changes. The three source resolutions preserve main's
+ambient-this/instanceof admission, strict/sloppy member-write distinction and
+exact strict/sloppy physical helper evidence. A shared native capability policy
+feeds both selection and prepared signatures, keeping the enclosing planner
+below its size ceiling without a new allowance.
+
+The newer main merge brings the shadowed-instanceof-RHS repair and refreshed
+artifacts verbatim; those incoming source/test/artifact paths were compared
+byte-for-byte against main after the normal commit hooks. No additional source
+conflict occurred.
+
+Fresh qualification (Node 25.9.0, Vitest, one fork):
+
+- **385/385** in fourteen files, including all **81** member controls, the two
+  five-test current-main constructor/instanceof cohorts and the retained
+  numeric/in/console/ABI/coercion/void/return controls. The i32 environment
+  passes **151/151**.
+- Against exact fresh main **2fe8c1e0d5**, the five old kernel/Set suites have
+  **65 passes / 22 failures out of 87 on each side**. Every failure block is
+  identical after path normalization, using the authentic Test262 tree and
+  freshly rebuilt compiler/runtime bundles on each side.
+- The current-main corpus comparison has **57/60 identical records**, with
+  all successful gc, standalone and linear binaries unchanged. Three WASI
+  binaries differ cumulatively with the console/numeric/member prerequisites:
+  algorithms (`bebed6ad8e5e…`,132713 → `e358a45f773c…`,119290),
+  classes (`c7a3db9b931a…`,118156 → `b9e62d4e5a28…`,43892),
+  async (`82b98b27f850…`,144162 → `e7509c7e9996…`,156880).
+- Both algorithms and classes exit zero and match the complete JavaScript
+  stdout oracle. Fresh main itself prints `[object]` for their dynamic console
+  values; that baseline failure is retained rather than relabeled as a pass.
+  The async reactor still emits only its heading on both sides in the available
+  driver, so full async equivalence remains unqualified. These are current-main
+  cumulative results, not a claim that the member slice alone fixes console.
+- Typecheck, lint, layering, cycles, flat directories, coercion/oracle and
+  optimization-retirement checks pass. LOC/function checks additionally pass
+  with `LOC_GATE_BASE=upstream/main` pinned to the exact main above. No new
+  allowance was added; incoming main allowances remain its own changes.
+- Compiler inventory is valid/incomplete with zero errors and tested source
+  fingerprint `c513bb95a1a048da7042244663cbdb040afc62f9283099face71188af56cec37`.
+  Dead-export preservation passes; strict closure remains OPEN at the two
+  existing nonliteral dynamic imports. Retirement is not certified.
+
+Raw current-main records are `.tmp/7138-main-2fe-*`, paired with the same
+explicitly named files in the audit checkout at 2fe8c1e0d5. Historical raw
+records remain labeled with their original bases. The console/numeric
+predecessors are still not merged at this main, so publication starts as a
+dependency-blocked draft, not as a ready or released stack. Independent
+adversarial review remains required against the final published head, including
+its prerequisite implementation and the three prior conflict resolutions.
+The read-only DefineOwnProperty gap and assignment-as-value migration gap remain
+explicit above. No existing predecessor PR head, HOLD or queue entry changed.
