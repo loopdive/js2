@@ -52,8 +52,8 @@ inference. Parameter inference and explicit annotations keep their behavior.
       branches emit actual IR bodies and match legacy runtime values.
 - [ ] Normal source gates and hooks pass; ready PR links this record.
 
-Base regression test: 9 failures / 15 tests (3 return seeds and 6 body-emission
-checks); the 6 boolean/mixed/nullish/object controls pass. Both legacy and
+Base regression test: 9 failures / 18 tests (3 return seeds and 6 body-emission
+checks); all 9 boolean/mixed/nullish/object/enum/annotation controls pass. Both legacy and
 fallback-enabled compiled execution already return the expected values.
 No test262 population gain is measured by this small regression suite.
 
@@ -65,12 +65,21 @@ that share `seedReturnType`. Both `g` and its caller `run` now emit IR bodies
 in all six compile/run cases; legacy execution gives the same values.
 The extra controls preserve numeric/string enums and explicit TS annotations.
 
+The pre-push numeric-local suite exposed one stale shape assertion: a switch
+with literal-union returns now emits IR, whose copy propagation replaces the
+named `$ch` local with the unboxed switch slot. On the exact base compiler the
+original suite passes 18/18; on the candidate only that name assertion fails.
+The updated test in `tests/issue-3765-numeric-locals.test.ts` checks actual IR
+emission, the existing f64/no-boxing operations, and all four runtime branches.
+
 Typecheck, changed-file lint/format, LOC/function budgets, coercion and oracle
 ratchets pass. The dead-export preservation gate passes its configured
 contract; its existing open runtime graph still does not certify retirement.
 
 Local Node 24.4.1 requires an exception-reference flag for existing try/catch
 tests; those environment-only failures disappear on the installed Node 25.9.0.
-The standalone workspace mode of `check-issue-ids.mjs` has an existing path
-decoding failure on this volume's space; validate staged/committed issue IDs
-through the script's git-tree modes instead.
+The workspace mode of `check-issue-ids.mjs` has an existing path decoding
+failure on this volume's space, and its committed mode reports an empty index.
+The actual `check-committed-issue-integrity.mjs HEAD` gate scans 4981/4981
+frontmatter-bearing files and passes. The allocator's full PR scan and the
+separate against-main collision check also pass.
