@@ -2275,6 +2275,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/console-output.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-unit-inventory.ts",
       "state": "clean",
       "layer": "foundation"
@@ -5013,6 +5018,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-native-numeric-field.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7137",
+      "nextBoundary": "Source-qualified native numeric field projection; move with exact class-layout preparation."
+    },
+    {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7187,6 +7200,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/helpers/ir-native-console.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7136",
+      "nextBoundary": "Move native console provider materialization with Program ABI preparation; formatting and output kernels remain shared."
     },
     {
       "path": "src/codegen/ir-native-map.ts",
@@ -12086,6 +12107,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/numeric-slot-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7137",
+      "nextBoundary": "Producer numeric slot/domain conversions reuse canonical bitwise IR; move with source-language lowering."
+    },
+    {
       "path": "src/ir/boolean-brand.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12492,6 +12521,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/console-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7136",
+      "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
     },
     {
       "path": "src/ir/host-free-runtime.ts",
