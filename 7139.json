@@ -3,10 +3,8 @@
   "assignee": "ttraenkler/codex-session-b",
   "requested_by": "ttraenkler/codex-session-b",
   "status": "in-progress",
-  "branch": "",
-  "reserved_at": "2026-10-22T17:09:49Z",
-  "claimed_at": "2026-10-22T17:09:49Z",
-  "updated_at": "2026-10-22T17:09:49Z",
-  "write_id": "65587-8qhel0ec",
-  "pr_scan": "ok"
+  "branch": "codex/7139-ir-native-dynamic-instanceof-20261022",
+  "claimed_at": "2026-10-22T17:18:03Z",
+  "updated_at": "2026-10-22T17:18:03Z",
+  "write_id": "68207-w0kj4dpv"
 }
