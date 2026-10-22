@@ -736,6 +736,16 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S1i — publish a direct call site's actual argument count to the callee's prologue. */
+  emitDynPublishArgc(count: number): void {
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error(
+        `IrFunctionBuilder: emitDynPublishArgc count must be a non-negative integer, got ${count} (#7106 S1i) (func ${this.id.name})`,
+      );
+    }
+    this.pushInstr({ kind: "dyn.publish_argc", count, result: null, resultType: null });
+  }
+
   /** #7106 S1e — the invocation's `arguments.length` (actual argument count); result f64. */
   emitDynArgumentsLength(formals: number): IrValueId {
     if (!Number.isInteger(formals) || formals < 0) {

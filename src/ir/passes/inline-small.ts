@@ -706,6 +706,8 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const v = mapId(rename, inst.value);
       return v === inst.value ? inst : { ...inst, value: v };
     }
+    case "dyn.publish_argc":
+      return inst; // no operands (#7106 S1e/S1i)
     case "dyn.own_property": {
       const receiver = mapId(rename, inst.receiver);
       const key = mapId(rename, inst.key);

@@ -280,6 +280,20 @@ export interface IrInstrDynInstanceOfFunction extends IrInstrBase {
 }
 
 /**
+ * `dyn.publish_argc{count}` — the caller half of the same count protocol
+ * (#7106 S1i): publishes the number of arguments actually passed at a direct
+ * call whose callee reads its own `arguments` (§10.4.4.6: "length" is the
+ * number of arguments passed), immediately before that call — exactly
+ * legacy's `emitSetArgc` for an under-arity call site. The callee's entry
+ * prologue consumes and clears it. No operands, no result.
+ */
+export interface IrInstrDynPublishArgc extends IrInstrBase {
+  readonly kind: "dyn.publish_argc";
+  /** The call site's actual argument count (fewer than the callee's formals). */
+  readonly count: number;
+}
+
+/**
  * `dyn.own_property{receiver, key, test}` — the ECMAScript
  * `Object.prototype.hasOwnProperty` ([[GetOwnProperty]] ≠ undefined,
  * §20.1.3.2) or `Object.prototype.propertyIsEnumerable` (§20.1.3.4) predicate
