@@ -167,12 +167,14 @@ describe("#1197 i32 element specialization for number[]", () => {
     });
 
     it("batches hot numeric misses while the kill switch restores the branch ladder", async () => {
+      // (#7108) The one-argument search is IR-owned now; the explicit `fromIndex` keeps this
+      // case on the legacy emitter whose batched branch ladder it pins (the IR admits no `fromIndex`).
       const source = `export function test(): number {
         const arr: number[] = [];
         for (let i = 0; i < 1031; i = i + 1) {
           arr.push((i * 37) % 1031);
         }
-        return arr.indexOf(444);
+        return arr.indexOf(444, 0);
       }`;
       const compileWithBatching = async (enabled: boolean) => {
         const previous = process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES;
@@ -358,22 +360,26 @@ describe("#1197 i32 element specialization for number[]", () => {
     });
 
     it("a fractional indexOf search keeps the f64 backing", async () => {
+      // (#7108) The one-argument search is IR-owned now; the explicit `fromIndex` keeps this
+      // case on the legacy emitter whose i32-promotion analysis it pins (the IR admits no `fromIndex`).
       const wat = await compileWatHostAssisted(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) values.push(i & 7);
-          return values.indexOf(1.5);
+          return values.indexOf(1.5, 0);
         }`,
       );
       expect(wat).not.toContain("__arr_i32");
     });
 
     it("an out-of-range indexOf search keeps the f64 backing", async () => {
+      // (#7108) The one-argument search is IR-owned now; the explicit `fromIndex` keeps this
+      // case on the legacy emitter whose i32-promotion analysis it pins (the IR admits no `fromIndex`).
       const wat = await compileWatHostAssisted(
         `export function test(): number {
           const values: number[] = [];
           for (let i = 0; i < 10; i++) values.push(i & 7);
-          return values.indexOf(2147483648);
+          return values.indexOf(2147483648, 0);
         }`,
       );
       expect(wat).not.toContain("__arr_i32");
