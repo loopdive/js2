@@ -5,6 +5,7 @@ import { parameterHasDynamicExternrefAbi } from "../src/codegen/ir-dynamic-param
 import type { CodegenContext } from "../src/codegen/context/types.js";
 import type { ValType } from "../src/ir/types.js";
 import { ts } from "../src/ts-api.js";
+import { jsDocParamIsExternrefCandidate } from "../src/ir/select.js";
 
 async function build(source: string, experimentalIR: boolean, target: "standalone" | "wasi") {
   const result = await compile(source, {
@@ -164,6 +165,31 @@ describe("#7135 native dynamic in", () => {
 });
 
 describe("#7135 dynamic parameter physical ABI proof", () => {
+  it("preserves the injected JSDoc projection and rejects missing source evidence", () => {
+    const source = ts.createSourceFile(
+      "abi.js",
+      "/** @param {object} p */ function f(p) { return true; }",
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.JS,
+    );
+    const parameter = (source.statements[0] as ts.FunctionDeclaration).parameters[0]!;
+    const ctx = {
+      fast: false,
+      targetProfile: { environment: "none" },
+      numImportFuncs: 0,
+      funcMap: new Map([["f", 0]]),
+      mod: {
+        functions: [{ typeIdx: 0 }],
+        types: [{ kind: "func", params: [{ kind: "externref" }], results: [] }],
+        funcOrdinalToPosition: [],
+      },
+    } as unknown as CodegenContext;
+    expect(parameter.type).toBeUndefined();
+    expect(parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate)).toBe(true);
+    expect(parameterHasDynamicExternrefAbi(ctx, parameter, () => false)).toBe(false);
+  });
+
   const source = ts.createSourceFile(
     "abi.ts",
     "function f(p: any): boolean { return true; }",
@@ -192,7 +218,7 @@ describe("#7135 dynamic parameter physical ABI proof", () => {
           funcOrdinalToPosition: [],
         },
       } as unknown as CodegenContext;
-      expect(parameterHasDynamicExternrefAbi(ctx, parameter)).toBe(expected);
+      expect(parameterHasDynamicExternrefAbi(ctx, parameter, () => false)).toBe(expected);
     });
   }
 });

@@ -167,3 +167,19 @@ oracle and coercion ratchets pass. Dead-export preservation passes 6/6 full
 source and 6/6 cut witnesses, with the strict modeled graph still open; this
 is not retirement certification. Boundary inventory is valid and explicitly
 architecture-incomplete. Normal hooks remain enabled.
+
+
+## CI repair, 2026-10-22
+
+The first published head failed the import-cycle ratchet in quality job
+119781719529 (run 39766070456). The ABI helper imported the large selector only
+for its JSDoc query. It now receives that existing query from its caller and
+reads explicit-any syntax directly; the physical-slot proof is unchanged. This
+cuts the codegen-to-IR edge (301 back to its 300-edge base) without granting
+cycle growth. The largest SCC remains 725 files. No hold or queue action accompanies this repair.
+
+
+The repaired head passes **83/83 focused tests in six files**, including the
+real JSDoc query's positive control and its absent-evidence rejection.
+Typecheck, lint, LOC/function budgets and the import-cycle ratchet pass.
+No new cycle/budget allowance is used for the repair.
