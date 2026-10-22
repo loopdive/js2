@@ -76,7 +76,7 @@ import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
-  observeIrFunctionObjectCallProviders,
+  observeIrDynamicRuntimeProviders,
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
@@ -345,6 +345,7 @@ import {
   type IrInstr,
   type IrInstrStringConst,
   type IrModule,
+  type IrModuleDeclarations,
   type IrObjectShape,
   type IrStringLengthProvider,
   type IrType,
@@ -367,8 +368,11 @@ import {
   planIrCompilation,
   type IrSelection,
 } from "./select.js";
-import { verifyIrFunction } from "./verify.js";
-import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
+import { verifyIrFunction, type IrVerificationOptions } from "./verify.js";
+import {
+  programAbiModuleDeclarations,
+  verifyRegisteredProviderArtifacts,
+} from "../codegen/program-abi-declared-globals.js";
 import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
@@ -2262,6 +2266,23 @@ function verifyFinalAllocArtifacts(
   return verified;
 }
 
+function requireVerifiedIrFunction(
+  fn: IrFunction,
+  declarations: IrModuleDeclarations | undefined,
+  options: IrVerificationOptions,
+  phase: string,
+): void {
+  const errors = verifyIrFunction(fn, undefined, declarations, options);
+  if (errors.length > 0) {
+    throw new IrInvariantError(
+      "verifier-failure",
+      "verify",
+      `${phase}: ${errors.map((error) => error.message).join("; ")}`,
+      errors,
+    );
+  }
+}
+
 function fillSealedPreparedCallable(
   componentId: string,
   previous: WasmFunction,
@@ -4022,15 +4043,7 @@ export function compileIrPathFunctions(
         throw new Error("injected synthetic hygiene failure");
       }
       const optimized = runHygienePasses(entry.fn, allocRegistry);
-      const postErrors = verifyIrFunction(optimized, undefined, undefined, verifyOptions);
-      if (postErrors.length > 0) {
-        throw new IrInvariantError(
-          "verifier-failure",
-          "verify",
-          `post-hygiene verify: ${postErrors.map((error) => error.message).join("; ")}`,
-          postErrors,
-        );
-      }
+      requireVerifiedIrFunction(optimized, undefined, verifyOptions, "post-hygiene verify");
       assertAllocProvenance(optimized, allocRegistry);
       hygieneCandidates.push({ ...entry, fn: optimized });
     } catch (error) {
@@ -4100,15 +4113,7 @@ export function compileIrPathFunctions(
       }
       const changed = after !== before.fn;
       const final = changed ? runHygienePasses(after, allocRegistry) : after;
-      const verifyErrors = verifyIrFunction(final, undefined, declsAfterInline, verifyOptions);
-      if (verifyErrors.length > 0) {
-        throw new IrInvariantError(
-          "verifier-failure",
-          "verify",
-          `post-inline verify: ${verifyErrors.map((error) => error.message).join("; ")}`,
-          verifyErrors,
-        );
-      }
+      requireVerifiedIrFunction(final, declsAfterInline, verifyOptions, "post-inline verify");
       if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "provenance-synthetic" && before.synthesized) {
         throw new IrInvariantError(
           "allocation-provenance-failure",
@@ -4396,15 +4401,7 @@ export function compileIrPathFunctions(
           ? hygienic
           : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(batchPolicy.batch));
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
-      const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU, verifyOptions);
-      if (verifyErrors.length > 0) {
-        throw new IrInvariantError(
-          "verifier-failure",
-          "verify",
-          `post-mono verify: ${verifyErrors.map((error) => error.message).join("; ")}`,
-          verifyErrors,
-        );
-      }
+      requireVerifiedIrFunction(final, declsAfterTU, verifyOptions, "post-mono verify");
       assertAllocProvenance(final, allocRegistry);
       readyForLower.push({
         artifactUnitId: fn.unitId,
@@ -4874,6 +4871,19 @@ export function compileIrPathFunctions(
     failedOwners,
     preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest, fuseNativeNumberFormatCarriers),
   );
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
+  if (
+    !runGlobalPreparation(() =>
+      verifyRegisteredProviderArtifacts(
+        ctx,
+        healthyForLower,
+        (fn, declarations) => verifyIrFunction(fn, undefined, declarations, verifyOptions),
+        (entry, error) => markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "verify"),
+      ),
+    )
+  )
+    return finishReport();
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
   // This vector is intentionally captured only after every final IR/resource
@@ -9457,8 +9467,7 @@ function preregisterDynamicSupport(
   if (dynamicRuntimeNeeds.size > 0) {
     addUnionImports(ctx);
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
-    if (dynamicRuntimeNeeds.has("member-call"))
-      observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
+    observeIrDynamicRuntimeProviders(dynamicRuntimeNeeds, (symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
   if (usesFunctionMemberStrictSet && nativeSemanticProviders && !ctx.fast) {
     ensureObjectRuntime(ctx);

@@ -3426,6 +3426,15 @@ function dynamicUsesAreMoveOnly(
       ) {
         return scanExpr(e.left, true);
       }
+      if (
+        op === ts.SyntaxKind.InstanceOfKeyword &&
+        !expectDyn &&
+        leftIsDyn &&
+        rightIsDyn &&
+        currentSelectionOptions?.nativeDynamicExternrefBuildable === true
+      ) {
+        return scanExpr(e.left, true) && scanExpr(e.right, true);
+      }
       // (#7106 S3c) `<dynamic> instanceof F` → `dyn.instanceof_fn`: a concrete i32.
       if (
         op === ts.SyntaxKind.InstanceOfKeyword &&
@@ -8040,6 +8049,14 @@ function selectorPrimitiveWrapperOrGenericBinary(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean {
+  if (
+    binOp === ts.SyntaxKind.InstanceOfKeyword &&
+    currentSelectionOptions?.nativeDynamicExternrefBuildable === true &&
+    currentSelectionOptions.isDynamicForInReceiver?.(expr.left) === true &&
+    currentSelectionOptions.isDynamicForInReceiver?.(expr.right) === true
+  ) {
+    return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
+  }
   if (binOp === ts.SyntaxKind.EqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsToken) {
     const leftWrapper = selectorPrimitiveWrapperConstruction(expr.left, scope, localClasses);
     const rightWrapper = selectorPrimitiveWrapperConstruction(expr.right, scope, localClasses);

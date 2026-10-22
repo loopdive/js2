@@ -43,11 +43,11 @@ describe("native dynamic instanceof prototype demand", () => {
           const result = await compile(source, { target, experimentalIR, trackIrOutcomes: true });
           expect(await run(result)).toBe(nodeResult(source));
           if (experimentalIR) {
-            // Resource repair alone must not claim an unqualified generic IR operator.
+            // The protocol follow-up now selects this checker; class-value callers
+            // can still require the compatibility path, tested separately.
             const check = result.irOutcomes?.filter((outcome) => outcome.displayName === "check");
             expect(check).toHaveLength(1);
-            expect(check![0].irBodyEmitted).toBe(false);
-            expect(check![0].legacyBodyEmitted).toBe(true);
+            expect(check![0].irBodyEmitted).toBe(true);
           }
         });
       }

@@ -7,6 +7,8 @@ import {
   irTypeEquals,
   irVal,
   type IrGlobalBinding,
+  type IrFunction,
+  type IrDeclaredSignature,
   type IrModule,
   type IrModuleDeclarations,
   type IrType,
@@ -14,6 +16,8 @@ import {
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { Import, ValType, WasmModule } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import type { IrVerifyError } from "../ir/verify.js";
+import { IrInvariantError } from "../shared/contracts/ir-preparation-errors.js";
 
 type GlobalImport = Import & { readonly desc: Extract<Import["desc"], { readonly kind: "global" }> };
 
@@ -110,17 +114,84 @@ export function programAbiDeclaredGlobals(
   return declarations;
 }
 
-/** Add Program ABI global declarations beside the module's own signatures. */
+/** Add independent observed-provider declarations without replacing nominal source contracts. */
+function declaredProviderSignatures(
+  ctx: Pick<CodegenContext, "programAbiCallableProviders">,
+  module: IrModule,
+): ReadonlyMap<string, IrDeclaredSignature> {
+  const declarations = new Map(irModuleDeclarations(module).declaredSignatures);
+  const providers = ctx.programAbiCallableProviders;
+  if (!providers) return declarations;
+  for (const fn of module.functions) {
+    const buffers = [
+      ...fn.blocks.map((block) => block.instrs),
+      ...(fn.asyncRuntime?.states.map((state) => state.body) ?? fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ];
+    for (const buffer of buffers)
+      for (const root of buffer)
+        forEachInstrDeep(root, (instruction) => {
+          if (instruction.kind !== "call" || instruction.target.binding.kind !== "runtime") return;
+          const key = irBindingKey(instruction.target.binding);
+          if (key === null) return;
+          const signature = providers.resolveCurrentSignature(instruction.target);
+          if (!signature) return;
+          const previous = declarations.get(key);
+          if (previous) {
+            if (previous.params.length !== signature.params.length) {
+              throw new ProgramAbiInvariantError(
+                "callable-provider-mismatch",
+                `declaration ${key} contradicts its allocator arity`,
+              );
+            }
+            return; // Preserve logical/nominal types after checking the independent arity.
+          }
+          declarations.set(key, {
+            params: signature.params.map((type) => irVal({ ...type })),
+            result: signature.results.length === 1 ? irVal({ ...signature.results[0]! }) : null,
+          });
+        });
+  }
+  return declarations;
+}
+
+/** Add exact Program ABI global/provider declarations beside the module's source signatures. */
 export function programAbiModuleDeclarations(
-  ctx: Pick<CodegenContext, "mod" | "programAbiSession">,
+  ctx: Pick<CodegenContext, "mod" | "programAbiSession" | "programAbiCallableProviders">,
   module: IrModule,
 ): IrModuleDeclarations {
+  const declaredSignatures = declaredProviderSignatures(ctx, module);
+  const withProviders = { ...module, declaredSignatures };
   const projected = programAbiDeclaredGlobals(ctx, module);
-  if (projected === undefined) return irModuleDeclarations(module);
+  if (projected === undefined) return irModuleDeclarations(withProviders);
   if (module.declaredGlobals === undefined) {
-    return irModuleDeclarations({ ...module, declaredGlobals: projected });
+    return irModuleDeclarations({ ...withProviders, declaredGlobals: projected });
   }
   const declaredGlobals = new Map(projected);
   for (const [key, type] of module.declaredGlobals) declaredGlobals.set(key, type);
-  return irModuleDeclarations({ ...module, declaredGlobals });
+  return irModuleDeclarations({ ...withProviders, declaredGlobals });
+}
+
+/** Verify runtime declarations only after their exact allocator providers exist. */
+export function verifyRegisteredProviderArtifacts<T extends { readonly fn: IrFunction }>(
+  ctx: CodegenContext,
+  entries: readonly T[],
+  verify: (fn: IrFunction, declarations: IrModuleDeclarations) => readonly IrVerifyError[],
+  onFailure: (entry: T, error: unknown) => void,
+): void {
+  const declarations = programAbiModuleDeclarations(ctx, { functions: entries.map((entry) => entry.fn) });
+  for (const entry of entries) {
+    try {
+      const errors = verify(entry.fn, declarations);
+      if (errors.length > 0) {
+        throw new IrInvariantError(
+          "verifier-failure",
+          "verify",
+          `registered-provider verify: ${errors.map((error) => error.message).join("; ")}`,
+          errors,
+        );
+      }
+    } catch (error) {
+      onFailure(entry, error);
+    }
+  }
 }

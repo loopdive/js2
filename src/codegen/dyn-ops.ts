@@ -2,6 +2,7 @@
 //
 // Representation-neutral runtime helpers used by IR dynamic operations.
 
+import { IrInvariantError } from "../shared/contracts/ir-preparation-errors.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
@@ -17,6 +18,7 @@ import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
+import { ensureInstanceofOperator, NATIVE_INSTANCEOF_OPERATOR } from "./native-dynamic-instanceof.js";
 import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import { RE_FLAG_G } from "./regex/bytecode.js";
 import { compilePattern } from "./regex/compile.js";
@@ -43,7 +45,8 @@ export type IrDynamicRuntimeNeed =
   | "method-call-0"
   | "method-call-1"
   | "string-replace"
-  | "member-call";
+  | "member-call"
+  | "instanceof";
 
 type RelNeed = "lt" | "le" | "gt" | "ge";
 
@@ -666,6 +669,11 @@ export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<I
   if (ctx.fast) ensureAnyHelpers(ctx);
   const carrier: ValType = ctx.fast ? { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx } : { kind: "externref" };
 
+  if (needs.has("instanceof")) {
+    if (ctx.fast || !hostFreeEnvironment(ctx) || ensureInstanceofOperator(ctx) === undefined) {
+      throw new IrInvariantError("selection-preparation-mismatch", "build", "native instanceof provider unavailable");
+    }
+  }
   if (needs.has("add")) ensureDynamicAdd(ctx, carrier);
   for (const op of ["lt", "le", "gt", "ge"] as const) {
     if (needs.has(op)) ensureDynamicRel(ctx, carrier, op);
@@ -679,6 +687,8 @@ export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<I
 /** Exact symbolic demand of the dynamic runtime this module owns. */
 export function irDynamicRuntimeNeedForSymbol(symbol: string): IrDynamicRuntimeNeed | undefined {
   switch (symbol) {
+    case NATIVE_INSTANCEOF_OPERATOR:
+      return "instanceof";
     case IR_DYN_ADD_FN:
       return "add";
     case IR_DYN_LT_FN:
@@ -703,8 +713,14 @@ export function irDynamicRuntimeNeedForSymbol(symbol: string): IrDynamicRuntimeN
   return undefined;
 }
 
-/** Observe only the actual function-object call helpers, after reservation. */
-export function observeIrFunctionObjectCallProviders(observe: (symbol: string) => void): void {
+/** Observe the reserved providers requested by the prepared runtime calls. */
+export function observeIrDynamicRuntimeProviders(
+  needs: ReadonlySet<IrDynamicRuntimeNeed>,
+  observe: (symbol: string) => void,
+): void {
+  if (needs.has("add")) observe(IR_DYN_ADD_FN);
+  if (needs.has("instanceof")) observe(NATIVE_INSTANCEOF_OPERATOR);
+  if (!needs.has("member-call")) return;
   for (const symbol of [
     IR_DYN_CALL_BOX_FN,
     IR_DYN_CALL_VALUE_FN,

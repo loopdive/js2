@@ -282,6 +282,13 @@ export class ProgramAbiCallableProviderRegistry {
     return index;
   }
 
+  /** Current physical declaration of an observed allocator object, never inferred from a call. */
+  resolveCurrentSignature(ref: IrFuncRef): FuncTypeDef | undefined {
+    if (this.resolveCurrentIndex(ref) === undefined) return undefined;
+    const observed = this.observed.get(irCallableBindingKey(this.requireProviderBinding(ref)))!;
+    return callableSignature(this.ctx.mod, observed.locator);
+  }
+
   /**
    * Capture one compatibility-selected provider as an exact allocator object.
    *

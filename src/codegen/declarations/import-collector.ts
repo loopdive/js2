@@ -2063,7 +2063,8 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     ) {
       addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
     }
-    if (state.getterCallbackFound) {
+    if (state.getterCallbackFound && !hostFreeEnvironment(ctx)) {
+      // Native accessor values use the shared closure ABI, including WASI.
       // __make_getter_callback: same signature — wraps a function so 'this' is bound (#929)
       // Used for Object.defineProperty accessor descriptors (getter/setter callbacks).
       addImport(ctx, "env", "__make_getter_callback", { kind: "func", typeIdx });

@@ -43,6 +43,7 @@ import {
 } from "./numeric-slot-coercion.js";
 import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
+import { lowerNativeInstanceof } from "./native-instanceof.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
@@ -14622,6 +14623,15 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
 function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerInstanceOf(expr, cx));
+  if (
+    cx.resolver?.stringIsExternref?.() === false &&
+    expressionProducesDynamic(expr.left, cx) &&
+    expressionProducesDynamic(expr.right, cx)
+  ) {
+    const value = lowerExpr(expr.left, cx, irDynamic());
+    const target = lowerExpr(expr.right, cx, irDynamic());
+    return lowerNativeInstanceof(cx.builder, value, target);
+  }
   if (!ts.isIdentifier(expr.right)) {
     demoteToLegacy(
       "operand-coercion-unsupported",
