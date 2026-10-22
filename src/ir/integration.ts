@@ -7526,12 +7526,12 @@ function resolveAndObserveCallableProvider(
     index = batchedConcatProviderIndex(ctx, prepared, 5);
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     index = batchedConcatProviderIndex(ctx, prepared, parseIrStringConcatManyArity(symbol)!);
-  } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
+  } else if (ref.binding.kind === "runtime" && (symbol === "__new_ReferenceError" || symbol === "__new_TypeError")) {
     if (ctx.wasi || ctx.standalone) {
-      emitWasiErrorConstructor(ctx, "ReferenceError", 1);
-      index = ctx.funcMap.get("__new_ReferenceError");
+      emitWasiErrorConstructor(ctx, symbol === "__new_TypeError" ? "TypeError" : "ReferenceError", 1);
+      index = ctx.funcMap.get(symbol);
     } else {
-      index = ensureLateImport(ctx, "__new_ReferenceError", [{ kind: "externref" }], [{ kind: "externref" }]);
+      index = ensureLateImport(ctx, symbol, [{ kind: "externref" }], [{ kind: "externref" }]);
     }
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);

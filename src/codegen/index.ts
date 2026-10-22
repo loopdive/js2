@@ -231,6 +231,7 @@ import {
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
 } from "./ir-imported-call-planning.js";
+import { parameterHasDynamicExternrefAbi } from "./declarations/ir-dynamic-parameter-abi.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,
@@ -315,6 +316,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
@@ -3178,9 +3180,7 @@ function planIrOverlay(
     let allPositionsAreExplicitNumbers = true;
     for (const parameter of declaration.parameters) {
       const explicitType = effectiveIrParamTypeNode(parameter);
-      // (#7106 item 1) A JSDoc position legacy registered as externref is a
-      // dynamic projection, not an annotation (the resolver below answers it).
-      if (explicitType && !(jsDocParamIsExternrefCandidate(parameter) && legacyParamSlotIsExternref(ctx, parameter))) {
+      if (explicitType && !parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate)) {
         if (explicitType.kind !== ts.SyntaxKind.NumberKeyword) allPositionsAreExplicitNumbers = false;
         continue;
       }
@@ -3248,11 +3248,9 @@ function planIrOverlay(
         const fact = ctx.oracle.typeFactOf(receiver);
         return fact.kind === "any" || fact.kind === "unknown";
       },
-      // #2952 slice 6c — reading the enumerated key in the body needs the
-      // head slot (an externref from the #2964 helpers) to BE the string
-      // carrier. That holds exactly when `resolveString()` yields externref,
-      // i.e. when native strings are off.
+      // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
