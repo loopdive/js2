@@ -698,6 +698,56 @@ shaped like the verify* helpers, compared with node.
   (`__getOwnPropertyDescriptor = function…`) is ignored by legacy, which still
   calls the builtin (511 where node answers 86).
 
+## propertyHelper.js, arm 2 — the for-in head as a dynamic carrier (2026-10-22, measured)
+
+**Blocker.**
+- `isEnumerable` reads its for-in key (`if (x === name)`). The selector
+  admitted head-value reads only when the key is a host string
+  (`forInHeadValueIsHostString`).
+- So on native-strings lanes it reported `forin-head-value-used`.
+- `verifyEnumerable` and `verifyNotEnumerable` then failed with
+  `call-graph-closure` on it, which is where arm 1 left them.
+
+**Arm.**
+- **Why this is sound.** for-in is admitted only on the non-fast carrier
+  (`isDynamicForInReceiver`). There the #2964 key helpers' externref IS the
+  dynamic carrier of the key string: `emitBox` of a native string is
+  `extern.convert_any`.
+- **Selector.** A new option, `forInHeadValueIsDynamicCarrier`
+  (`ctx.nativeStrings && !ctx.fast`), admits head reads on that lane. The head
+  joins the move-only scan's dynamic names (`dynamicCarrierForInHead`). A body
+  holding such a head always runs the scan (`containsDynamicCarrierForInHead`),
+  so a read in an unsupported position stays refused before claim. For example,
+  `s = s + k` on a concrete string stays `move-only[concrete]`.
+- **from-ast.** Tags the head slot `asType: dynamic` on that lane. It is a
+  plain `local.get` of the externref slot, so no conversion is emitted.
+
+**Per-function census.** `built-ins/Array/prototype/map/length.js`, honest
+harness, #6833 stack plus arm 1. Standalone and gc agree on every row.
+
+| function | before (arm 1) | after |
+| --- | --- | --- |
+| isEnumerable | `forin-head-value-used` | **IR emitted** |
+| verifyEnumerable | `call-graph-closure` | **IR emitted** |
+| verifyNotEnumerable | `call-graph-closure` | **IR emitted** |
+| the other 12 propertyHelper units | unchanged | unchanged |
+
+**Conformance sample.** Every third of the 89 test262 files that call
+`verifyEnumerable`/`verifyNotEnumerable`, 30 files on standalone and on gc.
+- The verify helpers are IR-emitted in 24 of the 30 files.
+- Pass/fail is identical to the base on both lanes: 26/30 pass. The other 4
+  are 1 skip and 3 runtime-import errors from `using` tests, all the same on
+  the base.
+
+**Tests.** `tests/issue-7106-prophelper-isenumerable.test.ts`, compared with
+node on standalone and gc (wasi: validate).
+- propertyHelper's `isEnumerable`, verbatim.
+- Four other head-read shapes, with no post-claim demotion.
+- One refused shape: concrete string accumulation.
+- All 5 cases fail on the base.
+- Also fixes the pre-existing #2952 slice 6c dual-run case "head compared to a
+  literal" on this stack.
+
 ## Ownership
 
 Per the #6583 plan: Stage 1 and 3 → B (items 2/3), Stage 2 and 4 → Shepherd
