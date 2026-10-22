@@ -26,6 +26,13 @@ assignee: "ttraenkler/claude-c"
 # wrapper (`src/ir/integration.ts` → `codegen/ir-dynamic-construct.ts`) and the
 # selector option reads legacy's callee predicates from the same module, which
 # joins the SCC (it imports the construct-driver modules).
+# 2026-10-21 (S3c, self-guarded Test262Error): two dialect kinds
+# (`dyn.current_this`, `dyn.instanceof_fn`) and a `sloppy` bit on
+# `dyn.member_set`, threaded through the same files as S1e; the legacy seam is
+# one predicate each in `compileNewExpression` (route `new F` to the native
+# construct driver) and `analyzeFnctorEscapeGate` (refuse the fnctor struct);
+# `dyn-read.ts` gains the sloppy twin of `__dyn_member_set` beside its strict
+# sibling. No new import edge: the wrappers live in ir-dynamic-construct.ts.
 flat-dir-budget-allow:
   - src/codegen/ir-string-carrier.ts # 2026-10-21 (#7106 S1c): the dyn.string_carrier wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
@@ -36,6 +43,9 @@ import-cycles-allow:
   - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
   - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
   - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it
+# 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
+# self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
+# stands down when runtime eval may share the realm.
 func-budget-allow:
   # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
   - src/ir/integration.ts::makeFromAstResolver
@@ -62,6 +72,10 @@ func-budget-allow:
   - src/ir/select.ts::whyNotIrClaimable
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/fnctor-escape-gate.ts::analyzeFnctorEscapeGate
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
   # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
   - src/codegen/builtin-value-read.ts
@@ -81,6 +95,9 @@ loc-budget-allow:
   - src/ir/prepared-component-dependencies.ts
   - src/codegen/index.ts
   - src/ir/propagate.ts
+  - src/codegen/dyn-read.ts
+  - src/codegen/fnctor-escape-gate.ts
+  - src/codegen/expressions/new-super.ts
 ---
 
 ## Problem
@@ -301,6 +318,54 @@ touching the global. Consequences:
 Acceptance unchanged: `Test262Error` and `$DONOTEVALUATE` IR-emitted; first
 **non-zero `ir_only_pass`** on the addition slice (needs 1–4, Stage 2 and
 item 1 together).
+
+### S3c slice — 2026-10-21 (D, acting as C's lead; measured)
+
+**Lead decision (route 2):** on the host-free lanes a top-level function of
+the exact self-guarded shape `function F(…) { if (!(this instanceof F))
+return new F(…); … }` (`isSelfGuardedConstructor`,
+`src/codegen/helpers/self-guarded-constructor.ts`) is kept out of the fnctor
+machinery by BOTH mechanisms the 02:40Z measurement named: the escape gate
+refuses it (`analyzeFnctorEscapeGate`) and `compileNewExpression` sends its
+`new F(…)` sites to the native construct driver (`tryCompileNativeConstructFromValue`
+with the ordinary-function flag), so no `__fnctor_F` struct or `__fnctor_F_new`
+ever exists and F's registered signature is plain externref. The shape occurs
+once in the corpus (`test262/harness/sta.js`; zero hits in `benchmarks/`,
+the playground examples and `tests/equivalence/`), so no Octane fnctor
+changes lowering. Since #6708 S6 the default gc lane runs the same native
+regime, so both CI lanes move.
+
+IR arms (all behind capability `native-current-this`, non-fast,
+standalone|wasi, and codegen's `functionThisStrictness` /
+`selfGuardedConstructorValue` selection callbacks):
+
+- `dyn.current_this{strict}` — legacy's `__current_this` ladder
+  (`compileThisKeyword`'s `readsCurrentThis` rung, which `function-body.ts`
+  sets for every declaration that references its own `this`), wrapped as
+  `__ir_current_this_{sloppy,strict}`; read once at entry (OrdinaryCallBindThis).
+- `dyn.instanceof_fn{value, target}` — `tryEmitNativeUserCtorInstanceOf`'s
+  chain walk `__isPrototypeOf(F.prototype, value)` against the same
+  per-function prototype global, wrapped as `__ir_instanceof_fn_<F>`.
+- `new F(…)` → `dyn.construct` with F's function-object value (the planner's
+  existing `topLevelFunctionValues` plan, now also emitted for the `new`
+  callee and the `instanceof` operand of a self-guarded constructor).
+- `this.name = v` → `dyn.member_set` with a new `sloppy` bit: sloppy code
+  ignores a failed `[[Set]]` through legacy's `__extern_set`
+  (`__dyn_member_set_sloppy`), strict throws as before.
+- A dynamic-return function may fall out of a trailing expression statement
+  into its implicit `return undefined` (checked/lowered as a mid-body
+  statement plus a bare `return;`).
+
+Measured (standalone, real harness, `language/expressions/addition/S11.6.1_A2.1_T1.js`):
+legacy units 4 → 3 — `Test262Error` ships an IR body; `assert` now passes
+selection and withdraws post-claim at `assert._toString(mustBeTrue)` ("function
+member operand has no canonical carrier" — the #6823 evidence class);
+`compareArray` and `<module-init>` unchanged. Probe program (sloppy and
+strict): every check of `new F`, plain-call `F(…)`, `instanceof`, `String(e)`,
+`e.constructor`, numeric/absent messages answers the spec value (511/511).
+A non-writable `F.prototype.message` now answers per spec (sloppy keeps the
+prototype value, strict throws TypeError); legacy's struct ignored the
+prototype and answered neither.
 
 ### Stage 4 — script top-level residue (item 5; `<module-init>`)
 
