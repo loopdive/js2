@@ -2693,47 +2693,7 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   // We accept ExpressionStatement (e.g., `f();`) as a tail in void
   // functions and synthesize the implicit return.
   if (cx.returnType === null && ts.isExpressionStatement(stmt)) {
-    if (ts.isCallExpression(stmt.expression)) {
-      lowerDiscardedExpression(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(stmt.expression.left)
-    ) {
-      lowerIdentifierAssignment(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: property-store assignment as a void tail — the SET accessor
-    // body shape `set name(v) { this.#name = v; }`. Route through the SAME
-    // `lowerPropertyAssignment` the non-tail statement path uses (see
-    // `lowerStatementList`), so a setter's lone assignment produces bytes
-    // identical to the mid-body case, then synthesize the implicit return.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(stmt.expression.left)
-    ) {
-      lowerPropertyAssignment(stmt.expression, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    // #3000-B: element-store assignment as a void tail (`arr[i] = v;` as the
-    // final statement of a void function) — mirror the non-tail element-store
-    // arm for select↔build parity.
-    if (
-      ts.isBinaryExpression(stmt.expression) &&
-      stmt.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(stmt.expression.left)
-    ) {
-      lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-      cx.builder.terminate({ kind: "return", values: [] });
-      return;
-    }
-    lowerDiscardedExpression(stmt.expression, cx);
+    lowerStmt(stmt, cx);
     cx.builder.terminate({ kind: "return", values: [] });
     return;
   }

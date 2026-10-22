@@ -53,6 +53,8 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { collectClosureBaseWrapperTypeIdxs as closureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#2175 V2-S1) shared list
+import { hostFreeEnvironment } from "./context/types.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { boxToAny } from "./value-tags.js";
 import { readEnv } from "../env.js";
@@ -580,6 +582,7 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
   const forceSelfTest = readEnv("JS2WASM_FORCE_DYN_MEMBER_GET") === "1";
   if (forceSelfTest) ctx.usesDynMemberGet = true;
   if (!ctx.usesDynMemberGet) return; // U0 / member-get-free modules: byte-identical.
+  if (hostFreeEnvironment(ctx)) recordStandaloneRuntimeKeyClassMemberRead(ctx);
   if (ctx.dynMemberGetHelpersEmitted) return;
   ctx.dynMemberGetHelpersEmitted = true;
 

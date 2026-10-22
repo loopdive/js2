@@ -89,7 +89,7 @@ import {
   buildArgumentVectorPushLocals,
   buildArgumentVectorPushBody,
 } from "../runtime/wasmgc/values/argument-vector-bodies.js";
-import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { inheritedSetAnyDirty, nativeInheritedSetRuntimeActive } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { jsValueBoundary } from "./context/types.js";
@@ -244,7 +244,7 @@ import {
   fillObjectAssignProxySourceArm,
 } from "./object-runtime-enumeration.js"; // (#3274 wave-B) enumeration/array-like/object-static helper builders
 import { fillObjectIntegrityProxyArms } from "./object-integrity-proxy.js"; // (#5268 step 2)
-import { buildObjectPrototypeHelpers } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
+import { buildObjectPrototypeHelpers, reserveSetPrototypeStart } from "./object-runtime-prototype.js"; // (#3274 wave-B) prototype-chain helper builders
 import * as fnctorArray from "./fnctor-array-prototype.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import { isUserDeclaredStruct } from "./user-declared-structs.js"; // (#3920) user shape vs builtin carrier
@@ -400,6 +400,10 @@ export const FLAG_TOMBSTONE = 0x80;
 export const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 /** Default for a data property created by `o.x = v` — w/e/c all true. */
 export const FLAG_DEFAULT = FLAG_WRITABLE | FLAG_ENUMERABLE | FLAG_CONFIGURABLE; // (#4629) map/set dyn-dispatch fill reads it
+
+const SET_RESULT_UNADMITTED = 0;
+const SET_RESULT_SUCCESS = 1;
+const SET_RESULT_REFUSED = 2;
 
 /**
  * `$Object.flags` (field 4) object-level integrity and representation bits
@@ -2533,14 +2537,10 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
   const objGrowIdx = ctx.funcMap.get("__obj_grow")!;
-  // #4504 is a standalone runtime slice.  Keeping the gate here (rather than
-  // only at individual callers) prevents descriptor-bearing host/native-first
-  // builds from gaining a private result global whose index could be shifted by
-  // later imports.
-  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx);
-  const SET_RESULT_UNADMITTED = 0;
-  const SET_RESULT_SUCCESS = 1;
-  const SET_RESULT_REFUSED = 2;
+  // Preserve the native Set result channel and use it for WASI as well.
+  // The new class-chain dependency is reserved only in host-free environments.
+  const inheritedSetRuntimeActive = nativeInheritedSetRuntimeActive(ctx);
+  const setPrototypeStartIdx = reserveSetPrototypeStart(ctx, registerNative) ?? fnctorProtoStartIdx;
   let externSetResultGlobalIdx: number | undefined;
   // (#6766) Without #4504's decide walk, a Proxy link on the chain is found by
   // its own reserved walk (filled once the Proxy dispatch exists).
@@ -2684,7 +2684,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
               { op: "local.set", index: 9 },
             ],
             else:
-              fnctorProtoStartIdx === undefined
+              setPrototypeStartIdx === undefined
                 ? ([
                     { op: "ref.null", typeIdx: objectTypeIdx },
                     { op: "local.set", index: 9 },
@@ -2695,7 +2695,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                     // the store. A non-`$Object` (or null) ends the explicit
                     // walk; the companion tail still runs, a miss inserts own.
                     { op: "local.get", index: 0 },
-                    { op: "call", funcIdx: fnctorProtoStartIdx },
+                    { op: "call", funcIdx: setPrototypeStartIdx },
                     { op: "local.tee", index: 10 },
                     { op: "any.convert_extern" },
                     { op: "ref.test", typeIdx: objectTypeIdx },
@@ -8390,7 +8390,7 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
  * all previously-baked call indices remain stable.
  */
 export function fillClosedStructHasOwnArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || ctx.anyStrTypeIdx < 0) return;
+  if ((!ctx.standalone && !ctx.wasi) || ctx.anyStrTypeIdx < 0) return;
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return;
@@ -10704,7 +10704,7 @@ export function fillExternSetVecArms(ctx: CodegenContext): void {
   const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const descriptorDecisionAvailable =
-    ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
+    nativeInheritedSetRuntimeActive(ctx) && setResultGlobalIdx !== undefined && setDecideIdx !== undefined;
   // Descriptor overlay writes are the lossless storage for canonical numeric
   // keys that cannot be represented by the signed i32 backing lane. The
   // overlay helper is reserved before this finalize-time fill and receives its

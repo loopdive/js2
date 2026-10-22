@@ -32,6 +32,54 @@ async function execute(source: string, target: "standalone" | "wasi", expected: 
 
 for (const target of ["standalone", "wasi"] as const) {
   describe(`#7138 unsigned dynamic member boundaries (${target})`, () => {
+    for (const [name, source, expected] of [
+      [
+        "dynamic method preserves its receiver",
+        "class C { count:number=0; next():number{this.count+=1;return 7;} } function read(o:any):number{return o.next()+o.count;} export function run():number{return read(new C());}",
+        8,
+      ],
+      [
+        "dynamic method on the store RHS runs once",
+        'type u32=number; class C {value:u32=0; count:number=0; next():number{this.count+=1;return -1;} } function edit(o:any,k:string):number{o[k]=o.next();return o.value+o.count;} export function run():number{return edit(new C(),"value");}',
+        4294967296,
+      ],
+      [
+        "inherited dynamic method",
+        "class B { count:number=0; next():number{this.count+=1;return 7;} } class C extends B{} function read(o:any):number{return o.next()+o.count;} export function run():number{return read(new C());}",
+        8,
+      ],
+      [
+        "same-layout classes keep different method identities",
+        "class C { value:number=0; next():number{return 3;} } class D { value:number=0; next():number{return 5;} } function read(o:any):number{return o.next();} export function run():number{return read(new C())+read(new D());}",
+        8,
+      ],
+    ] as const) {
+      it(name, async () => execute(source, target, expected));
+    }
+    for (const [name, source, expected] of [
+      [
+        "dynamic setter runs once with the original receiver",
+        "type u32=number; class C {value:u32=0;count:number=0;set x(n:number){this.count+=1;this.value=n;}} function edit(o:any):number{o.x=-1;return o.value+o.count;} export function run():number{return edit(new C());}",
+        4294967296,
+      ],
+      [
+        "inherited accessor uses the original receiver",
+        "class B {value:number=0;count:number=0;get x():number{return this.value;} set x(n:number){this.count+=1;this.value=n;}} class C extends B{} function edit(o:any):number{o.x=7;return o.x+o.count;} export function run():number{return edit(new C());}",
+        8,
+      ],
+      [
+        "getter-only dynamic assignment refuses catchably",
+        "class C {value:number=0;get x():number{return 3;}} function edit(o:any):number{try{o.x=7;return -5;}catch(e){return o.x;}} export function run():number{return edit(new C());}",
+        3,
+      ],
+      [
+        "own field shadows an inherited setter",
+        "class B {count:number=0;set x(n:number){this.count+=1;}} class C extends B{x:number=2;} function edit(o:any):number{o.x=7;return o.x+o.count;} export function run():number{return edit(new C());}",
+        7,
+      ],
+    ] as const) {
+      it(name, async () => execute(source, target, expected));
+    }
     for (const [name, annotation, initial, expected] of [
       ["maximum", "u32", "4294967295", 4294967295],
       ["high bit", "u32", "2147483648", 2147483648],

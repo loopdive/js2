@@ -5874,87 +5874,8 @@ function isPhase1Tail(
   // return. The lowerer's void branch synthesizes the empty-values
   // terminator after the expression's side effects.
   if (isVoidReturn && ts.isExpressionStatement(stmt)) {
-    const expr = stmt.expression;
-    if (
-      (ts.isPrefixUnaryExpression(expr) || ts.isPostfixUnaryExpression(expr)) &&
-      ts.isIdentifier(expr.operand) &&
-      isUnrepresentableModuleBinding(expr.operand)
-    ) {
-      return shapeNo("tail-module-storage-unrepresentable", expr);
-    }
-    if (ts.isBinaryExpression(expr) && ts.isIdentifier(expr.left)) {
-      const exactModuleWrite =
-        expr.operatorToken.kind === ts.SyntaxKind.EqualsToken
-          ? currentModuleBindingResolver?.(expr.left, expr.right)
-          : undefined;
-      if (exactModuleWrite) {
-        return isPhase1Expr(expr.right, scope, localClasses);
-      }
-      if (isUnrepresentableModuleBinding(expr.left)) {
-        return shapeNo("tail-module-storage-unrepresentable", expr);
-      }
-      const moduleBinding = currentModuleBindingResolver?.(expr.left);
-      if (moduleBinding) {
-        if (expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-          return shapeNo("tail-module-compound", expr);
-        }
-        if (!currentModuleBindingResolver?.(expr.left, expr.right)) {
-          return shapeNo("tail-module-assign-incompatible", expr);
-        }
-        return isPhase1Expr(expr.right, scope, localClasses);
-      }
-    }
-    // #3000-B: a property-store assignment as the void tail — the SET
-    // accessor body shape `set name(v) { this.#name = v; }`. Mirror the
-    // NON-tail property-store arm exactly (receiver Phase-1, prop an
-    // Identifier or PrivateIdentifier, RHS Phase-1); from-ast's void-tail
-    // arm routes it through the same `lowerPropertyAssignment` used mid-body,
-    // preserving select↔build parity.
-    if (
-      ts.isBinaryExpression(expr) &&
-      expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(expr.left)
-    ) {
-      if (!ts.isIdentifier(expr.left.name) && !ts.isPrivateIdentifier(expr.left.name))
-        return shapeNo("tail-assign-computedprop", expr);
-      // (#3522 W1-C) `super.<accessor> = v` as the void TAIL — the shape of a
-      // `rename(v) { super.label = v; }` forwarder. Mirrors the non-tail arm in
-      // `isPhase1BodyStatement`; from-ast routes both through the same
-      // `lowerPropertyAssignment`, so select↔build parity is preserved.
-      const superTailWrite = superAccessorAdmission(expr.left, "setter");
-      if (superTailWrite !== "not-super") {
-        return superTailWrite === "admitted" && isPhase1Expr(expr.right, scope, localClasses);
-      }
-      const standaloneDomSet = standaloneDomOperation(expr.left);
-      if (standaloneDomSet?.kind === "member-set") {
-        return (
-          isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses) &&
-          isPhase1Expr(expr.right, scope, localClasses)
-        );
-      }
-      if (!moduleExternPropertyWriteIsProven(expr.left, expr.right)) {
-        return shapeNo("tail-module-extern-assign-value", expr.right);
-      }
-      if (!preflightClassPropertyWrite(expr.left, scope)) return false;
-      if (!isPhase1Expr(expr.left.expression, scope, localClasses))
-        return shapeNo("tail-assign-recv", expr.left.expression);
-      return isPhase1Expr(expr.right, scope, localClasses);
-    }
-    // #3000-B: element-store assignment as the void tail (`arr[i] = v;` last).
-    // Same receiver restriction as the non-tail element-store arm.
-    if (
-      ts.isBinaryExpression(expr) &&
-      expr.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isElementAccessExpression(expr.left)
-    ) {
-      const lhs = expr.left;
-      if (!ts.isIdentifier(lhs.expression) || !scope.has(lhs.expression.text))
-        return shapeNo("tail-elemstore-recv", lhs.expression);
-      if (!isPhase1Expr(lhs.argumentExpression, scope, localClasses))
-        return shapeNo("tail-elemstore-idx", lhs.argumentExpression);
-      return isPhase1Expr(expr.right, scope, localClasses);
-    }
-    return isPhase1Expr(expr, scope, localClasses);
+    // A void tail discards the same value as a statement in a body buffer.
+    return isPhase1BodyStatement(stmt, scope, localClasses, /* inLoop */ false);
   }
   // #2952 slice 6a — a function ENDING in a `switch`. Slice 4 claimed the
   // non-tail form only (switch + trailing return), so `switch (n) { case 0:

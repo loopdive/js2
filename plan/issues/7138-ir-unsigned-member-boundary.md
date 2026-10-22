@@ -81,6 +81,32 @@ progress (fetched main `c0a04d0e48edb412a9b694f7c5a0d72e46270c90`).
   adversarial verdict before release. Remaining minimal seam growth must be
   split or justified explicitly in review; no new budget grant has been added.
 
+## Follow-through on open prototype controls
+
+The current resource trace points to the existing class-prototype demand and
+lookup owners, not a missing constructor transformation. `dyn.member_get` uses
+`__extern_get`, but no source read records the class prototype demand when the
+body is emitted only through IR. `mintStandaloneClassProtoBuilders` consumes
+that demand at finalize. Extend that owner from actual dynamic-kernel use and
+reuse its lazy class prototype builders; do not add another class dispatcher.
+`ctx.standalone` also marks the native semantic regime in a JavaScript
+environment. New IR demand/Set-chain bindings must additionally require
+`hostFreeEnvironment`, so the JS boundary retains its previous resource graph.
+Qualify original-receiver effects, inherited methods, structurally identical
+class discrimination and native setter dispatch in both targets. Keep the
+read-only descriptor and getter-only refusal cases explicit until measured. The
+Set engine reuses the canonical native GetPrototypeOf through a reserved forward
+binding; its descriptor walk and SUCCESS/REFUSED/UNADMITTED owner stay shared.
+WASI uses the same native activation policy for Set, proxies, vector overlays
+and instance tombstones.
+The own-field shadow control exposed an independent position drift: a lone
+compound statement in a void setter was refused, although the identical
+statement in a non-tail body already lowers. Delegate void expression tails to
+the shared body statement selector/lowerer and remove their duplicate dispatch.
+Preserve receiver/index evaluation and exact mutation rules through that owner.
+Any WIP after the pushed review head needs fresh qualification and a final
+review against its actual diff before release.
+
 ## Acceptance
 
 - [ ] Shared uint32 metadata survives the supported preparation/ABI boundaries.
@@ -160,12 +186,14 @@ The five old kernel/Set suites measure **65 passes / 22 failures on each side**;
 all 22 failure blocks, not only names/counts, match after path normalization.
 The fresh byte comparison again has **58/60 identical records** and exactly the
 two WASI hash pairs recorded above. Fresh i32 qualification passes **135/135**.
-Fresh current-main effect probes reproduce the open controls below; the source
-and generated-runtime gaps remain explicit rather than accepted as JS results.
+At review snapshot `c0fd9298616bbb51f261ec3cbbbf78886f659dba`, fresh
+current-main effect probes reproduced the open controls below. The subsequent
+prototype follow-through is qualified separately below; these historical
+measurements are not its final results.
 Fresh-context adversarial review remains
 required before release; no predecessor head, HOLD or queue entry changed.
 
-### Open semantic controls — publication is pending
+### Controls at review snapshot c0fd929861 — publication is pending
 
 The broader effect probe is kept in `.tmp/7138-effects.log`, with exact-base
 results in the audit checkout's `.tmp/7138-effects-base.log`:
@@ -184,3 +212,65 @@ results in the audit checkout's `.tmp/7138-effects-base.log`:
 These controls are not part of a claimed full semantic or retirement result.
 The issue remains in progress and unpublished while they are investigated.
 Existing predecessor heads, HOLDs and queue entries were not changed.
+
+
+### Qualified prototype follow-through after c0fd929861
+
+The existing lazy class-prototype builders now receive demand from actual native
+dynamic reads and method calls. WASI uses the same class lookup/own-field shadow
+representation. Dynamic named and computed Set operations start the existing
+nearest-descriptor walk through canonical GetPrototypeOf; no separate accessor
+algorithm or class dispatcher was added. Void expression tails delegate to the
+existing body-statement admission and lowering, removing duplicate dispatch.
+The existing recursive Proxy forwarding builder was extracted without changing
+its registration order or instructions, keeping the enclosing function below
+its size ceiling. No new budget grant was added.
+
+Current qualification (Node 25.9.0, Vitest, one fork, current-main dependency
+audit base `5be710863aad5c0a9d7d22e41e7c82bed2739da3` versus this working diff):
+
+- **375/375** across twelve files, including all **81** boundary registrations,
+  numeric domains, dynamic-in, console, ABI, coercion, void-method, return-union
+  and uninitialized-variable controls. The i32 environment passes **151/151**.
+- The five old kernel/Set suites retain **65 passes / 22 failures**; all failure
+  blocks match that audit base after normalizing checkout paths. The separate
+  mutating-statements suite retains its two known string-chain failures
+  (**42 passes / two failures**); no assertion was weakened.
+- Dynamic methods, inherited methods, same-layout class discrimination, computed
+  store RHS evaluation once, original-receiver setters, inherited accessors,
+  getter-only refusal and own-field shadowing pass in both native targets with
+  zero imports and genuine IR ownership. The effect probe now also returns the
+  correct frozen-field result in WASI.
+- Prototype identity, Object.create(C.prototype) and prototype aliases preserve
+  their expected results across both native targets with IR enabled/disabled
+  (**12/12**), matching the audit base.
+- Byte identity remains **58/60**: every successful gc and standalone binary
+  matches the audit base. WASI algorithms changes to SHA
+  `e358a45f773ca859aea150739bf98a90b0b10a16cd485cfeeb639e6009205db9`
+  (119290 bytes), exits zero and matches the complete JS stdout oracle. WASI
+  async changes to `e7509c7e999640f7b6f9793511899c3816b854e283d97bcb8aa7f1b49bf183e7`
+  (156880 bytes); its reactor still emits only the heading in the available
+  driver, as on base. Full async equivalence remains unqualified.
+- Typecheck, lint, LOC/function budgets, layering, import cycles, flat-directory,
+  coercion, oracle and optimization-retirement checks pass. Compiler-boundary
+  inventory reports valid inventory and incomplete architecture (no errors); its
+  tested dirty-content fingerprint is
+  `c8dc119807620702d6f6d8f80da3cb3c22d5c378640c37ef672a0839a8b4ca02`. The dead
+  export check passes only its preservation contract; strict closure remains
+  OPEN with the two existing nonliteral dynamic imports.
+
+The read-only descriptor control remains a real base defect: both native targets
+return -5 rather than 3, and gOPD reports writable true. WAT of the legacy-owned
+`run` shows key/descriptor evaluation followed by a drop, with no call to the
+define applier. This is a source DefineOwnProperty lowering gap before the
+runtime Set decision, rather than evidence that refusal succeeded. The frozen
+legacy AST emitter was not modified. The corresponding dynamic-define control
+also fails on base; it is not counted as IR coverage. Assignment-as-value remains
+legacy-owned and correctly returns -1. These migration gaps remain tracked here
+and under the parent epic; no full semantic closure or retirement is claimed.
+
+Logs: `.tmp/7138-prototype-final-{controls,i32,kernel-set,identity,surface,wasi-oracle}.log`,
+`.tmp/7138-prototype-final-gates.json` and `.tmp/7138-descriptor-probe.log`.
+The earlier review request names c0fd929861 only; an independent review must use
+the final updated head before publication/release. No predecessor head, HOLD,
+queue entry or running test was changed.
