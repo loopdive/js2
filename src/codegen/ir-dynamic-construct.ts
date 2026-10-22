@@ -398,7 +398,7 @@ export function ensureIrDynamicMethodCallHelper(
   method: string,
   arity: number,
 ): number | undefined {
-  if (!irDynamicMethodCallWrapperLane(ctx) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(method)) return undefined;
+  if (!irDynamicMethodCallWrapperLane(ctx)) return undefined;
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
