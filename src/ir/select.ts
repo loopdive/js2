@@ -57,7 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import { uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
+import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { classBindingNames, staticMemberBindingIsUnsound } from "./class-overrides.js";
 import { callableParameterMayReceiveForeignSignature } from "./closure-signature-flow.js";
@@ -140,6 +140,7 @@ import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
+import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
 
@@ -539,6 +540,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * while preserving same-named methods on local classes.
    */
   readonly isArrayExpression?: (expr: ts.Expression) => boolean;
+  /** (#7108) Checker element family of an array receiver; absent ⇒ no array search/join claims. */
+  readonly classifyArrayElementFamily?: (expr: ts.Expression) => IrArrayElementFamily | undefined;
   /** Exact pre-scanned sized-Array constructor sites for the sparse carrier. */
   readonly isHoleyArrayConstructor?: (expr: ts.NewExpression) => boolean;
   /**
@@ -691,6 +694,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-string-carrier-coercion"
       | "native-arguments-length"
       | "native-own-property-test"
+      | "native-own-property-descriptor"
       | "native-dynamic-value-call",
   ) => boolean;
   /**
@@ -2926,6 +2930,20 @@ function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly ari
   );
 }
 
+/**
+ * (#7106 propertyHelper) `alias(obj, name)` where `alias` is propertyHelper's
+ * immutable stored `Object.getOwnPropertyDescriptor` (see
+ * `uncurried-object-alias.ts`): exactly two plain arguments.
+ */
+function isStoredObjectDescriptorAliasCall(call: ts.CallExpression, shadowed: (name: string) => boolean): boolean {
+  return (
+    call.arguments.length === 2 &&
+    !call.questionDotToken &&
+    !call.arguments.some(ts.isSpreadElement) &&
+    storedObjectStaticAliasMethod(call.expression, shadowed) === "getOwnPropertyDescriptor"
+  );
+}
+
 function containsReceiverFirstDynamicMethodCall(body: ts.Block): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -3025,6 +3043,8 @@ function dynamicUsesAreMoveOnly(
     if (ts.isIdentifier(e)) return dynNames.has(e.text);
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
+    // (#7106 propertyHelper) the stored descriptor alias yields a carrier.
+    if (ts.isCallExpression(e) && isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) return true;
     if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
       return calleeReturnIsDynamic(e.expression.text, typeMap);
     }
@@ -3249,6 +3269,23 @@ function dynamicUsesAreMoveOnly(
           } else {
             const concrete = unwrap(argument);
             if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+          }
+        }
+        return true;
+      }
+      // (#7106 propertyHelper) `__getOwnPropertyDescriptor(obj, name)`: a
+      // dynamic result; each operand is a carrier or a boxable concrete.
+      if (isStoredObjectDescriptorAliasCall(e, (name) => dynNames.has(name))) {
+        if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
+        for (const argument of e.arguments) {
+          if (isDynShaped(argument)) {
+            if (!scanExpr(argument, true)) return false;
+            continue;
+          }
+          const concrete = unwrap(argument);
+          const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
+          if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false)) {
+            return false;
           }
         }
         return true;
@@ -10198,6 +10235,30 @@ function phase1IndirectEvalStatementVerdict(
   return undefined;
 }
 
+/**
+ * (#7108) indexOf / includes / join over a number or string vec: `undefined`
+ * when the call is not one of those methods, else the Phase-1 verdict.
+ */
+function isPhase1ArraySearchOrJoin(
+  expr: ts.CallExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean | undefined {
+  const verdict = selectVecSearchOrJoin(expr, {
+    elementFamily: currentSelectionOptions?.classifyArrayElementFamily,
+    argumentFamily: (argument) =>
+      currentSelectionOptions?.classifyPrimitiveExpression?.(argument) ??
+      (expressionIsProvenNumber(argument) ? "number" : expressionIsProvenString(argument) ? "string" : undefined),
+  });
+  if (verdict === undefined) return undefined;
+  if (!verdict.admitted) return capabilityNo("array-method-unsupported", verdict.arm, verdict.node);
+  const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
+  return (
+    isPhase1Expr(receiver, scope, localClasses) &&
+    expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses))
+  );
+}
+
 function functionObjectCallIsPhase1(
   expr: ts.CallExpression,
   scope: ReadonlySet<string>,
@@ -10667,6 +10728,21 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
       );
     }
+    // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
+    // alias, `__getOwnPropertyDescriptor(obj, name)`: the object runtime's
+    // native provider over two carriers, a dynamic result (legacy's
+    // `tryCompileStoredObjectBuiltinCall` arm).
+    if (isStoredObjectDescriptorAliasCall(expr, (name) => scope.has(name))) {
+      if (
+        !currentDynamicRuntimeBuildable ||
+        currentSelectionOptions?.supportsBackendCapability?.("native-own-property-descriptor") !== true
+      ) {
+        return capabilityNo("call-resolution-unsupported", "expr-call-stored-object-static-alias-lane", expr);
+      }
+      return (
+        isPhase1Expr(expr.arguments[0]!, scope, localClasses) && isPhase1Expr(expr.arguments[1]!, scope, localClasses)
+      );
+    }
     // (#7106 S1e) A direct call to a local function that reads `arguments`
     // needs no `__argc` publication from an IR caller: the direct-call plan
     // is exact-arity (from-ast demotes any other count), and the callee's
@@ -10952,6 +11028,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       const isNumberReceiver = provenReceiverFamily === "number" || expressionIsProvenNumber(builtinReceiver);
       const isStringReceiver = provenReceiverFamily === "string" || expressionIsProvenString(builtinReceiver);
       if (currentSelectionOptions?.isArrayExpression?.(builtinReceiver) === true) {
+        const searchJoin = isPhase1ArraySearchOrJoin(expr, scope, localClasses);
+        if (searchJoin !== undefined) return searchJoin;
         const isHoleyFilter =
           expr.expression.name.text === "filter" &&
           currentSelectionOptions.supportsHoleyArrayFilter === true &&
@@ -12096,6 +12174,10 @@ export function buildLocalCallGraph(
             // (#7106 S1g) propertyHelper's uncurried Object.prototype aliases
             // lower to the lane's own-property provider (`dyn.own_property`),
             // not a call edge; the per-function arms decide the lane.
+            for (const argument of node.arguments) visit(argument);
+            return;
+          } else if (isStoredObjectDescriptorAliasCall(node, (name) => localBindings.names.has(name))) {
+            // (#7106 propertyHelper) likewise the stored descriptor alias.
             for (const argument of node.arguments) visit(argument);
             return;
           } else {
