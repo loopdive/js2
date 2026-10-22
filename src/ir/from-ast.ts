@@ -2390,14 +2390,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       lowerDiscardedExpression(s.expression, cx);
       return false;
     }
-    // (#7106 propertyHelper) a dropped dynamic delete — the selector admits
-    // exactly `dynamicDeleteStatementOperand`; `lowerExpr`'s delete arm lowers it.
-    let dropped: ts.Expression = s.expression;
-    while (ts.isParenthesizedExpression(dropped)) dropped = dropped.expression;
-    if (ts.isDeleteExpression(dropped)) {
-      lowerDiscardedExpression(s.expression, cx);
-      return false;
-    }
+    if (lowerDroppedDelete(s.expression, cx)) return false;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(s)) {
@@ -8097,17 +8090,6 @@ function lowerClosureCall(
 }
 
 /**
- * Slice 3 (#1169c): lower a call to a nested function declaration.
- * Prepends capture args to the user args and emits a direct `call`
- * (no struct, no funcref) — matches the legacy
- * `compileNestedFunctionDeclaration` pattern.
- *
- * Mutable captures: if the outer hasn't already wrapped the variable
- * in a refcell (because no closure-VALUE has been built that captured
- * it as mutable), wrap it here and rebind `cx.scope[name]` so subsequent
- * outer reads/writes go through the cell.
- */
-/**
  * (#7106 propertyHelper) `delete <dyn>.name` / `delete <dyn>[key]` on a
  * dynamic receiver: the receiver and the (boxed) key as carriers, then the
  * site's runtime wrapper — legacy's generic externref delete arm
@@ -8146,6 +8128,21 @@ function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId 
 }
 
 /**
+ * (#7106 propertyHelper) A dropped `delete <dyn>[key];`. The selector admits
+ * exactly `dynamicDeleteStatementOperand`, in top-level AND nested bodies, so
+ * both statement dispatchers (`lowerStatementListPrefix` and `lowerStmt`) consult
+ * this before demoting; `lowerExpr`'s delete arm does the lowering. Returns
+ * false when the statement is not a delete.
+ */
+function lowerDroppedDelete(expression: ts.Expression, cx: LowerCtx): boolean {
+  let dropped: ts.Expression = expression;
+  while (ts.isParenthesizedExpression(dropped)) dropped = dropped.expression;
+  if (!ts.isDeleteExpression(dropped)) return false;
+  lowerDiscardedExpression(expression, cx);
+  return true;
+}
+
+/**
  * (#7106 S1g / propertyHelper) Lower the operands of a certified Object alias
  * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
  * parity: the selector admits only boxable operands) when one cannot box.
@@ -8170,6 +8167,17 @@ function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: st
   return carriers;
 }
 
+/**
+ * Slice 3 (#1169c): lower a call to a nested function declaration.
+ * Prepends capture args to the user args and emits a direct `call`
+ * (no struct, no funcref) — matches the legacy
+ * `compileNestedFunctionDeclaration` pattern.
+ *
+ * Mutable captures: if the outer hasn't already wrapped the variable
+ * in a refcell (because no closure-VALUE has been built that captured
+ * it as mutable), wrap it here and rebind `cx.scope[name]` so subsequent
+ * outer reads/writes go through the cell.
+ */
 function lowerNestedFuncCall(
   binding: {
     kind: "nestedFunc";
@@ -12908,6 +12916,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerDiscardedExpression(stmt.expression, cx);
       return;
     }
+    if (lowerDroppedDelete(stmt.expression, cx)) return;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(stmt)) {

@@ -800,8 +800,19 @@ node:
 - strict module deletes (computed key, named key, literal keys; frozen key →
   TypeError; null receiver → TypeError) on standalone and gc, plus a wasi
   validate;
+- deletes nested in a `try` body and in `if`/`else` arms (the
+  `isConfigurable`/`isWritable` shapes), including a non-configurable key
+  caught in strict code;
 - a sloppy script, where a frozen key reports `false`;
 - the #6842 refusals (concrete receiver, expression position) still hold.
+
+**Nested-body fix (follow-up commit).** The first cut gave only the
+statement-list dispatcher (`lowerStatementListPrefix`) a delete arm. The
+selector also admits the delete in nested bodies, so a delete inside a `try`
+body was claimed and then demoted at build ("unsupported body
+ExpressionStatement shape"), a post-claim error. Both dispatchers now share
+`lowerDroppedDelete`. A bare `{ … }` block holding a delete is still refused
+before the claim (a pre-existing block refusal, so the selector and from-ast agree).
 
 ## Ownership
 

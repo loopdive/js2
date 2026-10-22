@@ -36,6 +36,24 @@ const STRICT_MODULE = `${ALIAS}
     delete obj[0];
     return !__hasOwnProperty(obj, "b") && !__hasOwnProperty(obj, 0);
   }
+  // Deletes nested in a try body and in if/else arms (propertyHelper's
+  // isConfigurable / isWritable shapes). The nested statement lowering must
+  // take the same delete arm as the top-level one, or the claim demotes.
+  /** @param {object} obj @param {string|number|symbol} name */
+  function removeNested(obj, name) {
+    var ok = true;
+    try {
+      delete obj[name];
+    } catch (e) {
+      ok = false;
+    }
+    if (ok) {
+      delete obj.a;
+    } else {
+      delete obj["c"];
+    }
+    return ok && !__hasOwnProperty(obj, name);
+  }
   export function probe(): number {
     var n = 0;
     var o: any = { a: 1, b: 2 };
@@ -48,6 +66,10 @@ const STRICT_MODULE = `${ALIAS}
     try { removeKey(null, "x"); } catch (e) { if (e instanceof TypeError) n += 16; }
     var both: any = { b: 1, 0: 2, c: 3 };
     if (removeLiteralKeys(both) === true && __hasOwnProperty(both, "c")) n += 32;
+    var nested: any = { a: 1, b: 2, c: 3 };
+    if (removeNested(nested, "b") === true && !__hasOwnProperty(nested, "a") && __hasOwnProperty(nested, "c")) n += 64;
+    var pinned: any = Object.defineProperty({ a: 1, c: 1 }, "k", { value: 1, configurable: false });
+    if (removeNested(pinned, "k") === false && __hasOwnProperty(pinned, "a") && !__hasOwnProperty(pinned, "c")) n += 128;
     return n;
   }
 `;
@@ -70,7 +92,7 @@ const SLOPPY_SCRIPT = `${ALIAS}
   if (!nullThrew) { throw "#4 delete on null throws a TypeError"; }
 `;
 
-const DELETERS = ["removeKey", "removeA", "removeLiteralKeys"];
+const DELETERS = ["removeKey", "removeA", "removeLiteralKeys", "removeNested"];
 
 function irBodies(result: CompileResult): string[] {
   return (result.irOutcomes ?? []).filter((o) => o.kind === "emitted" && o.irBodyEmitted).map((o) => o.displayName);
@@ -123,7 +145,7 @@ describe("#7106 propertyHelper — statement-position dynamic delete", () => {
       const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
       const got = (instance.exports.probe as () => number)();
       expect(got).toBe(nodeProbe(STRICT_MODULE));
-      expect(got).toBe(63);
+      expect(got).toBe(255);
     });
 
     it(`${lane}: a sloppy script's delete reports false for a frozen key, like node`, async () => {
