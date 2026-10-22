@@ -175,7 +175,12 @@ assert.notSameValue(1, 2);
   it("the unstubbed harness keeps <module-init> legacy, on row 2 alone", async () => {
     const result = await compileHarness(assemble(BODY, false));
     expect(result.success).toBe(true);
-    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "array-method-unsupported" });
+    // Row 2 is `Array.prototype.map.call(arrayLike, String).join(", ")`. The
+    // borrow arm (#6874) lifted its `.join`-on-`any[]` refusal
+    // (`array-method-unsupported`); what stops the row now is `String` read as
+    // a VALUE (`expr-ident-not-in-scope «String»`, #7118 / #6846). The stubbed
+    // run below is unchanged: with row 2 gone every unit ships an IR body.
+    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "body-shape-rejected" });
   }, 60_000);
 
   it("with row 2 stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
