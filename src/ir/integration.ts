@@ -94,7 +94,7 @@ import {
   irDynamicDeleteHelperName,
   ensureIrDynamicInstanceOfHelper, // (#7106) generic dynamic instanceof wrapper
   IR_DYN_INSTANCEOF_HELPER,
-  irDynamicInstanceOfRoutesGeneric,
+  irDynamicInstanceOfAtLegacyParity,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
@@ -7009,8 +7009,8 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
-    // (#7106) the selector's `dynamicInstanceOfRoutesGeneric`, asked again per site.
-    dynamicInstanceOfRoutesGeneric: (site: ts.BinaryExpression) => irDynamicInstanceOfRoutesGeneric(ctx, site),
+    // (#7106) the selector's `dynamicInstanceOfAtLegacyParity`, asked again per site.
+    dynamicInstanceOfAtLegacyParity: (site: ts.BinaryExpression) => irDynamicInstanceOfAtLegacyParity(ctx, site),
     // (#7106 propertyHelper) the wrapper a dynamic delete at this site calls.
     dynamicDeleteSymbol(site: ts.DeleteExpression) {
       return ctx.fast ? undefined : irDynamicDeleteHelperName(irDeleteSiteIsStrict(site));

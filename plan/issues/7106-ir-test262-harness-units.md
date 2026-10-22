@@ -902,6 +902,63 @@ compared with a legacy-only compile (`experimentalIR: false`) and with node:
 "ABI draft … function-value-trampoline … would mutate sealed prepared scope".
 It is measured identical without this change.
 
+## `instanceof` an Error-family builtin (2026-10-22, measured)
+
+Stacks on #6848 (`dyn.instanceof`), #6846 (#7118, `dyn.global_object`) and
+#6850 (#7120). Merged, the JS dialect has 41 interfaces.
+
+**Arm.** `<any> instanceof TypeError` (any of `Error`, `TypeError`,
+`RangeError`, `ReferenceError`, `SyntaxError`, `EvalError`, `URIError`) ships
+as `dyn.instanceof`:
+- **Right-hand side.** #7118's ambient-intrinsic read. There is no new name
+  path.
+- **Left-hand side.** A dynamic parameter, `this`, or a catch binding.
+- **Admission (codegen `irDynamicInstanceOfAtLegacyParity`).** Exactly where
+  legacy takes its name-based tag path:
+  - the name binds only the lib declaration, and nothing declares or writes
+    it;
+  - the lane is native-first;
+  - the left operand is typed `any`/`unknown`;
+  - the module installs no callable `@@hasInstance`.
+
+With #7120, the operator answers the Error-family carrier from the value's
+`$tag` before any prototype read. The value is legacy's own
+`__builtin_<Name>` carrier: the subclass row answers true, which only that
+tag probe can produce. It is never member-read in the IR, so this is not
+#7123's path.
+
+**Pinned rows (IR / legacy / node).** All other rows are equal on all three,
+on standalone and default gc.
+
+| left-hand side | bits TE=1, RE=2, E=4 | IR | legacy | node |
+| --- | --- | --- | --- | --- |
+| `Object.create(TypeError.prototype)` | | 1 | 0 | 5 |
+| `Object.create(Error.prototype)` | | 4 | 0 | 4 |
+
+Both are equal to or closer to node than legacy, never worse.
+`Object.create(TypeError.prototype) instanceof Error` stays FALSE in the IR,
+the same as legacy and unlike node: the native error prototypes do not chain
+to `Error.prototype` (#7120).
+
+**Fixes the arm needed.**
+- **Catch bindings.** Now read as dynamic on the non-fast lanes, as the for-in
+  head is. `"…" + e` had been claimed and then demoted at build (a selector and
+  from-ast mismatch that predates this arm).
+- **Merge interactions.** Two came from combining #7118 with the stack. Each
+  stack passed alone.
+  - The move-only scan's identifier arm now accepts an ambient intrinsic where
+    a dynamic value is expected (`typeof Object`), consistent with
+    `isDynShaped`.
+  - `isDynShaped` now classifies the ambient special forms
+    `JSON.stringify(…)` and `Object.prototype.toString.call(…)` as concrete.
+    The member-call arm had walked down to their now-dynamic intrinsic root.
+
+**Census.** `map/length.js`, standalone: 11 of 25 units IR before, 14 after.
+isConfigurable, verifyConfigurable and verifyNotConfigurable ship IR.
+
+**Tests.** `tests/issue-7106-ir-instanceof-error-intrinsic.test.ts`. In #6848's
+test, the two error rows #7120 fixed leave the "diverges from node" set.
+
 ## Ownership
 
 Per the #6583 plan: Stage 1 and 3 → B (items 2/3), Stage 2 and 4 → Shepherd

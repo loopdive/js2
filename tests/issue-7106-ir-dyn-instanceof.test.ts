@@ -53,12 +53,13 @@ const SOURCE = `
 
 /**
  * Rows where legacy's generic operator, and so the IR, differs from node.
- * - `typeErrorIsError`, `subclassIsTypeError`: the native error prototypes do
- *   not chain to `Error.prototype`, so the chain walk misses (node: 1).
  * - `nonCallableTarget`: a runtime non-callable target answers `false` rather
  *   than throwing, the #2916 "no wrong throws" rule (node: 2).
+ * `typeErrorIsError` and `subclassIsTypeError` diverged too until #7120 made
+ * the operator answer an Error-family target from the value's `$tag`; with it
+ * merged they match node, in legacy and in the IR alike.
  */
-const DIVERGES_FROM_NODE = new Set(["typeErrorIsError", "subclassIsTypeError", "nonCallableTarget"]);
+const DIVERGES_FROM_NODE = new Set(["nonCallableTarget"]);
 
 const ROWS = [...SOURCE.matchAll(/export function (\w+)\(/g)].map((m) => m[1]!);
 

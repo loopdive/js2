@@ -866,7 +866,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#7106) Does legacy route this `<value> instanceof <parameter>` through its
    * generic runtime operator? The same question the selector asked.
    */
-  dynamicInstanceOfRoutesGeneric?(site: ts.BinaryExpression): boolean;
+  dynamicInstanceOfAtLegacyParity?(site: ts.BinaryExpression): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -14806,13 +14806,26 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
 }
 
 /**
+ * (#7106) An operand of `dyn.instanceof` as a dynamic carrier. A catch binding
+ * is a raw externref slot; on the non-fast lanes that IS the carrier, boxed as
+ * the dynamic member read boxes the same binding.
+ */
+function dynamicInstanceOfOperand(operand: ts.Expression, cx: LowerCtx): IrValueId {
+  const value = lowerExpr(operand, cx, irDynamic());
+  if (asVal(cx.builder.typeOf(value))?.kind === "externref" && cx.resolver?.dynamicCarrierIsExternref?.() === true) {
+    return cx.builder.emitBox(value, irDynamic());
+  }
+  return value;
+}
+
+/**
  * (#7106) The generic `instanceof` over two dynamic carriers. The selector admits
  * it only where legacy itself reaches its generic runtime operator
  * (`dynamicInstanceOfUse`), so a non-dynamic operand here is selector drift.
  */
 function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
-  const value = lowerExpr(expr.left, cx, irDynamic());
-  const target = lowerExpr(expr.right, cx, irDynamic());
+  const value = dynamicInstanceOfOperand(expr.left, cx);
+  const target = dynamicInstanceOfOperand(expr.right, cx);
   if (cx.builder.typeOf(value).kind !== "dynamic" || cx.builder.typeOf(target).kind !== "dynamic") {
     demoteToLegacy(
       "operand-coercion-unsupported",
@@ -14834,7 +14847,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   const className = expr.right.text;
   // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
   // legacy's generic runtime operator (`dyn.instanceof`).
-  if (cx.resolver?.dynamicInstanceOfRoutesGeneric?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
+  if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
@@ -17487,10 +17500,16 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       payloadSlot = cx.builder.declareSlot(`__catch_${varName}`, { kind: "externref" });
       // Bind the catch variable as a slot read so identifier reads
       // inside the handler emit `local.get` against the slot.
+      // (#7106) On the non-fast lanes the thrown payload already IS the dynamic
+      // carrier (an externref), and the selector's move-only scan treats the
+      // binding as dynamic. Read it as one, as the for-in head is read, so
+      // `"…" + e` takes the dynamic `+` the selector admitted.
+      const catchIsCarrier = cx.resolver?.dynamicCarrierIsExternref?.() === true;
       catchScope.set(varName, {
         kind: "slot",
         slotIndex: payloadSlot,
         type: irVal({ kind: "externref" }),
+        ...(catchIsCarrier ? { asType: irDynamic() } : {}),
       });
     } else if (stmt.catchClause.variableDeclaration) {
       // Destructuring catch — selector should have rejected this.
