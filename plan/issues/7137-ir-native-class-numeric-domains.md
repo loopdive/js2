@@ -179,3 +179,16 @@ This is not a supported IR-owned consumer or a completed native semantic
 boundary. It requires the remaining dynamic ABI/shared member-read migration;
 it is not silently counted among the qualified field operations or a Test262
 gain. Direct-AST body emitters remain frozen. Full goal completion stays open.
+
+
+Latest-main integration: upstream `699a2e71c746aa36ddd3f480beab562bb186400f`
+is merged as `5422ba286b1e68fe4054a6dc70f3aec2bbfa5d5b`, preserving the newly
+landed value-less method/constructor census change. The final matrix is
+**220/220 registrations in eight files**, including that incoming selector
+control. Current-main LOC/function, directory, layering, cycle and inventory
+checks pass with only the disclosed index import and predecessor grants.
+
+The fresh byte comparison against current main 699a2e71c7 again has exactly the
+two predecessor WASI changes and 58 identical records. The mixed-boundary WAT
+probe confirms `read` has an externref-to-f64 ABI; this is a legacy member-read
+boundary, not an unqualified success of the new typed-field producer.
