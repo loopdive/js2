@@ -78,6 +78,7 @@ export function prepareIrSourceDefinitionPopulation(
     ...input.inventoryOptions,
     entrySource: input.entrySource,
     checker: input.checker,
+    moduleInitMode: "source-complete",
   });
   // Source-map capture validates the scanner tree before identity projection,
   // in the same phase/order as the original source producer.

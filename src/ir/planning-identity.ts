@@ -11,8 +11,10 @@ import {
   type IrUnitId,
   type IrUnitInventory,
   type IrUnitRecord,
+  type IrInventoryScannerMetadata,
 } from "./identity.js";
 import { collectModuleInitPopulation } from "./module-init.js";
+import { classDefinitionExpressions } from "./analysis/class-definition-syntax.js";
 
 /** Exact structural identity retained across a temporary name-keyed API. */
 export interface IrLegacyUnitProjectionEntry {
@@ -70,6 +72,7 @@ export interface IrPlanningIdentityContext {
   readonly moduleInitUnitIdBySourceFile: ReadonlyMap<ts.SourceFile, IrUnitId>;
   /** Exact top-level statement population captured once for later stale-AST validation. */
   readonly moduleInitPopulationBySourceFile: ReadonlyMap<ts.SourceFile, readonly ts.Statement[]>;
+  readonly definitionOwnerByExpression: ReadonlyMap<ts.Node, IrUnitId | null>;
 }
 
 export type IrPlanningIdentityInvariantCode =
@@ -432,6 +435,15 @@ export function requireIrPlanningOwnerUnitId(identityContext: IrPlanningIdentity
   }
 
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (identityContext.definitionOwnerByExpression.has(current)) {
+      const owner = identityContext.definitionOwnerByExpression.get(current)!;
+      if (owner === null)
+        return throwIrPlanningIdentityInvariant(
+          "unowned-planning-owner",
+          "class definition expression has no R0 terminal owner",
+        );
+      return requireIrPlanningTerminalRecord(identityContext, sourceId, owner).id;
+    }
     const unitId = identityContext.unitIdByDeclaration.get(current);
     if (unitId === undefined) continue;
 
@@ -535,7 +547,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
     }
     sourceIdBySourceFile.set(scannedSource.sourceFile, source.id);
     sourceFileBySourceId.set(source.id, scannedSource.sourceFile);
-    const moduleInitPopulation = collectModuleInitPopulation(scannedSource.sourceFile);
+    const moduleInitPopulation = collectModuleInitPopulation(scannedSource.sourceFile, scanned.moduleInitMode);
     for (const statement of moduleInitPopulation) {
       if (statement.parent !== scannedSource.sourceFile || statement.getSourceFile() !== scannedSource.sourceFile) {
         return throwIrPlanningIdentityInvariant(
@@ -777,5 +789,52 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
     moduleInitUnitIdBySourceId: readonlyIdentityMap(moduleInitUnitIdBySourceId),
     moduleInitUnitIdBySourceFile: readonlyIdentityMap(moduleInitUnitIdBySourceFile),
     moduleInitPopulationBySourceFile: readonlyIdentityMap(moduleInitPopulationBySourceFile),
+    definitionOwnerByExpression: projectDefinitionExpressionOwners(
+      scanned,
+      declarationByClassId,
+      classesById,
+      terminalByUnitId,
+    ),
   });
+}
+
+function projectDefinitionExpressionOwners(
+  scanner: IrInventoryScannerMetadata,
+  declarations: ReadonlyMap<IrClassId, ts.ClassDeclaration | ts.ClassExpression>,
+  classes: ReadonlyMap<IrClassId, IrClassRecord>,
+  terminals: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>,
+): ReadonlyMap<ts.Node, IrUnitId | null> {
+  const owners = new Map<ts.Node, IrUnitId | null>();
+  if (scanner.moduleInitMode !== "source-complete") return readonlyIdentityMap(owners);
+  const expressionsByClass = new Map<IrClassId, ReadonlySet<ts.Expression>>();
+  let expectedCount = 0;
+  for (const [id, declaration] of declarations) {
+    const expressions = new Set(classDefinitionExpressions(declaration));
+    expressionsByClass.set(id, expressions);
+    expectedCount += expressions.size;
+  }
+  for (const entry of scanner.definitionExpressions) {
+    const declaration = declarations.get(entry.classId),
+      record = classes.get(entry.classId);
+    if (
+      !declaration ||
+      !record ||
+      declaration.getSourceFile() !== entry.sourceFile ||
+      entry.expression.getSourceFile() !== entry.sourceFile ||
+      !expressionsByClass.get(entry.classId)?.has(entry.expression) ||
+      owners.has(entry.expression) ||
+      (entry.terminalOwnerId !== null && terminals.get(entry.terminalOwnerId)?.sourceId !== record.sourceId)
+    )
+      return throwIrPlanningIdentityInvariant(
+        "class-record-mismatch",
+        "class definition expression lost its exact scanner execution owner",
+      );
+    owners.set(entry.expression, entry.terminalOwnerId);
+  }
+  if (owners.size !== expectedCount)
+    return throwIrPlanningIdentityInvariant(
+      "class-record-mismatch",
+      "class definition expression census changed after scanning",
+    );
+  return readonlyIdentityMap(owners);
 }

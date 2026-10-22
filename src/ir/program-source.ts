@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { classStartupOccurrences } from "./analysis/class-startup.js";
 import * as sourceClassDefinitions from "./program/source-class-definitions.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
@@ -18,7 +19,7 @@ import {
   type IrSourceMapNodeProjection,
 } from "./from-ast.js";
 import { getIrInventoryScannerMetadata, type BuildIrUnitInventoryOptions } from "./identity.js";
-import type { IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
+import type { IrSourceId, IrUnitId, IrClassId } from "../shared/contracts/ir-identity.js";
 import type {
   IrUnitInventory,
   IrPreparedSourceMap,
@@ -298,7 +299,14 @@ function sourceMapStartupOccurrences(
       if (identifier && unitId !== undefined && plan.executable && plan.gaps.length === 0)
         occurrences.set(declaration, Object.freeze({ start: binding.start, end: binding.end }));
     }
-    const expected = file.statements.flatMap((statement, statementOrdinal) => {
+    const expected = file.statements.flatMap<{
+      node: ts.Node;
+      statementOrdinal: number;
+      nestedOrdinal: number;
+      kind: string;
+      classId: IrClassId | null;
+      legacyKind: string;
+    }>((statement, statementOrdinal) => {
       if (ts.isVariableStatement(statement))
         return statement.declarationList.declarations.some((declaration) => declaration.initializer !== undefined)
           ? [
@@ -312,25 +320,8 @@ function sourceMapStartupOccurrences(
               },
             ]
           : [];
-      if (ts.isClassDeclaration(statement)) {
-        const nodes = statement.members.flatMap((member) => {
-          const isStatic =
-            ts.canHaveModifiers(member) &&
-            (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false);
-          if (ts.isClassStaticBlockDeclaration(member))
-            return [{ node: member as ts.Node, kind: "class-static-block" }];
-          return isStatic && ts.isPropertyDeclaration(member) && member.initializer
-            ? [{ node: member.initializer as ts.Node, kind: "class-static-field" }]
-            : [];
-        });
-        return nodes.map((row, nestedOrdinal) => ({
-          ...row,
-          statementOrdinal,
-          nestedOrdinal,
-          classId: identity.classIdByDeclaration.get(statement) ?? null,
-          legacyKind: "static",
-        }));
-      }
+      if (ts.isClassDeclaration(statement))
+        return classStartupOccurrences(identity, statement).map((row) => ({ ...row, statementOrdinal }));
       if (population.has(statement) || ts.isExportAssignment(statement))
         return [
           {

@@ -595,9 +595,14 @@ function sourceMapStartupEvaluations(
       row.statementOrdinal < statement ||
       !Number.isSafeInteger(row.nestedOrdinal) ||
       row.nestedOrdinal < 0 ||
-      !["statement", "variable-initializer", "export-assignment", "class-static-field", "class-static-block"].includes(
-        row.kind,
-      ) ||
+      ![
+        "statement",
+        "variable-initializer",
+        "export-assignment",
+        "class-definition",
+        "class-static-field",
+        "class-static-block",
+      ].includes(row.kind) ||
       (row.classId !== null && (typeof row.classId !== "string" || !row.classId)) ||
       typeof row.legacyKey !== "string" ||
       row.bindingIds.some((id) => typeof id !== "string" || !id) ||

@@ -968,3 +968,94 @@ prerequisite. Source ClassDefinitionEvaluation, inner/outer class environment
 production, actual class Call TypeError/Construct execution, descriptors,
 standard realm completion and true linear remain open. No public head, HOLD,
 queue, or existing process was changed or cancelled.
+
+### Source class execution ownership and startup census (implementation plan)
+
+Before lowering ClassDefinitionEvaluation, complete-source preparation must own
+the actual definition work. Extend the existing inventory scanner with an internal
+`source-complete` module population mode, forced by the whole-source entry after
+caller options. Default/legacy inventory retains its existing ordering and routing.
+The scanner creates the actual M0 terminal before class discovery in this mode;
+heritage/computed-key closures and empty implicit constructors retain that actual
+owner. Class statements are scanned once. Planning identity consumes the scanner's
+recorded mode rather than rebuilding a different population.
+
+Share the class startup occurrence census in `ir/analysis/class-startup.ts`.
+Complete-source plans record one `class-definition` evaluation at the declaration,
+with static work inside that evaluation; existing legacy plans keep their static
+field/block entries. Reuse this census in module-init planning and source-map
+validation, removing their duplicate member walker. Extend the backend-neutral
+startup kind and its data validator together. Source class exports must not claim
+the implicit constructor body's callable as a produced class value.
+
+Acceptance: real source-owned M0 for class-only modules, exact source/ClassID and
+original unit ownership, definition-time closure discovery without duplicate IDs,
+ordinary/class source ordering, ambient erasure, deterministic dependency order,
+unchanged default inventory and ordinary source execution/replay. Preserve source-map
+request validation precedence and all class execution refusals. Quality gates need
+no giant-file growth grants. This foundation is not executable class completion;
+class lexical environments, member ABI/capture lowering, canonical construction,
+real Call errors, class descriptors, lifecycle and true-linear acceptance remain open.
+
+Keep `identity.ts` below its existing budget by moving its existing class
+definition-expression census unchanged to
+`ir/analysis/class-definition-expressions.ts`. This syntax-only helper cannot
+import the planning context: scanner -> planning -> scanner would create a cycle.
+The shared startup occurrence owner separately consumes authenticated planning
+records. No duplicate expression walker is added.
+
+Fresh review identified a necessary ownership repair within this foundation:
+AST ancestry still assigns an implicit-constructor class node or computed method
+name to its callable body. Capture definition-expression execution boundaries in
+the same source-complete scanner pass, validate their exact source/class/terminal
+relations when projecting planning identity, and consult that boundary in owner
+lookup before a callable declaration boundary. This is an authenticated AST view,
+not a new unit or fabricated terminal; legacy inventory retains its old behavior.
+
+The final syntax owner is named `analysis/class-definition-syntax.ts`: it also
+receives the existing static-modifier/member-unit-kind classifier unchanged,
+keeping the scanner driver below its original LOC ceiling after the ownership
+boundary repair. Planning validates the complete expression census once per
+class, including additions to a previously expression-free class.
+
+The same review found class expressions in export assignments still inherited
+null execution ownership. Complete-source export assignments now create the real
+M0 before discovery too, and their support/closure scan inherits it. This changes
+complete-source ordering/ownership for export assignments, including ordinary
+ones; their original UnitIDs remain stable. Default legacy inventory remains
+unchanged, and ordinary modules without export assignments retain their order.
+This uses the existing export-work population predicate rather than a duplicate
+recursive class-presence prewalk or a fabricated future terminal.
+
+### Source class startup ownership qualification (local)
+
+Complete-source inventory now retains a real M0 for class declarations and
+export-assignment work. Its class definitions occur once in source order, with
+static work inside that evaluation. Definition-expression boundaries preserve
+actual execution ownership across heritage, computed method/accessor names and
+decorators, while callable bodies retain their original units. The exact scanner
+expression census is validated once per class, including stale additions to a
+previously expression-free class. No synthetic terminal or duplicate scan is used.
+
+- Focused source/inventory/TDZ/startup/source-map controls: **112/112**.
+- New inventory controls also pass **24/24** in the default numeric domain;
+  existing constructed-class validation passes **6/6** there. Existing class
+  allocation/realm controls pass **10/10** in the adjacent i32 run.
+- Adjacent original identity/typed-preparation files: **57 pass / 6 fail / 63**.
+  All six failures have identical complete failure sections against exact parent
+  `33e7dbd023dc3fe1405ddebd9579b569634a2763`; no assertions or baseline are changed.
+- Existing gc artifacts: **14/14 byte-identical**, including both experimental
+  IR settings. Default legacy inventory is unchanged; complete-source export
+  assignments now have actual M0 ownership and changed internal array order,
+  with their original UnitIDs preserved.
+- Fresh adversarial review found and verified repairs for definition-expression
+  ownership and export-expression ownership; independent controls include 24/24
+  expression queries, 6/6 export-class forms, 16/16 exact-parent default inventories,
+  malformed-map precedence, stale census and original/decoded execution.
+
+Evidence: `.tmp/7139-class-startup-*` and
+`.tmp/review-class-startup-inventory/REVIEW.md`. This foundation deliberately
+retains `class-definition-execution-unsupported`; it produces no new executable
+class value and claims no lifecycle conformance improvement. Lexical environments,
+member closures, canonical Call/Construct, descriptors, realm completion and true
+linear execution remain open. Public heads, HOLDs and queue remain unchanged.

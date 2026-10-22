@@ -38,6 +38,7 @@ export type IrModuleInitEvaluationKind =
   | "statement"
   | "variable-initializer"
   | "export-assignment"
+  | "class-definition"
   | "class-static-field"
   | "class-static-block";
 
