@@ -959,6 +959,72 @@ isConfigurable, verifyConfigurable and verifyNotConfigurable ship IR.
 **Tests.** `tests/issue-7106-ir-instanceof-error-intrinsic.test.ts`. In #6848's
 test, the two error rows #7120 fixed leave the "diverges from node" set.
 
+## `compareArray.format` (assert.js:179): measured plan (2026-10-22)
+
+rc-10's integrated census (#6859) puts this unit in 238 of 266 compiled tests,
+and as the only blocker in 10 of them (about +1,450 `ir_only_pass`).
+
+**Measurement base.** WIP branch `claude/7106-compare-array-format-wip`: #6858
+(which carries #6846, #6847, #6850 and main 91db60878b) merged with #6851
+(the #7119 method-call wrapper) and #6862 (#7127). The two merges were
+additive, except that #6851's flag-gated catch-binding typing is subsumed by
+#6858's unconditional non-fast form. Standalone and default gc gave the same
+results throughout.
+
+**Where it stops today.**
+- **The real harness.** In `map/length.js`, `__fx_compareArray_format` (the
+  top-level twin of the function expression) is first refused at
+  `.join(", ")`: `expr-array-search-element-family` on
+  `Array.prototype.map.call(arrayLike, String).join(", ")`. `<module-init>`,
+  which contains the expression, stops at `expr-ident-not-in-scope «Array»`.
+- **Layer by layer** (twins with dynamic parameters standing in for the
+  intrinsics):
+
+| probe | selection | note |
+| --- | --- | --- |
+| `Array.prototype.map` as a value | refused: `expr-ident-not-in-scope «Array»` | #7123 refuses a member-read receiver; #7127 lifts it only when legacy's `protoMemberDirty` companion is seeded, which this file does not seed |
+| `String` as a value | claimed | #7118 |
+| `m.call(a, String)` with `m` a dynamic parameter | claimed | reflective `.call` on a dynamic value through #6851 |
+| `m.call(a, S).join(", ")` | claimed | `.join` on a dynamic receiver goes through #6851, not the typed-vec arm |
+| `"[" + … + "]"` | claimed | dynamic `+` |
+
+  The top-level twins then fail the ABI-parity check (`function typeIdx parity
+  mismatch`, at resolve), because their return ABI differs from legacy's. The
+  real unit is a closure inside `<module-init>` and does not take this path.
+  The compiled probes answer like node for `m.call(a, String)`, the full
+  format and the `S` variant. Those bodies fell back at the ABI check, though,
+  so this is legacy's answer and not yet an IR measurement.
+
+**So the three layers reduce to one.** Once `Array.prototype.map` is a value
+the IR can hold, `.join` and `.call` already go through #6851's wrapper. The
+typed-vec routing for `.join` (#7108) is not needed: the receiver is a
+dynamic carrier, not a vec.
+
+**Plan (not built; out of session time).**
+1. Exact `Array.prototype.map` value read when `protoMemberDirty` is false.
+   With no program write to `Array.prototype`, the canonical method is the
+   lib's. Two candidates:
+   - read it through the same brand companion legacy's static
+     `Array.prototype.map` read uses: extend #7127 to seed the companion on
+     demand, or make the IR read call legacy's static member-read helper;
+   - or recognize `<Builtin>.prototype.<method>.call(recv, …args)` as one
+     reflective call, `dyn.method_call(recv, "map", args)` through #6851's
+     brand dispatch, never materializing the method value. This avoids #7123
+     entirely, and is exact when no program write to `Array.prototype.map`
+     exists (the same uniform-write argument as `builtin-ctor-assigned-alias`).
+
+   The second is smaller and does not depend on #6862. The admission check
+   would be `!identifierIsWrittenTo` for the builtin plus no assignment to
+   `Array.prototype.map` in the file.
+2. Then `<module-init>`: re-census `map/length.js` with the format closure
+   claimable, and check the 10 single-blocker files from #6859 against
+   legacy and node.
+
+**Found on the way (legacy, not IR).** `[1, null, "y"].join(", ")` through a
+dynamic receiver does not answer node's `"1, , y"` in IR or legacy. Join
+should map null/undefined elements to empty strings. `compareArray.format`
+is unaffected, because it maps every element through `String` first.
+
 ## Ownership
 
 Per the #6583 plan: Stage 1 and 3 → B (items 2/3), Stage 2 and 4 → Shepherd
