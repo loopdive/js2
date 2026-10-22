@@ -20,6 +20,10 @@ assignee: "ttraenkler/session-d"
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
+# 2026-10-22 (#7110): one call to `plannedClosureDynamicMethodCall` before the
+# generic method-call arm (the refusal below, "Method calls on dynamic receivers").
+func-budget-allow:
+  - src/ir/select.ts::isPhase1Expr
 ---
 
 # IR: void-result member closures in `<module-init>`
@@ -110,3 +114,21 @@ means a VOID plan, not an invented dynamic result.
     (`closure-return-type`).
 
   These are the next slices.
+
+## Method calls on dynamic receivers (2026-10-22)
+
+A void plan opens the closure body to the selector's general method-call arm.
+Every receiver in such a body is a dynamic carrier, and the IR's dynamic
+method call (`__ir_dyn_method_call_N` → `__extern_method_call`) has no brand
+arms for primitives or vecs on the host-free lanes: it returns `undefined`,
+where legacy dispatches by brand. Measured on a void member closure:
+`list.join(", ")`, `n.toString()` and `sym.toString()` all evaluated to
+`undefined` in the IR body. Legacy and node agree on the correct values.
+
+`plannedClosureDynamicMethodCall` therefore refuses any method call on a
+non-string-literal receiver inside a planned member closure, which keeps the
+closure legacy. Function-object member calls (`assert._toString(x)`) take
+their own arm earlier and are not affected. `assert.compareArray`'s
+`message.toString()` (its Symbol branch) is such a call, so that closure, and
+with it the harness `<module-init>`, stays legacy until the dynamic method
+call gains legacy's brand dispatch.
