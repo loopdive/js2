@@ -54,6 +54,12 @@ import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
+import {
+  compileTemplateExpressionAsExternref,
+  parseDetachedTemplate,
+  publishReceiverHelper,
+  receiverHelperContext,
+} from "./helpers/template-wrapper.js";
 
 /** The largest arity `dyn.construct` admits: the fixed-arity driver family. */
 export const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = MAX_NATIVE_CONSTRUCT_ARITY;
@@ -221,46 +227,6 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-/** A fresh helper `FunctionContext` over externref-style params (shared by the IR's template-built wrappers). */
-export function receiverHelperContext(
-  name: string,
-  params: { name: string; type: ValType }[],
-  returnType: ValType,
-): FunctionContext {
-  return {
-    name,
-    params,
-    locals: [],
-    localMap: new Map(params.map((param, index) => [param.name, index])),
-    returnType,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
-}
-
-/** Register the finished helper as a defined function under its name; returns its index. */
-export function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((param) => param.type),
-    results,
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(helper.name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: helper.name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
-}
-
 /** Collect what `emit` pushes into a detached sequence. */
 function captureReceiverSequence(helper: FunctionContext, emit: () => void): Instr[] {
   const outer = helper.body;
@@ -403,25 +369,6 @@ export function irDynamicMethodCallWrapperLane(ctx: CodegenContext): boolean {
   return noJsHost(ctx) && !ctx.fast;
 }
 
-/**
- * Parse a template function `text` in its own detached file and return the
- * expressions of its `count` expression statements. A template is a runtime
- * operation, not source: legacy's checker queries on its nodes answer
- * "unknown" — the facts of an `any` site — so the emitters take their dynamic
- * arms. Throws when the text does not hold exactly `count` statements.
- */
-export function parseDetachedTemplate(fileName: string, text: string, count: number): readonly ts.Expression[] {
-  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ES2022, true, ts.ScriptKind.JS);
-  const fn = file.statements[0];
-  const statements = fn && ts.isFunctionDeclaration(fn) ? fn.body?.statements : undefined;
-  const expressions = (statements ?? []).flatMap((statement) =>
-    ts.isExpressionStatement(statement) ? [statement.expression] : [],
-  );
-  if (expressions.length !== count)
-    throw new Error(`ir/template: ${fileName} did not parse (${expressions.length}/${count})`);
-  return expressions;
-}
-
 /** `recv.m`, `f.call(recv, a0, …)` and `recv.m(a0, …)`, parsed in a detached file. */
 function dynamicMethodCallTemplate(
   method: string,
@@ -436,18 +383,6 @@ function dynamicMethodCallTemplate(
     `}`;
   const [read, own, branded] = parseDetachedTemplate("__ir_dyn_mcall.js", text, 3);
   return [read!, own!, branded!];
-}
-
-/** Compile one template expression as an externref value onto `helper.body` (undefined for a void result). */
-export function compileTemplateExpressionAsExternref(
-  ctx: CodegenContext,
-  helper: FunctionContext,
-  expression: ts.Expression,
-): void {
-  const externref: ValType = { kind: "externref" };
-  const result = compileExpression(ctx, helper, expression, externref);
-  if (result === null || (result as unknown) === VOID_RESULT) emitUndefined(ctx, helper);
-  else if (result.kind !== "externref") coerceType(ctx, helper, result, externref);
 }
 
 /**

@@ -45,7 +45,7 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
   - ir->codegen: 80 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
-  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it
+  - largestSccSize: 727 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it, and codegen/helpers/template-wrapper.ts (the wrapper mechanics lifted out of ir-dynamic-construct.ts) joins it
 # 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
@@ -1491,7 +1491,7 @@ is never materialized.
 | piece | module | reuse |
 | --- | --- | --- |
 | shape + naming contract (`matchArrayPrototypeBorrowCall`, `__ir_arr_borrow_<m>_<n>`) | `src/ir/array-prototype-borrow-call.ts` | the per-(method, arity) symbol helpers now shared with the #7119 wrapper (`irWrapperSymbol` / `parseIrWrapperSymbol`, lifted out of `dynamic-method-call-names.ts`) |
-| wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | `receiverHelperContext`, `parseDetachedTemplate`, `compileTemplateExpressionAsExternref`, `publishReceiverHelper` — exported from `ir-dynamic-construct.ts`, where the #7119 wrapper now uses the same generalized template parser |
+| wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | `receiverHelperContext`, `parseDetachedTemplate`, `compileTemplateExpressionAsExternref`, `publishReceiverHelper` — one module, `codegen/helpers/template-wrapper.ts`, which the #7119 wrapper in `ir-dynamic-construct.ts` now imports too (its inline copies removed) |
 | admission | `arrayPrototypeBorrowCompilesHostFree` in `array-prototype-borrow.ts` (legacy's `ARRAY_METHODS` minus its standalone refusals) → `irArrayPrototypeBorrowIsWrappable` (the one predicate the selector option, the from-ast resolver and the finalize registration read) | no second method list |
 | selector | `ambientArrayPrototypeBorrowCall` beside `ambientObjectToStringTagCall`; the same three sites (move-only scan, Phase-1, external-call walk) plus `isDynShaped` (the result is the carrier) and one Phase-1 arm so a method call ON the result is a dynamic-receiver call, whatever the checker types the borrow | the #7119 wrapper carries `.join` on the result |
 | from-ast | `lowerArrayPrototypeBorrowCall`, intercepted before receiver lowering like the `Object.prototype.toString.call` arm; argument boxing shared with the dynamic method call through the new `lowerDynamicOperands` (one loop, was two) | — |

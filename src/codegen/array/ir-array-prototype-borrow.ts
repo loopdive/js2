@@ -17,18 +17,18 @@
  *
  * The naming contract lives in `ir/array-prototype-borrow-call.ts`; the
  * template-wrapper mechanics are shared with the dynamic method-call wrapper
- * (`ir-dynamic-construct.ts`).
+ * (`helpers/template-wrapper.ts`).
  */
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { flushLateImportShifts } from "../shared.js";
+import { irDynamicMethodCallWrapperLane } from "../ir-dynamic-construct.js";
 import {
   compileTemplateExpressionAsExternref,
-  irDynamicMethodCallWrapperLane,
   parseDetachedTemplate,
   publishReceiverHelper,
   receiverHelperContext,
-} from "../ir-dynamic-construct.js";
+} from "../helpers/template-wrapper.js";
 import { arrayPrototypeBorrowCompilesHostFree } from "../array-prototype-borrow.js";
 
 const BORROW_RECEIVER = "__ir_apb_recv";

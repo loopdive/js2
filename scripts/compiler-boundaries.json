@@ -6757,6 +6757,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/template-wrapper.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Shared mechanics of the template-built IR wrappers (#7106): helper context, detached template parse, publication."
+    },
+    {
       "path": "src/codegen/helpers/arguments-registration.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
