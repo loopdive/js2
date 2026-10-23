@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { nativeReceiverRouteGaps } from "./native-receiver-routes.js";
 import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
 import { closureSignatureEquals } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
+  closureInvocationKind,
   closureMethodArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
@@ -36,7 +38,7 @@ import {
 export interface NativeInvocationUse {
   readonly occurrence: number;
   readonly ownerUnitId: IrUnitId;
-  readonly kind: "method" | "apply-vector" | "undefined";
+  readonly kind: "method" | "apply-vector" | "undefined" | "receiver";
   readonly arity?: number;
   readonly liftedUnitId?: IrUnitId;
   readonly callbacks?: readonly {
@@ -174,14 +176,7 @@ function calculate(
       binding = call.target.binding;
     if (binding.kind !== "intrinsic") continue;
     const arity = closureMethodArity(binding.symbol);
-    const kind =
-      arity !== undefined
-        ? "method"
-        : binding.symbol === IR_CLOSURE_VECTOR_APPLY
-          ? "apply-vector"
-          : binding.symbol === IR_CLOSURE_UNDEFINED
-            ? "undefined"
-            : undefined;
+    const kind = closureInvocationKind(binding.symbol);
     if (!kind) continue;
     const unitId = buffer.ownerUnitId;
     let types = typeMaps.get(unitId);
@@ -192,8 +187,8 @@ function calculate(
     }
     if (call.result === null || !external(call.resultType ?? undefined))
       fail("semantic invocation result is not externref");
-    if (kind === "undefined") {
-      if (call.args.length) fail("canonical undefined callable takes no operands");
+    if (kind === "undefined" || kind === "receiver") {
+      if (call.args.length) fail(`canonical ${kind} callable takes no operands`);
       uses.push({ occurrence, ownerUnitId: unitId, kind });
       continue;
     }
@@ -273,6 +268,7 @@ function calculate(
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
   gaps.push(...getters.gaps);
+  gaps.push(...nativeReceiverRouteGaps(source, uses));
   return {
     uses,
     getterUses: getters.getterUses,

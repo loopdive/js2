@@ -1,5 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { emitNativeReferenceError } from "./native-errors.js";
+import { allocateLoweredLiftedFunctionArtifact } from "./source-closure-identity.js";
+import {
+  bindSourceClosureCaptures,
+  requireSourceClosureEntry,
+  type SourceClosureEntry,
+  type IrClosureLiteral,
+} from "./source-closure-entry.js";
 //
 // AST → IR lowering.
 //
@@ -54,7 +61,7 @@ import { ts, forEachChild } from "../ts-api.js";
 import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
-import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
+import { IR_CLOSURE_UNDEFINED, IR_CLOSURE_RECEIVER } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
   lowerSourceClosureInvocation,
@@ -220,7 +227,6 @@ import type { IrStandaloneDomOperation } from "./dom-capability.js";
 import { IR_CONSOLE_METHODS, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
-  allocateLiftedFunctionArtifact,
   type IrDerivedUnitProvenance,
   type IrFunctionIdentity,
   type IrLiftedFunctionArtifactIdentity,
@@ -1170,6 +1176,8 @@ export interface AstToIrOptions extends functionObjects.FunctionValueLoweringPla
    * dedicated final-parameter mode below.
    */
   readonly selfParam?: { readonly type: IrType };
+  /** Exact original terminal member; captures and receiver use the shared closure entry. */
+  readonly sourceClosureEntry?: SourceClosureEntry;
   /**
    * #3522 constructor retirement: lower a source constructor as the
    * allocator-independent `<Class>_init` body. User parameters keep their
@@ -1461,16 +1469,13 @@ function lowerGeneratorPrologue(options: AstToIrOptions, name: string, builder: 
 }
 
 function lowerClosureCaptureBindings(
-  captures: readonly NestedCapture[],
+  captures: readonly import("./source-closure-entry.js").ClosureCaptureBinding[],
   captureFieldTypes: readonly IrType[],
   selfV: IrValueId,
   builder: IrFunctionBuilder,
   scope: Map<string, ScopeBinding>,
 ): void {
-  for (let i = 0; i < captures.length; i++) {
-    const cap = captures[i]!;
-    const fieldType = captureFieldTypes[i]!;
-    const v = builder.emitClosureCap(selfV, i, fieldType);
+  bindSourceClosureCaptures(captures, captureFieldTypes, selfV, builder, (cap, v, fieldType) => {
     if (cap.withField) {
       scope.set(cap.name, {
         kind: "withField",
@@ -1481,7 +1486,7 @@ function lowerClosureCaptureBindings(
     } else {
       scope.set(cap.name, { kind: "local", value: v, type: fieldType });
     }
-  }
+  });
 }
 
 function lowerClosureDefaultBinding(
@@ -1568,6 +1573,63 @@ function numericProjectionOptions(
   };
 }
 
+/** Resolve the original user parameter population before allocating entry SSA values. */
+function resolveFunctionAstParameters(
+  fn: ts.SignatureDeclaration,
+  options: AstToIrOptions,
+  name: string,
+  logicalVectorConsumed: Set<ts.Node> | undefined,
+): { name: string; type: IrType }[] {
+  return fn.parameters.map((p, idx) => {
+    const override = options.paramTypeOverrides?.[idx];
+    const vector = options.logicalVectorTypes?.get(p);
+    if (
+      options.logicalVectorTypes !== undefined &&
+      (vector || override?.kind === "vec" || (p.type && ts.isArrayTypeNode(p.type)))
+    ) {
+      if (!vector || !override || !irTypeEquals(vector, override)) {
+        logicalVectorMismatch(name, "parameter entry must match its explicit parameter override");
+      }
+      logicalVectorConsumed?.add(p);
+    }
+    if (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) {
+      return {
+        name: `__pattern_param_${idx}`,
+        type: resolveIrType(effectiveIrParamTypeNode(p), override, `pattern param #${idx} of ${name}`),
+      };
+    }
+    if (!ts.isIdentifier(p.name)) {
+      demoteToLegacy("param-shape-rejected", `ir/from-ast: unsupported param shape in Phase 1 (${name})`);
+    }
+    // #2713 — rest (`...args`), default (`x = 5`) and optional (`x?`) params
+    // keep an Identifier name and so slip this gate, after which their
+    // arity/defaulting semantics are dropped (a regression against #1372).
+    // The top-level selector already rejects them (`select.ts` →
+    // param-shape-rejected); mirror that here so nested function declarations
+    // lowered through this path demote cleanly to legacy rather than
+    // miscompiling. (No-op for top-level claimed functions — the selector has
+    // already filtered these out.)
+    if (p.questionToken || p.dotDotDotToken || p.initializer) {
+      demoteToLegacy(
+        "param-shape-rejected",
+        `ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`,
+      );
+    }
+    // (#7106 item 1) A JSDoc position the planner projected to the dynamic
+    // carrier off legacy's registered externref slot is authoritative over
+    // the JSDoc node (`@param {string} [functionName]` is externref there).
+    const jsDocExternref = override?.kind === "dynamic" && jsDocParamIsExternrefCandidate(p);
+    return {
+      name: p.name.text,
+      type: resolveIrType(
+        jsDocExternref ? undefined : effectiveIrParamTypeNode(p),
+        override,
+        `param ${p.name.text} of ${name}`,
+      ),
+    };
+  });
+}
+
 export function lowerFunctionAstToIr(
   fn:
     | ts.FunctionDeclaration
@@ -1587,6 +1649,17 @@ export function lowerFunctionAstToIr(
   // MethodDeclaration: use options.funcName (its `.name` is PropertyName).
   // ConstructorDeclaration: use options.funcName (no `.name` node).
   const astName = ts.isFunctionDeclaration(fn) ? fn.name?.text : undefined;
+  const entry = options.sourceClosureEntry
+    ? requireSourceClosureEntry(options.sourceClosureEntry, fn, options.ownerUnitId)
+    : undefined;
+  if (
+    entry &&
+    (options.selfParam ||
+      options.constructorInitClassShape ||
+      options.moduleInitUnit ||
+      options.ambientThisStrict !== undefined)
+  )
+    throw new IrInvariantError("selection-preparation-mismatch", "build", "conflicting original source closure entry");
   const name = options.funcName ?? astName;
   if (!name) {
     demoteToLegacy(
@@ -1660,54 +1733,13 @@ export function lowerFunctionAstToIr(
   // identifier to bind, then emit destructuring reads (object.get / vec.get
   // / class.get) into the function body as a preamble. Identifier params
   // pass through unchanged.
-  const params: { name: string; type: IrType }[] = fn.parameters.map((p, idx) => {
-    const override = options.paramTypeOverrides?.[idx];
-    const vector = options.logicalVectorTypes?.get(p);
-    if (
-      options.logicalVectorTypes !== undefined &&
-      (vector || override?.kind === "vec" || (p.type && ts.isArrayTypeNode(p.type)))
-    ) {
-      if (!vector || !override || !irTypeEquals(vector, override)) {
-        logicalVectorMismatch(name, "parameter entry must match its explicit parameter override");
-      }
-      logicalVectorConsumed?.add(p);
-    }
-    if (ts.isObjectBindingPattern(p.name) || ts.isArrayBindingPattern(p.name)) {
-      return {
-        name: `__pattern_param_${idx}`,
-        type: resolveIrType(effectiveIrParamTypeNode(p), override, `pattern param #${idx} of ${name}`),
-      };
-    }
-    if (!ts.isIdentifier(p.name)) {
-      demoteToLegacy("param-shape-rejected", `ir/from-ast: unsupported param shape in Phase 1 (${name})`);
-    }
-    // #2713 — rest (`...args`), default (`x = 5`) and optional (`x?`) params
-    // keep an Identifier name and so slip this gate, after which their
-    // arity/defaulting semantics are dropped (a regression against #1372).
-    // The top-level selector already rejects them (`select.ts` →
-    // param-shape-rejected); mirror that here so nested function declarations
-    // lowered through this path demote cleanly to legacy rather than
-    // miscompiling. (No-op for top-level claimed functions — the selector has
-    // already filtered these out.)
-    if (p.questionToken || p.dotDotDotToken || p.initializer) {
-      demoteToLegacy(
-        "param-shape-rejected",
-        `ir/from-ast: rest/default/optional param not in Phase 1 IR scope (${name})`,
-      );
-    }
-    // (#7106 item 1) A JSDoc position the planner projected to the dynamic
-    // carrier off legacy's registered externref slot is authoritative over
-    // the JSDoc node (`@param {string} [functionName]` is externref there).
-    const jsDocExternref = override?.kind === "dynamic" && jsDocParamIsExternrefCandidate(p);
-    return {
-      name: p.name.text,
-      type: resolveIrType(
-        jsDocExternref ? undefined : effectiveIrParamTypeNode(p),
-        override,
-        `param ${p.name.text} of ${name}`,
-      ),
-    };
-  });
+  const params = resolveFunctionAstParameters(fn, options, name, logicalVectorConsumed);
+  if (entry && !closureSignatureEquals(entry.signature, { params: params.map((param) => param.type), returnType }))
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      "source closure entry signature differs from body",
+    );
 
   const sourceMapState: FrontendSourceMapState | undefined = options.sourceMap
     ? {
@@ -1747,6 +1779,9 @@ export function lowerFunctionAstToIr(
   // Single scope map for both params and let/const locals. Phase 1 forbids
   // shadowing (enforced by the selector) so there is no nesting to track.
   const scope = new Map<string, ScopeBinding>();
+  const closureSelf = entry
+    ? builder.addParam("__closureSelf", { kind: "closure", signature: entry.signature })
+    : undefined;
   // #1370 Phase B: synthetic `__self` for instance methods. Must be added
   // FIRST so its SSA index matches the legacy `local 0` slot the
   // pre-allocated typeIdx expects (see `class-bodies.ts:301`). `this` is
@@ -1787,6 +1822,18 @@ export function lowerFunctionAstToIr(
   }
 
   builder.openBlock();
+  if (entry) {
+    const bindEntry = () => {
+      lowerClosureCaptureBindings(entry.captures, entry.captureFieldTypes, closureSelf!, builder, scope);
+      scope.set("this", {
+        kind: "local",
+        value: builder.emitCall(irIntrinsicFuncRef(IR_CLOSURE_RECEIVER), [], irVal({ kind: "externref" }))!,
+        type: irVal({ kind: "externref" }),
+      });
+    };
+    if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", fn, bindEntry);
+    else bindEntry();
+  }
 
   // Parameters enter the function as SSA values, but a parameter that is
   // reassigned must subsequently read through mutable storage just like a
@@ -1973,7 +2020,15 @@ export function lowerFunctionAstToIr(
   }
 
   return {
-    main: builder.finish(),
+    main: builder.finish(
+      entry
+        ? {
+            signature: entry.signature,
+            captureFieldTypes: entry.captureFieldTypes,
+            ...fixedClosureParameters(entry.declaration, entry.signature),
+          }
+        : undefined,
+    ),
     ...sourceMapResult(cx),
     lifted,
     liftedUnitProvenance,
@@ -16168,83 +16223,6 @@ function recordLiftedUnitProvenance(identity: IrLiftedFunctionArtifactIdentity, 
   });
 }
 
-function allocateLoweredLiftedFunctionArtifact(
-  declaration: ts.FunctionDeclaration | IrClosureLiteral,
-  cx: LowerCtx,
-  displayNameForOrdinal: (ordinal: number) => string,
-  preserveDerivedIdentity = false,
-): IrLiftedFunctionArtifactIdentity {
-  // Exact host plans allocate their targets before AST lowering and compare
-  // against those derived identities when the plan is consumed. They are
-  // compiler-owned artifacts even though their syntax is a source closure;
-  // do not replace their planned target with the source node's unit ID.
-  if (preserveDerivedIdentity) return allocateLiftedFunctionArtifact(cx, displayNameForOrdinal);
-
-  // Mutable-capture/usage transforms may retain the terminal declaration but
-  // clone a nested function-like. TypeScript preserves the exact pre-transform
-  // node through getOriginalNode; consult it before classifying the lift as a
-  // compiler-created artifact, otherwise a real source arrow incorrectly
-  // escapes into the derived-unit namespace.
-  const originalDeclaration = ts.getOriginalNode(declaration);
-  const expectedSourceKind = ts.isFunctionDeclaration(declaration)
-    ? "nested-function"
-    : ts.isGetAccessorDeclaration(declaration)
-      ? "object-getter"
-      : ts.isSetAccessorDeclaration(declaration)
-        ? "object-setter"
-        : ts.isMethodDeclaration(declaration)
-          ? "object-method"
-          : ts.isFunctionExpression(declaration)
-            ? "function-expression"
-            : "arrow-function";
-  let sourceUnitId =
-    cx.identityContext?.unitIdByDeclaration.get(declaration) ??
-    (originalDeclaration !== declaration
-      ? cx.identityContext?.unitIdByDeclaration.get(originalDeclaration)
-      : undefined);
-  if (!sourceUnitId && cx.identityContext) {
-    // A few checker/usage transforms clone the nested node without preserving
-    // TypeScript's original-node link. Recover only one exact-span source
-    // record under this terminal owner; kind, source, owner, and offsets must
-    // all agree with the frozen inventory.
-    const owner = cx.identityContext.unitByUnitId.get(cx.ownerUnitId);
-    const sourceFile = declaration.getSourceFile();
-    const candidates = owner
-      ? cx.identityContext.inventory.allUnits.filter(
-          (unit) =>
-            unit.sourceId === owner.sourceId &&
-            unit.kind === expectedSourceKind &&
-            unit.terminalOwnerId === cx.ownerUnitId &&
-            unit.declarationStart === declaration.getStart(sourceFile) &&
-            unit.declarationEnd === declaration.end,
-        )
-      : [];
-    if (candidates.length === 1) sourceUnitId = candidates[0]!.id;
-  }
-  const sourceUnit = sourceUnitId ? cx.identityContext?.unitByUnitId.get(sourceUnitId) : undefined;
-  if (sourceUnitId && sourceUnit) {
-    if (
-      sourceUnit.kind !== expectedSourceKind ||
-      sourceUnit.terminalOwnerId !== cx.ownerUnitId ||
-      sourceUnit.lexicalOwnerId === null ||
-      !cx.identityContext?.unitByUnitId.has(sourceUnit.lexicalOwnerId as IrUnitId)
-    ) {
-      // invariant (producer-promise): the prepared plan and the lowering disagree — a plan<->builder desync — #4502.
-      throw new Error(`ir/from-ast: lifted source identity diverged (${cx.funcName})`);
-    }
-    const displayOrdinal = cx.liftedCounter.value++;
-    return {
-      unitId: sourceUnitId,
-      name: displayNameForOrdinal(displayOrdinal),
-      parentId: sourceUnit.lexicalOwnerId as IrUnitId,
-      role: "lifted-closure",
-      ordinal: sourceUnit.ordinal,
-      sourceUnit: true,
-    };
-  }
-  return allocateLiftedFunctionArtifact(cx, displayNameForOrdinal);
-}
-
 /**
  * Lower an arrow function or function expression as an IR closure
  * value. Lifts the body to a top-level IR function (with __self as
@@ -16324,13 +16302,6 @@ function closureDefaultParamStart(
   }
   return firstDefault;
 }
-
-type IrClosureLiteral =
-  | ts.ArrowFunction
-  | ts.FunctionExpression
-  | ts.MethodDeclaration
-  | ts.GetAccessorDeclaration
-  | ts.SetAccessorDeclaration;
 
 function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): void {
   const refuse: () => never = () =>
@@ -17070,9 +17041,11 @@ function analyseCaptures(
         const transitive = collectTransitiveClosureCaptures(node, fn, cx.checker);
         transitive.referenced.forEach((name) => referenced.add(name));
         transitive.written.forEach((name) => written.add(name));
+        if (ts.isArrowFunction(fn) && transitive.lexicalThis) referenced.add("this");
       }
       return;
     }
+    if (ts.isArrowFunction(fn) && node.kind === ts.SyntaxKind.ThisKeyword) referenced.add("this");
     if (ts.isIdentifier(node)) {
       referenced.add(node.text);
       // (#6992) Every write form, destructuring and for-in/for-of heads included.

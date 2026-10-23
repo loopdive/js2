@@ -13,9 +13,10 @@ export function collectOuterWrites(
     | ts.MethodDeclaration
     | ts.GetAccessorDeclaration
     | ts.SetAccessorDeclaration,
+  enclosingScope?: ts.Node,
 ): Set<string> {
   const writes = new Set<string>();
-  let outer: ts.Node | undefined = fn.parent;
+  let outer: ts.Node | undefined = enclosingScope ?? fn.parent;
   while (
     outer &&
     !ts.isFunctionDeclaration(outer) &&
@@ -85,14 +86,26 @@ export function collectTransitiveClosureCaptures(
   descendant: ts.Node,
   enclosing: ts.Node,
   checker: ts.TypeChecker,
-): { readonly referenced: Set<string>; readonly written: Set<string> } {
+): {
+  readonly referenced: Set<string>;
+  readonly written: Set<string>;
+  readonly bindings: ReadonlyMap<
+    ts.Symbol,
+    { readonly references: readonly ts.Identifier[]; readonly written: boolean }
+  >;
+  readonly lexicalThis: boolean;
+} {
   const referenced = new Set<string>();
   const written = new Set<string>();
+  const bindings = new Map<ts.Symbol, { references: ts.Identifier[]; written: boolean }>();
+  let lexicalThis = false;
   const declaredInside = (declaration: ts.Node): boolean => {
     for (let node: ts.Node | undefined = declaration; node; node = node.parent) if (node === enclosing) return true;
     return false;
   };
-  const visit = (node: ts.Node): void => {
+  const visit = (node: ts.Node, inheritsThis = ts.isArrowFunction(descendant)): void => {
+    const localThis = inheritsThis && (node === descendant || !ts.isFunctionLike(node) || ts.isArrowFunction(node));
+    if (localThis && node.kind === ts.SyntaxKind.ThisKeyword) lexicalThis = true;
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
       const symbol =
@@ -104,12 +117,17 @@ export function collectTransitiveClosureCaptures(
         const declarations = symbol.declarations;
         if (declarations?.length && declarations.every((declaration) => !declaredInside(declaration))) {
           referenced.add(node.text);
-          if (isLexicalBindingWrite(node)) written.add(node.text);
+          const write = isLexicalBindingWrite(node);
+          if (write) written.add(node.text);
+          const binding = bindings.get(symbol) ?? { references: [], written: false };
+          binding.references.push(node);
+          binding.written ||= write;
+          bindings.set(symbol, binding);
         }
       }
     }
-    forEachChild(node, visit);
+    forEachChild(node, (child) => visit(child, localThis));
   };
   visit(descendant);
-  return { referenced, written };
+  return { referenced, written, bindings, lexicalThis };
 }

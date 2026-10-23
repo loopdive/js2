@@ -38,6 +38,7 @@ export type RuntimeFeature =
   | "js.closure.method"
   | "js.closure.apply-vector"
   | "js.closure.undefined"
+  | "js.closure.receiver"
   | "class.value.allocate"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature

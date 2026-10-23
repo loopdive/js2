@@ -1,10 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { AllocSiteId } from "../../../ir/core/nodes.js";
-import {
-  IR_CLOSURE_VECTOR_APPLY,
-  IR_CLOSURE_UNDEFINED,
-  closureMethodArity,
-} from "../../../ir/core/closure-invocation-callables.js";
+import { closureInvocationKind } from "../../../ir/core/closure-invocation-callables.js";
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
@@ -253,9 +249,7 @@ export function planNativeStringValuePhysical(
         executable(index) &&
         instruction.kind === "call" &&
         instruction.target.binding.kind === "intrinsic" &&
-        (instruction.target.binding.symbol === IR_CLOSURE_VECTOR_APPLY ||
-          instruction.target.binding.symbol === IR_CLOSURE_UNDEFINED ||
-          closureMethodArity(instruction.target.binding.symbol) !== undefined)
+        closureInvocationKind(instruction.target.binding.symbol) !== undefined
       );
     });
   const numeric =

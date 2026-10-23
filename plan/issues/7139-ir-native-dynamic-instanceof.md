@@ -1135,3 +1135,98 @@ or true linear execution. Source lexical environments, original member closure
 ABI, Call/Construct production, descriptors and full realm execution remain open.
 The full migration acceptance is unchanged; public heads, HOLDs and queue remain
 untouched.
+
+### Original member closure entry and exact receiver (implementation plan)
+
+Actual class methods/accessors are original terminal units with a ClassId lexical
+owner and their own terminal owner. They must use their original main function
+slot, rather than the nested-function lift allocator, derived provenance or a
+copied synthetic function AST. Add an authenticated source closure-entry option
+to the shared main AST lowerer: canonical closure self precedes user arguments,
+existing closure.cap bindings recover the exact planned captures, and fixed
+public arity remains the user parameter count. Extract the shared capture-binding
+operation to a cohesive sibling owner so the AST driver does not grow another
+closure implementation or receive a size grant.
+
+The native invocation boundary already saves/restores exact currentThis, argc and
+extras, including exceptional exits. Add a semantic `js.closure.receiver` read
+through that existing issued owner and bind `this` once at original method entry.
+Do not use legacy dyn.current_this's null-as-unbound normalization: explicit null
+and undefined are distinct. Reserve its accessor only when actually demanded;
+join demand, original source closure body, selected invocation/getter boundary,
+ABI key and physical owner before admission. Do not add a class-global receiver,
+new host import, duplicated dispatch body, or change the closure header/signature.
+
+Qualification must execute receiver identity, null/undefined distinction,
+independent captures, nested/reentrant calls and exceptional boundary restoration,
+including decoded/source-free replay and unchanged old artifacts. Original member
+entry controls must retain exact inventoried declaration/UnitID and source sites,
+reject stale/foreign plans and keep source class admission closed until actual
+ClassDefinitionEvaluation, environments, descriptors and Construct are produced.
+This is a shared entry mechanism for that producer, not class lifecycle completion.
+
+### Original member closure entry and exact receiver (local qualification)
+
+Original read/write method ASTs now lower into their original terminal slots,
+with ClassId lexical ownership, canonical closure-self ABI, user-visible arity,
+exact ordered capture identities and shared mutable cells. The shared entry
+planner rejects copied/foreign entries, detached or changed source declarations,
+changed method parameters/results, unsupported module storage and captures outside
+the actual enclosing lexical scope. Nested arrows retain the snapshotted lexical
+receiver. The shared main lowerer shrinks by extracting its existing lifted-unit
+identity operation and parameter resolver; capture binding, callable-kind
+classification and DCE's terminator operands are shared rather than duplicated.
+
+`js.closure.receiver` is selected from actual occurrences and bound to the optional
+reader reservation in the existing issued native invocation owner. Its body reads
+that owner's exact currentThis global, preserving null, host undefined, canonical
+undefined, primitive values and reference identity. Every incoming allocation/use
+route must be a selected native method/apply boundary. Direct calls, callback
+bypasses, returns/escapes and exported readers refuse admission even when another
+valid native call exists. Getter and general realm-entry routes remain unsupported
+until their complete installation proof exists.
+
+Validation against local parent 9a77106a285e3db2d0503c6499a798cc50cff03b:
+
+- **56/56** focused cases across five files: twelve original-member cases, six
+  constructed raw receiver cases and thirty-eight capture/getter controls.
+  Actual original methods distinguish same-signature funcrefs, share cells within
+  one evaluation and retain separate cells across evaluations. Original/decoded
+  packets and fresh-process source-free replay execute with zero imports. Three
+  decoded nested native-boundary cases verify receiver restoration after normal
+  return and catch, plus exact thrown receiver reference identity.
+- **174/174** older adjacent controls passed. The later focused run repeats the
+  capture/getter neighbors touched by the subsequent freshness/arrow fixes.
+- The exact parent-source override control rejects the semantic receiver as an
+  undeclared callable; it does not silently run an alternate implementation.
+- **14/14** old default/experimental WasmGC artifact rows match byte-for-byte.
+  All **140/140** lifecycle status and full failure-text rows match the parent
+  report: **42 passed, 98 failed**. This is preservation, not a lifecycle gain.
+- Source typecheck and a separate focused-test TypeScript project pass. All eleven
+  configured quality commands exit zero, including staged LOC/function budgets,
+  cycles, dialect/layering and coercion checks. The dead-export command certifies
+  preservation only: its graph remains OPEN and strict modeled closure fails on
+  unresolved nonliteral imports; direct-handler retirement is not certified.
+- Fresh adversarial review has no unresolved findings. It found and prompted fixes
+  for stale captured/method declarations, mutable outer and module captures,
+  lexical arrow this, capture ordering/scope, duplicated traversal, an unused test
+  resolver and missing nested native-boundary qualification. Reviewed source/test
+  hashes match the final staged snapshot; qualification notes were appended later.
+
+Interim failures are retained in local evidence: initial 8-case harness had two
+incorrect replay-option accesses and an escape negative removed by DCE; the fixed
+8-case suite passed. A later nested `.call` attempt was explicitly refused by the
+class primordial-effect proof, which was not weakened. It was replaced with an
+honestly scoped original-arrow test and separate constructed nested native tests.
+The first final typecheck caught a terminal-record narrowing error; the guard was
+reordered and both source/focused-test typechecks now pass. Exact-parent probing
+also exposed scratch-test syntax and expected-diagnostic mistakes before the final
+control correctly asserted the actual undeclared-callable rejection.
+
+Evidence is retained under `.tmp/7139-member-entry-*` and
+`.tmp/review-class-member-entry/FINAL-REVIEW.md` in the Session B worktree. These are
+local checkpoints, not published class completion. Actual source
+ClassDefinitionEvaluation remains independently refused. Source binding storage,
+fresh constructor/prototype population, descriptors, Construct, HomeObject/private
+state, complete realm execution and true linear support remain open. Full migration
+acceptance is unchanged; public PR heads, HOLDs and queue remain untouched.
