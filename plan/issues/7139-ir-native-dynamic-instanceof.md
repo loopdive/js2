@@ -4,7 +4,7 @@ title: "IR: lower native dynamic instanceof with complete prototype demand"
 status: in-progress
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-23
 priority: high
 horizon: m
 feasibility: hard
@@ -1473,3 +1473,109 @@ remains outstanding. Source binding/definition production, full Construct and
 ordinary property flows, true Linear execution and migration acceptance remain
 open. The next source vertical is specified in
 `.tmp/7139-source-class-vertical-design.md`; this dependency does not replace it.
+
+### Executable source class bindings (implementation plan)
+
+Use the existing native externref/i32 ref-cell owners for a source lexical
+binding's value and initialized flag. Put the shared read/initialize/write recipe
+in `src/ir/source-lexical-bindings.ts`; reuse the canonical ReferenceError and
+TypeError constructors and share the initialized guard with module-global reads.
+Allocate outer storage at lexical scope entry and inner storage per definition
+evaluation. Initialize value before flag; evaluate assignment RHS before its
+PutValue guard, and reject writes to initialized immutable inner bindings at run
+time. Do not infer initialized state from the stored value (null is valid).
+
+Extend the existing source closure capture binder and exact original member
+entry issuer to retain both cells for one logical class binding. Authenticate
+source declaration identity and inner/outer role; do not invent parameters or
+ordinary lifted units for class names. Preserve the existing one-field capture
+layout and instruction bytes for current captures. Scope binding readers,
+assignment/compound/update and nested capture mutators must use this one binding
+recipe. No new core instruction, backend cell layout or singleton class global.
+
+Wire this into the executable ClassDefinitionEvaluation producer and actual
+module/nested lexical scopes in the same vertical work. Keep source admission
+closed until definition, prototype/descriptor construction, original member and
+implicit constructor support, and retained Get/Construct paths are complete for
+the admitted population. Test real outer mutation, inner immutability and TDZ,
+including escaped closures and abrupt definition ordering; retain all 140 source
+lifecycle assertions and the same full migration acceptance.
+
+
+Review of the in-progress binding implementation found an invalid scalar-to-reference
+coercion in plain assignment and an oversized capture preparation function. The
+assignment now reuses the native value-carrier owner with an explicit externref
+storage boundary, selecting canonical number/Boolean boxing without changing its
+existing dynamic-carrier default. Capture preparation is split into scope,
+snapshot, field-layout and current-snapshot checks. Nested closures and direct
+nested functions retain both lexical cells, including the inner binding's actual
+immutability, and preserve physical offsets of later ordinary captures.
+
+Qualification so far: ten capture/boxing contracts pass; four original/decoded
+runtime cases with nested readers/writers pass (14/14 combined). They check actual
+stored number/Boolean values, TDZ and immutable PutValue error order, and retained
+mutation effects. A further escaped-closure fixture now creates its callable
+before initialization, retains it after its accessor returns, and invokes it after
+initialization/mutation; that run is still pending. Initial qualification failures
+(policy mismatch, a Boolean-unbox proof refusal, and dynamic-box storage refusal)
+are preserved in .tmp logs; none was waived or bypassed. Source/focused typechecks
+and lint pass at this interim stage. The executable class-definition producer,
+source admission and full lifecycle/migration acceptance remain open; no unused
+binding foundation is accepted as a completed source milestone.
+
+The escaped accessor fixture exposes the next actual producer/use seam: native
+invocation only authenticates a local closure allocation, and rejects the
+returned callable before execution. Extend the existing constructor return-flow
+walker into one shared selected-value flow owner, with separate class/callable
+allocation selectors. Retain caches, exact all-normal-return checks, cycle/unknown
+storage refusal and allocation-family identity. Callable returns additionally
+resolve the actual canonical method invocation's callee before inspecting that
+selected closure body's returns. Require exact semantic/projection code for all
+participating returned-callable owners; do not substitute allocation families for
+runtime values/captures. Keep callbacks on their existing exact local proof.
+Qualify escaped TDZ/mutation, swapped same-family calls/arguments, unknown returns,
+cycles, and all existing constructor-flow tests. No new broad provenance grant,
+source admission opening, or reduced source lifecycle denominator.
+
+
+Returned-callable implementation now shares the selected-value walker with
+Construct and delegates provider enrichment to the actual existing runtime
+projection producer. No provider fields are stripped. Eight persistent controls
+pass, including unknown/null/mixed/cyclic returns, changed receiver arguments and
+swapping two actual same-family call results; independent probes also refuse
+unknown cells. Existing invocation/constructor adjacency is 72/72, and original
+source member preservation is 12/12 (separate populations).
+
+Current full lifecycle rerun remains **42 pass/98 fail of 140**, with every row
+status and full failure text identical to the previous member-entry measurement.
+All 14/14 successful standard GC artifacts are byte-identical to b27970a818b8.
+Ten quality commands pass without new grants; final source/focused typechecks,
+lint and function budget also pass after the final source guards. This is
+preservation evidence, not strict legacy-graph closure or source completion.
+
+Escaped runtime qualification exposed Vitest worker status RPC timeout after
+4/4 assertion passes, twice; both failed command logs are retained. The final
+rerun executes the same native artifact and copied error inspections in a Node
+child and asserts the identical observations from the responsive Vitest worker.
+It passes **4/4**, exit 0, with no unhandled errors. No timeout/error suppression
+or reduced assertions were added; the earlier failing command logs are retained.
+
+The bounded source-producer follow-up is recorded in
+`.tmp/7139-source-class-vertical-design.md`: actual public Realm root population
+and readiness, shared-state borrowing, original implicit-constructor support
+ownership, and qualified class own-bag Get/instance allocation must join before
+source admission. Bootstrap-only roots and structural-only mixed access cannot
+substitute for those owners. A local coordination draft is retained; this
+heartbeat has not posted a GitHub reply or changed any public head/HOLD/queue.
+
+
+This local checkpoint implements the prepared source-binding/returned-callable
+dependency only. Original source accessor bodies produce escaped closures before
+initialization; their later calls observe initialized values, mutations and the
+correct canonical errors. It does not implement ClassDefinitionEvaluation or
+advance the full source lifecycle. Independent reviews of storage/signatures and
+returned-flow/projection/harness conservation have no unresolved findings; the
+reviewed file hashes are pinned under `.tmp/review-source-class-bindings/` and
+`.tmp/review-returned-callable-flow/`. The ten quality commands, final source and
+focused-test typechecks, final lint and function budget pass. No new budget
+allowance, baseline, PR head, HOLD or queue change is included.

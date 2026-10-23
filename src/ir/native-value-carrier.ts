@@ -12,18 +12,27 @@ export function boxNativeValue(
   builder: IrFunctionBuilder,
   value: IrValueId,
   family: IrPrimitiveExpressionFamily | undefined,
+  carrier: "dynamic" | "externref" = "dynamic",
 ): IrValueId {
   const type = builder.typeOf(value);
   if (type.kind === "dynamic" || type.kind === "extern" || type.kind === "callable") return value;
-  if (type.kind === "string") return builder.emitBox(value, irDynamic(JS_TAG_IDS.String));
+  if (type.kind === "string")
+    return carrier === "externref"
+      ? builder.emitCoerceToExternref(value)
+      : builder.emitBox(value, irDynamic(JS_TAG_IDS.String));
   if (type.kind === "closure") return builder.emitCallablePack(value, type.signature);
   const val = asVal(type);
   if (irTypeIsBoolean(type) || (val?.kind === "i32" && family === "boolean")) {
-    return builder.emitBox(value, irDynamic(JS_TAG_IDS.Boolean));
+    return carrier === "externref"
+      ? builder.emitIntrinsic("js.boolean.box", [value])
+      : builder.emitBox(value, irDynamic(JS_TAG_IDS.Boolean));
   }
   if (val?.kind === "f64" || (val?.kind === "i32" && family === "number")) {
     const number = val.kind === "i32" ? coerceIrNumeric(builder, value, irVal({ kind: "f64" })) : value;
-    if (number !== null) return builder.emitBox(number, irDynamic(JS_TAG_IDS.NumberF64));
+    if (number !== null)
+      return carrier === "externref"
+        ? builder.emitIntrinsic("js.number.box", [number])
+        : builder.emitBox(number, irDynamic(JS_TAG_IDS.NumberF64));
   }
   if (
     type.kind === "object" ||

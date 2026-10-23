@@ -1,12 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { emitNativeReferenceError } from "./native-errors.js";
-import { allocateLoweredLiftedFunctionArtifact } from "./source-closure-identity.js";
 import {
-  bindSourceClosureCaptures,
-  requireSourceClosureEntry,
-  type SourceClosureEntry,
-  type IrClosureLiteral,
-} from "./source-closure-entry.js";
+  SOURCE_LEXICAL_VALUE_TYPE,
+  SOURCE_LEXICAL_FLAG_TYPE,
+  emitSourceInitializationGuard,
+  readSourceLexicalBinding,
+  writeSourceLexicalBinding,
+} from "./source-lexical-bindings.js";
+import { bindSourceClosureScope, type ScopeBinding, type NestedCapture } from "./source-scope-bindings.js";
+import { sourceClosureCaptureBindings } from "./source-closure-capture-bindings.js";
+import { allocateLoweredLiftedFunctionArtifact } from "./source-closure-identity.js";
+import { requireSourceClosureEntry, type SourceClosureEntry, type IrClosureLiteral } from "./source-closure-entry.js";
 //
 // AST → IR lowering.
 //
@@ -1468,27 +1471,6 @@ function lowerGeneratorPrologue(options: AstToIrOptions, name: string, builder: 
   return generatorBufferSlot;
 }
 
-function lowerClosureCaptureBindings(
-  captures: readonly import("./source-closure-entry.js").ClosureCaptureBinding[],
-  captureFieldTypes: readonly IrType[],
-  selfV: IrValueId,
-  builder: IrFunctionBuilder,
-  scope: Map<string, ScopeBinding>,
-): void {
-  bindSourceClosureCaptures(captures, captureFieldTypes, selfV, builder, (cap, v, fieldType) => {
-    if (cap.withField) {
-      scope.set(cap.name, {
-        kind: "withField",
-        receiver: v,
-        name: cap.withField.name,
-        type: cap.withField.type,
-      });
-    } else {
-      scope.set(cap.name, { kind: "local", value: v, type: fieldType });
-    }
-  });
-}
-
 function lowerClosureDefaultBinding(
   pending: { name: string; rawValue: IrValueId; type: IrType; initializer: ts.Expression },
   builder: IrFunctionBuilder,
@@ -1581,7 +1563,7 @@ function resolveFunctionAstParameters(
   logicalVectorConsumed: Set<ts.Node> | undefined,
 ): { name: string; type: IrType }[] {
   return fn.parameters.map((p, idx) => {
-    const override = options.paramTypeOverrides?.[idx];
+    const override = options.paramTypeOverrides?.[idx] ?? options.sourceClosureEntry?.signature.params[idx];
     const vector = options.logicalVectorTypes?.get(p);
     if (
       options.logicalVectorTypes !== undefined &&
@@ -1712,14 +1694,16 @@ export function lowerFunctionAstToIr(
       : undefined;
   const asyncUnwrappedReturn = isAsync ? unwrapPromiseTypeNode(declaredReturnTypeNode) : null;
   const effectiveReturnTypeNode = isAsync ? (asyncUnwrappedReturn ?? undefined) : declaredReturnTypeNode;
+  const returnTypeOverride =
+    options.returnTypeOverride !== undefined ? options.returnTypeOverride : entry?.signature.returnType;
   const isVoidReturn =
     !isGenerator &&
     !isCtor &&
     // #3000-B: a set accessor is inherently void (no source-level return type);
     // treat it as void even if the caller forgot the explicit override.
     (ts.isSetAccessorDeclaration(fn) ||
-      options.returnTypeOverride === null ||
-      (options.returnTypeOverride === undefined && effectiveReturnTypeNode?.kind === ts.SyntaxKind.VoidKeyword));
+      returnTypeOverride === null ||
+      (returnTypeOverride === undefined && effectiveReturnTypeNode?.kind === ts.SyntaxKind.VoidKeyword));
   const returnType: IrType | null = isGenerator
     ? irVal({ kind: "externref" })
     : // #3000-C: a constructor returns the constructed instance — `(ref $struct)`.
@@ -1727,7 +1711,7 @@ export function lowerFunctionAstToIr(
       ? ({ kind: "class", shape: options.constructorInitClassShape! } as IrType)
       : isVoidReturn
         ? null
-        : resolveIrType(effectiveReturnTypeNode, options.returnTypeOverride ?? undefined, `return type of ${name}`);
+        : resolveIrType(effectiveReturnTypeNode, returnTypeOverride ?? undefined, `return type of ${name}`);
   // #1372 — binding-pattern params: synthesize a stable internal name
   // (`__pattern_param_<idx>`) so the IR `addParam` machinery has a regular
   // identifier to bind, then emit destructuring reads (object.get / vec.get
@@ -1824,7 +1808,7 @@ export function lowerFunctionAstToIr(
   builder.openBlock();
   if (entry) {
     const bindEntry = () => {
-      lowerClosureCaptureBindings(entry.captures, entry.captureFieldTypes, closureSelf!, builder, scope);
+      bindSourceClosureScope(entry.captures, entry.captureFieldTypes, closureSelf!, builder, scope);
       scope.set("this", {
         kind: "local",
         value: builder.emitCall(irIntrinsicFuncRef(IR_CLOSURE_RECEIVER), [], irVal({ kind: "externref" }))!,
@@ -2645,6 +2629,7 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
     lowerDiscardedExpression(expr.right, cx);
     return;
   }
+  if (lowerAdoptedMutatingStatement(expr, cx)) return;
   if (ts.isCallExpression(expr)) {
     if (cx.resolver?.preparedObjectCreateCall?.(expr) === "null") {
       void lowerCall(expr, cx, /* statementPosition */ true);
@@ -2915,116 +2900,6 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
   );
 }
 
-/**
- * Slice 3 (#1169c): scope bindings carry a "kind" so call-site lowering
- * knows how to dispatch.
- *
- *   - `local`: params, let/const primitives, locally-built objects, and
- *     closures stored as values (the closure case sets `type` to
- *     `IrType.closure`). Reads emit `local.get`; if the type is `boxed`
- *     (ref cell), reads dereference via `refcell.get`.
- *   - `nestedFunc`: name-only binding for `function inner() {...}`.
- *     Calls expand into prepended-capture-args + direct call (matches
- *     the legacy `compileNestedFunctionDeclaration` pattern).
- *
- * Slice 6 (#1169e):
- *   - `slot`: a Wasm-local slot that survives across iterations of a
- *     for-of loop. Used for the loop variable AND for outer-scope `let`
- *     bindings that are mutated inside the loop body. Reads emit
- *     `slot.read`; writes emit `slot.write`. Once a name is bound as a
- *     slot, all subsequent reads/writes (including AFTER the for-of)
- *     route through the slot — this preserves the cross-iteration value
- *     semantics without requiring SSA phi nodes.
- */
-type ScopeBinding =
-  | { kind: "local"; value: IrValueId; type: IrType; stringEncoding?: Encoding }
-  | {
-      /**
-       * #4206 static `with` binding. The receiver is captured by reference;
-       * reads/writes stay object.get/object.set operations at the point of use.
-       */
-      kind: "withField";
-      receiver: IrValueId;
-      name: string;
-      type: IrType;
-      stringEncoding?: Encoding;
-    }
-  | {
-      /**
-       * (#3142 Slice 2) A module-scope binding inside the `<module-init>`
-       * unit. Reads emit a symbolic `global.get` and writes a symbolic
-       * `global.set` against the legacy-allocated `__mod_<name>` global, so
-       * the IR-lowered init body and every other function (legacy or IR)
-       * share the exact same storage. Slice 2 restricts `type` to f64/i32.
-       */
-      kind: "moduleGlobal";
-      globalRef: IrGlobalRef;
-      type: IrType;
-      stringEncoding?: Encoding;
-    }
-  | {
-      kind: "nestedFunc";
-      target: IrFuncRef;
-      signature: IrClosureSignature;
-      captures: readonly NestedCapture[];
-    }
-  | {
-      kind: "slot";
-      slotIndex: number;
-      /**
-       * The slot's IR type as the binding sees it. For most slots this
-       * equals the underlying Wasm-local type (e.g. `irVal({ kind:
-       * "f64" })` for a numeric slot). For string-loop variables in
-       * native-strings mode, this is `IrType.string` while the
-       * underlying slot is `(ref $AnyString)` — see `asType` below.
-       */
-      type: IrType;
-      /**
-       * Slice 6 part 4 refactor (#1185): optional widening for
-       * identifier reads. When present, the SSA result of a `slot.read`
-       * against this binding is re-tagged to `asType` instead of
-       * `irVal(slot.type)`. Used for native-strings string for-of
-       * where the slot ValType is `(ref $AnyString)` but the loop
-       * variable should compose with slice-1 string ops as
-       * `IrType.string`.
-       *
-       * The Wasm-level value is identical between `slot.type` and
-       * `asType` — `IrType.string` lowers to `(ref $AnyString)` in
-       * native mode — so this is purely a type-system rewrite.
-       */
-      asType?: IrType;
-      /**
-       * (#3741) The underlying Wasm slot is `i32` while `type` stays `f64` —
-       * the local was proven to hold only exact signed int32 values
-       * (`planI32Slots`). Reads go through `readPromotedI32Slot`, which
-       * appends `f64.convert_i32_s` so the SSA value handed to EVERY consumer
-       * is f64-typed exactly as before the promotion; writes go through
-       * `writePromotedI32Slot`, which lowers the RHS directly as an exact
-       * i32. This is deliberately NOT an `asType` widening: `asType` re-tags
-       * the value the body sees, which is the cross-cutting change #3741's
-       * first (reverted) attempt made.
-       */
-      i32Storage?: true;
-      stringEncoding?: Encoding;
-    };
-
-/**
- * Slice 3 (#1169c): one entry in a closure / nested-function's capture
- * set. `outerValue` is the SSA value the call-site uses to materialize
- * the capture argument; for mutable captures, the call-site wraps it
- * in a refcell on first use (rebinding `cx.scope` in-place so
- * subsequent outer reads/writes go through the cell).
- */
-interface NestedCapture {
-  readonly name: string;
-  /** Stored capture type. For a with-field this is the object receiver type. */
-  readonly type: IrType;
-  readonly mutable: boolean;
-  readonly outerValue: IrValueId;
-  /** Rehydrate an invocation-time object-property binding, not a value snapshot. */
-  readonly withField?: { readonly name: string; readonly type: IrType };
-}
-
 interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLoweringPlans {
   readonly builder: IrFunctionBuilder;
   /** Builder identity prevents a main-body proof leaking into lifted/nested bodies. */
@@ -3288,10 +3163,10 @@ function inferStringEncoding(expr: ts.Expression, cx: LowerCtx): Encoding | unde
   return inferEncoding(expr, (e) => [inferStringEncoding(e, cx), checkerOperandFamily(e, cx)]);
 }
 
-type StringEncodingScopeBinding = Exclude<ScopeBinding, { kind: "nestedFunc" }>;
+type StringEncodingScopeBinding = Exclude<ScopeBinding, { kind: "nestedFunc" | "lexical" }>;
 
 function isStringEncodingScopeBinding(binding: ScopeBinding): binding is StringEncodingScopeBinding {
-  if (binding.kind === "nestedFunc") return false;
+  if (binding.kind === "nestedFunc" || binding.kind === "lexical") return false;
   return (binding.kind === "slot" ? (binding.asType ?? binding.type) : binding.type).kind === "string";
 }
 
@@ -4779,11 +4654,7 @@ function lowerResolvedModuleBindingTdzCheck(name: string, binding: ModuleBinding
   }
   if (binding.tdzGlobalRef && binding.omitTdzReadCheck !== true) {
     const tdz = cx.builder.emitGlobalGet(binding.tdzGlobalRef, irVal({ kind: "i32" }));
-    const cond = cx.builder.emitUnary("i32.eqz", tdz, irVal({ kind: "i32" }));
-    const thenBody = cx.builder.collectBodyInstrs(() => {
-      emitNativeReferenceError(cx.builder);
-    });
-    cx.builder.emitIfStmt({ cond, then: thenBody, else: [] });
+    emitSourceInitializationGuard(cx.builder, tdz);
   }
 }
 
@@ -5168,6 +5039,7 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     }
     if (!p)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
+    if (p.kind === "lexical") return readSourceLexicalBinding(cx.builder, p.storage);
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
     // for-of iterations). Reads emit `slot.read`, which lowers to a
     // `local.get` on the Wasm-local slot. The slot's type is recorded
@@ -6598,6 +6470,10 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
       const found = cx.scope.get(name);
       if (!found) {
         demoteToLegacy("body-shape-rejected", `ir/from-ast: shorthand "${name}" not in scope in ${cx.funcName}`);
+      }
+      if (found.kind === "lexical") {
+        built.push({ name, type: found.type, value: readSourceLexicalBinding(cx.builder, found.storage) });
+        continue;
       }
       // Slice 3 (#1169c): only `local`-kind bindings are usable as
       // shorthand object property values. nestedFunc bindings have no
@@ -8140,7 +8016,14 @@ function lowerNestedFuncCall(
   const args: IrValueId[] = [];
   for (const cap of binding.captures) {
     const live = cx.scope.get(cap.name);
-    if (cap.mutable) {
+    if (cap.lexicalBinding) {
+      if (live?.kind !== "lexical")
+        demoteToLegacy(
+          "call-resolution-unsupported",
+          `ir/from-ast: nested lexical capture "${cap.name}" lost its storage (${cx.funcName})`,
+        );
+      args.push(live.storage.valueCell, live.storage.initializedCell);
+    } else if (cap.mutable) {
       if (live?.kind === "local" && live.type.kind === "boxed") {
         args.push(live.value);
       } else if (live?.kind === "local") {
@@ -13313,6 +13196,20 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       `ir/from-ast: assignment to undeclared identifier "${id.text}" in ${cx.funcName}`,
     );
   }
+  if (binding.kind === "lexical") {
+    const raw = lowerExpr(rhs, cx, binding.type);
+    const value = coerceIrValueToExternref(
+      cx.builder,
+      boxNativeValue(
+        cx.builder,
+        raw,
+        cx.checker ? makeIrPrimitiveExpressionClassifier(cx.checker)(rhs) : undefined,
+        "externref",
+      ),
+    );
+    writeSourceLexicalBinding(cx.builder, binding.storage, value);
+    return;
+  }
   // (#3142 Slice 2) Module-scope binding — write the legacy global.
   if (binding.kind === "moduleGlobal") {
     const newValue = boxForDynamicModuleStorage(lowerExpr(rhs, cx, binding.type), binding.type, rhs, cx);
@@ -13426,6 +13323,11 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     return;
   }
   const binding = cx.scope.get(id.text);
+  if (binding?.kind === "lexical")
+    demoteToLegacy(
+      "compound-assign-unsupported",
+      `ir/from-ast: lexical compound assignment requires its native ToPrimitive/ToNumeric owner (${cx.funcName})`,
+    );
   if (!binding) {
     demoteToLegacy(
       "compound-assign-unsupported",
@@ -13586,6 +13488,11 @@ function lowerIncrementDecrement(id: ts.Identifier, op: ts.SyntaxKind, cx: Lower
     return;
   }
   const binding = cx.scope.get(id.text);
+  if (binding?.kind === "lexical")
+    demoteToLegacy(
+      "compound-assign-unsupported",
+      `ir/from-ast: lexical update requires its native ToNumeric owner (${cx.funcName})`,
+    );
   if (!binding) {
     demoteToLegacy(
       "compound-assign-unsupported",
@@ -16540,6 +16447,11 @@ function lowerClosureExpressionWithSignature(
   const captureArgs: IrValueId[] = [];
   const captureFieldTypes: IrType[] = [];
   for (const cap of captures) {
+    if (cap.lexicalBinding) {
+      captureFieldTypes.push({ kind: "boxed", inner: cap.type }, { kind: "boxed", inner: SOURCE_LEXICAL_FLAG_TYPE });
+      captureArgs.push(cap.outerValue, cap.lexicalBinding.initializedCell);
+      continue;
+    }
     if (cap.withField) {
       captureFieldTypes.push(cap.type);
       captureArgs.push(cap.outerValue);
@@ -16697,6 +16609,19 @@ function liftNestedFunction(
 
   // Prepend capture params before the user's params.
   for (const cap of captures) {
+    if (cap.lexicalBinding) {
+      const valueCell = builder.addParam(cap.name, { kind: "boxed", inner: cap.type });
+      const initializedCell = builder.addParam(`${cap.name}#initialized`, {
+        kind: "boxed",
+        inner: SOURCE_LEXICAL_FLAG_TYPE,
+      });
+      scope.set(cap.name, {
+        kind: "lexical",
+        type: SOURCE_LEXICAL_VALUE_TYPE,
+        storage: { valueCell, initializedCell, mutable: cap.lexicalBinding.mutable },
+      });
+      continue;
+    }
     const innerVal = asVal(cap.type);
     // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
     const paramType: IrType = cap.mutable && innerVal ? { kind: "boxed", inner: irVal(innerVal) } : cap.type;
@@ -16894,13 +16819,15 @@ function liftClosureBody(
     }
   }
 
-  // Read each capture out of __self. captureFieldTypes is parallel to
-  // captures; lifted body sees captures at index 0..N-1.
+  // One source binding may retain both a value cell and its initialized cell.
+  const captureBindings = sourceClosureCaptureBindings(
+    captures.map((capture) => ({ ...capture, lexicalMutable: capture.lexicalBinding?.mutable })),
+  );
   if (sourceScope)
     withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, () =>
-      lowerClosureCaptureBindings(captures, captureFieldTypes, selfV, builder, scope),
+      bindSourceClosureScope(captureBindings, captureFieldTypes, selfV, builder, scope),
     );
-  else lowerClosureCaptureBindings(captures, captureFieldTypes, selfV, builder, scope);
+  else bindSourceClosureScope(captureBindings, captureFieldTypes, selfV, builder, scope);
 
   const innerCx: LowerCtx = {
     ...sourceScope,
@@ -17082,6 +17009,16 @@ function analyseCaptures(
     if (ownParams.has(name)) continue;
     const binding = cx.scope.get(name);
     if (!binding) continue;
+    if (binding.kind === "lexical") {
+      captures.push({
+        name,
+        type: binding.type,
+        mutable: true,
+        outerValue: binding.storage.valueCell,
+        lexicalBinding: { initializedCell: binding.storage.initializedCell, mutable: binding.storage.mutable },
+      });
+      continue;
+    }
     if (binding.kind === "withField") {
       const receiverType = cx.builder.typeOf(binding.receiver);
       if (receiverType.kind !== "object") {

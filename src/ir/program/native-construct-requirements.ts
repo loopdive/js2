@@ -57,8 +57,7 @@ function projectionGap(
   if (classes.some((proof) => proof.calls.length)) {
     const units = new Set([...classes, ...originals.map((proof) => proof!)].flatMap((proof) => proof.owners));
     for (const unit of units) {
-      const owner = source.demands.owners.find((owner) => owner.unitId === unit)!;
-      if (preparedIrDataMismatch(owner.programFunction, owner.projectedFunction) !== undefined)
+      if (!flow.projectionMatches(unit))
         return "returned Construct value needs its exact call/argument/capture transformation mapping";
     }
   }

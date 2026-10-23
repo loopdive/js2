@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { createNativeCallableFlow } from "./native-callable-flow.js";
 import { createNativeConstructUse } from "./native-construct-requirements.js";
 import { nativeReceiverRouteGaps } from "./native-receiver-routes.js";
 import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
@@ -50,6 +51,7 @@ export interface NativeInvocationUse {
     readonly newTargetCalls: readonly number[];
     readonly argv: IrValueId;
   };
+  readonly returnedCallee?: { readonly allocationOccurrence: number; readonly calls: readonly number[] };
   readonly callbacks?: readonly {
     readonly argument: number;
     readonly allocationOccurrence: number;
@@ -179,6 +181,7 @@ function calculate(
   const typeMaps = new Map<IrUnitId, ReturnType<typeof nativeAsyncCallableValueTypes>>();
   const definitions = new Map<IrUnitId, Map<IrValueId, IrInstr>>();
   const constructUse = createNativeConstructUse(source);
+  const callableFlow = createNativeCallableFlow(source);
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const buffer = demands.buffers[row.bufferIndex]!;
     if (buffer.view !== "projection" || row.instruction.kind !== "call") continue;
@@ -230,14 +233,15 @@ function calculate(
       }
       definitions.set(unitId, defs);
     }
-    const { type: calleeType, liftedUnitId } = callableAllocation(
-      source,
-      unitId,
-      callee,
-      defs,
-      types,
-      "invocation callee",
-    );
+    const selected = callableFlow.resolve(unitId, callee);
+    if (!selected.proof) {
+      gaps.push({ unitId, detail: selected.gap! });
+      uses.push({ occurrence, ownerUnitId: unitId, kind, ...(arity === undefined ? {} : { arity }) });
+      continue;
+    }
+    const proof = selected.proof;
+    const calleeType = { signature: proof.instruction.signature };
+    const liftedUnitId = proof.allocation.liftedUnitId;
     const argv = kind === "apply-vector" ? defs.get(call.args[2]!) : undefined;
     if (
       calleeType.signature.params.some((type) => type.kind === "callable") &&
@@ -277,6 +281,9 @@ function calculate(
       kind,
       ...(arity === undefined ? {} : { arity }),
       liftedUnitId,
+      ...(proof.calls.length
+        ? { returnedCallee: { allocationOccurrence: proof.allocation.occurrence, calls: proof.calls } }
+        : {}),
       callbacks,
     });
   }
