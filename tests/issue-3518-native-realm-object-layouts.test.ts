@@ -39,7 +39,7 @@ for (const displaced of [false, true])
       const inventory = nativeRealmObjectLayoutReservationInventory(r.f.tx, r.f.pack);
       expect(inventory.types).toHaveLength(4);
       expect(inventory.globals).toHaveLength(2);
-      expect(inventory.functions).toHaveLength(2);
+      expect(inventory.functions).toHaveLength(3);
       expect(() => r.instance().state!()).toThrow(WebAssembly.RuntimeError);
       const partial = r.instance();
       partial.initialize!(null);
@@ -97,6 +97,26 @@ for (const displaced of [false, true])
       expect(a.prototype!(first)).toBeNull();
       expect(a.realm!(first)).toBe(a.realm!(second));
       expect(() => a.state!()).toThrow(WebAssembly.RuntimeError);
+    });
+    it("allocates real ordinary objects with fresh state and the retained evaluated prototype", () => {
+      const a = r.instance(),
+        b = r.instance();
+      expect(() => a.ordinary!(null)).toThrow(WebAssembly.RuntimeError);
+      a.initialize!(null);
+      b.initialize!(null);
+      const parent = a.ordinary!(null);
+      const first = a.ordinary!(parent),
+        second = a.ordinary!(parent);
+      expect(Object.is(first, second)).toBe(false);
+      const state = a.ordinaryState!(first),
+        other = a.ordinaryState!(second);
+      expect(Object.is(state, other)).toBe(false);
+      expect(Object.is(a.prototype!(state), parent)).toBe(true);
+      expect(Object.is(a.realm!(state), a.realm!(other))).toBe(true);
+      expect(Object.is(a.realm!(state), b.realm!(b.ordinaryState!(b.ordinary!(null))))).toBe(false);
+      a.setPrototype!(state, null);
+      expect(a.prototype!(state)).toBeNull();
+      expect(Object.is(a.prototype!(other), parent)).toBe(true);
     });
     it("retains the six-field storage prefix and places state only on concrete ordinary carriers", () => {
       const { objects, pack } = r.f;
@@ -216,6 +236,19 @@ describe("realm carrier issuer boundaries", () => {
     second.tx.fillFunction(second.pack.sourceInitializer, { locals: [], body: [{ op: "unreachable" }] });
     expect(() => fillNativeRealmObjectLayouts(second.tx, second.pack)).toThrow(/already filled|completed|duplicate/);
     expect(() => requireCompletedNativeRealmObjectLayouts(second.tx, second.pack)).toThrow();
+  });
+  it("rejects a valid but wrong ordinary allocator body supplied during canonical fill", () => {
+    const f = realmLayoutFixture(),
+      original = f.tx.fillFunction.bind(f.tx);
+    f.tx.fillFunction = (token, definition) =>
+      original(
+        token,
+        token === f.pack.allocateOrdinary ? { locals: [], body: [{ op: "local.get", index: 0 }] } : definition,
+      );
+    f.tx.freezeReservations();
+    fillNativeRealmObjectLayouts(f.tx, f.pack);
+    expect(() => new WebAssembly.Module(emitBinary(f.module) as BufferSource)).not.toThrow();
+    expect(() => requireCompletedNativeRealmObjectLayouts(f.tx, f.pack)).toThrow("noncanonical ordinary allocation");
   });
   it.each([
     ["sourceInitializer", "body"],

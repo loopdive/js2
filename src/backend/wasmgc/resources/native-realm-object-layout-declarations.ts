@@ -76,6 +76,17 @@ function declareRealmLayouts(
             signature: { params: [], results: [{ kind: "ref", typeKey: state }] },
           },
         ] as const)),
+    ...(storage
+      ? [
+          {
+            key: key + ":allocateOrdinary",
+            role: ["realm-carrier", "ordinary-allocation"],
+            space: "function" as const,
+            name: "__realm_ordinary_object_new",
+            signature: { params: [{ kind: "externref" as const }], results: [{ kind: "externref" as const }] },
+          },
+        ]
+      : []),
   ];
   return freezeNativeResourceRecipe({
     declarations,

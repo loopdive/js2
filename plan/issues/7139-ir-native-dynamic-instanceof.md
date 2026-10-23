@@ -37,6 +37,56 @@ the member and main audit worktrees under `.tmp/7138-dynamic-class-rhs-audit.*`.
 
 ## Implementation Plan
 
+### Executable source integration (2026-10-24, in progress)
+
+Connect the original class definitions and member bodies to the existing class
+value, lexical cell, descriptor and Construct operations. The source planner
+belongs in `ir/program/source-class-definitions.ts`; evaluation and original
+implicit support bodies belong in dedicated frontend modules, called by
+`from-ast.ts`. Reuse the existing member entry/capture checker and descriptor
+operations. Keep runtime root population and mixed Get as explicit provider
+obligations; producing source IR alone is not executable acceptance.
+
+The first integration check uses the existing retained captured instances source
+(121), followed by the top-level plus retained-class source (7121). Keep all 140
+lifecycle cases and original inventory rows. Quality acceptance requires one
+capture materialization path, no synthetic AST replacement of original methods,
+no class-tag property/instance shortcuts, and no size-budget grant. An integrated
+checkpoint requires actual standalone execution and replay, not just frontend
+IR or independently passing resource tests.
+
+The first native execution probe exposes missing constructor flow through source
+lexical cells. Extend `native-selected-value-flow.ts` using a shared
+`native-local-cell-flow.ts` reader: prove a fresh, nonescaping local cell and its
+last unconditional write before the actual read. Unknown aliases, captured cells,
+branch writes, raw bodies and external cells retain explicit gaps. Carry cell-read
+evidence through constructor and callable projection checks; allocation-family
+equality alone must not approve a changed write or changed call arguments. Test
+actual source preparation and decoded IR alongside adversarial storage changes.
+Keep the source driver within its existing size ceilings by moving module global
+resolution and storage-type selection to `program/source-module-bindings.ts`.
+Reuse one exact class-member predicate for signature planning and body scheduling.
+
+2026-10-24 integration evidence (uncommitted work): the original retained-class
+source now prepares a complete program, and constructor selection traces its
+private lexical cell in both the original and decoded snapshots. Native execution
+still refuses admission: the next constructor gap is the missing executable
+`GetPrototypeFromConstructor` provider contract; actual instance Get/descriptor
+selection and Realm population also remain open. This is not a 121 execution
+pass and does not change the last full 140-row lifecycle result.
+
+The fresh focused run passed 35/35 tests in five files, including four real Wasm
+dispatch/replay cases from the existing constructed-IR harness, now also exercised
+with retained constructor values passing through private local cells. These are
+runtime storage/identity checks, not a substitute for source class execution.
+Seven source-preparation/module-binding checks passed after the driver extraction;
+source and focused-test typechecks passed. The function/file size gates passed
+without adding a size allowance. Evidence is retained under `.tmp/7139-cell-flow-tests-final.log`,
+`.tmp/7139-source-binding-tests.log`, and `.tmp/7139-source-integration-*-budget2.log`.
+An earlier combined run failed the newly added projection negative while its
+helper was being edited; a fresh isolated run and the subsequent fresh five-file
+run both passed. The earlier failure log remains preserved.
+
 1. Audit the shared native operator, ordinary-instance test, class prototype
    demand and their finalize order. Register implicit prototype consumption at
    the canonical native runtime owner, before idempotent reuse, guarded so the
@@ -1634,3 +1684,101 @@ original implicit Construct entry, class own-bag Get, the actual source producer
 true Linear and complete migration acceptance remain open. The full 140 lifecycle
 was not rerun for this physical reservation-only change; its last measured result
 remains 42 pass/98 fail. Strict legacy graph retirement stays OPEN.
+
+### Stateful ordinary allocation integration (2026-10-24)
+
+Next implementation joins the existing ordinary storage prefix and realm state
+initializer in `runtime/wasmgc/values/realm-object-allocation.ts`. Parameterize
+`buildOrdinaryObjectCreateBody` through a shared prefix builder instead of patching
+instruction offsets. The issued full/extended realm layout owner reserves, fills,
+and verifies its own `allocateOrdinary(externref)` function; it borrows the exact
+existing realm initializer and adds no anchor or bootstrap writer. The mixed
+access execution fixture must use that real allocator instead of synthesizing
+ordinary structs, exercising inherited properties and prototype mutation across
+families. This is an internal allocator with an already admitted Object-or-null
+operand, not a public object admission or complete realm-population grant.
+
+Quality acceptance: unchanged legacy default construction, one six-field storage
+prefix recipe, canonical allocator validation for both owned and borrowed state,
+no new size allowances. Correctness acceptance: fresh object/storage/state,
+retained evaluated prototype and shared realm, mutation observed by mixed access,
+missing initialization and foreign ownership still refused. Source `121` and
+serialized replay remain the integration target; allocator tests alone do not
+prove them or the full migration complete.
+
+A production composition experiment extended the kernel storage root for class
+programs. Actual constructor execution rejected all four original/replay cases:
+`native builtin functions: extensible ordinary carrier requires heterogeneous
+prototype dispatch`. The old builtin owner deliberately refuses subtype storage
+because its own/chain operations would mis-handle exotic objects. The experiment
+was reverted; this guard is not weakened. Evidence remains in
+`.tmp/7139-realm-allocation-production-tests.log`. The canonical allocator belongs
+to the full/extended realm layout owner; attaching it to source execution still
+requires the selected public population and mixed access path described above,
+not a second storage root or reinterpretation of the old kernel.
+
+Allocator verification (2026-10-24):
+
+- `.tmp/7139-realm-allocation-tests-final.log`: 132/146 pass. Realm layout,
+  shared-state extension, mixed access, and exact prefix-preservation suites all
+  pass (95/95); storage suite is 37/51. The same 14 storage preservation failures,
+  with identical names and error messages, occur in an isolated `git archive` of
+  `4facca6f7ae16828e90628d7324114591c73c486` (51-test denominator). Comparison:
+  `.tmp/7139-realm-allocation-baseline-comparison.json`; original baseline log
+  `.tmp/7139-storage-baseline-tests.log`. Historical receipts were not repinned.
+- The prefix refactor has its own exact reversible, Git-blob-authenticated
+  receipt, used only by historical readers. Actual emitted legacy default
+  construction is compared against execution of the original pinned recipe.
+  Real execution uses current production code, including the stateful allocator.
+- Source TS7, focused test TS7, scoped Biome lint, formatting, diff whitespace,
+  LOC and function budgets passed. No new budget allowances. Failed initial
+  checks and the wrong ESLint invocation remain in their original logs.
+- `.tmp/7139-realm-allocation-source-probe-restored.log`: real source preparation
+  succeeds, but original and serialized/replayed `121` both remain `not-accepted`
+  with 30 physical selection/materialization gaps. No new full lifecycle score,
+  source execution, true Linear parity, public PR, or completion claim follows.
+
+Next required integration is the selected public population plus mixed access,
+including the authenticated class carrier, selected descriptor/call flow, and
+GetPrototypeFromConstructor provider. The old kernel's explicit rejection of
+extensible storage is evidence that connecting only the allocator is insufficient.
+
+After restoring the production guard boundary,
+`.tmp/7139-realm-allocation-production-tests-restored.log` passes 10/10:
+all four genuine Wasm constructor-return execution cases (original/decoded,
+with/without private local cells) and six class-realm ownership checks. Thus the
+failed composition experiment leaves no new constructor execution regression.
+All test handles for this change are terminal; changes remain uncommitted.
+
+### Class carriers in shared object access (2026-10-24)
+
+The existing mixed object owner now optionally joins the genuine class-value
+owner from its exact source closure family. It reauthenticates that optional
+identity and requires the canonical class allocator before structural fill.
+The shared Classify/Own/GetPrototypeOf/SetPrototypeOf recipes read the class
+ObjectState tail and own bag; class misses may follow the actual state parent.
+Own storage must be the complete same-realm ordinary subtype, so a null bag
+stays unready and foreign/exotic/raw storage cannot manufacture absence. This
+also protects the extensibility read. SameValue precedes extensibility and cycle
+checking retains the stored Construct closure (ECMA-262 §§10.1.2.1, 10.1.8.1).
+
+The actual source probe was rerun after this change: original and decoded replay
+still reject with 30 physical setup gaps. Log:
+`.tmp/7139-class-mixed-access-source-probe2.log`. The earlier CLI invocation
+failed to open its sandbox IPC pipe; rerunning with `node --import tsx` executed
+the probe without that CLI service. No source execution claim follows from
+component success. Selected population, its real runtime provider bindings,
+and selected property-to-method invocation flow remain required.
+
+Verification for the class carrier join: 45/45 mixed-object tests pass, including
+normal/displaced type indices and UTF16/UTF8 keys; source TS7, focused test TS7,
+Biome, Prettier, diff whitespace and LOC/function budgets pass. Evidence:
+`.tmp/7139-class-mixed-access-{tests,typecheck,test-types2,lint,loc,func}.log`.
+
+The next Get join must reuse the real descriptor algorithm and invocation owner.
+`nativeInvocationGetterDispatch` currently grants only method-zero for the exact
+issued ordinary-object access owner with actual getter demands; it is not the
+three-argument generic mixed Call assumed by the component observer. It cannot
+certify arbitrary class methods or getter dispatch by matching a function type.
+The production join needs shared selection of class/property/invocation flows
+and selected public population before granting executable Get completion.

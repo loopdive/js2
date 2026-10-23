@@ -68,7 +68,15 @@ import {
   preflightNativeResourceRecipe,
 } from "./native-resource-declarations.js";
 
+import { CLASS_OBJECT_STATE_FIELD } from "../../../runtime/wasmgc/values/class-constructor-layouts.js";
+import {
+  requireNativeClassValues,
+  requireCompletedNativeClassValues,
+  type NativeClassValueReservations,
+} from "./native-class-values.js";
+
 export interface NativeMixedObjectAccessDependencies {
+  readonly classes?: NativeClassValueReservations;
   readonly realm: NativeObjectRealmDeclarations;
   readonly realmDependencies: NativeObjectRealmDependencies;
   readonly stringOwn: NativeStringOwnDescriptorReservations;
@@ -132,7 +140,7 @@ function same(actual: unknown, expected: unknown, detail: string): void {
 }
 /** Inspect wrappers before older authenticators can read their fields. Capabilities remain opaque. */
 function capture(input: NativeMixedObjectAccessDependencies): NativeMixedObjectAccessDependencies {
-  const d = record(input, dependencyRoles) as unknown as NativeMixedObjectAccessDependencies;
+  const d = record(input, dependencyRoles, ["classes"]) as unknown as NativeMixedObjectAccessDependencies;
   record(
     d.realmDependencies,
     ["requests", "closures", "closurePlan", "layouts", "substrate", "vectors", "vectorPlan", "exception"],
@@ -159,6 +167,10 @@ function dependencies(
 ): NativeMixedObjectAccessDependencies {
   const d = capture(input);
   requireNativeObjectRealmDeclarations(tx, d.realm, d.realmDependencies);
+  if (d.classes) {
+    if (!d.realmDependencies.source) fail("class access requires the shared source closure owner");
+    requireNativeClassValues(tx, d.classes, d.realmDependencies.source);
+  }
   requireNativeStringOwnDescriptorReservations(tx, d.stringOwn, d.stringOwnDependencies);
   requireNativeValueReservations(tx, d.values, d.valuePlan, d.valueDependencies);
   const own = d.stringOwnDependencies,
@@ -227,7 +239,8 @@ function current(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessRe
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied owner");
   const d = dependencies(tx, owner.original);
-  if (dependencyRoles.some((role) => d[role] !== owner.identities[role])) fail("changed dependency identity");
+  if (([...dependencyRoles, "classes"] as const).some((role) => d[role] !== owner.identities[role]))
+    fail("changed dependency identity");
   const plan = declareNativeMixedObjectAccessResources(
     owner.key,
     d.stringOwnDependencies.layoutDependencies.objects.propEntry.key,
@@ -281,7 +294,8 @@ export function requireNativeMixedObjectAccessReservations(
   const owner = current(tx, pack);
   if (expectedDependencies !== undefined) {
     const d = capture(expectedDependencies);
-    if (dependencyRoles.some((role) => d[role] !== owner.identities[role])) fail("different expected dependencies");
+    if (([...dependencyRoles, "classes"] as const).some((role) => d[role] !== owner.identities[role]))
+      fail("different expected dependencies");
   }
   return pack;
 }
@@ -316,6 +330,9 @@ function operands(
         },
       }),
     ),
+    ...(d.classes
+      ? [{ kind: "class" as const, typeIdx: d.classes.type.typeIndex, stateField: CLASS_OBJECT_STATE_FIELD }]
+      : []),
     ...(d.realmDependencies.source?.shapes.map(
       (shape): MixedObjectCarrier => ({
         kind: "source",
@@ -451,6 +468,7 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
 }
 function completedDependencies(tx: PhysicalModuleReservations, d: NativeMixedObjectAccessDependencies): void {
   requireCompletedNativeRealmObjectLayouts(tx, d.realm.layouts);
+  if (d.classes) requireCompletedNativeClassValues(tx, d.classes);
   requireCompletedNativeStringOwnDescriptors(tx, d.stringOwn, d.stringOwnDependencies);
   requireCompletedNativeValues(tx, d.values, d.valuePlan, d.valueDependencies);
   requireCompletedNativeInvocationSubstrate(tx, d.realmDependencies.substrate);

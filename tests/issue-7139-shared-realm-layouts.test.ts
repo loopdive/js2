@@ -40,11 +40,11 @@ function extend(f: ReturnType<typeof fixture>) {
   return extendNativeRealmObjectLayouts(f.tx, "shared-layout", f.state, f.dependencies, f.plan);
 }
 
-it("reserves only object subtypes and keeps the actual state, anchors and initializer owner", () => {
+it("reserves object subtypes and their allocator, keeping the actual state, anchors and initializer owner", () => {
   const f = fixture(),
     before = counts(f),
     pack = extend(f);
-  expect(counts(f)).toEqual([before[0]! + 2, before[1], before[2]]);
+  expect(counts(f)).toEqual([before[0]! + 3, before[1]! + 1, before[2]]);
   expect(pack.types.identity).toBe(f.state.types.identity);
   expect(pack.types.state).toBe(f.state.types.state);
   expect(pack.anchors).toBe(f.state.anchors);
@@ -52,7 +52,10 @@ it("reserves only object subtypes and keeps the actual state, anchors and initia
   expect(pack.sourceInitializer).toBe(f.state.sourceInitializer);
   expect(nativeRealmObjectStateOwner(f.tx, pack)).toBe(f.state);
   expect(nativeRealmObjectStateOwner(f.tx, f.state)).toBe(f.state);
-  expect(nativeRealmObjectLayoutReservationInventory(f.tx, pack)).toMatchObject({ globals: [], functions: [] });
+  expect(nativeRealmObjectLayoutReservationInventory(f.tx, pack)).toMatchObject({
+    globals: [],
+    functions: [pack.allocateOrdinary],
+  });
   expect(nativeRealmObjectLayoutReservationInventory(f.tx, pack).types).toEqual([
     pack.types.objectPrototype,
     pack.types.ordinary,
@@ -158,8 +161,16 @@ for (const displaced of [false, true])
     const b = new WebAssembly.Instance(wasm).exports as typeof a;
     const proto = {},
       other = {};
+    expect(() => a.ordinary!(null)).toThrow(WebAssembly.RuntimeError);
     a.initialize!(proto);
     b.initialize!(other);
+    const object = a.ordinary!(null),
+      child = a.ordinary!(object);
+    const objectState = a.ordinaryState!(object),
+      childState = a.ordinaryState!(child);
+    expect(a.prototype!(objectState)).toBeNull();
+    expect(Object.is(a.prototype!(childState), object)).toBe(true);
+    expect(Object.is(a.realm!(childState), a.realm!(a.state!()))).toBe(true);
     const source = a.state!(),
       ordinary = a.stateWithPrototype!(other),
       next = a.state!();

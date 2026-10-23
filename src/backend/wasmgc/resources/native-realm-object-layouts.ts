@@ -10,6 +10,7 @@ import {
   buildRealmSourceStateInitializer,
   buildRealmObjectStateInitializer,
 } from "../../../runtime/wasmgc/values/realm-object-layouts.js";
+import { buildRealmOrdinaryObjectAllocation } from "../../../runtime/wasmgc/values/realm-object-allocation.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
   requireNativeObjectLayouts,
@@ -49,6 +50,8 @@ export interface NativeRealmObjectStateReservations {
   readonly completionScope: "realm-carrier-state-only";
 }
 export interface NativeRealmObjectLayoutReservations extends NativeRealmObjectStateReservations {
+  /** Internal allocation; public prototype admission belongs to the semantic provider. */
+  readonly allocateOrdinary: FunctionReservation;
   readonly types: NativeRealmObjectStateReservations["types"] & {
     readonly objectPrototype: TypeReservation;
     readonly ordinary: TypeReservation;
@@ -161,7 +164,11 @@ function reserveRealmLayouts(
     state: borrowed?.types.state ?? type("state"),
     ...(captured ? { objectPrototype: type("objectPrototype"), ordinary: type("ordinary") } : {}),
   });
+  const allocateOrdinary = captured
+    ? requireNativeDeclaredReservation(records, key + ":allocateOrdinary", "function")
+    : undefined;
   const pack = Object.freeze({
+    ...(allocateOrdinary ? { allocateOrdinary } : {}),
     types,
     anchors:
       borrowed?.anchors ??
@@ -189,13 +196,21 @@ function reserveRealmLayouts(
       ...(borrowed
         ? []
         : [pack.anchors.realm, pack.anchors.functionPrototype, ...initializerRoles.map((role) => pack[role])]),
+      ...(allocateOrdinary ? [allocateOrdinary] : []),
     ]),
-    initializerHeaders: new Map(
-      initializerRoles.map((role) => [
-        pack[role],
-        { name: initializerNames[role], typeIdx: pack[role].object.typeIdx },
-      ]),
-    ),
+    initializerHeaders: new Map<FunctionReservation, { name: string; typeIdx: number }>([
+      ...initializerRoles.map(
+        (role) => [pack[role], { name: initializerNames[role], typeIdx: pack[role].object.typeIdx }] as const,
+      ),
+      ...(allocateOrdinary
+        ? [
+            [
+              allocateOrdinary,
+              { name: "__realm_ordinary_object_new", typeIdx: allocateOrdinary.object.typeIdx },
+            ] as const,
+          ]
+        : []),
+    ]),
     filled: false,
   });
   return pack;
@@ -273,6 +288,7 @@ export function requireNativeRealmObjectState<T extends NativeRealmObjectStateRe
     ...(owner.borrowed
       ? []
       : [pack.anchors.realm, pack.anchors.functionPrototype, ...initializerRoles.map((role) => pack[role])]),
+    ...(owner.dependencies && "allocateOrdinary" in pack ? [pack.allocateOrdinary] : []),
   ];
   if (
     owner.borrowed &&
@@ -372,7 +388,36 @@ export function fillNativeRealmObjectState(
   tx.fillGlobal(pack.anchors.functionPrototype, [{ op: "ref.null.extern" }]);
   const bodies = initializers(tx, pack);
   for (const role of initializerRoles) tx.fillFunction(pack[role], bodies[role]);
+  if (owner.dependencies) fillOrdinaryAllocation(tx, pack as NativeRealmObjectLayoutReservations);
   owner.filled = true;
+}
+
+function ordinaryAllocation(tx: PhysicalModuleReservations, pack: NativeRealmObjectLayoutReservations) {
+  const storage = owners.get(pack)!.dependencies!.objects;
+  return buildRealmOrdinaryObjectAllocation(
+    {
+      objectTypeIdx: tx.physicalIndex(storage.object),
+      propMapTypeIdx: tx.physicalIndex(storage.propMap),
+      initialCapacity: 8,
+    },
+    tx.physicalIndex(pack.types.ordinary),
+    pack.prototypeInitializer.handle,
+  );
+}
+function fillOrdinaryAllocation(tx: PhysicalModuleReservations, pack: NativeRealmObjectLayoutReservations): void {
+  tx.fillFunction(pack.allocateOrdinary, ordinaryAllocation(tx, pack));
+}
+function checkOrdinaryAllocation(tx: PhysicalModuleReservations, pack: NativeRealmObjectStateReservations): void {
+  if (!owners.get(pack)!.dependencies) return;
+  const full = pack as NativeRealmObjectLayoutReservations;
+  tx.assertCompletedReservation(full.allocateOrdinary);
+  if (
+    preparedIrDataMismatch(
+      { locals: full.allocateOrdinary.object.locals, body: full.allocateOrdinary.object.body },
+      ordinaryAllocation(tx, full),
+    )
+  )
+    fail("noncanonical ordinary allocation completion");
 }
 
 /** Canonical types/initializer only. Runtime anchor values and public population remain unproved. */
@@ -385,6 +430,7 @@ export function requireCompletedNativeRealmObjectState<T extends NativeRealmObje
   if (owner.borrowed) {
     if (!owner.filled) fail("missing canonical layout extension fill");
     requireCompletedNativeRealmObjectState(tx, owner.borrowed);
+    checkOrdinaryAllocation(tx, pack);
     return pack;
   }
   if (!owner.filled) fail("missing canonical initializer fill");
@@ -407,6 +453,7 @@ export function requireCompletedNativeRealmObjectState<T extends NativeRealmObje
     )
   )
     fail("noncanonical anchor or initializer completion");
+  checkOrdinaryAllocation(tx, pack);
   return pack;
 }
 
@@ -419,6 +466,7 @@ export function fillNativeRealmObjectLayouts(
   if (owner.borrowed) {
     if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
     requireCompletedNativeRealmObjectState(tx, owner.borrowed);
+    fillOrdinaryAllocation(tx, pack);
     owner.filled = true;
   } else fillNativeRealmObjectState(tx, pack);
 }
@@ -443,7 +491,9 @@ export function nativeRealmObjectStateReservationInventory(
       ),
     ),
     globals: Object.freeze(owners.get(pack)!.borrowed ? [] : [pack.anchors.realm, pack.anchors.functionPrototype]),
-    functions: Object.freeze(owners.get(pack)!.borrowed ? [] : initializerRoles.map((role) => pack[role])),
+    functions: Object.freeze(
+      owners.get(pack)!.tokens.filter((token): token is FunctionReservation => token.kind === "function"),
+    ),
   });
 }
 
