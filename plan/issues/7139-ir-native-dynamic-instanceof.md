@@ -1400,3 +1400,76 @@ Evidence: `.tmp/7139-select-checkpoint-tests2.log`,
 `.tmp/7139-select-exact-parent-failure2.log`, and
 `.tmp/review-reference-select/REVIEW.md`. Full source class evaluation/binding and
 Construct semantics, true Linear parity and migration retirement remain open.
+
+### Retained constructor value flow (implementation plan)
+
+Before source ClassDefinitionEvaluation can return retained classes, Construct
+must authenticate values returned by actual selected source functions. Add this
+proof beside the existing Construct requirements, reusing the current source
+closure demand issuer and exact allocation records. Trace carrier erasure and
+direct unit-call results to their actual returned class allocation. Require every
+normal return to resolve to the same class allocation family, with exact callable
+and owner joins in each representation. Unknown parameters, storage reads,
+recursive flow and mixed/unknown returns remain explicit gaps. No name-based
+class inference or runtime dispatch shortcut is introduced.
+
+Retain callee and newTarget proofs separately, including the actual call edges;
+require exact semantic/projection code in every returned-value owner until a
+richer call/argument/capture transformation map exists. Family equality cannot
+substitute for actual evaluation identity. Reuse existing private Construct closure and
+explicit-entry effect validation at the resolved allocation owner. Keep the
+generic invocation owner small and remove the displaced local-only tracing
+duplicate. Test real returned class execution, distinct retained captures and
+newTarget identity, decoded replay and fail-closed unknown/mixed/cyclic paths.
+This is a dependency for the source producer, not source-class migration closure.
+
+The shared native value-definition/erasure helper replaces the duplicate loops
+in constructor, ordinary Get-result and ordinary object-access proofs, retaining
+the existing ambiguity/cycle diagnostic strings. Owner/view indexes and completed
+return proofs are cached within one current invocation census; repeated return
+values are deduplicated and unknown returns short-circuit. A persistent depth-14
+control requires exactly 15 owner indexes and no extra scan on repeat lookup,
+closing the exponential traversal found during fresh review.
+
+### Retained constructor value-flow checkpoint
+
+Construct now follows actual direct selected factory returns through the shared
+native value index. Distinct callee/newTarget values keep independent call-edge
+receipts even when they originate from the same allocation family. The runtime
+dispatcher still consumes their actual reference operands and retained closures;
+family IDs never substitute for evaluation identities. Unknown cell/null returns,
+mixed exits/families, recursive flow and opaque code remain located preclaim gaps.
+Every participating returned-value owner must match its semantic/projection code
+exactly, including call operands and capture construction. A changed factory
+argument remains refused despite an unchanged family.
+
+Qualification: **90/90** focused/adjacent checks and **2/2** actual original/decoded
+runtime tests pass. Two retained evaluations of one factory family preserve
+distinct captured cells and identity through two direct return edges, including
+runtime early returns. The inspector observes each distinct newTarget at actual
+internal entry and verifies frame restoration. Its first run failed because the
+copy fixture supplied a receiver outside the inspector's existing canonical
+receiver protocol; that failure log is preserved. The corrected original artifact
+and copied inspector both execute. Independent review passed **65/65** checks,
+including 11 overlapping constructor tests; these totals are not disjoint.
+
+Source/focused typechecks and all ten quality commands pass without new grants.
+All **14/14** successful existing GC artifacts are byte-identical to parent
+`bf5bcfe28322`. The exact parent refuses the selected new runtime fixture with
+three missing constructor-family proofs, before emission; four loaded source
+module hashes match its pinned Git blobs. This is a preclaim refusal control,
+not parent backend execution. The other runtime case was unselected, not passed.
+Fresh review's exponential traversal, duplicate walkers and distinct-newTarget
+qualification findings are all fixed. No deletion certification is implied by
+the preservation-only dead-export check (OPEN graph, failed strict closure).
+
+Evidence: `.tmp/7139-constructor-flow-adjacent.log`,
+`.tmp/7139-constructor-flow-execution2.log`,
+`.tmp/7139-constructor-flow-quality.json`,
+`.tmp/7139-constructor-flow-comparisons.json`, and
+`.tmp/review-constructor-return-flow/REVIEW.md`. The full 140-row source lifecycle
+was not rerun for this prepared-IR dependency; its last measured 42 pass/98 fail
+remains outstanding. Source binding/definition production, full Construct and
+ordinary property flows, true Linear execution and migration acceptance remain
+open. The next source vertical is specified in
+`.tmp/7139-source-class-vertical-design.md`; this dependency does not replace it.

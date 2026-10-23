@@ -35,6 +35,8 @@ export async function inspectConstructCopy(original: WasmModule) {
     secondClass = add("secondClass", true);
   const seenTarget = add("seenTarget", true),
     seenArguments = add("seenArguments", true);
+  const firstEntryTarget = add("firstEntryTarget", true),
+    secondEntryTarget = add("secondEntryTarget", true);
   const calls = add("constructCalls"),
     nonempty = add("nonemptyFrames"),
     bad = add("badFrames"),
@@ -51,33 +53,33 @@ export async function inspectConstructCopy(original: WasmModule) {
     { op: "i32.add" },
     { op: "global.set", index },
   ];
+  const recordValue = (counter: number, ordinal: number, target: number, local: number): Instr[] => [
+    { op: "global.get", index: counter },
+    { op: "i32.const", value: ordinal },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: local },
+        { op: "global.set", index: target },
+      ],
+    },
+  ];
   let allocators = 0,
     dispatchers = 0;
   module.functions = module.functions.map((fn) => {
     if (fn.name === "__class_value_new") {
       allocators++;
       const value = 5 + fn.locals.length;
-      const record = (ordinal: number, target: number): Instr[] => [
-        { op: "global.get", index: allocations },
-        { op: "i32.const", value: ordinal },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "local.get", index: value },
-            { op: "global.set", index: target },
-          ],
-        },
-      ];
       return {
         ...fn,
         locals: [...fn.locals, { name: "test:value", type: { kind: "externref" as const } }],
         body: [
           ...fn.body,
           { op: "local.set", index: value },
-          ...record(0, firstClass),
-          ...record(1, secondClass),
+          ...recordValue(allocations, 0, firstClass, value),
+          ...recordValue(allocations, 1, secondClass, value),
           ...increment(allocations),
           { op: "local.get", index: value },
         ],
@@ -92,6 +94,8 @@ export async function inspectConstructCopy(original: WasmModule) {
         ...fn,
         body: [
           ...increment(entries),
+          ...recordValue(entries, 1, firstEntryTarget, 1),
+          ...recordValue(entries, 2, secondEntryTarget, 1),
           ...wrong([{ op: "global.get", index: argc.index }, { op: "i32.const", value: -1 }, { op: "i32.ne" }]),
           ...wrong([{ op: "global.get", index: extras.index }, { op: "ref.is_null" }, { op: "i32.eqz" }]),
           ...wrong([

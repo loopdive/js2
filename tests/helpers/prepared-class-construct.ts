@@ -25,7 +25,7 @@ const vector = CLASS_CONSTRUCT_SIGNATURE.params[1]!;
 const callSignature = { params: [], returnType: external } as const;
 const constructFields = [cell, cell, cell] as const;
 const outerFields = [external, external, external, cell, cell, cell, cell, cell] as const;
-export type ConstructProbe = "marker" | "newTarget" | "argument" | "arguments" | "throw" | "nested";
+export type ConstructProbe = "marker" | "newTarget" | "argument" | "arguments" | "throw" | "nested" | "retained";
 export const constructPolicy = {
   ...typedOptions.policy,
   numberBoundary: { box: "native", unbox: "native" },
@@ -33,11 +33,17 @@ export const constructPolicy = {
 } as const;
 
 /** Constructed dispatch harness, retaining the real class inventory; not source ClassDefinitionEvaluation. */
-export function classConstructInput(probe: ConstructProbe = "marker") {
+export function classConstructInput(probe: ConstructProbe = "marker", retainedDepth = 0) {
+  const factoryName = (target: string, depth: number) => `factory_${target}_${depth}`;
+  const factorySource = (probe === "retained" ? ["left"] : ["left", "right"])
+    .flatMap((target) =>
+      Array.from({ length: retainedDepth }, (_, depth) => `function ${factoryName(target, depth)}():number{return 0;}`),
+    )
+    .join("\n");
   const source = sourceInput({
     "./entry.ts": `export function run():number {class C{};return 0;}
     function outer():number{return 0;} function left():number{return 0;}
-    function right():number{return 0;} function callClass():number{return 0;}`,
+    function right():number{return 0;} function callClass():number{return 0;}${factorySource}`,
   });
   const { inventory, identity } = prepareIrSourceDefinitionPopulation(source);
   const originalInventory = JSON.stringify(inventory);
@@ -107,14 +113,38 @@ export function classConstructInput(probe: ConstructProbe = "marker") {
   }
   const right = internal("right"),
     left = internal("left", right);
+  const factories: IrFunction[] = [];
+  const factoryByTarget = new Map<string, IrFunction>();
+  function retained(builder: IrFunctionBuilder, target: IrFunction, captures: readonly IrValueId[]) {
+    if (!retainedDepth) return allocate(builder, target, captures);
+    const cached = factoryByTarget.get(target.unitId);
+    if (cached) return builder.emitCall(irUnitFuncRef(cached), captures, external)!;
+    let prior: IrFunction | undefined;
+    for (let depth = 0; depth < retainedDepth; depth++) {
+      const factory = make(factoryName(target.name, depth));
+      const parameters = constructFields.map((type, index) => factory.addParam(`cell${index}`, type));
+      factory.openBlock();
+      const value = prior
+        ? factory.emitCall(irUnitFuncRef(prior), parameters, external)!
+        : allocate(factory, target, parameters);
+      const isNull = factory.emitRefIsNull(factory.emitRefCellGet(parameters[0]!, external));
+      const early = factory.collectBodyInstrs(() => factory.emitEarlyReturn(value));
+      factory.emitIfStmt({ cond: isNull, then: early, else: [] });
+      factory.terminate({ kind: "return", values: [value] });
+      prior = factory.finish();
+      factories.push(prior);
+    }
+    factoryByTarget.set(target.unitId, prior!);
+    return builder.emitCall(irUnitFuncRef(prior!), captures, external)!;
+  }
   const outer = make("outer");
   const outerSelf = outer.addParam("self", { kind: "closure", signature: callSignature });
   outer.openBlock();
   const captures = outerFields.map((type, index) => outer.emitClosureCap(outerSelf, index, type));
   const markerA = outer.emitRefCellNew(captures[0]!, external.val),
     markerB = outer.emitRefCellNew(captures[1]!, external.val);
-  const leftClass = allocate(outer, left, [markerA, captures[6]!, captures[7]!]);
-  const rightClass = allocate(outer, right, [markerB, captures[6]!, captures[7]!]);
+  const leftClass = retained(outer, left, [markerA, captures[6]!, captures[7]!]);
+  const rightClass = retained(outer, probe === "retained" ? left : right, [markerB, captures[6]!, captures[7]!]);
   const argv = outer.emitVecNewFixed([captures[2]!, captures[1]!], external, vector);
   const invoke = (callee: IrValueId, target: IrValueId, resultCell: IrValueId) => {
     const payloadSlot = outer.declareSlot("caught", external.val);
@@ -168,7 +198,7 @@ export function classConstructInput(probe: ConstructProbe = "marker") {
   });
   const input = {
     inventory,
-    ir: { functions: [run.finish(), outerFn, left, right, call] },
+    ir: { functions: [run.finish(), outerFn, left, right, call, ...factories] },
     derivedUnits: [],
     startup: [
       buildIrModuleInitPlan({
@@ -185,8 +215,8 @@ export function classConstructInput(probe: ConstructProbe = "marker") {
   };
   return { input, source, originalInventory, outer: outerFn, left, right };
 }
-export function prepareClassConstructProgram(probe?: ConstructProbe) {
-  const fixture = classConstructInput(probe);
+export function prepareClassConstructProgram(probe?: ConstructProbe, retainedDepth = 0) {
+  const fixture = classConstructInput(probe, retainedDepth);
   return {
     ...fixture,
     program: requireProgram(

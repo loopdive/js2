@@ -42,10 +42,11 @@ export interface NativeObjectAccessRequirements {
   readonly gaps: readonly { readonly occurrence: number; readonly unitId: IrUnitId; readonly detail: string }[];
   readonly completionScope: "ordinary-object-read-prerequisite";
 }
-interface Definition {
-  readonly instruction: IrInstr;
-  readonly occurrence: number;
-}
+import {
+  indexNativeValueDefinitions,
+  nativeValueOriginal,
+  type NativeValueOccurrence as Definition,
+} from "./native-value-definitions.js";
 interface Issued {
   readonly demands: NativeStringValueDemands;
   readonly sourceSnapshot: unknown;
@@ -59,14 +60,7 @@ function same(left: unknown, right: unknown, detail: string): void {
   if (preparedIrDataMismatch(left, right) !== undefined) fail(detail);
 }
 function original(value: IrValueId, definitions: ReadonlyMap<IrValueId, Definition>): Definition | undefined {
-  const seen = new Set<IrValueId>();
-  for (;;) {
-    if (seen.has(value)) fail("cyclic representation-only SSA alias");
-    seen.add(value);
-    const row = definitions.get(value);
-    if (row?.instruction.kind !== "coerce.to_externref") return row;
-    value = row.instruction.value;
-  }
+  return nativeValueOriginal(value, definitions, () => fail("cyclic representation-only SSA alias"));
 }
 function createFeature(row: Definition | undefined): OrdinaryObjectRuntimeFeature | undefined {
   if (row?.instruction.kind !== "call") return undefined;
@@ -85,14 +79,8 @@ function mask(call: IrInstrCall, definitions: ReadonlyMap<IrValueId, Definition>
 }
 
 function definitionsFor(demands: NativeStringValueDemands, unitId: IrUnitId, view: "program" | "projection") {
-  const definitions = new Map<IrValueId, Definition>();
-  for (const [occurrence, row] of demands.occurrences.entries()) {
-    const buffer = demands.buffers[row.bufferIndex]!;
-    if (buffer.ownerUnitId !== unitId || buffer.view !== view || row.instruction.result === null) continue;
-    if (definitions.has(row.instruction.result)) fail("ambiguous prepared SSA definition");
-    definitions.set(row.instruction.result, { occurrence, instruction: row.instruction });
-  }
-  return definitions;
+  return indexNativeValueDefinitions(demands, unitId, view, () => fail("ambiguous prepared SSA definition"))
+    .definitions;
 }
 
 function descriptorHalfIdentity(

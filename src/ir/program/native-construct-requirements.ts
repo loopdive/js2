@@ -2,44 +2,19 @@
 import { IR_CONSTRUCT } from "../core/closure-invocation-callables.js";
 import { preparedIrDataMismatch } from "./data.js";
 import { constructEntryEffectGap } from "./construct-entry-effects.js";
-import type { IrInstr, IrInstrCall, IrValueId } from "../core/nodes.js";
+import type { IrInstrCall } from "../core/nodes.js";
 import { closureSignatureEquals } from "../core/types.js";
 import { CLASS_CONSTRUCT_SIGNATURE } from "../runtime/closure-invocation-callables.js";
 import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
 import type { NativeInvocationUse } from "./native-invocation-requirements.js";
-
-/** Trace only exact carrier erasure; unknown value flow needs a separate constructor-family proof. */
-function definition(value: IrValueId, definitions: ReadonlyMap<IrValueId, IrInstr>): IrInstr | undefined {
-  const seen = new Set<IrValueId>();
-  while (!seen.has(value)) {
-    seen.add(value);
-    const row = definitions.get(value);
-    if (row?.kind !== "coerce.to_externref") return row;
-    value = row.value;
-  }
-  return undefined;
-}
-
-function classAssociation(
-  source: NativeSourceClosureRequirements,
-  owner: NativeInvocationUse["ownerUnitId"],
-  view: "program" | "projection",
-  value: IrInstr | undefined,
-) {
-  return value?.kind === "class.value.new"
-    ? source.classValues?.find((allocation) => {
-        const occurrence = source.demands.occurrences[allocation.occurrence]!;
-        const region = source.demands.buffers[occurrence.bufferIndex]!;
-        return region.view === view && region.ownerUnitId === owner && occurrence.instruction === value;
-      })
-    : undefined;
-}
+import { createNativeConstructorFlow, type NativeConstructorFlow } from "./native-constructor-flow.js";
 
 function projectionGap(
   source: NativeSourceClosureRequirements,
   use: Pick<NativeInvocationUse, "occurrence" | "ownerUnitId">,
   call: IrInstrCall,
-  classes: readonly NonNullable<ReturnType<typeof classAssociation>>[],
+  classes: readonly NativeConstructorFlow[],
+  flow: ReturnType<typeof createNativeConstructorFlow>,
 ): string | undefined {
   const rows = (view: "program" | "projection") =>
     source.demands.occurrences.flatMap((row, occurrence) => {
@@ -63,46 +38,55 @@ function projectionGap(
     preparedIrDataMismatch(original.site, call.site) !== undefined
   )
     return "Construct semantic/projection occurrence population differs";
-  const definitions = new Map<IrValueId, IrInstr>();
-  for (const row of source.demands.occurrences) {
-    const region = source.demands.buffers[row.bufferIndex]!;
-    if (region.ownerUnitId === use.ownerUnitId && region.view === "program" && row.instruction.result !== null)
-      definitions.set(row.instruction.result, row.instruction);
-  }
+  const originals = original.args.slice(0, 2).map((value) => flow.resolve(use.ownerUnitId, "program", value));
   if (
-    classes.some(
-      (allocation, index) =>
-        classAssociation(source, use.ownerUnitId, "program", definition(original.args[index]!, definitions))
-          ?.allocationId !== allocation.allocationId,
-    ) ||
+    classes.some((proof, index) => {
+      const semantic = originals[index];
+      return (
+        !semantic ||
+        semantic.allocation.allocationId !== proof.allocation.allocationId ||
+        semantic.allocation.ownerUnitId !== proof.allocation.ownerUnitId
+      );
+    }) ||
     original.args[2] !== call.args[2]
   )
     return "Construct operands across representations need their authenticated transformation mapping";
+  // Family equality is insufficient: changing factory arguments or swapping two
+  // calls from one family changes evaluation identity/captures. Until a richer
+  // transformation map exists, require exact code for every returned-value owner.
+  if (classes.some((proof) => proof.calls.length)) {
+    const units = new Set([...classes, ...originals.map((proof) => proof!)].flatMap((proof) => proof.owners));
+    for (const unit of units) {
+      const owner = source.demands.owners.find((owner) => owner.unitId === unit)!;
+      if (preparedIrDataMismatch(owner.programFunction, owner.projectedFunction) !== undefined)
+        return "returned Construct value needs its exact call/argument/capture transformation mapping";
+    }
+  }
   return undefined;
 }
 
 /** Actual private storage and original lifted code, not public Call signature or class spelling. */
-export function nativeConstructUse(
+function nativeConstructUse(
   source: NativeSourceClosureRequirements,
   use: Pick<NativeInvocationUse, "occurrence" | "ownerUnitId">,
   call: IrInstrCall,
-  definitions: ReadonlyMap<IrValueId, IrInstr>,
+  flow: ReturnType<typeof createNativeConstructorFlow>,
 ): { readonly use: NativeInvocationUse; readonly gap?: string } {
   const result = { ...use, kind: "construct" as const };
-  const values = call.args.slice(0, 2).map((value) => definition(value, definitions));
-  const classes = values.map((value) => classAssociation(source, use.ownerUnitId, "projection", value));
+  const classes = call.args.slice(0, 2).map((value) => flow.resolve(use.ownerUnitId, "projection", value));
   if (!classes[0] || !classes[1])
     return { use: result, gap: "Construct callee/newTarget needs its actual class allocation family proof" };
-  const projected = projectionGap(source, use, call, [classes[0], classes[1]]);
+  const projected = projectionGap(source, use, call, [classes[0], classes[1]], flow);
   if (projected) return { use: result, gap: projected };
-  const callee = values[0] as Extract<IrInstr, { kind: "class.value.new" }>;
-  const closure = definition(callee.construct, definitions);
+  const callee = classes[0].instruction;
+  const allocationOwner = classes[0].allocation.ownerUnitId;
+  const closure = flow.definition(allocationOwner, "projection", callee.construct);
   if (closure?.kind !== "closure.new" || closure.liftedFunc.binding.kind !== "unit")
     return { use: result, gap: "Construct storage needs its actual source closure allocation" };
   const allocation = source.allocations.find((allocation) => {
     const occurrence = source.demands.occurrences[allocation.occurrence]!;
     const region = source.demands.buffers[occurrence.bufferIndex]!;
-    return region.view === "projection" && region.ownerUnitId === use.ownerUnitId && occurrence.instruction === closure;
+    return region.view === "projection" && region.ownerUnitId === allocationOwner && occurrence.instruction === closure;
   });
   if (!allocation || !closureSignatureEquals(closure.signature, CLASS_CONSTRUCT_SIGNATURE))
     return { use: result, gap: "Construct closure lacks the exact internal newTarget/argument-vector protocol" };
@@ -117,11 +101,20 @@ export function nativeConstructUse(
       ...result,
       liftedUnitId: allocation.liftedUnitId,
       construct: {
-        calleeOccurrence: classes[0]!.occurrence,
-        newTargetOccurrence: classes[1]!.occurrence,
+        calleeOccurrence: classes[0].allocation.occurrence,
+        newTargetOccurrence: classes[1].allocation.occurrence,
         closureOccurrence: allocation.occurrence,
+        calleeCalls: classes[0].calls,
+        newTargetCalls: classes[1].calls,
         argv: call.args[2]!,
       },
     },
   };
+}
+
+/** One current source census shares indexes and completed return proofs across its Construct uses. */
+export function createNativeConstructUse(source: NativeSourceClosureRequirements) {
+  const flow = createNativeConstructorFlow(source);
+  return (use: Pick<NativeInvocationUse, "occurrence" | "ownerUnitId">, call: IrInstrCall) =>
+    nativeConstructUse(source, use, call, flow);
 }

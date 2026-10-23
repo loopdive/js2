@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { nativeConstructUse } from "./native-construct-requirements.js";
+import { createNativeConstructUse } from "./native-construct-requirements.js";
 import { nativeReceiverRouteGaps } from "./native-receiver-routes.js";
 import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
 import { closureSignatureEquals } from "../core/types.js";
@@ -46,6 +46,8 @@ export interface NativeInvocationUse {
     readonly calleeOccurrence: number;
     readonly newTargetOccurrence: number;
     readonly closureOccurrence: number;
+    readonly calleeCalls: readonly number[];
+    readonly newTargetCalls: readonly number[];
     readonly argv: IrValueId;
   };
   readonly callbacks?: readonly {
@@ -176,6 +178,7 @@ function calculate(
   const { demands } = source;
   const typeMaps = new Map<IrUnitId, ReturnType<typeof nativeAsyncCallableValueTypes>>();
   const definitions = new Map<IrUnitId, Map<IrValueId, IrInstr>>();
+  const constructUse = createNativeConstructUse(source);
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const buffer = demands.buffers[row.bufferIndex]!;
     if (buffer.view !== "projection" || row.instruction.kind !== "call") continue;
@@ -211,6 +214,12 @@ function calculate(
       if (argv?.kind !== "vec" || !external(argv.elementType) || argv.layout)
         fail("apply lacks its actual native argument-vector input");
     }
+    if (kind === "construct") {
+      const selected = constructUse({ occurrence, ownerUnitId: unitId }, call);
+      uses.push(selected.use);
+      if (selected.gap) gaps.push({ unitId, detail: selected.gap });
+      continue;
+    }
     let defs = definitions.get(unitId);
     if (!defs) {
       defs = new Map();
@@ -220,12 +229,6 @@ function calculate(
           defs.set(candidate.instruction.result, candidate.instruction);
       }
       definitions.set(unitId, defs);
-    }
-    if (kind === "construct") {
-      const selected = nativeConstructUse(source, { occurrence, ownerUnitId: unitId }, call, defs);
-      uses.push(selected.use);
-      if (selected.gap) gaps.push({ unitId, detail: selected.gap });
-      continue;
     }
     const { type: calleeType, liftedUnitId } = callableAllocation(
       source,

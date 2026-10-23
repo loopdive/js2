@@ -1,37 +1,29 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { closureSignatureEquals, type IrInstr, type IrType, type IrValueId } from "../core/nodes.js";
+import { closureSignatureEquals, type IrType, type IrValueId } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { NativeSourceClosureRequirements } from "./native-source-closure-requirements.js";
 import type { NativeStringValueDemands, NativeStringValueView } from "./native-string-value-demands.js";
 
-export interface ObjectResultDefinition {
-  readonly instruction: IrInstr;
-  readonly occurrence: number;
-}
+import {
+  indexNativeValueDefinitions,
+  nativeValueOriginal,
+  type NativeValueOccurrence,
+} from "./native-value-definitions.js";
+export type ObjectResultDefinition = NativeValueOccurrence;
 export function objectResultDefinitions(
   demands: NativeStringValueDemands,
   unitId: IrUnitId,
   view: NativeStringValueView,
 ) {
-  const definitions = new Map<IrValueId, ObjectResultDefinition>();
-  for (const [occurrence, row] of demands.occurrences.entries()) {
-    const buffer = demands.buffers[row.bufferIndex]!;
-    if (buffer.ownerUnitId !== unitId || buffer.view !== view || row.instruction.result === null) continue;
-    if (definitions.has(row.instruction.result)) throw new Error("ordinary Get result proof: ambiguous SSA definition");
-    definitions.set(row.instruction.result, { occurrence, instruction: row.instruction });
-  }
-  return definitions;
+  return indexNativeValueDefinitions(demands, unitId, view, () => {
+    throw new Error("ordinary Get result proof: ambiguous SSA definition");
+  }).definitions;
 }
 export function objectResultOriginal(value: IrValueId, definitions: ReadonlyMap<IrValueId, ObjectResultDefinition>) {
-  const seen = new Set<IrValueId>();
-  for (;;) {
-    if (seen.has(value)) throw new Error("ordinary Get result proof: cyclic representation alias");
-    seen.add(value);
-    const row = definitions.get(value);
-    if (row?.instruction.kind !== "coerce.to_externref") return row;
-    value = row.instruction.value;
-  }
+  return nativeValueOriginal(value, definitions, () => {
+    throw new Error("ordinary Get result proof: cyclic representation alias");
+  });
 }
 export function objectResultIsBoolean(type: IrType | null | undefined): boolean {
   return type?.kind === "val" && !type.typeRef && type.val.kind === "i32" && type.val.boolean === true;
