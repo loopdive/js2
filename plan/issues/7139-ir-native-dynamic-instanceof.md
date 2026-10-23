@@ -1579,3 +1579,58 @@ reviewed file hashes are pinned under `.tmp/review-source-class-bindings/` and
 `.tmp/review-returned-callable-flow/`. The ten quality commands, final source and
 focused-test typechecks, final lint and function budget pass. No new budget
 allowance, baseline, PR head, HOLD or queue change is included.
+
+
+### Shared Realm layout extension (implementation plan)
+
+Before the public Realm producer can supply real class default prototypes, its
+ordinary-object subtypes must borrow the actual source/class carrier state.
+Keep the pure declarations in `native-realm-object-layout-declarations.ts` and
+the one reservation/authentication owner in `native-realm-object-layouts.ts`.
+Reuse the existing state/global/initializer tokens; reserve only the two ordinary
+subtypes. Authenticate the borrowed owner, ledger, retained plan and storage
+prerequisites, with one extension per canonical state. Do not compare raw types
+as a replacement for owner identity. Public source declarations compare the
+issued canonical state owner while retaining the exact layout dependency.
+
+Bootstrap binding and state fill remain owned once by the original state owner.
+An extension cannot fill the borrowed globals or initializers a second time or
+rebind bootstrap. Its inventory lists only newly owned resources. Existing
+self-contained layout reservation remains unchanged. Shared state is a physical
+prerequisite, not public Realm readiness or source ClassDefinitionEvaluation.
+
+Acceptance: demonstrate source/public layout sharing with actual source closure
+reservations; execute ordinary and source-state initializers against the same
+anchors in original and displaced layouts; reject copied/foreign owners, changed
+plans/types/dependencies, duplicate extensions/bootstrap and premature completion.
+Keep public readiness closed, all existing realm tests and GC bytes preserved.
+Quality: one declaration implementation and one authentication owner, no new
+budget grants, no duplicated initialization or caller-issued capability, fresh
+adversarial review before any release.
+
+
+### Shared Realm layout extension qualification
+
+The public ordinary-object layout can now extend the actual issued source/class
+state, reserving only its two storage subtypes. Its inventory excludes borrowed
+anchors/initializer functions. Bootstrap and state fill stay with the original
+owner; the extension has its own once-only completion. Public source declarations
+retain exact physical carriers and compare the canonical issued state identity.
+Their null/zero declaration fill still cannot grant public runtime readiness.
+
+Focused qualification: 9/9 new ownership/runtime/source-join cases, 26/26 public
+Realm declaration cases, and 47/47 existing layout/class-state cases pass. Source
+and focused test typechecks and ten quality commands pass without new grants;
+all 14 successful GC artifact bytes match 741be78363. The earlier combined run's
+15 failures are retained; the omitted public expected realmState is independently
+reproduced using the exact parent module and corrected here. The new runtime
+probes compare opaque Wasm identity through Object.is. A subsequent test-edit
+mistake omitted one negative fixture arm; that failing log is retained too.
+
+Independent review passed 7 mutation/ownership/phase probes and found 4 declaration
+plans and 2 validated binaries identical to the exact parent. This qualifies the
+shared physical prerequisite only. Public Realm population/algorithms, the
+original implicit Construct entry, class own-bag Get, the actual source producer,
+true Linear and complete migration acceptance remain open. The full 140 lifecycle
+was not rerun for this physical reservation-only change; its last measured result
+remains 42 pass/98 fail. Strict legacy graph retirement stays OPEN.

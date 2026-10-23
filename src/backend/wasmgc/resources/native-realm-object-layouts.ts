@@ -7,10 +7,6 @@ import type {
 } from "../../../wasm/physical/module-reservations.js";
 import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import {
-  createRealmIdentityDeclaration,
-  createRealmObjectStateDeclaration,
-  createRealmObjectPrototypeDeclaration,
-  createRealmOrdinaryObjectDeclaration,
   buildRealmSourceStateInitializer,
   buildRealmObjectStateInitializer,
 } from "../../../runtime/wasmgc/values/realm-object-layouts.js";
@@ -23,10 +19,19 @@ import {
 import {
   compareNativeResourceDeclarationShape,
   executeNativeResourceRecipe,
-  freezeNativeResourceRecipe,
   preflightNativeResourceRecipe,
   requireNativeDeclaredReservation,
 } from "./native-resource-declarations.js";
+
+import {
+  declareNativeRealmObjectState,
+  declareNativeRealmObjectLayouts,
+  declareNativeRealmObjectLayoutExtension,
+} from "./native-realm-object-layout-declarations.js";
+export {
+  declareNativeRealmObjectState,
+  declareNativeRealmObjectLayouts,
+} from "./native-realm-object-layout-declarations.js";
 
 export interface NativeRealmObjectLayoutDependencies {
   readonly objects: NativeObjectLayoutReservations;
@@ -83,79 +88,6 @@ function dependencies(tx: PhysicalModuleReservations, d: NativeRealmObjectLayout
   return new Map([object, d.objects.propMap].map((token) => [token.key, token]));
 }
 
-/** No catalog or source demand is invented to reserve these physical prerequisites. */
-function declareRealmLayouts(
-  key: string,
-  storage?: { readonly objectKey: string; readonly mapKey: string },
-): NativeResourceRecipe {
-  const { objectKey, mapKey } = storage ?? {};
-  for (const value of [key, ...(storage ? [objectKey, mapKey] : [])])
-    if (typeof value !== "string" || !value) fail("invalid declaration key");
-  const identity = key + ":identity",
-    state = key + ":state";
-  const shapes = [
-    createRealmIdentityDeclaration(),
-    createRealmObjectStateDeclaration(identity),
-    ...(storage
-      ? [
-          createRealmObjectPrototypeDeclaration(storage.objectKey, storage.mapKey),
-          createRealmOrdinaryObjectDeclaration(storage.objectKey, storage.mapKey, state),
-        ]
-      : []),
-  ];
-  const declarations: NativeResourceRecipe["declarations"] = [
-    ...typeRoles.slice(0, shapes.length).map((role, index) => ({
-      key: key + ":" + role,
-      role: ["realm-carrier", role],
-      space: "type" as const,
-      shape: shapes[index]!,
-    })),
-    {
-      key: key + ":realm",
-      role: ["realm-carrier", "realm-anchor"],
-      space: "global",
-      name: "__realm_identity",
-      valueType: { kind: "ref_null", typeKey: identity },
-      mutable: true,
-    },
-    {
-      key: key + ":functionPrototype",
-      role: ["realm-carrier", "function-prototype-anchor"],
-      space: "global",
-      name: "__realm_function_prototype",
-      valueType: { kind: "externref" },
-      mutable: true,
-    },
-    {
-      key: key + ":prototypeInitializer",
-      role: ["realm-carrier", "prototype-state-initializer"],
-      space: "function",
-      name: initializerNames.prototypeInitializer,
-      signature: { params: [{ kind: "externref" }], results: [{ kind: "ref", typeKey: state }] },
-    },
-    {
-      key: key + ":sourceInitializer",
-      role: ["realm-carrier", "source-state-initializer"],
-      space: "function",
-      name: initializerNames.sourceInitializer,
-      signature: { params: [], results: [{ kind: "ref", typeKey: state }] },
-    },
-  ];
-  return freezeNativeResourceRecipe({
-    declarations,
-    reservationSteps: declarations.map((row) => ({
-      phase: "resources" as const,
-      kind: "reserve" as const,
-      resourceKey: row.key,
-    })),
-  });
-}
-export function declareNativeRealmObjectState(key: string): NativeResourceRecipe {
-  return declareRealmLayouts(key);
-}
-export function declareNativeRealmObjectLayouts(key: string, objectKey: string, mapKey: string): NativeResourceRecipe {
-  return declareRealmLayouts(key, { objectKey, mapKey });
-}
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly key: string;
@@ -165,45 +97,83 @@ interface Owner {
   readonly plan: NativeResourceRecipe;
   readonly tokens: readonly (TypeReservation | GlobalReservation | FunctionReservation)[];
   readonly initializerHeaders: ReadonlyMap<FunctionReservation, { readonly name: string; readonly typeIdx: number }>;
+  readonly borrowed?: NativeRealmObjectStateReservations;
   bootstrap?: FunctionReservation;
   filled: boolean;
 }
 const owners = new WeakMap<NativeRealmObjectStateReservations, Owner>();
+const extensions = new WeakMap<NativeRealmObjectStateReservations, NativeRealmObjectStateReservations>();
+
+function layoutPlan(
+  key: string,
+  storage: NativeRealmObjectLayoutDependencies | undefined,
+  borrowed: NativeRealmObjectStateReservations | undefined,
+): NativeResourceRecipe {
+  if (!storage) return declareNativeRealmObjectState(key);
+  return borrowed
+    ? declareNativeRealmObjectLayoutExtension(
+        key,
+        storage.objects.object.key,
+        storage.objects.propMap.key,
+        borrowed.types.state.key,
+      )
+    : declareNativeRealmObjectLayouts(key, storage.objects.object.key, storage.objects.propMap.key);
+}
+function layoutPrerequisites(
+  tx: PhysicalModuleReservations,
+  storage: NativeRealmObjectLayoutDependencies | undefined,
+  borrowed: NativeRealmObjectStateReservations | undefined,
+) {
+  const prerequisites = storage ? dependencies(tx, storage) : new Map<string, TypeReservation>();
+  if (borrowed) {
+    requireNativeRealmObjectState(tx, borrowed);
+    for (const token of Object.values(borrowed.types)) prerequisites.set(token.key, token);
+  }
+  return prerequisites;
+}
+function selectedTypeRoles(owner: Pick<Owner, "dependencies" | "borrowed">) {
+  return typeRoles.slice(owner.borrowed ? 2 : 0, owner.dependencies ? 4 : 2);
+}
 
 function reserveRealmLayouts(
   tx: PhysicalModuleReservations,
   key: string,
   sourceDependencies: NativeRealmObjectLayoutDependencies | undefined,
-  expectedPlan: NativeResourceRecipe,
+  expectedPlan: NativeResourceRecipe | undefined,
+  borrowed?: NativeRealmObjectStateReservations,
 ): NativeRealmObjectStateReservations {
   if (tx.state !== "reserving") fail("invalid reservation phase");
   const captured = sourceDependencies
     ? (Object.freeze(data(sourceDependencies, dependencyRoles)) as unknown as NativeRealmObjectLayoutDependencies)
     : undefined;
-  const prerequisites = captured ? dependencies(tx, captured) : new Map<string, TypeReservation>();
-  const plan = captured
-    ? declareNativeRealmObjectLayouts(key, captured.objects.object.key, captured.objects.propMap.key)
-    : declareNativeRealmObjectState(key);
-  const selectedTypes = typeRoles.slice(0, captured ? 4 : 2);
-  if (preparedIrDataMismatch(preflightNativeResourceRecipe(expectedPlan, [...prerequisites.keys()]), plan))
+  const prerequisites = layoutPrerequisites(tx, captured, borrowed);
+  const plan = layoutPlan(key, captured, borrowed);
+  const selectedTypes = selectedTypeRoles({ dependencies: captured, borrowed });
+  const sourcePlan = expectedPlan ?? plan;
+  if (preparedIrDataMismatch(preflightNativeResourceRecipe(sourcePlan, [...prerequisites.keys()]), plan))
     fail("substituted declaration plan");
   tx.assertReservationKeysAvailable(plan.declarations.map((row) => row.key));
   const records = executeNativeResourceRecipe(tx, plan, prerequisites);
   const type = (role: (typeof typeRoles)[number]) =>
     requireNativeDeclaredReservation(records, key + ":" + role, "type");
   const types = Object.freeze({
-    identity: type("identity"),
-    state: type("state"),
+    identity: borrowed?.types.identity ?? type("identity"),
+    state: borrowed?.types.state ?? type("state"),
     ...(captured ? { objectPrototype: type("objectPrototype"), ordinary: type("ordinary") } : {}),
   });
   const pack = Object.freeze({
     types,
-    anchors: Object.freeze({
-      realm: requireNativeDeclaredReservation(records, key + ":realm", "global"),
-      functionPrototype: requireNativeDeclaredReservation(records, key + ":functionPrototype", "global"),
-    }),
-    prototypeInitializer: requireNativeDeclaredReservation(records, key + ":prototypeInitializer", "function"),
-    sourceInitializer: requireNativeDeclaredReservation(records, key + ":sourceInitializer", "function"),
+    anchors:
+      borrowed?.anchors ??
+      Object.freeze({
+        realm: requireNativeDeclaredReservation(records, key + ":realm", "global"),
+        functionPrototype: requireNativeDeclaredReservation(records, key + ":functionPrototype", "global"),
+      }),
+    prototypeInitializer:
+      borrowed?.prototypeInitializer ??
+      requireNativeDeclaredReservation(records, key + ":prototypeInitializer", "function"),
+    sourceInitializer:
+      borrowed?.sourceInitializer ?? requireNativeDeclaredReservation(records, key + ":sourceInitializer", "function"),
     completionScope: "realm-carrier-state-only" as const,
   });
   owners.set(pack, {
@@ -211,13 +181,14 @@ function reserveRealmLayouts(
     key,
     sourceDependencies,
     dependencies: captured,
-    sourcePlan: expectedPlan,
+    sourcePlan,
     plan,
+    ...(borrowed ? { borrowed } : {}),
     tokens: Object.freeze([
       ...selectedTypes.map((role) => types[role]!),
-      pack.anchors.realm,
-      pack.anchors.functionPrototype,
-      ...initializerRoles.map((role) => pack[role]),
+      ...(borrowed
+        ? []
+        : [pack.anchors.realm, pack.anchors.functionPrototype, ...initializerRoles.map((role) => pack[role])]),
     ]),
     initializerHeaders: new Map(
       initializerRoles.map((role) => [
@@ -248,6 +219,30 @@ export function reserveNativeRealmObjectLayouts(
   return pack as NativeRealmObjectLayoutReservations;
 }
 
+/** The original state keeps sole ownership of anchors, initializers and bootstrap. */
+export function extendNativeRealmObjectLayouts(
+  tx: PhysicalModuleReservations,
+  key: string,
+  state: NativeRealmObjectStateReservations,
+  storage: NativeRealmObjectLayoutDependencies,
+  plan?: NativeResourceRecipe,
+): NativeRealmObjectLayoutReservations {
+  requireNativeRealmObjectState(tx, state);
+  if (owners.get(state)!.dependencies || extensions.has(state)) fail("state already has ordinary object layouts");
+  const pack = reserveRealmLayouts(tx, key, storage, plan, state) as NativeRealmObjectLayoutReservations;
+  extensions.set(state, pack);
+  return pack;
+}
+
+/** Issued identity of the common owner, never inferred from matching type coordinates. */
+export function nativeRealmObjectStateOwner(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmObjectStateReservations,
+): NativeRealmObjectStateReservations {
+  requireNativeRealmObjectState(tx, pack);
+  return owners.get(pack)!.borrowed ?? pack;
+}
+
 export function requireNativeRealmObjectState<T extends NativeRealmObjectStateReservations>(
   tx: PhysicalModuleReservations,
   pack: T,
@@ -265,29 +260,29 @@ export function requireNativeRealmObjectState<T extends NativeRealmObjectStateRe
     if (dependencyRoles.some((role) => current[role] !== owner.dependencies?.[role]))
       fail("changed dependency identity");
   }
-  const prerequisites = owner.dependencies ? dependencies(tx, owner.dependencies) : new Map<string, TypeReservation>();
-  const selectedTypes = typeRoles.slice(0, owner.dependencies ? 4 : 2);
+  const prerequisites = layoutPrerequisites(tx, owner.dependencies, owner.borrowed);
+  const selectedTypes = selectedTypeRoles(owner);
   const actualTypes = pack.types as Partial<NativeRealmObjectLayoutReservations["types"]>;
   if (
     preparedIrDataMismatch(preflightNativeResourceRecipe(owner.sourcePlan, [...prerequisites.keys()]), owner.plan) ||
-    preparedIrDataMismatch(
-      owner.dependencies
-        ? declareNativeRealmObjectLayouts(
-            owner.key,
-            owner.dependencies.objects.object.key,
-            owner.dependencies.objects.propMap.key,
-          )
-        : declareNativeRealmObjectState(owner.key),
-      owner.plan,
-    )
+    preparedIrDataMismatch(layoutPlan(owner.key, owner.dependencies, owner.borrowed), owner.plan)
   )
     fail("changed retained declaration plan");
   const tokens = [
     ...selectedTypes.map((role) => actualTypes[role]!),
-    pack.anchors.realm,
-    pack.anchors.functionPrototype,
-    ...initializerRoles.map((role) => pack[role]),
+    ...(owner.borrowed
+      ? []
+      : [pack.anchors.realm, pack.anchors.functionPrototype, ...initializerRoles.map((role) => pack[role])]),
   ];
+  if (
+    owner.borrowed &&
+    (extensions.get(owner.borrowed) !== pack ||
+      pack.types.identity !== owner.borrowed.types.identity ||
+      pack.types.state !== owner.borrowed.types.state ||
+      pack.anchors !== owner.borrowed.anchors ||
+      initializerRoles.some((role) => pack[role] !== owner.borrowed![role]))
+  )
+    fail("substituted borrowed state owner");
   if (owner.tokens.some((token, index) => token !== tokens[index])) fail("substituted reservation token");
   const types = new Map([
     ...prerequisites,
@@ -334,7 +329,7 @@ export function bindNativeRealmObjectBootstrap(
   initialize: FunctionReservation,
 ): void {
   requireNativeRealmObjectState(tx, pack);
-  const owner = owners.get(pack)!;
+  const owner = owners.get(nativeRealmObjectStateOwner(tx, pack))!;
   if (tx.state !== "reserving" || owner.filled || owner.bootstrap) fail("invalid or duplicate bootstrap binding");
   tx.assertFunctionReservation(initialize);
   if (initialize.object.typeIdx !== tx.internFunctionType([], [])) fail("bootstrap requires () -> ()");
@@ -346,7 +341,7 @@ export function requireNativeRealmObjectBootstrap(
   initialize: FunctionReservation,
 ): void {
   requireNativeRealmObjectState(tx, pack);
-  if (owners.get(pack)!.bootstrap !== initialize) fail("foreign realm bootstrap");
+  if (owners.get(nativeRealmObjectStateOwner(tx, pack))!.bootstrap !== initialize) fail("foreign realm bootstrap");
   if (tx.state === "reserving") tx.assertFunctionReservation(initialize);
   else tx.physicalIndex(initialize);
 }
@@ -371,6 +366,7 @@ export function fillNativeRealmObjectState(
 ): void {
   requireNativeRealmObjectState(tx, pack);
   const owner = owners.get(pack)!;
+  if (owner.borrowed) fail("borrowed state must be filled by its original owner");
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
   tx.fillGlobal(pack.anchors.realm, [{ op: "ref.null", typeIdx: pack.types.identity.typeIndex }]);
   tx.fillGlobal(pack.anchors.functionPrototype, [{ op: "ref.null.extern" }]);
@@ -385,7 +381,13 @@ export function requireCompletedNativeRealmObjectState<T extends NativeRealmObje
   pack: T,
 ): T {
   requireNativeRealmObjectState(tx, pack);
-  if (!owners.get(pack)!.filled) fail("missing canonical initializer fill");
+  const owner = owners.get(pack)!;
+  if (owner.borrowed) {
+    if (!owner.filled) fail("missing canonical layout extension fill");
+    requireCompletedNativeRealmObjectState(tx, owner.borrowed);
+    return pack;
+  }
+  if (!owner.filled) fail("missing canonical initializer fill");
   for (const token of [
     pack.anchors.realm,
     pack.anchors.functionPrototype,
@@ -413,7 +415,12 @@ export function fillNativeRealmObjectLayouts(
   pack: NativeRealmObjectLayoutReservations,
 ): void {
   requireNativeRealmObjectLayouts(tx, pack);
-  fillNativeRealmObjectState(tx, pack);
+  const owner = owners.get(pack)!;
+  if (owner.borrowed) {
+    if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate canonical fill");
+    requireCompletedNativeRealmObjectState(tx, owner.borrowed);
+    owner.filled = true;
+  } else fillNativeRealmObjectState(tx, pack);
 }
 export function requireCompletedNativeRealmObjectLayouts(
   tx: PhysicalModuleReservations,
@@ -430,9 +437,13 @@ export function nativeRealmObjectStateReservationInventory(
   requireNativeRealmObjectState(tx, pack);
   return Object.freeze({
     plan: owners.get(pack)!.plan,
-    types: Object.freeze(Object.values(pack.types)),
-    globals: Object.freeze([pack.anchors.realm, pack.anchors.functionPrototype]),
-    functions: Object.freeze(initializerRoles.map((role) => pack[role])),
+    types: Object.freeze(
+      selectedTypeRoles(owners.get(pack)!).map(
+        (role) => (pack.types as NativeRealmObjectLayoutReservations["types"])[role],
+      ),
+    ),
+    globals: Object.freeze(owners.get(pack)!.borrowed ? [] : [pack.anchors.realm, pack.anchors.functionPrototype]),
+    functions: Object.freeze(owners.get(pack)!.borrowed ? [] : initializerRoles.map((role) => pack[role])),
   });
 }
 
