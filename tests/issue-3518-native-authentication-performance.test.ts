@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { copyIrPreparationData } from "../src/ir/analysis/alloc-registry.js";
 import { setImmediate } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +10,45 @@ import { emitBinary } from "../src/emit/binary.js";
 import { PhysicalModuleReservations, type PhysicalReservation } from "../src/wasm/physical/module-reservations.js";
 
 afterEach(async () => await setImmediate());
+
+describe("allocation copying retains live checks after slot-cache warming", () => {
+  it("copies changed values and rejects newly introduced getters and prototypes", () => {
+    const value = { nested: { count: 1 } };
+    for (let repeat = 0; repeat < 3; repeat++) expect(copyIrPreparationData(value)).toEqual(value);
+    value.nested.count = 2;
+    expect(copyIrPreparationData(value).nested.count).toBe(2);
+    Object.setPrototypeOf(value.nested, Date.prototype);
+    expect(() => copyIrPreparationData(value)).toThrow("unsupported object instance");
+    Object.setPrototypeOf(value.nested, Object.prototype);
+    let reads = 0;
+    Object.defineProperty(value.nested, "count", {
+      get() {
+        reads++;
+        return 3;
+      },
+    });
+    expect(() => copyIrPreparationData(value)).toThrow("accessor count");
+    expect(reads).toBe(0);
+  });
+
+  it.each([false, true])("retains Date slot refusal through prototype erasure, invalid=%s", (invalid) => {
+    const value = new Date(invalid ? NaN : 0);
+    for (const prototype of [Date.prototype, null, Object.prototype]) {
+      Object.setPrototypeOf(value, prototype);
+      expect(() => copyIrPreparationData(value)).toThrow("unsupported Date instance");
+    }
+  });
+
+  it.each([() => new Map(), () => new Set(), () => new WeakMap(), () => new WeakSet()])(
+    "retains cached native collection slots after prototype erasure: %s",
+    (make) => {
+      const value = make();
+      Object.setPrototypeOf(value, null);
+      for (let repeat = 0; repeat < 3; repeat++)
+        expect(() => copyIrPreparationData(value)).toThrow("unsupported collection prototype");
+    },
+  );
+});
 
 describe("collection-slot caching preserves fresh data authentication", () => {
   it.each(["value", "negative-zero", "undefined", "hidden", "symbol", "prototype", "accessor", "function"])(
@@ -149,6 +189,42 @@ describe("collection-slot caching preserves fresh data authentication", () => {
     expect(preparedIrDataMismatch(wrappedCollection, {})).toBe("$root (field population)");
   });
 
+  it("does not cache a false collection brand through a replaced array iterator", () => {
+    const value = Object.setPrototypeOf(new Map(), null);
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)!;
+    const original = Array.prototype[Symbol.iterator];
+    const probes = [Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has];
+    let skipped = 0;
+    Object.defineProperty(Array.prototype, Symbol.iterator, {
+      ...descriptor,
+      value: function (this: unknown[]) {
+        if (
+          this.length === 4 &&
+          this[0] === probes[0] &&
+          this[1] === probes[1] &&
+          this[2] === probes[2] &&
+          this[3] === probes[3]
+        ) {
+          skipped++;
+          return original.call([]);
+        }
+        return original.call(this);
+      },
+    });
+    let failure: unknown;
+    try {
+      freezePreparedIrRuntimeValue(value);
+    } catch (error) {
+      failure = error;
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, descriptor);
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("mutable or executable context state");
+    expect(skipped).toBe(0);
+    expect(() => freezePreparedIrRuntimeValue(value)).toThrow("mutable or executable context state");
+  });
+
   it("uses captured probes and private cache dispatch after public intrinsic replacement", () => {
     const warm = {},
       cold = {},
@@ -248,7 +324,7 @@ describe("fresh batch physical-index authentication", () => {
         r.tx.seal();
         expect(r.tx.physicalIndices(tokens)).toEqual(expected);
         if (!imported) {
-          const compiled = new WebAssembly.Module(emitBinary(r.module));
+          const compiled = new WebAssembly.Module(new Uint8Array(emitBinary(r.module)));
           expect(WebAssembly.Module.imports(compiled)).toHaveLength(0);
           expect((new WebAssembly.Instance(compiled).exports.answer as () => number)()).toBe(42);
         }

@@ -90,3 +90,13 @@ describe("class allocation owner boundaries", () => {
     expect(verifyIrFunction(malformed).some((row) => row.message.includes("internal Construct closure"))).toBe(true);
   });
 });
+
+it("allows only one metadata owner for the exact source closure family before any mutation", () => {
+  const fixture = reserveClassValueFixture();
+  const before = structuredClone(fixture.f.module);
+  expect(() => reserveNativeClassValues(fixture.f.tx, "alternate-class-family", fixture.f.source.types)).toThrow(
+    /duplicate class metadata owner/,
+  );
+  expect(fixture.f.module).toEqual(before);
+  expect(fixture.f.tx.state).toBe("reserving");
+});

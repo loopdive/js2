@@ -40,6 +40,7 @@ export type RuntimeFeature =
   | "js.closure.undefined"
   | "js.closure.receiver"
   | "class.value.allocate"
+  | "js.construct"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
   | NumberRemainderRuntimeFeature

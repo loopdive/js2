@@ -29,10 +29,13 @@ const typeExports = [
 // original blob 4d371d2a98678e2227d770b123685ba7e8a38e78. No historical Git
 // objects are required at test time. Tests exercise compatibility, not public
 // compiler caller liveness, preparation closure or backend materialization.
+// The copy helper receipt is updated by 7139 for shared immutable slot caching;
+// all allocation owner/member receipts remain the original relocation receipts.
+// Original copy helper SHA256: 482b87beebe8d0255294c92e1600469f2cfbfb6f6f0bf6f499233d762bf399b5.
 const declarationReceipts: readonly { name: string; sha256: string }[] = [
   {
     name: "copyIrPreparationData",
-    sha256: "482b87beebe8d0255294c92e1600469f2cfbfb6f6f0bf6f499233d762bf399b5",
+    sha256: "7e9fec8035f3a240360ed9c6d946e922bc6a1d7688994af87b778d073e527d2d",
   },
   {
     name: "ALLOC_NAMESPACES",
@@ -227,7 +230,12 @@ function verifyCanonical(text = read(newPath)) {
   const imports = file.statements
     .filter(ts.isImportDeclaration)
     .map((node) => (node.moduleSpecifier as ts.StringLiteral).text);
-  expect(imports).toEqual(["../core/nodes.js", "../core/types.js", "./contracts/allocations.js"]);
+  expect(imports).toEqual([
+    "../core/native-data-slots.js",
+    "../core/nodes.js",
+    "../core/types.js",
+    "./contracts/allocations.js",
+  ]);
 }
 
 const id = asAllocSiteId;
@@ -272,7 +280,7 @@ describe("allocation ownership runtime relocation", () => {
     expect(old[name]).toBe(canonical[name]);
   });
 
-  it("retains every declaration, method, getter, private field, initializer and comment", () => {
+  it("retains allocation owner receipts and the reviewed slot-cache copy helper", () => {
     verifyCanonical();
   });
 
@@ -498,6 +506,7 @@ describe("allocation ownership runtime relocation", () => {
   });
 
   it.each([
+    ["copy slot check", (text: string) => text.replace("if (hasNativeDateState(value))", "if (false)")],
     ["method body", (text: string) => text.replace("return this.sites.length;", "return 0;")],
     [
       "private field initialization",

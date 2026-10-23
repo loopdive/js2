@@ -74,3 +74,13 @@ export function fillNativeClassRealm(tx: PhysicalModuleReservations, pack: Nativ
   fillNativeClassValues(tx, owner.values);
   requireCompletedNativeClassValues(tx, owner.values);
 }
+
+/** Actual private metadata owner, retained through the reservation/fill cycle. */
+export function nativeClassRealmValues(
+  tx: PhysicalModuleReservations,
+  pack: NativeClassRealm,
+): NativeClassValueReservations {
+  const owner = current(tx, pack);
+  if (!owner.values) throw Error("native class realm: class allocation population not reserved");
+  return owner.values;
+}

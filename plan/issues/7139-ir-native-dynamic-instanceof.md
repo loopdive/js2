@@ -1230,3 +1230,105 @@ ClassDefinitionEvaluation remains independently refused. Source binding storage,
 fresh constructor/prototype population, descriptors, Construct, HomeObject/private
 state, complete realm execution and true linear support remain open. Full migration
 acceptance is unchanged; public PR heads, HOLDs and queue remain untouched.
+
+### Stored Construct execution (implementation plan)
+
+The next executable dependency of source ClassDefinitionEvaluation is canonical
+Construct dispatch for the fresh class carrier already allocated by class.value.new.
+Add the semantic js.construct(callee, newTarget, native external-element argument
+vector) contract to the shared invocation declaration/census. Retain an internal
+Construct closure ABI (closure self, newTarget, argument vector) distinct from
+user constructor arguments and class public length. Its original prepared unit,
+actual class allocation, private closure allocation, vector owner and newTarget
+must join before admission; unknown constructor families remain typed Unsupported.
+
+The existing issued invocation pack owns its optional Construct dispatcher and
+shares its exact receiver/error/frame resources. The class realm supplies its
+actual class metadata TypeReservation after reservation; no numeric index/name
+lookup authorizes loading the private Construct field. Runtime bodies reuse the
+canonical closure call core and save/restore boundary, including catch/rethrow;
+class field zero remains the TypeError Call stub. No legacy Construct ladder,
+second receiver global, host callback/import or copied user body is introduced.
+
+Internal Construct bodies must use explicit newTarget/vector inputs; reject raw
+Wasm and unowned ambient receiver/argument readers, including reachable helpers.
+General prototype/escape routes still need their complete proof. Tests must execute real
+stored closures with retained/distinct mutable captures, exact newTarget and
+argument-vector transport, nested/exception state restoration, normal class Call
+TypeError, decoded/source-free replay, actual import/unit accounting, and negative
+signature/provenance/constructor-family substitution. Preserve old allocation-only
+artifacts and exact failure rows. Fresh adversarial quality review remains required;
+source class admission stays closed until its complete evaluation sequence exists.
+
+The first Construct harness exposed an additional migration defect: a valid
+reference-valued IR select lowers to untyped Wasm select, which rejects externref
+operands at instantiation. The dispatch fixture now expresses its result-mode
+branches as typed IR if/else. Reference-select backend lowering remains a tracked
+full-migration obligation; this harness change is not evidence that select works.
+
+
+The complex dispatch fixture exposes repeated preparation-data copying as a
+measured emission cost (63.394 seconds before optimization; CPU profile retained).
+Move the existing immutable native collection-slot cache out of program/data into
+dependency-free core/native-data-slots and reuse it for allocation copying, with
+an equally narrow Date-slot cache. Cache only unchangeable internal-slot brands;
+all live prototype, descriptor, field, collection-entry and provenance checks
+remain on every call. No successful whole-data authentication cache is allowed.
+Exercise warmed mutation, erased prototypes, invalid Dates and non-invoking
+accessor rejection, and remeasure the same executable fixture. Route the class
+metadata accessor through the existing native realm seam so the change adds no
+IR/backend cycle edge. No new size or cycle grant.
+
+
+### Stored Construct execution checkpoint (2026-10-23)
+
+Implemented canonical `js.construct` dispatch over actual class metadata and
+original selected private closure slots. The callee and newTarget have separate
+allocation/occurrence proofs across semantic and projected views; the actual
+native externref vector is passed unchanged. Internal code uses the explicit
+`(closureSelf, newTarget, argv)` protocol. Unknown constructor families and
+unowned ambient/raw helper effects remain Unsupported. Public class Call is
+still its canonical TypeError stub. One actual class metadata owner is permitted
+per source closure family, with duplicate reservation refused before mutation.
+
+The actual issued invocation state is neutralized on internal entry and restored
+on both return and rethrow. Tests inspect only a copy after original artifacts
+execute, checking exact receiver/argc/extras restoration, positive internal entry
+counts, canonical undefined/-1/null entry state, exact newTarget/vector identity,
+mutable retained captures, distinct same-signature bodies and nested/throw paths.
+The five handwritten typed harness bodies retain their real original class/unit
+inventory; they are not evidence of source ClassDefinitionEvaluation lowering.
+
+Qualification: **98/98** combined Construct/authentication/allocation-relocation
+checks, **161/161** adjacent invocation/member/class contract checks and **9/9**
+class allocation checks. Source and focused test typechecks pass, as do all ten
+quality/ratchet commands without a new grant. All **14/14** old artifact rows are
+exactly equal; all **140/140** lifecycle statuses and full failure texts are equal
+(**42 pass, 98 fail**, not migration closure). Exact parent `cb64b3505d81` lacks the
+canonical Construct declaration and refuses the genuine encoded packet at the
+ABI declaration population boundary. Its five loaded changed modules match the
+pinned parent blobs; backend execution is not claimed for that refusal control.
+
+The immutable-slot optimization removes repeated Date/collection brand probes
+without caching live data authentication. The same fixture's unprofiled emission
+fell from **66.723 s** to **44.685 s**; the original failure logs retain the
+35-second test timeouts, invalid reference select, inspector correction and worker
+RPC timeout. Final combined execution has no unhandled worker error. Review also
+caught an introduced Array-iterator bypass of collection probes; numeric indexing
+and a cold erased-Map regression close it. Exact allocation owner/member receipts
+remain unchanged; only the reviewed copy helper receipt/import list changed.
+
+The recorded Linear refusal is specifically a **missing linear runtime
+projection** (`body-shape-rejected`, build stage), not proof that a Construct
+owner ran on Linear. True linear execution, source binding/evaluation storage,
+instance/prototype/descriptor construction, base/derived return rules, private and
+HomeObject semantics, realm completion and reference-select lowering remain open.
+Fresh adversarial review has no unresolved implementation/quality findings in the
+reviewed scope; dead-export evidence is preservation-only (graph OPEN, strict
+closure FAIL), so retirement/deletion remains uncertified.
+
+Raw evidence: `.tmp/7139-construct-qualified-final-tests.log`,
+`.tmp/7139-construct-adjacent-regressions.log`,
+`.tmp/7139-construct-final-quality.json`, `.tmp/7139-construct-comparisons.json`,
+`.tmp/7139-construct-parent-*`, `.tmp/7139-profile-construct*`, and
+`.tmp/review-class-construct-execution/REVIEW.md`.

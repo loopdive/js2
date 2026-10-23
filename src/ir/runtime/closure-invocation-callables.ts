@@ -20,15 +20,21 @@ export function irClosureInvocationCallableDeclaration(ref: IrFuncRef): IrRuntim
   const kind = closureInvocationKind(symbol);
   if (!kind) return undefined;
   return Object.freeze({
-    feature: `js.closure.${kind}` as const,
+    feature: kind === "construct" ? "js.construct" : (`js.closure.${kind}` as const),
     ref: irIntrinsicFuncRef(symbol),
     params: Object.freeze(
       kind === "method"
         ? Array.from({ length: arity! + 2 }, () => EXTERNAL)
-        : kind === "apply-vector"
+        : kind === "apply-vector" || kind === "construct"
           ? [EXTERNAL, EXTERNAL, VECTOR]
           : [],
     ),
     results: Object.freeze([EXTERNAL]),
   });
 }
+
+/** Internal [[Construct]] code receives explicit newTarget/argv, never hidden user arguments. */
+export const CLASS_CONSTRUCT_SIGNATURE = Object.freeze({
+  params: Object.freeze([EXTERNAL, VECTOR]),
+  returnType: EXTERNAL,
+});

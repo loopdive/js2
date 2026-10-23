@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { nativeConstructUse } from "./native-construct-requirements.js";
 import { nativeReceiverRouteGaps } from "./native-receiver-routes.js";
 import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
 import { closureSignatureEquals } from "../core/types.js";
@@ -38,9 +39,15 @@ import {
 export interface NativeInvocationUse {
   readonly occurrence: number;
   readonly ownerUnitId: IrUnitId;
-  readonly kind: "method" | "apply-vector" | "undefined" | "receiver";
+  readonly kind: "method" | "apply-vector" | "undefined" | "receiver" | "construct";
   readonly arity?: number;
   readonly liftedUnitId?: IrUnitId;
+  readonly construct?: {
+    readonly calleeOccurrence: number;
+    readonly newTargetOccurrence: number;
+    readonly closureOccurrence: number;
+    readonly argv: IrValueId;
+  };
   readonly callbacks?: readonly {
     readonly argument: number;
     readonly allocationOccurrence: number;
@@ -213,6 +220,12 @@ function calculate(
           defs.set(candidate.instruction.result, candidate.instruction);
       }
       definitions.set(unitId, defs);
+    }
+    if (kind === "construct") {
+      const selected = nativeConstructUse(source, { occurrence, ownerUnitId: unitId }, call, defs);
+      uses.push(selected.use);
+      if (selected.gap) gaps.push({ unitId, detail: selected.gap });
+      continue;
     }
     const { type: calleeType, liftedUnitId } = callableAllocation(
       source,

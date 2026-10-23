@@ -81,6 +81,7 @@ interface Owner {
   filled: boolean;
 }
 const owners = new WeakMap<NativeClassValueReservations, Owner>();
+const families = new WeakMap<NativeSourceClosureTypes, NativeClassValueReservations>();
 function prerequisites(tx: PhysicalModuleReservations, source: NativeSourceClosureTypes) {
   requireNativeSourceClosureTypes(tx, source, source.requirements);
   const realm = nativeSourceClosureRealmState(tx, source);
@@ -90,6 +91,7 @@ function prerequisites(tx: PhysicalModuleReservations, source: NativeSourceClosu
 function requireOwner(tx: PhysicalModuleReservations, pack: NativeClassValueReservations): Owner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied owner");
+  if (families.get(owner.source) !== pack) fail("substituted canonical class family owner");
   const { realm, types } = prerequisites(tx, owner.source);
   if (
     realm !== owner.realm ||
@@ -126,6 +128,7 @@ export function reserveNativeClassValues(
   const { realm, types } = prerequisites(tx, source);
   const plan = declareNativeClassValues(key, source.closures.root.key, realm.types.state.key);
   if (expectedPlan) assertNativeResourceDataMatches(expectedPlan, plan, "substituted declaration plan");
+  if (families.has(source)) fail("duplicate class metadata owner for source closure family");
   tx.assertReservationKeysAvailable(plan.declarations.map((row) => row.key));
   const records = executeNativeResourceRecipe(tx, plan, types);
   const pack = Object.freeze({
@@ -145,13 +148,16 @@ export function reserveNativeClassValues(
     allocatorType: pack.allocate.object.typeIdx,
     filled: false,
   });
+  families.set(source, pack);
   return pack;
 }
 export function requireNativeClassValues(
   tx: PhysicalModuleReservations,
   pack: NativeClassValueReservations,
+  source?: NativeSourceClosureTypes,
 ): NativeClassValueReservations {
-  requireOwner(tx, pack);
+  const owner = requireOwner(tx, pack);
+  if (source !== undefined && owner.source !== source) fail("substituted source closure owner");
   return pack;
 }
 function allocationBody(tx: PhysicalModuleReservations, pack: NativeClassValueReservations, owner: Owner) {

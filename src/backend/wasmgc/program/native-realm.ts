@@ -3,6 +3,7 @@ import {
   reserveNativeClassRealm,
   reserveNativeClassRealmAllocation,
   nativeClassRealmInventory,
+  nativeClassRealmValues,
   fillNativeClassRealm,
   type NativeClassRealm,
 } from "./native-class-realm.js";
@@ -593,4 +594,10 @@ export function requireCompletedNativeRealmBootstrap(
   });
   requireCompletedNativeBuiltinFunctionKernel(tx, owner.kernel.kernel, owner.kernel.kernelDependencies);
   return pack;
+}
+
+/** Resolve class metadata through the already-issued whole realm owner. */
+export function nativeRealmClassValues(tx: PhysicalModuleReservations, pack: NativeRealmReservations) {
+  current(tx, pack);
+  return pack.classRealm ? nativeClassRealmValues(tx, pack.classRealm) : undefined;
 }

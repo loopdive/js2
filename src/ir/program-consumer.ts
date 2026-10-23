@@ -43,6 +43,7 @@ import {
   reserveNativeProgramFoundation,
   reserveNativeRealmKernel,
   nativeRealmReservationInventory,
+  nativeRealmClassValues,
   fillNativeRealmResources,
   requireCompletedNativeRealmBootstrap,
 } from "../backend/wasmgc/program/native-realm.js";
@@ -1432,6 +1433,7 @@ function materializePhysicalProgram(
       invocationPack,
       nativeSourceClosureCallableBindings(reservations, sourceClosures, record.nativeInvocation),
       exceptionTag,
+      invocationPack.construct && realm ? nativeRealmClassValues(reservations, realm) : undefined,
     );
   }
 
