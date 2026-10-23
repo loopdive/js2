@@ -1332,3 +1332,71 @@ Raw evidence: `.tmp/7139-construct-qualified-final-tests.log`,
 `.tmp/7139-construct-final-quality.json`, `.tmp/7139-construct-comparisons.json`,
 `.tmp/7139-construct-parent-*`, `.tmp/7139-profile-construct*`, and
 `.tmp/review-class-construct-execution/REVIEW.md`.
+
+
+### Reference-valued select (implementation plan)
+
+Move select emission out of the generic lowering switch into
+`src/ir/lowering/select.ts`, next to the existing string-operation lowering seam.
+Use the active backend TypeConverter's actual physical slot. Numeric/Wasm handle
+selects and non-Wasm backends retain their existing instructions and local count.
+A physical reference select stores both eagerly evaluated operands in distinct
+per-instruction scratch locals, then evaluates the condition and emits a typed
+if whose arms only read those locals. This preserves true/false/condition order
+and unselected operand effects; it is not short-circuit evaluation.
+
+Reuse the lowerer's scratch allocator and existing emitter local/if primitives.
+Use defaultable nullable scratch for nonnullable references, refining only the
+proven-nonnull reads; retain the exact original result block type. Do not pool
+scratch by type: nested selects in the false operand or condition must not
+clobber an enclosing saved true operand. No new emitter ABI, Wasm instruction
+variant, encoder or host bridge is needed. Keep the generic switch smaller.
+
+Acceptance includes original/decoded source-free standalone execution, exact
+reference identity for both conditions, eager effects and abrupt completion,
+nullable/concrete reference validation, nested false/condition regressions, and
+exact numeric instruction/local/byte preservation. Check the actual linear
+physical converter's numeric handle path separately from the still-open full
+class/Construct linear projection. Fresh adversarial review must assess scratch
+ownership, physical type conversion, nesting and the quality split.
+
+### Reference-valued select checkpoint
+
+The generic switch now delegates to the small select lowerer described above.
+Actual backend physical slots determine whether select needs reference scratch;
+logical strings on the production Linear converter still use their original i32
+handle select without extra locals. The two nullable scratch slots belong to each
+instruction; nonnullable reads refine back to the exact original result type.
+
+Qualification: **24/24** focused tests pass, including original/decoded standalone
+units, runtime nested selects in both false operand and condition, exact reference
+identity, eager operand/condition calls, and exact thrown payload identity. A direct
+helper-level Wasm test checks evaluation independently of the enclosing try
+scheduler. Seven persistent physical-reference cases validate and execute extern,
+nonnullable extern, function, eq/any and concrete nullable/nonnullable references.
+Vitest's inspector initially threw on opaque GC objects; the retained failed log
+records this, and Object.is now tests those identities without object inspection.
+
+Four numeric/backend cases preserve literal instruction bodies, local counts and
+resulting bytes; their golden modules share the lowered signature metadata. The
+production Linear factory test separately executes its numeric handle path with
+real emitted string handles. This does not establish full Linear class/Construct
+execution or source-frontend reference-select construction. All **14/14** existing
+GC artifact rows are exactly equal to parent `6caf9c520b76`.
+
+The exact-parent source substitution positively reproduces the invalid untyped
+reference select at Wasm validation; the same selected decoded case passes on the
+candidate. Loaded parent source hashes match the pinned Git blob. All **50/50**
+adjacent test statuses and full failure messages are unchanged: **46 pass, 4 fail**.
+Those four existing frozen string-refusal expectations remain red on both sides;
+they were neither skipped nor rebaselined. Source and focused test typechecks and
+all ten quality commands pass, with no size grant. Dead-export qualification still
+only preserves an OPEN graph/failed strict closure; it does not certify deletion.
+Fresh adversarial review has no unresolved correctness or quality findings.
+
+Evidence: `.tmp/7139-select-checkpoint-tests2.log`,
+`.tmp/7139-select-checkpoint-tests-typecheck.log`,
+`.tmp/7139-select-qualified-quality.json`, `.tmp/7139-select-comparisons.json`,
+`.tmp/7139-select-exact-parent-failure2.log`, and
+`.tmp/review-reference-select/REVIEW.md`. Full source class evaluation/binding and
+Construct semantics, true Linear parity and migration retirement remain open.
