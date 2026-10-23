@@ -1059,3 +1059,79 @@ retains `class-definition-execution-unsupported`; it produces no new executable
 class value and claims no lifecycle conformance improvement. Lexical environments,
 member closures, canonical Call/Construct, descriptors, realm completion and true
 linear execution remain open. Public heads, HOLDs and queue remain unchanged.
+
+### Canonical class Call error execution (implementation plan)
+
+The retained class value can invoke its actual Call closure, but the existing IR
+`emitNativeTypeError` has no semantic callable declaration or full-program physical
+binding. Class Call must throw this error, while class lexical guards can also
+need ReferenceError in the same artifact. Extend that shared path before producing
+source class Call entries; do not substitute another class-only exception carrier.
+
+Move the existing ReferenceError declarations/providers into parameterized
+`ir/runtime/error-callables.ts`, preserving its exports, provider data and host
+compatibility. Add TypeError only for existing WasmGC no-host targets, with the
+same message/result ABI and canonical Error constructor owner. Extend the closed
+feature/provider catalog and the existing callable-feature census. No new host
+capability or host lane is introduced.
+
+Generalize `ir/program/native-error-setup.ts` selection/binding by error kind,
+retaining its ReferenceError API default. The native string plan/pack must carry
+the full ordered error population, reserve/fill/authenticate each constructor
+through `native-error-constructor.ts`, and contribute each literal/resource/ABI
+entry exactly once. Preserve the old ReferenceError resource keys and old native
+TypeError facade. Reuse one canonical Error layout/recipe; no copied error body.
+
+Qualification must execute a retained class Call closure containing the real IR
+TypeError throw, including catch continuation and coexistence with actual source
+TDZ ReferenceError, original/decoded/fresh-process replay and zero imports. Inspect
+actual thrown kind, brand, message and fresh identity on copies only. These are
+constructed class-IR controls, not a claim of source ClassDefinitionEvaluation.
+Reject changed provider/signature, lost/extra/reordered error requirements and
+stale or swapped reservation owners. Existing TDZ/TypeError owner and artifact
+controls remain unchanged. Quality gates require no driver growth grants.
+
+Baseline probe: `.tmp/7139-class-call-error-baseline.mts` supplies the shared IR
+throw helper in the actual retained class Call target of the complete allocation
+fixture; preserve its observed refusal before claiming the physical fix. Source
+class environments/construction and the complete migration acceptance remain open.
+
+### Canonical class Call error execution qualification (local)
+
+The actual retained class Call closure now throws the canonical native TypeError
+through the shared semantic declaration, full-program selection, ABI binding and
+physical Error constructor owner. ReferenceError and TypeError can coexist in one
+prepared artifact with exact ordered resource accounting. ReferenceError retains
+its existing keys, provider data and compatibility exports; no host import or
+new host capability is added.
+
+- Execution and source TDZ controls: **16/16**, including original/decoded
+  packets, native/UTF-8 strings and guarded frontend-free process replay. Actual
+  class calls throw TypeError with tag, name, full message and fresh identity;
+  mixed artifacts retain genuine source TDZ ReferenceError. Construct closure
+  probes retain independent captured values across calls and class evaluations.
+- Provider/ABI/resource/owner/manifest controls: **113/113**. Source inventory,
+  source class refusal, TDZ, prepared validation and realm owner controls:
+  **55/55**. One selected default-domain Construct preservation case also passes;
+  the other eight cases were not selected in that separate run.
+- Exact parent `3dc1caa49c4dec0c47eefdc8f414136cc78b7823` still refuses the
+  complete class Call packet with `unknown-function-ref` for `__new_TypeError`;
+  the parent-loading probe passes **1/1** with source substitution provenance.
+- Full existing class lifecycle: **42 pass / 98 fail / 140**. Every assertion
+  status and full failure text matches both retained earlier lifecycle reports;
+  there is no source class lifecycle gain from this constructed-IR slice.
+- Existing gc artifacts: **14/14 byte-identical**. All eight source quality gates
+  pass without grants or baseline edits. Fresh adversarial review reports no
+  findings; final source/test hashes match its recorded scope.
+
+Evidence: `.tmp/7139-class-call-errors-*`,
+`.tmp/review-class-call-errors/REVIEW.md`. An intermediate expanded inspector run
+was **12 pass / 4 fail / 16** because its UTF-8 observation branch used the wrong
+Wasm `if` block-type property. The test-only reader is corrected; the final
+16/16 run includes actual UTF-8 field inspection. Both logs are retained.
+
+This qualifies constructed class IR Call, not source ClassDefinitionEvaluation
+or true linear execution. Source lexical environments, original member closure
+ABI, Call/Construct production, descriptors and full realm execution remain open.
+The full migration acceptance is unchanged; public heads, HOLDs and queue remain
+untouched.

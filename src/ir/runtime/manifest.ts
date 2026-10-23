@@ -215,6 +215,7 @@ export type {
 } from "./contracts/manifest.js";
 
 import { irTypeEquals } from "../core/types.js";
+import { TYPE_ERROR_SIGNATURE } from "./error-callables.js";
 import {
   REFERENCE_ERROR_SIGNATURE,
   REFERENCE_ERROR_RUNTIME_PROVIDERS,
@@ -360,6 +361,7 @@ const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc
 
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
   "error.reference.construct": REFERENCE_ERROR_SIGNATURE,
+  "error.type.construct": TYPE_ERROR_SIGNATURE,
   "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "js.number.unbox": EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,

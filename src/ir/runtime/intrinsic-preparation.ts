@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { irErrorConstructorDeclaration } from "./error-callables.js";
 import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import type { PreparedIrRuntimeManifest } from "./contracts/prepared.js";
@@ -828,7 +829,7 @@ export function prepareIrRuntimeManifest(input: PrepareIrRuntimeManifestInput): 
               const declaration = irRuntimeCallableDeclaration(reference);
               if (
                 declaration &&
-                (declaration.feature === "error.reference.construct" ||
+                (irErrorConstructorDeclaration(declaration.ref) ||
                   declaration.feature === "js.number.from-value" ||
                   irOrdinaryObjectCallableDeclaration(declaration.ref) ||
                   irNumberRemainderCallableDeclaration(declaration.ref))
