@@ -27,7 +27,7 @@ import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservat
 import { createEmptyModule } from "../src/ir/types.js";
 import { prepareIrRuntimeManifest } from "../src/ir/intrinsic-support.js";
 import { planPhysicalSetup, type PhysicalNativeNumberFormatInput } from "../src/ir/program-physical-plan.js";
-import { forEachInstrDeep } from "../src/ir/core/nodes.js";
+import { forEachInstrDeep, type IrInstr } from "../src/ir/core/nodes.js";
 import { planNativeStringValuePhysical } from "../src/backend/wasmgc/program/native-string-values.js";
 import { deriveNativeStringOutputRequirements } from "../src/ir/program/native-string-output-requirements.js";
 import { deriveNativeValueResourcePlan } from "../src/ir/program/native-value-resources.js";
@@ -100,6 +100,7 @@ describe("complete prepared formatter demand joins", () => {
       const nativeInput = {
         demands,
         plan: selected.plan,
+        ...(selected.invocationRequirements ? { invocationRequirements: selected.invocationRequirements } : {}),
         outputRequirements,
         ...(selected.plan.mode === "number-boundary"
           ? { valueRequirements: deriveNativeValueResourcePlan(program, projection, "native-string") }
@@ -334,7 +335,14 @@ describe("complete prepared formatter demand joins", () => {
       expect(requirements.calls.map((row) => row.instruction)).toEqual(expected.map((row) => row.instruction));
       expect(new Set(requirements.calls.map((row) => row.view))).toEqual(new Set(["program", "projection"]));
       expect(requirements.batch).toBe(program.runtimeSupport!.batches[0]);
-      expect(requirements.supportBuffers).toHaveLength(31);
+      expect(requirements.supportBuffers).toHaveLength(43);
+      // Compare every actual instruction identity, not only a buffer-count snapshot.
+      const actualInstructions = new Set<IrInstr>();
+      for (const block of requirements.batch.implementation.body.blocks)
+        for (const root of block.instrs) forEachInstrDeep(root, (instruction) => actualInstructions.add(instruction));
+      const selectedInstructions = new Set(requirements.supportBuffers.flatMap((row) => row.instructions));
+      expect(selectedInstructions.size).toBe(actualInstructions.size);
+      for (const instruction of actualInstructions) expect(selectedInstructions.has(instruction)).toBe(true);
       expect(requirements.literals).toHaveLength(requirements.batch.literals.length);
       expect(
         requirements.literals.map((row) => [row.bufferIndex, row.instructionIndex, row.instruction.value]),

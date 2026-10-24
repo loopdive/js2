@@ -25,7 +25,7 @@ import {
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
-import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
+import { planPreparedDynamicUnits, preparedOpaqueDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -995,7 +995,7 @@ function physicalSignatureConverter(
       }
       const value =
         scalar(type) ??
-        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
+        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedOpaqueDynamicCarrier(type) : undefined);
       if (
         type.kind === "support-ref" &&
         native?.formatterScratch &&
@@ -1287,7 +1287,7 @@ export function planPhysicalSetup(
   const asyncFrames = asyncOutcome.kind === "planned" ? asyncOutcome.setup : undefined;
   if (asyncOutcome.kind !== "planned") gaps.add(asyncOutcome.detail, asyncOutcome.unitId);
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
-  const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
+  const dynamic = planPreparedDynamicUnits(program, projection, asyncFrames, sourceClosures, native?.valueRequirements);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
   const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
 

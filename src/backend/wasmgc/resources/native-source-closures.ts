@@ -139,6 +139,7 @@ function authenticateCarriers(
     requireNativeStringLiteralTypes(tx, carriers.strings.types, carriers.strings.key, carriers.strings.utf8Storage);
 }
 function carrierValue(tx: PhysicalModuleReservations, carriers: NativeSourceClosureCarriers, type: IrType): ValType {
+  if (type.kind === "dynamic" && type.tag === undefined) return { kind: "externref" };
   if (type.kind === "boxed") {
     const inner = nativeRefCellScalarInner(type);
     const cell = inner && carriers.refCells && resolveNativeRefCell(tx, carriers.refCells, inner);

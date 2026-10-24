@@ -431,6 +431,8 @@ export interface IrExternClassMeta {
  * until Phase 3, so from-ast doesn't see them.
  */
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
+  /** Source-owned logical generic closure signature; no physical representation grant. */
+  sourceClosureSignature?(node: IrClosureLiteral): IrClosureSignature | undefined;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -16496,6 +16498,11 @@ function assertUndefinedOnlyVoidClosure(expr: IrClosureLiteral, cx: LowerCtx): v
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerClosureExpression(expr, cx));
+  const sourceSignature = cx.resolver?.sourceClosureSignature?.(expr);
+  if (sourceSignature) {
+    if (sourceSignature.returnType === null) assertUndefinedOnlyVoidClosure(expr, cx);
+    return lowerClosureExpressionWithSignature(expr, sourceSignature, undefined, cx);
+  }
   const memberPlan = ts.isFunctionExpression(expr) ? cx.functionMemberClosures?.resolve(expr) : undefined;
   if (memberPlan) {
     if (!memberPlan.isCurrent() || memberPlan.ownerUnitId !== cx.ownerUnitId)

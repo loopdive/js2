@@ -2935,3 +2935,59 @@ it was left running under the user's no-cancellation constraint. The 79-case
 result above is the separately scoped, completed run. General value-preserving
 JavaScript Call, public Promise execution, Linear/WASI, full Test262/performance
 acceptance and reviewed legacy retirement remain incomplete.
+
+## Implementation Plan — 2026-10-24 — value-preserving source closures
+
+A scalar adapter cannot recover a value erased by typed body lowering. Connect
+logical dynamic source signatures to the native runtime's existing opaque value
+carrier, preserving the source function and its actual closure slot. Reuse the
+existing source signature planning and per-unit dynamic operation census; keep
+logical signature admission separate from physical representation selection.
+Native dynamic lowering must use the same canonical value producers as common
+Call, never a host import or a newly invented box population. Unsupported dynamic
+operations must remain explicit until their real native implementation is joined.
+
+Start validation from a source-produced generic closure with heterogeneous runtime
+arguments, omitted arguments and object/function identity, including codec replay.
+This is a path through the real public compiler, not a hand-built Wasm function.
+Typed source bodies still need value-preserving generic preparation before their
+runtime guards can be removed. Full generic Call and Promise integration remain
+the acceptance target; identity transport alone is not completion.
+
+Signature conversion is extracted into `src/ir/source-callable-signatures.ts`
+beside existing source closure lowering. It reuses the checker and prepared-data
+comparison, removes the converter from the oversized program source driver, and
+shares annotation/inference admission. Its AST dependency remains explicit
+frontend migration debt in the boundary inventory; this extraction does not
+claim frontend activation. The existing void-return proof also applies to the
+new closure-signature path.
+
+Validation of this slice: four actual native Call executions cover both string
+storage modes and original/decoded programs, including annotated and inferred
+factories. Nine signature/void rejection cases pass. The 14-case run initially
+reported 13 passed and one test failure because dynamic addition is refused
+already during preparation (`__ir_dyn_add` lacks a canonical declaration),
+rather than at physical admission as the test expected. The corrected explicit
+preparation-refusal case passed separately (1/1; 13 unrelated cases skipped).
+Source/focused-test TS7, all nine quality checks including the CI-base budgets,
+and eleven byte-identical host binaries against main 7371eb505 passed.
+Independent review found and verified the void-return guard repair; no further
+actionable findings remained. Opaque value transport is implemented here;
+dynamic operations, typed-body generic preparation, full Promise execution,
+Linear/WASI and strict legacy retirement remain open.
+
+The commit hook exposed four formatter-fixture failures. An isolated archive of
+published 4d66db0c reproduces the same four failures (25/29 pass), so these are
+not caused by the new opaque-value lowering. The fixture dropped the issued
+invocation requirement returned by the real string/value planner; preserve that
+exact owner. Its old 31-buffer snapshot also disagrees with the actual canonical
+formatter's 43 buffers, with or without GVN. Pin the current population and add
+an independent deep-instruction identity census so the update cannot conceal
+missing support instructions. Rerun the complete 29-case fixture suite.
+
+Formatter repair result: 29/29 pass in the complete targeted suite; focused
+TS7 also passes. The earlier slow commit hook had additionally passed 61/61
+source invocation and the mixed-object-access suite before stopping at the
+formatter failures. Remaining hook files were not reached and are not claimed
+as checked by that run. The commit retry uses the repository's documented fast
+hook after repairing the observed failure; no failed result is suppressed.

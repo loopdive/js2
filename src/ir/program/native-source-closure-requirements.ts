@@ -82,6 +82,7 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
   if (!anchor) invalid("missing source anchor");
   const key = `native-source-closures:${JSON.stringify(anchor.id)}`;
   const scalar = (type: IrType, unitId: IrUnitId, role: string): void => {
+    if (type.kind === "dynamic" && type.tag === undefined) return;
     if (type.kind === "val" && !type.typeRef && type.val.kind !== "ref" && type.val.kind !== "ref_null") return;
     if (type.kind === "extern" || type.kind === "string" || nativeRefCellScalarInner(type)) return;
     if (type.kind === "callable") {

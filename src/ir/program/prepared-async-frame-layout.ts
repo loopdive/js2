@@ -12,7 +12,7 @@ import type { CurrentPreparedIrAsyncRuntime } from "../runtime/contracts/prepare
 import { irCallableBindingKey, irUnitCallableBindingId, irUnitFuncRef } from "../core/callable-bindings.js";
 import { preparedIrCallableSignature } from "./abi-signatures.js";
 import { preparedIrDataMismatch } from "./data.js";
-import { preparedHostAsyncDynamicCarrier } from "./host-async-dynamic.js";
+import { preparedOpaqueDynamicCarrier } from "./host-async-dynamic.js";
 import type { PreparedIrAbiEntry } from "./prepared-contracts.js";
 import type { PreparedFrameInput, FrameValue, PreparedAsyncFrameCallable } from "./prepared-async-frame-contracts.js";
 const ext: ValType = { kind: "externref" };
@@ -34,7 +34,7 @@ export function gap(detail: string, stateId?: number, valueId?: number): never {
 
 /** The adapter's kind-only conversions cannot preserve branded/unsigned domains. */
 export function scalar(type: IrType, where: string, mode: "host" | "native" = "host"): ValType {
-  const dynamic = mode === "host" ? preparedHostAsyncDynamicCarrier(type) : undefined;
+  const dynamic = mode === "host" ? preparedOpaqueDynamicCarrier(type) : undefined;
   if (dynamic) return dynamic;
   if (
     type.kind !== "val" ||
