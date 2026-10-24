@@ -475,3 +475,5 @@ tests on bare codegen contexts or byte/ABI pins (`issue-2949-s5-0/1/2/3/5`,
 `issue-3521-prepared-free-function-routing`, `issue-3526-callable-boundary-callback`,
 `issue-3526-string-boundary-concat-many`, `issue-1183`, `native-strings-standalone`).
 Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
+
+- **IR-only readiness re-bank (2026-10-24, stakeholder decision):** `scripts/ir-only-baseline.json` single-host lane re-measured under the regime (38/0 → 26/12) because its basis profile `host-assisted` no longer exists; the 12 legacy units are #7103, which ratchets the lane back. Decided by the stakeholder on 2026-10-24 after the lead presented re-bank vs land-#7103-first.
