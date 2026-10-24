@@ -17,6 +17,10 @@ goal: standalone-mode
 requested_by: claude.ai@loopdive.com/fable-architect
 related: [6651, 6766, 6767, 5316, 5268, 5148, 5116, 4777, 4599, 3371, 4010, 1906]
 loc-budget-allow:
+  # 2026-10-20 (#6770 approved relational Symbol boundary): six wiring lines
+  # reserve the existing TypeError guard before operands and check both numeric
+  # temporaries. No new conversion semantics outside this approved value guard.
+  - src/codegen/binary-ops.ts
   # 2026-09-30 (#6770 plan, Fable lane). Eight mechanisms across the object
   # runtime; wiring only in the existing files listed, every helper longer
   # than ~40 lines goes into a NEW leaf (registered in
@@ -989,3 +993,19 @@ file on `319fc0a667e37710be11d6de0cc1477bdfd3b5bf` settled **5 PASS / 0 FAIL /
 source/dependency guards. Normal hooks, CI, and the protected full-suite floor
 remain **PENDING**. This continuation does not close #6770, waive either TA failure,
 claim original oracle14/full11778 success, or provide census conformance credit.
+
+## 2026-10-20 approved relational Symbol numeric-boundary continuation
+
+The separately human-approved 2,890-byte repair reuses the existing semantic
+Symbol-to-number TypeError arm at both relational numeric operands, after both
+ToPrimitive results exist and before numeric unboxing. Required TypeError
+dependencies are prepared before operand compilation; lexicographic comparison,
+raw nonthrowing numeric-index probes and the original operand/conversion order
+remain unchanged. This is the bounded AST exception for this repair only.
+
+The exact Root-owned eight programs provide 24 independent serial flag cases,
+with isolated Node VM references, mandatory module initialization and the stock
+35-second case deadline. Qualification, normal hooks, CI and protected floors
+are PENDING; no canonical Test262 result, TypedArray repair or whole #6770
+closure is claimed. The earlier seeder five-test evidence and both retained
+TypedArray failures remain separate and unchanged.
