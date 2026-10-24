@@ -24,13 +24,15 @@ import { ts } from "../ts-api.js";
 export const IR_NUMBER_TO_STRING_NATIVE_FN = "__ir_number_to_string_native";
 
 /**
- * Host-free stdout sink append (#3469's `__stdout_append`) — takes one
- * `(ref null $AnyString)`, concatenates it onto the in-module `__stdout_acc`
- * rope, returns nothing. The rope is read back by the runner through
- * `__stdout_prepare`/`__stdout_char`, so the whole console path stays
- * import-free and #2961's import-leak gate stays green.
+ * Native stdout append takes the logical string carrier and returns nothing.
+ * Standalone uses the in-module rope and its readout exports; WASI uses the
+ * existing UTF-8 fd_write provider. Neither needs an env/JavaScript import.
  */
-export const IR_CONSOLE_SINK_APPEND_FN = "__ir_console_sink_append";
+export {
+  IR_CONSOLE_SINK_APPEND_FN,
+  IR_CONSOLE_STDERR_APPEND_FN,
+  IR_CONSOLE_FORMAT_VALUE_FN,
+} from "../shared/contracts/console-output.js";
 
 /**
  * The console methods the IR lowers. Identical in both lanes: the host lane
@@ -38,7 +40,8 @@ export const IR_CONSOLE_SINK_APPEND_FN = "__ir_console_sink_append";
  * argument and appends it to the sink. `console.log`-family only — anything
  * else (`table`, `group`, `time`, …) has no lowering in either lane.
  */
-export const IR_CONSOLE_METHODS: ReadonlySet<string> = new Set(["log", "warn", "error", "info", "debug"]);
+import { CONSOLE_METHOD_NAMES as IR_CONSOLE_METHODS } from "../shared/contracts/console-output.js";
+export { IR_CONSOLE_METHODS };
 
 /**
  * The EXACT console call shape the host-free lowering covers, as seen from the
@@ -70,4 +73,18 @@ export function isHostFreeConsoleCallReceiver(expr: ts.Identifier): boolean {
   // no value representation for here (the builder's own `statementPosition`
   // guard states the same restriction).
   return ts.isExpressionStatement(call.parent);
+}
+
+/** Extract the supported single console argument only after the caller proves the receiver. */
+export function hostFreeConsoleArgument(
+  call: ts.CallExpression,
+  provesReceiver: (id: ts.Identifier) => boolean,
+): ts.Expression | null {
+  const target = call.expression;
+  return ts.isPropertyAccessExpression(target) &&
+    ts.isIdentifier(target.expression) &&
+    provesReceiver(target.expression) &&
+    isHostFreeConsoleCallReceiver(target.expression)
+    ? call.arguments[0]!
+    : null;
 }

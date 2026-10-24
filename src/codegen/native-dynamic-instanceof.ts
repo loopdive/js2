@@ -161,7 +161,8 @@
  * `__typeof_function`, which changes no index at all.
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { hostFreeEnvironment, type CodegenContext, type FunctionContext } from "./context/types.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import type { ts } from "../ts-api.js";
 import { OBJ_FLAG_CALLABLE } from "./builtin-callable-brand.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
@@ -575,6 +576,18 @@ function linkedPeerPrototypeArm(ctx: CodegenContext, externGetIdx: number, guard
   ];
 }
 
+/** Positive primitive proof; unknown values remain unclassified. */
+function provenPrimitiveInstrs(slot: number, primitiveIdxs: readonly (number | undefined)[]): Instr[] {
+  const out: Instr[] = [
+    { op: "local.get", index: slot },
+    { op: "call", funcIdx: primitiveIdxs[0]! },
+  ];
+  for (const idx of primitiveIdxs.slice(1)) {
+    out.push({ op: "local.get", index: slot }, { op: "call", funcIdx: idx! }, { op: "i32.or" });
+  }
+  return out;
+}
+
 /**
  * Register (once) the native `__instanceof_dynamic` helper and return its stable
  * function handle, or `undefined` when the standalone substrate it needs is
@@ -582,6 +595,9 @@ function linkedPeerPrototypeArm(ctx: CodegenContext, externGetIdx: number, guard
  * than emit a partial answer.
  */
 export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | undefined {
+  // The operator implicitly reads the runtime constructor prototype. Record
+  // the explicit-read demand before reuse; finalize builds the identity edge.
+  if (hostFreeEnvironment(ctx)) recordStandaloneRuntimeKeyClassMemberRead(ctx);
   const existing = ctx.funcMap.get(HELPER_NAME);
   if (existing !== undefined) return existing;
 
@@ -642,17 +658,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
     { op: "call", funcIdx: typeofUndefinedIdx },
     { op: "i32.or" },
   ];
-  /** Positive primitive proof; unknown values must remain conservative false. */
-  const isProvenPrimitive = (slot: number): Instr[] => {
-    const out: Instr[] = [
-      { op: "local.get", index: slot },
-      { op: "call", funcIdx: primitiveIdxs[0]! },
-    ];
-    for (const idx of primitiveIdxs.slice(1)) {
-      out.push({ op: "local.get", index: slot }, { op: "call", funcIdx: idx! }, { op: "i32.or" });
-    }
-    return out;
-  };
+  const isProvenPrimitive = (slot: number): Instr[] => provenPrimitiveInstrs(slot, primitiveIdxs);
   const returnConst = (value: number): Instr[] => [{ op: "i32.const", value }, { op: "return" }];
 
   addStringConstantGlobal(ctx, "prototype");

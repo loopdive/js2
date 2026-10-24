@@ -423,7 +423,7 @@ export type IrType =
 
 /** Wrap a plain ValType as an IrType — the common path for Phase 1/2 callers. */
 export function irVal(v: ValType): IrType {
-  return { kind: "val", val: v };
+  return v.kind === "i32" && v.uint32 ? { kind: "val", val: v, signed: false } : { kind: "val", val: v };
 }
 
 /** Construct a backend-neutral dense-vector type. */
@@ -638,6 +638,7 @@ export function objectShapeEquals(a: IrObjectShape, b: IrObjectShape): boolean {
 
 function valTypeEquals(a: ValType, b: ValType): boolean {
   if (a.kind !== b.kind) return false;
+  if (a.kind === "i32" && b.kind === "i32" && a.uint32 !== b.uint32) return false;
   if (a.kind === "ref" || a.kind === "ref_null") {
     return (a as { typeIdx: number }).typeIdx === (b as { typeIdx: number }).typeIdx;
   }

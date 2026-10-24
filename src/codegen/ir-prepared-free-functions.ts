@@ -38,7 +38,7 @@ import {
   preparedIrAsyncSourceCanSuspend,
   preparedIrAsyncSourceShape,
 } from "./async-ir-planning.js";
-import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
+import { addFuncType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
 import { timerShimOutsideCaller } from "./ir-timer-shim-planning.js";
@@ -55,6 +55,12 @@ import {
   type IrExactBodyClaim,
   type IrExactFunctionClaim,
 } from "./ir-overlay-safety.js";
+import {
+  preparedSignatureOptions,
+  r2StableSignatureType,
+  r2SignatureMatchesAllocatedSlot,
+} from "./declarations/prepared-signatures.js";
+import { samePhysicalValType } from "./struct-hierarchy-layout.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 import { applyArgArrayTypeErrorMaterializesReceiver } from "./apply-arglist-typeerror.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
@@ -395,36 +401,6 @@ function bodyProjection(
   );
 }
 
-function r2StableSignatureType(
-  type: IrType | null,
-  options?: { readonly allowOpaqueExternrefValue?: boolean },
-): boolean {
-  if (type === null || type.kind === "string") return true;
-  // #2951 generator owners — the source return contract of a `function*` is the
-  // opaque generator object, which both front-ends project to the same physical
-  // `externref`. Only the generator admission path opts in; every other owner
-  // keeps the narrower vocabulary so an unproven reference contract cannot
-  // silently enter preparation.
-  if (options?.allowOpaqueExternrefValue === true && asVal(type)?.kind === "externref") return true;
-  // #3522 returned-closure ownership — an exact callable source boundary is
-  // the same canonical externref contract in both backends. Admit the owner to
-  // prepare-before-emit so its inventoried lifted literal is allocated inside
-  // the sealed component instead of relying on a direct-body closure slot.
-  if (type.kind === "callable") return true;
-  // #3522 Builtins retirement — opaque host-class contracts have one
-  // backend-independent physical representation in the JS-host lane:
-  // externref. Admission is still fail-closed because
-  // r2SignatureMatchesAllocatedSlot compares that projection with the exact
-  // Program ABI slot before preparation can replace the direct body.
-  if (type.kind === "extern") return true;
-  if (type.kind === "vec") {
-    const element = asVal(type.elementType);
-    return element?.kind === "f64" || element?.kind === "i32";
-  }
-  const val = asVal(type);
-  return val?.kind === "f64" || val?.kind === "i32";
-}
-
 /**
  * An unsealed early attempt is retried after direct emission. Nested executable
  * syntax can allocate derived callable identities during that attempt, and the
@@ -637,37 +613,6 @@ function containsCurrentFunctionPoisonPillRead(ctx: CodegenContext, declaration:
   return found;
 }
 
-function sameValType(left: ValType, right: ValType): boolean {
-  if (left.kind !== right.kind) return false;
-  if ((left.kind === "ref" || left.kind === "ref_null") && (right.kind === "ref" || right.kind === "ref_null")) {
-    return left.typeIdx === right.typeIdx;
-  }
-  return true;
-}
-
-function r2StableValType(
-  ctx: CodegenContext,
-  type: IrType,
-  options?: { readonly allowOpaqueExternrefValue?: boolean },
-): ValType | undefined {
-  if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
-  if (options?.allowOpaqueExternrefValue === true && asVal(type)?.kind === "externref") {
-    return { kind: "externref" };
-  }
-  if (type.kind === "string") {
-    if (!ctx.nativeStrings) return { kind: "externref" };
-    return ctx.anyStrTypeIdx >= 0 ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
-  }
-  if (type.kind === "vec") {
-    const element = asVal(type.elementType);
-    if (!element || (element.kind !== "f64" && element.kind !== "i32")) return undefined;
-    const vecTypeIdx = getOrRegisterVecType(ctx, element.kind, element);
-    return { kind: type.nullable ? "ref_null" : "ref", typeIdx: vecTypeIdx };
-  }
-  const val = asVal(type);
-  return val?.kind === "f64" || val?.kind === "i32" ? val : undefined;
-}
-
 /**
  * #2951 — IR-claimed generators compile once only in the JS-host lane. The
  * standalone / WASI / no-host-import lanes lower generators through the
@@ -677,37 +622,6 @@ function r2StableValType(
  */
 function generatorsPreparable(ctx: CodegenContext): boolean {
   return !(ctx.standalone || ctx.wasi || ctx.strictNoHostImports);
-}
-
-/**
- * Preparation may replace an empty declaration slot before direct emission,
- * but it must not change that slot's already allocated callable ABI. The
- * Program ABI registry observes the allocation contract, and later direct
- * callers/exports can already depend on it even when the body is still empty.
- */
-function r2SignatureMatchesAllocatedSlot(
-  ctx: CodegenContext,
-  unitId: IrUnitId,
-  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
-  options?: { readonly allowOpaqueExternrefValue?: boolean },
-): boolean {
-  const func = ctx.programAbiSourceCallables?.functionForUnit(unitId);
-  const signature = func === undefined ? undefined : ctx.mod.types[func.typeIdx];
-  if (!signature || signature.kind !== "func") return false;
-  const params = override.params.map((type) => r2StableValType(ctx, type, options));
-  const result = override.returnType === null ? null : r2StableValType(ctx, override.returnType, options);
-  if (
-    params.some((type) => type === undefined) ||
-    result === undefined ||
-    signature.params.length !== params.length ||
-    signature.results.length !== (override.returnType === null ? 0 : 1)
-  ) {
-    return false;
-  }
-  return (
-    signature.params.every((type, index) => sameValType(type, params[index]!)) &&
-    (result === null || sameValType(signature.results[0]!, result))
-  );
 }
 
 /**
@@ -1094,7 +1008,7 @@ function r3SuspendingAsyncSignatureMatchesAllocatedSlot(
   return (
     signature?.kind === "func" &&
     signature.params.length === override.params.length &&
-    signature.params.every((type, index) => sameValType(type, params[index]!)) &&
+    signature.params.every((type, index) => samePhysicalValType(type, params[index]!)) &&
     signature.results.length === 1 &&
     signature.results[0]?.kind === "externref"
   );
@@ -1499,7 +1413,7 @@ export function selectR2PreparedOwnerComponents(input: {
     // Admit that one reference contract for generators only; the standalone /
     // WASI / no-host-import lanes keep the compile-twice route because their
     // legacy lowering is the disjoint #680 native carrier.
-    const signatureOptions = isGenerator ? { allowOpaqueExternrefValue: true } : undefined;
+    const signatureOptions = preparedSignatureOptions(input.ctx, isGenerator);
     // (#3521 R2-T1) The same ten predicates in the same order, read as a table
     // so the FIRST failing one can be named. `find` short-circuits exactly like
     // the `||` chain it replaces, so no predicate that used to be skipped runs.

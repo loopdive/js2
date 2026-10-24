@@ -2,7 +2,7 @@
 
 import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
-import type { IrClassShape } from "../ir/nodes.js";
+import type { IrClassShape, IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { FieldDef, FuncHandle, ValType, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
@@ -67,6 +67,15 @@ function implicitConstructorClassForDeclaration(declaration: ts.Declaration): Im
     return declaration.initializer;
   }
   return undefined;
+}
+
+/** A non-terminal nested parent carries a separate enclosing-owner obligation. */
+function isNestedImplicitParentSupport(
+  target: IrFuncRef | undefined,
+  context: IrOverlayIdentityPlan["identityContext"],
+): boolean {
+  const unit = target?.binding.kind === "unit" ? context.unitByUnitId.get(target.binding.unitId) : undefined;
+  return unit?.kind === "class-implicit-constructor" && !unit.terminal && unit.terminalOwnerId !== null;
 }
 
 function sameValType(left: ValType, right: ValType): boolean {
@@ -254,10 +263,7 @@ export function prepareImplicitConstructorSupports(input: {
       (parentShape &&
         (parentInitTarget?.binding.kind !== "unit" ||
           !parentLayout ||
-          (input.identityPlan.identityContext.unitByUnitId.get(parentInitTarget.binding.unitId)?.kind ===
-            "class-implicit-constructor" &&
-            input.identityPlan.identityContext.unitByUnitId.get(parentInitTarget.binding.unitId)?.terminalOwnerId !==
-              null)))
+          isNestedImplicitParentSupport(parentInitTarget, input.identityPlan.identityContext)))
     ) {
       continue;
     }
@@ -323,17 +329,17 @@ export function prepareImplicitConstructorSupports(input: {
 
   // Preparation is component-atomic across the synthesized parent chain. A
   // derived support body may reference an implicit parent only when that exact
-  // parent support is staged too, and may reference an explicit constructor
-  // only when its terminal body belongs to this preparation transaction.
+  // parent support is staged too. A terminal parent, including an implicit
+  // constructor with field initializers, must belong to this transaction.
   for (let changed = true; changed; ) {
     changed = false;
     const stagedUnitIds = new Set(staged.map(({ unitId }) => unitId));
     const filtered = staged.filter((candidate) => {
       if (!candidate.parentInitUnitId) return true;
       const parentUnit = input.identityPlan.identityContext.unitByUnitId.get(candidate.parentInitUnitId);
-      return parentUnit?.kind === "class-implicit-constructor"
-        ? stagedUnitIds.has(candidate.parentInitUnitId)
-        : input.ownerUnitIds.has(candidate.parentInitUnitId);
+      return parentUnit?.terminal
+        ? input.ownerUnitIds.has(candidate.parentInitUnitId)
+        : parentUnit?.kind === "class-implicit-constructor" && stagedUnitIds.has(candidate.parentInitUnitId);
     });
     if (filtered.length !== staged.length) {
       staged = filtered;
