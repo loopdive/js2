@@ -710,7 +710,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
-      | "native-own-property-descriptor",
+      | "native-own-property-descriptor"
+      | "native-dynamic-value-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -6272,6 +6273,46 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
  * declaration point.
  */
 let currentMemberClosureHasDynamicParams = false;
+// (#7106 Stage 4) The planned member closure's dynamic parameter names.
+let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+
+/**
+ * (#7106 Stage 4) `func()` — a bare call through one of the current function's
+ * dynamic parameters (assert.throws' `func()`), lowered through the native
+ * IsCallable + `__apply_closure` runtime with an undefined receiver. The
+ * calling body must not read `this`: legacy additionally restores
+ * `__current_this` when the callee throws inside a try, which the shared
+ * runtime does not, so a caller that could observe its receiver afterwards
+ * stays legacy. A planned member closure never reads `this` (its plan refuses
+ * it); a top-level function is checked here.
+ */
+function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
+  const closureParam = currentClosureDynamicParamNames.has(callee.text);
+  if (!closureParam && !currentDynamicParamNames.has(callee.text)) return false;
+  if (!currentDynamicRuntimeBuildable) return false;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-value-call") !== true) return false;
+  if (closureParam) return true;
+  const subject = currentSelectionSubject;
+  return subject !== null && subject.body !== undefined && !bodyReadsOwnThis(subject.body);
+}
+
+function bodyReadsOwnThis(body: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      found = true;
+      return;
+    }
+    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassLike(node)))
+      return;
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return found;
+}
 
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
@@ -6758,6 +6799,13 @@ function withFunctionMemberClosureState<T>(
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
   const outerClosureDynamic = currentMemberClosureHasDynamicParams;
   currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
+  const outerClosureDynamicNames = currentClosureDynamicParamNames;
+  currentClosureDynamicParamNames = new Set(
+    [...plan.dynamicParameterIndices].flatMap((index) => {
+      const name = plan.expression.parameters[index]?.name;
+      return name && ts.isIdentifier(name) ? [name.text] : [];
+    }),
+  );
   currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
     plan.expression,
     new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
@@ -6806,6 +6854,7 @@ function withFunctionMemberClosureState<T>(
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
     currentMemberClosureHasDynamicParams = outerClosureDynamic;
+    currentClosureDynamicParamNames = outerClosureDynamicNames;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
@@ -11292,6 +11341,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
     let localCallableArity: CallableArityRange | undefined;
+    if (scope.has(calleeName) && dynamicValueCallTarget(expr)) {
+      return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
+    }
     if (scope.has(calleeName)) {
       localCallableArity = knownCallableArity(expr.expression, scope);
       if (localCallableArity === undefined) {
