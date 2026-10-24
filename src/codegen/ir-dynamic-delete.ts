@@ -88,5 +88,5 @@ export function ensureIrDynamicDeleteHelper(ctx: CodegenContext, strict: boolean
   }
   // Late imports the guard or the throw registered mid-body shift every baked index.
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [i32]);
+  return publishReceiverHelper(ctx, helper);
 }

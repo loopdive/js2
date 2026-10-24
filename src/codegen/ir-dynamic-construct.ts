@@ -242,11 +242,11 @@ export function receiverHelperContext(
 }
 
 /** Register the finished helper as a defined function under its name; returns its index. */
-export function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
+export function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext): number {
   const typeIdx = addFuncType(
     ctx,
     helper.params.map((param) => param.type),
-    results,
+    helper.returnType === null ? [] : [helper.returnType],
   );
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set(helper.name, funcIdx);
@@ -305,7 +305,7 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
     { op: "if", blockType: { kind: "val", type: externref }, then: unbound, else: installed },
   );
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [externref]);
+  return publishReceiverHelper(ctx, helper);
 }
 
 export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
@@ -323,7 +323,7 @@ export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefi
   const helper = receiverHelperContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
   emitGlobalObjectAsThis(ctx, helper);
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [externref]);
+  return publishReceiverHelper(ctx, helper);
 }
 
 /**
@@ -353,7 +353,7 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
     { op: "call", funcIdx: ctx.funcMap.get("__isPrototypeOf") ?? isProtoOf },
   );
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [{ kind: "i32" }]);
+  return publishReceiverHelper(ctx, helper);
 }
 
 /**

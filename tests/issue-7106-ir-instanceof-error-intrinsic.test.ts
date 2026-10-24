@@ -154,5 +154,29 @@ describe("#7106 — instanceof an Error-family builtin through dyn.instanceof", 
       const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
       expect((instance.exports.probe as () => number)()).toBe(3);
     });
+
+    // Each source misses one of the arm's conditions, so the IR must keep
+    // `probe` on legacy without a post-claim error.
+    const REFUSED: Record<string, string> = {
+      "a typed left operand": `export function probe(v: Error) { return v instanceof TypeError; }`,
+      "a name the file declares": `var TypeError: any = Error;\nexport function probe(v: any) { return v instanceof TypeError; }`,
+      "a parameter named like the intrinsic": `export function probe(v: any, TypeError: any) { return v instanceof TypeError; }`,
+      "an Error-family name off the realm read": `export function probe(v: any) { return v instanceof AggregateError; }`,
+    };
+    for (const [name, source] of Object.entries(REFUSED)) {
+      it(`${lane}: keeps ${name} on legacy`, async () => {
+        const result = await compile(source, {
+          ...(lane === "standalone" ? { target: "standalone" } : {}),
+          experimentalIR: true,
+          skipSemanticDiagnostics: true,
+          allowJs: true,
+          fileName: "issue-7106-instanceof-error-refused.ts",
+          trackIrOutcomes: true,
+        } as never);
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        expect(irBodies(result)).not.toContain("probe");
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+      });
+    }
   }
 });

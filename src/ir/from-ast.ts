@@ -14845,26 +14845,13 @@ function lowerDynamicLaneIn(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId 
 }
 
 /**
- * (#7106) An operand of `dyn.instanceof` as a dynamic carrier. A catch binding
- * is a raw externref slot; on the non-fast lanes that IS the carrier, boxed as
- * the dynamic member read boxes the same binding.
- */
-function dynamicInstanceOfOperand(operand: ts.Expression, cx: LowerCtx): IrValueId {
-  const value = lowerExpr(operand, cx, irDynamic());
-  if (asVal(cx.builder.typeOf(value))?.kind === "externref" && cx.resolver?.dynamicCarrierIsExternref?.() === true) {
-    return cx.builder.emitBox(value, irDynamic());
-  }
-  return value;
-}
-
-/**
  * (#7106) The generic `instanceof` over two dynamic carriers. The selector admits
  * it only where legacy itself reaches its generic runtime operator
  * (`dynamicInstanceOfUse`), so a non-dynamic operand here is selector drift.
  */
 function lowerDynamicInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
-  const value = dynamicInstanceOfOperand(expr.left, cx);
-  const target = dynamicInstanceOfOperand(expr.right, cx);
+  const value = lowerExpr(expr.left, cx, irDynamic());
+  const target = lowerExpr(expr.right, cx, irDynamic());
   if (cx.builder.typeOf(value).kind !== "dynamic" || cx.builder.typeOf(target).kind !== "dynamic") {
     demoteToLegacy(
       "operand-coercion-unsupported",

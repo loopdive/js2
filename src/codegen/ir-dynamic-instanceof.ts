@@ -28,8 +28,10 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
+import { isAmbientIntrinsicName } from "../ir/values/ambient-intrinsics.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
-import { isBuiltinTypeName } from "./builtin-tags.js";
+import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
 import { publishReceiverHelper, receiverHelperContext } from "./ir-dynamic-construct.js";
 import { noJsHost } from "./js-errors.js";
@@ -94,10 +96,16 @@ function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
  */
 export function irDynamicInstanceOfAtLegacyParity(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
   if (!noJsHost(ctx) || ctx.fast) return false;
+  // `noJsHost` does not imply native-first: wasi with `strictNoHostImports: false`
+  // keeps host-assisted providers, whose instanceof tail this wrapper does not copy.
+  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (site.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !ts.isIdentifier(site.right)) return false;
   const file = site.getSourceFile();
   if (moduleInstallsCallableHasInstance(file)) return false;
-  return parameterTargetRoutesGeneric(ctx, site.right, file) || errorIntrinsicTargetTakesTagPath(ctx, site, file);
+  return (
+    parameterTargetRoutesGeneric(ctx, site.right, file) ||
+    errorIntrinsicTargetTakesTagPath(ctx, site.right, site.left, file)
+  );
 }
 
 /** The parameter half of {@link irDynamicInstanceOfAtLegacyParity}. */
@@ -111,20 +119,19 @@ function parameterTargetRoutesGeneric(ctx: CodegenContext, right: ts.Identifier,
   return isDynamicTypeFact(ctx.oracle.typeFactOf(right).kind);
 }
 
-function isDynamicTypeFact(kind: string): boolean {
+function isDynamicTypeFact(kind: TypeFact["kind"]): boolean {
   return kind === "any" || kind === "unknown";
 }
 
-/** (#7106) The Error-family builtins the IR may use as an `instanceof` target. */
-const IR_INSTANCEOF_ERROR_INTRINSICS: ReadonlySet<string> = new Set([
-  "Error",
-  "TypeError",
-  "RangeError",
-  "ReferenceError",
-  "SyntaxError",
-  "EvalError",
-  "URIError",
-]);
+/**
+ * (#7106) An Error-family constructor the IR may use as an `instanceof` target:
+ * one with a native `$tag` (`ERROR_FAMILY_CTOR_NAMES`) that the IR can also read
+ * off the realm (#7118's ambient-intrinsic value read). AggregateError and
+ * SuppressedError fall out because that realm read does not admit them.
+ */
+function isInstanceOfErrorIntrinsic(name: string): boolean {
+  return (ERROR_FAMILY_CTOR_NAMES as readonly string[]).includes(name) && isAmbientIntrinsicName(name);
+}
 
 /**
  * (#7106) `<any> instanceof TypeError` with the realm's own Error-family
@@ -135,7 +142,6 @@ const IR_INSTANCEOF_ERROR_INTRINSICS: ReadonlySet<string> = new Set([
  * where legacy takes that path:
  * - the name binds the lib declaration only, nothing in the file declares or
  *   writes it;
- * - the lane is native-first;
  * - the left operand is typed `any`/`unknown`, so none of
  *   `tryStaticInstanceOf`'s compile-time folds apply.
  * Whether the two paths agree row by row is measured, not assumed, in
@@ -143,16 +149,15 @@ const IR_INSTANCEOF_ERROR_INTRINSICS: ReadonlySet<string> = new Set([
  */
 function errorIntrinsicTargetTakesTagPath(
   ctx: CodegenContext,
-  site: ts.BinaryExpression,
+  right: ts.Identifier,
+  left: ts.Expression,
   file: ts.SourceFile,
 ): boolean {
-  const right = site.right as ts.Identifier;
   const name = right.text;
-  if (!IR_INSTANCEOF_ERROR_INTRINSICS.has(name)) return false;
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
+  if (!isInstanceOfErrorIntrinsic(name)) return false;
   if (ctx.oracle.valueDeclarationOf(right)?.getSourceFile().isDeclarationFile !== true) return false;
   if (declaredNonParameterNames(file).has(name) || identifierIsWrittenTo(file, name)) return false;
-  return isDynamicTypeFact(ctx.oracle.typeFactOf(site.left).kind);
+  return isDynamicTypeFact(ctx.oracle.typeFactOf(left).kind);
 }
 
 /**
@@ -181,5 +186,5 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
   emitInstanceofThrowGuard(ctx, helper);
   // The guard's TypeError may register late imports that shift baked indices.
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [i32]);
+  return publishReceiverHelper(ctx, helper);
 }
