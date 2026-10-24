@@ -32,6 +32,7 @@ import {
   type NativeDeclaredReservation,
 } from "./native-resource-declarations.js";
 import type { NativePromiseResourcePlan, NativePromiseOwner } from "../../../ir/program/native-promise-resources.js";
+import { NATIVE_PROMISE_STRINGS } from "../../../runtime/contracts/native-promise-literals.js";
 import { resolveNativeVectorForElement, type NativeVectorTypeReservations } from "./native-vectors.js";
 import {
   requireNativeClosureReservations,
@@ -237,7 +238,7 @@ export interface NativePromiseReservations {
   };
 }
 export interface NativePromiseStringBinding {
-  readonly text: "then" | "Chaining cycle detected for promise";
+  readonly text: (typeof NATIVE_PROMISE_STRINGS)[keyof typeof NATIVE_PROMISE_STRINGS];
   readonly global: GlobalReservation;
   readonly representation: "externref" | "gc";
 }
@@ -669,8 +670,8 @@ export function fillNativePromiseResources(
   const bagHas = bind(r.bagHas, [EXTERN, EXTERN], [I32]);
   const externGet = bind(r.externGet, [EXTERN, EXTERN], [EXTERN]);
   const typeofFunction = bind(r.typeofFunction, [EXTERN], [I32]);
-  const selfString = string(r.selfResolution, "Chaining cycle detected for promise"),
-    thenString = string(r.then, "then");
+  const selfString = string(r.selfResolution, NATIVE_PROMISE_STRINGS.selfResolution),
+    thenString = string(r.then, NATIVE_PROMISE_STRINGS.then);
   const methods: number[] = [],
     accessors: { typeIdx: number; getGlobal: number }[] = [],
     fields: { typeIdx: number; fieldIdx: number }[] = [],

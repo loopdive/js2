@@ -50,7 +50,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
 import-cycles-allow:
-  - backend->ir: 118 # 2026-10-24 (#3527): native frame materializer adds planner, plan comparison and attachment authentication; SCC counts do not grow.
+  - backend->ir: 119 # 2026-10-24 (#3527): frame materializer joins (+3) and shared Promise demand selection in the string planner (+1); literals stay in a runtime contract.
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
   - src/codegen/async-ir-planning.ts
@@ -2584,3 +2584,44 @@ three pre-existing malformed test type fixtures. The physical observation
 suite passes 20/20 after its BufferSource type correction. Full lint, boundary
 inventory, import-cycle and size/coercion/oracle gates pass. Legacy closure
 remains OPEN under the same preservation-only reachability result.
+
+## Implementation Plan — 2026-10-24 — native Promise value/string ownership
+
+Connect runtime-created Promise demand to the existing native string/value
+producer, including async source with no string literals or explicit boxing
+instructions. Share the demand predicate between the resource plan, source
+census and string planner in `program/native-promise-resources.ts`; retain
+the existing scanner, AnyValue, canonical undefined and number producers.
+Declare Promise-owned lookup/error literals through the same literal owner.
+Do not manufacture observations or admit the still-incomplete Promise group.
+
+Acceptance: source-created immediate-return and await programs, both string
+storage modes and codec replay obtain actual reserved and filled values;
+execute number roundtrips and inspect canonical undefined through emitted
+Wasm. Public acceptance must advance beyond missing string/value input while
+preserving the remaining composition obligations. Synchronous no-demand
+programs keep their existing selection. Quality: one shared demand predicate,
+no duplicate value runtime and no special-case source recognizer.
+
+Value/string integration validation: the new source-based matrix failed all
+eight async cases before the change (synchronous control passed). The first
+resource regression run passes 156/156. Five wider suites initially pass
+73/88: four failures pin the former 24-resource inventory; the other eleven
+also reproduce on archived unchanged HEAD 81bf738ef59062656419dda7c273cedff3dd89e2.
+Independent inventory probes identify exactly thirteen added resources,
+24→37 declarations, 27→43 steps and 6→10 carriers. Existing support remains
+43 buffers / 222 instructions from `__sh_num_toString_radix`. Expectations
+now retain exact counts and assert all seven shared value roles. Final
+planning/source-value run passes 21/21; inventory rerun passes 28/28 after
+correcting the options-mutation error expectation. Across the exercised
+suites, 244 distinct cases have passing results; this is not full Test262.
+
+Source and changed-test TS7, full lint (7,317 files), formatting and required
+ratchets pass. Eleven host consumer binaries are byte-identical to main
+7371eb505b365e49815f1ddc09afed6c52372540. Fresh review required moving the
+Promise literals out of the IR planner into an independent runtime contract;
+the repaired diff has no open findings. Import SCC sizes are unchanged; the
+shared demand predicate accounts for the reviewed backend→IR edge 119.
+Compiler inventory is valid but architecture incomplete. Legacy reachability
+is preservation-only: its two existing nonliteral imports leave strict
+closure OPEN. Full Promise execution and migration completion remain unproven.

@@ -274,9 +274,10 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
-        "src/runtime/contracts/well-known-symbols.ts"
+        "src/runtime/contracts/well-known-symbols.ts",
+        "src/runtime/contracts/native-promise-literals.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "backend-wasmgc",
@@ -16607,6 +16608,11 @@
       "path": "src/runtime/wasmgc/promise/promise-layout.ts",
       "state": "clean",
       "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/contracts/native-promise-literals.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
     }
   ]
 }

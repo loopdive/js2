@@ -253,9 +253,9 @@ describe("native Promise inventory on ordinary consumer planning", () => {
             ),
           ).toHaveLength(33);
           expect(result.observations).toHaveLength(1);
-          expect(result.observations[0]!.declarations).toHaveLength(24);
-          expect(result.observations[0]!.reservationSteps).toHaveLength(27);
-          expect(result.observations[0]!.carriers).toHaveLength(6);
+          expect(result.observations[0]!.declarations).toHaveLength(37);
+          expect(result.observations[0]!.reservationSteps).toHaveLength(43);
+          expect(result.observations[0]!.carriers).toHaveLength(10);
           expect(result.source.supportFunctions).toHaveLength(1);
           // Current radix support has 43 buffers / 222 instructions on the unchanged base too.
           expect(result.source.supportFunctions[0]!.name).toBe("__sh_num_toString_radix");
