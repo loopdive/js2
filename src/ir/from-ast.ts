@@ -17537,11 +17537,15 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       payloadSlot = cx.builder.declareSlot(`__catch_${varName}`, { kind: "externref" });
       // Bind the catch variable as a slot read so identifier reads
       // inside the handler emit `local.get` against the slot.
-      // (#7106) On the non-fast lanes the thrown payload already IS the dynamic
+      // (#7106) On the host-free lanes the thrown payload already IS the dynamic
       // carrier (an externref), and the selector's move-only scan treats the
       // binding as dynamic. Read it as one, as the for-in head is read, so
-      // `"…" + e` takes the dynamic `+` the selector admitted.
-      const catchIsCarrier = cx.resolver?.dynamicCarrierIsExternref?.() === true;
+      // `"…" + e` and `e instanceof TypeError` take the dynamic operations the
+      // selector admitted. The gc lane's carrier is an externref too, but gc
+      // output stays byte-identical when shared code changes, so the re-tag is
+      // host-free only; gc keeps its pre-existing claim-then-demote on these shapes.
+      const catchIsCarrier =
+        cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver?.jsHostExterns?.() === false;
       catchScope.set(varName, {
         kind: "slot",
         slotIndex: payloadSlot,

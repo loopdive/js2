@@ -33,7 +33,7 @@ import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
-import { publishReceiverHelper, receiverHelperContext } from "./ir-dynamic-construct.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { noJsHost } from "./js-errors.js";
 import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
 import { identifierIsWrittenTo, moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js";
@@ -174,7 +174,7 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
 
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
-  const helper = receiverHelperContext(
+  const helper = helperFunctionContext(
     IR_DYN_INSTANCEOF_HELPER,
     [
       { name: "value", type: externref },
@@ -186,5 +186,5 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
   emitInstanceofThrowGuard(ctx, helper);
   // The guard's TypeError may register late imports that shift baked indices.
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper);
+  return publishHelperFunction(ctx, helper);
 }
