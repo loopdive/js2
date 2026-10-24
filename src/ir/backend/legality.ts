@@ -31,7 +31,10 @@ export type IrBackendTargetCapability =
   | "native-arguments-length"
   | "native-current-this"
   | "native-own-property-test"
-  | "native-own-property-descriptor";
+  | "native-own-property-descriptor"
+  | "native-dynamic-value-call"
+  | "dynamic-method-call-wrapper"
+  | "host-dynamic-method-call";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -131,6 +134,31 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
+    case "native-dynamic-value-call":
+      // (#7106 Stage 4) a bare call through a dynamic value: the native
+      // IsCallable + `__apply_closure` member-call runtime (host-free lanes).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "dynamic-method-call-wrapper":
+      // (#7106 Stage 4) `recv.m(…)` on a dynamic receiver through the
+      // per-(method, arity) `__ir_dyn_mcall_<m>_<n>` wrapper: the call's
+      // [[Get]], then legacy's own any-receiver brand dispatch (host-free
+      // lanes; the native `__extern_method_call` serves open `$Object` only).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "host-dynamic-method-call":
+      // (#7117) `recv.m(…)` on a dynamic receiver through the generic
+      // `__ir_dyn_method_call_N` → host `__extern_method_call`, the real JS
+      // call. (A WasmGC vec is opaque to it — `list.join("-")` answers wrong
+      // there, pre-existing; the default JS lane is the native regime and
+      // projects as standalone, so it takes the wrapper instead.)
+      return profile.backend === "wasmgc" && profile.allowHostImports;
     case "native-arguments-length":
       // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
       // host-free lanes (`__ir_arguments_length`).

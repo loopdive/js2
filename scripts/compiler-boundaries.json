@@ -6765,6 +6765,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/template-wrapper.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Shared mechanics of the template-built IR wrappers (#7106): helper context, detached template parse, publication."
+    },
+    {
       "path": "src/codegen/helpers/arguments-registration.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8499,6 +8507,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "IR dyn.construct support (#7106 S3a): the per-arity wrapper over the legacy native-construct driver and the selector's plain-callee predicate; moves with the construct-driver backend split."
+    },
+    {
+      "path": "src/codegen/array/ir-array-prototype-borrow.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "IR Array.prototype borrow wrapper (#7106): legacy's borrow compiler over a detached template; moves with the array-prototype-borrow backend split."
     },
     {
       "path": "src/codegen/object-proto-tostring.ts",
@@ -11637,6 +11653,14 @@
       "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
+      "path": "src/ir/builtin-method-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/alloc-registry.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12292,6 +12316,22 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/dynamic-method-call-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Naming and routing contract for the per-(method, arity) dynamic method-call wrappers; move with the other IR runtime-symbol contracts when ir-core is split from frontend inventory."
+    },
+    {
+      "path": "src/ir/array-prototype-borrow-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Shape and naming contract for the per-(method, arity) Array.prototype borrow wrappers (`Array.prototype.<m>.call(recv, …)`); moves with the dynamic method-call naming contract."
     },
     {
       "path": "src/ir/dynamic-number-lowering.ts",

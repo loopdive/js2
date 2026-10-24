@@ -24,7 +24,8 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { flushLateImportShifts } from "./shared.js";
+import { compileExpression, flushLateImportShifts, VOID_RESULT } from "./shared.js";
+import { coerceType } from "./type-coercion.js";
 import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
 import { addFuncType, getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -53,6 +54,12 @@ import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
+import {
+  compileTemplateExpressionAsExternref,
+  parseDetachedTemplate,
+  publishReceiverHelper,
+  receiverHelperContext,
+} from "./helpers/template-wrapper.js";
 
 /** The largest arity `dyn.construct` admits: the fixed-arity driver family. */
 export const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = MAX_NATIVE_CONSTRUCT_ARITY;
@@ -220,44 +227,6 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-function receiverHelperContext(
-  name: string,
-  params: { name: string; type: ValType }[],
-  returnType: ValType,
-): FunctionContext {
-  return {
-    name,
-    params,
-    locals: [],
-    localMap: new Map(params.map((param, index) => [param.name, index])),
-    returnType,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
-}
-
-function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((param) => param.type),
-    results,
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(helper.name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: helper.name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
-}
-
 /** Collect what `emit` pushes into a detached sequence. */
 function captureReceiverSequence(helper: FunctionContext, emit: () => void): Instr[] {
   const outer = helper.body;
@@ -356,4 +325,128 @@ export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Ide
   const decl = ctx.oracle.valueDeclarationOf(ident);
   if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
   return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
+}
+
+// ---------------------------------------------------------------------------
+// (#7106 Stage 4, #7119) `__ir_dyn_mcall_<m>_<n>(recv, a0, …) -> externref` —
+// the IR's built-in (or wider than one-argument) method call on a DYNAMIC
+// receiver on the non-fast host-free lanes.
+//
+// The generic `__ir_dyn_method_call_N` → `__extern_method_call` route answers
+// `undefined` for every receiver the native object runtime has no brand arm
+// for (a string, a number, a vec …): it dispatches open-`$Object` methods
+// only. Legacy, for the same `any`-receiver call site, emits brand dispatch by
+// method name — the native string arm, `__extern_toString`, the reflective
+// `.call`/`.apply`, the vec push/pop arms, the closed-method dispatcher
+// `__call_m_<m>_<n>`. This wrapper is that emission plus the one step legacy's
+// brand arms skip. Once per (method, arity) it compiles, with legacy's own
+// emitters over a fixed template whose only free names are its externref
+// parameters (the dynamic carrier of these lanes, which is legacy's `any`):
+//
+//   f = recv.m                            // the call's single [[Get]]
+//   IsCallable(f) ? f.call(recv, a0, …)   // an own / inherited method value
+//                 : recv.m(a0, …)         // legacy's any-receiver brand dispatch
+//
+// Legacy's brand arms do not consult the receiver for a built-in name — its
+// `join` on any receiver is the generic array-like algorithm, so
+// `{ join() {…} }.join()` and a constructor-prototype `join` were missed
+// (measured). A built-in method of a primitive or vec receiver has no runtime
+// value, so the read answers undefined there and the brand arm runs.
+//
+// The template is a runtime operation, not source: its text is a function of
+// (method, arity) alone, parsed into its own detached file, so legacy's checker
+// queries on it answer "unknown" — the facts of an `any` call site. The
+// callable test is emitted directly (`__is_callable`): legacy folds a template
+// `typeof` on a detached node statically (measured: `i32.const 0`).
+// ---------------------------------------------------------------------------
+
+const DMC_RECEIVER = "__ir_dmc_recv";
+const DMC_METHOD_VALUE = "__ir_dmc_fn";
+const dmcArgumentName = (index: number): string => `__ir_dmc_arg${index}`;
+
+/** The host-free lanes whose dynamic carrier is legacy's `any` externref. */
+export function irDynamicMethodCallWrapperLane(ctx: CodegenContext): boolean {
+  return noJsHost(ctx) && !ctx.fast;
+}
+
+/** `recv.m`, `f.call(recv, a0, …)` and `recv.m(a0, …)`, parsed in a detached file. */
+function dynamicMethodCallTemplate(
+  method: string,
+  arity: number,
+): readonly [ts.Expression, ts.Expression, ts.Expression] {
+  const args = Array.from({ length: arity }, (_, index) => dmcArgumentName(index));
+  const text =
+    `function __ir_dmc(${[DMC_RECEIVER, ...args].join(", ")}) {\n` +
+    `  ${DMC_RECEIVER}.${method};\n` +
+    `  ${DMC_METHOD_VALUE}.call(${[DMC_RECEIVER, ...args].join(", ")});\n` +
+    `  ${DMC_RECEIVER}.${method}(${args.join(", ")});\n` +
+    `}`;
+  const [read, own, branded] = parseDetachedTemplate("__ir_dyn_mcall.js", text, 3);
+  return [read!, own!, branded!];
+}
+
+/**
+ * Reserve (once per method/arity) the wrapper `name` — the IR names it
+ * (`ir/dynamic-method-call-names.ts`), and only an identifier-safe `method`
+ * reaches here. Returns its function index, or undefined off the wrapper lanes
+ * or when legacy's emitter reports an error for the template (its diagnostics
+ * are dropped).
+ */
+export function ensureIrDynamicMethodCallHelper(
+  ctx: CodegenContext,
+  name: string,
+  method: string,
+  arity: number,
+): number | undefined {
+  if (!irDynamicMethodCallWrapperLane(ctx)) return undefined;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+
+  const externref: ValType = { kind: "externref" };
+  const helper = receiverHelperContext(
+    name,
+    [DMC_RECEIVER, ...Array.from({ length: arity }, (_, index) => dmcArgumentName(index))].map((param) => ({
+      name: param,
+      type: externref,
+    })),
+    externref,
+  );
+  const methodValue = allocLocal(helper, DMC_METHOD_VALUE, externref);
+  const [read, own, branded] = dynamicMethodCallTemplate(method, arity);
+  const errorsBefore = ctx.errors.length;
+
+  ensureLateImport(ctx, "__is_callable", [externref], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, helper);
+  compileTemplateExpressionAsExternref(ctx, helper, read);
+  helper.body.push({ op: "local.set", index: methodValue });
+  const isCallable = ctx.funcMap.get("__is_callable");
+  if (isCallable === undefined) throw new Error("ir/dynamic-method-call: __is_callable is not registered");
+  helper.body.push({ op: "local.get", index: methodValue }, { op: "call", funcIdx: isCallable });
+
+  // Each completed sequence stays parked in `savedBodies` until the join, so a
+  // late import registered by a later branch still shifts its call indices;
+  // the live body is never also parked (one shift walk per sequence).
+  const outer = helper.body;
+  const parked: Instr[][] = [outer];
+  helper.savedBodies.push(outer);
+  const branches = [own, branded].map((expression) => {
+    helper.body = [];
+    compileTemplateExpressionAsExternref(ctx, helper, expression);
+    const branch = helper.body;
+    helper.savedBodies.push(branch);
+    parked.push(branch);
+    return branch;
+  });
+  helper.body = [];
+  flushLateImportShifts(ctx, helper);
+  helper.savedBodies.splice(helper.savedBodies.length - parked.length, parked.length);
+  helper.body = outer;
+  helper.body.push({ op: "if", blockType: { kind: "val", type: externref }, then: branches[0]!, else: branches[1]! });
+
+  if (ctx.errors.length !== errorsBefore) {
+    ctx.errors.length = errorsBefore;
+    return undefined;
+  }
+  flushLateImportShifts(ctx, helper);
+  return publishReceiverHelper(ctx, helper, [externref]);
 }
