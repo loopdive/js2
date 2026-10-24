@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { nativePromiseResourcesRequired } from "./native-promise-resources.js";
 import type { IrClosureSignature, IrFunction, IrType } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import { preparedIrTypeKey } from "./abi-signatures.js";
@@ -27,6 +28,7 @@ export interface NativeSourceClosureShape {
 export interface NativeSourceClosureRequirements {
   readonly key: string;
   readonly demands: NativeStringValueDemands;
+  readonly promiseClosures?: { readonly signatureId: string; readonly metadataId: string };
   readonly refCells: NativeRefCellCensus["refCells"];
   readonly refCellAllocations: NativeRefCellCensus["refCellAllocations"];
   readonly signatures: readonly NativeSourceClosureSignature[];
@@ -188,8 +190,16 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
       rawAllocationId: instruction.alloc,
     });
   }
+  const projection = demands.projection;
+  const promises =
+    projection.backend === "wasmgc" &&
+    projection.target === "standalone" &&
+    nativePromiseResourcesRequired(projection.prepared.functions, projection.prepared.manifest.providers);
   return {
     key,
+    ...(promises
+      ? { promiseClosures: { signatureId: `${key}:promise:settle`, metadataId: `${key}:promise:settle-metadata` } }
+      : {}),
     signatures,
     shapes,
     units,
@@ -207,7 +217,8 @@ export function planNativeSourceClosureRequirements(
 ): NativeSourceClosureRequirements | undefined {
   const demands = collectNativeStringValueDemands(program, projection);
   const data = calculate(demands);
-  if (!data.signatures.length && !data.refCells.length && !data.refCellAllocations.length) return undefined;
+  if (!data.signatures.length && !data.refCells.length && !data.refCellAllocations.length && !data.promiseClosures)
+    return undefined;
   const snapshot = freezePreparedIrValue(data);
   const result = Object.freeze({ ...data, demands });
   sources.set(result, { demands, snapshot, sourceSnapshot: freezePreparedIrValue(demands) });

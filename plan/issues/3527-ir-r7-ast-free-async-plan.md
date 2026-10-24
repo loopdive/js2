@@ -2695,3 +2695,37 @@ byte-identical to main 7371eb50. Review has no remaining findings. Boundary
 inventory is valid; architecture and strict legacy closure remain incomplete.
 The argument entry retains selected-source invocation authority: it does not
 yet associate or certify compiler-created Promise settlement callables.
+
+## Implementation Plan — 2026-10-24 — shared source/Promise closure declarations
+
+Retain an issued closure requirement owner for actual standalone WasmGC
+Promise demand even when its source signature/shape/unit/allocation lists are
+empty. Derive stable settlement signature/metadata request IDs alongside that
+owner from the existing shared Promise demand predicate. The source closure
+reservoir already combines source and intrinsic requests; append settlement
+requests there, reusing the sole signature cache and root rather than making
+a parallel closure pack. Existing currentness checks must recalculate the
+runtime request selection and reject copied or stale requirements.
+
+Acceptance: actual immediate-return/await programs, with and without source
+closures and after codec replay, reserve the genuine Promise resources against
+that same closure root and settlement metadata. Source populations stay exact;
+non-Promise programs keep their prior request population. Preserve runtime
+callable-completion and whole Promise refusal until real bodies are joined.
+Quality: no invented source records, no second closure issuer, and no new
+backend-to-IR dependency when the existing requirement owner carries the data.
+
+Validation for shared source/Promise closure declarations: 100/100 cases in
+five suites (source closure requirements/consumer, Promise resources, actual
+async values and the new 9-case owner suite). Source and focused test TS7 pass;
+lint checks 7,319 files. LOC/function/coercion/oracle and preservation gates
+pass against main 7371eb505b365e49815f1ddc09afed6c52372540. The strict
+legacy reachability result remains OPEN at the two recorded dynamic import
+sites; inventory validity does not certify architectural completion. Eleven
+existing host binaries remain byte-identical to that main baseline.
+Adversarial review found no blocking declaration issue. An additional
+source/settlement signature-cache-hit case is not claimed: attempted source
+extern-to-void fixtures hit earlier frontend/carrier restrictions. Existing
+whole-source mixed numeric signatures and Promise-only declarations are tested.
+This change reserves real shared resources; it does not certify Promise body
+execution or public async acceptance.

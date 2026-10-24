@@ -1491,6 +1491,7 @@ export function planPhysicalSetup(
       ? {
           sourceClosures: {
             key: sourceClosures.key,
+            ...(sourceClosures.promiseClosures ? { promiseClosures: sourceClosures.promiseClosures } : {}),
             signatures: sourceClosures.signatures,
             shapes: sourceClosures.shapes,
             units: sourceClosures.units,
