@@ -53,7 +53,10 @@ type PreparedTimerDynamicHelperName =
   | "__is_truthy"
   | "__typeof"
   | "__typeof_undefined"
-  | "__extern_strict_eq";
+  | "__extern_strict_eq"
+  | "__dyn_member_get"
+  | "__dyn_member_set"
+  | "__dyn_member_set_sloppy";
 
 export interface CompilerTimerShimLateSealTransaction {
   readonly componentIds: ReadonlyMap<IrUnitId, string>;

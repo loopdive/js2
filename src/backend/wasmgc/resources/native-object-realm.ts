@@ -29,6 +29,7 @@ import {
 import {
   requireNativeRealmObjectLayouts,
   requireCompletedNativeRealmObjectLayouts,
+  nativeRealmObjectStateOwner,
   type NativeRealmObjectLayoutReservations,
 } from "./native-realm-object-layouts.js";
 import {
@@ -192,7 +193,7 @@ interface Owner {
   filled: boolean;
 }
 const owners = new WeakMap<NativeObjectRealmDeclarations, Owner>();
-const populations = new WeakSet<NativeRealmObjectLayoutReservations>();
+const populations = new WeakSet<ReturnType<typeof nativeRealmObjectStateOwner>>();
 
 function dependencies(
   tx: PhysicalModuleReservations,
@@ -220,12 +221,15 @@ function dependencies(
   if (needsSource) {
     if (!d.source) fail("missing genuine source owner");
     const strings = nativeStringLiteralReservationInventory(tx, request.strings).typePack;
+    const sourceState = nativeSourceClosureRealmState(tx, d.source);
     requireNativeSourceClosureTypes(tx, d.source, source, d.requests, {
       vectors: d.vectors,
       vectorPlan: d.vectorPlan,
       strings: { types: strings, key: strings.key, utf8Storage: strings.utf8Storage },
+      ...(sourceState ? { realmState: sourceState } : {}),
     });
-    if (nativeSourceClosureRealmState(tx, d.source) !== d.layouts) fail("missing or substituted source realm state");
+    if (!sourceState || nativeRealmObjectStateOwner(tx, sourceState) !== nativeRealmObjectStateOwner(tx, d.layouts))
+      fail("missing or substituted source realm state");
     if (d.source.closures !== d.closures || d.source.closurePlan !== d.closurePlan)
       fail("different source closure population");
   } else {
@@ -301,10 +305,11 @@ export function reserveNativeObjectRealmDeclarations(
 ): NativeObjectRealmDeclarations {
   if (tx.state !== "reserving") fail("declarations require reservation phase");
   const d = dependencies(tx, realm, input);
-  if (populations.has(d.layouts)) fail("realm anchors already have a public population owner");
+  const stateOwner = nativeRealmObjectStateOwner(tx, d.layouts);
+  if (populations.has(stateOwner)) fail("realm anchors already have a public population owner");
   const keys = Object.freeze(resourceKeys(d));
   tx.assertReservationKeysAvailable(keys);
-  populations.add(d.layouts);
+  populations.add(stateOwner);
   const key = d.requests.key,
     request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
   const objectPrototype = Object.freeze({

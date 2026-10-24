@@ -34,6 +34,7 @@ export interface BuiltinFunctionBodyOperands {
   readonly vectorTypeIdx: number;
   readonly vectorArrayTypeIdx: number;
   readonly realm: number;
+  readonly stateAnchors?: { readonly realm: number; readonly functionPrototype: number; readonly identityType: number };
   readonly objectPrototype: number;
   readonly state: number;
   readonly undefinedGlobal: number;
@@ -175,6 +176,20 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       }),
     ),
   ];
+  if (d.stateAnchors) {
+    const prototype = d.entries.find((entry) => entry.behavior === "function-prototype");
+    if (!prototype) throw Error("builtin realm anchors have no actual Function.prototype");
+    allocate.push(
+      global(d.realm),
+      { op: "ref.as_non_null" },
+      { op: "ref.cast", typeIdx: d.stateAnchors.identityType },
+      { op: "global.set", index: d.stateAnchors.realm },
+      global(prototype.singleton),
+      { op: "ref.as_non_null" },
+      { op: "extern.convert_any" },
+      { op: "global.set", index: d.stateAnchors.functionPrototype },
+    );
+  }
   const seed: Instr[] = d.entries.flatMap((entry) => {
     const bag = (): Instr[] => [
       global(entry.singleton),

@@ -131,11 +131,11 @@ it.each(["copied", "foreign"] as const)(
     expect(all.entries).toHaveLength(1);
     const bad = kind === "copied" ? { ...all } : associationFixture().all;
     const before = structuredClone(f.module.functions);
-    expect(() => fillNativeInvocationResources(f.tx, f.invocation!, selected, f.kernel.exception, bad)).toThrow(
-      /foreign|copied/,
-    );
+    expect(() =>
+      fillNativeInvocationResources(f.tx, f.invocation!, selected, f.kernel.exception, { realmCallables: bad }),
+    ).toThrow(/foreign|copied/);
     expect(f.module.functions).toEqual(before);
-    fillNativeInvocationResources(f.tx, f.invocation!, selected, f.kernel.exception, all);
+    fillNativeInvocationResources(f.tx, f.invocation!, selected, f.kernel.exception, { realmCallables: all });
   },
 );
 it("rechecks an unselected source slot when completing the invocation owner", () => {

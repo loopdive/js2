@@ -118,7 +118,7 @@ export async function fillFullRealm(r: ReturnType<typeof fullRealmFixture>, disp
     /requires all source callables/,
   );
   const all = nativeRealmSourceClosureCallableBindings(tx, c.source!, f.realm);
-  fillNativeInvocationResources(tx, r.invocation, selected, f.exception.tag, all);
+  fillNativeInvocationResources(tx, r.invocation, selected, f.exception.tag, { realmCallables: all });
   await setImmediate();
   fillNativeMixedObjectAccessStructure(tx, r.access);
   await setImmediate();

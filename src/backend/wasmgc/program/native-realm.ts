@@ -1,4 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  reserveNativeClassRealm,
+  reserveNativeClassRealmAllocation,
+  nativeClassRealmInventory,
+  nativeClassRealmValues,
+  fillNativeClassRealm,
+  type NativeClassRealm,
+} from "./native-class-realm.js";
 import type {
   PreparedIrProgram,
   PreparedIrProgramRuntimeProjection,
@@ -177,6 +185,7 @@ export function prepareNativeProgramStringInput(
   });
 }
 export interface NativeRealmReservations {
+  readonly classRealm?: NativeClassRealm;
   readonly requirements: NativeRealmRequirements;
   readonly strings: NativeStringValueReservations;
   readonly substrate: NativeInvocationSubstrateReservations;
@@ -217,9 +226,10 @@ function assertFoundationVectors(input: NativeStringValueReservationInput, plan:
   if (preparedIrDataMismatch(plan, expected) !== undefined)
     fail("vector plan differs from selected program/projection");
 }
-function sharedCarriers(owner: Owner) {
+function sharedCarriers(owner: Owner, classRealm?: NativeClassRealm) {
   const types = nativeStringLiteralReservationInventory(owner.tx, owner.strings.strings).typePack;
   return {
+    ...(classRealm ? { realmState: classRealm.state } : {}),
     vectors: owner.vectors,
     vectorPlan: owner.vectorPlan,
     strings: { types, key: types.key, utf8Storage: types.utf8Storage },
@@ -245,7 +255,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeRealmReservations):
         owner.population.sourceTypes,
         pack.requirements.source!,
         pack.requests,
-        sharedCarriers(owner),
+        sharedCarriers(owner, pack.classRealm),
       );
     nativeClosureReservationInventory(tx, owner.population.closures, owner.population.closurePlan);
   }
@@ -323,7 +333,9 @@ function beginRealm(
       closures: reserveNativeClosureResources(tx, closureRequirements, closurePlan),
     });
   }
+  const classRealm = requirements.source?.classValues?.length ? reserveNativeClassRealm(tx, key) : undefined;
   const pack = Object.freeze({
+    ...(classRealm ? { classRealm } : {}),
     requirements,
     strings,
     substrate,
@@ -430,6 +442,7 @@ function reserveKernelResources(
     declareNativeObjectDescriptorResources(key + ":descriptors"),
   );
   const kernelDependencies = {
+    ...(pack.classRealm ? { realmState: pack.classRealm.state } : {}),
     requests: pack.requests,
     closures: population.closures,
     closurePlan: population.closurePlan,
@@ -470,7 +483,13 @@ export function reserveNativeRealmKernel(
   if (exception) tx.assertTagReservation(exception, { params: [{ kind: "externref" }], results: [] });
   if (pack.requirements.source) {
     if (!sourceTypes) fail("missing actual source type issuer");
-    requireNativeSourceClosureTypes(tx, sourceTypes, pack.requirements.source, pack.requests, sharedCarriers(owner));
+    requireNativeSourceClosureTypes(
+      tx,
+      sourceTypes,
+      pack.requirements.source,
+      pack.requests,
+      sharedCarriers(owner, pack.classRealm),
+    );
     owner.population = Object.freeze({
       sourceTypes,
       closures: sourceTypes.closures,
@@ -479,6 +498,7 @@ export function reserveNativeRealmKernel(
   } else if (sourceTypes !== undefined) fail("unexpected source owner for no-source realm");
   owner.phase = "reserving-kernel";
   try {
+    if (pack.classRealm && sourceTypes) reserveNativeClassRealmAllocation(tx, pack.classRealm, sourceTypes);
     owner.kernel = reserveKernelResources(tx, pack, owner, exception);
     if (invocation) bindNativeInvocationBuiltins(tx, invocation, owner.kernel.kernel);
     owner.phase = "reserved";
@@ -498,7 +518,9 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
   const bigints = nativeBigIntReservationInventory(tx, k.bigints, k.bigintPlan);
   const symbols = nativeSymbolCarrierReservationInventory(tx, k.symbols);
   const kernel = nativeBuiltinFunctionReservationInventory(tx, k.kernel);
+  const classRealm = nativeClassRealmInventory(tx, pack.classRealm);
   const functions: FunctionReservation[] = [
+    ...classRealm.functions,
     ...substrate.functions,
     nativeStringEqualityReservationInventory(tx, k.equality).equals,
     ...(k.ownsBooleans ? [k.booleans.isBoolean, k.booleans.unboxBoolean] : []),
@@ -511,6 +533,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...kernel.functions,
   ];
   const types: TypeReservation[] = [
+    ...classRealm.types,
     ...substrate.types,
     ...bigints.types,
     ...(!population.sourceTypes
@@ -523,6 +546,7 @@ export function nativeRealmReservationInventory(tx: PhysicalModuleReservations, 
     ...kernel.types,
   ];
   const globals: GlobalReservation[] = [
+    ...classRealm.globals,
     ...symbols.resources.flatMap((row) => (row.reservation.kind === "global" ? [row.reservation] : [])),
     ...kernel.globals,
   ];
@@ -561,6 +585,7 @@ export function fillNativeRealmResources(tx: PhysicalModuleReservations, pack: N
     fillNativeObjectStorageResources(tx, k.storage);
     fillNativeObjectSameValueResources(tx, k.sameValue);
     fillNativeObjectDescriptorResources(tx, k.descriptors, k.kernel.exception);
+    fillNativeClassRealm(tx, pack.classRealm);
     fillNativeBuiltinFunctionResources(tx, k.kernel);
     owner.phase = "complete";
   } catch (error) {
@@ -583,4 +608,10 @@ export function requireCompletedNativeRealmBootstrap(
   });
   requireCompletedNativeBuiltinFunctionKernel(tx, owner.kernel.kernel, owner.kernel.kernelDependencies);
   return pack;
+}
+
+/** Resolve class metadata through the already-issued whole realm owner. */
+export function nativeRealmClassValues(tx: PhysicalModuleReservations, pack: NativeRealmReservations) {
+  current(tx, pack);
+  return pack.classRealm ? nativeClassRealmValues(tx, pack.classRealm) : undefined;
 }

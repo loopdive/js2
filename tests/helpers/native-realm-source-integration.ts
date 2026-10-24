@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { reserveNativeRefCells } from "../../src/backend/wasmgc/resources/native-ref-cells.js";
 import { createEmptyModule } from "../../src/ir/types.js";
 import { PhysicalModuleReservations, type FunctionReservation } from "../../src/wasm/physical/module-reservations.js";
 import type { PreparedIrProgram } from "../../src/ir/program/prepared-contracts.js";
@@ -140,6 +141,8 @@ export function realmSource(f: ReturnType<typeof realmFoundation>) {
         tx,
         requirements.source,
         {
+          ...(realm.classRealm ? { realmState: realm.classRealm.state } : {}),
+          ...(requirements.source.refCells.length ? { refCells: reserveNativeRefCells(tx, requirements.source) } : {}),
           vectors: foundation.vectorTypes,
           vectorPlan: f.vectorPlan,
           strings: {
@@ -204,7 +207,7 @@ export function fillRealmFixture(f: RealmFixture) {
       f.invocation,
       nativeSourceClosureCallableBindings(tx, f.source, f.input.invocationRequirements!),
       f.kernel.exception,
-      nativeRealmSourceClosureCallableBindings(tx, f.source, f.requirements),
+      { realmCallables: nativeRealmSourceClosureCallableBindings(tx, f.source, f.requirements) },
     );
   const resolver: IrLowerResolver = {
     ...(f.source ? nativeSourceClosureResolver(tx, f.source) : {}),

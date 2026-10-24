@@ -81,6 +81,7 @@ function allocKindOfInstr(kind: string): AllocKind | null {
     case "box":
       return "box";
     case "closure.new":
+    case "class.value.new":
       return "closure";
     case "string.const":
       return "string";

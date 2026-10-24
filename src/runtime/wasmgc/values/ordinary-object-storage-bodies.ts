@@ -23,17 +23,28 @@ export interface OrdinaryObjectGrowResources {
 
 /** Canonical storage construction; the compatibility caller keeps the default prototype encoding. */
 export function buildOrdinaryObjectCreateBody(resources: OrdinaryObjectCreateResources): Instr[] {
+  return [
+    ...buildOrdinaryObjectStoragePrefix(resources),
+    { op: "struct.new", typeIdx: resources.objectTypeIdx },
+    { op: "extern.convert_any" },
+  ];
+}
+
+/** Shared own-property storage, also used by concrete objects with a state tail. */
+export function buildOrdinaryObjectStoragePrefix(
+  resources: OrdinaryObjectCreateResources,
+  prototype?: readonly Instr[],
+  flags?: readonly Instr[],
+): Instr[] {
   const { objectTypeIdx, propMapTypeIdx, initialCapacity: INITIAL_CAP } = resources;
   return [
-    { op: "ref.null", typeIdx: objectTypeIdx }, // proto
+    ...(prototype ?? [{ op: "ref.null" as const, typeIdx: objectTypeIdx }]),
     { op: "i32.const", value: INITIAL_CAP }, // props: array.new_default count
     { op: "array.new_default", typeIdx: propMapTypeIdx },
     { op: "i32.const", value: 0 }, // count
     { op: "i32.const", value: 0 }, // tombstones
-    { op: "i32.const", value: 0 }, // flags
+    ...(flags ?? [{ op: "i32.const" as const, value: 0 }]),
     { op: "i32.const", value: 0 }, // nextSeq (#1837)
-    { op: "struct.new", typeIdx: objectTypeIdx },
-    { op: "extern.convert_any" },
   ];
 }
 

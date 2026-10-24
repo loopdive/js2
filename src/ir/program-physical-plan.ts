@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { planNativeClassValueSetup, type NativeClassValueSetup } from "./program-native-class-value-setup.js";
+import { directIrCallableReferences } from "./core/callable-operands.js";
 //
 // #3518 package C — the source-free PHYSICAL SETUP PLAN for one accepted
 // backend/target projection of a `PreparedIrProgram`.
@@ -19,7 +21,8 @@ import {
   nativeInvocationSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
-import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { nativeStringOutputInputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { nativeErrorAbiBindings } from "./program/native-error-setup.js";
 import {
   nativeBooleanAbiBindings,
   nativeNumberBinding,
@@ -102,6 +105,7 @@ import { nativeRefCellScalarInner } from "./program/native-ref-cell-requirements
 import { planNativePromiseInventoryPreflight } from "./program-native-async-resources.js";
 import {
   planNativeSourceClosureRequirements,
+  nativeSourceClosureDescription,
   type NativeSourceClosureRequirements,
 } from "./program/native-source-closure-requirements.js";
 
@@ -255,6 +259,7 @@ export interface PhysicalSetupPlan {
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  readonly classValues?: NativeClassValueSetup;
   readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
@@ -690,17 +695,8 @@ function nativeStringSetup(
     if (binding) add(binding);
   }
   nativeBooleanAbiBindings(input, baseOrder).forEach(add);
-  if (input.plan.output) {
-    if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
-    const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
-    if (offset < 0) nativeInvalid("output recipe is detached from aggregate declarations");
-    for (const binding of nativeStringOutputAbiBindings(
-      input.outputRequirements,
-      input.plan.output,
-      baseOrder + offset,
-    ))
-      add(binding);
-  }
+  nativeErrorAbiBindings(input, baseOrder).forEach(add);
+  nativeStringOutputInputAbiBindings(input, baseOrder).forEach(add);
   const seen = new Set<string>();
   for (const [index, declaration] of input.plan.declarations.entries()) {
     if (seen.has(declaration.key)) nativeInvalid("duplicate resource declaration key");
@@ -1267,7 +1263,11 @@ export function planPhysicalSetup(
     ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
   );
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
-  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? [])];
+  const classValues = planNativeClassValueSetup(
+    sourceClosures,
+    invocationOrder + (nativeInvocation?.bindings.length ?? 0),
+  );
+  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? []), ...(classValues?.bindings ?? [])];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
     program,
@@ -1406,13 +1406,15 @@ export function planPhysicalSetup(
         ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
         : fn.unitId;
     forEachPreparedIrInstruction(fn, (instruction) => {
-      if (instruction.kind === "call" || instruction.kind === "closure.new") {
-        const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
-        if (!reserved.has(irCallableBindingKey(ref.binding))) {
-          gaps.add(
-            `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-            diagnosticUnit,
-          );
+      const references = directIrCallableReferences(instruction);
+      if (references.length) {
+        for (const ref of references) {
+          if (!reserved.has(irCallableBindingKey(ref.binding))) {
+            gaps.add(
+              `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
+              diagnosticUnit,
+            );
+          }
         }
       } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
         if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
@@ -1489,20 +1491,11 @@ export function planPhysicalSetup(
     numberRemainders,
     ...(sourceClosures
       ? {
-          sourceClosures: {
-            key: sourceClosures.key,
-            ...(sourceClosures.promiseClosures ? { promiseClosures: sourceClosures.promiseClosures } : {}),
-            signatures: sourceClosures.signatures,
-            shapes: sourceClosures.shapes,
-            units: sourceClosures.units,
-            allocations: sourceClosures.allocations,
-            refCells: sourceClosures.refCells,
-            refCellAllocations: sourceClosures.refCellAllocations,
-            gaps: sourceClosures.gaps,
-          },
+          sourceClosures: nativeSourceClosureDescription(sourceClosures),
         }
       : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(classValues ? { classValues } : {}),
     ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),

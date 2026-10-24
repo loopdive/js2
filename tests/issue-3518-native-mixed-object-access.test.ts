@@ -44,6 +44,7 @@ for (const displaced of [false, true])
       expect(WebAssembly.Module.exports(runtime.wasm).length).toBeGreaterThan(25);
       expect(api().isUtf8(key("own"))).toBe(displaced ? 1 : 0);
       expect(api().has(null, key("own"))).toBe(2);
+      expect(() => api().ordinary(null)).toThrow(WebAssembly.RuntimeError);
       reset();
       const captured = api().makeCaptured(100),
         empty = api().makeEmpty();
@@ -53,6 +54,73 @@ for (const displaced of [false, true])
       expect(api().getPrototypeOf(captured)[0]).toBe(2);
       expect(api().get(empty, key("length"), empty)[0]).toBe(2);
       expect(api().has(api().unknownSource(), key("own"))).toBe(3);
+    });
+    it("uses canonical fresh allocation across heterogeneous parents and later prototype mutation", () => {
+      reset();
+      const parent = api().ordinary(null),
+        alternate = api().ordinary(null);
+      api().put(parent, key("own"), 11, 7, null);
+      api().put(alternate, key("own"), 29, 7, null);
+      const wrapper = api().newNumber(parent, 1);
+      const first = api().ordinary(wrapper),
+        second = api().ordinary(wrapper);
+      expect(Object.is(first, second)).toBe(false);
+      const [status, prototype] = api().getPrototypeOf(first);
+      expect(status).toBe(1);
+      expect(Object.is(prototype, wrapper)).toBe(true);
+      expect(api().get(first, key("own"), first)).toEqual([1, 11]);
+      api().put(first, key("absent"), 51, 7, null);
+      expect(api().has(second, key("absent"))).toBe(0);
+      expect(api().setPrototypeOf(first, alternate)).toBe(1);
+      expect(api().get(first, key("own"), first)).toEqual([1, 29]);
+      expect(api().get(second, key("own"), second)).toEqual([1, 11]);
+    });
+    it("reads class properties and actual parents while retaining the constructor closure", () => {
+      reset();
+      const construct = api().makeCaptured(12),
+        parent = api().ordinary(null),
+        bag = api().ordinary(null);
+      api().put(parent, key("own"), 31, 7, null);
+      const cls = api().classValue(bag, construct, parent);
+      expect(api().get(cls, key("own"), cls)).toEqual([1, 31]);
+      api().put(cls, key("own"), 47, 7, null);
+      expect(api().get(cls, key("own"), cls)).toEqual([1, 47]);
+      const child = api().ordinary(cls);
+      expect(api().get(child, key("own"), child)).toEqual([1, 47]);
+      expect(api().has(cls, key("absent"))).toBe(0);
+      expect(api().setPrototypeOf(cls, child)).toBe(0);
+      expect(Object.is(api().getPrototypeOf(cls)[1], parent)).toBe(true);
+      expect(api().setPrototypeOf(cls, null)).toBe(1);
+      expect(api().getPrototypeOf(cls)).toEqual([1, null]);
+      expect(Object.is(api().classConstruct(cls), construct)).toBe(true);
+      api().flags(cls, 129);
+      expect(api().setPrototypeOf(cls, null)).toBe(1);
+      expect(api().setPrototypeOf(cls, parent)).toBe(0);
+      expect(api().getPrototypeOf(cls)).toEqual([1, null]);
+    });
+    it("keeps missing, exotic and foreign class storage unresolved", () => {
+      reset();
+      const construct = api().makeEmpty(),
+        parent = api().ordinary(null);
+      api().put(parent, key("own"), 31, 7, null);
+      for (const bag of [
+        null,
+        1,
+        {},
+        api().foreign(null),
+        api().stringCreate(null, key("own")),
+        api().newNumber(null, 1),
+      ]) {
+        const cls = api().classValue(bag, construct, parent),
+          status = bag === null ? 2 : 3;
+        expect(api().get(cls, key("own"), cls)[0]).toBe(status);
+        expect(api().has(cls, key("absent"))).toBe(status);
+        expect(api().setPrototypeOf(cls, null)).toBe(status);
+        expect(Object.is(api().getPrototypeOf(cls)[1], parent)).toBe(true);
+      }
+      const previousRealm = api().classValue(api().ordinary(null), construct, parent);
+      reset();
+      expect(api().has(previousRealm, key("own"))).toBe(3);
     });
     it("returns a nearer own entry before an unknown parent and ignores storage-prefix prototype", () => {
       reset();
@@ -406,6 +474,41 @@ describe("genuine mixed structural resource owner", () => {
     ).toThrow(/different shared state/);
     expect(r.f.module.functions.length).toBe(afterAlternative);
     expect(() => reserveMixedOwner(r)).not.toThrow();
+  });
+  it("authenticates the class owner and retains optional dependency identity", () => {
+    const r = mixedOwnerFixture(),
+      foreign = mixedOwnerFixture(),
+      before = r.f.module.functions.length;
+    for (const classes of [{ ...r.classes }, foreign.classes]) {
+      expect(() =>
+        reserveNativeMixedObjectAccessResources(r.tx, "mixed:access", { ...r.dependencies, classes }, r.plan),
+      ).toThrow(/foreign|copied/);
+      expect(r.f.module.functions.length).toBe(before);
+    }
+    const pack = reserveMixedOwner(r);
+    Object.defineProperty(r.dependencies, "classes", { value: undefined, enumerable: true });
+    expect(() => requireNativeMixedObjectAccessReservations(r.tx, pack)).toThrow(/changed dependency identity/);
+    Object.defineProperty(r.dependencies, "classes", { value: r.classes, enumerable: true });
+    expect(() => requireNativeMixedObjectAccessReservations(r.tx, pack)).not.toThrow();
+  });
+  it("requires the actual canonical class allocator before structural completion", () => {
+    const r = mixedOwnerFixture(),
+      pack = reserveMixedOwner(r),
+      fill = r.tx.fillFunction.bind(r.tx);
+    r.tx.freezeReservations();
+    r.tx.fillFunction = (token, definition) =>
+      fill(
+        token,
+        token === r.classes.allocate
+          ? {
+              locals: [],
+              body: [{ op: "ref.null", typeIdx: -17 }],
+            }
+          : definition,
+      );
+    fillMixedDependencies(r);
+    expect(() => fillNativeMixedObjectAccessStructure(r.tx, pack)).toThrow(/noncanonical allocator/);
+    expect(pack.classify.object.body).toEqual([]);
   });
   it("preflights the last key before reserving any mixed role", () => {
     const r = mixedOwnerFixture(),

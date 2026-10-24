@@ -2304,6 +2304,11 @@
       "layer": "foundation"
     },
     {
+      "path": "src/shared/contracts/console-output.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
       "path": "src/shared/contracts/ir-unit-inventory.ts",
       "state": "clean",
       "layer": "foundation"
@@ -5042,6 +5047,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/declarations/ir-native-numeric-field.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7137",
+      "nextBoundary": "Source-qualified native numeric field projection; move with exact class-layout preparation."
+    },
+    {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7242,6 +7255,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/ir-native-console.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7136",
+      "nextBoundary": "Move native console provider materialization with Program ABI preparation; formatting and output kernels remain shared."
+    },
+    {
+      "path": "src/codegen/helpers/uint32-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Canonical integer conversion provider; move its physical resource allocation with Program ABI preparation."
+    },
+    {
       "path": "src/codegen/ir-native-map.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -7312,6 +7341,30 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/vec-element-boxing.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Separate context-bound boxer lookup from physical element boxing instructions."
+    },
+    {
+      "path": "src/ir/ast-source-facts.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "Source AST/oracle forwarding still depends on frontend and mixed from-ast types; no clean-boundary claim."
+    },
+    {
+      "path": "src/codegen/declarations/prepared-signatures.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "7138",
+      "nextBoundary": "Prepared signature vocabulary and exact allocated physical slot proof; separate context-bound vector type registration."
     },
     {
       "path": "src/codegen/ir-prepared-free-functions.ts",
@@ -12139,6 +12192,14 @@
       "nextBoundary": "Pure TypeScript-AST fold shared by the selector and from-ast (#7106 S1b); moves with the frontend inventory split."
     },
     {
+      "path": "src/ir/numeric-slot-coercion.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7137",
+      "nextBoundary": "Producer numeric slot/domain conversions reuse canonical bitwise IR; move with source-language lowering."
+    },
+    {
       "path": "src/ir/boolean-brand.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12545,6 +12606,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/console-lowering.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7136",
+      "nextBoundary": "Native console producer emits logical strings and symbolic provider calls; keep physical provider selection outside the IR."
     },
     {
       "path": "src/ir/host-free-runtime.ts",
@@ -13361,6 +13430,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/select-dynamic-members.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7138",
+      "nextBoundary": "AST member-selection gates extracted from the structural selector; lower with the common frontend policy."
     },
     {
       "path": "src/ir/select-expression-structure.ts",
@@ -14235,6 +14312,11 @@
     },
     {
       "path": "src/wasm/physical/module-reservations.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
+      "path": "src/wasm/physical/numeric-carriers.ts",
       "state": "clean",
       "layer": "wasm-physical"
     },
@@ -16744,6 +16826,259 @@
       "path": "src/ir/program/native-invocation-parameter.ts",
       "state": "clean",
       "layer": "ir-program"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-class-realm.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-class-values.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-error-constructor.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-object-layout-declarations.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/analysis/ambient-declarations.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/analysis/class-definition-syntax.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/analysis/class-startup.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/backend/class-allocation.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3527-integration",
+      "nextBoundary": "Separate semantic requirement records from physical WasmGC reservation/lowering owners; retain the existing mixed coordinator dependencies until that split."
+    },
+    {
+      "path": "src/ir/class-binding-resolution.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/core/class-value-contract.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/callable-operands.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/class-nodes.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/class-operands.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/native-data-slots.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/core/terminator-operands.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
+      "path": "src/ir/lowering/select.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3527-integration",
+      "nextBoundary": "Separate semantic requirement records from physical WasmGC reservation/lowering owners; retain the existing mixed coordinator dependencies until that split."
+    },
+    {
+      "path": "src/ir/native-errors.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/native-instanceof.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/native-value-carrier.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/program/construct-entry-effects.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-callable-flow.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program-native-class-value-setup.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3527-integration",
+      "nextBoundary": "Separate semantic requirement records from physical WasmGC reservation/lowering owners; retain the existing mixed coordinator dependencies until that split."
+    },
+    {
+      "path": "src/ir/program/native-construct-requirements.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-constructor-flow.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-error-setup.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-receiver-routes.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-selected-value-flow.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/source-class-definitions.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/runtime/class-call-verification.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/class-value-callable.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/error-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/source-closure-capture-bindings.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/source-closure-entry.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/source-closure-identity.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/source-lexical-bindings.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/ir/source-scope-bindings.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-integration",
+      "nextBoundary": "Move source class/closure preparation with its AST, planning identity and builder dependencies to the frontend after separating pure IR output contracts; this entry does not certify the mixed closure."
+    },
+    {
+      "path": "src/runtime/contracts/builtin-type-tags.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/class-construct-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/class-constructor-layouts.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/realm-object-allocation.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/runtime/provider-data.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
     }
   ]
 }

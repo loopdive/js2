@@ -1,4 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  reserveNativeClassValues,
+  fillNativeClassValues,
+} from "../../src/backend/wasmgc/resources/native-class-values.js";
+import {
+  CLASS_OBJECT_STATE_FIELD,
+  CLASS_CONSTRUCT_CLOSURE_FIELD,
+} from "../../src/runtime/wasmgc/values/class-constructor-layouts.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
 import type { FunctionReservation } from "../../src/wasm/physical/module-reservations.js";
 import { emitBinary } from "../../src/emit/binary.js";
@@ -103,6 +111,7 @@ export function mixedFoundation(
   const f = publicRealmFoundation(displaced, false, false, false, sourceText, extraLiterals, expectedSourceUnits),
     { tx } = f,
     c = publicRealmClosures(f);
+  const classes = reserveNativeClassValues(tx, "mixed:classes", c.source!.types);
   const flatten = reserveNativeStringFlattenResources(tx, "mixed:flatten", f.strings);
   const equality = reserveNativeStringEqualityResources(tx, "mixed:equality", flatten, true);
   const symbols = reserveNativeSymbolCarrierResources(tx, "mixed:symbols", f.strings);
@@ -186,6 +195,7 @@ export function mixedFoundation(
   return {
     f,
     c,
+    classes,
     tx,
     flatten,
     equality,
@@ -214,6 +224,7 @@ export function mixedOwnerFixture(
   const r = mixedFoundation(displaced, sourceText, extraLiterals, expectedSourceUnits),
     realm = publicRealmDeclarations(r.f, r.c);
   const dependencies = {
+    classes: r.classes,
     realm: realm.declarations,
     realmDependencies: realm.dependencies,
     stringOwn: r.own,
@@ -262,6 +273,7 @@ export function alternativeMixedStringOwner(r: ReturnType<typeof mixedOwnerFixtu
 }
 export function fillMixedDependencies(r: ReturnType<typeof mixedFoundation>) {
   fillRealmLayoutFixture(r.f);
+  fillNativeClassValues(r.tx, r.classes);
   fillNativeStringLiteralResources(r.tx, r.f.strings);
   fillNativeInvocationSubstrateResources(r.tx, r.f.substrate);
   fillNativeStringFlattenResources(r.tx, r.flatten);
@@ -331,6 +343,8 @@ export function mixedRuntime(displaced = false) {
   };
   const signatures: Record<string, { params: ValType[]; results: ValType[] }> = {
     initialize: { params: [], results: [] },
+    classValue: { params: [ext, ext, ext], results: [ext] },
+    classConstruct: { params: [ext], results: [ext] },
     ordinary: { params: [ext], results: [ext] },
     foreign: { params: [ext], results: [ext] },
     put: { params: [ext, ext, ext, i32, ext], results: [] },
@@ -416,6 +430,7 @@ export function mixedRuntime(displaced = false) {
           singletonExtern: true,
         },
       },
+      { kind: "class", typeIdx: r.classes.type.typeIndex, stateField: CLASS_OBJECT_STATE_FIELD },
       ...c.source!.types.shapes.map((shape) => ({
         kind: "source" as const,
         typeIdx: shape.type.typeIndex,
@@ -505,13 +520,28 @@ export function mixedRuntime(displaced = false) {
   for (const name of ["ordinary", "foreign"] as const)
     tx.fillFunction(controls[name]!, {
       locals: [],
-      body: [
-        ...prefix,
-        ...state([get(0)], name === "foreign"),
-        { op: "struct.new", typeIdx: f.pack.types.ordinary.typeIndex },
-        { op: "extern.convert_any" },
-      ],
+      body:
+        name === "ordinary"
+          ? [get(0), call(f.pack.allocateOrdinary)]
+          : [
+              ...prefix,
+              ...state([get(0)], true),
+              { op: "struct.new", typeIdx: f.pack.types.ordinary.typeIndex },
+              { op: "extern.convert_any" },
+            ],
     });
+  tx.fillFunction(controls.classValue!, {
+    locals: [],
+    body: [{ op: "ref.func", funcIdx: lifted.handle }, n(0), get(0), get(1), get(2), call(r.classes.allocate)],
+  });
+  tx.fillFunction(controls.classConstruct!, {
+    locals: [],
+    body: [
+      ...as(0, r.classes.type.typeIndex),
+      { op: "struct.get", typeIdx: r.classes.type.typeIndex, fieldIdx: CLASS_CONSTRUCT_CLOSURE_FIELD },
+      { op: "extern.convert_any" },
+    ],
+  });
   tx.fillFunction(controls.nativeClone!, { locals: [], body: native([get(0)], [get(1)], [get(2)]) });
   tx.fillFunction(controls.wrongLift!, {
     locals: [],

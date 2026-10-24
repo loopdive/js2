@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directUses } from "../core/nodes.js";
 //
 // Intra-procedural ownership + access-semantics analysis (#1587, Phase 1).
 //
@@ -351,6 +352,9 @@ function applyInstrEffect(
       break;
 
     // --- captures: a closure stores its captured values (they escape) --------
+    case "class.value.new":
+      for (const value of directUses(instr)) markEscaped(state, value, allocOf);
+      break;
     case "closure.new":
       for (const cap of instr.captures) markEscaped(state, cap, allocOf);
       break;

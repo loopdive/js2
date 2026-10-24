@@ -38,6 +38,7 @@ import {
   requireNativeRealmSourceClosureCallables,
   type NativeRealmSourceClosureCallables,
 } from "../backend/wasmgc/resources/native-source-closure-callables.js";
+import type { WasmFunction } from "../wasm/model/module-records.js";
 import type { Instr, ValType } from "../wasm/model/instructions.js";
 import { lowerIrFunctionBody } from "./lower-generic.js";
 import { wasmValueTypeConverter } from "./backend/wasm-lowering.js";
@@ -55,6 +56,9 @@ import type {
   NativePromiseDeclarationPlan,
 } from "../backend/wasmgc/resources/native-promises.js";
 import { bindNativePromiseInvocation } from "../backend/wasmgc/resources/native-promise-invocation.js";
+
+import { reserveNativeRefCells } from "../backend/wasmgc/resources/native-ref-cells.js";
+import type { NativeStringLiteralTypeReservations } from "../backend/wasmgc/resources/native-string-literals.js";
 
 export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
@@ -134,7 +138,11 @@ export function bindNativeSourceClosureUnits(
     if (slot.object.typeIdx !== shape.lowering.funcTypeIdx) fail("source slot does not use its exact lifted signature");
     return { unitId: unit.unitId, fn, slot };
   });
-  const referencedSlots = [...new Set(pack.requirements.allocations.map((row) => row.liftedUnitId))].map((id) => {
+  const referencedUnits = [
+    ...pack.requirements.allocations.map((row) => row.liftedUnitId),
+    ...(pack.requirements.classValues ?? []).map((row) => row.callUnitId),
+  ];
+  const referencedSlots = [...new Set(referencedUnits)].map((id) => {
     const row = rows.find((candidate) => candidate.unitId === id);
     if (!row) fail("source allocation target has no authenticated lifted unit slot");
     return row.slot;
@@ -294,4 +302,62 @@ export function bindPreparedNativePromiseInvocation(
   const { program, projection } = source.requirements.demands;
   const plan = planNativePromiseResources(program, options, projection, configuration);
   return bindNativePromiseInvocation(tx, source.types, promise, declaration, plan);
+}
+
+/** Index each actual support owner once for both ABI ownership and emission receipts. */
+export function registerOwnedSupportFunctions(
+  nativeFunctions: Set<WasmFunction>,
+  supportFunctions: Map<WasmFunction, FunctionReservation>,
+  functions: readonly FunctionReservation[],
+): void {
+  for (const token of functions) {
+    if (nativeFunctions.has(token.object) || supportFunctions.has(token.object))
+      fail("support function has competing native owners");
+    nativeFunctions.add(token.object);
+    supportFunctions.set(token.object, token);
+  }
+}
+
+/** Authenticate the original source slots for the shared invocation fill operation. */
+export function preparedNativeInvocationBindings(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission | undefined,
+  requirements: NativeInvocationRequirements | undefined,
+  realm: NativeRealmRequirements | undefined,
+) {
+  if (!source || !requirements) fail("native invocation lost its source owner");
+  return {
+    callables: nativeSourceClosureCallableBindings(tx, source, requirements),
+    realmCallables: realm ? nativeRealmSourceClosureCallableBindings(tx, source, realm) : undefined,
+  };
+}
+
+/** Reserve source carriers once from the consumer's shared vector/string/realm foundation. */
+export function reservePreparedSourceClosureEmission(
+  tx: PhysicalModuleReservations,
+  requirements: NativeSourceClosureRequirements | undefined,
+  foundation: {
+    readonly vectorTypes: NativeSourceClosureCarriers["vectors"];
+    readonly vectorPlan: NativeSourceClosureCarriers["vectorPlan"];
+    readonly stringTypes: NativeStringLiteralTypeReservations | undefined;
+    readonly realmState: NativeSourceClosureCarriers["realmState"];
+    readonly builtins: NativeBuiltinFunctionRequestIssuer | undefined;
+  },
+): NativeSourceClosureEmission | undefined {
+  if (!requirements) return undefined;
+  const { vectorTypes, vectorPlan, stringTypes, realmState, builtins } = foundation;
+  return beginNativeSourceClosureEmission(
+    tx,
+    requirements,
+    {
+      vectors: vectorTypes,
+      vectorPlan,
+      ...(realmState ? { realmState } : {}),
+      ...(requirements.refCells.length ? { refCells: reserveNativeRefCells(tx, requirements) } : {}),
+      ...(stringTypes
+        ? { strings: { types: stringTypes, key: stringTypes.key, utf8Storage: stringTypes.utf8Storage } }
+        : {}),
+    },
+    builtins,
+  );
 }

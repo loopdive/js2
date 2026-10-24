@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { sameValTypes } from "../wasm/physical/function-types.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import { ts } from "../ts-api.js";
 import type { PipelineOutputContext } from "../compiler.js";
@@ -127,14 +128,12 @@ interface DeclarationCapture {
   readonly fulfillment?: "number" | "boolean" | "void";
 }
 const numeric = (type: ValType): boolean => ["i32", "i64", "f32", "f64"].includes(type.kind);
-function booleanCarrier(type: ValType): boolean {
-  return type.kind === "i32" && type.boolean === true && type.symbol === undefined && type.int32 === undefined;
-}
 function sourceSlotMatches(slot: PresentationSlot, type: IrType | undefined): boolean {
   if (slot === "promise")
     return type?.kind === "val" && preparedIrDataMismatch(type.val, { kind: "externref" }) === undefined;
   if (!type || type.kind !== "val") return false;
-  if (slot === "boolean") return type.typeRef === undefined && booleanCarrier(type.val);
+  if (slot === "boolean")
+    return type.typeRef === undefined && sameValTypes([type.val], [{ kind: "i32", boolean: true }]);
   return numeric(type.val) && (type.val.kind !== "i32" || type.val.boolean !== true);
 }
 function physicalSlotMatches(slot: PresentationSlot, physical: ValType, logical: IrType | undefined): boolean {
@@ -143,7 +142,7 @@ function physicalSlotMatches(slot: PresentationSlot, physical: ValType, logical:
     (slot === "promise"
       ? physical.kind === "externref"
       : logical?.kind === "val" && physical.kind === logical.val.kind) &&
-    (slot !== "boolean" || booleanCarrier(physical))
+    (slot !== "boolean" || sameValTypes([physical], [{ kind: "i32", boolean: true }]))
   );
 }
 function booleanExportSignature(declaration: DeclarationCapture): ExportSignature | undefined {

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import { forEachNestedBuffer, type AllocSiteId, type IrFunction, type IrInstr } from "../core/nodes.js";
 import type { IrSupportRefType, IrType } from "../core/types.js";
@@ -295,10 +296,11 @@ export function irNumberFormatDemandOwners(functions: readonly IrFunction[]): re
       active.add(buffer);
       dense(buffer, "executable instructions", (instr) => {
         if (!instr) invalidSupport("missing executable instruction");
-        const ref = instr.kind === "call" ? instr.target : instr.kind === "closure.new" ? instr.liftedFunc : undefined;
-        if (ref && irNativeAsyncCallableDeclaration(ref)?.feature === "async.native.number-to-string") {
-          if (instr.kind !== "call") invalidSupport("formatter support requires a direct canonical call");
-          demanded = true;
+        for (const ref of directIrCallableReferences(instr)) {
+          if (irNativeAsyncCallableDeclaration(ref)?.feature === "async.native.number-to-string") {
+            if (instr.kind !== "call") invalidSupport("formatter support requires a direct canonical call");
+            demanded = true;
+          }
         }
         // Never stop after the first hit: malformed later buffers still fail.
         forEachNestedBuffer(instr, visit);

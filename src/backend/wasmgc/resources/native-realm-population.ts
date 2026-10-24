@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { bindNativeRealmObjectBootstrap, requireNativeRealmObjectBootstrap } from "./native-realm-object-layouts.js";
 import type { Instr } from "../../../wasm/model/instructions.js";
 import type { PhysicalModuleReservations } from "../../../wasm/physical/module-reservations.js";
 import type { NativeResourceRecipe } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
@@ -106,6 +107,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeRealmPopulation) {
   if (roles.some((role) => d[role] !== owner.dependencies[role])) fail("changed dependency identity");
   const binding = authenticate(tx, d);
   if (binding.binding.realm !== pack.realm) fail("substituted realm");
+  requireNativeRealmObjectBootstrap(tx, pack.realm.layouts, pack.realm.initialize);
   return { owner, ...binding };
 }
 /** Acquire the existing initializer slot once; no second realm anchor or closure population is reserved. */
@@ -117,6 +119,7 @@ export function reserveNativeRealmPopulation(
   const dependencies = capture(input),
     { binding } = authenticate(tx, dependencies);
   if (populations.has(binding.realm)) fail("realm already has a population owner");
+  bindNativeRealmObjectBootstrap(tx, binding.realm.layouts, binding.realm.initialize);
   populations.add(binding.realm);
   const pack = Object.freeze({
     realm: binding.realm,

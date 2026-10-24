@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import {
   IR_NATIVE_PROMISE_DELAY_FN,
@@ -227,8 +228,9 @@ export function collectNativeAsyncCallableDemands(
         for (const root of body)
           forEachInstrDeep(root, (instr) => {
             const position = ordinal++;
-            const ref =
-              instr.kind === "call" ? instr.target : instr.kind === "closure.new" ? instr.liftedFunc : undefined;
+            const ref = directIrCallableReferences(instr).find((reference) =>
+              irNativeAsyncCallableDeclaration(reference),
+            );
             const contract = ref && irNativeAsyncCallableDeclaration(ref);
             if (!contract) return;
             if (instr.kind !== "call")

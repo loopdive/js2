@@ -18,6 +18,17 @@ import {
   type NativeRealmRequirements,
 } from "../../../ir/program/native-realm-requirements.js";
 
+/** Class storage and its authenticated internal protocol exclude private code from public Call. */
+export function nativePrivateConstructUnits(
+  tx: PhysicalModuleReservations,
+  types: NativeSourceClosureTypes,
+): ReadonlySet<IrUnitId> {
+  requireNativeSourceClosureTypes(tx, types, types.requirements);
+  const proof = types.requirements.privateConstruct;
+  if (proof?.gaps.length) fail(proof.gaps.join("; "));
+  return new Set(proof?.units ?? []);
+}
+
 export interface NativeSourceClosureCallable {
   readonly unitId: IrUnitId;
   readonly source: IrFunction;
@@ -140,7 +151,13 @@ function realmEntries(
   requireNativeSourceClosureTypes(tx, types, types.requirements);
   assertNativeRealmRequirementsCurrent(realm);
   if (realm.source !== types.requirements) fail("realm belongs to a different source owner");
-  return resolveSourceEntries(tx, types, slots, new Set(realm.description.sourceUnits));
+  const privateUnits = nativePrivateConstructUnits(tx, types);
+  return resolveSourceEntries(
+    tx,
+    types,
+    slots,
+    new Set(realm.description.sourceUnits.filter((unit) => !privateUnits.has(unit))),
+  );
 }
 /** All actual source units, independently of selected call/apply/getter demands. No Construct or reflection grant. */
 export function bindNativeRealmSourceClosureCallables(

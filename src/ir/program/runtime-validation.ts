@@ -137,21 +137,8 @@ export function assertPreparedIrRuntimeProjection(
 ): void {
   const key = `${projection.backend}:${projection.target}`;
   assertClockProjection(program, projection);
-  const expected = prepareWholeProgramRuntimeManifest({
-    inventory: program.inventory,
-    ir: program.ir,
-    derivedUnits: program.derivedUnits,
-    // The caller validated the complete ABI already. Re-entering the public lookup would recurse.
-    abi: preparedIrDraftAbiLookup(program.abi.entries),
-    policy: projection.prepared.manifest.policy,
-    demands: new Map(program.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)])),
-  });
-  if (expected.kind !== "prepared")
-    throw new PreparedIrProgramInvariantError(
-      "invalid-prepared-data",
-      `runtime projection ${key} cannot be reproduced: ${expected.detail}`,
-    );
-  const mismatch = preparedIrDataMismatch(expected.runtime, projection.prepared);
+  const expected = reproducePreparedIrRuntimeProjection(program, projection);
+  const mismatch = preparedIrDataMismatch(expected, projection.prepared);
   if (mismatch !== undefined)
     throw new PreparedIrProgramInvariantError(
       "invalid-prepared-data",
@@ -166,4 +153,27 @@ export function assertPreparedIrRuntimeProjection(
         `runtime owner ${fn.unitId} is attached to a foreign manifest`,
       );
   }
+}
+
+/** Reuse the actual runtime producer; callers may not erase arbitrary projection fields. */
+export function reproducePreparedIrRuntimeProjection(
+  program: PreparedIrProgram,
+  projection: PreparedIrProgramRuntimeProjection,
+) {
+  const key = `${projection.backend}:${projection.target}`;
+  const expected = prepareWholeProgramRuntimeManifest({
+    inventory: program.inventory,
+    ir: program.ir,
+    derivedUnits: program.derivedUnits,
+    // The caller validated the complete ABI already. Re-entering the public lookup would recurse.
+    abi: preparedIrDraftAbiLookup(program.abi.entries),
+    policy: projection.prepared.manifest.policy,
+    demands: new Map(program.ir.functions.map((fn) => [fn.unitId, irProgramRuntimeDemands(fn)])),
+  });
+  if (expected.kind !== "prepared")
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      `runtime projection ${key} cannot be reproduced: ${expected.detail}`,
+    );
+  return expected.runtime;
 }

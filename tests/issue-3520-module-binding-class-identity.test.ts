@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { buildIrUnitInventory, type IrClassId, type IrUnitId } from "../src/ir/identity.js";
 import {
+  makeIrClassValueBindingResolver,
   makeIrIdentityLocalClassExpressionResolver,
   makeIrIdentityModuleBindingResolver,
   makeIrLocalClassExpressionResolver,
@@ -342,5 +343,249 @@ describe("#3520 module-binding and local-class identity", () => {
 
     expectPlanningError(() => moduleResolver(identifierUse(clonedRead, "shared")), "source-record-mismatch");
     expectPlanningError(() => classResolver(propertyReceiver(clonedRead, "value")), "source-record-mismatch");
+  });
+});
+
+describe("#7139 exact class lexical bindings", () => {
+  it("distinguishes the mutable declaration binding from the captured immutable class name", () => {
+    const graph = fixture({
+      "/repo/a.ts": `
+      class C { static inner(): any { return C; } }
+      function outer(): any { return C; }
+      function write(): void { C = null; }
+    `,
+    });
+    const source = graph.sourceFiles[0]!;
+    const declaration = classDeclaration(source, "C");
+    const resolver = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    const inner = declaration.members.find(ts.isMethodDeclaration)!;
+    const innerBinding = resolver(identifierUse(inner.body!, "C"))!;
+    const outerBinding = resolver(identifierUse(functionDeclaration(source, "outer"), "C"))!;
+    const writeBinding = resolver(identifierUse(functionDeclaration(source, "write"), "C"))!;
+    expect(outerBinding).toMatchObject({
+      classId: classId(graph.context, declaration),
+      declaration,
+      kind: "declaration",
+      mutable: true,
+    });
+    expect(writeBinding).toEqual(outerBinding);
+    expect(innerBinding).toMatchObject({
+      classId: outerBinding.classId,
+      sourceId: outerBinding.sourceId,
+      declaration,
+      kind: "class-name",
+      mutable: false,
+    });
+    expect(Object.isFrozen(innerBinding)).toBe(true);
+  });
+
+  it("retains the inner binding through nested methods and closures", () => {
+    const graph = fixture({
+      "/repo/a.ts": `
+      class C { static make(): any { return function read(): any { return C; }; } }
+      function make(): any { class D {} return D; }
+    `,
+    });
+    const source = graph.sourceFiles[0]!;
+    const resolver = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    const outerClass = classDeclaration(source, "C");
+    const captured = identifierUse(collectNodes(outerClass, ts.isFunctionExpression)[0]!, "C");
+    expect(resolver(captured)).toMatchObject({
+      classId: classId(graph.context, outerClass),
+      kind: "class-name",
+      mutable: false,
+    });
+    const make = functionDeclaration(source, "make");
+    const nestedClass = collectNodes(make, ts.isClassDeclaration)[0]!;
+    const nestedUse = identifierUse(make.body!.statements.find(ts.isReturnStatement)!, "D");
+    expect(resolver(nestedUse)).toMatchObject({
+      classId: classId(graph.context, nestedClass),
+      declaration: nestedClass,
+      kind: "declaration",
+      mutable: true,
+    });
+  });
+
+  it("keeps a named class expression's inner name separate from its receiving variable and outer shadows", () => {
+    const graph = fixture({
+      "/repo/a.ts": `
+      class Self {}
+      const Alias = class Self { static read(): any { return Self; } };
+      function outer(): any { return Self; }
+      function alias(): any { return Alias; }
+    `,
+    });
+    const source = graph.sourceFiles[0]!;
+    const resolver = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    const expression = collectNodes(source, ts.isClassExpression)[0]!;
+    const inner = resolver(identifierUse(expression.members.find(ts.isMethodDeclaration)!.body!, "Self"))!;
+    const outer = resolver(identifierUse(functionDeclaration(source, "outer"), "Self"))!;
+    expect(inner).toMatchObject({
+      classId: graph.context.classIdByDeclaration.get(expression),
+      declaration: expression,
+      kind: "class-name",
+      mutable: false,
+    });
+    expect(inner.classId).not.toBe(outer.classId);
+    expect(outer.kind).toBe("declaration");
+    expect(resolver(identifierUse(functionDeclaration(source, "alias"), "Alias"))).toBeUndefined();
+  });
+
+  it("resolves heritage and computed keys through the class-name binding without proving initialization", () => {
+    const graph = fixture({
+      "/repo/a.ts": `
+      class C {}
+      const Alias = class C extends C { [C](): void {} };
+    `,
+    });
+    const source = graph.sourceFiles[0]!;
+    const expression = collectNodes(source, ts.isClassExpression)[0]!;
+    const heritage = expression.heritageClauses![0]!.types[0]!.expression as ts.Identifier;
+    const computed = (expression.members[0]!.name as ts.ComputedPropertyName).expression as ts.Identifier;
+    const resolver = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    for (const use of [heritage, computed]) {
+      expect(resolver(use)).toMatchObject({
+        classId: graph.context.classIdByDeclaration.get(expression),
+        kind: "class-name",
+        mutable: false,
+      });
+    }
+  });
+
+  it("does not confer constructor evidence on instances, parameters or aliases", () => {
+    const graph = fixture({
+      "/repo/a.ts": `
+      class C {}
+      const Alias = C;
+      function instance(value: C): C { return value; }
+      function shadow(C: any): any { return C; }
+      function alias(): any { return Alias; }
+      function value(): any { return C; }
+    `,
+    });
+    const source = graph.sourceFiles[0]!;
+    const resolver = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    for (const [name, identifier] of [
+      ["instance", "value"],
+      ["shadow", "C"],
+      ["alias", "Alias"],
+    ]) {
+      expect(resolver(identifierUse(functionDeclaration(source, name!), identifier!))).toBeUndefined();
+    }
+    const id = classId(graph.context, classDeclaration(source, "C"));
+    const instanceResolver = makeIrIdentityLocalClassExpressionResolver(
+      graph.checker,
+      source,
+      new Map([["C", projected(id, "C")]]),
+      graph.context,
+    );
+    expect(instanceResolver(identifierUse(functionDeclaration(source, "value"), "C"))).toBeUndefined();
+    expect(resolver(identifierUse(functionDeclaration(source, "value"), "C"))?.classId).toBe(id);
+  });
+
+  it("refuses merged declarations and stale reverse identity maps", () => {
+    const ambiguous = fixture({ "/repo/a.ts": "class C {} class C {} function read():any{return C;}" });
+    const source = ambiguous.sourceFiles[0]!;
+    expect(
+      makeIrClassValueBindingResolver(
+        ambiguous.checker,
+        source,
+        ambiguous.context,
+      )(identifierUse(functionDeclaration(source, "read"), "C")),
+    ).toBeUndefined();
+    const graph = fixture({ "/repo/a.ts": "class C {} class D {} function read():any{return C;}" });
+    const exact = graph.sourceFiles[0]!;
+    const c = classDeclaration(exact, "C"),
+      d = classDeclaration(exact, "D");
+    const stale = {
+      ...graph.context,
+      declarationByClassId: new Map(graph.context.declarationByClassId).set(classId(graph.context, c), d),
+    };
+    expect(
+      makeIrClassValueBindingResolver(
+        graph.checker,
+        exact,
+        stale,
+      )(identifierUse(functionDeclaration(exact, "read"), "C")),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    "class C {} let C = 1; function read(){ return C; }",
+    "let C = 1; class C {} function read(){ return C; }",
+    "class C {} var C; function read(){ return C; }",
+    "class C {} function C() {} function read(){ return C; }",
+    "function C() {} class C {} function read(){ return C; }",
+    "class C {} const { value: [C] } = { value: [1] }; function read(){ return C; }",
+    "class C {} if (true) { var C; } function read(){ return C; }",
+    "function read(flag){ switch(flag){ case 1: class C {} return C; case 2: class C {} return C; } }",
+    "function read(flag){ switch(flag){ case 1: class C {} return C; default: let C = 1; return C; } }",
+    "function read(C){ class C {} return C; }",
+    "try {} catch ({C}) { class C {} function read(){ return C; } }",
+    "class C {} import { C } from './other.js'; function read(){ return C; }",
+    "class C {} import C = Other.C; function read(){ return C; }",
+    "class C {} enum C { X } function read(){ return C; }",
+    "class C {} const enum C { X } function read(){ return C; }",
+    "function read(flag){ switch(flag){ case 1: class C {} return C; default: enum C { X } return C; } }",
+  ])("refuses competing value declarations in the class lexical scope: %s", (text) => {
+    const graph = fixture({ "/repo/a.ts": text });
+    const source = graph.sourceFiles[0]!;
+    const resolve = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    const returns = collectNodes(source, ts.isReturnStatement);
+    expect(returns.length).toBeGreaterThan(0);
+    for (const statement of returns) expect(resolve(statement.expression as ts.Identifier)).toBeUndefined();
+  });
+
+  it.each([
+    "class C {} interface C { field: number } function read(){ return C; }",
+    "class C {} namespace C { export const field = 1; } function read(){ return C; }",
+    "class C {} { class C {} function inner(){ return C; } } function read(){ return C; }",
+    "function read(flag){ switch(flag){ case 1: { class C {} return C; } default: { class C {} return C; } } }",
+    "class C {} { let C = 1; } function read(){ return C; }",
+    "class C {} function other(C) {} function read(){ return C; }",
+  ])("preserves exact classes with type merges and independent shadows: %s", (text) => {
+    const graph = fixture({ "/repo/a.ts": text });
+    const source = graph.sourceFiles[0]!;
+    const resolve = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    const returns = collectNodes(source, ts.isReturnStatement);
+    expect(returns.length).toBeGreaterThan(0);
+    const ids = returns.map((statement) => {
+      const binding = resolve(statement.expression as ts.Identifier);
+      expect(binding).toMatchObject({ kind: "declaration", mutable: true });
+      expect(binding!.classId).toBe(classId(graph.context, binding!.declaration));
+      return binding!.classId;
+    });
+    if (returns.length > 1) expect(new Set(ids).size).toBe(returns.length);
+  });
+
+  it("rejects cloned source objects and inconsistent inventory source records", () => {
+    const graph = fixture({ "/repo/a.ts": "class C {} function read():any{return C;}", "/repo/b.ts": "class D {}" });
+    const source = graph.byName.get("/repo/a.ts")!;
+    const clone = ts.createSourceFile(source.fileName, source.text, ts.ScriptTarget.ES2022, true);
+    const resolver = makeIrClassValueBindingResolver(graph.checker, source, graph.context);
+    expectPlanningError(
+      () => resolver(identifierUse(functionDeclaration(clone, "read"), "C")),
+      "source-record-mismatch",
+    );
+    const id = classId(graph.context, classDeclaration(source, "C"));
+    const foreignId = graph.context.sourceIdBySourceFile.get(graph.byName.get("/repo/b.ts")!)!;
+    const stale = {
+      ...graph.context,
+      inventory: {
+        ...graph.context.inventory,
+        classes: graph.context.inventory.classes.map((record) =>
+          record.id === id ? { ...record, sourceId: foreignId } : record,
+        ),
+      },
+    };
+    expectPlanningError(
+      () =>
+        makeIrClassValueBindingResolver(
+          graph.checker,
+          source,
+          stale,
+        )(identifierUse(functionDeclaration(source, "read"), "C")),
+      "class-record-mismatch",
+    );
   });
 });

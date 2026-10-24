@@ -705,6 +705,13 @@ export class PhysicalModuleReservations {
       this.#fail("borrowed tag signature mismatch");
   }
 
+  /** Authenticate a deferred initializer dependency without exposing a pre-freeze index. */
+  assertFunctionReservation(token: FunctionReservation): void {
+    this.#require("reserving");
+    this.#owned(token);
+    if (token.kind !== "function") this.#fail("expected defined function reservation token");
+  }
+
   /** Reserve the emitter-affecting descriptor before freeze, including future members. */
   reserveCanonicalRuntimeRecGroup(
     key: PhysicalResourceKey,

@@ -59,7 +59,7 @@ describe("source-free typed program preparation, standalone WasmGC", () => {
     expect(encoded).not.toContain('"controls"');
   });
 
-  it("keeps lexical globals/startup order and retains the located native TDZ materialization refusal", async () => {
+  it("keeps lexical globals/startup order and executes native TDZ guards after complete preparation", async () => {
     const { packet, source } = sourcePacket(startupFiles);
     const reversed = sourcePacket(startupFiles, true).packet;
     expect(packet.inventory.terminalUnits).toHaveLength(3);
@@ -70,17 +70,8 @@ describe("source-free typed program preparation, standalone WasmGC", () => {
     const normal = requireProgram(typed.prepareTypedIrProgram(packet, typedOptions));
     const reverse = requireProgram(typed.prepareTypedIrProgram(reversed, typedOptions));
     expect(encodePreparedIrProgram(reverse)).toBe(encodePreparedIrProgram(normal));
-    const refused = await replayProgram(normal, replayOptions("wasmgc", "standalone"));
-    expect(refused.kind).toBe("not-accepted");
-    if (refused.kind !== "not-accepted") throw new Error("unimplemented native TDZ materialization was accepted");
-    expect(refused.failure.kind).toBe("unsupported");
-    expect(refused.failure.code).toBe("body-shape-rejected");
-    expect(refused.failure.stage).toBe("build");
-    expect(refused.failure.sourceFile).toBe("base.ts");
-    expect(refused.failure.unitId).toBe(packet.startup[0]!.unitId);
-    expect(refused.failure.detail).toBe(
-      "wasmgc:standalone physical setup cannot be materialized (2 gaps): runtime callable __new_ReferenceError needs runtime function materialization; body <module-init> references runtime callable __new_ReferenceError that the plan cannot reserve",
-    );
+    expect(await execute(normal, "read")).toEqual([132, 132]);
+    expect(await execute(decodePreparedIrProgram(encodePreparedIrProgram(reverse)), "read")).toEqual([132, 132]);
   });
 
   it("executes live var storage and noncommutative startup in both source orders without TDZ demands", async () => {

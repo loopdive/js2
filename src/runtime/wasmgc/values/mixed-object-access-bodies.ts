@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { CLASS_OBJECT_STATE_FIELD } from "./class-constructor-layouts.js";
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 
 /** Internal results, not a scalar JavaScript Get/Has ABI. */
 export const MIXED_ACCESS_STATUS = Object.freeze({ absent: 0, present: 1, unready: 2, unsupported: 3 });
 export interface MixedObjectCarrier {
-  readonly kind: "ordinary" | "wrapper" | "string" | "source" | "native" | "object-prototype" | "promise";
+  readonly kind: "ordinary" | "wrapper" | "string" | "class" | "source" | "native" | "object-prototype" | "promise";
   readonly typeIdx: number;
   readonly stateField?: number;
   readonly bagTypeIdx?: number;
@@ -108,15 +109,18 @@ function operands(input: MixedObjectAccessOperands): MixedObjectAccessOperands {
     const c = data(row, ["kind", "typeIdx"], ["stateField", "native", "bagTypeIdx"]);
     coordinate(c.typeIdx);
     if (
-      !["ordinary", "wrapper", "string", "source", "native", "object-prototype", "promise"].includes(c.kind as string)
+      !["ordinary", "wrapper", "string", "class", "source", "native", "object-prototype", "promise"].includes(
+        c.kind as string,
+      )
     )
       throw Error("mixed object bodies: unknown family");
-    if (["ordinary", "wrapper", "string", "source", "promise"].includes(c.kind as string)) {
+    if (["ordinary", "wrapper", "string", "class", "source", "promise"].includes(c.kind as string)) {
       coordinate(c.stateField);
       if (
         c.native !== undefined ||
         (["ordinary", "promise"].includes(c.kind as string) && c.stateField !== 6) ||
         (["wrapper", "string"].includes(c.kind as string) && c.stateField !== 7) ||
+        (c.kind === "class" && c.stateField !== CLASS_OBJECT_STATE_FIELD) ||
         (c.kind === "source" && c.stateField < 3)
       )
         throw Error("mixed object bodies: invalid state tail");
@@ -189,7 +193,7 @@ function carrierArm(local: number, ordinal: number, body: Instr[]): Instr[] {
 function ownBag(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
   return c.kind === "promise"
     ? field(0, c.typeIdx, 3)
-    : c.kind === "native" || c.kind === "source"
+    : c.kind === "native" || c.kind === "source" || c.kind === "class"
       ? field(0, c.typeIdx, 2)
       : [get(0)];
 }
@@ -210,6 +214,19 @@ function promiseBagGuards(d: MixedObjectAccessOperands, c: MixedObjectCarrier): 
       ? when([global(d.intrinsicPopulationState!), n(2), { op: "i32.ne" }], ret(n(-2)))
       : ret(n(-2))),
   ];
+}
+
+/** Class own storage must be a complete same-realm ordinary bag, never an exotic prefix. */
+function validateClassBag(
+  d: MixedObjectAccessOperands,
+  c: MixedObjectCarrier,
+  local: number,
+  failed: Instr[],
+): Instr[] {
+  if (c.kind !== "class") return [];
+  const ordinary = d.carriers.findIndex((row) => row.kind === "ordinary");
+  if (ordinary < 0) throw Error("mixed object bodies: class access requires ordinary storage");
+  return when([get(local), call(d.classify), n(ordinary + 1), { op: "i32.ne" }], failed);
 }
 
 /** Exact carrier/realm checks precede every private field read. -2 is pending authority. */
@@ -346,6 +363,7 @@ export function buildMixedObjectOwn(input: MixedObjectAccessOperands): MixedObje
             [get(3), { op: "any.convert_extern" }, { op: "ref.test", typeIdx: d.objectTypeIdx }, { op: "i32.eqz" }],
             missing(d, [n(3)]),
           ),
+          ...validateClassBag(d, c, 3, missing(d, [n(3)])),
           ...cast(3, d.objectTypeIdx),
           get(1),
           call(c.kind === "string" ? d.findString : d.findOrdinary),
@@ -532,6 +550,7 @@ export function buildMixedObjectSetPrototype(input: MixedObjectAccessOperands): 
                   ],
                   ret(n(3)),
                 ),
+                ...validateClassBag(d, c, 4, ret(n(3))),
                 ...when([...field(4, d.objectTypeIdx, 4), n(flags.nonExtensible), { op: "i32.and" }], ret(n(0))),
               ],
         ),

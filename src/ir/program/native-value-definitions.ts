@@ -37,6 +37,7 @@ export function indexNativeValueDefinitions(
   ambiguous: () => never,
   representation: NativeValueRepresentation = "execution",
 ) {
+  const rows: NativeValueOccurrence[] = [];
   const definitions = new Map<IrValueId, NativeValueOccurrence>();
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const region = demands.buffers[row.bufferIndex]!;
@@ -46,12 +47,13 @@ export function indexNativeValueDefinitions(
       !nativeValueBufferSelected(demands, region, representation)
     )
       continue;
-    if (row.instruction.result === null) continue;
     const value = { instruction: row.instruction, occurrence };
+    rows.push(value);
+    if (row.instruction.result === null) continue;
     if (definitions.has(row.instruction.result)) ambiguous();
     definitions.set(row.instruction.result, value);
   }
-  return { definitions };
+  return { rows, definitions };
 }
 
 /** Follow representation erasure only; a storage read or call needs a separate producer proof. */

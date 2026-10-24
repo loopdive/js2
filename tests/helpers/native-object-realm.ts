@@ -52,7 +52,10 @@ import {
 import {
   declareNativeRealmObjectLayouts,
   reserveNativeRealmObjectLayouts,
+  reserveNativeRealmObjectState,
+  extendNativeRealmObjectLayouts,
 } from "../../src/backend/wasmgc/resources/native-realm-object-layouts.js";
+import { declareNativeRealmObjectLayoutExtension } from "../../src/backend/wasmgc/resources/native-realm-object-layout-declarations.js";
 import {
   reserveNativeObjectRealmException,
   reserveNativeObjectRealmDeclarations,
@@ -67,6 +70,7 @@ export function publicRealmFoundation(
   sourceText = STATE_SOURCE,
   extraLiterals: readonly string[] = [],
   expectedSourceUnits = noSource ? 0 : 2,
+  borrowState = false,
 ) {
   const program = prepareGetterProgram(noSource ? NO_SOURCE_REALM : sourceText, decoded);
   const projection = program.runtime[0]!;
@@ -96,9 +100,19 @@ export function publicRealmFoundation(
     objectPlan = declareNativeObjectLayouts(requirements);
   const objects = reserveNativeObjectLayouts(tx, requirements, objectPlan),
     dependencies = { objects, objectPlan };
-  const plan = declareNativeRealmObjectLayouts("realm-layout", objects.object.key, objects.propMap.key);
-  const pack = reserveNativeRealmObjectLayouts(tx, "realm-layout", dependencies, plan);
-  const f = { module, tx, prefix, requirements, objects, objectPlan, dependencies, plan, pack };
+  const sharedState = borrowState ? reserveNativeRealmObjectState(tx, "source-state") : undefined;
+  const plan = sharedState
+    ? declareNativeRealmObjectLayoutExtension(
+        "realm-layout",
+        objects.object.key,
+        objects.propMap.key,
+        sharedState.types.state.key,
+      )
+    : declareNativeRealmObjectLayouts("realm-layout", objects.object.key, objects.propMap.key);
+  const pack = sharedState
+    ? extendNativeRealmObjectLayouts(tx, "realm-layout", sharedState, dependencies, plan)
+    : reserveNativeRealmObjectLayouts(tx, "realm-layout", dependencies, plan);
+  const f = { module, tx, prefix, requirements, objects, objectPlan, dependencies, plan, pack, sharedState };
   const vectorPlan = deriveNativeVectorResourcePlan({
     anchor: deriveNativeValueResourcePlan(program, projection, "native-string").anchor,
     functions: program.ir.functions,
@@ -169,7 +183,7 @@ export function publicRealmClosures(f: ReturnType<typeof publicRealmFoundation>,
       vectors: f.vectors,
       vectorPlan: f.vectorPlan,
       strings: { types: f.stringTypes, key: f.stringTypes.key, utf8Storage: f.stringTypes.utf8Storage },
-      ...(state ? { realmState: f.pack } : {}),
+      ...(state ? { realmState: f.sharedState ?? f.pack } : {}),
     };
     const source = beginNativeSourceClosureEmission(f.tx, f.realm.source, carriers, f.requests);
     return { source, carriers, closures: source.types.closures, closurePlan: source.types.closurePlan };

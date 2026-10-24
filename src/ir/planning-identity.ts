@@ -11,8 +11,10 @@ import {
   type IrUnitId,
   type IrUnitInventory,
   type IrUnitRecord,
+  type IrInventoryScannerMetadata,
 } from "./identity.js";
 import { collectModuleInitPopulation } from "./module-init.js";
+import { classDefinitionExpressions } from "./analysis/class-definition-syntax.js";
 
 /** Exact structural identity retained across a temporary name-keyed API. */
 export interface IrLegacyUnitProjectionEntry {
@@ -70,6 +72,7 @@ export interface IrPlanningIdentityContext {
   readonly moduleInitUnitIdBySourceFile: ReadonlyMap<ts.SourceFile, IrUnitId>;
   /** Exact top-level statement population captured once for later stale-AST validation. */
   readonly moduleInitPopulationBySourceFile: ReadonlyMap<ts.SourceFile, readonly ts.Statement[]>;
+  readonly definitionOwnerByExpression: ReadonlyMap<ts.Node, IrUnitId | null>;
 }
 
 export type IrPlanningIdentityInvariantCode =
@@ -101,6 +104,46 @@ export class IrPlanningIdentityInvariantError extends Error {
     super(message);
     this.name = "IrPlanningIdentityInvariantError";
   }
+}
+
+export function throwIrPlanningIdentityInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
+  throw new IrPlanningIdentityInvariantError(code, message);
+}
+
+export function rethrowIrPlanningIdentityInvariant(error: unknown): void {
+  if (error instanceof IrPlanningIdentityInvariantError) throw error;
+}
+
+/** Validate a source class against the complete authoritative identity record. */
+export function requireIrPlanningClassRecord(
+  context: IrPlanningIdentityContext,
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+): IrClassRecord {
+  const sourceFile = declaration.getSourceFile();
+  const sourceId = context.sourceIdBySourceFile.get(sourceFile);
+  if (sourceId === undefined || context.sourceFileBySourceId.get(sourceId) !== sourceFile) {
+    return throwIrPlanningIdentityInvariant(
+      "source-record-mismatch",
+      `class declaration comes from stale source ${sourceFile.fileName}`,
+    );
+  }
+  const classId = context.classIdByDeclaration.get(declaration);
+  const record = context.inventory.classes.find((candidate) => candidate.id === classId);
+  if (
+    classId === undefined ||
+    context.declarationByClassId.get(classId) !== declaration ||
+    !record ||
+    record.sourceId !== sourceId ||
+    record.declarationKind !== (ts.isClassDeclaration(declaration) ? "declaration" : "expression") ||
+    record.declarationStart !== declaration.getStart(sourceFile) ||
+    record.declarationEnd !== declaration.end
+  ) {
+    return throwIrPlanningIdentityInvariant(
+      "class-record-mismatch",
+      `class ${declaration.name?.text ?? "<anonymous>"} is not its exact authoritative declaration`,
+    );
+  }
+  return record;
 }
 
 /** Runtime read-only map: callers do not receive a mutable Map behind the type. */
@@ -332,10 +375,6 @@ export class IrLegacyUnitResultCorrelation<TResult> {
   }
 }
 
-function planningIdentityInvariant(code: IrPlanningIdentityInvariantCode, message: string): never {
-  throw new IrPlanningIdentityInvariantError(code, message);
-}
-
 /** Require an exact source object from the authoritative planning context. */
 export function requireIrPlanningSourceId(
   identityContext: IrPlanningIdentityContext,
@@ -343,7 +382,7 @@ export function requireIrPlanningSourceId(
 ): IrSourceId {
   const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
   if (sourceId) return sourceId;
-  return planningIdentityInvariant(
+  return throwIrPlanningIdentityInvariant(
     "source-record-mismatch",
     `source ${sourceFile.fileName} is not part of the authoritative IR planning context`,
   );
@@ -357,13 +396,13 @@ function requireIrPlanningTerminalRecord(
   const terminal = identityContext.terminalByUnitId.get(terminalOwnerId);
   const inventoryRecord = identityContext.unitByUnitId.get(terminalOwnerId);
   if (!terminal || inventoryRecord !== terminal || !terminal.terminal || terminal.terminalOwnerId !== terminal.id) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "missing-planning-owner",
       `planning owner ${terminalOwnerId} is not an exact terminal inventory record`,
     );
   }
   if (terminal.sourceId !== sourceId) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "source-record-mismatch",
       `planning owner ${terminalOwnerId} belongs to source ${terminal.sourceId}, not ${sourceId}`,
     );
@@ -389,25 +428,34 @@ export function requireIrPlanningOwnerUnitId(identityContext: IrPlanningIdentity
   const sourceFile = node.getSourceFile();
   const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
   if (identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "source-record-mismatch",
       `source ${sourceId} does not resolve back to the exact planning SourceFile`,
     );
   }
 
   for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (identityContext.definitionOwnerByExpression.has(current)) {
+      const owner = identityContext.definitionOwnerByExpression.get(current)!;
+      if (owner === null)
+        return throwIrPlanningIdentityInvariant(
+          "unowned-planning-owner",
+          "class definition expression has no R0 terminal owner",
+        );
+      return requireIrPlanningTerminalRecord(identityContext, sourceId, owner).id;
+    }
     const unitId = identityContext.unitIdByDeclaration.get(current);
     if (unitId === undefined) continue;
 
     const unit = identityContext.unitByUnitId.get(unitId);
     if (!unit || identityContext.declarationByUnitId.get(unitId) !== current) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "missing-planning-owner",
         `indexed declaration does not resolve to exact inventory unit ${unitId}`,
       );
     }
     if (unit.sourceId !== sourceId) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "source-record-mismatch",
         `indexed unit ${unitId} belongs to source ${unit.sourceId}, not ${sourceId}`,
       );
@@ -419,20 +467,20 @@ export function requireIrPlanningOwnerUnitId(identityContext: IrPlanningIdentity
       continue;
     }
     if (unit.terminalOwnerId === null) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "unowned-planning-owner",
         `indexed support unit ${unitId} has no R0 terminal owner`,
       );
     }
     if (unit.terminal && unit.terminalOwnerId !== unit.id) {
-      return planningIdentityInvariant("missing-planning-owner", `terminal unit ${unit.id} does not own itself`);
+      return throwIrPlanningIdentityInvariant("missing-planning-owner", `terminal unit ${unit.id} does not own itself`);
     }
     return requireIrPlanningTerminalRecord(identityContext, sourceId, unit.terminalOwnerId).id;
   }
 
   const moduleInitUnitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   if (moduleInitUnitId === undefined || identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitUnitId) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "missing-planning-owner",
       `source ${sourceId} has no exact source-owned module-init planning unit`,
     );
@@ -443,7 +491,7 @@ export function requireIrPlanningOwnerUnitId(identityContext: IrPlanningIdentity
     moduleInit.observedKind !== "module-init" ||
     moduleInit.lexicalOwnerId !== null
   ) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "missing-planning-owner",
       `source-owned planning unit ${moduleInitUnitId} is not a structural module-init terminal`,
     );
@@ -460,14 +508,14 @@ export function requireIrPlanningOwnerUnitId(identityContext: IrPlanningIdentity
 export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPlanningIdentityContext {
   const scanned = getIrInventoryScannerMetadata(inventory);
   if (!scanned) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "untracked-inventory",
       "IR planning identity requires the exact inventory returned by buildIrUnitInventory",
     );
   }
 
   if (scanned.sources.length !== inventory.sources.length) {
-    return planningIdentityInvariant(
+    return throwIrPlanningIdentityInvariant(
       "source-record-mismatch",
       `inventory has ${inventory.sources.length} sources but its scanner captured ${scanned.sources.length}`,
     );
@@ -480,26 +528,29 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
     const source = inventory.sources[index]!;
     const scannedSource = scanned.sources[index]!;
     if (scannedSource.record !== source || scannedSource.sourceFile.fileName !== source.originalFileName) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "source-record-mismatch",
         `source ${index} no longer matches scanner record ${source.id}`,
       );
     }
     if (sourceFileBySourceId.has(source.id)) {
-      return planningIdentityInvariant("duplicate-source-id", `source identity ${source.id} occurs more than once`);
+      return throwIrPlanningIdentityInvariant(
+        "duplicate-source-id",
+        `source identity ${source.id} occurs more than once`,
+      );
     }
     if (sourceIdBySourceFile.has(scannedSource.sourceFile)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-source-file",
         `source file ${scannedSource.sourceFile.fileName} occurs more than once`,
       );
     }
     sourceIdBySourceFile.set(scannedSource.sourceFile, source.id);
     sourceFileBySourceId.set(source.id, scannedSource.sourceFile);
-    const moduleInitPopulation = collectModuleInitPopulation(scannedSource.sourceFile);
+    const moduleInitPopulation = collectModuleInitPopulation(scannedSource.sourceFile, scanned.moduleInitMode);
     for (const statement of moduleInitPopulation) {
       if (statement.parent !== scannedSource.sourceFile || statement.getSourceFile() !== scannedSource.sourceFile) {
-        return planningIdentityInvariant(
+        return throwIrPlanningIdentityInvariant(
           "invalid-module-init",
           `module-init statement at ${statement.pos} is detached from source ${source.id}`,
         );
@@ -511,10 +562,10 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   const unitsById = new Map<IrUnitId, IrUnitRecord>();
   for (const unit of inventory.allUnits) {
     if (unitsById.has(unit.id)) {
-      return planningIdentityInvariant("duplicate-unit-id", `unit identity ${unit.id} occurs more than once`);
+      return throwIrPlanningIdentityInvariant("duplicate-unit-id", `unit identity ${unit.id} occurs more than once`);
     }
     if (!sourceFileBySourceId.has(unit.sourceId)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "unit-record-mismatch",
         `unit ${unit.id} belongs to unknown source ${unit.sourceId}`,
       );
@@ -527,13 +578,13 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   const moduleInitUnitIdBySourceFile = new Map<ts.SourceFile, IrUnitId>();
   for (const terminal of inventory.terminalUnits) {
     if (terminalByUnitId.has(terminal.id)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-terminal-id",
         `terminal identity ${terminal.id} occurs more than once`,
       );
     }
     if (unitsById.get(terminal.id) !== terminal || !terminal.terminal || terminal.terminalOwnerId !== terminal.id) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "terminal-record-mismatch",
         `terminal ${terminal.id} is not the exact terminal record in allUnits`,
       );
@@ -547,20 +598,20 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
       terminal.observedKind !== "module-init" ||
       terminal.lexicalOwnerId !== null
     ) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "invalid-module-init",
         `module-init terminal ${terminal.id} does not have structural source ownership`,
       );
     }
     if (moduleInitUnitIdBySourceId.has(terminal.sourceId)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-module-init",
         `source ${terminal.sourceId} owns more than one module-init unit`,
       );
     }
     const sourceFile = sourceFileBySourceId.get(terminal.sourceId);
     if (!sourceFile) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "invalid-module-init",
         `module-init ${terminal.id} belongs to unknown source ${terminal.sourceId}`,
       );
@@ -570,13 +621,13 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   }
   for (const unit of inventory.allUnits) {
     if (unit.terminal && terminalByUnitId.get(unit.id) !== unit) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "terminal-record-mismatch",
         `terminal allUnits record ${unit.id} is absent from terminalUnits`,
       );
     }
     if (unit.terminalOwnerId !== null && !terminalByUnitId.has(unit.terminalOwnerId)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "invalid-terminal-owner",
         `unit ${unit.id} references unknown terminal owner ${unit.terminalOwnerId}`,
       );
@@ -588,7 +639,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
         containing === undefined ||
         containing.sourceId !== unit.sourceId
       ) {
-        return planningIdentityInvariant(
+        return throwIrPlanningIdentityInvariant(
           "invalid-terminal-owner",
           `nested terminal ${unit.id} references invalid containing terminal ${unit.containingTerminalOwnerId}`,
         );
@@ -600,7 +651,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   const declarationByUnitId = new Map<IrUnitId, ts.Node>();
   for (const entry of scanned.units) {
     if (unitsById.get(entry.record.id) !== entry.record || entry.record.kind === "module-init") {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "unit-record-mismatch",
         `scanned declaration does not match inventory unit ${entry.record.id}`,
       );
@@ -609,20 +660,20 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
       sourceIdBySourceFile.get(entry.sourceFile) !== entry.record.sourceId ||
       entry.declaration.getSourceFile() !== entry.sourceFile
     ) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "unit-record-mismatch",
         `unit ${entry.record.id} declaration belongs to a different source`,
       );
     }
     const priorDeclarationId = unitIdByDeclaration.get(entry.declaration);
     if (priorDeclarationId !== undefined) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-unit-declaration",
         `AST declaration maps to both ${priorDeclarationId} and ${entry.record.id}`,
       );
     }
     if (declarationByUnitId.has(entry.record.id)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-unit-declaration",
         `unit ${entry.record.id} maps to more than one AST declaration`,
       );
@@ -633,7 +684,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   for (const unit of inventory.allUnits) {
     if (unit.kind === "module-init") {
       if (declarationByUnitId.has(unit.id)) {
-        return planningIdentityInvariant(
+        return throwIrPlanningIdentityInvariant(
           "invalid-module-init",
           `module-init ${unit.id} must be owned by its source rather than an AST declaration`,
         );
@@ -641,7 +692,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
       continue;
     }
     if (!declarationByUnitId.has(unit.id) && unit.syntheticRole === undefined) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "missing-unit-declaration",
         `source unit ${unit.id} has no scanned AST declaration`,
       );
@@ -651,10 +702,13 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   const classesById = new Map<IrClassId, IrClassRecord>();
   for (const classRecord of inventory.classes) {
     if (classesById.has(classRecord.id)) {
-      return planningIdentityInvariant("duplicate-class-id", `class identity ${classRecord.id} occurs more than once`);
+      return throwIrPlanningIdentityInvariant(
+        "duplicate-class-id",
+        `class identity ${classRecord.id} occurs more than once`,
+      );
     }
     if (!sourceFileBySourceId.has(classRecord.sourceId)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "class-record-mismatch",
         `class ${classRecord.id} belongs to unknown source ${classRecord.sourceId}`,
       );
@@ -666,7 +720,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   const declarationByClassId = new Map<IrClassId, ts.ClassDeclaration | ts.ClassExpression>();
   for (const entry of scanned.classes) {
     if (classesById.get(entry.record.id) !== entry.record) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "class-record-mismatch",
         `scanned declaration does not match inventory class ${entry.record.id}`,
       );
@@ -675,20 +729,20 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
       sourceIdBySourceFile.get(entry.sourceFile) !== entry.record.sourceId ||
       entry.declaration.getSourceFile() !== entry.sourceFile
     ) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "class-record-mismatch",
         `class ${entry.record.id} declaration belongs to a different source`,
       );
     }
     const priorDeclarationId = classIdByDeclaration.get(entry.declaration);
     if (priorDeclarationId !== undefined) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-class-declaration",
         `class declaration maps to both ${priorDeclarationId} and ${entry.record.id}`,
       );
     }
     if (declarationByClassId.has(entry.record.id)) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "duplicate-class-declaration",
         `class ${entry.record.id} maps to more than one AST declaration`,
       );
@@ -698,7 +752,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
   }
   for (const classRecord of inventory.classes) {
     if (!declarationByClassId.has(classRecord.id) && classRecord.syntheticRole === undefined) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "missing-class-declaration",
         `source class ${classRecord.id} has no scanned AST declaration`,
       );
@@ -715,7 +769,7 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
       classRecord.sourceId !== terminal.sourceId ||
       classRecord.lexicalOwnerId !== terminal.containingTerminalOwnerId
     ) {
-      return planningIdentityInvariant(
+      return throwIrPlanningIdentityInvariant(
         "invalid-terminal-owner",
         `nested terminal ${terminal.id} is detached from its enclosing class/component edge`,
       );
@@ -735,5 +789,52 @@ export function buildIrPlanningIdentityContext(inventory: IrUnitInventory): IrPl
     moduleInitUnitIdBySourceId: readonlyIdentityMap(moduleInitUnitIdBySourceId),
     moduleInitUnitIdBySourceFile: readonlyIdentityMap(moduleInitUnitIdBySourceFile),
     moduleInitPopulationBySourceFile: readonlyIdentityMap(moduleInitPopulationBySourceFile),
+    definitionOwnerByExpression: projectDefinitionExpressionOwners(
+      scanned,
+      declarationByClassId,
+      classesById,
+      terminalByUnitId,
+    ),
   });
+}
+
+function projectDefinitionExpressionOwners(
+  scanner: IrInventoryScannerMetadata,
+  declarations: ReadonlyMap<IrClassId, ts.ClassDeclaration | ts.ClassExpression>,
+  classes: ReadonlyMap<IrClassId, IrClassRecord>,
+  terminals: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>,
+): ReadonlyMap<ts.Node, IrUnitId | null> {
+  const owners = new Map<ts.Node, IrUnitId | null>();
+  if (scanner.moduleInitMode !== "source-complete") return readonlyIdentityMap(owners);
+  const expressionsByClass = new Map<IrClassId, ReadonlySet<ts.Expression>>();
+  let expectedCount = 0;
+  for (const [id, declaration] of declarations) {
+    const expressions = new Set(classDefinitionExpressions(declaration));
+    expressionsByClass.set(id, expressions);
+    expectedCount += expressions.size;
+  }
+  for (const entry of scanner.definitionExpressions) {
+    const declaration = declarations.get(entry.classId),
+      record = classes.get(entry.classId);
+    if (
+      !declaration ||
+      !record ||
+      declaration.getSourceFile() !== entry.sourceFile ||
+      entry.expression.getSourceFile() !== entry.sourceFile ||
+      !expressionsByClass.get(entry.classId)?.has(entry.expression) ||
+      owners.has(entry.expression) ||
+      (entry.terminalOwnerId !== null && terminals.get(entry.terminalOwnerId)?.sourceId !== record.sourceId)
+    )
+      return throwIrPlanningIdentityInvariant(
+        "class-record-mismatch",
+        "class definition expression lost its exact scanner execution owner",
+      );
+    owners.set(entry.expression, entry.terminalOwnerId);
+  }
+  if (owners.size !== expectedCount)
+    return throwIrPlanningIdentityInvariant(
+      "class-record-mismatch",
+      "class definition expression census changed after scanning",
+    );
+  return readonlyIdentityMap(owners);
 }

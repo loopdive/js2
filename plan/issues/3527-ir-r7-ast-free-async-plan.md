@@ -3698,3 +3698,246 @@ selected case (five filtered out), exit 0, in 680.33 seconds. Its final ledger
 profile recorded 58,787 single index checks taking 420.01 seconds and 13,560
 batch index checks taking 96.73 seconds. This is diagnostic execution of the
 previous commit, not performance acceptance of the token-group change.
+
+### Implementation Plan — Promise/class stack integration (2026-10-24)
+
+Integrate published Promise head `9850f3e9d59ef30ed7f76763a640ca33385589ee`
+with class head `4373949d849412cdf2203b3ace94fda0c3976ad6` in the isolated
+`codex/3527-native-promise-class-integration-20261024` worktree. This resolves
+existing implementations, without claiming generic public Construct or Species.
+The architecture review requires preserving semantic/execution definition
+selection while retaining void effect rows; physical callable checks traverse
+prepared runtime instructions and enumerate class callable operands. Invocation
+keeps callback-parameter authentication before callable flow, both Promise and
+class owners, and explicit optional fill context. Public Call/IsCallable excludes
+actual internal Construct protocol entries, not entries selected by signature.
+Class construction keeps its private metadata owner and exact source slot.
+
+Unify ordinary allocation on the shared storage-prefix and state-tail recipe;
+keep separate bootstrap and checked initializer adapters to avoid recursive realm
+initialization. Preserve Promise bag/population guards and class same-realm bag
+validation. Inspect automatically merged source closure/state ownership joins so
+only one actual owner initializes shared anchors. Existing historical hash pins
+remain unchanged. Validate focused type checking, token/batch/Call contracts,
+class Construct execution and private/public partition regressions; retain exact
+failure logs and distinguish historical baseline failures from integration bugs.
+
+#### Integration findings and remaining production join (2026-10-24)
+
+The resolved integration preserves both branches' existing owners. Shared
+ordinary allocation now uses one storage-prefix/state-tail recipe; the bootstrap
+adapter supplies explicit state operands and the class adapter calls the issued
+initializer. Public realm population binds that initializer through the same
+single-owner bootstrap boundary used by private class realms, rejecting competing
+writers. Invocation fill receives explicit `realmCallables` and `classValues`
+roles. Public Call excludes class-owned internal Construct entries using the
+existing storage/signature/fixed-parameter/effect proof, shared with the Construct
+use validator; it does not require a local Construct call site. Occurrences and
+definitions both select the execution representation.
+
+Validation so far: source TS7 passes; Promise callback/settlement, captured Call,
+completion/token contracts and the initial partition control pass **63/63**.
+Shared layout and allocation preservation pass **12/12**. The first real class
+execution run was **43/50**, with all seven execution failures caused by the test
+worker rejecting `exn` heap types, plus one worker RPC timeout. Merely passing the
+flag to the outer Node process did not enable it in Vitest's configured forks.
+A temporary config then printed the actual worker argv and validated an exnref
+Wasm positive control (**1/1**); with that configuration the actual original class
+Construct/receiver restoration case passed **1/1**, six cases filtered out
+(57.60 seconds test time). No historical pins were changed. Logs are under this
+worktree's `.tmp/integration-*.log`.
+
+A constructed Prepared program combining class dispatch with the already-known
+native Promise.all intrinsic prepares successfully but is refused before runtime
+with **8 physical-setup gaps**. This is explicit refusal evidence, not combined
+execution acceptance. The temporary smoke helper is retained only in `.tmp/`.
+Architecture review identifies the missing production sequence:
+
+- Carry an explicitly selected NativePromiseConfiguration from canonical backend
+  options through acceptance into the private acceptance record.
+- Feed that checked composition into the physical plan before runtime binding and
+  body-reference checks. The current Promise preflight is called without config;
+  its remaining producer, carrier, dispatch, construction and composition gaps
+  are unconditional placeholders, not an implemented successful proof issuer.
+- Reserve actual Promise resources, source/settlement association, shared Call,
+  public realm population/mixed Get, Promise objects/then lookup, and common
+  Promise runtime before the consumer's single reservation freeze. Bind original
+  source slots and fill each existing owner once, then issue full composition
+  evidence. The current consumer still explicitly refuses native async frames.
+- Delay/All currently has declaration/reservation but no complete fill producer.
+  Existing combinator bodies allocate Promise payloads with null own-property
+  bags; they cannot substitute for the canonical public realm Promise allocator.
+  The `support` source-closure settlement mode and `ordinary` combinator mode
+  also need a coherent choice, not a compatibility assertion.
+
+The common Promise runtime binding certifies core resolution/settlement only.
+None of the above gates may be removed or replaced with simulated evidence.
+Queued Promise Job -> public Call -> retained class Construct, with original and
+codec replay, remains an unmet acceptance condition for that next production join.
+
+Final merge checkpoint: all **17/17** conflicts are resolved. The shared storage
+proof now has discriminated outcomes: a genuine ordinary callable payload keeps
+its existing semantics, an authenticated internal protocol is private, and an
+unsupported private protocol propagates a failure instead of becoming public.
+The final partition/Construct-contract run passes **11/11**, including stored
+private code with no Construct call and a negative raw-body control. The latter
+was changed to an immutable fixture update after focused TS7 caught its readonly
+array mutation, then rerun successfully (**1/1**, two filtered out).
+Full source TS7, focused partition-test TS7 and lint pass. The required
+reachability command exits 0 with preservation **6/6** full and **6/6** cut
+witnesses, core nodes **12/12**, and core types **10/10**. It still explicitly
+reports the open dynamic-import graph and does not certify strict retirement.
+An earlier audit raced formatting and reported source changes; the final audit
+ran with source writes stopped and passed. This checkpoint is staged for root
+review, without a commit or push; full combined Promise/class execution remains
+blocked on the production composition described above.
+
+### Integration gate correction — 2026-10-24
+
+The root review measured three integration-specific gate failures: consumer LOC
+1537/1531 and materialization size 302/300, three added backend-to-IR value
+imports (122/119), and missing exact boundary inventory entries for class modules.
+Before editing, the correction is to extract the complete invocation fill join
+into its existing IR integration owner, and calculate private Construct storage
+proofs while deriving authenticated source requirements. Backend admission will
+consume and reauthenticate that result, retaining unsupported-private gaps rather
+than falling back to public Call. Execution-view filtering stays with the IR
+proof. No allowance or import-cycle exemption is needed. Class module inventory
+entries will follow their actual dependency closure; frontend/backend mixed code
+remains explicit migration debt, and existing debt/closure thresholds stay intact.
+Targeted partition and source contracts, typecheck, and the failing gates will
+qualify the correction. Root retains ownership of the ongoing remaining class
+execution run; its mixed legacy/new EH failures are a distinct unresolved runtime
+finding, not evidence that the worker flag is absent.
+
+The exact inventory inspection also found pre-existing class-branch placement
+violations: frontend `program/source-class-definitions`, physical setup files in
+`ir/program`, and runtime provider checks reaching program snapshot utilities.
+The narrow correction relocates the three new mixed files beside their actual
+integration callers (still marked debt), moves the pure class-value operand
+contract into `ir/core`, and gives runtime provider records a local exact data
+comparison that rejects executable/accessor/foreign object data. It also replaces
+erased `ir/identity` imports in new pure flow/effect helpers with the canonical
+shared identity contract. These are dependency repairs, not layer exemptions or
+promotion of existing debt. All forty previously missing modules receive exact
+entries; activated roots and previous closure denominators are preserved.
+
+The final boundary split keeps error ABI planning in `ir/program`: its only
+backend dependencies were erased types for a much larger reservation input. It
+now takes the actual descriptive demands/declarations/error selection it reads.
+The source association helper owns the extracted consumer check; resource fill
+remains at its existing backend boundary, avoiding two new reverse value edges.
+
+Root's remaining class run ended with five explicit mixed legacy/standard EH
+failures, then a V8 fatal assertion and IPC closure before the sixth result. The
+resolver omitted the existing standardized-EH policy, and the copy inspector
+also injected legacy try/rethrow. Pass the accepted target to the resolver's
+policy and use the existing standard rethrow helper for inspection; preserve host
+legacy bytes. Root's original common Promise execution (session 97757) also ended
+without a pass: 1/1 timed out (configured 1,800,000 ms, actual 3,217,550 ms), plus
+an onTaskUpdate RPC timeout. That performance diagnosis is separate root work.
+
+Gate-correction checkpoint: source TS7 and focused changed-test TS7 pass; LOC and
+function-size gates pass after extracting source-carrier reservation and source
+association into the existing invocation integration owner. The import-cycle
+gate passes at backend->IR **119** and IR->backend **26**, using only the already
+existing allowances. Boundary inventory passes with **zero errors**, explicitly
+`inventory-valid-architecture-incomplete`. The added inventory has 41 exact
+entries; existing states, active roots and closure denominators are unchanged.
+Three new class modules were relocated (pure class-value contract into core;
+source-class definitions and mixed class physical setup outside pure program).
+Error setup stays pure through its minimal descriptive input contract.
+
+Partition/Construct contracts pass **11/11** after relocating proof derivation.
+The changed class boundary/source suite is **46/52**: two added provider controls
+pass (nested accessors never evaluated, foreign prototypes and added symbols
+rejected); six pre-existing class-call-error tests refuse at source preparation
+with `runtime-supplied callable result needs a value-preserving carrier; an
+annotation does not prove its returned value`. They never reach their intended
+error owner checks. This remains unresolved fixture/source-admission
+incompatibility; no gate was removed to admit those values.
+
+With actual worker exnref capability and the corrected standalone EH policy,
+`decoded=true` real class execution passes **1/1** (six filtered), **57.93s** test
+time, including original runtime result checks and positive instrumented
+Construct/internal-entry counts with zero bad receiver/argument frames. Log:
+`.tmp/integration-class-eh-decoded.log`. The other six cases need requalification
+against this correction; the failed prior run cannot count as that evidence.
+Root will own further gate/host-byte/reviewer checks. Source edits stop at this
+checkpoint; no commit or push, and no claim of complete Promise/class composition.
+
+### Review follow-up — finite providers and class Call fixture
+
+Before editing: the reviewer identified duplicated generic comparison in the
+new runtime provider helper. Replace it with an explicit finite contract for the
+class allocator and error providers: fixed top-level fields, ordered scalar
+arrays, host/runtime callable payloads, and the error-only externref->externref
+signature. Own data descriptors and exact field populations must still reject
+accessors, foreign prototypes and added symbol fields without executing them.
+No generic recursive traversal or program snapshot/Map/Set logic belongs here.
+
+The six error-contract failures originate in source `invoke(f,x){return f(x)}`:
+its arbitrary callable parameter cannot establish an f64 result carrier. Keep
+that production refusal. The constructed class fixture will obtain the same
+source/unit signature inventory from an explicit scalar placeholder and replace
+that one body with typed `closure.call` IR, just as it already replaces allocation
+and class Call bodies. This tests the actual private typed class Call ABI and its
+throwing body without claiming broader runtime-supplied scalar Call admission.
+Re-run error contracts and actual class Call TypeError execution, plus source and
+focused test TS7, before freezing again. Root's last host-byte comparison passed
+11/11 for the prior handoff hash; do not reuse that receipt for changed source.
+
+Follow-up results: class error contracts and prepared class validation now pass
+**15/15**, including all six formerly blocked contract cases. Real mixed
+ReferenceError/class Call TypeError execution with codec replay and UTF-16 passes
+**1/1**, eight filtered; the final run takes **28.12s** test time and preserves
+error tags/messages, fresh thrown identities, exported retained invocation and
+zero imports. The first identical execution passed in 31.80s; focused TS7 then
+found an existing un-narrowed string-resource union in its assertion. An explicit
+`errors`-plan presence check fixes that test typing and was included in the final
+runtime pass. Source TS7, focused test TS7, Biome (four files) and diff whitespace
+checks pass. Logs: `.tmp/integration-review-{contracts,class-typeerror-final,
+typecheck,test-typecheck-final,biome-final}.log`. No broad gates were duplicated.
+Five paths changed since the last handoff; edits stop for review again.
+
+### Guarded child engine capability — 2026-10-24
+
+Before editing: the guarded class Call replay explicitly creates a child argv
+containing only the TS loader. Vitest's exnref fork flag does not propagate to
+that child. Add `--experimental-wasm-exnref` to this test's explicit child engine
+arguments, preserving its frontend guard, timeout, oracle and assertions. Only
+the guarded-child test will run here; root owns the other execution cases and
+final gates. No production change is involved.
+
+Guarded-child validation passes **1/1**, eight other cases filtered, **33.66s**
+test time. Child receipt `.tmp/class-call-error-replay-OlBasl/result.json` records
+exit 0, both actual runtime results (1703 and 1698) matching the oracle, no
+frontend or TypeScript modules, identical codec re-encoding and `ok: true`.
+Suite log: `.tmp/integration-class-guarded-child.log`. Biome and diff whitespace
+checks pass. Only the test and this plan changed; production source is untouched.
+The test file was frozen before root started the other eight cases, and all
+edits now stop for final review.
+
+### Final integration validation checkpoint — 2026-10-24
+
+Read and verified the final receipts on the frozen integration source:
+
+- `.tmp/integration-final-class-execution.log`: **7/7 passed**, 405.37s
+  total, covering original/codec Construct execution, actual arguments, nested
+  calls, throws, newTarget and argument-vector identity/restoration.
+- `.tmp/integration-final-class-call-errors.log`: **8/8 selected passed**,
+  224.52s total, covering mixed/unmixed error populations, original/codec replay
+  and UTF-8/UTF-16. The filtered guarded-child ninth case independently passed
+  **1/1**, as recorded above; it is not counted twice.
+- `.tmp/integration-final-gates.json`: all **9 gates exit 0** (LOC, function
+  size, coercion, oracle, import cycles, boundary inventory, dead exports,
+  CI LOC and CI function size). The boundary report has zero errors and retains
+  `inventory-valid-architecture-incomplete` with `architectureComplete: false`.
+
+These successful reruns qualify the repaired class integration; all earlier
+failed runs and their diagnoses remain recorded. They do not certify full IR
+migration, strict legacy retirement or queued Promise Job -> Call -> class
+Construct composition. The common Promise execution timeout and missing Promise
+production coordinator remain open. Root owns the final host-byte rerun and
+merge checkpoint; subsequent work targets Promise reservation performance. This
+update changes only this issue file, with no production or test edits.

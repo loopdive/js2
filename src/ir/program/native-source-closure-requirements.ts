@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { nativePrivateConstructRequirements } from "./native-construct-requirements.js";
 import { nativePromiseResourcesRequired } from "./native-promise-resources.js";
 import type { IrClosureSignature, IrFunction, IrType } from "../core/nodes.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
@@ -15,6 +16,11 @@ import {
   nativeRefCellScalarInner,
   type NativeRefCellCensus,
 } from "./native-ref-cell-requirements.js";
+
+import { classValueNewMismatch } from "../core/class-value-contract.js";
+import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
+import { irClassValueAllocationDeclaration } from "../runtime/class-value-callable.js";
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 export interface NativeSourceClosureSignature {
   readonly id: string;
@@ -42,6 +48,14 @@ export interface NativeSourceClosureRequirements {
     readonly allocationId: AllocSiteId;
     readonly rawAllocationId: AllocSiteId;
   }[];
+  readonly privateConstruct?: { readonly units: readonly IrUnitId[]; readonly gaps: readonly string[] };
+  readonly classValues?: readonly {
+    readonly occurrence: number;
+    readonly ownerUnitId: IrUnitId;
+    readonly allocationId: AllocSiteId;
+    readonly rawAllocationId: AllocSiteId;
+    readonly callUnitId: IrUnitId;
+  }[];
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
 }
 const sources = new WeakMap<
@@ -67,6 +81,7 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
     shapes: NativeSourceClosureShape[] = [];
   const units: NativeSourceClosureRequirements["units"][number][] = [];
   const allocations: NativeSourceClosureRequirements["allocations"][number][] = [];
+  const classValues: NonNullable<NativeSourceClosureRequirements["classValues"]>[number][] = [];
   const cells = collectNativeRefCellRequirements(demands);
   const gaps: NativeSourceClosureRequirements["gaps"][number][] = [...cells.gaps];
   const signatureIds = new Map<string, string>(),
@@ -76,7 +91,12 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
   const allocationOwners = new Map<AllocSiteId, IrUnitId>();
   const logicalSites = new Map<
     string,
-    { readonly liftedUnitId: IrUnitId; readonly shapeId: string; readonly captures: readonly IrValueId[] }
+    {
+      readonly kind: "closure.new" | "class.value.new";
+      readonly liftedUnitId: IrUnitId;
+      readonly shapeId: string;
+      readonly captures: readonly IrValueId[];
+    }
   >();
   const anchor = demands.program.inventory.sources.find((source) => source.kind === "entry");
   if (!anchor) invalid("missing source anchor");
@@ -144,14 +164,35 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
       invalid("detached occurrence coordinate");
     const instruction = occurrence.instruction;
     if (instruction.resultType) type(instruction.resultType, buffer.ownerUnitId);
-    if (instruction.kind !== "closure.new") continue;
-    if (instruction.liftedFunc.binding.kind !== "unit") invalid("source allocation does not refer to a lifted unit");
-    const liftedUnitId = instruction.liftedFunc.binding.unitId;
+    if (
+      instruction.kind !== "class.value.new" &&
+      directIrCallableReferences(instruction).some(irClassValueAllocationDeclaration)
+    )
+      invalid("class allocator may only be selected by class.value.new");
+    if (instruction.kind !== "closure.new" && instruction.kind !== "class.value.new") continue;
+    const isClass = instruction.kind === "class.value.new";
+    const reference = isClass ? instruction.callTarget : instruction.liftedFunc;
+    if (reference.binding.kind !== "unit") invalid("source allocation does not refer to a lifted unit");
+    const liftedUnitId = reference.binding.unitId;
     const lifted = demands.owners.find((owner) => owner.unitId === liftedUnitId)?.projectedFunction;
     if (!lifted?.closureSubtype) invalid("source allocation lacks its actual lifted closure body");
+    const captureFieldTypes = isClass ? [] : instruction.captureFieldTypes;
+    const captures = isClass
+      ? [instruction.construct, instruction.parent, instruction.properties]
+      : instruction.captures;
     same(lifted.closureSubtype.signature, instruction.signature, "allocation/lifted signature mismatch");
-    same(lifted.closureSubtype.captureFieldTypes, instruction.captureFieldTypes, "allocation/lifted capture mismatch");
-    if (instruction.alloc === undefined || instruction.captures.length !== instruction.captureFieldTypes.length)
+    same(lifted.closureSubtype.captureFieldTypes, captureFieldTypes, "allocation/lifted capture mismatch");
+    if (isClass) {
+      if (!irClassValueAllocationDeclaration(instruction.allocator))
+        invalid("class allocator lacks its canonical binding");
+      const owner = demands.owners.find((row) => row.unitId === buffer.ownerUnitId)!;
+      const types = nativeAsyncCallableValueTypes(
+        buffer.view === "program" ? owner.programFunction : owner.projectedFunction,
+      );
+      const problem = classValueNewMismatch(instruction, (value) => types.get(value));
+      if (problem) invalid(problem);
+    }
+    if (instruction.alloc === undefined || (!isClass && instruction.captures.length !== captureFieldTypes.length))
       invalid("source allocation lacks complete capture/allocation provenance");
     const allocation = registry.resolve(instruction.alloc);
     if (!allocation || allocation.kind !== "closure") invalid("source allocation lacks a live closure registry record");
@@ -159,7 +200,10 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
     if (row?.state !== "live" || row.site.id !== allocation.id)
       invalid("source allocation lacks its exact canonical registry row");
     same(row.site.type, instruction.resultType, "closure allocation registry type differs from its occurrence");
-    const shapeId = shape({ ...instruction, captureFieldTypes: instruction.captureFieldTypes }, buffer.ownerUnitId);
+    const shapeId = shape(
+      isClass ? { signature: instruction.signature, captureFieldTypes } : instruction,
+      buffer.ownerUnitId,
+    );
     const priorOwner = allocationOwners.get(allocation.id);
     if (priorOwner !== undefined && priorOwner !== buffer.ownerUnitId)
       invalid("canonical closure allocation is borrowed by another executable owner");
@@ -168,20 +212,30 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
     if (executableSites.has(executableKey)) invalid("distinct executable closure allocations share one canonical ID");
     executableSites.add(executableKey);
     const logicalKey = JSON.stringify([buffer.ownerUnitId, allocation.id]);
-    const association = { liftedUnitId, shapeId, captures: instruction.captures };
+    const association = { kind: instruction.kind, liftedUnitId, shapeId, captures };
     const prior = logicalSites.get(logicalKey);
     if (prior) {
       same(
-        { liftedUnitId: prior.liftedUnitId, shapeId: prior.shapeId },
-        { liftedUnitId, shapeId },
+        { kind: prior.kind, liftedUnitId: prior.liftedUnitId, shapeId: prior.shapeId },
+        { kind: instruction.kind, liftedUnitId, shapeId },
         "closure allocation changes lifted owner/shape between representations",
       );
-      if (preparedIrDataMismatch(prior.captures, instruction.captures) !== undefined)
+      if (preparedIrDataMismatch(prior.captures, captures) !== undefined)
         gaps.push({
           unitId: buffer.ownerUnitId,
           detail: "closure capture operands across representations need an authenticated transformation mapping",
         });
     } else logicalSites.set(logicalKey, association);
+    if (isClass) {
+      classValues.push({
+        occurrence: index,
+        ownerUnitId: buffer.ownerUnitId,
+        allocationId: allocation.id,
+        rawAllocationId: instruction.alloc,
+        callUnitId: liftedUnitId,
+      });
+      continue;
+    }
     allocations.push({
       occurrence: index,
       shapeId,
@@ -196,7 +250,7 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
     projection.backend === "wasmgc" &&
     projection.target === "standalone" &&
     nativePromiseResourcesRequired(projection.prepared.functions, projection.prepared.manifest.providers);
-  return {
+  const data: Omit<NativeSourceClosureRequirements, "demands"> = {
     key,
     ...(promises
       ? { promiseClosures: { signatureId: `${key}:promise:settle`, metadataId: `${key}:promise:settle-metadata` } }
@@ -205,10 +259,14 @@ function calculate(demands: NativeStringValueDemands): Omit<NativeSourceClosureR
     shapes,
     units,
     allocations,
+    ...(classValues.length ? { classValues } : {}),
     refCells: cells.refCells,
     refCellAllocations: cells.refCellAllocations,
     gaps,
   };
+  return classValues.length
+    ? { ...data, privateConstruct: nativePrivateConstructRequirements({ ...data, demands }) }
+    : data;
 }
 
 /** Descriptive derived requirements; the coordinator additionally authenticates the entire program. */
@@ -248,4 +306,13 @@ export function assertNativeSourceClosureRequirementsCurrent(requirements: Nativ
     invalid("source identities changed");
   same(data, source.snapshot, "requirements changed");
   same(calculate(fresh), source.snapshot, "source closure population changed");
+}
+
+/** Descriptive plan data from the exact issued source census. */
+export function nativeSourceClosureDescription(
+  requirements: NativeSourceClosureRequirements,
+): Omit<NativeSourceClosureRequirements, "demands"> {
+  assertNativeSourceClosureRequirementsCurrent(requirements);
+  const { demands: _demands, ...description } = requirements;
+  return description;
 }

@@ -1,17 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { isAmbientDeclaration } from "./analysis/ambient-declarations.js";
 
 const ASCII_IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const RESERVED_CLASS_METHOD_KEYS = new Set(["constructor", "new", "init"]);
-
-function hasDeclareModifier(node: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node; current; current = current.parent) {
-    const modifiers = (current as { modifiers?: readonly ts.Node[] }).modifiers;
-    if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
-  }
-  return node.getSourceFile().isDeclarationFile;
-}
 
 function hasDecorators(node: ts.Node): boolean {
   return ts.canHaveDecorators(node) && (ts.getDecorators(node)?.length ?? 0) > 0;
@@ -75,7 +68,7 @@ function isAdmissibleClass(member: ts.MethodDeclaration): ts.ClassDeclaration | 
   const owner = member.parent;
   if (!ts.isClassDeclaration(owner) || owner.parent !== owner.getSourceFile() || !owner.name) return undefined;
   if (owner.heritageClauses !== undefined && owner.heritageClauses.length > 0) return undefined;
-  if (hasDeclareModifier(owner) || hasDecorators(owner)) return undefined;
+  if (isAmbientDeclaration(owner) || hasDecorators(owner)) return undefined;
   return owner;
 }
 
