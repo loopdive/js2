@@ -11,6 +11,8 @@ import {
   requireCompletedNativeStringValues,
 } from "../src/backend/wasmgc/program/native-string-values.js";
 import { reserveNativeStringLiteralTypes } from "../src/backend/wasmgc/resources/native-string-literals.js";
+import { planNativeVectorResources } from "../src/ir/program-physical-plan.js";
+import { reserveNativeVectorTypes } from "../src/backend/wasmgc/resources/native-vectors.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import { emitBinary } from "../src/emit/binary.js";
@@ -40,8 +42,26 @@ describe("native Promise dependencies from actual async source", () => {
           expect(input.plan.literalRequirements.literals.map((row) => row.value)).toEqual(
             expect.arrayContaining(["", "then", "Chaining cycle detected for promise", "TypeError"]),
           );
+          const vectorPlan = planNativeVectorResources(
+            program,
+            {
+              ...policy,
+              utf8Storage,
+              sharedExceptionTag: false,
+              sourceMap: false,
+              moduleName: "async-values",
+            },
+            program.runtime[0]!,
+          );
+          expect(vectorPlan.layouts).toEqual(["externref"]);
+          expect(vectorPlan.helper).toBeUndefined();
+          expect(vectorPlan.demands.flatMap((owner) => owner.uses)).toHaveLength(0);
+          expect(vectorPlan.exceptionRequired).toBe(true);
           const module = createEmptyModule();
           const tx = new PhysicalModuleReservations(module);
+          const vectors = reserveNativeVectorTypes(tx, vectorPlan);
+          const array = vectors.layouts[0]!.array;
+          const capacity = tx.reserveFunction("probe:array", "array", { params: [], results: [{ kind: "i32" }] });
           const types = reserveNativeStringLiteralTypes(tx, input.plan.key, utf8Storage);
           const pack = reserveNativeStringValueResources(tx, input, types);
           if (!pack.number) throw Error("missing shared values");
@@ -68,6 +88,15 @@ describe("native Promise dependencies from actual async source", () => {
               { op: "call", funcIdx: tx.physicalIndex(values.functions.unboxNumber) },
             ],
           });
+          tx.fillFunction(capacity, {
+            locals: [],
+            body: [
+              { op: "i32.const", value: 3 },
+              { op: "array.new_default", typeIdx: tx.physicalIndex(array) },
+              { op: "array.len" },
+            ],
+          });
+          tx.defineExport("export:array", "array", capacity);
           tx.defineExport("export:tag", "tag", tag);
           tx.defineExport("export:number", "number", roundtrip);
           tx.seal();
@@ -76,6 +105,7 @@ describe("native Promise dependencies from actual async source", () => {
           expect(WebAssembly.Module.imports(compiled)).toEqual([]);
           const exports = new WebAssembly.Instance(compiled).exports;
           expect((exports.tag as () => number)()).toBe(1);
+          expect((exports.array as () => number)()).toBe(3);
           for (const value of [0, -0, 42.5, NaN, Infinity, -Infinity, 2 ** 40])
             expect((exports.number as (n: number) => number)(value)).toBe(value);
           const accepted = acceptPreparedIrProgram(program, {
@@ -93,5 +123,18 @@ describe("native Promise dependencies from actual async source", () => {
   it("keeps synchronous scalar owners free of Promise-only resources", () => {
     const program = prepare("export function run(seed: number): number { return seed; }", false);
     expect(prepareNativeProgramStringInput(program, program.runtime[0]!, { utf8Storage: false })).toBeUndefined();
+    expect(
+      planNativeVectorResources(
+        program,
+        {
+          ...policy,
+          utf8Storage: false,
+          sharedExceptionTag: false,
+          sourceMap: false,
+          moduleName: "scalar",
+        },
+        program.runtime[0]!,
+      ).layouts,
+    ).toEqual([]);
   });
 });

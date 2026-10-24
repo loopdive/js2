@@ -2625,3 +2625,32 @@ shared demand predicate accounts for the reviewed backend→IR edge 119.
 Compiler inventory is valid but architecture incomplete. Legacy reachability
 is preservation-only: its two existing nonliteral imports leave strict
 closure OPEN. Full Promise execution and migration completion remain unproven.
+
+## Implementation Plan — 2026-10-24 — Promise-owned shared vector storage
+
+Extend the existing `program/native-vector-resources.ts` selector to include
+the shared externref vector and exception resource required by native Promise
+resolution even when there is no source-level vector operation. Reuse the
+shared Promise demand predicate and existing vector reservations; do not add
+a second vector layout or fake a source helper demand. Keep host selection
+unchanged. Extend the actual async source matrix to reserve the selected
+vector types alongside values and execute an array allocation through those
+types. Synchronous no-demand input must still reserve no vector layout.
+
+Vector integration validation: all eight async source cases failed before
+selection and now execute shared vector allocation alongside values in both
+storage modes and after codec replay. The synchronous control reserves no
+vector. The final changed suites pass 40/40; native frame execution passes
+15/15, giving 55 distinct passing cases. Four stale vector diagnostic
+expectations reproduce on archived unchanged HEAD 81bf738e and now assert
+the explicit incomplete-composition refusal. Focused TS7 also exposed older
+BufferSource, Tag-import and invalid-provider fixture typing; those fixtures
+are repaired without changing runtime behavior. Source and changed-test TS7,
+full lint (7,317 files), formatting and size/coercion/oracle gates pass.
+Eleven host binaries remain byte-identical to main 7371eb50. Fresh production
+and test review reports no actionable findings. The import graph retains the
+119-edge allowance and unchanged SCC size. Boundary inventory remains valid
+but architecture incomplete; dead-export preservation passes while strict
+closure remains OPEN at its two existing nonliteral imports. This proves
+shared vector ownership and allocation, not complete Promise execution or
+exception-tag use by native Promise resolution.

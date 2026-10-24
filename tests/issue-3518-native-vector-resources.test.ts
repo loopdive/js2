@@ -152,13 +152,11 @@ function execute(shared = false, importOffset = false) {
     tx.defineExport(`export:${fn.object.name}`, fn.object.name, fn);
   tx.defineExport("export:exception", "exception", tag);
   tx.seal();
-  const binary = emitBinary(module);
+  const binary = new Uint8Array(emitBinary(module));
   expect(WebAssembly.validate(binary)).toBe(true);
   const externalTag = new WebAssembly.Tag({ parameters: ["externref"] });
-  const instance = new WebAssembly.Instance(new WebAssembly.Module(binary), {
-    env: { __exn: externalTag },
-    control: { noop() {} },
-  });
+  const imports = { env: { __exn: externalTag }, control: { noop() {} } };
+  const instance = new WebAssembly.Instance(new WebAssembly.Module(binary), imports as unknown as WebAssembly.Imports);
   const api = instance.exports as unknown as {
     make(capacity: number): unknown;
     get(vec: unknown, index: number): unknown;
@@ -197,7 +195,10 @@ describe("native vector physical resource planning from the complete source fami
           ? others
           : mutation === "duplicate-provider"
             ? [...input.providers, canonical]
-            : [...others, { ...canonical, id: "foreign.vector", feature: "async.native.delay" as const }];
+            : [
+                ...others,
+                { ...canonical, id: "foreign.vector" as typeof canonical.id, feature: "async.native.delay" as const },
+              ];
       expect(() => deriveNativeVectorResourcePlan({ ...input, providers })).toThrow(
         "native vector resources: noncanonical selected vector provider",
       );
@@ -218,7 +219,7 @@ describe("native vector physical resource planning from the complete source fami
         const refusal = planPhysicalSetup(program, options, program.runtime[0]!);
         expect(refusal.kind).toBe("unsupported");
         if (refusal.kind === "planned") throw new Error("whole-family physical execution unexpectedly admitted");
-        expect(refusal.detail).toContain("scheduler/promise runtime materialization");
+        expect(refusal.detail).toContain("native Promise inventory complete-composition");
         expect(refusal.location.sourceId).toBeDefined();
         expect(program.allocations.size).toBeGreaterThan(0);
       });
