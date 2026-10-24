@@ -2303,3 +2303,35 @@ result storage. The next required join is resource materialization plus complete
 carrier/dispatch/construction inventory; this change does not enable whole-program
 native async admission or claim source execution, Linear/WASI completion or
 retirement. The full original acceptance scope remains unchanged.
+
+### Native frame materialization implementation plan (2026-10-24)
+
+Bind the native frame recipe in backend/wasmgc/resources to actual same-ledger
+Promise, reaction, queue, settlement and value bridge reservations. Reuse a shared
+layout/machinery allocator with the host resource path; preserve host publication.
+Native filling must validate the retained source/runtime, physical ownership and
+complete parent acceptance before detached body construction and publication.
+No public whole-program admission is enabled by a resource recipe alone.
+
+Correctness: execute genuine original and decoded source-owned async functions
+with two awaits and live spill values, using shared native number, settlement and
+queue builders without host imports or substitute helper bodies. Reject foreign
+ledger dependencies, wrong bridge signatures and changed layouts before filling.
+Quality: share allocation logic, keep native adaptation separate from scheduling
+semantics, and retain complete-program inventory/retirement obligations.
+
+Materialization validation: 96/96 tests across seven native/host async suites;
+after final association-check extraction, 20/20 native execution/runtime tests
+pass. Genuine original and decoded source functions execute two awaits and a
+live spill through native frame materialization, preserving -0, NaN, infinities,
+fractional values and queue growth. The source-frame integration emits no host
+imports; original/decoded live-spill binaries are identical. Eleven host binaries
+are byte-identical to the parent commit. Source and focused-test TS7, lint,
+layering and size checks pass.
+
+This is kernel integration using the real shared queue, settlement and number
+builders, not public whole-program admission. Complete native resource inventory,
+thenable/return-resolution composition, broader source coverage, true Linear/WASI,
+full conformance/performance and reviewed retirement remain open. The reservation
+adapter requires the parent's complete acceptance callback; tests explicitly use
+a narrower kernel assertion and do not issue whole-program authority.

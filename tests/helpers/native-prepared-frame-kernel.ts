@@ -27,12 +27,31 @@ import {
   buildPromiseSettleLocals,
 } from "../../src/runtime/wasmgc/promise/settlement-bodies.js";
 
+import {
+  reservePreparedNativeAsyncFrame,
+  fillPreparedNativeAsyncFrame,
+  type NativeFrameDependencies,
+} from "../../src/backend/wasmgc/resources/prepared-native-async-frame.js";
+import {
+  planPreparedNativeAsyncFrame,
+  type PreparedNativeAsyncFrameInput,
+} from "../../src/ir/program/prepared-native-async-frame-plan.js";
+import {
+  buildBoxNumberBody,
+  buildBoxNumberLocals,
+  buildUnboxNumberBody,
+  buildUnboxNumberLocals,
+} from "../../src/runtime/wasmgc/values/number-bodies.js";
+
 const ext = { kind: "externref" } as const;
 const i32 = { kind: "i32" } as const;
 const get = (index: number): Instr => ({ op: "local.get", index });
 
 /** Runtime-kernel harness: actual builders and ledger, no source-admission claim or substitute helpers. */
-export function nativePreparedFrameKernel(promiseShape = createNativePromiseShape()) {
+export function nativePreparedFrameKernel(
+  promiseShape = createNativePromiseShape(),
+  source?: PreparedNativeAsyncFrameInput,
+) {
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
   const promise = tx.reserveType("promise", promiseShape);
@@ -55,31 +74,41 @@ export function nativePreparedFrameKernel(promiseShape = createNativePromiseShap
     mutable: true,
   });
   const promiseRef: ValType = { kind: "ref", typeIdx: promise.typeIndex };
-  const frame = tx.reserveType("frame", {
-    kind: "struct",
-    name: "frame",
-    fields: [
-      ...["state", "sent", "mode", "abrupt", "error"].map((name, index) => ({
-        name,
-        type: index === 0 || index === 2 ? i32 : ext,
-        mutable: true,
-      })),
-      { name: "seed", type: ext, mutable: false },
-      { name: "result", type: promiseRef, mutable: true },
-    ],
-  });
   const fn = (name: string, params: readonly ValType[], results: readonly ValType[]) =>
     tx.reserveFunction(name, name, { params, results });
+  const sourcePlan = source ? planPreparedNativeAsyncFrame(source) : undefined;
+  if (sourcePlan && sourcePlan.kind !== "planned") throw Error(sourcePlan.detail);
+  const sourceEntry = sourcePlan
+    ? fn(sourcePlan.plan.primary.bindingId, sourcePlan.plan.primary.params as ValType[], [ext])
+    : undefined;
+  const sourceFrame =
+    source && sourceEntry ? reservePreparedNativeAsyncFrame(tx, source, sourceEntry, promise) : undefined;
+  const frame =
+    sourceFrame?.frame ??
+    tx.reserveType("frame", {
+      kind: "struct",
+      name: "frame",
+      fields: [
+        ...["state", "sent", "mode", "abrupt", "error"].map((name, index) => ({
+          name,
+          type: index === 0 || index === 2 ? i32 : ext,
+          mutable: true,
+        })),
+        { name: "seed", type: ext, mutable: false },
+        { name: "result", type: promiseRef, mutable: true },
+      ],
+    });
   const grow = fn("grow", [i32], []),
     enqueue = fn("enqueue", [{ kind: "funcref" }, ext, ext], []),
     drain = fn("drain", [], []);
   const fulfill = fn("fulfill", [promiseRef, ext], [ext]),
     reject = fn("reject", [promiseRef, ext], [ext]);
-  const entry = fn("run", [ext], [ext]),
-    resume = fn("resume", [{ kind: "ref", typeIdx: frame.typeIndex }], []);
-  const fulfillStep = fn("fulfillStep", [ext, ext], [ext]),
-    rejectStep = fn("rejectStep", [ext, ext], [ext]);
+  const entry = sourceFrame?.entry ?? fn("run", [ext], [ext]),
+    resume = sourceFrame?.resume ?? fn("resume", [{ kind: "ref", typeIdx: frame.typeIndex }], []);
+  const fulfillStep = sourceFrame?.fulfillStep ?? fn("fulfillStep", [ext, ext], [ext]),
+    rejectStep = sourceFrame?.rejectStep ?? fn("rejectStep", [ext, ext], [ext]);
   const tag = tx.reserveTag("exception", { params: [ext], results: [] }, { kind: "defined", name: "exception" });
+  if (tag.kind !== "tag") throw Error("kernel requires a defined tag");
   const functionsRef: ValType = { kind: "ref_null", typeIdx: functionsType.typeIndex };
   const argumentsRef: ValType = { kind: "ref_null", typeIdx: argumentsType.typeIndex };
   const globals = {
@@ -193,6 +222,45 @@ export function nativePreparedFrameKernel(promiseShape = createNativePromiseShap
       },
     ],
   };
+  const number = source
+    ? {
+        boxType: tx.reserveType("number", {
+          kind: "struct",
+          name: "number",
+          fields: [{ name: "value", type: { kind: "f64" }, mutable: false }],
+        }),
+        boolType: tx.reserveType("bool", {
+          kind: "struct",
+          name: "bool",
+          fields: [{ name: "value", type: i32, mutable: false }],
+        }),
+        box: fn("box", [{ kind: "f64" }], [ext]),
+        unbox: fn("unbox", [ext], [{ kind: "f64" }]),
+      }
+    : undefined;
+  const dependencies: NativeFrameDependencies = {
+    promise,
+    reaction,
+    enqueue,
+    fulfill,
+    reject,
+    tag,
+    markHandled: { kind: "not-required" },
+    bridges: new Map(
+      number
+        ? [
+            ["number.box", number.box],
+            ["number.unbox", number.unbox],
+          ]
+        : [],
+    ),
+    calls: new Map(),
+    assertAccepted() {
+      // Kernel scope only. Whole-program inventory/admission is deliberately not invoked.
+      if (!sourcePlan || sourcePlan.kind !== "planned" || sourcePlan.plan.calls.length)
+        throw Error("kernel requires a genuine call-free source plan");
+    },
+  };
   tx.freezeReservations();
   const queue: PreparedNativeMicrotaskReservations = {
     types: {
@@ -213,6 +281,20 @@ export function nativePreparedFrameKernel(promiseShape = createNativePromiseShap
         : { op: "ref.null", typeIdx: (token.object.type as { typeIdx: number }).typeIdx },
     ]);
   function fillSupport() {
+    if (number) {
+      tx.fillFunction(number.box, {
+        locals: buildBoxNumberLocals(),
+        body: buildBoxNumberBody(number.boxType.typeIndex),
+      });
+      tx.fillFunction(number.unbox, {
+        locals: buildUnboxNumberLocals(),
+        body: buildUnboxNumberBody(number.boxType.typeIndex, number.boolType.typeIndex, {
+          kind: "absent",
+          evidence: "selected-primitive-only",
+        }),
+      });
+      tx.defineExport("export:number", "number", number.unbox);
+    }
     tx.fillFunction(grow, { locals: buildGrowLocals(queue), body: buildGrowBody(queue) });
     tx.fillFunction(enqueue, { locals: [], body: buildEnqueueBody(queue) });
     tx.fillFunction(drain, { locals: buildDrainLocals(), body: buildDrainBody(queue) });
@@ -274,13 +356,20 @@ export function nativePreparedFrameKernel(promiseShape = createNativePromiseShap
     tx,
     plan,
     resources,
+    sourceFrame,
+    dependencies,
     publish() {
-      const out = emitPreparedFrame(plan, resources);
+      if (sourceFrame) fillPreparedNativeAsyncFrame(tx, sourceFrame, dependencies);
+      else {
+        const out = emitPreparedFrame(plan, resources);
+        for (const [name, token] of Object.entries({ entry, resume, fulfillStep, rejectStep }))
+          tx.fillFunction(token, out[name as keyof typeof out]);
+      }
       fillSupport();
-      for (const [name, token] of Object.entries({ entry, resume, fulfillStep, rejectStep }))
-        tx.fillFunction(token, out[name as keyof typeof out]);
-      tx.declareFunctionReference(fulfillStep);
-      tx.declareFunctionReference(rejectStep);
+      if (!sourceFrame) {
+        tx.declareFunctionReference(fulfillStep);
+        tx.declareFunctionReference(rejectStep);
+      }
       for (const [name, token] of Object.entries({ run: entry, drain, pending, ...inspectors, ...settleExports }))
         tx.defineExport("export:" + name, name, token);
       tx.seal();
