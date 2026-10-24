@@ -56,6 +56,15 @@ import {
 } from "./native-booleans.js";
 import { objectResultIsBoolean } from "../../../ir/program/native-object-result-values.js";
 
+import {
+  nativeBuiltinFunctionInvocationBinding,
+  type NativeBuiltinFunctionReservations,
+} from "./native-builtin-functions.js";
+import {
+  buildArgumentVectorMethodAdapter,
+  buildArgumentVectorApplyAdapter,
+} from "../../../runtime/wasmgc/values/argument-vector-call-adapters.js";
+
 import { requireNativePromiseInvocation, type NativePromiseInvocation } from "./native-promise-invocation.js";
 
 export interface NativeInvocationDependencies {
@@ -94,6 +103,7 @@ interface Owner {
   readonly functions: readonly FunctionReservation[];
   callables?: NativeSourceClosureCallables;
   argumentApply?: FunctionReservation;
+  builtins?: NativeBuiltinFunctionReservations;
   filled: boolean;
 }
 const owners = new WeakMap<NativeInvocationReservations, Owner>();
@@ -308,7 +318,41 @@ function requireOwner(tx: PhysicalModuleReservations, pack: NativeInvocationRese
   authenticate(tx, pack.requirements, owner.dependencies);
   if (preparedIrDataMismatch(invocationLayout(tx, owner.dependencies), owner.layout)) fail("changed closure ancestry");
   requireNativeInvocationSubstrateReservations(tx, owner.substrate, substrateDependencies(owner.dependencies));
+  if (owner.builtins) builtinBinding(owner, pack, owner.builtins);
   return owner;
+}
+
+function builtinBinding(
+  owner: Owner,
+  pack: NativeInvocationReservations,
+  builtins: NativeBuiltinFunctionReservations,
+  completed = false,
+) {
+  const binding = nativeBuiltinFunctionInvocationBinding(owner.tx, builtins, completed),
+    d = owner.dependencies;
+  if (
+    binding.closures !== d.source.closures ||
+    binding.closurePlan !== d.source.closurePlan ||
+    binding.arguments !== pack.arguments ||
+    binding.values !== d.values ||
+    binding.strings !== d.strings ||
+    binding.errors !== pack.errors
+  )
+    fail("builtin invocation uses different shared producers");
+  return binding;
+}
+
+/** Join the genuine emitted kernel once, before freeze; this grants no whole-realm completion. */
+export function bindNativeInvocationBuiltins(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  builtins: NativeBuiltinFunctionReservations,
+): void {
+  const owner = requireOwner(tx, pack);
+  if (tx.state !== "reserving" || owner.builtins) fail("invalid phase or duplicate builtin invocation join");
+  builtinBinding(owner, pack, builtins);
+  reserveNativeInvocationArgumentApply(tx, pack);
+  owner.builtins = builtins;
 }
 
 /** Read-only cycle join. Reservation authentication never certifies callable body completion. */
@@ -441,6 +485,8 @@ export function fillNativeInvocationResources(
     fail("invocation and Promise producer use different exception tags");
   requireNativeSourceClosureCallables(tx, callables, owner.dependencies.source);
   if (callables.requirements !== pack.requirements) fail("selected callable requirements differ");
+  const builtin = owner.builtins ? builtinBinding(owner, pack, owner.builtins, true) : undefined;
+  if (builtin && builtin.exception !== exception) fail("invocation and builtin producer use different exception tags");
   const exceptionTag = tx.physicalIndex(exception);
   const rows = [...settlementEntries(owner, pack), ...entries(owner, callables, pack)];
   const { values, strings } = owner.dependencies;
@@ -486,16 +532,28 @@ export function fillNativeInvocationResources(
     locals: [],
     body: buildClosureUndefinedTest(0, values.types.anyValue.typeIndex),
   });
+  const adapter = owner.argumentApply
+    ? {
+        newVector: pack.arguments.newVector.handle,
+        push: pack.arguments.push.handle,
+        call: owner.argumentApply.handle,
+      }
+    : undefined;
   for (const row of pack.methods)
-    tx.fillFunction(row.function, buildNativeClosureMethodDefinition(row.arity, owner.layout, rows, state, failure));
+    tx.fillFunction(
+      row.function,
+      builtin
+        ? buildArgumentVectorMethodAdapter(row.arity, adapter!, "receiver-first")
+        : buildNativeClosureMethodDefinition(row.arity, owner.layout, rows, state, failure),
+    );
   if (pack.applyVector) {
     const input = owner.dependencies.vectors.layouts.find((row) => row.element === "externref")!;
+    const layout = { vectorTypeIdx: input.carrier.typeIndex, arrayTypeIdx: input.array.typeIndex };
     tx.fillFunction(
       pack.applyVector,
-      buildNativeClosureVectorApplyDefinition(owner.layout, rows, state, failure, {
-        vectorTypeIdx: input.carrier.typeIndex,
-        arrayTypeIdx: input.array.typeIndex,
-      }),
+      builtin
+        ? buildArgumentVectorApplyAdapter(adapter!, layout)
+        : buildNativeClosureVectorApplyDefinition(owner.layout, rows, state, failure, layout),
     );
   }
   if (owner.argumentApply)
@@ -505,6 +563,15 @@ export function fillNativeInvocationResources(
         vectorTypeIdx: pack.arguments.carrier.typeIndex,
         arrayTypeIdx: pack.arguments.array.typeIndex,
         external: true,
+        ...(builtin
+          ? {
+              receiverVector: {
+                match: builtin.match.handle,
+                call: builtin.call.handle,
+                carriers: builtin.carriers.map((type) => type.typeIndex),
+              },
+            }
+          : {}),
       }),
     );
   owner.callables = callables;
@@ -520,6 +587,7 @@ export function requireCompletedNativeInvocation(
   requireNativeSourceClosureCallables(tx, owner.callables, owner.dependencies.source, true);
   if (owner.dependencies.promise)
     requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source, true);
+  if (owner.builtins) builtinBinding(owner, pack, owner.builtins, true);
   requireCompletedNativeValues(
     tx,
     owner.dependencies.values,

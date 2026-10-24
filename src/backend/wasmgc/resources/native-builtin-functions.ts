@@ -6,6 +6,7 @@ import type {
   GlobalReservation,
   TypeReservation,
   TagReservation,
+  TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -78,6 +79,7 @@ export interface NativeBuiltinFunctionDependencies {
   readonly closurePlan: NativeClosureDeclarationPlan;
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
+  readonly exception?: TagReservation | TagImportReservation;
 }
 const functionRoles = [
   "initialize",
@@ -135,7 +137,8 @@ export interface NativeBuiltinFunctionReservations {
     readonly realmReady: GlobalReservation;
   };
   readonly realmType: TypeReservation;
-  readonly exception: TagReservation;
+  readonly exception: TagReservation | TagImportReservation;
+  readonly ownsException: boolean;
   readonly completionScope: "synchronous-builtin-object-kernel";
 }
 interface Owner {
@@ -161,12 +164,18 @@ function same(a: unknown, b: unknown, detail: string): void {
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
   if (
-    Object.keys(d).length !== 5 ||
+    Object.keys(d).length !== (Object.hasOwn(d, "exception") ? 6 : 5) ||
     Object.keys(d).some(
-      (key) => !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies"].includes(key),
+      (key) =>
+        !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies", "exception"].includes(key),
     )
   )
     fail("unexpected dependency input");
+  if ("exception" in d && !Object.hasOwn(d, "exception")) fail("inherited exception selection");
+  if (Object.hasOwn(d, "exception")) {
+    if (!d.exception) fail("present exception requires an issued tag");
+    tx.assertTagReservation(d.exception, { params: [ext], results: [] });
+  }
   requireNativeBuiltinFunctionRequests(tx, d.requests);
   const input = nativeBuiltinFunctionRequestDependencies(tx, d.requests),
     dd = d.descriptorDependencies;
@@ -245,7 +254,9 @@ export function reserveNativeBuiltinFunctionResources(
   if (tx.state !== "reserving") fail("invalid reservation phase");
   const inventory = dependencies(tx, d),
     input = nativeBuiltinFunctionRequestDependencies(tx, d.requests);
-  const keys = Object.freeze(resourceKeys(d.requests));
+  const keys = Object.freeze(
+    resourceKeys(d.requests).filter((key) => !d.exception || key !== d.requests.requirements.key + ":exception"),
+  );
   tx.assertReservationKeysAvailable(keys);
   const key = d.requests.requirements.key,
     realmType = tx.reserveType(key + ":realm-type", createBuiltinFunctionRealmType(key + ":realm"));
@@ -331,11 +342,9 @@ export function reserveNativeBuiltinFunctionResources(
       ]),
     ),
   ) as Readonly<Record<FunctionRole, FunctionReservation>>;
-  const exception = tx.reserveTag(
-    key + ":exception",
-    { params: [ext], results: [] },
-    { kind: "defined", name: key + ":exception" },
-  ) as TagReservation;
+  const exception =
+    d.exception ??
+    tx.reserveTag(key + ":exception", { params: [ext], results: [] }, { kind: "defined", name: key + ":exception" });
   const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
   const pack = Object.freeze({
     requests: d.requests,
@@ -344,6 +353,7 @@ export function reserveNativeBuiltinFunctionResources(
     globals,
     realmType,
     exception,
+    ownsException: d.exception === undefined,
     completionScope: "synchronous-builtin-object-kernel" as const,
   });
   owners.set(pack, {
@@ -367,6 +377,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeBuiltinFunctionRese
   assertBuiltinFunctionDataRecord(owner.dependencies);
   for (const key of Object.keys(owner.identities) as (keyof NativeBuiltinFunctionDependencies)[])
     if (owner.dependencies[key] !== owner.identities[key]) fail("substituted dependency identity");
+  if (owner.dependencies.exception !== owner.identities.exception) fail("changed exception selection");
   const inventory = dependencies(tx, owner.dependencies);
   if (inventory.functions !== owner.descriptorInventory.functions || inventory.plan !== owner.descriptorInventory.plan)
     fail("changed descriptor inventory");
@@ -623,4 +634,28 @@ export function nativeBuiltinFunctionSingletonBinding(
   const index = pack.requests.requirements.intrinsics.findIndex((row) => row.aliases.includes(alias));
   if (index < 0) fail("unknown intrinsic alias");
   return pack.entries[index]!;
+}
+
+/** Authentic transport and its complete carrier family; no caller-selected handles. */
+export function nativeBuiltinFunctionInvocationBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeBuiltinFunctionReservations,
+  completed = false,
+) {
+  const owner = current(tx, pack),
+    d = owner.dependencies;
+  if (completed) requireCompletedNativeBuiltinFunctionKernel(tx, pack, d);
+  const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests);
+  return Object.freeze({
+    closures: d.closures,
+    closurePlan: d.closurePlan,
+    arguments: input.arguments,
+    strings: input.strings,
+    values: d.descriptorDependencies.sameValueDependencies.values,
+    errors: d.descriptorDependencies.errors,
+    exception: pack.exception,
+    match: pack.functions.match,
+    call: pack.functions.callVector,
+    carriers: Object.freeze(pack.entries.map((entry) => entry.type)),
+  });
 }

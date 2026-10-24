@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildArgumentVectorMethodAdapter } from "./argument-vector-call-adapters.js";
 import type { Instr, LocalDef, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
   BFN_ID_FIELD_IDX,
@@ -290,21 +291,12 @@ export function buildBuiltinFunctionMethodDefinition(
   d: BuiltinFunctionBodyOperands,
   arity: number,
 ): BuiltinFunctionDefinition {
-  const vector = arity + 2;
-  return {
-    locals: [{ name: "arguments", type: { kind: "externref" } }],
-    body: [
-      call(d.newVector),
-      { op: "local.set", index: vector },
-      ...Array.from({ length: arity }, (_, index): Instr[] => [get(vector), get(index + 2), call(d.push)]).flat(),
-      get(0),
-      get(1),
-      get(vector),
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-      call(d.callVector),
-    ],
-  };
+  return buildArgumentVectorMethodAdapter(
+    arity,
+    { newVector: d.newVector, push: d.push, call: d.callVector },
+    "callee-first",
+    d.vectorTypeIdx,
+  );
 }
 export function buildBuiltinFunctionSlotDefinition(
   d: BuiltinFunctionBodyOperands,

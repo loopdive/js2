@@ -2823,3 +2823,53 @@ owner must authenticate matcher, caller and the complete builtin carrier family
 together, join the canonical public realm and all source callables, and provide
 the remaining Promise Get/then-dispatch dependencies before public native async
 can be admitted.
+
+## Implementation Plan — 2026-10-24 — productive builtin/source invocation join
+
+Join the already emitted synchronous builtin kernel to the existing native
+invocation owner before reservation freeze. Derive its matcher, caller and entire
+concrete carrier population from the genuine kernel owner; require the same
+closure root, arguments, values, strings and errors. Reauthenticate canonical
+kernel completion during invocation fill and final completion. No raw-handle
+binder, replacement realm or fabricated empty source population is permitted.
+
+The public consumer supplies its existing physical exception tag to the kernel.
+Validate borrowed tag ownership and the externref exception signature before
+allocating dependent resources; omit borrowed tags from the kernel-owned census.
+Unselected callers retain the existing tag reservation. Descriptor errors,
+builtin throws and source throws must use the same tag in a composed program.
+
+For a joined kernel, fixed-arity method entries forward (receiver, callee, args)
+through the common (callee, receiver, ArgumentVector) entry. Typed vector apply
+copies its ordered inputs into the canonical runtime ArgumentVector, with null
+normalized to the existing empty-list behavior. Share fixed-arity vector packing
+with builtin-only calls. Authenticate the builtin branch before source fallback
+and retain the complete concrete builtin-carrier exclusion. Existing unjoined
+source-only recipes remain unchanged.
+
+Verify execution of the actual public consumer's generated dispatcher, decoded
+replay, both native string storage modes and displaced coordinates; run existing
+source call/apply/getter/state tests and foreign/copy/tag negative controls. Keep
+bootstrap completion distinct from full public Object/Function/Promise acceptance.
+
+Implementation result: the productive consumer now joins the authentic existing
+builtin kernel to native invocation and uses one physical exception tag. Public
+method/apply entries reach the shared dispatcher; unjoined resource fixtures keep
+their explicit opt-in. The new recipe is registered as clean native runtime.
+
+Validation: six suites completed with 142/143 passing. The sole failure asserted
+that the public consumer must omit the shared entry, an obsolete pre-integration
+expectation. Its actual execution still returned 94; after changing the assertion
+to exactly one shared entry, the targeted rerun passed (1/1, six unrelated cases
+skipped). Thus all 143 exercised cases have passing evidence: 11 new productive
+integration, 61 source invocation, 36 builtin, four mixed execution, seven argument
+invocation and 24 realm/source cases. Source and focused-test TS7 passed. LOC and
+function budgets passed both merge-base and main-tip comparisons; coercion, oracle,
+import-cycle and boundary-inventory checks passed. Eleven host binaries remain
+byte-identical to main 7371eb505b365e49815f1ddc09afed6c52372540.
+
+Independent review found a negative test reusing an already failed ledger; each
+negative and positive now has its own fixture. No further production finding
+remained. The legacy audit passes preservation only; strict closure is still OPEN
+at the two documented dynamic imports. Full public realm, all-source association,
+mixed Get/then dispatch and public Promise execution remain unfinished.

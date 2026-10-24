@@ -1360,8 +1360,8 @@ function materializePhysicalProgram(
       : undefined;
   if (Boolean(invocationPack) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation prerequisites were not reserved");
+  if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types, exceptionTag, invocationPack);
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
-  if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
   const realmFunctions = realm ? nativeRealmReservationInventory(reservations, realm).functions : [];
   for (const token of [...invocationFunctions, ...realmFunctions]) {
     if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");

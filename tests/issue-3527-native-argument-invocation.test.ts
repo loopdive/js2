@@ -66,7 +66,7 @@ describe("native runtime ArgumentVector through the source invocation owner", ()
         expect(runtime.extras.value).toBe(empty);
         expect(fixture.module.imports).toEqual([]);
       });
-  it("keeps the public source-only consumer free of the runtime entry", async () => {
+  it("joins the public source consumer to one shared runtime entry", async () => {
     vi.stubEnv("JS2WASM_IR_GVN", "0");
     const program = prepareGetterProgram(`export function run(): number {
       const captured = 13;
@@ -77,7 +77,9 @@ describe("native runtime ArgumentVector through the source invocation owner", ()
     if (outcome.kind !== "ran") throw Error(JSON.stringify(outcome.failure));
     expect((outcome.run.exports.run as () => number)()).toBe(94);
     expect(outcome.run.emitted.module.imports).toEqual([]);
-    expect(outcome.run.emitted.module.functions.some((fn) => fn.name === "__apply_closure_arguments")).toBe(false);
+    expect(outcome.run.emitted.module.functions.filter((fn) => fn.name === "__apply_closure_arguments")).toHaveLength(
+      1,
+    );
   });
   it("allocates once on consumer request and refuses foreign owners or late requests", () => {
     vi.stubEnv("JS2WASM_IR_GVN", "0");

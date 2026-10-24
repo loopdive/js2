@@ -678,6 +678,23 @@ export class PhysicalModuleReservations {
     if (token.kind !== "type") this.#fail("expected type reservation token");
   }
 
+  /** Authenticate a borrowed exception before allocating any dependent resource. */
+  assertTagReservation(token: TagReservation | TagImportReservation, signature: PhysicalFunctionSignature): void {
+    if (this.#state === "failed") this.#fail("tag authentication on failed ledger");
+    this.#owned(token);
+    if (token.kind !== "tag" && token.kind !== "tag-import") this.#fail("expected tag reservation token");
+    const descriptor = token.kind === "tag-import" ? token.object.desc : undefined;
+    const index = token.kind === "tag" ? token.object.typeIdx : descriptor?.kind === "tag" ? descriptor.typeIdx : -1;
+    const type = this.#flatTypes()[index];
+    if (
+      !type ||
+      type.kind !== "func" ||
+      !sameValTypes(type.params, signature.params) ||
+      !sameValTypes(type.results, signature.results)
+    )
+      this.#fail("borrowed tag signature mismatch");
+  }
+
   /** Reserve the emitter-affecting descriptor before freeze, including future members. */
   reserveCanonicalRuntimeRecGroup(
     key: PhysicalResourceKey,
