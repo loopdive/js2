@@ -788,6 +788,22 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 — the generic `value instanceof target` over two dynamic carriers; result boolean i32. */
+  emitDynInstanceOf(value: IrValueId, target: IrValueId): IrValueId {
+    for (const operand of [value, target]) {
+      if (this.typeOf(operand).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynInstanceOf operand ${operand} is not dynamic (#7106) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType: IrType = irVal({ kind: "i32", boolean: true });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.instanceof", value, target, result, resultType });
+    return result;
+  }
+
   /** #7106 S1c — checked native-string carrier recovery from a dynamic value; result string. */
   emitDynStringCarrier(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {

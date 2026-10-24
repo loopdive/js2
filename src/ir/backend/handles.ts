@@ -394,6 +394,12 @@ export interface IrDynamicLowering {
    */
   emitInstanceOfFunction(functionName: string): readonly Instr[];
   /**
+   * (#7106) Value and target carriers on the stack → i32 `value instanceof
+   * target`: legacy's generic runtime operator and its not-callable throw guard,
+   * wrapped once per module (`__ir_dyn_instanceof`). Host-free lanes only.
+   */
+  emitInstanceOf(): readonly Instr[];
+  /**
    * (#7106 S1i) Nothing on the stack → nothing: publish a direct call site's
    * actual argument count to `__argc` (legacy's `emitSetArgc`), wrapped once
    * per module (`__ir_publish_argc`). Same `native-arguments-length` lanes.

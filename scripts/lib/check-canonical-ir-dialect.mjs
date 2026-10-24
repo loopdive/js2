@@ -24,6 +24,7 @@ export const DIALECT_NAMES = Object.freeze(
     "IrInstrDynArgumentsLength",
     "IrInstrDynCurrentThis",
     "IrInstrDynInstanceOfFunction",
+    "IrInstrDynInstanceOf",
     "IrInstrDynPublishArgc",
     "IrInstrDynOwnProperty",
     "IrInstrExternCall",
