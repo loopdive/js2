@@ -2270,3 +2270,36 @@ and candidate. Source/focused-test typechecks and targeted lint pass.
 This repairs the runtime kernel. Whole-program standalone frame admission,
 thenable assimilation, true Linear/WASI integration and the original R7 retirement
 requirements remain open; these kernel tests do not claim source-level coverage.
+
+## Native frame planning design — 2026-10-24
+
+Move scalar/layout checks, state-operation validation and supplementary ABI
+machinery into shared planning modules. Keep the existing host entry point and
+its exact imports/callback publication. Add a native entry point using the same
+state validator, with symbolic native Promise storage and explicit native bridge
+requirements derived from canonical selected providers. Native helpers are
+requirements, not fabricated callable ABI entries or physical function indices.
+
+Acceptance: original and decoded source-produced native async plans produce
+identical layouts, call demands and conversion requirements without host imports
+or callback exports; missing or mismatched providers/owners/signatures reject.
+Existing host plans and emitted binaries must remain identical. No new resource
+admission exception, guessed bindings, duplicate state parser or budget grant.
+This producer is a prerequisite for checked resource materialization; the complete
+native Promise composition and source-execution obligations remain required.
+
+Native planning validation: 12/12 source-plan tests cover two awaits, live spills,
+bare returns, original/decoded equality, exact selected provider ownership and
+rejection of foreign target/runtime/callback requests. Together with existing
+host planning, frame runtime, whole-program async consumer and dynamic async
+regressions, 76/76 tests pass. A separate base/candidate checkout comparison
+observes 28 identical host planning outcomes and 11 byte-identical host binaries.
+Source/focused-test TS7, lint, formatting, layering and size checks pass.
+
+The native plan is descriptive and has no imports, callback exports or physical
+function indices. It requests native number box/unbox and canonical undefined
+bridges from authenticated provider selection, with symbolic native Promise
+result storage. The next required join is resource materialization plus complete
+carrier/dispatch/construction inventory; this change does not enable whole-program
+native async admission or claim source execution, Linear/WASI completion or
+retirement. The full original acceptance scope remains unchanged.
