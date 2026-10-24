@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
+import { nativeInvocationParameter } from "./native-invocation-parameter.js";
 import { closureSignatureEquals } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import {
@@ -39,6 +40,7 @@ export interface NativeInvocationUse {
   readonly kind: "method" | "apply-vector" | "undefined";
   readonly arity?: number;
   readonly liftedUnitId?: IrUnitId;
+  readonly parameterIndex?: number;
   readonly callbacks?: readonly {
     readonly argument: number;
     readonly allocationOccurrence: number;
@@ -218,6 +220,13 @@ function calculate(
           defs.set(candidate.instruction.result, candidate.instruction);
       }
       definitions.set(unitId, defs);
+    }
+    const parameter = nativeInvocationParameter(source, unitId, callee, defs, types);
+    if (parameter) {
+      if (kind !== "method" || arity !== parameter.signature.params.length)
+        fail("source parameter invocation differs from its exact signature");
+      uses.push({ occurrence, ownerUnitId: unitId, kind, arity, parameterIndex: parameter.index });
+      continue;
     }
     const { type: calleeType, liftedUnitId } = callableAllocation(
       source,

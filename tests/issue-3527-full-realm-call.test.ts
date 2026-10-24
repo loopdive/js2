@@ -40,11 +40,7 @@ import {
   fillNativeRealmFunctionCore,
   requireCompletedNativeRealmFunctionCore,
 } from "../src/backend/wasmgc/resources/native-realm-function-core.js";
-import {
-  declareNativeNumberPrimitiveClassifierResources,
-  reserveNativeNumberPrimitiveClassifierResources,
-  fillNativeNumberPrimitiveClassifierResources,
-} from "../src/backend/wasmgc/resources/native-number-primitive-classifier.js";
+import { fillNativeNumberPrimitiveClassifierResources } from "../src/backend/wasmgc/resources/native-number-primitive-classifier.js";
 import {
   reserveNativeRealmNumberCoercion,
   fillNativeRealmNumberCoercion,
@@ -63,6 +59,7 @@ import {
   fillNativeRealmFunctionApply,
   requireCompletedNativeRealmFunctionApply,
 } from "../src/backend/wasmgc/resources/native-realm-function-apply.js";
+import { reserveNumericClassifier } from "./helpers/native-realm-primitive-classifier.js";
 import { setImmediate } from "node:timers/promises";
 import {
   reserveNativePromiseThenLookup,
@@ -83,24 +80,6 @@ async function drainWorkerEvents() {
 beforeEach(drainWorkerEvents);
 afterEach(drainWorkerEvents);
 
-function reserveNumericClassifier(r: ReturnType<typeof fixture>) {
-  const classifierDependencies = {
-    values: r.values,
-    valuePlan: r.valuePlan,
-    valueDependencies: r.valueDependencies,
-    booleans: r.booleans,
-    bigints: r.population.bigints,
-    bigintPlan: r.population.bigintPlan,
-    strings: r.f.strings,
-    symbols: r.symbols,
-  };
-  return reserveNativeNumberPrimitiveClassifierResources(
-    r.tx,
-    "control:classifier",
-    declareNativeNumberPrimitiveClassifierResources("control:classifier"),
-    classifierDependencies,
-  );
-}
 describe("full public realm Call joins", { timeout: 240000 }, () => {
   it("rejects invalid numeric joins and late key collisions without reserving anything", () => {
     const r = fixture();

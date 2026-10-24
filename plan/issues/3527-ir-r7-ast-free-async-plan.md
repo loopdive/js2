@@ -3543,3 +3543,61 @@ Current measured evidence:
 Read-only adversarial review found no remaining concrete EH/observer blocker.
 Standard EH reference:
 https://webassembly.github.io/exception-handling/core/binary/instructions.html
+
+
+### Common native Promise runtime integration checkpoint (2026-10-24)
+
+Implementation structure in progress: extract the existing queue/settlement
+assembly into `backend/wasmgc/resources/native-promise-kernel.ts` and the shared
+resolver/job assembly into `native-promise-resolution.ts`; join genuine Get,
+Call, source and Promise-object owners in `native-common-promise-runtime.ts`.
+The captured job invocation recipe lives in
+`runtime/wasmgc/promise/thenable-job-call-body.ts`. Preserve the default recipe
+exactly and require shared-path byte preservation, focused tests, boundary/cycle
+gates and adversarial review before publishing this increment.
+
+The preceding full-realm common lookup execution has now completed **2/2**
+(normal and displaced layout; 1362.84 s). This run predates the strengthened
+identity/Boolean assertions and the current shared helper extraction, so it is
+not current-working-tree acceptance.
+
+The new integration executes an actual source `then(resolve)` body against
+runtime-created settlement closures. Preparing that source exposed an unsupported
+closure-parameter carrier. Higher-order parameters now retain checker-owned
+logical callable signatures and invoke the shared realm Call with boxed
+arguments. Closed callbacks with complete source proofs retain their existing
+specialized path. The native invocation census authenticates the actual lifted
+parameter and requires the full realm dispatcher.
+
+Open callback return annotations are not runtime value proofs: numeric results
+remain explicitly rejected until a value-preserving result path is implemented.
+Adversarial review caught that distinction and a missing default-mode fallback
+handle check; both are fixed, with targeted tests, and follow-up inspection found
+no further concrete defect. The review did not assess pending integration runs.
+
+Current evidence for this increment:
+
+- Focused preservation, captured Call, open parameters and source contracts:
+  **75/75**, exit 0. Four GVN/codec combinations preserve the open parameter.
+- The previous callable regression run was **70/71**, exit 1. Its single `any`
+  annotation refusal also failed in a pristine archive of published head e4cd5ffe0579ffa11853f397f95337cac06a2ec3. The stale
+  assertion is replaced with a check of the actual dynamic argument contract,
+  included in the 75-case run. The original failure remains recorded.
+- Focused TS7 and lint pass. All nine source/CI-base gates pass after extracting
+  the parameter predicate and keeping call dispatch below its existing budget.
+  The reachability gate is preservation-only: strict retirement is not certified.
+- The final host comparison confirms **11/11** byte-identical binaries against
+  baseline 7371eb505b365e49815f1ddc09afed6c52372540, including the final
+  predicate/call-site refactor.
+- Full common-runtime execution and the strengthened full-realm lookup checks
+  are still running; no runtime acceptance is claimed yet.
+
+Native callback parameter plan: reuse checker-owned `callable` signatures for
+standalone higher-order closure parameters, rather than minting a new typed
+wrapper carrier. Lower their direct invocation through the existing semantic
+closure-call intrinsic with boxed arguments and canonical undefined receiver.
+The native invocation census must distinguish and authenticate an actual
+parameter of the current lifted source body from a local closure allocation;
+execution of this open parameter path requires the full realm dispatch owner.
+Keep host lowering unchanged. The integration must still execute the real
+source `then(resolve)` body against runtime-created settlement closures.

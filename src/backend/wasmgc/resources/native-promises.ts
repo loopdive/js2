@@ -40,29 +40,9 @@ import {
   type NativeClosureReservations,
   type NativeClosureMetadataBinding,
 } from "./native-closures.js";
-import {
-  buildGrowLocals,
-  buildGrowBody,
-  buildEnqueueBody,
-  buildDrainLocals,
-  buildDrainBody,
-  type PreparedNativeMicrotaskReservations,
-} from "../../../runtime/wasmgc/async/microtask-queue-bodies.js";
-import {
-  buildPromiseSettleLocals,
-  buildPromiseSettleBody,
-  buildIdentityWrapperLocals,
-  buildIdentityWrapperBody,
-  PROMISE_STATE_FULFILLED,
-  PROMISE_STATE_REJECTED,
-  type PromiseHookResources,
-} from "../../../runtime/wasmgc/promise/settlement-bodies.js";
-import {
-  buildNativePromiseResolveValueBody,
-  buildPromiseResolveValueLocals,
-  buildPromiseThenableJob,
-  buildPromiseSettleClosureBody,
-} from "../../../runtime/wasmgc/promise/resolution-bodies.js";
+import type { PromiseHookResources } from "../../../runtime/wasmgc/promise/settlement-bodies.js";
+import { nativePromiseKernelDefinitions, fillNativePromiseKernelDefinitions } from "./native-promise-kernel.js";
+import { nativePromiseResolutionDefinitions } from "./native-promise-resolution.js";
 import {
   buildPromisePeelValue,
   buildPromiseThenableClassifier,
@@ -499,25 +479,6 @@ export function reserveNativePromiseResources(
   return result;
 }
 
-function promiseQueueReservations(
-  tx: PhysicalModuleReservations,
-  pack: NativePromiseReservations,
-): PreparedNativeMicrotaskReservations {
-  const t = pack.types;
-  return {
-    types: {
-      functions: { kind: "type", index: t.functions.typeIndex },
-      arguments: { kind: "type", index: t.arguments.typeIndex },
-      callback: { kind: "type", index: t.callbackSignature },
-    },
-    globals: Object.fromEntries(
-      Object.entries(pack.globals).map(([name, token]) => [name, { kind: "global", index: tx.physicalIndex(token) }]),
-    ) as PreparedNativeMicrotaskReservations["globals"],
-    grow: { kind: "function", index: pack.functions.grow.handle },
-    initialCapacity: 8192,
-  };
-}
-
 export function nativePromiseReservationInventory(
   tx: PhysicalModuleReservations,
   pack: NativePromiseReservations,
@@ -614,7 +575,12 @@ export function requireNativePromiseSettlementBinding(
     for (const token of Object.values(pack.functions)) tx.assertCompletedReservation(token);
     for (const token of Object.values(pack.globals)) tx.assertCompletedReservation(token);
   }
-  return Object.freeze({ metadata, capture: pack.types.settleCapture, exceptionTag: owner.dependencies.exceptionTag });
+  return Object.freeze({
+    metadata,
+    capture: pack.types.settleCapture,
+    exceptionTag: owner.dependencies.exceptionTag,
+    configuration: owner.plan.configuration,
+  });
 }
 
 /** No fallback: resolution/classification/value dependencies must all be real same-ledger reservations. */
@@ -790,46 +756,21 @@ export function fillNativePromiseResources(
     unhandledHead = tx.physicalIndex(dependencies.unhandledRejections.head);
     unhandledNode = tx.physicalIndex(dependencies.unhandledRejections.node);
   }
-  const f = pack.functions,
-    t = pack.types;
-  const queue = promiseQueueReservations(tx, pack);
-  const cap = {
-    capTypeIdx: t.settleCapture.typeIndex,
-    capMetaTypeIdx: owner.settleMetadata.type.typeIndex,
-    capPromiseFieldIdx: 5,
-    guardTypeIdx: t.resolvingPair.typeIndex,
-  };
-  const target = { wasi: false, standalone: true };
-  const resolution = buildNativePromiseResolveValueBody({
-    target,
-    state: {
-      promiseFulfillFuncIdx: f.fulfill.handle,
-      promiseRejectFuncIdx: f.reject.handle,
-      enqueueFuncIdx: f.enqueue.handle,
-      identityFulfillWrapperFuncIdx: f.identityFulfill.handle,
-      identityRejectWrapperFuncIdx: f.identityReject.handle,
-    },
-    promiseTypeIdx: t.promise.typeIndex,
-    callbackTypeIdx: t.callback.typeIndex,
-    capsTypeIdx: t.captures.typeIndex,
-    promiseFields: { state: 0, value: 1, callbacks: 2 },
-    callbackFields: [0, 1, 2, 3, 4],
-    capsFields: { callback: 0, chained: 1 },
-    thenable: {
-      hasCallableThenFuncIdx: f.classifier.handle,
-      lookupThenFuncIdx: f.lookupThen.handle,
-      thenableJobFuncIdx: f.thenableJob.handle,
-      peelValueFuncIdx: f.peel.handle,
-      newTypeErrorFuncIdx: newTypeError,
-    },
-    exnTagIdx: exn,
-    selfResolutionStringInstrs: selfString,
-    thenStringInstrs: thenString,
-    thenGetStringInstrs: thenString,
-    bagHasIdx: bagHas,
-    externGetIdx: externGet,
-    typeofFunctionIdx: typeofFunction,
-    callableRootTypeIdx: owner.dependencies.closures.root.typeIndex,
+  const f = pack.functions;
+  const resolution = nativePromiseResolutionDefinitions(pack, {
+    metadataType: owner.settleMetadata.type.typeIndex,
+    closureRoot: owner.dependencies.closures.root.typeIndex,
+    exn,
+    newTypeError,
+    selfString,
+    thenString,
+    bagHas,
+    externGet,
+    typeofFunction,
+    argumentNew,
+    argumentPush,
+    apply,
+    thenDispatch,
   });
   const thenableInventory: PromiseThenableInventory = {
     finalized: true,
@@ -843,77 +784,21 @@ export function fillNativePromiseResources(
   };
   const classifier = buildPromiseThenableClassifier(thenableInventory);
   const lookupThen = buildPromiseThenableLookup(thenableInventory);
-  const job = buildPromiseThenableJob({
-    target,
-    promiseTypeIdx: t.promise.typeIndex,
-    promiseRejectFuncIdx: f.reject.handle,
-    capsTypeIdx: t.captures.typeIndex,
-    capsFields: { callback: 0, chained: 1 },
-    objVecNewIdx: argumentNew,
-    objVecPushIdx: argumentPush,
-    execClosures: { ...cap, resolveClFuncIdx: f.resolveClosure.handle, rejectClFuncIdx: f.rejectClosure.handle },
-    applyClosureIdx: apply,
-    peelValueFuncIdx: f.peel.handle,
-    varargThenFuncIdx: thenDispatch,
-    exnTag: exn,
+  const definitions = nativePromiseKernelDefinitions(tx, pack, {
+    metadataType: owner.settleMetadata.type.typeIndex,
+    hook,
+    unhandledHead,
+    unhandledNode,
+    ...resolution,
+    peel: buildPromisePeelValue({
+      typeIdx: anyType,
+      tagFieldIdx: av.tag,
+      refFieldIdx: av.ref,
+      externFieldIdx: av.extern,
+    }),
+    classifier,
+    lookupThen,
   });
-  for (const token of [pack.globals.head, pack.globals.tail, pack.globals.capacity])
-    tx.fillGlobal(token, [{ op: "i32.const", value: 0 }]);
-  for (const token of [pack.globals.functions, pack.globals.captures, pack.globals.arguments]) {
-    if (token.object.type.kind !== "ref_null") fail("wrong queue storage type");
-    tx.fillGlobal(token, [{ op: "ref.null", typeIdx: token.object.type.typeIdx }]);
-  }
-  tx.fillFunction(f.grow, { locals: buildGrowLocals(queue), body: buildGrowBody(queue) });
-  tx.fillFunction(f.enqueue, { locals: [], body: buildEnqueueBody(queue) });
-  tx.fillFunction(f.drain, { locals: buildDrainLocals(), body: buildDrainBody(queue) });
-  for (const [fn, state] of [
-    [f.fulfill, PROMISE_STATE_FULFILLED],
-    [f.reject, PROMISE_STATE_REJECTED],
-  ] as const)
-    tx.fillFunction(fn, {
-      locals: buildPromiseSettleLocals(t.callback.typeIndex),
-      body: buildPromiseSettleBody(
-        {
-          promiseTypeIdx: t.promise.typeIndex,
-          callbackTypeIdx: t.callback.typeIndex,
-          enqueueFuncIdx: f.enqueue.handle,
-          resolveHook: hook,
-          unhandledHeadGlobalIdx: unhandledHead,
-          unhandledNodeTypeIdx: unhandledNode,
-        },
-        state,
-      ),
-    });
-  for (const [fn, settle] of [
-    [f.identityFulfill, f.resolveValue],
-    [f.identityReject, f.reject],
-  ])
-    tx.fillFunction(fn!, {
-      locals: buildIdentityWrapperLocals(t.captures.typeIndex),
-      body: buildIdentityWrapperBody({
-        capsTypeIdx: t.captures.typeIndex,
-        settleFuncIdx: settle!.handle,
-        beforeHook: hook,
-        afterHook: hook,
-      }),
-    });
-  tx.fillFunction(f.resolveValue, { locals: buildPromiseResolveValueLocals(t.promise.typeIndex), body: resolution });
-  tx.fillFunction(
-    f.peel,
-    buildPromisePeelValue({ typeIdx: anyType, tagFieldIdx: av.tag, refFieldIdx: av.ref, externFieldIdx: av.extern }),
-  );
-  tx.fillFunction(f.classifier, classifier);
-  tx.fillFunction(f.lookupThen, lookupThen);
-  tx.fillFunction(f.thenableJob, job);
-  tx.fillFunction(f.resolveClosure, {
-    locals: [],
-    body: buildPromiseSettleClosureBody({ ...cap, duplicateEvent: 3 }, f.resolveValue.handle),
-  });
-  tx.fillFunction(f.rejectClosure, {
-    locals: [],
-    body: buildPromiseSettleClosureBody({ ...cap, duplicateEvent: 2 }, f.reject.handle),
-  });
-  for (const fn of [f.identityFulfill, f.identityReject, f.thenableJob, f.resolveClosure, f.rejectClosure])
-    tx.declareFunctionReference(fn);
+  fillNativePromiseKernelDefinitions(tx, pack, definitions);
   owner.filled = true;
 }

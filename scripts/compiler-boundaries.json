@@ -255,7 +255,8 @@
         "src/ir/program/runtime-manifest.ts",
         "src/ir/program/runtime-validation.ts",
         "src/ir/program/validation.ts",
-        "src/ir/program/allocation-body-validation.ts"
+        "src/ir/program/allocation-body-validation.ts",
+        "src/ir/program/native-invocation-parameter.ts"
       ],
       "minModules": 49
     },
@@ -346,7 +347,10 @@
         "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
         "src/backend/wasmgc/lowering/dynamic-scratch.ts",
         "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
-        "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+        "src/backend/wasmgc/resources/native-promise-kernel.ts",
+        "src/backend/wasmgc/resources/native-promise-resolution.ts",
+        "src/backend/wasmgc/resources/native-common-promise-runtime.ts"
       ],
       "minModules": 55
     },
@@ -16715,6 +16719,31 @@
       "path": "src/runtime/contracts/native-promise-literals.ts",
       "state": "clean",
       "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-kernel.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-resolution.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-common-promise-runtime.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/thenable-job-call-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/program/native-invocation-parameter.ts",
+      "state": "clean",
+      "layer": "ir-program"
     }
   ]
 }

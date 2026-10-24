@@ -1696,6 +1696,7 @@ export function prepareIrProgramSources(
       };
       const resolver: IrFromAstResolver = {
         sourceClosureSignature: (node) => callableTypes.closure(node, unit.displayName),
+        nativeCallableInvocation: (node) => callableTypes.runtimeParameter(node, closureCallableParameters),
         sourceClosureInvocation: (expression) => closureInvocations.get(expression),
         sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
         resolveModuleBinding: resolveBinding,

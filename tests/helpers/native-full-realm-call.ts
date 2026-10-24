@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { expect } from "vitest";
+import { NATIVE_PROMISE_STRINGS } from "../../src/runtime/contracts/native-promise-literals.js";
+import { closureMethodArity, IR_CLOSURE_UNDEFINED } from "../../src/ir/core/closure-invocation-callables.js";
 import { setImmediate } from "node:timers/promises";
 import { mixedOwnerFixture, reserveMixedOwner, fillMixedDependencies } from "./native-mixed-object-access.js";
 import { publicRealmSourceSlots } from "./native-object-realm.js";
@@ -45,17 +47,22 @@ import {
   fillNativePromiseObjects,
 } from "../../src/backend/wasmgc/resources/native-promise-objects.js";
 
-export function fullRealmFixture(displaced = false, asyncSource = "") {
+export function fullRealmFixture(
+  displaced = false,
+  asyncSource = "",
+  extraFactories: Parameters<typeof publicRealmSourceSlots>[2] = [],
+) {
   const r = mixedOwnerFixture(
       displaced,
       `export function makeCaptured(seed: number): (value: number) => number {
     return function captured(value: number): number { return seed + value; };
   }
   export function makeEmpty(): () => number { return function empty(): number { return 7; }; }` + asyncSource,
-      ["then", "missingPromiseProperty"],
+      ["then", "missingPromiseProperty", ...(asyncSource ? [NATIVE_PROMISE_STRINGS.selfResolution] : [])],
+      2 + extraFactories.length,
     ),
     { tx, f, c } = r;
-  const source = publicRealmSourceSlots(f, c);
+  const source = publicRealmSourceSlots(f, c, extraFactories);
   const booleans = reserveNativeBooleanResources(tx, "test:booleans", r.values, r.valuePlan, r.valueDependencies);
   const dependencies = {
     realm: r.realm.declarations,
@@ -125,7 +132,17 @@ export function fillFullRealmSourceUnits(r: ReturnType<typeof fullRealmFixture>)
     resolveFunc(ref) {
       const slot = ref.binding.kind === "unit" && r.source.slots.get(ref.binding.unitId);
       if (slot) return slot.handle;
-      throw Error("unexpected callable");
+      if (ref.binding.kind === "intrinsic") {
+        if (ref.binding.symbol === IR_CLOSURE_UNDEFINED) return r.invocation.undefinedValue.handle;
+        const arity = closureMethodArity(ref.binding.symbol);
+        const method = r.invocation.methods.find((row) => row.arity === arity);
+        if (method) return method.function.handle;
+      }
+      if (ref.binding.kind === "runtime") {
+        if (ref.binding.symbol === "__box_number") return r.values.functions.boxNumber.handle;
+        if (ref.binding.symbol === "__unbox_number") return r.values.functions.unboxNumber.handle;
+      }
+      throw Error("unexpected callable: " + ref.name);
     },
     resolveGlobal() {
       throw Error("unexpected global");

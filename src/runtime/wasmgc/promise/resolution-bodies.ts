@@ -4,6 +4,7 @@ import { buildTargetTaggedTry } from "../../../wasm/physical/exception-control.j
 import { buildPromiseReactionRegistration } from "./reaction-registration-body.js";
 import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
 import { buildPromiseResolvingPairGuard } from "./resolving-pair-bodies.js";
+import { buildThenableJobCall } from "./thenable-job-call-body.js";
 
 export interface PromiseResolutionBindings {
   readonly hasCallableThenFuncIdx: FuncHandle;
@@ -464,6 +465,7 @@ export function buildPromiseSettleClosureBody(
   ];
 }
 export interface PromiseThenableJobResources {
+  readonly invocationMode?: "captured";
   readonly target: { wasi: boolean; standalone: boolean };
   readonly promiseTypeIdx: TypeHandle;
   readonly promiseRejectFuncIdx: FuncHandle;
@@ -477,27 +479,15 @@ export interface PromiseThenableJobResources {
   };
   readonly applyClosureIdx: FuncHandle | undefined;
   readonly peelValueFuncIdx: FuncHandle;
-  readonly varargThenFuncIdx: FuncHandle;
+  readonly varargThenFuncIdx?: FuncHandle;
   readonly exnTag: number;
 }
 export function buildPromiseThenableJob(resources: PromiseThenableJobResources): { locals: LocalDef[]; body: Instr[] } {
-  const {
-    target,
-    capsTypeIdx,
-    capsFields,
-    objVecNewIdx,
-    objVecPushIdx,
-    execClosures,
-    applyClosureIdx,
-    peelValueFuncIdx,
-    varargThenFuncIdx,
-    exnTag,
-  } = resources;
+  const { target, capsTypeIdx, capsFields, objVecNewIdx, objVecPushIdx, execClosures, exnTag } = resources;
   const state = resources;
   const promiseLocal = 2;
   const reasonLocal = 3;
   const vecLocal = 4;
-  const capturedThenLocal = 5;
   const rejectClosureLocal = 6;
   const guardLocal = 7;
   // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call
@@ -535,47 +525,7 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
       ? emitSettleCap(execClosures.rejectClFuncIdx)
       : ([{ op: "local.get", index: rejectClosureLocal }] satisfies Instr[])),
     { op: "call", funcIdx: objVecPushIdx },
-    // __call_m_then_vararg(peel(thenable), argvec) — `then.call(thenable,
-    // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
-    // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW
-    // object as the receiver.
-    // When Resolve captured the `then` FUNCTION (ordinary lookup or own `then`
-    // on a native promise), call THAT value — the spec captures `then` at Resolve
-    // time (step 9) and calls it as a job (step 14), so a reassignment between
-    // the two must not change which function runs. Otherwise re-dispatch
-    // through the vararg `then` method dispatcher exactly as before.
-    ...(applyClosureIdx === undefined
-      ? [
-          { op: "local.get", index: 1 } as Instr,
-          { op: "call", funcIdx: peelValueFuncIdx } as Instr,
-          { op: "local.get", index: vecLocal } as Instr,
-          { op: "call", funcIdx: varargThenFuncIdx } as Instr,
-        ]
-      : ([
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: capsTypeIdx },
-          { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: capsFields.callback },
-          { op: "local.tee", index: capturedThenLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: [
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: peelValueFuncIdx },
-              { op: "local.get", index: vecLocal },
-              { op: "call", funcIdx: varargThenFuncIdx },
-            ],
-            else: [
-              { op: "local.get", index: capturedThenLocal },
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: peelValueFuncIdx },
-              { op: "local.get", index: vecLocal },
-              { op: "call", funcIdx: applyClosureIdx },
-            ],
-          },
-        ] satisfies Instr[])),
+    ...buildThenableJobCall(resources, vecLocal),
     { op: "drop" },
   ];
   return {

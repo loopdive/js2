@@ -48,6 +48,7 @@ import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
 import {
   fixedClosureParameters,
   lowerSourceClosureInvocation,
+  lowerNativeCallableInvocation,
   type SourceClosureInvocationPlan,
 } from "./source-closure-invocation.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
@@ -433,6 +434,8 @@ export interface IrExternClassMeta {
 export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   /** Source-owned logical generic closure signature; no physical representation grant. */
   sourceClosureSignature?(node: IrClosureLiteral): IrClosureSignature | undefined;
+  /** Native callable values use realm Call instead of an annotation-shaped call_ref. */
+  nativeCallableInvocation?(node: ts.Expression): boolean;
   /** Exact complete-source proof of a local closure's primordial call/apply member. */
   sourceClosureInvocation?(expression: ts.CallExpression): SourceClosureInvocationPlan | undefined;
   /** Exact higher-order parameter certified by the complete source invocation proof. */
@@ -7792,7 +7795,7 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   //   - top-level callee in calleeTypes → vanilla `call`
   const binding = cx.scope.get(calleeName);
   if (binding?.kind === "local" && (binding.type.kind === "closure" || binding.type.kind === "callable")) {
-    return lowerClosureCall(binding.value, binding.type.signature, expr.arguments, cx, statementPosition);
+    return lowerClosureCall(binding.value, binding.type.signature, expr, cx, statementPosition);
   }
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
@@ -8095,10 +8098,11 @@ function isUnshadowedUndefinedExpression(expr: ts.Expression, cx: LowerCtx): boo
 function lowerClosureCall(
   callee: IrValueId,
   signature: IrClosureSignature,
-  argExprs: readonly ts.Expression[],
+  expression: ts.CallExpression,
   cx: LowerCtx,
   statementPosition = false,
 ): IrValueId | null {
+  const argExprs = expression.arguments;
   if (signature.returnType === null && !statementPosition) {
     unsupportedVoidCallExpression(`ir/from-ast: void closure calls are not in value position scope (${cx.funcName})`);
   }
@@ -8123,6 +8127,14 @@ function lowerClosureCall(
     }
     args.push(argVal);
   }
+  if (
+    cx.builder.typeOf(callee).kind === "callable" &&
+    ts.isIdentifier(expression.expression) &&
+    cx.resolver?.nativeCallableInvocation?.(expression.expression)
+  )
+    return lowerNativeCallableInvocation(cx.builder, callee, args, signature.returnType, (value) =>
+      coerceToExpectedExtern(value, { kind: "externref" }, cx, "native callable invocation"),
+    );
   return cx.builder.emitClosureCall(callee, args, signature.returnType);
 }
 
@@ -9771,7 +9783,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       );
     }
     const callee = cx.builder.emitObjectGet(recv, methodName, field.type);
-    return lowerClosureCall(callee, field.type.signature, expr.arguments, cx, statementPosition);
+    return lowerClosureCall(callee, field.type.signature, expr, cx, statementPosition);
   }
 
   const numberString = tryLowerNumberToStringCall(expr, cx, methodName, recv, recvType);

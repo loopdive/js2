@@ -608,6 +608,8 @@ export function fillNativeInvocationResources(
   const builtin = joinedBuiltin(owner, pack, !!owner.builtins);
   if (builtin && builtin.exception !== exception) fail("invocation and builtin producer use different exception tags");
   const exceptionTag = tx.physicalIndex(exception);
+  if (pack.requirements.uses.some((use) => use.parameterIndex !== undefined) && !owner.publicRealm)
+    fail("runtime-supplied source parameters require the full realm dispatch owner");
   if (owner.publicRealm && !realmCallables) fail("full public realm requires all source callables");
   if (realmCallables) {
     const expectedRealm = owner.publicRealm

@@ -160,3 +160,31 @@ export function lowerSourceClosureInvocation(
   if (result?.kind === "extern" || (result?.kind === "val" && result.val.kind === "externref")) return value;
   unsupported("result needs its canonical native invocation conversion");
 }
+
+/** Runtime-created callbacks need argument conversion through realm Call. */
+export function lowerNativeCallableInvocation(
+  builder: IrFunctionBuilder,
+  callee: IrValueId,
+  args: readonly IrValueId[],
+  resultType: IrType | null,
+  externalize: (value: IrValueId) => IrValueId,
+): IrValueId | null {
+  if (
+    resultType !== null &&
+    resultType.kind !== "extern" &&
+    !(resultType.kind === "val" && !resultType.typeRef && resultType.val.kind === "externref")
+  )
+    throw new IrUnsupportedError(
+      "call-resolution-unsupported",
+      "build",
+      "runtime-supplied callable result needs a value-preserving carrier; an annotation does not prove its returned value",
+    );
+  const external = { kind: "val", val: { kind: "externref" } } as const;
+  const receiver = builder.emitCall(irIntrinsicFuncRef(IR_CLOSURE_UNDEFINED), [], external)!;
+  const value = builder.emitCall(
+    irClosureMethodReference(args.length),
+    [receiver, builder.emitCoerceToExternref(callee), ...args.map(externalize)],
+    external,
+  )!;
+  return resultType === null ? null : value;
+}

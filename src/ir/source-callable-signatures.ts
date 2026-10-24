@@ -97,12 +97,22 @@ export function createSourceCallableSignatures(
       ("asteriskToken" in node && node.asteriskToken) ||
       !(
         node.type?.kind === ts.SyntaxKind.AnyKeyword ||
-        node.parameters.some((p) => p.type?.kind === ts.SyntaxKind.AnyKeyword)
+        node.parameters.some(
+          (p) =>
+            p.type &&
+            (p.type.kind === ts.SyntaxKind.AnyKeyword ||
+              checker.getSignaturesOfType(checker.getTypeFromTypeNode(p.type), ts.SignatureKind.Call).length > 0),
+        )
       )
     )
       return undefined;
     const type = checkerCallableType(checker.getTypeAtLocation(node), where);
     return type?.kind === "callable" ? type.signature : undefined;
   }
-  return { callable: checkerCallable, inferredResult: checkerInferredCallableResult, closure };
+  function runtimeParameter(node: ts.Expression, closedParameters: ReadonlySet<ts.TypeNode | undefined>): boolean {
+    if (!nativeDynamic) return false;
+    const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+    return !!declaration && ts.isParameter(declaration) && !closedParameters.has(declaration.type);
+  }
+  return { callable: checkerCallable, inferredResult: checkerInferredCallableResult, closure, runtimeParameter };
 }
