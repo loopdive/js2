@@ -11,6 +11,7 @@ import {
   type NativeObjectAccessUse,
 } from "./native-object-access-requirements.js";
 import type { NativeStringValueView } from "./native-string-value-demands.js";
+import { indexNativeValueDefinitions } from "./native-value-definitions.js";
 
 export interface NativePrototypeChain {
   /** Ordered actual creation occurrences, starting at the lookup target/receiver. */
@@ -57,13 +58,13 @@ function callAt(access: NativeObjectAccessRequirements, occurrence: number): IrI
 }
 
 function chainReader(access: NativeObjectAccessRequirements, unitId: IrUnitId, view: NativeStringValueView) {
-  const definitions = new Map<IrValueId, number>();
-  for (const [occurrence, row] of access.demands.occurrences.entries()) {
-    const buffer = access.demands.buffers[row.bufferIndex]!;
-    if (buffer.ownerUnitId !== unitId || buffer.view !== view || row.instruction.result === null) continue;
-    if (definitions.has(row.instruction.result)) invalid("ambiguous prototype SSA definition");
-    definitions.set(row.instruction.result, occurrence);
-  }
+  const { definitions } = indexNativeValueDefinitions(
+    access.demands,
+    unitId,
+    view,
+    () => invalid("ambiguous prototype SSA definition"),
+    view === "program" ? "semantic" : "execution",
+  );
   return (initial: IrValueId): NativePrototypeChain => {
     const creations: number[] = [],
       seen = new Set<IrValueId>();
@@ -71,8 +72,8 @@ function chainReader(access: NativeObjectAccessRequirements, unitId: IrUnitId, v
     for (;;) {
       if (seen.has(value)) invalid("cyclic prototype creation or representation alias");
       seen.add(value);
-      const occurrence = definitions.get(value);
-      const instruction = occurrence === undefined ? undefined : access.demands.occurrences[occurrence]!.instruction;
+      const definition = definitions.get(value);
+      const instruction = definition?.instruction;
       if (instruction?.kind === "coerce.to_externref") {
         value = instruction.value;
         continue;
@@ -82,7 +83,7 @@ function chainReader(access: NativeObjectAccessRequirements, unitId: IrUnitId, v
       if (instruction?.kind !== "call") return { creations, end: { kind: "unresolved", value } };
       const feature = irOrdinaryObjectCallableDeclaration(instruction.target)?.feature;
       if (!feature?.startsWith("js.object.create-")) return { creations, end: { kind: "unresolved", value } };
-      creations.push(occurrence!);
+      creations.push(definition!.occurrence);
       if (feature === "js.object.create-null") return { creations, end: { kind: "null" } };
       if (feature === "js.object.create-default")
         return { creations, end: { kind: "builtin", name: "Object", brand: BUILTIN_BRAND_TABLE.Object! } };
