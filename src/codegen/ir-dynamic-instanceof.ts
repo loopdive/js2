@@ -27,9 +27,9 @@
  */
 
 import { ts } from "../ts-api.js";
-import type { TypeFact } from "../checker/oracle.js";
 import type { ValType } from "../ir/types.js";
 import { isAmbientIntrinsicName } from "../ir/values/ambient-intrinsics.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
@@ -96,28 +96,20 @@ function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
  */
 export function irDynamicInstanceOfAtLegacyParity(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
   if (!noJsHost(ctx) || ctx.fast) return false;
-  // Both arms reproduce the native-first providers' operator; a host-free lane
-  // under another provider regime keeps legacy.
+  // `noJsHost` does not imply native-first: wasi with `strictNoHostImports: false`
+  // keeps host-assisted providers, whose instanceof tail this wrapper does not copy.
   if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (site.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !ts.isIdentifier(site.right)) return false;
   const file = site.getSourceFile();
   if (moduleInstallsCallableHasInstance(file)) return false;
-  const operands: InstanceOfOperands = { left: site.left, right: site.right };
-  return parameterTargetRoutesGeneric(ctx, operands, file) || errorIntrinsicTargetTakesTagPath(ctx, operands, file);
-}
-
-/** An `instanceof` site whose right operand is an identifier. */
-interface InstanceOfOperands {
-  readonly left: ts.Expression;
-  readonly right: ts.Identifier;
+  return (
+    parameterTargetRoutesGeneric(ctx, site.right, file) ||
+    errorIntrinsicTargetTakesTagPath(ctx, site.right, site.left, file)
+  );
 }
 
 /** The parameter half of {@link irDynamicInstanceOfAtLegacyParity}. */
-function parameterTargetRoutesGeneric(
-  ctx: CodegenContext,
-  { right }: InstanceOfOperands,
-  file: ts.SourceFile,
-): boolean {
+function parameterTargetRoutesGeneric(ctx: CodegenContext, right: ts.Identifier, file: ts.SourceFile): boolean {
   const declaration = ctx.oracle.valueDeclarationOf(right);
   if (declaration === undefined || !ts.isParameter(declaration) || !ts.isIdentifier(declaration.name)) return false;
   const name = right.text;
@@ -132,14 +124,12 @@ function isDynamicTypeFact(kind: TypeFact["kind"]): boolean {
 }
 
 /**
- * (#7106) The Error-family constructors the IR may read off the realm as an
- * `instanceof` target: legacy's native `$Error_struct` family
- * (`ERROR_FAMILY_CTOR_NAMES`) restricted to the ambient intrinsics #7118 admits
- * as values. AggregateError and SuppressedError are in the family but not in
- * that value set, so `instanceof AggregateError` stays legacy (probed: no
- * post-claim error).
+ * (#7106) An Error-family constructor the IR may use as an `instanceof` target:
+ * one with a native `$tag` (`ERROR_FAMILY_CTOR_NAMES`) that the IR can also read
+ * off the realm (#7118's ambient-intrinsic value read). AggregateError and
+ * SuppressedError fall out because that realm read does not admit them.
  */
-function isIrInstanceOfErrorIntrinsic(name: string): boolean {
+function isInstanceOfErrorIntrinsic(name: string): boolean {
   return (ERROR_FAMILY_CTOR_NAMES as readonly string[]).includes(name) && isAmbientIntrinsicName(name);
 }
 
@@ -159,11 +149,12 @@ function isIrInstanceOfErrorIntrinsic(name: string): boolean {
  */
 function errorIntrinsicTargetTakesTagPath(
   ctx: CodegenContext,
-  { left, right }: InstanceOfOperands,
+  right: ts.Identifier,
+  left: ts.Expression,
   file: ts.SourceFile,
 ): boolean {
   const name = right.text;
-  if (!isIrInstanceOfErrorIntrinsic(name)) return false;
+  if (!isInstanceOfErrorIntrinsic(name)) return false;
   if (ctx.oracle.valueDeclarationOf(right)?.getSourceFile().isDeclarationFile !== true) return false;
   if (declaredNonParameterNames(file).has(name) || identifierIsWrittenTo(file, name)) return false;
   return isDynamicTypeFact(ctx.oracle.typeFactOf(left).kind);
