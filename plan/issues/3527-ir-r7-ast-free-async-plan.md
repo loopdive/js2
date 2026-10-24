@@ -2373,3 +2373,64 @@ inventory. It does not establish full public native inventory composition,
 source admission, successful captured-accessor then dispatch, own-Promise then
 shadowing, Linear/WASI support or legacy retirement. Those original obligations
 remain open.
+### Async representation scope repair plan (2026-10-24)
+
+The full native async example currently crashes during ordinary consumer planning
+with ambiguous prepared SSA definition: the retained semantic async plan and its
+lowered executable states reuse value IDs, but native access/result/prototype
+analysis indexes both in one definition table. The physical dependency census
+also visits semantic clock requests that execution replaced with constants.
+
+Extract the existing representation-aware definition/alias helper and migrate
+all three native value consumers to it. Preserve separate semantic and executable
+operation comparison against source; duplicates within either representation,
+missing/foreign attachments and changed property regions must still reject.
+Use one authenticated executable-instruction traversal for consumer references
+and physical resource demand. Preserve semantic traversal for semantic callers.
+
+Acceptance: original/decoded genuine async example reaches located inventory
+refusal rather than an internal SSA crash, with lowered-away clock requirements
+absent. Getter operations after await remain accounted for. Existing ordinary
+object/prototype and host async behavior must pass without exceptions or weakened
+gates. Keep units bounded and remove duplicated definition/alias loops. This is
+an independent port of prior local work; class changes and frozen index remain
+untouched. Public native async admission and full migration remain incomplete.
+
+The isolated implementation shares representation selection and alias indexing
+across access/result/prototype analysis, and authenticates executable traversal
+before reference or resource collection. The full example and codec replay now
+reach the existing structured native-inventory refusal; semantic-only clock
+requests no longer appear as missing executable providers. Genuine property
+operations, duplicate definitions within one representation and invalid runtime
+attachments remain checked.
+
+The focused regressions pass 14/14; source and focused-test TypeScript 7 checks
+pass. An isolated archive of base `ff27bb4de9` and the candidate emit 11/11
+byte-identical host async binaries. Formatting, lint, layering and source budgets
+pass without allowances. Fresh-context adversarial review of the diff, plan and
+validation callers found an unused occurrence array; it was removed and the
+reviewer confirmed no outstanding findings. The reviewer did not run tests.
+
+The reachability command exits zero under its preservation contract: core nodes
+12/12 observed (dispatch-cut unknown), core types 10/10 full and cut, preservation
+6/6 full and cut. The strict graph remains open at the nonliteral imports in
+`src/optimize.ts` and `src/runtime/platform-capability-adapter.ts`; retirement is
+not certified. This change does not close the native Promise inventory,
+whole-program native async execution, Linear/WASI or the overall IR migration.
+
+The expanded regression run exposed a previously unreachable stale inventory
+expectation. On an isolated unchanged `ff27bb4de9` archive, the inventory-planning
+suite fails 8/12 cases, including the ambiguous-SSA crash. Direct source-census
+probes on that same base, with GVN both off and on, identify the actual
+`__sh_num_toString_radix` support as 43 buffers / 222 occurrences, not the old
+31 / 157. Update the planning test's exact counts and named owner accordingly;
+retain its source hash, all owner/carrier counts, all six unresolved obligations
+and the prohibition on acceptance/emission.
+
+Final regression result: 122/122 cases in the other seven suites, plus 12/12 in
+the corrected inventory-planning suite (134/134 across eight suites). The final
+focused scope suite separately passes 14/14 after review cleanup; both changed
+test files pass TypeScript 7. The reviewer also verified 1,985 archived
+source/fixture/helper blobs against the base with zero mismatches and accepted
+the inventory test correction. No new production allowances or acceptance
+exceptions were introduced.
