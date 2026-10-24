@@ -2,9 +2,9 @@
 id: 6979
 title: "S7: delete the host-semantic implementation — one native semantic core, host imports only as capabilities, adapters and named accelerators"
 status: in-progress
-assignee: ttraenkler/opus-s7b-legacy-semantic
+assignee: ttraenkler/opus-s7b-remerge
 created: 2026-10-14
-updated: 2026-10-20
+updated: 2026-10-25
 priority: high
 horizon: xl
 feasibility: hard
@@ -755,3 +755,48 @@ counter), `issue-4577-standalone-calendar-retirement` (3 rows: 38-terminal
 census, TDZ guards / `$__cb_0`, artifact ceilings), and
 `issue-6474-linked-script-goal` (3 linked-run rows: the local runtime-eval
 provider is not an object).
+
+**Re-merge onto S7-a of 2026-10-24 (2026-10-25, `opus-s7b-remerge`).** S7-a was
+re-merged onto 2026-10-24 main (PR 6701, head `665f2bdc52`, ~290 main commits).
+That head was merged into S7-b `1e7a64aaa8` as `01f6311935`. Two conflicts:
+- `src/codegen/dyn-ops.ts`: main's `3551338437` (IR function-object member
+  calls) added `ensureDynamicMemberCallSupport` and its imports
+  (`reserveApplyClosure`, `emitWasiErrorConstructor`, and
+  `ensureLateImport`/`flushLateImportShifts` from `shared.js`, which S7-b had
+  dropped). All of it is kept. Its only import, `__is_callable`, is
+  native-finalized. S7-b's deletions are re-applied: the host
+  `string-replace` arm and `addStringConstantGlobal`.
+- This issue file: S7-a's re-bank bullet goes at the end of the S7-a section,
+  and the S7-b section is kept.
+
+Nothing else conflicted. No main commit in the range imports a file S7-b deletes
+or adds a `legacy-semantic` import. The `host-assisted` mention counts in `src/`
+are the same per file as on the old S7-b head.
+
+Gates on the merged tree: tsc 0, Biome lint 0, Prettier clean. Host-import
+policy: 33 probes, 452 imports, 0 regime-gap, 0 unknown. IR fallbacks OK.
+`check:ir-only --policy=hybrid` READY, with single-host at 26/12 (unchanged
+from S7-a's re-bank). The compiler-boundaries inventory is valid. The ratchet
+chain and import cycles are OK against `upstream/main` `7cc5d52322`. No new
+grants. Equivalence gate: `20 failing, 2044 passing, 22 known-failures`, "No new
+equivalence regressions", and 2 baseline failures now pass.
+
+Byte-neutrality versus the S7-a head: every `compileSourceSync` call the
+equivalence suite makes was recorded and replayed in both trees. That gives
+2,101 distinct programs (gc 1,839, standalone 257, wasi 5). 2,062 are
+identical. The other 39 (38 gc, 1 standalone) still differ when recompiled in a
+fresh process per tree, by 0 or -1 byte. All 39 differ only in type-section
+order:
+- 12 have identical binaryen WAT.
+- 27 differ only in type-index-derived helper-name suffixes
+  (`__vec_elem_set_<typeIdx>`) and in `i32.const` type tags. The tags map
+  consistently and one-to-one, e.g. 147→145.
+
+This is the same cause as the 2026-10-20 run (32 then).
+
+Fix-on-touch: the 17 touched test files plus the 15 `--pinned` files give 545
+passing and 8 failing. The failures are the same 8 pre-existing rows listed
+above (3518 ×2, 4577 ×3, 6474 ×3, quickjs engine absent locally), and they fail
+identically on the S7-a head. I also ran main's 54 test files changed in the
+range: 22 rows fail on S7-b (`issue-1102`, `2960`, `3519`, `5164`,
+`7106-prophelper`, `7106-s3a`), and every one also fails on the S7-a head.
