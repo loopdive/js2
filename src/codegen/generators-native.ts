@@ -4097,9 +4097,9 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   if (!decl.name && !ts.isFunctionExpression(decl) && !isAnonymousDefaultExportDeclaration(decl)) return false;
   // (#3164) Fn-expr-specific shape gate (identifier-only params, frame-carried
   // `arguments`, no `this`/self-name reference, no outer capture). Applied
-  // here — the SINGLE candidate gate — so `sourceNeedsGeneratorHostImports`,
-  // `registerNativeGenerator`, and the closures.ts emit site all agree
-  // (disagreement bakes an undefined `__gen_*` funcIdx → invalid module).
+  // here — the SINGLE candidate gate — so `registerNativeGenerator` and the
+  // closures.ts emit site agree (a rejected fn-expr is a #7010 refusal on
+  // host-free builds, the eager buffer in the JS-host lane).
   if (ts.isFunctionExpression(decl) && !isNativeGeneratorExpressionShape(ctx, decl)) return false;
   // (#2571) An object-literal method with a computed/string name
   // (`{ [k]*(){} }`, `{ "m"*(){} }`) is out of scope — only an identifier-named
@@ -4131,9 +4131,8 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // synthetic-`this` state-struct model applies uniformly. Any OTHER
   // MethodDeclaration context (e.g. a TS interface/type member, or a shape the
   // emit paths don't cover) keeps the host path — bailing here (the single
-  // candidate gate consumed by both `registerNativeGenerator` AND
-  // `sourceNeedsGeneratorHostImports`) keeps the host imports registered,
-  // avoiding an undefined-funcidx invalid module.
+  // candidate gate consumed by `registerNativeGenerator`) routes it to the
+  // eager buffer in the JS-host lane and to a #7010 refusal on host-free builds.
   if (ts.isMethodDeclaration(decl) && !ts.isClassLike(decl.parent) && !ts.isObjectLiteralExpression(decl.parent)) {
     return false;
   }
@@ -4209,8 +4208,8 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
   // binary emit, fn-name-gen-method.js). Computed names (`*[sym]()`) bail too:
   // their emitted-name derivation is not stable enough to prove uniqueness.
   // Gate here — the SINGLE source of truth — so collection, the method emit
-  // AND `sourceNeedsGeneratorHostImports` all agree (host imports stay
-  // registered; behavior matches the pre-#2938 eager-buffer path).
+  // agree (JS host: the pre-#2938 eager-buffer path; host-free: a #7010
+  // refusal).
   if (ts.isMethodDeclaration(decl)) {
     // (#6651 A3) Uniqueness is decided on the FOLDED key — the one the emit
     // sites key by — so `*['a']()` and `*a()` in one body collide, as they do
@@ -4318,19 +4317,10 @@ function isStandaloneDynamicClassMethod(ctx: CodegenContext, decl: GeneratorDecl
 
 /**
  * (#2203) True when `decl` is a generator nested inside another function that
- * reads or writes a binding from an enclosing scope (a "capture"). Such a
- * generator cannot use the Wasm-native generator factory — its state lives in a
- * struct, with no slot for captured outer-scope bindings, so the native
- * registration in `nested-declarations.ts` is gated on `captures.length === 0`
- * and a capturing generator falls through to the eager-buffer host path. In a
- * no-JS-host target the eager path needs the `__gen_*` host imports; if they
- * were never registered (because `isNativeGeneratorCandidate` — which does not
- * model captures — wrongly classified this as native), the emit bakes a
- * `funcIdx: undefined` and produces invalid Wasm. Flagging the capture here lets
- * `sourceNeedsGeneratorHostImports` register the host imports so the funcidx is
- * valid (the test262 standalone runner supplies the `__gen_*` shim). A
- * non-capturing nested generator stays native and is NOT flagged, so it does not
- * gain unused host-import dependencies.
+ * reads or writes a binding from an enclosing scope (a "capture"). In the
+ * JS-host lane such a generator stays on the eager-buffer path (the native
+ * candidate gates bail on it); host-free builds handle captures natively or
+ * refuse the generator (#7010).
  */
 function generatorCapturesOuterScope(ctx: CodegenContext, decl: GeneratorDecl): boolean {
   if (!decl.body) return false;
@@ -4395,68 +4385,6 @@ function generatorCapturesOuterScope(ctx: CodegenContext, decl: GeneratorDecl): 
   }
   scan(decl.body);
   return captures;
-}
-
-export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile: ts.SourceFile): boolean {
-  let found = false;
-  let needsHost = false;
-
-  function visit(node: ts.Node): void {
-    if (needsHost) return;
-    // (#6980) An async generator in a module whose async gens ALL drive
-    // host-free (the pre-body `moduleHasNonDrivableAsyncGen` verdict, the same
-    // shape predicate the emit gate uses) never emits a legacy buffer. Counting
-    // it here registered the `__gen_result_*` imports anyway, and every
-    // `IteratorResult` `.value`/`.done` read then routed to them (NaN, or a
-    // native-first policy rejection).
-    if (
-      (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
-      node.asteriskToken &&
-      node.body &&
-      ctx.moduleHasAsyncGen === true &&
-      ctx.moduleHasNonDrivableAsyncGen !== true &&
-      ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
-    ) {
-      found = true;
-      return;
-    }
-    if (ts.isFunctionDeclaration(node) && node.asteriskToken && node.body) {
-      found = true;
-      // A non-native-candidate generator needs the host imports; so does a
-      // nested generator that captures an outer-scope binding (#2203) — it
-      // cannot use the native factory (no capture slot in the state struct) and
-      // falls to the eager-buffer host path, which would otherwise bake an
-      // undefined funcidx in a no-JS-host target.
-      if (!isNativeGeneratorCandidate(ctx, node) || generatorCapturesOuterScope(ctx, node)) needsHost = true;
-      return;
-    }
-    if (ts.isFunctionExpression(node) && node.asteriskToken) {
-      found = true;
-      // (#3164) A generator FUNCTION EXPRESSION no longer forces the host
-      // imports when the extended candidate gate admits it (zero/identifier
-      // params, frame-carried `arguments`, no `this`/self-name/capture — the fn-expr arm of
-      // `isNativeGeneratorCandidate`); the closures.ts emit site routes it
-      // through the native state-struct factory. Any bail (including async —
-      // the modifiers check inside the candidate) keeps the imports
-      // registered, exactly like the declaration/method branches.
-      if (!node.body || !isNativeGeneratorCandidate(ctx, node)) needsHost = true;
-      return;
-    }
-    if (ts.isMethodDeclaration(node) && node.asteriskToken && node.body) {
-      found = true;
-      // (#2571) A class / object-literal generator METHOD that the native path
-      // can lower (instance/static, identifier params, frame-carried arguments,
-      // no capture / super) no longer forces the host imports — same logic as the
-      // FunctionDeclaration branch above, generalized to methods. A
-      // non-candidate or capturing method generator still needs the host buffer.
-      if (!isNativeGeneratorCandidate(ctx, node) || generatorCapturesOuterScope(ctx, node)) needsHost = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  ts.forEachChild(sourceFile, visit);
-  return found && needsHost;
 }
 
 /**
