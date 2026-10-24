@@ -854,6 +854,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 propertyHelper) The runtime wrapper a dynamic `delete` at `site`
+   * calls (strict / sloppy, decided like legacy's `compileDeleteExpression`),
+   * or undefined where the dynamic carrier is not an externref.
+   */
+  dynamicDeleteSymbol?(site: ts.DeleteExpression): string | undefined;
 }
 
 export type IrSourceMapNodeProjection =
@@ -2385,6 +2391,7 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       lowerDiscardedExpression(s.expression, cx);
       return false;
     }
+    if (lowerDroppedDelete(s.expression, cx)) return false;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(s)) {
@@ -5284,6 +5291,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
   // Slice 11 (#1169n) used to answer a constant `true` here, which removed
   // nothing and never threw. Fail closed if a delete ever reaches lowering.
   if (ts.isDeleteExpression(expr)) {
+    const dynamicDelete = lowerDynamicDelete(expr, cx);
+    if (dynamicDelete !== null) return dynamicDelete;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: delete has no IR lowering in ${cx.funcName}`);
   }
   // Slice 11 (#1169n) — `void <expr>`. Lower the operand for side
@@ -8125,22 +8134,64 @@ function lowerClosureCall(
 }
 
 /**
- * Slice 3 (#1169c): lower a call to a nested function declaration.
- * Prepends capture args to the user args and emits a direct `call`
- * (no struct, no funcref) — matches the legacy
- * `compileNestedFunctionDeclaration` pattern.
- *
- * Mutable captures: if the outer hasn't already wrapped the variable
- * in a refcell (because no closure-VALUE has been built that captured
- * it as mutable), wrap it here and rebind `cx.scope[name]` so subsequent
- * outer reads/writes go through the cell.
+ * (#7106 propertyHelper) `delete <dyn>.name` / `delete <dyn>[key]` on a
+ * dynamic receiver: the receiver and the (boxed) key as carriers, then the
+ * site's runtime wrapper — legacy's generic externref delete arm
+ * (`codegen/ir-dynamic-delete.ts`). Returns the delete's boolean, or null when
+ * the operand is not that shape (the caller demotes).
  */
+function lowerDynamicDelete(expr: ts.DeleteExpression, cx: LowerCtx): IrValueId | null {
+  let operand: ts.Expression = expr.expression;
+  while (ts.isParenthesizedExpression(operand)) operand = operand.expression;
+  let receiverExpr: ts.Expression;
+  let keyExpr: ts.Expression | undefined;
+  let keyName: string | undefined;
+  if (ts.isPropertyAccessExpression(operand) && ts.isIdentifier(operand.name) && !operand.questionDotToken) {
+    receiverExpr = operand.expression;
+    keyName = operand.name.text;
+  } else if (ts.isElementAccessExpression(operand) && !operand.questionDotToken) {
+    receiverExpr = operand.expression;
+    keyExpr = operand.argumentExpression;
+  } else {
+    return null;
+  }
+  const symbol = cx.resolver?.dynamicDeleteSymbol?.(expr);
+  if (symbol === undefined) return null;
+  const receiver = lowerExpr(receiverExpr, cx, irDynamic());
+  if (cx.builder.typeOf(receiver).kind !== "dynamic") return null;
+  const key =
+    keyName !== undefined
+      ? cx.builder.emitBox(cx.builder.emitStringConst(keyName), irDynamic(JS_TAG_IDS.String))
+      : lowerAliasCarrierOperands([keyExpr!], "delete", cx)[0]!;
+  const result = cx.builder.emitCall(irRuntimeFuncRef(symbol), [receiver, key], irVal({ kind: "i32", boolean: true }));
+  if (result === null) {
+    // invariant (producer-promise): a runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: dynamic delete produced no value in ${cx.funcName}`);
+  }
+  return result;
+}
+
+/**
+ * (#7106 propertyHelper) A dropped `delete <dyn>[key];`. The selector admits
+ * exactly `dynamicDeleteStatementOperand`, in top-level AND nested bodies, so
+ * both statement dispatchers (`lowerStatementListPrefix` and `lowerStmt`) consult
+ * this before demoting; `lowerExpr`'s delete arm does the lowering. Returns
+ * false when the statement is not a delete.
+ */
+function lowerDroppedDelete(expression: ts.Expression, cx: LowerCtx): boolean {
+  let dropped: ts.Expression = expression;
+  while (ts.isParenthesizedExpression(dropped)) dropped = dropped.expression;
+  if (!ts.isDeleteExpression(dropped)) return false;
+  lowerDiscardedExpression(expression, cx);
+  return true;
+}
+
 /**
  * (#7106 S1g / propertyHelper) Lower the operands of a certified Object alias
  * call as dynamic carriers, boxing a concrete operand; demotes (pre-claim
  * parity: the selector admits only boxable operands) when one cannot box.
  */
-function lowerAliasCarrierOperands(args: ts.NodeArray<ts.Expression>, aliasName: string, cx: LowerCtx): IrValueId[] {
+function lowerAliasCarrierOperands(args: readonly ts.Expression[], aliasName: string, cx: LowerCtx): IrValueId[] {
   const carriers: IrValueId[] = [];
   for (const argument of args) {
     let value = lowerExpr(argument, cx, irDynamic());
@@ -8160,6 +8211,17 @@ function lowerAliasCarrierOperands(args: ts.NodeArray<ts.Expression>, aliasName:
   return carriers;
 }
 
+/**
+ * Slice 3 (#1169c): lower a call to a nested function declaration.
+ * Prepends capture args to the user args and emits a direct `call`
+ * (no struct, no funcref) — matches the legacy
+ * `compileNestedFunctionDeclaration` pattern.
+ *
+ * Mutable captures: if the outer hasn't already wrapped the variable
+ * in a refcell (because no closure-VALUE has been built that captured
+ * it as mutable), wrap it here and rebind `cx.scope[name]` so subsequent
+ * outer reads/writes go through the cell.
+ */
 function lowerNestedFuncCall(
   binding: {
     kind: "nestedFunc";
@@ -10555,7 +10617,10 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
 
-  if (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) {
+  if (
+    (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) ||
+    functionObjects.isPreparedFunctionObjectChainedWrite(lhs.expression, cx.topLevelFunctionValues)
+  ) {
     functionObjects.lowerFunctionObjectPropertyWrite(recv, fieldName, expr.right, functionObjectLoweringHost(cx));
     return;
   }
@@ -11535,11 +11600,17 @@ function lowerForInStatement(stmt: ts.ForInStatement, cx: LowerCtx): void {
   // selector's `forInHeadValueIsHostString` gate keeps head-value uses off
   // the IR path entirely (fail-closed, not claim-then-demote).
   const headIsHostString = cx.resolver?.resolveString?.()?.kind === "externref";
+  // (#7106 propertyHelper) On a native-strings lane the key externref IS the
+  // non-fast dynamic carrier of the key string (`emitBox` of a native string
+  // is `extern.convert_any`), so the head reads as `dynamic` — the selector's
+  // `forInHeadValueIsDynamicCarrier` admits exactly this lane.
+  const headIsDynamicCarrier = !headIsHostString && cx.resolver?.dynamicCarrierIsExternref?.() === true;
   bodyScope.set(declaration.name.text, {
     kind: "slot",
     slotIndex: keySlot,
     type: externref,
     ...(headIsHostString ? { asType: { kind: "string" } as IrType } : {}),
+    ...(headIsDynamicCarrier ? { asType: irDynamic() } : {}),
   });
   const bodyCx: LowerCtx = {
     ...cx,
@@ -12889,6 +12960,7 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
       lowerDiscardedExpression(stmt.expression, cx);
       return;
     }
+    if (lowerDroppedDelete(stmt.expression, cx)) return;
     demoteToLegacy("body-shape-rejected", `ir/from-ast: unsupported body ExpressionStatement shape in ${cx.funcName}`);
   }
   if (ts.isWithStatement(stmt)) {
@@ -16149,7 +16221,9 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   // Proven boolean i32 → tag-4 box; without the refinement the i32 would box
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
-  if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
+  // (#7106 census arm 4) The `irBool` brand is the same proof (#4503): a
+  // lattice-`bool` parameter slot carries it.
+  if (tv.kind === "i32" && (irTypeIsBoolean(t) || expressionIsDefinitelyBoolean(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the

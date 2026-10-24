@@ -95,15 +95,19 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
-  type FunctionObjectTypeEvidence,
-  functionObjectHasTypeEvidence,
+  isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
 } from "./select-expression-structure.js";
 
-export { effectiveIrParamTypeNode, effectiveIrReturnTypeNode } from "./select-expression-structure.js";
+export {
+  effectiveIrParamTypeNode,
+  effectiveIrReturnTypeNode,
+  isFunctionObjectChainedWrite,
+  functionObjectStoreRoot,
+} from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import {
   closureLiteralIsBuildable,
@@ -634,6 +638,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * fail-closed as the slice-5 receiver certificate.
    */
   readonly forInHeadValueIsHostString?: boolean;
+  /**
+   * (#7106 propertyHelper) true when a for-in enumerated key can be bound as a
+   * DYNAMIC head value: a native-strings lane on the non-fast carrier, where
+   * the #2964 key helpers' externref IS the dynamic carrier of the key string
+   * (`emitBox` of a native string is `extern.convert_any`). The head then
+   * joins the move-only scan's dynamic names. propertyHelper's `isEnumerable`
+   * compares the key against its dynamic `name`.
+   */
+  readonly forInHeadValueIsDynamicCarrier?: boolean;
   /** (#3214 A+B1) Checker-backed imports; omitted by host-free and bare selector callers. */
   readonly importedFunctions?: IrImportedFunctionResolver;
   /** (#3657) Checker-certified class-member calls to same-file primitive host stubs. */
@@ -2197,7 +2210,8 @@ function whyNotIrClaimable(
     isDynamicReturn ||
     subjectHasAmbientThis() ||
     containsReceiverFirstDynamicMethodCall(body) ||
-    bodyCallsDynamicParamCallee(body, typeMap)
+    bodyCallsDynamicParamCallee(body, typeMap) ||
+    containsDynamicCarrierForInHead(body)
   ) {
     const dynamicStringLocals = collectDynamicStringLocalWidening(fn, new Set(dynNames));
     if (!dynamicUsesAreMoveOnly(fn, dynNames, isDynamicReturn, typeMap, dynamicStringLocals)) {
@@ -2281,11 +2295,6 @@ function isIrClaimable(
 //   use gating) is deleted: it diverged from legacy's fast-mode `any` ABI
 //   and was the last claim-then-demote channel for non-move any-uses.
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
-
-const functionObjectTypeEvidence: FunctionObjectTypeEvidence = Object.freeze({
-  parameterType: effectiveIrParamTypeNode,
-  returnType: effectiveIrReturnTypeNode,
-});
 
 /**
  * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
@@ -3073,20 +3082,9 @@ function dynamicUsesAreMoveOnly(
     if (!ts.isIdentifier(access.expression) || dynNames.has(access.expression.text)) return null;
     if (access.questionDotToken || e.questionDotToken || e.arguments.some(ts.isSpreadElement)) return null;
     const resolver = currentSelectionOptions?.functionObjectValues;
+    // Receiver-only use: the planner mints the boxed `objectReceiver` plan for
+    // annotated and unannotated targets alike (see `isFunctionObjectReceiver`).
     if (!isFunctionObjectReceiver(access.expression, resolver)) return null;
-    // The planner (`ir-imported-call-planning.ts`) mints the canonical
-    // function-object support only with type evidence for every parameter
-    // and the result (an annotation, or the target's own IR claim entry).
-    // The claim set is not visible here, so require the annotations: an
-    // untyped legacy-owned function object (test262's `assert`) is refused
-    // PRE-claim instead of demoting at lowering. Loosen when the planner's
-    // claim-entry route can be mirrored (post Stage 3c, when `assert` claims).
-    // (#6823) The same evidence rule the Phase-1 member-call arm applies.
-    const declaration = resolver?.resolveTopLevelFunctionValue(access.expression)?.declaration;
-    if (declaration === undefined || !functionObjectHasTypeEvidence(declaration, functionObjectTypeEvidence)) {
-      shapeNo("function-object-member-evidence", e);
-      return null;
-    }
     return access.expression;
   };
 
@@ -3360,7 +3358,12 @@ function dynamicUsesAreMoveOnly(
             if (!scanExpr(argument, true)) return false;
           } else {
             const concrete = unwrap(argument);
-            if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+            // (#7106 census arm 4) A number/boolean/string PARAMETER boxes by
+            // its slot's own family (a lattice `bool` slot carries the
+            // `irBool` brand), like the dynamic-equality operands.
+            const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
+            if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false))
+              return false;
           }
         }
         return true;
@@ -3749,6 +3752,14 @@ function dynamicUsesAreMoveOnly(
     }
     if (ts.isExpressionStatement(s)) {
       const e = unwrap(s.expression);
+      // (#7106 propertyHelper) `delete <dyn param>[<key>]`: the receiver and a
+      // dynamic key are carriers; a literal key is boxed by the producer.
+      const dynamicDelete = dynamicDeleteStatementOperand(e);
+      if (dynamicDelete !== null) {
+        if (!scanExpr(dynamicDelete.receiver, true)) return false;
+        const key = dynamicDelete.key;
+        return key === undefined || !ts.isIdentifier(key) || scanExpr(key, true);
+      }
       // Statement-position direct call: the result is DROPPED, so a dynamic
       // return is fine here regardless of the callee's return verdict.
       if (ts.isCallExpression(e) && ts.isIdentifier(e.expression) && !dynNames.has(e.expression.text)) {
@@ -3792,12 +3803,17 @@ function dynamicUsesAreMoveOnly(
       return scanStmt(s.statement);
     }
     if (ts.isForInStatement(s)) {
-      return (
-        currentSelectionOptions?.isDynamicForInReceiver?.(s.expression) === true &&
-        isDynShaped(s.expression) &&
-        scanExpr(s.expression, true) &&
-        scanStmt(s.statement)
-      );
+      if (
+        currentSelectionOptions?.isDynamicForInReceiver?.(s.expression) !== true ||
+        !isDynShaped(s.expression) ||
+        !scanExpr(s.expression, true)
+      ) {
+        return false;
+      }
+      // (#7106 propertyHelper) a dynamic-carrier head value is a dynamic name.
+      const head = dynamicCarrierForInHead(s);
+      if (head !== undefined) dynNames.add(head);
+      return scanStmt(s.statement);
     }
     // #2952 slice 6c — a LABEL wraps a statement without changing its value
     // flow. Without this arm the labelled statement fell into the
@@ -4320,6 +4336,8 @@ function isPhase1StatementListInScope(
     // `obj.field = expr;`. The lowerer enforces the receiver IS a class
     // shape; if not, the function falls back to legacy.
     if (ts.isExpressionStatement(s)) {
+      // (#7106 propertyHelper) a dropped dynamic delete.
+      if (dynamicDeleteStatementOperand(unwrapPhase1Parens(s.expression)) !== null) continue;
       if (ts.isCallExpression(s.expression)) {
         if (!isPhase1Expr(s.expression, scope, localClasses)) return shapeNo("nontail-callstmt", s.expression);
         continue;
@@ -5493,6 +5511,38 @@ function classifyForInHeadUse(
   return { used, written, captured, redeclared };
 }
 
+/**
+ * (#7106 propertyHelper) The head name of a `for (var k in <dyn>)` whose body
+ * READS `k`, on a lane where that head is a dynamic carrier
+ * (`forInHeadValueIsDynamicCarrier`); undefined otherwise.
+ */
+function dynamicCarrierForInHead(stmt: ts.ForInStatement): string | undefined {
+  if (currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true) return undefined;
+  if (currentSelectionOptions?.forInHeadValueIsHostString === true) return undefined;
+  const init = stmt.initializer;
+  if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) return undefined;
+  const name = init.declarations[0]!.name;
+  if (!ts.isIdentifier(name)) return undefined;
+  return classifyForInHeadUse(stmt.statement, name.text).used ? name.text : undefined;
+}
+
+/** True when `body` (not nested functions) holds a dynamic-carrier for-in head. */
+function containsDynamicCarrierForInHead(body: ts.Block): boolean {
+  if (currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true) return false;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node !== body && isFunctionLike(node)) return;
+    if (ts.isForInStatement(node) && dynamicCarrierForInHead(node) !== undefined) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return found;
+}
+
 function isPhase1ForInStatement(
   stmt: ts.ForInStatement,
   scope: ReadonlySet<string>,
@@ -5525,7 +5575,10 @@ function isPhase1ForInStatement(
   // too: a closure over the head would need the ref-cell capture path.
   const headUse = classifyForInHeadUse(stmt.statement, headName);
   if (headUse.used) {
-    if (currentSelectionOptions?.forInHeadValueIsHostString !== true) {
+    if (
+      currentSelectionOptions?.forInHeadValueIsHostString !== true &&
+      currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true
+    ) {
       return shapeNo("forin-head-value-used", stmt.statement);
     }
     if (headUse.written) return shapeNo("forin-head-value-written", stmt.statement);
@@ -5794,6 +5847,8 @@ function isPhase1BodyStatement(
     // collected buffer per arm (#2952 slice 2 machinery), which nests
     // correctly inside loop / try / switch bodies.
     if (expressionStatementIsPhase1Discardable(stmt.expression, scope, localClasses)) return true;
+    // (#7106 propertyHelper) a dropped dynamic delete.
+    if (dynamicDeleteStatementOperand(unwrapPhase1Parens(stmt.expression)) !== null) return true;
     return shapeNo("body-exprstmt-other", stmt.expression);
   }
   if (ts.isForOfStatement(stmt)) {
@@ -7392,9 +7447,33 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
  * condition representation is already boolean. Non-module subexpressions are
  * left to the existing selector/build type checks.
  */
+/**
+ * (#7106) A certified Object alias call, or a member read off one:
+ * - the S1g uncurried `Object.prototype` predicate (`__hasOwnProperty(o, k)`,
+ *   a boolean `dyn.own_property`);
+ * - arm 1's stored `Object.getOwnPropertyDescriptor` (a dynamic carrier).
+ * Neither is an unboxed module scalar of unknown family, the case
+ * {@link trackedModuleInfluenceIsBoolean} guards. Since #7114 a script's
+ * top-level alias `var` is a tracked module binding. The callee resolving to
+ * that binding means it is not shadowed.
+ */
+function isCertifiedObjectAliasValue(expr: ts.Expression): boolean {
+  let root = unwrapPhase1Parens(expr);
+  while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+    root = unwrapPhase1Parens(root.expression);
+  }
+  return (
+    ts.isCallExpression(root) &&
+    moduleBinding(root.expression) !== undefined &&
+    (uncurriedObjectAliasMethod(root.expression, () => false) !== undefined ||
+      storedObjectStaticAliasMethod(root.expression, () => false) !== undefined)
+  );
+}
+
 function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   if (!expressionTouchesTrackedModuleValue(candidate)) return true;
+  if (isCertifiedObjectAliasValue(candidate)) return true;
   if (moduleBinding(candidate)) return isDirectBooleanModuleBinding(candidate);
   if (moduleScalarAliasFamily(candidate)) return moduleScalarAliasFamily(candidate) === "boolean";
   if (isModuleMapGetAlias(candidate)) return false;
@@ -10027,6 +10106,31 @@ function selfGuardedConstructorValueUse(ident: ts.Identifier): boolean {
   return currentSelectionOptions.functionObjectValues?.resolveTopLevelFunctionValue(ident) !== undefined;
 }
 
+/**
+ * (#7106 propertyHelper) A statement-position `delete` the IR lowers through
+ * the dynamic delete wrapper (`codegen/ir-dynamic-delete.ts`): the receiver is
+ * the current subject's dynamic-typed PARAMETER, and the key is a plain name,
+ * a dynamic parameter, or a string/number literal. Never in `<module-init>`,
+ * whose `delete this.x` needs the global-object model (#2726), and never on
+ * the fast carrier. Returns the receiver and the element key, else null.
+ */
+function dynamicDeleteStatementOperand(
+  expr: ts.Expression,
+): { readonly receiver: ts.Identifier; readonly key: ts.Expression | undefined } | null {
+  if (!ts.isDeleteExpression(expr) || !currentDynamicRuntimeBuildable || currentSubjectIsModuleInit) return null;
+  const operand = unwrapPhase1Parens(expr.expression);
+  if (!ts.isPropertyAccessExpression(operand) && !ts.isElementAccessExpression(operand)) return null;
+  if (operand.questionDotToken) return null;
+  const receiver = operand.expression;
+  if (!ts.isIdentifier(receiver) || !currentDynamicParamNames.has(receiver.text)) return null;
+  if (ts.isPropertyAccessExpression(operand))
+    return ts.isIdentifier(operand.name) ? { receiver, key: undefined } : null;
+  const key = unwrapPhase1Parens(operand.argumentExpression);
+  const keyIsCarrier = ts.isIdentifier(key) && currentDynamicParamNames.has(key.text);
+  if (!keyIsCarrier && !ts.isStringLiteral(key) && !ts.isNumericLiteral(key)) return null;
+  return { receiver, key };
+}
+
 /** (#7106 S3c) The left operand of a `dyn.instanceof_fn`: a dynamic carrier the scan can prove. */
 function instanceOfLeftIsDynamicCarrier(left: ts.Expression): boolean {
   const operand = unwrapPhase1Parens(left);
@@ -10292,11 +10396,8 @@ function functionObjectCallIsPhase1(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
-  return functionObjectMemberCallIsBuildable(
-    expr,
-    currentSelectionOptions?.functionObjectValues,
-    functionObjectTypeEvidence,
-    (expression) => isPhase1Expr(expression, scope, localClasses),
+  return functionObjectMemberCallIsBuildable(expr, currentSelectionOptions?.functionObjectValues, (expression) =>
+    isPhase1Expr(expression, scope, localClasses),
   );
 }
 
@@ -10443,8 +10544,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
-      return true;
+    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
+    if (isFunctionObjectStoredValue(expr, currentSelectionOptions?.functionObjectValues)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.

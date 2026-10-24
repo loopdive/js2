@@ -38,13 +38,19 @@ flat-dir-budget-allow:
   - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
+  - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
-  - largestSccSize: 725 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it
+  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it (726 = the union of both arms after the 2026-10-22 merge)
+# 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
+# dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
+# dynamic-delete statement arm.
 # 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  - src/ir/integration.ts::makeFromAstResolver
+  - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
   - src/ir/from-ast.ts::lowerFunctionAstToIr
@@ -703,6 +709,116 @@ shaped like the verify* helpers, compared with node.
   (`__getOwnPropertyDescriptor = function…`) is ignored by legacy, which still
   calls the builtin (511 where node answers 86).
 
+## propertyHelper.js, arm 2 — the for-in head as a dynamic carrier (2026-10-22, measured)
+
+**Blocker.**
+- `isEnumerable` reads its for-in key (`if (x === name)`). The selector
+  admitted head-value reads only when the key is a host string
+  (`forInHeadValueIsHostString`).
+- So on native-strings lanes it reported `forin-head-value-used`.
+- `verifyEnumerable` and `verifyNotEnumerable` then failed with
+  `call-graph-closure` on it, which is where arm 1 left them.
+
+**Arm.**
+- **Why this is sound.** for-in is admitted only on the non-fast carrier
+  (`isDynamicForInReceiver`). There the #2964 key helpers' externref IS the
+  dynamic carrier of the key string: `emitBox` of a native string is
+  `extern.convert_any`.
+- **Selector.** A new option, `forInHeadValueIsDynamicCarrier`
+  (`ctx.nativeStrings && !ctx.fast`), admits head reads on that lane. The head
+  joins the move-only scan's dynamic names (`dynamicCarrierForInHead`). A body
+  holding such a head always runs the scan (`containsDynamicCarrierForInHead`),
+  so a read in an unsupported position stays refused before claim. For example,
+  `s = s + k` on a concrete string stays `move-only[concrete]`.
+- **from-ast.** Tags the head slot `asType: dynamic` on that lane. It is a
+  plain `local.get` of the externref slot, so no conversion is emitted.
+
+**Per-function census.** `built-ins/Array/prototype/map/length.js`, honest
+harness, #6833 stack plus arm 1. Standalone and gc agree on every row.
+
+| function | before (arm 1) | after |
+| --- | --- | --- |
+| isEnumerable | `forin-head-value-used` | **IR emitted** |
+| verifyEnumerable | `call-graph-closure` | **IR emitted** |
+| verifyNotEnumerable | `call-graph-closure` | **IR emitted** |
+| the other 12 propertyHelper units | unchanged | unchanged |
+
+**Conformance sample.** Every third of the 89 test262 files that call
+`verifyEnumerable`/`verifyNotEnumerable`, 30 files on standalone and on gc.
+- The verify helpers are IR-emitted in 24 of the 30 files.
+- Pass/fail is identical to the base on both lanes: 26/30 pass. The other 4
+  are 1 skip and 3 runtime-import errors from `using` tests, all the same on
+  the base.
+
+**Tests.** `tests/issue-7106-prophelper-isenumerable.test.ts`, compared with
+node on standalone and gc (wasi: validate).
+- propertyHelper's `isEnumerable`, verbatim.
+- Four other head-read shapes, with no post-claim demotion.
+- One refused shape: concrete string accumulation.
+- All 5 cases fail on the base.
+- Also fixes the pre-existing #2952 slice 6c dual-run case "head compared to a
+  literal" on this stack.
+
+## propertyHelper.js, arm 3 — statement-position dynamic delete (2026-10-22, measured)
+
+**Blocker.** `isConfigurable` and `isWritable` delete through their dynamic
+`obj` parameter (`delete obj[name];`). #6842 keeps every `delete` off the IR,
+because the Slice 11 lowering answered a constant `true`.
+
+**Arm.**
+- **Wrapper.** `codegen/ir-dynamic-delete.ts` builds one wrapper per code
+  strictness, `__ir_dyn_delete_{strict,sloppy}(externref, externref) -> i32`.
+  Its body is exactly legacy's generic externref arm of
+  `compileDeleteExpression`:
+  - RequireObjectCoercible via `emitExternrefDestructureGuard` (a TypeError for
+    a null/undefined receiver);
+  - then `__delete_property`;
+  - then, in strict code only, a TypeError for a refused delete.
+
+  Strictness is decided per site with legacy's own `isStrictContext`, through
+  the resolver (`dynamicDeleteSymbol`).
+- **Selector (`dynamicDeleteStatementOperand`).** Admits exactly:
+  - statement position (top-level and nested bodies);
+  - the receiver is the subject's dynamic-typed parameter;
+  - the key is a plain name, a dynamic parameter, or a string/number literal;
+  - never `<module-init>`, never the fast carrier.
+
+  The move-only scan sees the receiver (and a parameter key) as carriers.
+  Expression-position deletes and concrete receivers stay refused (#6842).
+- **from-ast (`lowerDynamicDelete`).** Lowers receiver and key as carriers
+  (a literal key is boxed) and calls the wrapper. Integration builds the
+  wrappers before Phase 3 and observes them as runtime providers.
+
+**Per-function census.** `map/length.js`, standalone. `isConfigurable` moves
+from `body-exprstmt-other:DeleteExpression` to the next blocker,
+`expr-binary-op-instanceof` on `e instanceof TypeError` in its catch clause.
+No other unit changes. `isWritable` still stops first on its
+`__isArray(obj) && …` alias conditional.
+
+**Conformance sample.** Every fourth of the 335 test262 files with an indented
+`delete <ident>[…]`/`.…` statement: 60 files, standalone. Pass/fail and IR unit
+counts are identical to the base (36/60 pass both). The test262 deletes sit
+in `<module-init>` or on non-parameter receivers, which this arm leaves alone.
+
+**Tests.** `tests/issue-7106-prophelper-dyn-delete.test.ts`, compared with
+node:
+- strict module deletes (computed key, named key, literal keys; frozen key →
+  TypeError; null receiver → TypeError) on standalone and gc, plus a wasi
+  validate;
+- deletes nested in a `try` body and in `if`/`else` arms (the
+  `isConfigurable`/`isWritable` shapes), including a non-configurable key
+  caught in strict code;
+- a sloppy script, where a frozen key reports `false`;
+- the #6842 refusals (concrete receiver, expression position) still hold.
+
+**Nested-body fix (follow-up commit).** The first cut gave only the
+statement-list dispatcher (`lowerStatementListPrefix`) a delete arm. The
+selector also admits the delete in nested bodies, so a delete inside a `try`
+body was claimed and then demoted at build ("unsupported body
+ExpressionStatement shape"), a post-claim error. Both dispatchers now share
+`lowerDroppedDelete`. A bare `{ … }` block holding a delete is still refused
+before the claim (a pre-existing block refusal, so the selector and from-ast agree).
+
 ## Ownership
 
 Per the #6583 plan: Stage 1 and 3 → B (items 2/3), Stage 2 and 4 → Shepherd
@@ -757,6 +873,32 @@ A transparent exact-input selector observation records the original `assert._isS
 Three unchanged initializer/timer suites produce 53 passes and six failures on both the final candidate and the clean main-based apply-repair control. Those failures and all assertions are retained for CI and owner disposition.
 
 The receiving PR remains held for lead C's dependency and admission order, including the separately qualified apply-preparation prerequisite in #6814. Normal hooks, protected CI and existing floors remain required. No full Stage 2, Linear backend or full conformance qualification is claimed, and no baseline, allowance or architectural exemption is part of this work.
+
+## `delete` reached a wrong IR lowering — selector refusal (2026-10-22, measured)
+
+Found while planning the propertyHelper `isConfigurable` arm.
+- **Old lowering.** Slice 11 (#1169n) admitted `delete <expr>` in
+  `isPhase1Expr` and lowered it to the operand's side effects plus a constant
+  `true`. The IR has no delete operation, so a claimed `delete` removed nothing
+  and never threw.
+- **Reachable on origin/main.** In a module (strict code),
+  `function f(): number { const a = [1, 2]; return delete (a as any).length ? 1 : 0; }`
+  is IR-claimed and returns `1` on standalone and gc, where node and the
+  direct path throw a TypeError.
+- Statement-position `delete` (`body-exprstmt-other`) and deletes on dynamic
+  parameters (`move-only[concrete]`) were already refused.
+
+**Fix.**
+- The selector refuses every `delete` with `expr-delete-no-ir-lowering`. This
+  subsumes the #2726 module-global `delete this.x` refusal.
+- from-ast's arm now demotes instead of answering a constant.
+- The #1169n case that asserted the claim now asserts the refusal.
+- The playground corpus has no `delete`, so `check:ir-fallbacks` is unchanged.
+- **The `isConfigurable` arm carries the real dynamic delete later.**
+
+**Still wrong on the direct path (not changed here).** Legacy's
+`delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
+readable. That is the same on the base and on legacy-only compiles.
 
 ## GDI prologue for an IR-claimed `<module-init>` (2026-10-22)
 
@@ -820,32 +962,6 @@ cases and the no-helper control.
 script-var gate. A local approximation of that gate still rejected the source
 with `expr-ident-not-in-scope «y»`, so this repro was not run. The module
 analog, which goes through the same `emitModuleVarUndefinedSeeds`, is covered.
-
-## `delete` reached a wrong IR lowering — selector refusal (2026-10-22, measured)
-
-Found while planning the propertyHelper `isConfigurable` arm.
-- **Old lowering.** Slice 11 (#1169n) admitted `delete <expr>` in
-  `isPhase1Expr` and lowered it to the operand's side effects plus a constant
-  `true`. The IR has no delete operation, so a claimed `delete` removed nothing
-  and never threw.
-- **Reachable on origin/main.** In a module (strict code),
-  `function f(): number { const a = [1, 2]; return delete (a as any).length ? 1 : 0; }`
-  is IR-claimed and returns `1` on standalone and gc, where node and the
-  direct path throw a TypeError.
-- Statement-position `delete` (`body-exprstmt-other`) and deletes on dynamic
-  parameters (`move-only[concrete]`) were already refused.
-
-**Fix.**
-- The selector refuses every `delete` with `expr-delete-no-ir-lowering`. This
-  subsumes the #2726 module-global `delete this.x` refusal.
-- from-ast's arm now demotes instead of answering a constant.
-- The #1169n case that asserted the claim now asserts the refusal.
-- The playground corpus has no `delete`, so `check:ir-fallbacks` is unchanged.
-- **The `isConfigurable` arm carries the real dynamic delete later.**
-
-**Still wrong on the direct path (not changed here).** Legacy's
-`delete (o as any).x` on a typed struct parameter (`o: Point`) leaves `o.x`
-readable. That is the same on the base and on legacy-only compiles.
 
 ## Harness unit blocker census (2026-10-21)
 
