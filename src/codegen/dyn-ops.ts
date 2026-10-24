@@ -5,7 +5,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureAnyToExternHelper } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
-import { jsValueBoundary } from "./context/types.js";
+import { hostFreeEnvironment, jsValueBoundary } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import {
   ensureNativeStringHelpers,
@@ -17,6 +17,7 @@ import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import { RE_FLAG_G } from "./regex/bytecode.js";
 import { compilePattern } from "./regex/compile.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
@@ -342,6 +343,7 @@ function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0
 
   if (nativeSemanticProviders) {
     ensureObjectRuntime(ctx);
+    if (hostFreeEnvironment(ctx)) recordStandaloneRuntimeKeyClassMemberRead(ctx);
   } else {
     ensureLateImport(ctx, arrayNewName, [], [externref]);
     ensureLateImport(ctx, arrayPushName, [externref, externref], []);
@@ -701,8 +703,13 @@ export function irDynamicRuntimeNeedForSymbol(symbol: string): IrDynamicRuntimeN
   return undefined;
 }
 
-/** Observe only the actual function-object call helpers, after reservation. */
-export function observeIrFunctionObjectCallProviders(observe: (symbol: string) => void): void {
+/** Observe the reserved providers requested by the prepared runtime calls. */
+export function observeIrDynamicRuntimeProviders(
+  needs: ReadonlySet<IrDynamicRuntimeNeed>,
+  observe: (symbol: string) => void,
+): void {
+  if (needs.has("add")) observe(IR_DYN_ADD_FN);
+  if (!needs.has("member-call")) return;
   for (const symbol of [
     IR_DYN_CALL_BOX_FN,
     IR_DYN_CALL_VALUE_FN,

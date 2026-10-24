@@ -53,6 +53,8 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import { collectClosureBaseWrapperTypeIdxs as closureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#2175 V2-S1) shared list
+import { hostFreeEnvironment } from "./context/types.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { boxToAny } from "./value-tags.js";
 import { readEnv } from "../env.js";
@@ -121,20 +123,6 @@ export function ensureDynReadHelpers(ctx: CodegenContext): void {
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
 
-  function addHelper(
-    name: string,
-    params: ValType[],
-    results: ValType[],
-    body: Instr[],
-    locals: { name: string; type: ValType }[] = [],
-  ): void {
-    if (ctx.funcMap.has(name)) return;
-    const typeIdx = addFuncType(ctx, params, results, name);
-    const funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: false } as never);
-    ctx.funcMap.set(name, funcIdx);
-  }
-
   // Shared tag read: convert the externref receiver to anyref, test the boxed
   // `$AnyValue`, and leave the tag (i32) on the stack — or fall through to the
   // "raw" (non-boxed) cases. A receiver reaches here either already boxed
@@ -150,7 +138,8 @@ export function ensureDynReadHelpers(ctx: CodegenContext): void {
   //     object/extern path's string arm where present). String tag 5 also routes
   //     through __extern_get, which has the native-string indexed/`.length` arm.
   //   The result is a UNIFORM externref — numeric values arrive boxed.
-  addHelper(
+  addDynHelper(
+    ctx,
     "__dyn_get",
     [externref, externref],
     [externref],
@@ -189,7 +178,8 @@ export function ensureDynReadHelpers(ctx: CodegenContext): void {
   //   rare `obj.x === undefined` own-property case — refined in M2/M3 where the
   //   distinction matters (HasProperty proper vs Get); for M1's `.length` and the
   //   array-like cluster, non-null-Get ⇔ present is correct.
-  addHelper(
+  addDynHelper(
+    ctx,
     "__dyn_has",
     [externref, externref],
     [i32],
@@ -547,6 +537,28 @@ const AV_F64 = 2;
 const AV_REF = 3;
 const AV_EXT = 4;
 
+/** Shared reserve-once function allocation for the reader and writer kernels. */
+function addDynHelper(
+  ctx: CodegenContext,
+  name: string,
+  params: ValType[],
+  results: ValType[],
+  body: Instr[],
+  locals: { name: string; type: ValType }[] = [],
+): number {
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  const typeIdx = addFuncType(ctx, params, results, name);
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: false });
+  ctx.funcMap.set(name, funcIdx);
+  return funcIdx;
+}
+
+function dynamicPropertyKeyInstrs(ctx: CodegenContext, native: boolean): Instr[] {
+  return native ? [{ op: "call", funcIdx: ctx.funcMap.get("__to_property_key")! }] : [];
+}
+
 /**
  * (#3053 U0) Register the unified dynamic-reader carrier primitive
  * `__dyn_member_get` (+ the internal `__carrier_recv_to_extern` peel in gc/
@@ -565,10 +577,12 @@ const AV_EXT = 4;
  * required natives up by name and bails without emitting if any is absent (the
  * call site keeps its prior lowering — no regression).
  */
+
 export function ensureDynMemberGet(ctx: CodegenContext): void {
   const forceSelfTest = readEnv("JS2WASM_FORCE_DYN_MEMBER_GET") === "1";
   if (forceSelfTest) ctx.usesDynMemberGet = true;
   if (!ctx.usesDynMemberGet) return; // U0 / member-get-free modules: byte-identical.
+  if (hostFreeEnvironment(ctx)) recordStandaloneRuntimeKeyClassMemberRead(ctx);
   if (ctx.dynMemberGetHelpersEmitted) return;
   ctx.dynMemberGetHelpersEmitted = true;
 
@@ -603,22 +617,6 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     ctx.dynMemberGetHelpersEmitted = false;
     ctx.usesDynMemberGet = false;
     return;
-  }
-
-  function addHelper(
-    name: string,
-    params: ValType[],
-    results: ValType[],
-    body: Instr[],
-    locals: { name: string; type: ValType }[] = [],
-  ): number | undefined {
-    const existing = ctx.funcMap.get(name);
-    if (existing !== undefined) return existing;
-    const typeIdx = addFuncType(ctx, params, results, name);
-    const funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: false } as never);
-    ctx.funcMap.set(name, funcIdx);
-    return funcIdx;
   }
 
   // (#3053 U2) Carrier mode-split alignment — MUST key on `ctx.fast`, the SAME
@@ -775,14 +773,9 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
       // Residual carrier partition: keep the historical null extern fallback.
       { op: "ref.null.extern" },
     ];
-    const peelIdx = addHelper("__carrier_recv_to_extern", [anyRefNull], [externref], peelBody, [
+    const peelIdx = addDynHelper(ctx, "__carrier_recv_to_extern", [anyRefNull], [externref], peelBody, [
       { name: "tag", type: i32 },
     ]);
-    if (peelIdx === undefined) {
-      ctx.dynMemberGetHelpersEmitted = false;
-      ctx.usesDynMemberGet = false;
-      return;
-    }
 
     // __dyn_member_get(recv, key) -> (ref null $AnyValue): the self-contained
     // round-trip. The result of `__any_from_extern_honest` is a (ref $AnyValue),
@@ -795,12 +788,7 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
       { op: "call", funcIdx: externGetIdx },
       { op: "call", funcIdx: honestIdx },
     ];
-    const dmgIdx = addHelper("__dyn_member_get", [anyRefNull, anyRefNull], [anyRefNull], dmgBody);
-    if (dmgIdx === undefined) {
-      ctx.dynMemberGetHelpersEmitted = false;
-      ctx.usesDynMemberGet = false;
-      return;
-    }
+    const dmgIdx = addDynHelper(ctx, "__dyn_member_get", [anyRefNull, anyRefNull], [anyRefNull], dmgBody);
 
     if (forceSelfTest) {
       emitDynMemberGetSelfTestStandalone(ctx, {
@@ -823,7 +811,8 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     ctx.usesDynMemberGet = false;
     return;
   }
-  const peelHostIdx = addHelper(
+  const peelHostIdx = addDynHelper(
+    ctx,
     "__carrier_recv_to_extern",
     [externref],
     [externref],
@@ -841,23 +830,19 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
     ],
   );
-  if (peelHostIdx === undefined) {
-    ctx.dynMemberGetHelpersEmitted = false;
-    ctx.usesDynMemberGet = false;
-    return;
-  }
   const dmgHostBody: Instr[] = [
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: peelHostIdx },
     { op: "local.get", index: 1 },
+    // RequireObjectCoercible precedes observable key coercion. The native
+    // object runtime then receives one canonical string/Symbol key.
+    ...dynamicPropertyKeyInstrs(
+      ctx,
+      ctx.targetProfile.environment !== "javascript" && ctx.targetProfile.semanticProviders === "native-first",
+    ),
     { op: "call", funcIdx: externGetIdx },
   ];
-  const dmgHostIdx = addHelper("__dyn_member_get", [externref, externref], [externref], dmgHostBody);
-  if (dmgHostIdx === undefined) {
-    ctx.dynMemberGetHelpersEmitted = false;
-    ctx.usesDynMemberGet = false;
-    return;
-  }
+  const dmgHostIdx = addDynHelper(ctx, "__dyn_member_get", [externref, externref], [externref], dmgHostBody);
   if (forceSelfTest) emitDynMemberGetSelfTestHost(ctx, dmgHostIdx);
 }
 
@@ -877,37 +862,17 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
 
   const externref: ValType = { kind: "externref" };
   const nativeStrictSet = ctx.standalone || ctx.wasi;
-  const externSetIdx = ctx.funcMap.get(nativeStrictSet ? "__reflect_set" : "__extern_set_strict");
+  const externSetIdx = ctx.funcMap.get("__extern_set_strict");
   if (externSetIdx === undefined) return;
   // Standalone receiver dispatch contains early-return arms before the
   // string-keyed object table.  Canonicalize the key at the dynamic Reference
   // boundary so IR dyn.member_set and legacy computed stores agree.  Host
   // setters already perform ToPropertyKey themselves.
-  const toPropertyKeyIdx = nativeStrictSet ? ctx.funcMap.get("__to_property_key") : undefined;
-  const canonicalizeKey = (): Instr[] =>
-    toPropertyKeyIdx === undefined ? [] : [{ op: "call", funcIdx: toPropertyKeyIdx }];
-  const strictSetFailure = (): Instr[] =>
-    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property", {
-      forceInModuleCtor: true,
-    });
-  const finishStrictSet = (): Instr[] =>
-    nativeStrictSet
-      ? [
-          { op: "call", funcIdx: externSetIdx },
-          { op: "i32.eqz" },
-          { op: "if", blockType: { kind: "empty" }, then: strictSetFailure() },
-        ]
-      : [{ op: "call", funcIdx: externSetIdx }];
-
-  const addHelper = (name: string, params: ValType[], results: ValType[], body: Instr[]): number | undefined => {
-    const existing = ctx.funcMap.get(name);
-    if (existing !== undefined) return existing;
-    const typeIdx = addFuncType(ctx, params, results, name);
-    const funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals: [], body, exported: false } as never);
-    ctx.funcMap.set(name, funcIdx);
-    return funcIdx;
-  };
+  const canonicalizeKey = (): Instr[] => dynamicPropertyKeyInstrs(ctx, nativeStrictSet);
+  // The shared strict setter observes the completed Set outcome. Reflect.set's
+  // Boolean alone also maps an unadmitted native boundary to false, which must
+  // not be mistaken for a descriptor refusal here.
+  const finishStrictSet = (): Instr[] => [{ op: "call", funcIdx: externSetIdx }];
 
   if (ctx.fast) {
     // The read substrate owns the receiver peel. A dynamic write necessarily
@@ -969,9 +934,15 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
       { op: "local.get", index: 0 },
       { op: "call", funcIdx: anyToExternIdx },
     ];
-    const valueToExternIdx = addHelper("__carrier_value_to_extern", [anyRefNull], [externref], valueToExternBody);
-    if (valueToExternIdx === undefined) return;
-    const dmsIdx = addHelper(
+    const valueToExternIdx = addDynHelper(
+      ctx,
+      "__carrier_value_to_extern",
+      [anyRefNull],
+      [externref],
+      valueToExternBody,
+    );
+    addDynHelper(
+      ctx,
       "__dyn_member_set",
       [anyRefNull, anyRefNull, anyRefNull],
       [],
@@ -986,7 +957,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
         ...finishStrictSet(),
       ],
     );
-    if (dmsIdx !== undefined && readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
+    if (readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
       emitDynMemberSetNullishSelfTest(ctx);
       emitDynMemberSetPrivateNameSelfTest(ctx);
     }
@@ -1000,7 +971,8 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
   ensureDynMemberGet(ctx);
   const peelHostIdx = ctx.funcMap.get("__carrier_recv_to_extern");
   if (peelHostIdx === undefined) return;
-  const dmsIdx = addHelper(
+  addDynHelper(
+    ctx,
     "__dyn_member_set",
     [externref, externref, externref],
     [],
@@ -1013,7 +985,7 @@ export function ensureDynMemberSet(ctx: CodegenContext): void {
       ...finishStrictSet(),
     ],
   );
-  if (dmsIdx !== undefined && readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
+  if (readEnv("JS2WASM_FORCE_DYN_MEMBER_SET") === "1") {
     emitDynMemberSetNullishSelfTest(ctx);
     emitDynMemberSetPrivateNameSelfTest(ctx);
   }
@@ -1177,31 +1149,13 @@ function emitDynMemberSetPrivateNameSelfTest(ctx: CodegenContext): void {
   const i32: ValType = { kind: "i32" };
   const key = (value: string): Instr[] => stringConstantExternrefInstrs(ctx, value);
   const call = (funcIdx: number): Instr => ({ op: "call", funcIdx });
-  const addHelper = (
-    name: string,
-    params: ValType[],
-    results: ValType[],
-    locals: { name: string; type: ValType }[],
-    body: Instr[],
-  ): number => {
-    const existing = ctx.funcMap.get(name);
-    if (existing !== undefined) return existing;
-    const typeIdx = addFuncType(ctx, params, results, name);
-    const funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, { name, typeIdx, locals, body, exported: false } as never);
-    ctx.funcMap.set(name, funcIdx);
-    return funcIdx;
-  };
 
   // (kind, type, static, name) -> element
-  const elementIdx = addHelper(
+  const elementIdx = addDynHelper(
+    ctx,
     "__dms_test_element",
     [externref, externref, externref, externref],
     [externref],
-    [
-      { name: "keyObj", type: externref },
-      { name: "element", type: externref },
-    ],
     [
       call(newObjIdx),
       { op: "local.set", index: 4 },
@@ -1228,6 +1182,10 @@ function emitDynMemberSetPrivateNameSelfTest(ctx: CodegenContext): void {
       { op: "local.get", index: 2 },
       call(setIdx),
       { op: "local.get", index: 5 },
+    ],
+    [
+      { name: "keyObj", type: externref },
+      { name: "element", type: externref },
     ],
   );
 

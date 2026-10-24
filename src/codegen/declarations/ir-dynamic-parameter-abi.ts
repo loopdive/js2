@@ -15,3 +15,13 @@ export function parameterHasDynamicExternrefAbi(
     legacyParamSlotIsExternref(ctx, parameter)
   );
 }
+
+/** Native dynamic selection and prepared signatures share one carrier policy. */
+export function nativeDynamicExternrefAvailable(ctx: CodegenContext): boolean {
+  return !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx);
+}
+
+export function nativeDynamicSelectionOptions(ctx: CodegenContext) {
+  const available = nativeDynamicExternrefAvailable(ctx);
+  return { nativeDynamicInBuildable: available, nativeDynamicExternrefBuildable: available };
+}
