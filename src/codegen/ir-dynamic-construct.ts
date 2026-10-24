@@ -220,7 +220,8 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-function receiverHelperContext(
+/** A fresh helper `FunctionContext` whose parameters are addressable by name. */
+export function receiverHelperContext(
   name: string,
   params: { name: string; type: ValType }[],
   returnType: ValType,
@@ -240,7 +241,8 @@ function receiverHelperContext(
   };
 }
 
-function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
+/** Register the finished helper as a defined function under its name; returns its index. */
+export function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
   const typeIdx = addFuncType(
     ctx,
     helper.params.map((param) => param.type),
@@ -302,6 +304,24 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
     { op: "ref.is_null" },
     { op: "if", blockType: { kind: "val", type: externref }, then: unbound, else: installed },
   );
+  flushLateImportShifts(ctx, null);
+  return publishReceiverHelper(ctx, helper, [externref]);
+}
+
+export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
+
+/**
+ * (#7106) Reserve the realm-global-object wrapper `dyn.global_object` calls:
+ * legacy's own `globalThis` read (`emitGlobalObjectAsThis`, the sloppy-`this`
+ * fallback), so an IR read of an ambient global sees the realm's bindings.
+ */
+export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const helper = receiverHelperContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
+  emitGlobalObjectAsThis(ctx, helper);
   flushLateImportShifts(ctx, null);
   return publishReceiverHelper(ctx, helper, [externref]);
 }
