@@ -3306,3 +3306,30 @@ must initialize it. Populate the actual Promise.prototype chain and callable the
 with capability/species behavior before treating native Promise misses as absent.
 Mixed Get must authenticate that carrier and use its stored prototype; null bags
 remain incomplete. Only then join common Get/IsCallable and select the new mode.
+
+
+### Implementation plan: shared Promise reaction registration
+
+Move the state-based reaction registration from emitStandalonePromiseThen and
+native-state adoption into runtime/wasmgc/promise/reaction-registration-body.ts.
+The recipe receives concrete type/function/local coordinates, enqueues the matching
+reaction of a settled Promise, or prepends one immutable callback node for a pending
+Promise. Reuse the existing settlement reversal for FIFO order. Keep the rejection
+tracking action at its existing position and keep capability/species construction
+outside this recipe. Both existing production consumers must call it, removing
+the duplicate instruction trees; no second scheduling algorithm or speculative
+completion owner. Verify emitted instruction preservation and execute all states,
+queue ordering, distinct handler captures and rejection handling. This extracts a
+real prerequisite for the full prototype method; it does not certify that method.
+
+
+Reaction registration validation (2026-10-24): four direct Wasm tests cover
+settled fulfillment/rejection and pending FIFO settlement, distinct capture and
+value identity, deferred execution and one-shot settlement. The existing
+resolution-preservation/common-Get suites pass 63/63; compiler async/queue and
+pending/reentrant regressions pass 7/7 (the latter use the Deno hostBridge fixture).
+Focused TS7, lint/format and nine source/CI-base gates pass after adding the new
+module to the compiler-boundary inventory. Eleven host binary hashes remain equal
+to baseline 7371eb505b365e49815f1ddc09afed6c52372540. Review found structurally equal
+empty captures weakened FIFO assertions; corrected tests now assert per-index
+identity and distinct labels. Follow-up read-only review accepts both corrections.

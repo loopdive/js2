@@ -2253,6 +2253,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/promise/reaction-registration-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/promise/rejection-event-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"

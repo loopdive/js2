@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { buildTargetTaggedTry } from "../../../wasm/physical/exception-control.js";
-import { PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
+import { buildPromiseReactionRegistration } from "./reaction-registration-body.js";
 import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
 import { buildPromiseResolvingPairGuard } from "./resolving-pair-bodies.js";
 
@@ -350,54 +350,16 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
         { op: "struct.new", typeIdx: capsTypeIdx },
         { op: "extern.convert_any" },
         { op: "local.set", index: capsLocal },
-        // dispatch on inner.state
-        { op: "local.get", index: innerLocal },
-        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.state },
-        { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // already fulfilled: schedule fulfill reaction with inner.value
-            { op: "ref.func", funcIdx: state.identityFulfillWrapperFuncIdx },
-            { op: "local.get", index: capsLocal },
-            { op: "local.get", index: innerLocal },
-            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.value },
-            { op: "call", funcIdx: state.enqueueFuncIdx },
-          ],
-          else: [
-            { op: "local.get", index: innerLocal },
-            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.state },
-            { op: "i32.const", value: PROMISE_STATE_REJECTED },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                // already rejected: schedule reject reaction with inner.value
-                { op: "ref.func", funcIdx: state.identityRejectWrapperFuncIdx },
-                { op: "local.get", index: capsLocal },
-                { op: "local.get", index: innerLocal },
-                { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.value },
-                { op: "call", funcIdx: state.enqueueFuncIdx },
-              ],
-              else: [
-                // pending: prepend a reaction node onto inner.callbacks
-                { op: "local.get", index: innerLocal },
-                { op: "ref.func", funcIdx: state.identityFulfillWrapperFuncIdx },
-                { op: "local.get", index: capsLocal },
-                { op: "ref.func", funcIdx: state.identityRejectWrapperFuncIdx },
-                { op: "local.get", index: capsLocal },
-                { op: "local.get", index: innerLocal },
-                { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.callbacks },
-                { op: "struct.new", typeIdx: callbackTypeIdx },
-                { op: "extern.convert_any" },
-                { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.callbacks },
-              ],
-            },
-          ],
-        },
+        ...buildPromiseReactionRegistration({
+          promiseTypeIdx,
+          callbackTypeIdx,
+          promiseFields: resources.promiseFields,
+          promiseLocal: innerLocal,
+          fulfilled: { function: state.identityFulfillWrapperFuncIdx, capturesLocal: capsLocal },
+          rejected: { function: state.identityRejectWrapperFuncIdx, capturesLocal: capsLocal },
+          enqueue: state.enqueueFuncIdx,
+          beforeRejected: [],
+        }),
         // result (unused by the microtask drain, but the type must be externref)
         { op: "local.get", index: valueLocal },
       ],
