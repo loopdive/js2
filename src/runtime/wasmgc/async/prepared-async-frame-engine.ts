@@ -31,9 +31,12 @@ function resources(r: PreparedFrameResources) {
   const frame = physicalIndex(r.frame.target, r.allocator.type(r.frame));
   const tag = physicalIndex(r.exceptionTag.target, r.allocator.tag(r.exceptionTag));
   const rt = r.runtime;
-  const funcs = [r.entry, r.resume, r.fulfillStep, r.rejectStep, rt.fulfill, rt.reject, ...r.operations];
-  if (rt.kind === "host") funcs.push(rt.create, rt.resolve, rt.react, rt.wrap, rt.caught);
-  else funcs.push(rt.enqueue, ...(rt.markHandled.kind === "function" ? [rt.markHandled.target] : []));
+  const funcs = [r.entry, r.resume, r.fulfillStep, r.rejectStep, rt.reject, ...r.operations];
+  if (rt.kind === "host") funcs.push(rt.fulfill, rt.create, rt.resolve, rt.react, rt.wrap, rt.caught);
+  else {
+    if (!rt.resolveValue) throw new Error("prepared native frame requires PromiseResolve");
+    funcs.push(rt.resolveValue, rt.enqueue, ...(rt.markHandled.kind === "function" ? [rt.markHandled.target] : []));
+  }
   const indices = new Map(funcs.map((fn) => [fn, functionIndex(fn)] as const));
   return {
     frame,
@@ -230,7 +233,11 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
     if (term.kind === "resolve") {
       body.push(get(result));
       term.value(operation(body));
-      body.push(call(r.runtime.fulfill), { op: "drop" }, { op: "return" });
+      body.push(
+        call(r.runtime.kind === "native" ? r.runtime.resolveValue : r.runtime.fulfill),
+        { op: "drop" },
+        { op: "return" },
+      );
     } else if (term.kind === "goto") body.push(...stateTo(term.target), { op: "br", depth: 1 });
     else if (term.kind === "branch") {
       term.condition(operation(body));
@@ -260,6 +267,15 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
         body.push(
           ...buildNativeAwaitClassification({
             alwaysAsync: true,
+            thenableAdoption: {
+              resolveValueFuncIdx: bound.functionIndex(rt.resolveValue),
+              newPendingPromise: [
+                ...createNativePromiseShape().fields.map((field) =>
+                  field.name === "$handled" ? constant(1) : defaultSpillInstr(field.type),
+                ),
+                { op: "struct.new", typeIdx: bound.promise },
+              ],
+            },
             awaitedLocal: awaited,
             promiseLocal: pending,
             frameLocal: 0,

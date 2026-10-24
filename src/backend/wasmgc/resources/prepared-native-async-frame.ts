@@ -31,7 +31,7 @@ export interface NativeFrameDependencies {
   readonly promise: TypeReservation;
   readonly reaction: TypeReservation;
   readonly enqueue: FunctionReservation;
-  readonly fulfill: FunctionReservation;
+  readonly resolveValue: FunctionReservation;
   readonly reject: FunctionReservation;
   readonly markHandled:
     | { readonly kind: "not-required" }
@@ -82,6 +82,7 @@ function bindDependencies(
   plan: PreparedNativeAsyncFramePlan,
   d: NativeFrameDependencies,
 ) {
+  if (!d.resolveValue) fail("missing PromiseResolve dependency");
   const reaction = bindings.struct(d.reaction);
   if (
     reaction.target.fields.length !== 5 ||
@@ -116,7 +117,7 @@ function bindDependencies(
       promise: bindings.struct(d.promise),
       reaction,
       enqueue: bindings.function(d.enqueue, [{ kind: "funcref" }, ext, ext], []),
-      fulfill: bindings.function(d.fulfill, [promiseRef, ext], [ext]),
+      resolveValue: bindings.function(d.resolveValue, [promiseRef, ext], [ext]),
       reject: bindings.function(d.reject, [promiseRef, ext], [ext]),
       markHandled:
         d.markHandled.kind === "not-required"
@@ -131,7 +132,7 @@ function retainAssociations(d: NativeFrameDependencies): () => void {
     d.promise,
     d.reaction,
     d.enqueue,
-    d.fulfill,
+    d.resolveValue,
     d.reject,
     d.tag,
     d.markHandled,
@@ -144,7 +145,7 @@ function retainAssociations(d: NativeFrameDependencies): () => void {
       d.promise,
       d.reaction,
       d.enqueue,
-      d.fulfill,
+      d.resolveValue,
       d.reject,
       d.tag,
       d.markHandled,

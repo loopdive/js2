@@ -2335,3 +2335,41 @@ thenable/return-resolution composition, broader source coverage, true Linear/WAS
 full conformance/performance and reviewed retirement remain open. The reservation
 adapter requires the parent's complete acceptance callback; tests explicitly use
 a narrower kernel assertion and do not issue whole-program authority.
+
+### Native frame PromiseResolve integration plan (2026-10-24)
+
+Prepared native frames currently fulfill terminal values directly and omit the
+native await classifier's thenable-adoption binding. Wire the existing native
+Promise resolver through the frame contract and ledger-checked materializer as
+a required dependency. Native return resolves through this function; non-Promise
+await operands use a fresh handled pending Promise and the same resolver. Keep
+host code generation byte-identical, and retain pre/post-emission dependency
+identity/signature checks. Do not add an optional silent plain-value fallback.
+
+Reuse existing resolution, thenable lookup/job, resolving-pair, settlement,
+argument-vector and microtask builders in a bounded executable test kernel.
+Exercise native Promise adoption, thenable job ordering, rejection and nested
+adoption, plus missing/foreign/wrong-signature resolver rejection before frame
+publication. The test kernel is not whole-program source admission. Real public
+inventory composition, Linear/WASI and retirement remain required separately.
+
+Resolution validation: 87/87 tests across seven native/host async suites, followed
+by 22/22 resolver tests after adding two queue-interleaving cases. The observer
+runs in the real native queue: a thenable-return result is fulfilled before the
+observer, while an await result remains pending until its later continuation.
+Coverage includes nested thenables, throwing getters (exactly one read), abrupt
+then methods, first-call-wins before pending adoption, rejection identity,
+indirect self-resolution TypeError, and missing/foreign/wrong-signature resolver
+rejection before publication. All emitted kernel modules have zero imports.
+Eleven host binaries are byte-identical between parent e9dd538daf94dcb6997f46f113210a9d069ffef5
+and the candidate using the existing whole-program host async test harness.
+Source/focused-test TS7, targeted lint and formatting pass. Fresh-context
+adversarial review found no actionable defects; its ordering coverage limitation
+was closed by the two observer cases and re-reviewed without findings.
+
+This binds the production resolver at the prepared-frame seam and tests it using
+real resolution/job/vector/settlement builders with a finite explicit carrier
+inventory. It does not establish full public native inventory composition,
+source admission, successful captured-accessor then dispatch, own-Promise then
+shadowing, Linear/WASI support or legacy retirement. Those original obligations
+remain open.

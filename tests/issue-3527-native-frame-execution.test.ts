@@ -79,6 +79,24 @@ describe("source-owned native async frame materialization (kernel integration)",
     expect(a.sourceFrame!.entry.object.body).toEqual([]);
     expect(a.sourceFrame!.resume.object.body).toEqual([]);
   });
+  it.each(["missing", "foreign", "signature"] as const)(
+    "rejects a %s resolver before filling frame bodies",
+    (defect) => {
+      const h = nativePreparedFrameKernel(undefined, input());
+      const foreign = defect === "foreign" ? nativePreparedFrameKernel(undefined, input()) : undefined;
+      const dependency =
+        defect === "missing"
+          ? undefined
+          : defect === "foreign"
+            ? foreign!.dependencies.resolveValue
+            : h.dependencies.enqueue;
+      const before = structuredClone(h.sourceFrame!.entry.object.body);
+      expect(() =>
+        fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, { ...h.dependencies, resolveValue: dependency! }),
+      ).toThrow();
+      expect(h.sourceFrame!.entry.object.body).toEqual(before);
+    },
+  );
   it("rejects a wrong bridge signature before filling frame bodies", () => {
     const h = nativePreparedFrameKernel(undefined, input());
     const bridges = new Map(h.dependencies.bridges);

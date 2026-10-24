@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { reserveFrameResolutionKernel } from "./native-frame-resolution-kernel.js";
 import { createEmptyModule, type StructTypeDef } from "../../src/ir/types.js";
 import type { IrBindingId, IrUnitId } from "../../src/ir/identity.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
@@ -51,6 +52,7 @@ const get = (index: number): Instr => ({ op: "local.get", index });
 export function nativePreparedFrameKernel(
   promiseShape = createNativePromiseShape(),
   source?: PreparedNativeAsyncFrameInput,
+  completion: "await" | "return" = "await",
 ) {
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
@@ -109,6 +111,7 @@ export function nativePreparedFrameKernel(
     rejectStep = sourceFrame?.rejectStep ?? fn("rejectStep", [ext, ext], [ext]);
   const tag = tx.reserveTag("exception", { params: [ext], results: [] }, { kind: "defined", name: "exception" });
   if (tag.kind !== "tag") throw Error("kernel requires a defined tag");
+  const resolution = reserveFrameResolutionKernel(tx, { promise, reaction, enqueue, fulfill, reject, tag });
   const functionsRef: ValType = { kind: "ref_null", typeIdx: functionsType.typeIndex };
   const argumentsRef: ValType = { kind: "ref_null", typeIdx: argumentsType.typeIndex };
   const globals = {
@@ -154,7 +157,7 @@ export function nativePreparedFrameKernel(
       promise: struct(promise),
       reaction: struct(reaction),
       enqueue: handle(enqueue),
-      fulfill: handle(fulfill),
+      resolveValue: handle(resolution.resolveValue),
       reject: handle(reject),
       markHandled: { kind: "not-required" },
     },
@@ -191,36 +194,51 @@ export function nativePreparedFrameKernel(
       { id: 0, type: ext, param: 0 },
       { id: 1, type: ext },
     ],
-    states: [
-      {
-        id: 0,
-        restore: [],
-        body() {},
-        terminator: {
-          kind: "suspend",
-          awaited(e) {
-            e.body.push(get(e.local(0)));
-          },
-          next: 1,
-          live: [],
-        },
-      },
-      {
-        id: 1,
-        restore: [],
-        resume(e) {
-          e.resumeValue();
-          e.body.push({ op: "local.set", index: e.local(1) });
-        },
-        body() {},
-        terminator: {
-          kind: "resolve",
-          value(e) {
-            e.body.push(get(e.local(1)));
-          },
-        },
-      },
-    ],
+    states:
+      completion === "return"
+        ? [
+            {
+              id: 0,
+              restore: [],
+              body() {},
+              terminator: {
+                kind: "resolve",
+                value(e) {
+                  e.body.push(get(e.local(0)));
+                },
+              },
+            },
+          ]
+        : [
+            {
+              id: 0,
+              restore: [],
+              body() {},
+              terminator: {
+                kind: "suspend",
+                awaited(e) {
+                  e.body.push(get(e.local(0)));
+                },
+                next: 1,
+                live: [],
+              },
+            },
+            {
+              id: 1,
+              restore: [],
+              resume(e) {
+                e.resumeValue();
+                e.body.push({ op: "local.set", index: e.local(1) });
+              },
+              body() {},
+              terminator: {
+                kind: "resolve",
+                value(e) {
+                  e.body.push(get(e.local(1)));
+                },
+              },
+            },
+          ],
   };
   const number = source
     ? {
@@ -242,7 +260,7 @@ export function nativePreparedFrameKernel(
     promise,
     reaction,
     enqueue,
-    fulfill,
+    resolveValue: resolution.resolveValue,
     reject,
     tag,
     markHandled: { kind: "not-required" },
@@ -281,6 +299,7 @@ export function nativePreparedFrameKernel(
         : { op: "ref.null", typeIdx: (token.object.type as { typeIdx: number }).typeIdx },
     ]);
   function fillSupport() {
+    resolution.fill();
     if (number) {
       tx.fillFunction(number.box, {
         locals: buildBoxNumberLocals(),
