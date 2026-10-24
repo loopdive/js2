@@ -226,7 +226,7 @@ export function planNativeStringValuePhysical(
   const executable = (occurrence: number) =>
     demands.buffers[demands.occurrences[occurrence]!.bufferIndex]!.view === "projection";
   const invocationRequirements = nativeStringInvocationRequirements(demands, options.utf8Storage, expectedInvocation);
-  const boolean = selectNativeBooleans(demands, invocationRequirements);
+  const boolean = selectNativeBooleans(demands, invocationRequirements, realmRequirements);
   if (boolean.gap) return located(demands, boolean.gap.occurrence, boolean.gap.detail);
   const outputRequirements = deriveNativeStringOutputRequirements(demands, {
     emptyIdentity: options.stringConcatEmptyIdentity ?? true,

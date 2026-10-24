@@ -2873,3 +2873,65 @@ negative and positive now has its own fixture. No further production finding
 remained. The legacy audit passes preservation only; strict closure is still OPEN
 at the two documented dynamic imports. Full public realm, all-source association,
 mixed Get/then dispatch and public Promise execution remain unfinished.
+
+## Implementation Plan — 2026-10-24 — runtime source call population
+
+The productive realm's common Call entry must use the original complete source
+slot association, rather than the subset selected by static call/apply/getter
+sites. Keep the selected association for frontend demand authentication; join
+`NativeRealmSourceClosureCallables` separately and recheck every original slot at
+completion. Do not filter unsupported or async units out of this population:
+missing conversions and missing async completion remain explicit failures until
+the corresponding genuine producers are connected.
+
+Reuse the existing row builder for both populations. Derive internal Boolean
+result boxing from all issued realm source signatures without granting a new
+frontend Boolean boundary provider. Boolean arguments use the joined kernel's
+authenticated isBoolean/unboxBoolean pair. Extend the existing argument-carrier
+matcher, which already validates reference arguments, before reading the typed
+payload. Do not turn arbitrary objects, numbers, omitted arguments or strings
+into Booleans: typed i32 lowering cannot preserve their JavaScript identities.
+
+Adversarial review identified that ToBoolean would silently change the meaning of
+`(x: boolean) => x === true` when passed an object. The runtime boundary therefore
+refuses incompatible values until value-preserving generic source lowering is
+connected. This typed boundary is not a general JavaScript Call implementation
+and does not license full Promise execution. The same representation obligation
+must be resolved for scalar Number arguments, including omission/undefined.
+Joined Number entries now also require genuine Number carriers; only parameters
+with an actual numeric default admit the undefined sentinel consumed by that
+default. Existing static invocation proof and unsupported-signature gaps remain.
+
+Quality acceptance: one source-row builder, the existing argument-carrier matcher
+and actual Boolean producers, no second realm/singleton population or raw-handle
+grant. Correctness acceptance: execute an exported source factory with no static
+call sites through the emitted public common Call, including actual Boolean
+arguments/results, codec replay and both string storage modes; refuse incompatible
+values, reject foreign associations and recheck original source body completion.
+Full native Promise execution, Linear/WASI and legacy retirement remain required.
+
+Implementation result: productive native Call now associates every original
+prepared source closure, including units with no static invocation sites, and
+revalidates their canonical body completion. Boolean and Number scalar arguments
+are checked against their genuine runtime producers before payload extraction.
+The physical planner already authenticates realm requirements through its literal
+planner; removing the duplicated assertion in Boolean selection avoids a new
+backend-to-IR value-import edge without weakening the reservation boundary.
+
+Validation: 79/79 cases across runtime source population (7), existing source
+invocation (61), and productive mixed invocation (11) passed. Source and focused
+test TS7 passed. LOC/function gates passed against both the branch merge-base and
+main 7371eb505b365e49815f1ddc09afed6c52372540; coercion, oracle and import-cycle
+ratchets passed. Compiler-boundary inventory is valid; complete architecture is
+still false. Legacy preservation/core checks passed, with strict modeled closure
+still OPEN at the two existing dynamic-import sites. Eleven host binaries were
+byte-identical to that main revision. Independent adversarial review found no
+remaining actionable findings after the typed argument correction, including a
+separate check of the authentication-preserving import repair.
+
+A temporary Vitest configuration accidentally selected the whole repository.
+That separate run contains failures and is not full-suite acceptance evidence;
+it was left running under the user's no-cancellation constraint. The 79-case
+result above is the separately scoped, completed run. General value-preserving
+JavaScript Call, public Promise execution, Linear/WASI, full Test262/performance
+acceptance and reviewed legacy retirement remain incomplete.

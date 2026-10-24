@@ -298,7 +298,13 @@ export function planNativeInvocationRequirements(
       : undefined);
   const objectResults = objectAccess ? deriveNativeObjectResultRequirements(source, objectAccess) : undefined;
   const data = calculate(source, objectAccess, objectResults);
-  if (!data.uses.length && !data.getterUses.length && !objectResults?.gaps.length && !source.promiseClosures)
+  if (
+    !data.uses.length &&
+    !data.getterUses.length &&
+    !objectResults?.gaps.length &&
+    !source.promiseClosures &&
+    !source.units.length
+  )
     return undefined;
   const { program, projection } = source.demands;
   const runtimeCreated = collectNativePromiseSourceCensus(program, projection, {

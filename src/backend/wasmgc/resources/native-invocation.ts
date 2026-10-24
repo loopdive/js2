@@ -17,6 +17,9 @@ import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "
 import {
   requireNativeSourceClosureCallables,
   type NativeSourceClosureCallables,
+  type NativeSourceClosureCallable,
+  requireNativeRealmSourceClosureCallables,
+  type NativeRealmSourceClosureCallables,
 } from "./native-source-closure-callables.js";
 import {
   requireNativeValueReservations,
@@ -93,6 +96,7 @@ export interface NativeInvocationReservations {
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
 }
+
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly dependencies: NativeInvocationDependencies;
@@ -103,6 +107,7 @@ interface Owner {
   readonly functions: readonly FunctionReservation[];
   callables?: NativeSourceClosureCallables;
   argumentApply?: FunctionReservation;
+  realmCallables?: NativeRealmSourceClosureCallables;
   builtins?: NativeBuiltinFunctionReservations;
   filled: boolean;
 }
@@ -426,7 +431,10 @@ function settlementEntries(owner: Owner, pack: NativeInvocationReservations): Na
       funcTypeIdx: signature.liftedFuncTypeIndex,
       closureArity: signature.info.paramTypes.length,
       params: signature.info.paramTypes,
-      arguments: { unboxNumber: values.functions.unboxNumber.handle, isUndefined: pack.isUndefined.handle },
+      arguments: {
+        unboxNumber: values.functions.unboxNumber.handle,
+        isUndefined: pack.isUndefined.handle,
+      },
       result: voidResult(owner),
     },
   ];
@@ -434,11 +442,12 @@ function settlementEntries(owner: Owner, pack: NativeInvocationReservations): Na
 
 function entries(
   owner: Owner,
-  callables: NativeSourceClosureCallables,
+  callables: readonly NativeSourceClosureCallable[],
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  return callables.entries.map((row) => {
+  const booleans = owner.builtins ? builtinBinding(owner, pack, owner.builtins).booleans : undefined;
+  return callables.map((row) => {
     const info = row.signature.info;
     const booleanResult =
       objectResultIsBoolean(row.source.closureSubtype?.signature.returnType) &&
@@ -446,7 +455,12 @@ function entries(
       info.returnType.boolean === true &&
       owner.dependencies.booleanBoxes !== undefined;
     if (
-      info.paramTypes.some((type) => type.kind !== "externref" && type.kind !== "f64") ||
+      info.paramTypes.some(
+        (type) =>
+          type.kind !== "externref" &&
+          type.kind !== "f64" &&
+          !(type.kind === "i32" && type.boolean === true && booleans),
+      ) ||
       (info.returnType && info.returnType.kind !== "externref" && info.returnType.kind !== "f64" && !booleanResult)
     )
       fail("selected callable lacks its actual native argument/result conversion");
@@ -456,7 +470,17 @@ function entries(
       funcTypeIdx: row.slot.object.typeIdx,
       closureArity: info.paramTypes.length,
       params: info.paramTypes,
-      arguments: { unboxNumber: values.functions.unboxNumber.handle, isUndefined: pack.isUndefined.handle },
+      arguments: {
+        unboxNumber: values.functions.unboxNumber.handle,
+        isUndefined: pack.isUndefined.handle,
+        ...(owner.builtins
+          ? {
+              isNumber: values.functions.isNumber.handle,
+              defaultParameterStart: row.source.closureSubtype!.signature.defaultParamStart,
+            }
+          : {}),
+        ...(booleans ? { isBoolean: booleans.isBoolean.handle, unboxBoolean: booleans.unboxBoolean.handle } : {}),
+      },
       result: info.returnType
         ? {
             kind: "value",
@@ -475,6 +499,7 @@ export function fillNativeInvocationResources(
   pack: NativeInvocationReservations,
   callables: NativeSourceClosureCallables,
   exception: TagReservation | TagImportReservation,
+  realmCallables?: NativeRealmSourceClosureCallables,
 ): void {
   const owner = requireOwner(tx, pack);
   if (owner.filled) fail("duplicate fill");
@@ -488,7 +513,15 @@ export function fillNativeInvocationResources(
   const builtin = owner.builtins ? builtinBinding(owner, pack, owner.builtins, true) : undefined;
   if (builtin && builtin.exception !== exception) fail("invocation and builtin producer use different exception tags");
   const exceptionTag = tx.physicalIndex(exception);
-  const rows = [...settlementEntries(owner, pack), ...entries(owner, callables, pack)];
+  if (realmCallables) {
+    requireNativeRealmSourceClosureCallables(tx, realmCallables, owner.dependencies.source, realmCallables.realm);
+    if (!builtin || realmCallables.realm.source !== pack.requirements.source)
+      fail("realm callables require the joined source/builtin population");
+  }
+  const rows = [
+    ...settlementEntries(owner, pack),
+    ...entries(owner, realmCallables?.entries ?? callables.entries, pack),
+  ];
   const { values, strings } = owner.dependencies;
   requireCompletedNativeValues(tx, values, owner.dependencies.valuePlan, owner.dependencies.valueDependencies);
   if (owner.dependencies.booleanBoxes)
@@ -574,6 +607,7 @@ export function fillNativeInvocationResources(
           : {}),
       }),
     );
+  owner.realmCallables = realmCallables;
   owner.callables = callables;
   owner.filled = true;
 }
@@ -585,6 +619,14 @@ export function requireCompletedNativeInvocation(
   const owner = requireOwner(tx, pack);
   if (!owner.filled || !owner.callables) fail("incomplete selected source-invocation population");
   requireNativeSourceClosureCallables(tx, owner.callables, owner.dependencies.source, true);
+  if (owner.realmCallables)
+    requireNativeRealmSourceClosureCallables(
+      tx,
+      owner.realmCallables,
+      owner.dependencies.source,
+      owner.realmCallables.realm,
+      true,
+    );
   if (owner.dependencies.promise)
     requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source, true);
   if (owner.builtins) builtinBinding(owner, pack, owner.builtins, true);

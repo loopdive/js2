@@ -82,6 +82,31 @@ export function buildClosureInvocationBoundary(
   ];
 }
 
+/** Typed scalar entries must not silently coerce a different JavaScript value. */
+function scalarArgumentMatch(entry: NativeClosureMethodEntry, type: ValType, index: number, local: number): Instr[] {
+  const test =
+    type.kind === "f64"
+      ? entry.arguments.isNumber
+      : type.kind === "i32" && type.boolean === true
+        ? entry.arguments.isBoolean
+        : undefined;
+  if (test === undefined) return [];
+  return [
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: test },
+    ...(type.kind === "f64" &&
+    entry.arguments.isUndefined !== undefined &&
+    index >= (entry.arguments.defaultParameterStart ?? Infinity)
+      ? ([
+          { op: "local.get", index: local },
+          { op: "call", funcIdx: entry.arguments.isUndefined },
+          { op: "i32.or" },
+        ] satisfies Instr[])
+      : []),
+    { op: "i32.and" },
+  ];
+}
+
 export function buildNativeClosureMethodMatch(
   entry: NativeClosureMethodEntry,
   anyLocal: number,
@@ -94,16 +119,17 @@ export function buildNativeClosureMethodMatch(
     { op: "local.get", index: funcLocal },
     { op: "ref.test", typeIdx: entry.funcTypeIdx },
     { op: "i32.and" },
-    ...entry.params.flatMap((type, index): Instr[] =>
-      type.kind !== "ref"
+    ...entry.params.flatMap((type, index): Instr[] => [
+      ...scalarArgumentMatch(entry, type, index, argumentLocals[index]!),
+      ...(type.kind !== "ref"
         ? []
-        : [
+        : ([
             { op: "local.get", index: argumentLocals[index]! },
             { op: "any.convert_extern" },
             { op: "ref.test", typeIdx: type.typeIdx },
             { op: "i32.and" },
-          ],
-    ),
+          ] satisfies Instr[])),
+    ]),
   ];
 }
 

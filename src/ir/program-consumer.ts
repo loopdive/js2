@@ -51,7 +51,10 @@ import {
   fillNativeInvocationResources,
   requireCompletedNativeInvocation,
 } from "../backend/wasmgc/resources/native-invocation.js";
-import { nativeSourceClosureCallableBindings } from "./program-native-invocation.js";
+import {
+  nativeSourceClosureCallableBindings,
+  nativeRealmSourceClosureCallableBindings,
+} from "./program-native-invocation.js";
 import {
   reservePreparedAsyncFrame,
   fillPreparedAsyncFrame,
@@ -1431,6 +1434,7 @@ function materializePhysicalProgram(
       invocationPack,
       nativeSourceClosureCallableBindings(reservations, sourceClosures, record.nativeInvocation),
       exceptionTag,
+      realm ? nativeRealmSourceClosureCallableBindings(reservations, sourceClosures, realm.requirements) : undefined,
     );
   }
 

@@ -27,6 +27,7 @@ import {
   beginNativeSourceClosureEmission,
   bindNativeSourceClosureUnits,
   nativeSourceClosureCallableBindings,
+  nativeRealmSourceClosureCallableBindings,
   nativeSourceClosureResolver,
   fillPreparedPrimaryUnit,
   requireCompletedNativeSourceClosures,
@@ -203,6 +204,7 @@ export function fillRealmFixture(f: RealmFixture) {
       f.invocation,
       nativeSourceClosureCallableBindings(tx, f.source, f.input.invocationRequirements!),
       f.kernel.exception,
+      nativeRealmSourceClosureCallableBindings(tx, f.source, f.requirements),
     );
   const resolver: IrLowerResolver = {
     ...(f.source ? nativeSourceClosureResolver(tx, f.source) : {}),

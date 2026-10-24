@@ -653,6 +653,7 @@ export function nativeBuiltinFunctionInvocationBinding(
     strings: input.strings,
     values: d.descriptorDependencies.sameValueDependencies.values,
     errors: d.descriptorDependencies.errors,
+    booleans: d.descriptorDependencies.sameValueDependencies.booleans,
     exception: pack.exception,
     match: pack.functions.match,
     call: pack.functions.callVector,
