@@ -10,6 +10,7 @@ import type {
 } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
+  buildMixedObjectGet,
   buildMixedObjectClassify,
   buildMixedObjectOwn,
   buildMixedObjectLookup,
@@ -18,7 +19,6 @@ import {
   buildMixedObjectSetPrototype,
   type MixedObjectAccessOperands,
   type MixedObjectCarrier,
-  type MixedObjectDefinition,
 } from "../../../runtime/wasmgc/values/mixed-object-access-bodies.js";
 import {
   buildOrdinaryObjectHashDefinition,
@@ -62,11 +62,21 @@ import {
 import { nativePublicBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { requireCompletedNativeInvocationSubstrate } from "./native-invocation-substrate.js";
 import {
+  requireCanonicalNativeFunction,
   executeNativeResourceRecipe,
   freezeNativeResourceRecipe,
   requireNativeDeclaredReservation,
   preflightNativeResourceRecipe,
 } from "./native-resource-declarations.js";
+
+import {
+  nativeInvocationObjectRealmBinding,
+  requireCompletedNativeInvocation,
+  type NativeInvocationReservations,
+} from "./native-invocation.js";
+
+import { nativeRealmPopulationBinding, type NativeRealmPopulation } from "./native-realm-population.js";
+import { nativePromiseObjectBinding, type NativePromiseObjects } from "./native-promise-objects.js";
 
 export interface NativeMixedObjectAccessDependencies {
   readonly realm: NativeObjectRealmDeclarations;
@@ -221,6 +231,10 @@ interface Owner {
   readonly plan: NativeResourceRecipe;
   readonly tokens: readonly FunctionReservation[];
   filled: boolean;
+  invocation?: NativeInvocationReservations;
+  getterFilled?: boolean;
+  population?: NativeRealmPopulation;
+  promises?: NativePromiseObjects;
 }
 const owners = new WeakMap<NativeMixedObjectAccessReservations, Owner>();
 function current(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessReservations): Owner {
@@ -289,17 +303,34 @@ function operands(
   tx: PhysicalModuleReservations,
   pack: NativeMixedObjectAccessReservations,
   d: NativeMixedObjectAccessDependencies,
+  population?: NativeRealmPopulation,
+  promises?: NativePromiseObjects,
 ): MixedObjectAccessOperands {
   const own = d.stringOwnDependencies,
     layout = d.realm.layouts;
+  if (population && nativeRealmPopulationBinding(tx, population, true).realm !== d.realm)
+    fail("different descriptor population realm");
   const [realm, objectPrototype, ...singletons] = tx.physicalIndices([
     layout.anchors.realm,
     d.realm.objectPrototype.singleton,
     ...d.realm.entries.map((entry) => entry.singleton),
   ]);
+  const promise = promises ? nativePromiseObjectBinding(tx, promises, true) : undefined;
+  if (promise && (promise.realm !== d.realm || promise.population !== population))
+    fail("different Promise object realm");
   const carriers: MixedObjectCarrier[] = [
     { kind: "string", typeIdx: own.layouts.types.String.typeIndex, stateField: 7 },
     { kind: "ordinary", typeIdx: layout.types.ordinary.typeIndex, stateField: 6 },
+    ...(promise
+      ? [
+          {
+            kind: "promise" as const,
+            typeIdx: promise.promise.typeIndex,
+            bagTypeIdx: promise.bag.typeIndex,
+            stateField: 6,
+          },
+        ]
+      : []),
     ...(["Boolean", "Number", "Symbol", "BigInt"] as const).map(
       (kind): MixedObjectCarrier => ({ kind: "wrapper", typeIdx: own.layouts.types[kind].typeIndex, stateField: 7 }),
     ),
@@ -333,6 +364,8 @@ function operands(
     symbolTypeIdx: own.layoutDependencies.symbols.types.symbol.typeIndex,
     realm: realm!,
     objectPrototype: objectPrototype!,
+    ordinaryIntrinsicSingletons: tx.physicalIndices(d.realm.ordinaryIntrinsics.map((entry) => entry.singleton)),
+    ...(population ? { intrinsicPopulationState: tx.physicalIndex(d.realm.globals.state) } : {}),
     carriers,
     metadataTypes: [...new Set(d.realmDependencies.closures.metadata.map((row) => row.binding.type.typeIndex))],
     classify: pack.classify.handle,
@@ -351,18 +384,6 @@ const builders = {
   getPrototypeOf: buildMixedObjectGetPrototype,
   setPrototypeOf: buildMixedObjectSetPrototype,
 };
-function canonical(
-  tx: PhysicalModuleReservations,
-  token: FunctionReservation,
-  definition: MixedObjectDefinition,
-): void {
-  tx.assertCompletedReservation(token);
-  same(
-    { locals: token.object.locals, body: token.object.body },
-    definition,
-    "noncanonical executable dependency " + token.key,
-  );
-}
 /** Audit only the executable own/key/String subgraph; the old whole-chain lookup/has are never used. */
 function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObjectAccessDependencies): void {
   const own = d.stringOwnDependencies,
@@ -372,9 +393,14 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
   const decoder = flatten.utf8Decoder
     ? { kind: "present" as const, handle: flatten.utf8Decoder.handle }
     : { kind: "absent" as const };
-  canonical(tx, flatten.copyTree, buildStringCopyTreeDefinition(layout, flatten.worklist.typeIndex, decoder));
-  if (flatten.utf8Decoder) canonical(tx, flatten.utf8Decoder, buildStringUtf8ToFlatDefinition(layout));
-  canonical(
+  requireCanonicalNativeFunction(
+    tx,
+    flatten.copyTree,
+    buildStringCopyTreeDefinition(layout, flatten.worklist.typeIndex, decoder),
+  );
+  if (flatten.utf8Decoder)
+    requireCanonicalNativeFunction(tx, flatten.utf8Decoder, buildStringUtf8ToFlatDefinition(layout));
+  requireCanonicalNativeFunction(
     tx,
     flatten.flatten,
     buildStringFlattenDefinition(layout, {
@@ -387,7 +413,7 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
   if (empty.kind !== "global") fail("canonical empty literal is not a global");
   tx.assertCompletedReservation(flatten.emptyLiteral);
   same(flatten.emptyLiteral.object.init, empty.init, "noncanonical executable empty literal");
-  canonical(
+  requireCanonicalNativeFunction(
     tx,
     lookup.equality.equals,
     buildStringEqualityDefinition(layout, flatten.flatten.handle, lookup.equality.lazy),
@@ -402,13 +428,13 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
     strFlattenIdx: flatten.flatten.handle,
     strEqualsIdx: lookup.equality.equals.handle,
   };
-  canonical(
+  requireCanonicalNativeFunction(
     tx,
     own.lookup.hash,
     buildOrdinaryObjectHashDefinition({ ...keys, hashedStrTypeIdx: layout.hashedStrTypeIdx, nativeFirst: true }),
   );
-  canonical(tx, own.lookup.keyEquals, buildOrdinaryObjectKeyEqualsDefinition(keys));
-  canonical(
+  requireCanonicalNativeFunction(tx, own.lookup.keyEquals, buildOrdinaryObjectKeyEqualsDefinition(keys));
+  requireCanonicalNativeFunction(
     tx,
     own.lookup.findOwn,
     buildOrdinaryObjectFindDefinition({
@@ -427,8 +453,8 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
     nativeStrDataTypeIdx: layout.nativeStrDataTypeIdx,
     flattenIdx: flatten.flatten.handle,
   };
-  canonical(tx, d.stringOwn.arrayIndex, buildStringExoticIndexDefinition(strings));
-  canonical(
+  requireCanonicalNativeFunction(tx, d.stringOwn.arrayIndex, buildStringExoticIndexDefinition(strings));
+  requireCanonicalNativeFunction(
     tx,
     d.stringOwn.virtualOwn,
     buildStringVirtualOwnDescriptorDefinition({
@@ -439,7 +465,7 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
       indexIdx: d.stringOwn.arrayIndex.handle,
     }),
   );
-  canonical(
+  requireCanonicalNativeFunction(
     tx,
     d.stringOwn.findOwn,
     buildStringExoticOwnDescriptorDefinition({
@@ -464,7 +490,7 @@ export function fillNativeMixedObjectAccessStructure(
   const owner = current(tx, pack);
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate structural fill");
   completedDependencies(tx, owner.identities);
-  const d = operands(tx, pack, owner.identities);
+  const d = operands(tx, pack, owner.identities, owner.population, owner.promises);
   const definitions = structuralRoles.map((role) => builders[role](d));
   structuralRoles.forEach((role, i) => tx.fillFunction(pack[role], definitions[i]!));
   owner.filled = true;
@@ -478,7 +504,7 @@ export function requireCompletedNativeMixedObjectAccessStructure(
   const owner = owners.get(pack)!;
   if (!owner.filled) fail("missing canonical structural fill");
   completedDependencies(tx, owner.identities);
-  const d = operands(tx, pack, owner.identities);
+  const d = operands(tx, pack, owner.identities, owner.population, owner.promises);
   for (const role of structuralRoles) {
     tx.assertCompletedReservation(pack[role]);
     same(
@@ -489,13 +515,78 @@ export function requireCompletedNativeMixedObjectAccessStructure(
   }
   return pack;
 }
+/** Descriptor coverage is separate from callable algorithm coverage. */
+export function bindNativeMixedObjectPopulation(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  population: NativeRealmPopulation,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "reserving" || owner.population) fail("invalid phase or duplicate population join");
+  if (nativeRealmPopulationBinding(tx, population).realm !== owner.identities.realm)
+    fail("different descriptor population realm");
+  owner.population = population;
+}
+
+/** Join only the full public population's actual common Call, never a caller-supplied function token. */
+export function bindNativeMixedObjectInvocation(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  invocation: NativeInvocationReservations,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "reserving" || owner.invocation) fail("invalid phase or duplicate invocation join");
+  getterBinding(tx, owner, invocation);
+  owner.invocation = invocation;
+}
+function getterBinding(tx: PhysicalModuleReservations, owner: Owner, invocation: NativeInvocationReservations) {
+  const binding = nativeInvocationObjectRealmBinding(tx, invocation),
+    d = owner.identities;
+  if (
+    binding.realm !== d.realm ||
+    binding.source !== d.realmDependencies.source ||
+    binding.values !== d.values ||
+    binding.arguments !== d.realmDependencies.substrate.arguments ||
+    binding.exception !== d.realm.exception.tag
+  )
+    fail("different shared Get/Call population");
+  return binding;
+}
+function getterDefinition(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessReservations, owner: Owner) {
+  if (!owner.invocation) fail("missing full-realm invocation join");
+  const binding = getterBinding(tx, owner, owner.invocation);
+  return buildMixedObjectGet({
+    entryTypeIdx: owner.identities.stringOwnDependencies.layoutDependencies.objects.propEntry.typeIndex,
+    argumentVector: { kind: "externref" },
+    undefinedGlobal: tx.physicalIndex(owner.identities.values.globals.undefined),
+    lookup: pack.lookup.handle,
+    newVector: binding.arguments.newVector.handle,
+    call: binding.call.handle,
+  });
+}
+/** The runtime getter invokes the same Call used by source and native functions, preserving Receiver. */
+export function fillNativeMixedObjectGet(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "filling" || owner.getterFilled) fail("invalid phase or duplicate Get fill");
+  requireCompletedNativeMixedObjectAccessStructure(tx, pack);
+  tx.fillFunction(pack.get, getterDefinition(tx, pack, owner));
+  owner.getterFilled = true;
+}
 /** A filled-looking Get token or declaration counters cannot substitute for the genuine missing graph. */
 export function requireCompletedNativeMixedObjectAccess(
   tx: PhysicalModuleReservations,
   pack: NativeMixedObjectAccessReservations,
 ): never {
-  requireNativeMixedObjectAccessReservations(tx, pack);
-  fail("mixed Call, source lowering/allocation and complete intrinsic populations remain unavailable");
+  const owner = current(tx, pack);
+  if (!owner.getterFilled || !owner.invocation)
+    fail("mixed Call, source lowering/allocation and complete intrinsic populations remain unavailable");
+  requireCompletedNativeMixedObjectAccessStructure(tx, pack);
+  requireCanonicalNativeFunction(tx, pack.get, getterDefinition(tx, pack, owner));
+  requireCompletedNativeInvocation(tx, owner.invocation);
+  fail("complete intrinsic populations remain unavailable");
 }
 export function nativeMixedObjectAccessReservationInventory(
   tx: PhysicalModuleReservations,
@@ -509,4 +600,41 @@ export function nativeMixedObjectAccessReservationInventory(
     pendingGet: pack.get,
     completionScope: pack.completionScope,
   });
+}
+
+/** Canonical Get/Call cycle edge; this does not attest complete builtin algorithms. */
+export function nativeMixedObjectGetBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  invocation: NativeInvocationReservations,
+  completed = false,
+) {
+  const owner = current(tx, pack);
+  if (owner.invocation !== invocation) fail("different Get/Call invocation owner");
+  const binding = getterBinding(tx, owner, invocation);
+  if (completed) {
+    if (!owner.getterFilled) fail("missing canonical Get fill");
+    requireCompletedNativeMixedObjectAccessStructure(tx, pack);
+    requireCanonicalNativeFunction(tx, pack.get, getterDefinition(tx, pack, owner));
+  }
+  return Object.freeze({
+    ...binding,
+    get: pack.get,
+    symbols: owner.identities.stringOwnDependencies.layoutDependencies.symbols,
+  });
+}
+
+/** Promise own storage and prototype access share the actual allocator's population. */
+export function bindNativeMixedObjectPromises(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  promises: NativePromiseObjects,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "reserving" || owner.promises) fail("invalid phase or duplicate Promise join");
+  const binding = nativePromiseObjectBinding(tx, promises);
+  if (binding.realm !== owner.identities.realm || (owner.population && owner.population !== binding.population))
+    fail("different Promise object realm");
+  owner.population = binding.population;
+  owner.promises = promises;
 }

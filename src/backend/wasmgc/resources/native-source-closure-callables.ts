@@ -167,6 +167,7 @@ export function requireNativeRealmSourceClosureCallables(
   pack: NativeRealmSourceClosureCallables,
   expectedTypes: NativeSourceClosureTypes,
   expectedRealm: NativeRealmRequirements,
+  completed = false,
 ): NativeRealmSourceClosureCallables {
   if (
     realmOwners.get(pack) !== tx ||
@@ -192,6 +193,7 @@ export function requireNativeRealmSourceClosureCallables(
       row.publicLength !== old.publicLength
     )
       fail(`changed realm callable association for ${row.unitId}`);
+    if (completed) tx.assertCompletedReservation(row.slot);
   }
   return pack;
 }

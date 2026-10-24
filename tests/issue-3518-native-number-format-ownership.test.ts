@@ -128,7 +128,11 @@ function authenticateEnvelope(source: string, family: "format" | "radix"): void 
           "emitNonFinitePrologue",
           "emitIntegerDigits",
           "buildNumberFormatFinalizeBody",
+          "DecimalFormatResources",
+          "IntegerFormatResources",
           "buildNumberFormatToStringBody",
+          "buildRyuNumberToStringBody",
+          "numberToStringDefinition",
           "buildNumberFormatToFixedBody",
           "buildNumberFormatToExponentialBody",
           "buildNumberFormatToPrecisionBody",
@@ -158,7 +162,9 @@ function authenticateEnvelope(source: string, family: "format" | "radix"): void 
     if (ts.isInterfaceDeclaration(statement) || ts.isFunctionDeclaration(statement)) {
       const name = statement.name?.text;
       const exported =
-        ts.isInterfaceDeclaration(statement) ||
+        (ts.isInterfaceDeclaration(statement) &&
+          !["DecimalFormatResources", "IntegerFormatResources"].includes(name!)) ||
+        name === "buildRyuNumberToStringBody" ||
         name === "numberFormatSignatures" ||
         name?.startsWith("buildNumberFormat");
       expect(statement.modifiers?.map((modifier) => modifier.kind) ?? []).toEqual(
@@ -270,7 +276,10 @@ function inverseNative(adapter: string, runtime: string): string {
   }
   for (const name of ["ToString", "ToFixed", "ToExponential", "ToPrecision"] as const) {
     const originalAdapter = functionSource(result, "emit" + name);
-    const builder = functionSource(runtime, "buildNumberFormat" + name + "Body");
+    const builder =
+      name === "ToString"
+        ? legacyToStringBuilder(runtime)
+        : functionSource(runtime, "buildNumberFormat" + name + "Body");
     const at = originalAdapter.indexOf("  const types = numberFormatTypes(ctx);");
     const end = originalAdapter.indexOf("  const typeIdx = addFuncType");
     if (at < 0 || end < at) throw new Error("changed formatter adapter construction");
@@ -579,9 +588,60 @@ describe("complete canonical module envelope", () => {
   });
 });
 
+/** Specialize the shared definition at the retained wrapper's mandatory integer argument. */
+function legacyToStringBuilder(runtime: string): string {
+  expect(tokens(functionSource(runtime, "buildNumberFormatToStringBody"))).toEqual(
+    tokens(`
+    export function buildNumberFormatToStringBody(resources: DecimalFormatResources & IntegerFormatResources): NativeNumberFormatBody {
+      return numberToStringDefinition(resources, resources);
+    }
+  `),
+  );
+  expect(tokens(functionSource(runtime, "buildRyuNumberToStringBody"))).toEqual(
+    tokens(`
+    export function buildRyuNumberToStringBody(resources: DecimalFormatResources): NativeNumberFormatBody {
+      return numberToStringDefinition(resources);
+    }
+  `),
+  );
+  let source = replaceOnce(
+    functionSource(runtime, "numberToStringDefinition"),
+    "function numberToStringDefinition(\n  resources: DecimalFormatResources,\n  integer?: IntegerFormatResources,\n): NativeNumberFormatBody {",
+    `export function buildNumberFormatToStringBody(resources: {
+      readonly types: NumberFormatStringTypes; readonly finalize: FuncHandle;
+      readonly radix: FuncHandle; readonly ryuToBuffer: FuncHandle; readonly integerBeforeScratch: boolean;
+    }): NativeNumberFormatBody {`,
+  );
+  source = replaceOnce(source, "integer?.radix", "resources.radix");
+  source = replaceOnce(source, "integer?.integerBeforeScratch", "resources.integerBeforeScratch");
+  source = replaceOnce(source, "funcIdx: radixIdx!", "funcIdx: radixIdx");
+  // Select only this explicit emission branch; all retained instructions below
+  // still flow into the immutable donor comparison, including countermodels.
+  source = replaceOnce(
+    source,
+    `...(integer
+      ? integerBeforeScratch
+        ? []
+        : postScratchIntegerReturn()
+      : [
+          { op: "local.get", index: L_ABS } as Instr,
+          { op: "f64.const", value: 0 } as Instr,
+          { op: "f64.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...putConst(strDataTypeIdx, L_BUF, L_POS, C_ZERO), ...finalizeReturn()],
+          } as Instr,
+        ]),`,
+    "...(integerBeforeScratch ? [] : postScratchIntegerReturn()),",
+  );
+  return source;
+}
+
 /** Invert only the approved parameter extraction and private normalization split. */
 function formatterConstruction(runtime: string, name: "ToString" | "ToFixed" | "ToExponential" | "ToPrecision") {
-  const source = functionSource(runtime, "buildNumberFormat" + name + "Body");
+  const source =
+    name === "ToString" ? legacyToStringBuilder(runtime) : functionSource(runtime, "buildNumberFormat" + name + "Body");
   const start =
     name === "ToPrecision" ? "  // We reduce toPrecision" : name === "ToExponential" ? "  // params 0" : "  // params:";
   const startAt = source.indexOf(start);

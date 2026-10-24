@@ -14,6 +14,23 @@ import type { ProgramAbiDerivedUnitRecord } from "./abi.js";
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 
+/** Runtime-created promises need the same resources even without explicit source calls. */
+export function nativePromiseResourcesRequired(
+  functions: readonly IrFunction[],
+  providers: readonly RuntimeProviderDefinition[],
+): boolean {
+  return (
+    functions.some((fn) => fn.asyncPlan !== undefined) ||
+    providers.some(
+      (provider) =>
+        provider.feature.startsWith("promise.") ||
+        provider.feature.startsWith("scheduler.") ||
+        provider.feature === "async.native.delay" ||
+        provider.feature === "async.native.all",
+    )
+  );
+}
+
 export interface NativePromiseOwner {
   readonly unitId: IrUnitId;
   readonly calls: readonly { readonly region: string; readonly ordinal: number; readonly bindingKey: string }[];
@@ -138,11 +155,7 @@ export function deriveNativePromiseResourcePlan(input: NativePromiseResourceInpu
       fail("derived owner is duplicate or absent");
     derived.add(unit.id);
   }
-  const required =
-    input.functions.some((fn) => fn.asyncPlan !== undefined) ||
-    input.providers.some(
-      (provider) => provider.feature.startsWith("promise.") || provider.feature.startsWith("scheduler."),
-    );
+  const required = nativePromiseResourcesRequired(input.functions, input.providers);
   const providers: RuntimeProviderDefinition[] = [];
   if (required) {
     if (

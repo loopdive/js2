@@ -12,7 +12,7 @@ const EXTERN = irVal({ kind: "externref" });
 
 function owner(ordinal: number): ReturnType<typeof createIrUnitId> {
   const sourceId = createIrSourceId({ kind: "entry", order: 0, sourceKey: "tests/issue-3527-linear.ts" });
-  return createIrUnitId({ sourceId, lexicalOwnerId: null, kind: "function-declaration", ordinal });
+  return createIrUnitId({ sourceId, lexicalOwnerId: null, kind: "top-level-function", ordinal });
 }
 
 function nullConst(result: IrValueId): Extract<IrInstr, { readonly kind: "const" }> {
@@ -101,6 +101,68 @@ function slotBackedChain(): IrFunction {
 }
 
 describe("#3527 generic linear async preparation", () => {
+  it.each([F64, { kind: "dynamic" } as const, null])("prepares an immediate return with fulfillment %j", (type) => {
+    const original = genericThreeState();
+    const fn: IrFunction = {
+      ...original,
+      params: type ? [{ name: "value", value: asValueId(0), type }] : [],
+      resultTypes: type ? [type] : [],
+      valueCount: type ? 1 : 0,
+      blocks: [
+        { ...original.blocks[0]!, instrs: [], terminator: { kind: "return", values: type ? [asValueId(0)] : [] } },
+      ],
+    };
+    const prepared = prepareLinearSuspendingIrFunction(fn);
+    expect(prepared).not.toBeNull();
+    const plan = prepared!.main.asyncPlan!;
+    expect(verifyIrAsyncPlan(plan)).toEqual([]);
+    expect(plan.states).toHaveLength(1);
+    expect(plan.states[0]!.terminator).toEqual(type ? { kind: "resolve", value: asValueId(0) } : { kind: "resolve" });
+    expect(plan.spills).toEqual([]);
+    expect(prepared!.stateFunctions).toEqual([]);
+    if (!type) expect(plan.runtimeIntents).toContain("value.undefined");
+  });
+
+  it("preserves computation and reaching slot definitions without suspension", () => {
+    const original = slotBackedChain();
+    const fn: IrFunction = {
+      ...original,
+      valueCount: 3,
+      blocks: [
+        {
+          ...original.blocks[0]!,
+          instrs: [
+            add(asValueId(0), asValueId(0), asValueId(1)),
+            { kind: "slot.write", slotIndex: 0, value: asValueId(1), result: null, resultType: null },
+            { kind: "slot.read", slotIndex: 0, result: asValueId(2), resultType: F64 },
+          ],
+          terminator: { kind: "return", values: [asValueId(2)] },
+        },
+      ],
+    };
+    const prepared = prepareLinearSuspendingIrFunction(fn)!;
+    expect(prepared).not.toBeNull();
+    expect(verifyIrAsyncPlan(prepared.main.asyncPlan!)).toEqual([]);
+    expect(prepared.main.asyncPlan!.states[0]!.terminator).toEqual({ kind: "resolve", value: asValueId(1) });
+    expect(prepared.stateFunctions).toHaveLength(1);
+    expect(prepared.stateFunctions[0]!.blocks[0]!.instrs[0]!.kind).toBe("binary");
+  });
+
+  it("still refuses early return control without suspension", () => {
+    const original = genericThreeState();
+    const fn: IrFunction = {
+      ...original,
+      blocks: [
+        {
+          ...original.blocks[0]!,
+          instrs: [{ kind: "early.return", value: asValueId(0), result: null, resultType: null }],
+          terminator: { kind: "return", values: [asValueId(0)] },
+        },
+      ],
+    };
+    expect(prepareLinearSuspendingIrFunction(fn)).toBeNull();
+  });
+
   it("splits every await and carries exact values through an empty intermediate body", () => {
     const prepared = prepareLinearSuspendingIrFunction(genericThreeState());
     expect(prepared).not.toBeNull();
@@ -135,7 +197,7 @@ describe("#3527 generic linear async preparation", () => {
     expect(verifyIrAsyncPlan(plan)).toEqual([]);
     expect(plan.spills).toEqual([{ value: asValueId(3), type: F64, storage: "slot" }]);
     expect(
-      plan.states.filter((state) => state.terminator.kind === "suspend").map((state) => state.terminator.live),
+      plan.states.flatMap((state) => (state.terminator.kind === "suspend" ? [state.terminator.live] : [])),
     ).toEqual([[], [asValueId(3)]]);
     expect(plan.values.some(({ value }) => value === asValueId(1))).toBe(false);
     expect(plan.values.some(({ value }) => value === asValueId(4))).toBe(false);

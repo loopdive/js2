@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "../../../ir/program/prepared-contracts.js";
 import type { NativeStringLiteralReservations } from "./native-string-literals.js";
 import {
   requireNativeStringNumberReservations,
@@ -14,6 +15,7 @@ import type {
 } from "../../../wasm/physical/module-reservations.js";
 import {
   assertNativeValueResourcePlan,
+  assertNativeValueResourcePlanFor,
   type NativeValueResourcePlan,
 } from "../../../ir/program/native-value-resources.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
@@ -204,12 +206,20 @@ export function requireNativeValueReservations(
   pack: NativeValueReservations,
   expectedRequirements: NativeValueResourcePlan,
   expectedDependencies: NativeValueDependencies,
+  expectedSource?: { readonly program: PreparedIrProgram; readonly projection: PreparedIrProgramRuntimeProjection },
 ): NativeValueReservations {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign native value reservations");
   if (owner.requirements !== expectedRequirements || owner.dependencies !== expectedDependencies)
     fail("substituted native value reservation inputs");
   assertNativeValueResourcePlan(expectedRequirements);
+  if (expectedSource)
+    assertNativeValueResourcePlanFor(
+      expectedRequirements,
+      expectedSource.program,
+      expectedSource.projection,
+      expectedRequirements.strings,
+    );
   const strings = requireDependency(tx, expectedRequirements, expectedDependencies);
   if (
     strings.kind !== owner.dependency.kind ||

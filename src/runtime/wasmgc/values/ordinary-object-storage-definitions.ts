@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import type { Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import {
   buildOrdinaryObjectCreateBody,
   buildOrdinaryObjectInsertBody,
@@ -14,8 +14,11 @@ import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING } from "./ordinary-object-descripto
 export function buildOrdinaryObjectCreateDefinition(
   d: OrdinaryObjectCreateResources,
   prototype: "default" | "null" | "argument",
+  allocationTypeIdx: TypeHandle = d.objectTypeIdx,
 ): { locals: LocalDef[]; body: Instr[] } {
   const body = buildOrdinaryObjectCreateBody(d);
+  // Only a subtype with this exact storage prefix is valid; the issuer authenticates it.
+  body[7] = { op: "struct.new", typeIdx: allocationTypeIdx };
   if (prototype === "null") body[5] = { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype };
   if (prototype === "argument") {
     body[0] = { op: "local.get", index: 0 };

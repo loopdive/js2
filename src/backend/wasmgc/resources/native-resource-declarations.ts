@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { ValType } from "../../../wasm/model/instructions.js";
+import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import type { TypeDef, GlobalDef } from "../../../wasm/model/module-records.js";
 import type {
   PhysicalModuleReservations,
@@ -58,7 +58,7 @@ function plainRecipeData(value: unknown, active = new Set<object>()): unknown {
   const result = Array.isArray(value) ? [] : {};
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
-    if (typeof key !== "string" || !("value" in descriptor)) fail("non-data recipe field");
+    if (typeof key !== "string" || !Object.hasOwn(descriptor, "value")) fail("non-data recipe field");
     const copied = plainRecipeData(descriptor.value, active);
     if (Array.isArray(result) && key === "length") result.length = copied as number;
     else Object.defineProperty(result, key, { value: copied, enumerable: true, writable: true, configurable: true });
@@ -423,4 +423,60 @@ export function compareNativeResourceDeclarationShape(
     };
   }
   if (preparedIrDataMismatch(observed, expected) !== undefined) fail("resource descriptor/signature mismatch");
+}
+
+/** Authenticate an issued filled function and its exact canonical recipe without trusting counters. */
+export function requireCanonicalNativeFunction(
+  tx: PhysicalModuleReservations,
+  token: FunctionReservation,
+  definition: { readonly locals: readonly LocalDef[]; readonly body: readonly Instr[] },
+): void {
+  tx.assertCompletedReservation(token);
+  compareCanonicalFunction(token, definition);
+}
+
+interface CanonicalFunction {
+  readonly token: FunctionReservation;
+  readonly definition: { readonly locals: readonly LocalDef[]; readonly body: readonly Instr[] };
+}
+function compareCanonicalFunction(token: FunctionReservation, definition: CanonicalFunction["definition"]): void {
+  if (preparedIrDataMismatch({ locals: token.object.locals, body: token.object.body }, definition) !== undefined)
+    fail("noncanonical executable dependency " + token.key);
+}
+function ownDataField(value: unknown, key: PropertyKey): unknown {
+  if (value === null || typeof value !== "object") fail("non-data canonical function row");
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !Object.hasOwn(descriptor, "value")) fail("non-data canonical function field " + String(key));
+  return descriptor.value;
+}
+function captureCanonicalFunctions(rows: readonly CanonicalFunction[]): CanonicalFunction[] {
+  if (!Array.isArray(rows)) fail("canonical functions require a dense own-data array");
+  const length = ownDataField(rows, "length");
+  if (typeof length !== "number" || !Number.isSafeInteger(length) || length < 0)
+    fail("invalid canonical function count");
+  const captured: CanonicalFunction[] = [];
+  for (let index = 0; index < length; index++) {
+    const row = ownDataField(rows, index);
+    const token = ownDataField(row, "token") as FunctionReservation;
+    // Copy data, never caller references: a later comparison may run a Proxy trap.
+    const definition = plainRecipeData(ownDataField(row, "definition")) as CanonicalFunction["definition"];
+    captured.push({ token, definition });
+  }
+  return captured;
+}
+
+/** Audit the ledger around all canonical comparisons, retaining no authority between calls. */
+export function requireCanonicalNativeFunctions(
+  tx: PhysicalModuleReservations,
+  rows: readonly CanonicalFunction[],
+): void {
+  const captured = captureCanonicalFunctions(rows);
+  const tokens = captured.map(({ token }) => token);
+  tx.assertCompletedReservations(tokens);
+  for (const { token, definition } of captured) {
+    if (token.kind !== "function") fail("canonical executable requires a function reservation");
+    compareCanonicalFunction(token, definition);
+  }
+  // A later comparison can mutate an earlier function or poison the ledger.
+  tx.assertCompletedReservations(tokens);
 }

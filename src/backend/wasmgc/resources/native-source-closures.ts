@@ -19,6 +19,7 @@ import {
   nativeClosureReservationInventory,
   reserveNativeClosureResources,
   type NativeClosureDeclarationPlan,
+  type NativeClosureDeclarationRequirements,
   type NativeClosureReservations,
 } from "./native-closures.js";
 import {
@@ -138,6 +139,7 @@ function authenticateCarriers(
     requireNativeStringLiteralTypes(tx, carriers.strings.types, carriers.strings.key, carriers.strings.utf8Storage);
 }
 function carrierValue(tx: PhysicalModuleReservations, carriers: NativeSourceClosureCarriers, type: IrType): ValType {
+  if (type.kind === "dynamic" && type.tag === undefined) return { kind: "externref" };
   if (type.kind === "boxed") {
     const inner = nativeRefCellScalarInner(type);
     const cell = inner && carriers.refCells && resolveNativeRefCell(tx, carriers.refCells, inner);
@@ -178,7 +180,7 @@ function physicalPlan(
     references.set(token.key, token);
     return { kind: value.kind, typeKey: token.key };
   };
-  const requests = requirements.signatures.map((row) => ({
+  const requests: NativeClosureDeclarationRequirements["requests"][number][] = requirements.signatures.map((row) => ({
     kind: "signature" as const,
     id: row.id,
     allocationMode: "ordinary" as const,
@@ -186,6 +188,13 @@ function physicalPlan(
     results: row.signature.returnType ? [declared(row.signature.returnType)] : [],
     minimumArgumentCount: row.signature.defaultParamStart ?? row.signature.params.length,
   }));
+  if (requirements.promiseClosures) {
+    const { signatureId, metadataId } = requirements.promiseClosures;
+    requests.push(
+      { kind: "signature", id: signatureId, allocationMode: "support", params: [{ kind: "externref" }], results: [] },
+      { kind: "metadata", id: metadataId, signatureId, key: "promise:settle", name: "", length: 1 },
+    );
+  }
   if (builtins !== undefined) {
     requireNativeBuiltinFunctionRequestIssuer(tx, builtins);
     for (const token of builtins.referenceTypes) {
@@ -263,7 +272,7 @@ export function reserveNativeSourceClosureTypes(
         return capture + CLOSURE_CAPTURE_FIELD_BASE;
       },
     });
-    if (builtins) requireSourceMetadataSeparation(type);
+    if (builtins || requirements.promiseClosures) requireSourceMetadataSeparation(type);
     return Object.freeze({ id: shape.id, type, lowering });
   });
   const pack = Object.freeze({ requirements, closures, closurePlan, shapes: Object.freeze(shapes) });

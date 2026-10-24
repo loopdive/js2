@@ -147,7 +147,7 @@ describe("source-produced method and apply execution through the native consumer
         expect((outcome.run.exports.run as () => number)()).toBe(oracle(source));
       });
 
-  it("keeps an unrelated Boolean closure outside the selected dispatcher population", async () => {
+  it("retains a Boolean closure without a selected static invocation", async () => {
     const mixed = source.replace(
       "const captured = 13;",
       "const unrelated = (value: boolean): boolean => value; const captured = 13;",

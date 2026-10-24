@@ -8,6 +8,8 @@ import {
 import type { IrStringEncoding, IrStringConcatMode } from "../../../ir/core/string-types.js";
 import type { IrFuncRef, IrGlobalRef } from "../../../ir/core/value-references.js";
 import type { IrUnitId } from "../../../shared/contracts/ir-identity.js";
+import { nativePromiseResourcesRequired } from "../../../ir/program/native-promise-resources.js";
+import { NATIVE_PROMISE_STRINGS } from "../../../runtime/contracts/native-promise-literals.js";
 import type { NativeInvocationRequirements } from "../../../ir/program/native-invocation-requirements.js";
 import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
 import {
@@ -224,7 +226,7 @@ export function planNativeStringValuePhysical(
   const executable = (occurrence: number) =>
     demands.buffers[demands.occurrences[occurrence]!.bufferIndex]!.view === "projection";
   const invocationRequirements = nativeStringInvocationRequirements(demands, options.utf8Storage, expectedInvocation);
-  const boolean = selectNativeBooleans(demands, invocationRequirements);
+  const boolean = selectNativeBooleans(demands, invocationRequirements, realmRequirements);
   if (boolean.gap) return located(demands, boolean.gap.occurrence, boolean.gap.detail);
   const outputRequirements = deriveNativeStringOutputRequirements(demands, {
     emptyIdentity: options.stringConcatEmptyIdentity ?? true,
@@ -243,7 +245,12 @@ export function planNativeStringValuePhysical(
           closureMethodArity(instruction.target.binding.symbol) !== undefined)
       );
     });
+  const promises = nativePromiseResourcesRequired(
+    demands.projection.prepared.functions,
+    demands.projection.prepared.manifest.providers,
+  );
   const numeric =
+    promises ||
     invocation ||
     !!boolean.selection ||
     demands.intrinsics.some(
@@ -318,6 +325,8 @@ export function planNativeStringValuePhysical(
       })
     : undefined;
   if (numeric || realmLiterals || output) literals.push({ value: "", encoding: "wtf16" });
+  if (promises)
+    literals.push(...Object.values(NATIVE_PROMISE_STRINGS).map((value) => ({ value })), { value: "TypeError" });
   if (invocation) literals.push({ value: "TypeError" }, { value: "Value is not callable" });
   if (outputRequirements.batchArities.length) literals.push({ value: "undefined" });
   if (realmLiterals) literals.push(...realmLiterals.literals);

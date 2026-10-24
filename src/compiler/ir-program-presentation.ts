@@ -895,7 +895,7 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
     gap("emission", "empty-population", "presentation requires genuine nonempty emitted and terminal populations");
   if (mixed)
     for (const row of emittedPhysicalSetupPlan(emission).asyncFrames?.frames ?? [])
-      for (const callback of row.callbacks) joinedExports.add(callback.externalName);
+      for (const callback of row.kind === "host" ? row.callbacks : []) joinedExports.add(callback.externalName);
   const physicalExportNames = new Set<string>();
   for (const row of mod.exports) {
     if (row.desc.kind !== "func" && row.desc.kind !== "global") continue;
@@ -1039,7 +1039,10 @@ function checkMixedImports(emission: EmittedPreparedIrProgram, plan: PhysicalSet
 }
 function mixedProviderMatches(
   program: PreparedIrProgram,
-  imported: NonNullable<PhysicalSetupPlan["asyncFrames"]>["frames"][number]["imports"][number],
+  imported: Extract<
+    NonNullable<PhysicalSetupPlan["asyncFrames"]>["frames"][number],
+    { kind: "host" }
+  >["imports"][number],
 ): boolean {
   const manifest = program.runtime.find((row) => row.backend === "wasmgc" && row.target === "host")?.prepared.manifest;
   const records = manifest?.hostCapabilityRecords.filter((row) => row.capability === imported.capability) ?? [];
@@ -1162,6 +1165,10 @@ function checkMixedFrames(
   if (!setup?.frames.length || owners.length !== setup.frames.length)
     gap("async.frames", "frame-census", "selected real async owners and completed frames must match completely");
   for (const frame of setup?.frames ?? []) {
+    if (frame.kind !== "host") {
+      gap("async.frames", "frame-target", "mixed host presentation requires host frames", { unitId: frame.owner });
+      continue;
+    }
     const owner = owners.filter((fn) => fn.unitId === frame.owner);
     if (seen.has(frame.owner) || owner.length !== 1 || !owner[0]?.asyncPlan || !owner[0]?.asyncRuntime)
       gap("async.frames", "frame-owner", "frame must have a unique genuine prepared async attachment", {
@@ -1257,7 +1264,9 @@ function checkMixedDemand(
   if (emission.module.exportSignatures !== undefined)
     gap("exportSignatures", "boundary-metadata", "source boundary metadata must be derived after all joins");
   const capabilities = new Set<string>(
-    plan.asyncFrames?.frames.flatMap((frame) => frame.imports.map((row) => row.capability)),
+    plan.asyncFrames?.frames.flatMap((frame) =>
+      frame.kind === "host" ? frame.imports.map((row) => row.capability) : [],
+    ),
   );
   if (
     runtime.length === 1 &&

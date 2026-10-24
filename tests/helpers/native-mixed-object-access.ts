@@ -94,8 +94,13 @@ import {
 } from "../../src/ir/program-native-invocation.js";
 import type { IrLowerResolver } from "../../src/ir/backend/lower-contracts.js";
 
-export function mixedFoundation(displaced = false) {
-  const f = publicRealmFoundation(displaced),
+export function mixedFoundation(
+  displaced = false,
+  sourceText?: string,
+  extraLiterals: readonly string[] = [],
+  expectedSourceUnits = 2,
+) {
+  const f = publicRealmFoundation(displaced, false, false, false, sourceText, extraLiterals, expectedSourceUnits),
     { tx } = f,
     c = publicRealmClosures(f);
   const flatten = reserveNativeStringFlattenResources(tx, "mixed:flatten", f.strings);
@@ -188,6 +193,7 @@ export function mixedFoundation(displaced = false) {
     lookupDependencies,
     lookup,
     storage,
+    storageDependencies,
     layouts,
     own,
     ownDependencies,
@@ -199,8 +205,13 @@ export function mixedFoundation(displaced = false) {
     stringCreate,
   };
 }
-export function mixedOwnerFixture(displaced = false) {
-  const r = mixedFoundation(displaced),
+export function mixedOwnerFixture(
+  displaced = false,
+  sourceText?: string,
+  extraLiterals: readonly string[] = [],
+  expectedSourceUnits = 2,
+) {
+  const r = mixedFoundation(displaced, sourceText, extraLiterals, expectedSourceUnits),
     realm = publicRealmDeclarations(r.f, r.c);
   const dependencies = {
     realm: realm.declarations,
@@ -431,7 +442,7 @@ export function mixedRuntime(displaced = false) {
     tokens.get!,
     buildMixedObjectGet({
       entryTypeIdx: f.objects.propEntry.typeIndex,
-      vectorTypeIdx: f.substrate.arguments.carrier.typeIndex,
+      argumentVector: { kind: "typed", typeIdx: f.substrate.arguments.carrier.typeIndex },
       undefinedGlobal: tx.physicalIndex(r.values.globals.undefined),
       lookup: tokens.lookup!.handle,
       newVector: f.substrate.arguments.newVector.handle,
@@ -455,7 +466,7 @@ export function mixedRuntime(displaced = false) {
     ...prototype,
     ...(foreign
       ? ([{ op: "struct.new", typeIdx: f.pack.types.identity.typeIndex }] as Instr[])
-      : [global(realm), { op: "ref.as_non_null" }]),
+      : ([global(realm), { op: "ref.as_non_null" }] as Instr[])),
     { op: "struct.new", typeIdx: f.pack.types.state.typeIndex },
   ];
   const native = (id: Instr[], foreign: Instr[], prototype: Instr[], functionHandle = lifted.handle): Instr[] => [

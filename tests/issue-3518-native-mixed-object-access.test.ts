@@ -18,6 +18,7 @@ import {
 } from "../src/backend/wasmgc/resources/native-mixed-object-access.js";
 import {
   buildMixedObjectClassify,
+  buildMixedObjectOwn,
   buildMixedObjectGet,
   buildMixedObjectLookup,
 } from "../src/runtime/wasmgc/values/mixed-object-access-bodies.js";
@@ -244,6 +245,87 @@ for (const displaced of [false, true])
       expect(api().get(tail, key("own"), tail)).toEqual([1, 94]);
       expect(api().has(tail, key("absent"))).toBe(0);
     });
+    it.each(["intrinsicPopulationState", "ordinaryIntrinsicSingletons"])(
+      "ignores inherited %s and getters without granting absence",
+      (role) => {
+        const expected = buildMixedObjectOwn(runtime.operands);
+        const saved = Object.getOwnPropertyDescriptor(Object.prototype, role);
+        let reads = 0;
+        try {
+          for (const descriptor of [
+            { value: 123456 },
+            {
+              get() {
+                reads++;
+                throw Error("inherited getter must not run");
+              },
+            },
+          ]) {
+            Object.defineProperty(Object.prototype, role, { ...descriptor, configurable: true });
+            const actual = buildMixedObjectOwn(runtime.operands);
+            Reflect.deleteProperty(Object.prototype, role);
+            expect(actual).toEqual(expected);
+          }
+          expect(reads).toBe(0);
+          expect(() =>
+            buildMixedObjectOwn({ ...runtime.operands, [role]: role === "intrinsicPopulationState" ? -1 : [-1] }),
+          ).toThrow(/coordinate/);
+          const ownGetter = { ...runtime.operands };
+          Object.defineProperty(ownGetter, role, {
+            enumerable: true,
+            get() {
+              reads++;
+              return 1;
+            },
+          });
+          expect(() => buildMixedObjectOwn(ownGetter)).toThrow(/accessor/);
+          expect(reads).toBe(0);
+        } finally {
+          if (saved) Object.defineProperty(Object.prototype, role, saved);
+          else Reflect.deleteProperty(Object.prototype, role);
+        }
+      },
+    );
+    it("uses the checked singleton coordinate snapshot instead of caller array methods", () => {
+      const expected = buildMixedObjectOwn({ ...runtime.operands, ordinaryIntrinsicSingletons: [0] });
+      let reads = 0;
+      const coordinates = new Proxy([0], {
+        get(target, key, receiver) {
+          if (key === "flatMap") {
+            ++reads;
+            throw Error("caller flatMap must not run");
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(buildMixedObjectOwn({ ...runtime.operands, ordinaryIntrinsicSingletons: coordinates })).toEqual(expected);
+      expect(reads).toBe(0);
+    });
+    it("requires an own Promise bag type without invoking inherited getters", () => {
+      let reads = 0;
+      const row = { kind: "promise" as const, typeIdx: 999, stateField: 6 };
+      const input = { ...runtime.operands, carriers: [...runtime.operands.carriers, row] };
+      const prior = Object.getOwnPropertyDescriptor(Object.prototype, "bagTypeIdx");
+      try {
+        for (const descriptor of [
+          { value: runtime.operands.objectTypeIdx, configurable: true },
+          {
+            get() {
+              reads++;
+              return runtime.operands.objectTypeIdx;
+            },
+            configurable: true,
+          },
+        ]) {
+          Object.defineProperty(Object.prototype, "bagTypeIdx", descriptor);
+          expect(() => buildMixedObjectClassify(input)).toThrow(/missing bag type/);
+        }
+        expect(reads).toBe(0);
+      } finally {
+        if (prior) Object.defineProperty(Object.prototype, "bagTypeIdx", prior);
+        else Reflect.deleteProperty(Object.prototype, "bagTypeIdx");
+      }
+    });
     it("rejects getter-bearing/hidden/sparse pure operands without invoking callbacks", () => {
       let calls = 0;
       const bad = { ...runtime.operands };
@@ -260,7 +342,7 @@ for (const displaced of [false, true])
       expect(() =>
         buildMixedObjectGet({
           entryTypeIdx: 0,
-          vectorTypeIdx: 0,
+          argumentVector: { kind: "typed", typeIdx: 0 },
           undefinedGlobal: 0,
           lookup: 0,
           newVector: 0,
