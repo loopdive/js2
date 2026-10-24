@@ -867,12 +867,12 @@ export class PhysicalModuleReservations {
   #captureReservationList(tokens: readonly PhysicalReservation[], context: string): PhysicalReservation[] {
     if (!Array.isArray(tokens)) this.#fail(`${context} require a dense own-data array`);
     const length = Object.getOwnPropertyDescriptor(tokens, "length");
-    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0)
+    if (!length || !Object.hasOwn(length, "value") || !Number.isSafeInteger(length.value) || length.value < 0)
       this.#fail(`${context} require an own-data length`);
     const captured: PhysicalReservation[] = [];
     for (let index = 0; index < length.value; index++) {
       const descriptor = Object.getOwnPropertyDescriptor(tokens, index);
-      if (!descriptor || !("value" in descriptor)) this.#fail(`${context} require dense own-data entries`);
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) this.#fail(`${context} require dense own-data entries`);
       captured.push(descriptor.value);
     }
     return captured;
@@ -907,14 +907,24 @@ export class PhysicalModuleReservations {
 
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
+    this.assertCompletedReservations([token]);
+  }
+
+  /** A fresh whole-ledger audit for captured tokens; no completion result survives this call. */
+  assertCompletedReservations(tokens: readonly (FunctionReservation | GlobalReservation)[]): void {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
+    const captured = this.#captureReservationList(tokens, "completed reservations");
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
     this.#verifyLayout();
-    this.#owned(token);
-    if (token.kind === "function") {
-      if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
-    } else if (token.kind === "global") {
-      if (!this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
-    } else this.#fail("completion requires a defined function or global");
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
+    for (const token of captured) {
+      this.#owned(token);
+      if (token.kind === "function") {
+        if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
+      } else if (token.kind === "global") {
+        if (!this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
+      } else this.#fail("completion requires a defined function or global");
+    }
   }
 
   fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {

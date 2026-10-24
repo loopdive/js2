@@ -3601,3 +3601,48 @@ parameter of the current lifted source body from a local closure allocation;
 execution of this open parameter path requires the full realm dispatch owner.
 Keep host lowering unchanged. The integration must still execute the real
 source `then(resolve)` body against runtime-created settlement closures.
+
+### Implementation Plan — completion validation cost (2026-10-24)
+
+The strengthened full-realm lookup execution completed **2/2**, exit 0
+(1330.28 seconds; four unrelated cases filtered out), and invocation consumers
+completed **61/61**, exit 0. The actual common-runtime execution is still live.
+A native process sample shows recursive data traversal in JavaScript; it does
+not identify a particular JS function or prove the cost attribution.
+
+`PhysicalModuleReservations.assertCompletedReservation` currently scans the
+whole ledger for every function in the canonical runtime loop. Add a batch
+completion check beside the existing type/index batch APIs, reusing descriptor
+capture and private ownership/fill records. Share the single-token check with
+that implementation. Add a canonical-function batch helper in
+`native-resource-declarations.ts`, reusing its plain-data snapshot and existing
+canonical comparator. Capture tokens and independent expected definitions,
+authenticate before reading token objects, compare, then audit again. Use it
+only for the common Promise runtime function loop; retain final dependency
+revalidation and all global checks. Never cache success across public calls.
+
+Quality/correctness acceptance: no new snapshot algorithm or budget allowance;
+reject sparse/accessor input, forged/foreign/wrong-kind/unfilled tokens, capture
+side effects, late mutation of an already compared function, and changes between
+calls. Expected definitions must be independent of caller mutation. Measure
+scan reduction on a positive fixture without claiming end-to-end speed from it;
+review the implementation adversarially and rerun affected checks.
+
+The implementation passes **115/115** focused completion, canonical-function,
+snapshot and type-authentication tests. Adversarial review found inherited
+descriptor `value` pollution could bypass own-data checks; capture now requires
+an own `value` field and four getter-counting regression cases pass. Follow-up
+review found no remaining concrete blocker in this delta. Focused TS7 passes.
+The earlier broad run remains **259/260**, exit 1: the unchanged module-record
+hash pin fails identically in a pristine archive of aab6af248c295c4d4b9994c06d81d3e4f8db5709
+(initial archive startup failed for missing scripts; the complete rerun reached
+and reproduced the actual assertion). No hash pin or baseline is changed here.
+
+Synthetic validation measurement, 32 canonical functions with 128 instructions
+each: the new path uses **2 audits instead of 32**. For the small ledger,
+warmed single checks took 20–21 ms and the batch took 62–81 ms; copying expected
+definitions has a cost. With 128 additional filled functions of 512 instructions
+each, single checks took 301–378 ms and the batch took 98–104 ms across three
+trials. These measurements justify use in the large composed runtime; they do
+not measure its total compile time. The single-function API retains its one
+fresh audit and the common runtime retains final dependency revalidation.

@@ -9,7 +9,7 @@ import { requireNativePromiseInvocation, type NativePromiseInvocation } from "./
 import { nativePromiseObjectBinding, type NativePromiseObjects } from "./native-promise-objects.js";
 import { nativePromiseThenLookupBinding, type NativePromiseThenLookup } from "./native-promise-then-lookup.js";
 import { nativePromiseKernelDefinitions, fillNativePromiseKernelDefinitions } from "./native-promise-kernel.js";
-import { requireCanonicalNativeFunction } from "./native-resource-declarations.js";
+import { requireCanonicalNativeFunctions } from "./native-resource-declarations.js";
 import { requireNativeStringLiteral } from "./native-string-literals.js";
 
 export interface NativeCommonPromiseRuntime {
@@ -124,7 +124,7 @@ export function nativeCommonPromiseRuntimeBinding(tx: PhysicalModuleReservations
   const owner = current(tx, pack);
   if (!owner.filled) fail("missing canonical runtime fill");
   const rows = definitions(pack, owner);
-  for (const { token, definition } of rows.functions) requireCanonicalNativeFunction(tx, token, definition);
+  requireCanonicalNativeFunctions(tx, rows.functions);
   for (const { token } of rows.globals) tx.assertCompletedReservation(token);
   return { ...bindings(pack, owner, true), promise: pack.objects.promise };
 }
