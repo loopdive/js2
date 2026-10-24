@@ -125,6 +125,10 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
     case "dyn.undefined":
       return instr;
     case "dyn.arguments_length":
+    case "dyn.current_this":
+      return instr; // no operands (#7106 S1e/S3c)
+    case "dyn.instanceof_fn":
+      return { ...instr, value: resolve(instr.value) };
     case "dyn.publish_argc":
       return instr; // no operands (#7106 S1e/S1i)
     case "dyn.own_property":

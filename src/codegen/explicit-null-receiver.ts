@@ -192,7 +192,7 @@ export function buildCurrentThisNonNullArm(
 }
 
 /** Discrimination core of `buildCurrentThisNonNullArm`; no scratch local needed. */
-function buildExplicitNullThisElseArm(
+export function buildExplicitNullThisElseArm(
   ctx: CodegenContext,
   thisTmpLocal: number,
   nullAnswer: readonly Instr[],
