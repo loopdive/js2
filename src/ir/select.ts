@@ -10563,7 +10563,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPrefixUnaryExpression(expr)) {
     if (!isPhase1PrefixOp(expr.operator))
       return shapeNo(`expr-prefix-op-${ts.tokenToString(expr.operator) ?? expr.operator}`, expr);
-    if (expr.operator === ts.SyntaxKind.ExclamationToken && !trackedModuleInfluenceIsBoolean(expr.operand)) {
+    // An operand the exact-family check already proves boolean (a comparison,
+    // a `!`, S1g's certified `__hasOwnProperty(o, k)` alias call) is not a
+    // module-value influence the boolean `!` could misread, whatever slot the
+    // script var behind it was given.
+    if (
+      expr.operator === ts.SyntaxKind.ExclamationToken &&
+      !trackedModuleInfluenceIsBoolean(expr.operand) &&
+      !declaredExpressionHasExactFamily(expr.operand, "boolean", scope)
+    ) {
       return shapeNo("expr-module-value-not", expr);
     }
     if (expressionMayBeModuleExtern(expr.operand)) {
