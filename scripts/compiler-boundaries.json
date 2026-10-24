@@ -11637,6 +11637,14 @@
       "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
+      "path": "src/ir/builtin-method-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
       "path": "src/ir/alloc-registry.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12292,6 +12300,14 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/ir/dynamic-method-call-names.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7106-item1-harness-units",
+      "nextBoundary": "Naming and routing contract for the per-(method, arity) dynamic method-call wrappers; move with the other IR runtime-symbol contracts when ir-core is split from frontend inventory."
     },
     {
       "path": "src/ir/dynamic-number-lowering.ts",
