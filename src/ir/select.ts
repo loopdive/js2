@@ -95,15 +95,21 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
-  type FunctionObjectTypeEvidence,
-  functionObjectHasTypeEvidence,
+  isFunctionObjectMemberRead,
+  isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
 } from "./select-expression-structure.js";
 
-export { effectiveIrParamTypeNode, effectiveIrReturnTypeNode } from "./select-expression-structure.js";
+export {
+  effectiveIrParamTypeNode,
+  effectiveIrReturnTypeNode,
+  isFunctionObjectChainedWrite,
+  isFunctionObjectMemberRead,
+  functionObjectStoreRoot,
+} from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
 import {
   closureLiteralIsBuildable,
@@ -710,7 +716,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
-      | "native-own-property-descriptor",
+      | "native-own-property-descriptor"
+      | "native-dynamic-value-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -2282,11 +2289,6 @@ function isIrClaimable(
 //   and was the last claim-then-demote channel for non-move any-uses.
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
-const functionObjectTypeEvidence: FunctionObjectTypeEvidence = Object.freeze({
-  parameterType: effectiveIrParamTypeNode,
-  returnType: effectiveIrReturnTypeNode,
-});
-
 /**
  * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
  * the IR must ASK about rather than derive? True for a JSDoc type outside the
@@ -3073,20 +3075,9 @@ function dynamicUsesAreMoveOnly(
     if (!ts.isIdentifier(access.expression) || dynNames.has(access.expression.text)) return null;
     if (access.questionDotToken || e.questionDotToken || e.arguments.some(ts.isSpreadElement)) return null;
     const resolver = currentSelectionOptions?.functionObjectValues;
+    // Receiver-only use: the planner mints the boxed `objectReceiver` plan for
+    // annotated and unannotated targets alike (see `isFunctionObjectReceiver`).
     if (!isFunctionObjectReceiver(access.expression, resolver)) return null;
-    // The planner (`ir-imported-call-planning.ts`) mints the canonical
-    // function-object support only with type evidence for every parameter
-    // and the result (an annotation, or the target's own IR claim entry).
-    // The claim set is not visible here, so require the annotations: an
-    // untyped legacy-owned function object (test262's `assert`) is refused
-    // PRE-claim instead of demoting at lowering. Loosen when the planner's
-    // claim-entry route can be mirrored (post Stage 3c, when `assert` claims).
-    // (#6823) The same evidence rule the Phase-1 member-call arm applies.
-    const declaration = resolver?.resolveTopLevelFunctionValue(access.expression)?.declaration;
-    if (declaration === undefined || !functionObjectHasTypeEvidence(declaration, functionObjectTypeEvidence)) {
-      shapeNo("function-object-member-evidence", e);
-      return null;
-    }
     return access.expression;
   };
 
@@ -3360,7 +3351,12 @@ function dynamicUsesAreMoveOnly(
             if (!scanExpr(argument, true)) return false;
           } else {
             const concrete = unwrap(argument);
-            if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+            // (#7106 census arm 4) A number/boolean/string PARAMETER boxes by
+            // its slot's own family (a lattice `bool` slot carries the
+            // `irBool` brand), like the dynamic-equality operands.
+            const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
+            if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false))
+              return false;
           }
         }
         return true;
@@ -6273,6 +6269,123 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
  */
 let currentMemberClosureHasDynamicParams = false;
 
+/**
+ * (#7106 Stage 4) A conditional VALUE whose one arm is a dynamic parameter
+ * (of the subject or of a planned member closure) and whose other arm is a
+ * primitive literal (or a second such parameter): each arm is lowered in its
+ * own branch, the literal boxed into the carrier, and the join is dynamic —
+ * assert.compareArray's `message === undefined ? '' : message`.
+ */
+function dynamicConditionalValueArms(expr: ts.ConditionalExpression): boolean {
+  if (!currentDynamicRuntimeBuildable) return false;
+  const dynamicArm = (arm: ts.Expression): boolean => {
+    const e = unwrapPhase1Parens(arm);
+    return ts.isIdentifier(e) && (currentDynamicParamNames.has(e.text) || currentClosureDynamicParamNames.has(e.text));
+  };
+  const literalArm = (arm: ts.Expression): boolean => {
+    const e = unwrapPhase1Parens(arm);
+    return (
+      ts.isStringLiteral(e) ||
+      ts.isNoSubstitutionTemplateLiteral(e) ||
+      ts.isNumericLiteral(e) ||
+      e.kind === ts.SyntaxKind.TrueKeyword ||
+      e.kind === ts.SyntaxKind.FalseKeyword
+    );
+  };
+  const trueDynamic = dynamicArm(expr.whenTrue);
+  const falseDynamic = dynamicArm(expr.whenFalse);
+  if (!trueDynamic && !falseDynamic) return false;
+  return (trueDynamic || literalArm(expr.whenTrue)) && (falseDynamic || literalArm(expr.whenFalse));
+}
+// (#7106 Stage 4) The planned member closure's dynamic parameter names.
+let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+// (#7106 Stage 4) The planned member closure's `var x = F.member;` locals: each
+// holds the dynamic carrier for its whole life (one declaration, never stored).
+let currentClosureFunctionObjectReadLocals: ReadonlySet<string> = new Set();
+
+/**
+ * (#7106 Stage 4) The `var` locals of `fn`'s own body that are initialized by a
+ * function-object member read (`var format = compareArray.format;`) and are
+ * never written again — no second declaration, assignment, update or nested
+ * function capture (a nested function is refused by every member-closure plan).
+ */
+function functionObjectReadLocals(fn: ts.FunctionExpression): ReadonlySet<string> {
+  const candidates = new Map<string, number>();
+  const written = new Set<string>();
+  const parameters = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+  const visit = (node: ts.Node): void => {
+    if (node !== fn.body && ts.isFunctionLike(node)) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const read =
+        node.initializer !== undefined &&
+        (ts.isPropertyAccessExpression(node.initializer) || ts.isElementAccessExpression(node.initializer)) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        isFunctionObjectMemberRead(node.initializer) &&
+        isFunctionObjectReceiver(node.initializer.expression, currentSelectionOptions?.functionObjectValues);
+      candidates.set(node.name.text, read ? (candidates.get(node.name.text) ?? 0) + 1 : Number.POSITIVE_INFINITY);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left)
+    )
+      written.add(node.left.text);
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand)
+    )
+      written.add(node.operand.text);
+    forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return new Set(
+    [...candidates].flatMap(([name, count]) =>
+      count === 1 && !written.has(name) && !parameters.has(name) ? [name] : [],
+    ),
+  );
+}
+
+/**
+ * (#7106 Stage 4) `func()` — a bare call through one of the current function's
+ * dynamic parameters (assert.throws' `func()`), lowered through the native
+ * IsCallable + `__apply_closure` runtime with an undefined receiver. The
+ * calling body must not read `this`: legacy additionally restores
+ * `__current_this` when the callee throws inside a try, which the shared
+ * runtime does not, so a caller that could observe its receiver afterwards
+ * stays legacy. A planned member closure never reads `this` (its plan refuses
+ * it); a top-level function is checked here.
+ */
+function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
+  const closureParam =
+    currentClosureDynamicParamNames.has(callee.text) || currentClosureFunctionObjectReadLocals.has(callee.text);
+  if (!closureParam && !currentDynamicParamNames.has(callee.text)) return false;
+  if (!currentDynamicRuntimeBuildable) return false;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-value-call") !== true) return false;
+  if (closureParam) return true;
+  const subject = currentSelectionSubject;
+  return subject !== null && subject.body !== undefined && !bodyReadsOwnThis(subject.body);
+}
+
+function bodyReadsOwnThis(body: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      found = true;
+      return;
+    }
+    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassLike(node)))
+      return;
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return found;
+}
+
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
@@ -6687,6 +6800,18 @@ function isPhase1ClosureLiteral(
   const plan = ts.isFunctionExpression(expr)
     ? currentSelectionOptions?.functionMemberClosures?.resolve(expr)
     : undefined;
+  // (#7106 Stage 4) `this` is read through `dyn.current_this` (legacy's ladder);
+  // a string result recovers a dynamic return through `dyn.string_carrier`.
+  if (
+    plan?.thisStrict !== undefined &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-current-this") !== true
+  )
+    return shapeNo("closure-member-this", expr);
+  if (
+    plan?.signature.returnType?.kind === "string" &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-string-carrier-coercion") !== true
+  )
+    return shapeNo("closure-member-string-result", expr);
   return closureLiteralIsBuildable(expr, scope, localClasses, allowNumericDefaultSuffix, plan, {
     shapeNo,
     annotationToResolvedKind,
@@ -6758,13 +6883,24 @@ function withFunctionMemberClosureState<T>(
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
   const outerClosureDynamic = currentMemberClosureHasDynamicParams;
   currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
+  const outerClosureDynamicNames = currentClosureDynamicParamNames;
+  const outerClosureReadLocals = currentClosureFunctionObjectReadLocals;
+  currentClosureFunctionObjectReadLocals = functionObjectReadLocals(plan.expression);
+  currentClosureDynamicParamNames = new Set(
+    [...plan.dynamicParameterIndices].flatMap((index) => {
+      const name = plan.expression.parameters[index]?.name;
+      return name && ts.isIdentifier(name) ? [name.text] : [];
+    }),
+  );
   currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
     plan.expression,
     new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
   );
   const outerInPlannedClosure = currentInPlannedMemberClosure;
   currentInPlannedMemberClosure = true;
-  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
+  // Only an i32 (boolean) plan returns booleans; a string plan returns strings.
+  currentSubjectReturnsBoolean =
+    plan.signature.returnType?.kind === "val" && plan.signature.returnType.val.kind === "i32";
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
   currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
@@ -6806,6 +6942,8 @@ function withFunctionMemberClosureState<T>(
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
     currentMemberClosureHasDynamicParams = outerClosureDynamic;
+    currentClosureDynamicParamNames = outerClosureDynamicNames;
+    currentClosureFunctionObjectReadLocals = outerClosureReadLocals;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
@@ -10292,11 +10430,8 @@ function functionObjectCallIsPhase1(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
-  return functionObjectMemberCallIsBuildable(
-    expr,
-    currentSelectionOptions?.functionObjectValues,
-    functionObjectTypeEvidence,
-    (expression) => isPhase1Expr(expression, scope, localClasses),
+  return functionObjectMemberCallIsBuildable(expr, currentSelectionOptions?.functionObjectValues, (expression) =>
+    isPhase1Expr(expression, scope, localClasses),
   );
 }
 
@@ -10443,8 +10578,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
-      return true;
+    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
+    if (isFunctionObjectStoredValue(expr, currentSelectionOptions?.functionObjectValues)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.
@@ -10662,6 +10797,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // dead arm).
     const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTag(id, scope));
     if (folded !== undefined) return isPhase1Expr(folded ? expr.whenTrue : expr.whenFalse, scope, localClasses);
+    // (#7106 Stage 4) `message === undefined ? '' : message` — a dynamic
+    // parameter arm and a literal arm join on the dynamic carrier.
+    if (dynamicConditionalValueArms(expr)) {
+      return (
+        isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
+        isPhase1Expr(expr.whenTrue, scope, localClasses) &&
+        isPhase1Expr(expr.whenFalse, scope, localClasses)
+      );
+    }
     const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
     const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
     const truePrimitive = classifyPrimitive?.(expr.whenTrue);
@@ -11292,6 +11436,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
     let localCallableArity: CallableArityRange | undefined;
+    if (scope.has(calleeName) && dynamicValueCallTarget(expr)) {
+      return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
+    }
     if (scope.has(calleeName)) {
       localCallableArity = knownCallableArity(expr.expression, scope);
       if (localCallableArity === undefined) {

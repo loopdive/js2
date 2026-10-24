@@ -9,9 +9,32 @@ import type { TypeDef, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { peekFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
 import { noteFunctionValueInhabitant } from "./closures/closure-type-sources.js";
+import { isStrictFunction } from "./helpers/is-strict-function.js";
 
 function physicalKey(types: readonly ValType[], result: ValType | null): string {
   return JSON.stringify([types, result]);
+}
+
+/**
+ * The physical wrapper result of a plan signature: a `val` is its own value
+ * type; the logical `string` (a STRING-result plan) is legacy's non-null native
+ * string ref, which is also what the IR's canonical string carrier lowers to.
+ */
+function physicalResult(ctx: CodegenContext, type: IrType | null): ValType | null | undefined {
+  if (type === null) return null;
+  if (type.kind === "val") return type.val;
+  return type.kind === "string" && ctx.nativeStrings ? { kind: "ref", typeIdx: ctx.anyStrTypeIdx } : undefined;
+}
+
+/** The allocation's signature is the plan's, up to the string carrier preparation attaches. */
+function sameMemberClosureSignature(actual: IrClosureSignature, plan: IrClosureSignature): boolean {
+  if (actual === plan) return true;
+  return (
+    actual.params.length === plan.params.length &&
+    actual.params.every((type, index) => type === plan.params[index]) &&
+    actual.returnType?.kind === "string" &&
+    plan.returnType?.kind === "string"
+  );
 }
 
 /** No capture/mutation/implicit receiver authority is transferred by this proof. */
@@ -86,31 +109,40 @@ function closedScalarBodyKey(
 }
 
 /**
- * (#7106 Stage 4) The VOID-result body proof: assert.js's `assert.sameValue =
- * function (actual, expected, message) { … }` — oracle return `void`, legacy
- * physical result none. The body is NOT restricted to scalar returns (its
- * buildability is the IR selector's own decision, over an empty outer scope);
- * this proof only refuses what would transfer authority the plan does not
- * carry — `this`/`super`/`arguments`/`new.target`, a nested function or class
- * (captures), `yield`/`await` — and a `return <value>` (the ABI has no
- * result). The key records every node plus each identifier's resolved
+ * (#7106 Stage 4) The OPEN body proof for a VOID- or STRING-result closure:
+ * assert.js's `assert.sameValue = function (actual, expected, message) { … }`
+ * (oracle `void`, legacy physical result none) and sta.js's
+ * `Test262Error.prototype.toString = function () { return … }` (oracle
+ * `string`, legacy result the native string ref). The body is NOT restricted to
+ * scalar returns (its buildability is the IR selector's own decision, over an
+ * empty outer scope); this proof only refuses what would transfer authority the
+ * plan does not carry — `super`/`arguments`/`new.target`, a nested function or
+ * class (captures), `yield`/`await` — plus `this` unless the plan binds it
+ * (`allowThis`), and a `return <value>` unless the ABI has a result
+ * (`returnsValue`; a bare `return;` there is refused, it would yield
+ * `undefined`). The key records every node plus each identifier's resolved
  * declaration, so `isCurrent` sees a rebinding as staleness.
  */
-function openVoidBodyKey(expression: ts.FunctionExpression, oracle: CodegenContext["oracle"]): string | undefined {
+function openBodyKey(
+  expression: ts.FunctionExpression,
+  oracle: CodegenContext["oracle"],
+  returnsValue: boolean,
+  allowThis: boolean,
+): string | undefined {
   const facts: Array<string | number> = [];
   let ok = true;
   const visit = (node: ts.Node): void => {
     if (!ok) return;
     facts.push(node.kind, node.pos, node.end);
     if (
-      node.kind === ts.SyntaxKind.ThisKeyword ||
+      (node.kind === ts.SyntaxKind.ThisKeyword && !allowThis) ||
       node.kind === ts.SyntaxKind.SuperKeyword ||
       ts.isMetaProperty(node) ||
       ts.isFunctionLike(node) ||
       ts.isClassLike(node) ||
       ts.isYieldExpression(node) ||
       ts.isAwaitExpression(node) ||
-      (ts.isReturnStatement(node) && node.expression !== undefined)
+      (ts.isReturnStatement(node) && (node.expression !== undefined) !== returnsValue)
     ) {
       ok = false;
       return;
@@ -127,6 +159,18 @@ function openVoidBodyKey(expression: ts.FunctionExpression, oracle: CodegenConte
   };
   for (const statement of expression.body.statements) visit(statement);
   return ok && expression.body.statements.length > 0 ? JSON.stringify(facts) : undefined;
+}
+
+/** Does `expression`'s own body (no nested function, which every plan refuses) read `this`? */
+function bodyReadsThis(expression: ts.FunctionExpression): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found || ts.isFunctionLike(node)) return;
+    if (node.kind === ts.SyntaxKind.ThisKeyword) found = true;
+    else ts.forEachChild(node, visit);
+  };
+  for (const statement of expression.body.statements) visit(statement);
+  return found;
 }
 
 /** Guard cached oracle facts with the exact captured AST before querying them. */
@@ -208,11 +252,22 @@ function planMemberClosure(
     assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
     !ts.isPropertyAccessExpression(assignment.left) ||
     assignment.left.questionDotToken ||
-    !ts.isIdentifier(assignment.left.expression) ||
     !ts.isIdentifier(assignment.left.name) ||
     !ts.isExpressionStatement(assignment.parent)
   )
     return;
+  // `F.x = function …` or the chained `F.p.x = function …`
+  // (`Test262Error.prototype.toString = …`, the store #7106 census arm 3 lowers).
+  const holder = assignment.left.expression;
+  const receiver = ts.isIdentifier(holder)
+    ? holder
+    : ts.isPropertyAccessExpression(holder) &&
+        !holder.questionDotToken &&
+        ts.isIdentifier(holder.name) &&
+        ts.isIdentifier(holder.expression)
+      ? holder.expression
+      : undefined;
+  if (!receiver) return;
   const statementOwner = assignment.parent.parent;
   const ownerDeclaration =
     ts.isBlock(statementOwner) &&
@@ -223,7 +278,6 @@ function planMemberClosure(
       : undefined;
   if (!ts.isSourceFile(statementOwner) && !ownerDeclaration) return;
   const access = assignment.left;
-  const receiver = assignment.left.expression;
   const target = resolver.resolveTopLevelFunctionValueTarget(receiver);
   const source = expression.getSourceFile();
   if (
@@ -255,21 +309,48 @@ function planMemberClosure(
   // parameter declaration joins and canonical physical ABI are checked below;
   // no declaration identity is invented from the registry-free signature fact.
   const oracleSignature = ctx.oracle.signatureOf(expression);
-  const returnsVoid = oracleSignature?.returns.kind === "void";
+  // A throw-only body (`Test262Error.thrower = function (message) { throw … }`)
+  // has the oracle return `never`, reported unresolvable; legacy still
+  // registers it with no physical result, and the void body proof refuses
+  // any `return <value>`.
+  const returnsVoid = oracleSignature?.returns.kind === "void" || oracleSignature?.returns.kind === "unresolvable";
+  // (#7106 Stage 4) A STRING result (`return "Test262Error: " + this.message;`):
+  // legacy registers the native string ref, which the IR's string carrier is.
+  const returnsString = oracleSignature?.returns.kind === "string";
   if (
     !oracleSignature ||
     oracleSignature.declaredArity !== expression.parameters.length ||
     oracleSignature.params.length !== expression.parameters.length ||
-    (oracleSignature.returns.kind !== "boolean" && !returnsVoid)
+    (oracleSignature.returns.kind !== "boolean" && !returnsVoid && !returnsString)
   )
     return;
   const physical = operations.computeSignature(expression);
+  const result = physical.returnType;
   if (
     physical.hasRestParam ||
     physical.params.length !== expression.parameters.length ||
-    (returnsVoid ? physical.returnType !== null : physical.returnType?.kind !== "i32")
+    (returnsVoid
+      ? result !== null
+      : returnsString
+        ? !ctx.nativeStrings || result?.kind !== "ref" || result.typeIdx !== ctx.anyStrTypeIdx
+        : result?.kind !== "i32")
   )
     return;
+  // (#7106 Stage 4) A prototype method of an approved fnctor stays legacy's:
+  // legacy pins its `this` to the fnctor struct and may build a typed-`this`
+  // twin plus direct-call trampolines for it (#3683), none of which the IR does.
+  // Without the query (a bare service bundle), a chained `F.p.x` store is refused.
+  const fnctorStruct = operations.fnctorPrototypeMethodStruct
+    ? operations.fnctorPrototypeMethodStruct(expression)
+    : holder !== receiver
+      ? "unknown"
+      : undefined;
+  if (fnctorStruct !== undefined) return;
+  // Otherwise `this` is bound once at entry through `dyn.current_this` —
+  // legacy's lifted-closure `__current_this` ladder — in an open-body plan.
+  const readsThis = bodyReadsThis(expression);
+  if (readsThis && !returnsVoid && !returnsString) return;
+  const thisStrict = readsThis ? isStrictFunction(expression, ctx.inferModuleStrictArguments) : undefined;
   const parameters = new Set<ts.ParameterDeclaration>();
   const seenNames = new Set<string>();
   const parameterNames: Array<readonly [ts.ParameterDeclaration, ts.Identifier, string]> = [];
@@ -305,16 +386,25 @@ function planMemberClosure(
       return;
   }
   const bodyKeyOf = (): string | undefined =>
-    returnsVoid ? openVoidBodyKey(expression, ctx.oracle) : closedScalarBodyKey(expression, ctx.oracle, parameters);
+    returnsVoid || returnsString
+      ? openBodyKey(expression, ctx.oracle, returnsString, readsThis)
+      : closedScalarBodyKey(expression, ctx.oracle, parameters);
   const bodyKey = bodyKeyOf();
   if (bodyKey === undefined) return;
   const sourceText = source.text;
   const syntaxIsCurrent = captureMemberClosureSyntax(expression);
   const memberName = access.name;
   const memberText = memberName.text;
+  // A string result is the logical `string`: Program-ABI preparation attaches
+  // the canonical carrier, which lowers to exactly legacy's `(ref $AnyString)`.
   const signature: IrClosureSignature = Object.freeze({
     params: Object.freeze(physical.params.map((type) => operations.valueType(Object.freeze({ ...type })))),
-    returnType: physical.returnType === null ? null : operations.valueType(Object.freeze({ ...physical.returnType })),
+    returnType:
+      physical.returnType === null
+        ? null
+        : returnsString
+          ? Object.freeze({ kind: "string" as const })
+          : operations.valueType(Object.freeze({ ...physical.returnType })),
   });
   const key = physicalKey(physical.params, physical.returnType);
   return Object.freeze({
@@ -323,13 +413,15 @@ function planMemberClosure(
     sourceUnitId,
     signature,
     dynamicParameterIndices,
+    ...(thisStrict === undefined ? {} : { thisStrict }),
     isCurrent() {
       // Refuse stale captured source/target before invoking canonical ABI services.
       if (
         expression.parent !== assignment ||
         assignment.right !== expression ||
         assignment.left !== access ||
-        access.expression !== receiver ||
+        access.expression !== holder ||
+        (holder !== receiver && (holder as ts.PropertyAccessExpression).expression !== receiver) ||
         source.text !== sourceText ||
         access.name !== memberName ||
         memberName.text !== memberText ||
@@ -366,18 +458,19 @@ function planMemberClosure(
         current.sourceUnitId !== sourceUnitId ||
         resolver.resolveTopLevelFunctionValueTarget(receiver)?.declaration !== target.declaration ||
         bodyKeyOf() !== bodyKey ||
+        current.thisStrict !== thisStrict ||
         current.dynamicParameterIndices.size !== dynamicParameterIndices.size ||
         [...dynamicParameterIndices].some((index) => !current.dynamicParameterIndices.has(index))
       )
         return false;
       const currentParams = current.signature.params;
-      const currentResult = current.signature.returnType;
+      const currentResult = physicalResult(ctx, current.signature.returnType);
       return (
         currentParams.every((type) => type.kind === "val") &&
-        (currentResult === null || currentResult.kind === "val") &&
+        currentResult !== undefined &&
         physicalKey(
           currentParams.map((type) => (type as Extract<typeof type, { kind: "val" }>).val),
-          currentResult === null ? null : currentResult.val,
+          currentResult,
         ) === key
       );
     },
@@ -391,6 +484,12 @@ export interface FunctionMemberClosureServices {
     hasRestParam: boolean;
   };
   dynamicCarrierIsExternref(): boolean;
+  /**
+   * (#7106 Stage 4) The `$__fnctor_F` struct legacy pins a prototype method's
+   * `this` to (`resolveLiftedMethodThisStruct`), injected so this planner
+   * stays outside the fnctor-gate import cycle.
+   */
+  fnctorPrototypeMethodStruct?(expression: ts.FunctionExpression): string | undefined;
 }
 interface FunctionMemberClosureOperations extends FunctionMemberClosureServices {
   valueType(type: ValType): IrType;
@@ -421,15 +520,19 @@ export function makeIrFunctionMemberClosures(
       if (instruction.liftedFunc.binding.kind !== "unit") return;
       const plan = byUnit.get(instruction.liftedFunc.binding.unitId);
       if (!plan) return;
-      if (!plan.isCurrent() || instruction.signature !== plan.signature || instruction.captureFieldTypes.length !== 0)
+      if (
+        !plan.isCurrent() ||
+        !sameMemberClosureSignature(instruction.signature, plan.signature) ||
+        instruction.captureFieldTypes.length !== 0
+      )
         throw new Error("function-member closure lost its exact source/allocation proof");
       const params = plan.signature.params.map((type) => {
         if (type.kind !== "val") throw new Error("function-member closure has a nonphysical parameter");
         return type.val;
       });
-      const result = plan.signature.returnType;
-      if (result !== null && result.kind !== "val") throw new Error("function-member closure has no physical result");
-      const wrapper = peekFuncRefWrapperTypes(ctx, params, result === null ? [] : [result.val]);
+      const result = physicalResult(ctx, plan.signature.returnType);
+      if (result === undefined) throw new Error("function-member closure has no physical result");
+      const wrapper = peekFuncRefWrapperTypes(ctx, params, result === null ? [] : [result]);
       const actual = ctx.irUnitFuncMap.get(plan.sourceUnitId);
       const session = ctx.programAbiSession;
       if (
