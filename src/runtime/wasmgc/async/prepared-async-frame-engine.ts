@@ -2,6 +2,7 @@
 
 import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";
+import { assertNativePromiseShape, createNativePromiseShape } from "../promise/promise-layout.js";
 import { defaultSpillInstr } from "./frame-defaults.js";
 import { buildNativeAwaitClassification } from "./native-await.js";
 import type {
@@ -62,6 +63,7 @@ export function preflightPreparedFrame(plan: PreparedFramePlan, r: PreparedFrame
   const ids = new Set(plan.values.map((v) => v.id));
   if (ids.size !== plan.values.length) throw new Error("prepared frame has duplicate values");
   const { promise } = resources(r);
+  if (r.runtime.kind === "native") assertNativePromiseShape(r.runtime.promise.target);
   const carrier = r.frame.target.fields[r.resultField]?.type;
   if (
     r.runtime.kind === "host" ? carrier?.kind !== "externref" : carrier?.kind !== "ref" || carrier.typeIdx !== promise
@@ -314,6 +316,10 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
     get(0),
     field(r.resultField),
     set(result),
+    // Wasm definite assignment cannot infer that suspended=1 implies a classified
+    // native Promise. Seed the scratch reference before entering dispatch; await
+    // classification replaces it before any pending reaction is installed.
+    ...(r.runtime.kind === "native" ? [get(result), set(pending)] : []),
     buildStandardTryTable(empty, dispatch, [
       { kind: "catch", tagIdx: bound.tag, payloadType: ext, body: [set(reason), ...reject] },
       ...(r.runtime.kind === "host"
@@ -342,10 +348,7 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
     r.runtime.kind === "host"
       ? [call(r.runtime.create)]
       : [
-          constant(0),
-          { op: "ref.null.extern" },
-          { op: "ref.null.extern" },
-          { op: "ref.null.extern" },
+          ...createNativePromiseShape().fields.map((field) => defaultSpillInstr(field.type)),
           { op: "struct.new", typeIdx: bound.promise },
         ];
   entryBody.push(set(paramCount));

@@ -2242,3 +2242,31 @@ is retained as `integration-commit.log`. Inventory is valid but the architecture
 graph remains open; reachability certifies preservation (6/6 full and cut), not
 retirement. Exact-base checker/coercion/verdict gates pass, and the post-projection
 TypeScript 7 check exits zero.
+
+## Native prepared-frame carrier repair — 2026-10-24
+
+A no-import module using the real queue and Promise settlement builders exposed
+invalid Wasm in the native prepared-frame engine: entry supplied four constructor
+operands for the canonical five-field Promise, and resume read a non-defaultable
+Promise scratch local outside the branch that initialized it.
+
+Implementation: share the existing carrier schema between native declarations,
+frame preflight and construction. Reject missing, mistyped or immutable fields
+before publishing frame bodies. Initialize the scratch reference before dispatch;
+classification replaces it before installing any pending reaction. Reuse the
+existing default-value, queue, settlement and reservation builders. No new host
+imports or size-budget allowances.
+
+Validation on isolated main ff27bb4de9c8162535dc663043facc1b7d3c3b12 plus this
+repair: 77/77 tests across native frame execution (9), existing prepared-frame
+runtime (21), and native Promise reservations (47). The six execution cases use
+zero-import Wasm: plain-value identity, queue growth with twelve independent
+frames, fulfilled/rejected native inputs, and pending fulfillment/rejection.
+Three negative cases reject malformed carrier layouts before entry publication.
+The previous engine fails Wasm validation (five constructor operands required,
+four supplied); all twelve emitted host fixtures are byte-identical between base
+and candidate. Source/focused-test typechecks and targeted lint pass.
+
+This repairs the runtime kernel. Whole-program standalone frame admission,
+thenable assimilation, true Linear/WASI integration and the original R7 retirement
+requirements remain open; these kernel tests do not claim source-level coverage.
