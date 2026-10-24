@@ -854,6 +854,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /** (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>` read folds to, else undefined. */
+  ambientNamespaceConstant?(expr: ts.PropertyAccessExpression): number | undefined;
 }
 
 export type IrSourceMapNodeProjection =
@@ -6253,6 +6255,16 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
       );
     }
     return entry;
+  }
+  // (#7106 module-init lever A) `Number.<CONST>` / `Math.<CONST>` on the
+  // unshadowed ambient namespace folds to legacy's own constant.
+  if (
+    ts.isIdentifier(expr.expression) &&
+    !cx.scope.has(expr.expression.text) &&
+    cx.resolver?.isAmbientBinding?.(expr.expression) !== false
+  ) {
+    const constant = cx.resolver?.ambientNamespaceConstant?.(expr);
+    if (constant !== undefined) return cx.builder.emitConst({ kind: "f64", value: constant }, irVal({ kind: "f64" }));
   }
   const ordinary = lowerPreparedOrdinaryPropertyRead(expr, cx);
   if (ordinary !== null) return ordinary;

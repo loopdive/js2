@@ -39,12 +39,18 @@ flat-dir-budget-allow:
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
-  - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
-  - largestSccSize: 725 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it
+  - ir->codegen: 81 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`)
+  - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
+  - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
+  - largestSccSize: 726 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it
 # 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
+  - src/ir/integration.ts::makeFromAstResolver
+  # 2026-10-22 (lever B): one intrinsic→provider branch
+  - src/ir/integration.ts::resolveAndObserveCallableProvider
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
   - src/ir/from-ast.ts::lowerFunctionAstToIr
@@ -71,6 +77,10 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
+  - src/codegen/builtin-value-read.ts
+  # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
+  - src/ir/runtime/manifest.ts
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
@@ -1428,3 +1438,67 @@ for (let k = 1; k <= 12; k++) {
 ```
 
 </details>
+
+## `<module-init>` lever A — ambient `Number.<CONST>` / `Math.<CONST>` fold (built 2026-10-22)
+
+Arm A of the plan in #6876 (the 80-file census on the integrated stack:
+`expr-ident-not-in-scope «Number»` first among the `<module-init>` blockers,
+37 of 71). The read folds, in the IR, to the SAME constant legacy's dot read
+emits.
+
+| piece | where | reuse |
+| --- | --- | --- |
+| the table | `builtinNamespaceConstantValue` in `codegen/builtin-value-read.ts` — `MATH_CONSTANT_VALUES` / `NUMBER_CONSTANT_VALUES`, own keys only; legacy's `tryEmitBuiltinNamespaceConstantValue` now reads through it | no second list anywhere |
+| bridge | `irAmbientNamespaceConstant(expr)` in `ir/integration.ts`, the one answer behind the selection option and the from-ast resolver, supplied at both planning sites | — |
+| selector | `ambientNamespaceConstantRead` (ambient predicate; the caller's `scope` / `dynNames` settles a local shadow) at the Phase-1 property-access arm and the move-only scan (a concrete f64) | — |
+| from-ast | the first arm of `lowerPropertyAccess`: `emitConst f64` | — |
+
+**Measured** (`tests/issue-7106-ir-ambient-namespace-constants.test.ts`,
+standalone and default, compared with node): `MAX_VALUE`, `MIN_VALUE`,
+`EPSILON`, `NaN`, `±Infinity`, `MAX/MIN_SAFE_INTEGER`, `Math.PI/LN2/SQRT2/
+SQRT1_2` in functions ship IR bodies; a `<module-init>` of
+`var eps = Number.EPSILON; var big = Number.MAX_VALUE; …` ships an IR body
+(was `expr-ident-not-in-scope «Number»`). A module-level `var Number = {…}`
+is never folded by the IR (the function is declined, not miscompiled).
+
+**Found on the way (legacy, not IR) — to file.** Legacy's dot-read fold
+ignores a shadowing binding: with `var Number = { MAX_VALUE: 7 }` (module
+level) or a parameter named `Number`, legacy still emits `1.7976931348623157e+308`
+(node answers the shadow's value). Measured on both lanes; the IR declines
+both shapes. `claim-issue.mjs --allocate` was refused here (open-PR scan
+degraded, no `gh` GraphQL from this session), so the id is left for a lane
+with `gh`.
+
+## `<module-init>` lever B — `Number(v)` through its host-free provider (built 2026-10-22)
+
+The 37 «Number» module-init blockers of the census are `Number(…)` calls.
+from-ast already lowered a source-bound `Number(v)` (`lowerPreparedNumberCall`
+→ intrinsic `js.number.from-value`, the full ToNumeric contract), but nothing
+reached it: no selector admission, a plan invalidated by any `Number.X` /
+`new Number` in the file, no plan on the integration from-ast resolver, and —
+decisive — **no provider for the intrinsic on any lane**.
+
+| piece | where | reuse |
+| --- | --- | --- |
+| provider | `native.js.number.from-value` (`ir/runtime/number-conversion-callable.ts`, in `SEMANTIC_CALLABLE_RUNTIME_PROVIDERS`), symbol `__ir_number_from_value` | the manifest's `runtime-callable` shape, like `REFERENCE_ERROR_RUNTIME_PROVIDERS` |
+| the function | `codegen/helpers/ir-number-from-value.ts`: legacy's own `Number(v)` emission (`call-identifier.ts`) over a detached template with one externref parameter — the symbol guard, StringToNumber, the array/object ToPrimitive arms, the ToNumber cascade, byte for byte | `codegen/helpers/template-wrapper.ts` — the helper context, detached parse and publication every template wrapper shares (the #7119 / #6874 copies move here when they land) |
+| resolution | `resolveAndObserveCallableProvider` maps the intrinsic to the helper; pre-registered at finalize from the IR scan (`usesNumberFromValue`) so no Phase-3 body drives a late-import shift | the dyn.object_tag pattern |
+| admission | capability `native-number-conversion` (host-free, non-fast, wasmgc) + the plan's own answer (`preparedNumberCall`, supplied to the selector at both planning sites and to the from-ast resolver); `preparedNumberConversionCall` at the three selector sites beside `String(v)` | the plan is the single authority on shadowing |
+| plan | `prepare-number-conversion.ts`: a member-access receiver (`Number.MAX_VALUE`) or a `new Number(…)` callee keeps the plan — neither reads the binding as a value that could be rebound | — |
+
+**Measured** (`tests/issue-7106-ir-number-conversion.test.ts`, standalone vs
+node): a dynamic operand answers node on `{valueOf}`, `[5]`, `"0x10"`,
+`null`, `undefined`, `true`, `"abc"`, `new Number(9)`, `{toString}`,
+`Symbol()` → TypeError, `[]`, `[1,2]` (2047/2047); legacy's SITE arm for the
+same program answers 6143 (it does not throw for a dynamic Symbol) — the
+template takes legacy's `any` arm, which does. A module-init of six literal
+conversions beside `Number.MAX_VALUE` / `Number.NaN` / `Number.NEGATIVE_INFINITY`
+reads ships an IR body. Standalone's caller-closure rule still drops a
+parameterless claimed callee of an unclaimed caller (`zero()` called from a
+legacy `run`), pre-existing.
+
+**Left out.** Host lanes (no `host.js.number.from-value` provider; the
+selector capability excludes them). **Found on the way (legacy, to file with
+the constants-shadow defect):** with `var Number = function (x) { return 7; }`
+at module level, legacy's by-name `Number(x)` arm still converts (node: 7).
+
