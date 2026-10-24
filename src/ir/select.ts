@@ -710,7 +710,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
-      | "native-own-property-descriptor",
+      | "native-own-property-descriptor"
+      | "native-dynamic-value-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -6273,6 +6274,75 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
  */
 let currentMemberClosureHasDynamicParams = false;
 
+/**
+ * (#7106 Stage 4) A conditional VALUE whose one arm is a dynamic parameter
+ * (of the subject or of a planned member closure) and whose other arm is a
+ * primitive literal (or a second such parameter): each arm is lowered in its
+ * own branch, the literal boxed into the carrier, and the join is dynamic —
+ * assert.compareArray's `message === undefined ? '' : message`.
+ */
+function dynamicConditionalValueArms(expr: ts.ConditionalExpression): boolean {
+  if (!currentDynamicRuntimeBuildable) return false;
+  const dynamicArm = (arm: ts.Expression): boolean => {
+    const e = unwrapPhase1Parens(arm);
+    return ts.isIdentifier(e) && (currentDynamicParamNames.has(e.text) || currentClosureDynamicParamNames.has(e.text));
+  };
+  const literalArm = (arm: ts.Expression): boolean => {
+    const e = unwrapPhase1Parens(arm);
+    return (
+      ts.isStringLiteral(e) ||
+      ts.isNoSubstitutionTemplateLiteral(e) ||
+      ts.isNumericLiteral(e) ||
+      e.kind === ts.SyntaxKind.TrueKeyword ||
+      e.kind === ts.SyntaxKind.FalseKeyword
+    );
+  };
+  const trueDynamic = dynamicArm(expr.whenTrue);
+  const falseDynamic = dynamicArm(expr.whenFalse);
+  if (!trueDynamic && !falseDynamic) return false;
+  return (trueDynamic || literalArm(expr.whenTrue)) && (falseDynamic || literalArm(expr.whenFalse));
+}
+// (#7106 Stage 4) The planned member closure's dynamic parameter names.
+let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+
+/**
+ * (#7106 Stage 4) `func()` — a bare call through one of the current function's
+ * dynamic parameters (assert.throws' `func()`), lowered through the native
+ * IsCallable + `__apply_closure` runtime with an undefined receiver. The
+ * calling body must not read `this`: legacy additionally restores
+ * `__current_this` when the callee throws inside a try, which the shared
+ * runtime does not, so a caller that could observe its receiver afterwards
+ * stays legacy. A planned member closure never reads `this` (its plan refuses
+ * it); a top-level function is checked here.
+ */
+function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
+  const closureParam = currentClosureDynamicParamNames.has(callee.text);
+  if (!closureParam && !currentDynamicParamNames.has(callee.text)) return false;
+  if (!currentDynamicRuntimeBuildable) return false;
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-value-call") !== true) return false;
+  if (closureParam) return true;
+  const subject = currentSelectionSubject;
+  return subject !== null && subject.body !== undefined && !bodyReadsOwnThis(subject.body);
+}
+
+function bodyReadsOwnThis(body: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      found = true;
+      return;
+    }
+    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassLike(node)))
+      return;
+    forEachChild(node, visit);
+  };
+  visit(body);
+  return found;
+}
+
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
@@ -6758,6 +6828,13 @@ function withFunctionMemberClosureState<T>(
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
   const outerClosureDynamic = currentMemberClosureHasDynamicParams;
   currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
+  const outerClosureDynamicNames = currentClosureDynamicParamNames;
+  currentClosureDynamicParamNames = new Set(
+    [...plan.dynamicParameterIndices].flatMap((index) => {
+      const name = plan.expression.parameters[index]?.name;
+      return name && ts.isIdentifier(name) ? [name.text] : [];
+    }),
+  );
   currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
     plan.expression,
     new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
@@ -6806,6 +6883,7 @@ function withFunctionMemberClosureState<T>(
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
     currentMemberClosureHasDynamicParams = outerClosureDynamic;
+    currentClosureDynamicParamNames = outerClosureDynamicNames;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
@@ -10662,6 +10740,15 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // dead arm).
     const folded = foldAmbientTypeofComparison(expr.condition, (id) => ambientTypeofIdentifierTag(id, scope));
     if (folded !== undefined) return isPhase1Expr(folded ? expr.whenTrue : expr.whenFalse, scope, localClasses);
+    // (#7106 Stage 4) `message === undefined ? '' : message` — a dynamic
+    // parameter arm and a literal arm join on the dynamic carrier.
+    if (dynamicConditionalValueArms(expr)) {
+      return (
+        isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
+        isPhase1Expr(expr.whenTrue, scope, localClasses) &&
+        isPhase1Expr(expr.whenFalse, scope, localClasses)
+      );
+    }
     const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
     const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
     const truePrimitive = classifyPrimitive?.(expr.whenTrue);
@@ -11292,6 +11379,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
     let localCallableArity: CallableArityRange | undefined;
+    if (scope.has(calleeName) && dynamicValueCallTarget(expr)) {
+      return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
+    }
     if (scope.has(calleeName)) {
       localCallableArity = knownCallableArity(expr.expression, scope);
       if (localCallableArity === undefined) {
