@@ -95,8 +95,6 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
-  type FunctionObjectTypeEvidence,
-  functionObjectHasTypeEvidence,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
@@ -2282,11 +2280,6 @@ function isIrClaimable(
 //   and was the last claim-then-demote channel for non-move any-uses.
 type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | "dynamic" | null;
 
-const functionObjectTypeEvidence: FunctionObjectTypeEvidence = Object.freeze({
-  parameterType: effectiveIrParamTypeNode,
-  returnType: effectiveIrReturnTypeNode,
-});
-
 /**
  * (#7106 item 1) Is this JSDoc-only parameter position one whose legacy slot
  * the IR must ASK about rather than derive? True for a JSDoc type outside the
@@ -3073,20 +3066,9 @@ function dynamicUsesAreMoveOnly(
     if (!ts.isIdentifier(access.expression) || dynNames.has(access.expression.text)) return null;
     if (access.questionDotToken || e.questionDotToken || e.arguments.some(ts.isSpreadElement)) return null;
     const resolver = currentSelectionOptions?.functionObjectValues;
+    // Receiver-only use: the planner mints the boxed `objectReceiver` plan for
+    // annotated and unannotated targets alike (see `isFunctionObjectReceiver`).
     if (!isFunctionObjectReceiver(access.expression, resolver)) return null;
-    // The planner (`ir-imported-call-planning.ts`) mints the canonical
-    // function-object support only with type evidence for every parameter
-    // and the result (an annotation, or the target's own IR claim entry).
-    // The claim set is not visible here, so require the annotations: an
-    // untyped legacy-owned function object (test262's `assert`) is refused
-    // PRE-claim instead of demoting at lowering. Loosen when the planner's
-    // claim-entry route can be mirrored (post Stage 3c, when `assert` claims).
-    // (#6823) The same evidence rule the Phase-1 member-call arm applies.
-    const declaration = resolver?.resolveTopLevelFunctionValue(access.expression)?.declaration;
-    if (declaration === undefined || !functionObjectHasTypeEvidence(declaration, functionObjectTypeEvidence)) {
-      shapeNo("function-object-member-evidence", e);
-      return null;
-    }
     return access.expression;
   };
 
@@ -3360,7 +3342,12 @@ function dynamicUsesAreMoveOnly(
             if (!scanExpr(argument, true)) return false;
           } else {
             const concrete = unwrap(argument);
-            if (!concreteDynamicAssignmentOperandIsBuildable(concrete) || !scanExpr(concrete, false)) return false;
+            // (#7106 census arm 4) A number/boolean/string PARAMETER boxes by
+            // its slot's own family (a lattice `bool` slot carries the
+            // `irBool` brand), like the dynamic-equality operands.
+            const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
+            if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false))
+              return false;
           }
         }
         return true;
@@ -10035,6 +10022,26 @@ function instanceOfLeftIsDynamicCarrier(left: ts.Expression): boolean {
 }
 
 /**
+ * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
+ * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
+ * binding (`selfGuardedConstructorValue`: the declaration itself, never
+ * reassigned) and the function-object planner must resolve the occurrence,
+ * because the lowering reads both the value and the identity from that plan.
+ */
+function selfGuardedConstructorValueUse(ident: ts.Identifier): boolean {
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-current-this") !== true) return false;
+  if (currentSelectionOptions.selfGuardedConstructorValue?.(ident) !== true) return false;
+  return currentSelectionOptions.functionObjectValues?.resolveTopLevelFunctionValue(ident) !== undefined;
+}
+
+/** (#7106 S3c) The left operand of a `dyn.instanceof_fn`: a dynamic carrier the scan can prove. */
+function instanceOfLeftIsDynamicCarrier(left: ts.Expression): boolean {
+  const operand = unwrapPhase1Parens(left);
+  if (operand.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
+  return ts.isIdentifier(operand) && currentDynamicParamNames.has(operand.text);
+}
+
+/**
  * (#7106 S3a) The `new <callee>(…)` shape `dyn.construct` admits: a direct,
  * non-spread construct of the current subject's dynamic-typed PARAMETER, at
  * most `IR_DYNAMIC_CONSTRUCT_MAX_ARITY` arguments, on a lane with the
@@ -10292,11 +10299,8 @@ function functionObjectCallIsPhase1(
   scope: ReadonlySet<string>,
   localClasses: ReadonlySet<string>,
 ): boolean | undefined {
-  return functionObjectMemberCallIsBuildable(
-    expr,
-    currentSelectionOptions?.functionObjectValues,
-    functionObjectTypeEvidence,
-    (expression) => isPhase1Expr(expression, scope, localClasses),
+  return functionObjectMemberCallIsBuildable(expr, currentSelectionOptions?.functionObjectValues, (expression) =>
+    isPhase1Expr(expression, scope, localClasses),
   );
 }
 
@@ -10443,8 +10447,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (namesDeferredHostSurface(expr, localClasses)) {
       return capabilityNo("host-surface-unavailable", "expr-ident-host-surface-deferred", expr);
     }
-    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
-      return true;
+    if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.

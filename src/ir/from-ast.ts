@@ -16149,7 +16149,9 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   // Proven boolean i32 → tag-4 box; without the refinement the i32 would box
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
-  if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
+  // (#7106 census arm 4) The `irBool` brand is the same proof (#4503): a
+  // lattice-`bool` parameter slot carries it.
+  if (tv.kind === "i32" && (irTypeIsBoolean(t) || expressionIsDefinitelyBoolean(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the

@@ -65,22 +65,6 @@ export function effectiveIrReturnTypeNode(
   return fn.type ?? ts.getJSDocReturnType(fn);
 }
 
-export interface FunctionObjectTypeEvidence {
-  readonly parameterType: (parameter: ts.ParameterDeclaration) => ts.TypeNode | undefined;
-  readonly returnType: (declaration: ts.FunctionDeclaration) => ts.TypeNode | undefined;
-}
-
-/** Preclaim evidence cannot depend on a target acquiring a later IR claim. */
-export function functionObjectHasTypeEvidence(
-  declaration: ts.FunctionDeclaration,
-  evidence: FunctionObjectTypeEvidence,
-): boolean {
-  return (
-    declaration.parameters.every((parameter) => evidence.parameterType(parameter) !== undefined) &&
-    evidence.returnType(declaration) !== undefined
-  );
-}
-
 function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
@@ -101,22 +85,24 @@ function resolveFunctionObjectReceiver(
   return resolver?.resolveTopLevelFunctionValue(node);
 }
 
-/** Without evidence this is only the existing stable receiver-identity test. */
+/**
+ * A stable top-level function used ONLY as the receiver of a member call or
+ * member write. (#7108-successor arm, #7106 census arm 4) No signature
+ * evidence is required: such a use lowers to the canonical function object
+ * boxed into the dynamic carrier (`objectReceiver` plan), and the planner
+ * mints that plan with an opaque signature when the target is unannotated —
+ * the signature only types the accessor's externref result before the box.
+ */
 export function isFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
-  evidence?: FunctionObjectTypeEvidence,
 ): boolean {
-  const target = resolveFunctionObjectReceiver(node, resolver);
-  return (
-    target !== undefined && (evidence === undefined || functionObjectHasTypeEvidence(target.declaration, evidence))
-  );
+  return resolveFunctionObjectReceiver(node, resolver) !== undefined;
 }
 
 export function functionObjectMemberCallIsBuildable(
   expr: ts.CallExpression,
   resolver: IrImportedFunctionResolver | undefined,
-  evidence: FunctionObjectTypeEvidence,
   isExpressionBuildable: (expression: ts.Expression) => boolean,
 ): boolean | undefined {
   const functionAccess = expr.expression;
@@ -126,7 +112,6 @@ export function functionObjectMemberCallIsBuildable(
       ? resolveFunctionObjectReceiver(functionAccess.expression, resolver)
       : undefined;
   if (target && (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess))) {
-    if (!functionObjectHasTypeEvidence(target.declaration, evidence)) return false;
     if (functionAccess.questionDotToken || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
       return false;
     if (ts.isElementAccessExpression(functionAccess) && !isExpressionBuildable(functionAccess.argumentExpression))
