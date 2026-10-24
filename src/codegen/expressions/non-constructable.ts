@@ -9,6 +9,7 @@
 import { ts } from "../../ts-api.js";
 import { isSingleAssignmentBinding } from "../proxy-value-provenance.js";
 import type { CodegenContext } from "../context/types.js";
+import { binderFor, isBindingReferencePosition, sourceFileOf } from "../../checker/binder.js";
 
 /**
  * (#2886) Does `id` resolve to the **ambient global** binding (declared only in
@@ -65,6 +66,91 @@ function unwrapValueExpression(expr: ts.Expression): ts.Expression {
     e = e.expression;
   }
   return e;
+}
+
+/**
+ * Recover only declaration identity when an ambient checker answer hides a
+ * source binding. This is NOT a constructability or single-assignment proof:
+ * writes and mutable prototype reads require the existing runtime new driver.
+ */
+export function recoverAmbientPrototypeConstructorBinding(
+  ctx: Pick<CodegenContext, "oracle">,
+  calleeExpr: ts.Expression,
+): ts.VariableDeclaration | undefined {
+  const id = unwrapValueExpression(calleeExpr);
+  if (!ts.isIdentifier(id) || !isBindingReferencePosition(id)) return undefined;
+  const seen = new Set<ts.Node>();
+  let owner: ts.Node | undefined = id;
+  while (owner && !ts.isSourceFile(owner)) {
+    if (seen.has(owner) || owner.pos < 0 || (owner.flags & ts.NodeFlags.Synthesized) !== 0) return undefined;
+    if (ts.isWithStatement(owner)) return undefined;
+    seen.add(owner);
+    owner = owner.parent;
+  }
+  if (!owner || owner.isDeclarationFile || sourceFileOf(id) !== owner) return undefined;
+  const source = owner;
+  for (const node of seen) if (node.end > source.end || node.end < node.pos) return undefined;
+
+  const evidence = ctx.oracle.bindingDeclarationEvidenceOf(id);
+  if (evidence.kind === "unknown") return undefined;
+  if (evidence.kind === "resolved") {
+    if (evidence.declarations.some((declaration) => !declaration.getSourceFile().isDeclarationFile)) return undefined;
+    if (evidence.valueDeclaration && !evidence.valueDeclaration.getSourceFile().isDeclarationFile) return undefined;
+  }
+  const binder = binderFor(source);
+  const binding = binder.resolve(id);
+  // The measured shape is a source-level variable captured by a callback.
+  // Nearest nested bindings, merged declarations and destructuring decline.
+  if (!binding || binding !== binder.sourceScope.bindings.get(id.text) || binding.destructured) return undefined;
+  if (binding.kind !== "var" && binding.kind !== "let" && binding.kind !== "const") return undefined;
+  if (binding.declarations.length !== 1) return undefined;
+  const declaration = binding.valueDeclaration;
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !ts.isIdentifier(declaration.name)) return undefined;
+  if (binding.declarations[0] !== declaration || !declaration.initializer || sourceFileOf(declaration) !== source) {
+    return undefined;
+  }
+  const list = declaration.parent;
+  if (!list || !ts.isVariableDeclarationList(list)) return undefined;
+  const statement = list.parent;
+  if (!statement || !ts.isVariableStatement(statement) || statement.parent !== source) return undefined;
+  if (ts.getModifiers(statement)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) return undefined;
+
+  // The binder does not model with/eval effects or Annex-B block-function
+  // merging. Refuse conservatively; scanning here is a veto, not resolution.
+  let uncertainScope = false;
+  const inspect = (node: ts.Node): void => {
+    if (uncertainScope) return;
+    const callCallee =
+      ts.isCallExpression(node) && !node.questionDotToken ? unwrapValueExpression(node.expression) : undefined;
+    if (ts.isWithStatement(node) || (callCallee && ts.isIdentifier(callCallee) && callCallee.text === "eval"))
+      uncertainScope = true;
+    if (
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === id.text &&
+      ts.isBlock(node.parent) &&
+      !ts.isFunctionLike(node.parent.parent)
+    )
+      uncertainScope = true;
+    ts.forEachChild(node, inspect);
+  };
+  inspect(source);
+  if (uncertainScope) return undefined;
+
+  const access = unwrapValueExpression(declaration.initializer);
+  if (!ts.isPropertyAccessExpression(access)) return undefined;
+  const prototype = unwrapValueExpression(access.expression);
+  if (!ts.isPropertyAccessExpression(prototype) || prototype.name.text !== "prototype") return undefined;
+  const root = unwrapValueExpression(prototype.expression);
+  if (!ts.isIdentifier(root) || binder.resolve(root)) return undefined;
+  const rootEvidence = ctx.oracle.bindingDeclarationEvidenceOf(root);
+  if (
+    rootEvidence.kind !== "resolved" ||
+    !rootEvidence.declarations.length ||
+    rootEvidence.declarations.some((decl) => !decl.getSourceFile().isDeclarationFile)
+  ) {
+    return undefined;
+  }
+  return declaration;
 }
 
 /**
