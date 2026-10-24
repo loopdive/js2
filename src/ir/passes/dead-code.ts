@@ -23,6 +23,7 @@
 // Distinct from the backend `dead-elimination.ts` in `src/codegen/` which
 // operates on Wasm imports / type definitions, not IR values.
 
+import { collectTerminatorUses } from "../core/terminator-operands.js";
 import {
   asBlockId,
   collectUses,
@@ -234,19 +235,6 @@ function shouldKeep(i: IrInstr, live: ReadonlySet<IrValueId>): boolean {
   if (isSideEffecting(i)) return true;
   if (i.result === null) return true; // void-producing but not side-effecting — keep to be safe
   return live.has(i.result);
-}
-
-function collectTerminatorUses(t: IrTerminator): readonly IrValueId[] {
-  switch (t.kind) {
-    case "return":
-      return t.values;
-    case "br":
-      return t.branch.args;
-    case "br_if":
-      return [t.condition, ...t.ifTrue.args, ...t.ifFalse.args];
-    case "unreachable":
-      return [];
-  }
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,13 @@ export type {
 } from "../shared/contracts/ir-identity.js";
 
 import { ts } from "../ts-api.js";
+import { isAmbientDeclaration } from "./analysis/ambient-declarations.js";
+import {
+  classDefinitionExpressions,
+  classMemberUnitKind,
+  hasStaticModifier,
+  type IrClassDefinitionExpressionOwner,
+} from "./analysis/class-definition-syntax.js";
 import {
   createDerivedIrUnitId,
   createIrBindingId,
@@ -39,7 +46,13 @@ import {
   isBoundedPreparedNestedOrdinaryClass,
   isNestedOrdinaryClassFieldCallInventoryCandidate,
 } from "./class-accessor-safety.js";
-import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import {
+  collectModuleInitPopulation,
+  moduleInitExportAssignment,
+  MODULE_INIT_UNIT_NAME,
+  LEGACY_STATIC_CLASS_INIT_FAILURE,
+  type IrModuleInitPopulationMode,
+} from "./module-init.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import type {
@@ -130,6 +143,8 @@ export interface IrNestedClassFieldCallInventoryCandidate {
 type PendingIrNestedClassFieldCallInventoryCandidate = Omit<IrNestedClassFieldCallInventoryCandidate, "inventory">;
 
 export interface BuildIrUnitInventoryOptions {
+  /** @internal Whole-source execution owns class definitions as startup work. */
+  readonly moduleInitMode?: IrModuleInitPopulationMode;
   /** Marks the entry explicitly without deriving it from caller insertion order. */
   readonly entrySource?: ts.SourceFile | string;
   /** Compiler-owned provenance; user spellings never classify a node as injected. */
@@ -451,22 +466,6 @@ function orderSourceKeys<T extends { sourceFile: ts.SourceFile; sourceKey: strin
   return components.flat();
 }
 
-function hasStaticModifier(node: ts.Node): boolean {
-  return (ts.getCombinedModifierFlags(node as ts.Declaration) & ts.ModifierFlags.Static) !== 0;
-}
-
-function hasDeclareModifier(node: ts.Node): boolean {
-  for (let current: ts.Node | undefined = node; current; current = current.parent) {
-    const modifiers = (current as { modifiers?: readonly ts.Node[] }).modifiers;
-    if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return true;
-  }
-  return node.getSourceFile().isDeclarationFile;
-}
-
-function decoratorExpressions(node: ts.Node): readonly ts.Expression[] {
-  return ts.canHaveDecorators(node) ? (ts.getDecorators(node)?.map((decorator) => decorator.expression) ?? []) : [];
-}
-
 /**
  * (#3522 W1-A) The single spelling for a `PrivateIdentifier`-named class member,
  * on every naming path: `#secret` → `__priv_secret`.
@@ -538,6 +537,8 @@ const compilerClassRole = (origin: CompilerSourceOrigin): IrSyntheticClassRole =
 
 /** @internal Exact AST records retained outside serializable identity values. */
 export interface IrInventoryScannerMetadata {
+  readonly definitionExpressions: readonly IrClassDefinitionExpressionOwner[];
+  readonly moduleInitMode: IrModuleInitPopulationMode;
   readonly sources: readonly {
     readonly sourceFile: ts.SourceFile;
     readonly record: IrSourceRecord;
@@ -695,6 +696,7 @@ class SourceInventoryBuilder {
   readonly terminalUnits: IrTerminalUnitRecord[] = [];
   readonly unitDeclarations: IrInventoryScannerMetadata["units"][number][] = [];
   readonly classDeclarations: IrInventoryScannerMetadata["classes"][number][] = [];
+  readonly definitionExpressions: IrClassDefinitionExpressionOwner[] = [];
   readonly fieldCallCandidates: PendingIrNestedClassFieldCallInventoryCandidate[] = [];
 
   private readonly unitOrdinals = new Map<string, number>();
@@ -712,7 +714,14 @@ class SourceInventoryBuilder {
   ) {}
 
   build(): void {
-    const modulePopulation = collectModuleInitPopulation(this.sourceFile);
+    const modulePopulation = collectModuleInitPopulation(this.sourceFile, this.options.moduleInitMode);
+    const sourceAnchor = modulePopulation[0] ?? moduleInitExportAssignment(this.sourceFile);
+    const sourceTerminal =
+      this.options.moduleInitMode === "source-complete" &&
+      (modulePopulation.some(ts.isClassDeclaration) || moduleInitExportAssignment(this.sourceFile)) &&
+      sourceAnchor
+        ? this.addTerminalUnit("module-init", null, sourceAnchor, MODULE_INIT_UNIT_NAME, "module-init")
+        : undefined;
     let firstStaticInitialization: ts.Node | undefined;
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
 
@@ -760,7 +769,13 @@ class SourceInventoryBuilder {
         continue;
       }
       if (ts.isClassDeclaration(statement)) {
-        const result = this.processClass(statement, null, null, true, this.compilerOrigin(statement));
+        const result = this.processClass(
+          statement,
+          null,
+          isAmbientDeclaration(statement) ? null : (sourceTerminal?.id ?? null),
+          true,
+          this.compilerOrigin(statement),
+        );
         if (result.firstStaticInitialization && firstStaticInitialization === undefined) {
           firstStaticInitialization = result.firstStaticInitialization;
         }
@@ -768,30 +783,28 @@ class SourceInventoryBuilder {
         continue;
       }
       if (ts.isExportAssignment(statement)) {
-        const unit = this.addSupportUnit("export-assignment", null, null, statement, "<export-assignment>");
-        this.scanNode(statement.expression, unit.id, null);
+        const owner = sourceTerminal?.id ?? null;
+        const unit = this.addSupportUnit("export-assignment", null, owner, statement, "<export-assignment>");
+        this.scanNode(statement.expression, unit.id, owner);
       }
     }
 
     const anchor = modulePopulation[0] ?? firstStaticInitialization ?? moduleInitExportAssignment(this.sourceFile);
     if (anchor) {
-      const terminal = this.addTerminalUnit(
-        "module-init",
-        null,
-        anchor,
-        MODULE_INIT_UNIT_NAME,
-        "module-init",
-        false,
-        firstStaticInitialization
-          ? {
-              kind: "unsupported",
-              code: "static-class-initialization",
-              stage: "select",
-              detail: "class static initialization is still emitted by the direct module-init path",
-            }
-          : undefined,
-      );
-      for (const statement of modulePopulation) this.scanNode(statement, terminal.id, terminal.id);
+      const terminal =
+        sourceTerminal ??
+        this.addTerminalUnit(
+          "module-init",
+          null,
+          anchor,
+          MODULE_INIT_UNIT_NAME,
+          "module-init",
+          false,
+          firstStaticInitialization ? LEGACY_STATIC_CLASS_INIT_FAILURE : undefined,
+        );
+      // Top-level classes were already discovered with this execution owner.
+      for (const statement of modulePopulation)
+        if (!ts.isClassDeclaration(statement)) this.scanNode(statement, terminal.id, terminal.id);
       for (const scan of deferredModuleInitScans) scan(terminal.id);
     }
   }
@@ -1009,15 +1022,6 @@ class SourceInventoryBuilder {
     return record;
   }
 
-  private classMemberKind(
-    member: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-  ): IrUnitKind {
-    const placement = hasStaticModifier(member) ? "static" : "instance";
-    if (ts.isGetAccessorDeclaration(member)) return `class-${placement}-getter`;
-    if (ts.isSetAccessorDeclaration(member)) return `class-${placement}-setter`;
-    return `class-${placement}-method`;
-  }
-
   private processClass(
     node: ts.ClassDeclaration | ts.ClassExpression,
     lexicalOwnerId: IrLexicalOwnerId | null,
@@ -1043,27 +1047,16 @@ class SourceInventoryBuilder {
     const fieldCallInventoryCandidate = directNestedClass && isNestedOrdinaryClassFieldCallInventoryCandidate(node);
     const fieldCallTerminalMembers: IrNestedClassFieldCallTerminalCandidate[] = [];
     const deferredModuleInitScans: ((moduleOwner: IrUnitId) => void)[] = [];
-    const definitionExpressions: ts.Expression[] = [...decoratorExpressions(node)];
-    for (const clause of node.heritageClauses ?? []) {
-      for (const heritageType of clause.types) definitionExpressions.push(heritageType.expression);
+    for (const expression of classDefinitionExpressions(node)) {
+      if (this.options.moduleInitMode === "source-complete")
+        this.definitionExpressions.push({
+          sourceFile: this.sourceFile,
+          expression,
+          classId: classRecord.id,
+          terminalOwnerId: inheritedTerminalOwnerId,
+        });
+      this.scanNode(expression, classRecord.id, inheritedTerminalOwnerId);
     }
-    for (const member of node.members) {
-      definitionExpressions.push(...decoratorExpressions(member));
-      if (
-        ts.isConstructorDeclaration(member) ||
-        ts.isMethodDeclaration(member) ||
-        ts.isGetAccessorDeclaration(member) ||
-        ts.isSetAccessorDeclaration(member)
-      ) {
-        for (const parameter of member.parameters) definitionExpressions.push(...decoratorExpressions(parameter));
-      }
-      if (member.name && ts.isComputedPropertyName(member.name)) definitionExpressions.push(member.name.expression);
-    }
-    const scanDefinitionExpressions = (terminalOwnerId: IrUnitId | null): void => {
-      for (const expression of definitionExpressions) this.scanNode(expression, classRecord.id, terminalOwnerId);
-    };
-    if (topLevelDeclaration) scanDefinitionExpressions(null);
-    else scanDefinitionExpressions(inheritedTerminalOwnerId);
     const anonymousFailure: IrPreparationFailure | undefined = isAnonymousTopLevel
       ? {
           kind: "unsupported",
@@ -1158,7 +1151,7 @@ class SourceInventoryBuilder {
                 ? staticCtorMethod
                   ? "class-static-method"
                   : "class-constructor"
-                : this.classMemberKind(functionalMember),
+                : classMemberUnitKind(functionalMember),
               classRecord.id,
               member,
               promoteNestedMember
@@ -1176,7 +1169,7 @@ class SourceInventoryBuilder {
                 ? staticCtorMethod
                   ? "class-static-method"
                   : "class-constructor"
-                : this.classMemberKind(functionalMember),
+                : classMemberUnitKind(functionalMember),
               classRecord.id,
               inheritedTerminalOwnerId,
               member,
@@ -1230,11 +1223,11 @@ class SourceInventoryBuilder {
       if (fieldCallInventoryCandidate && explicitConstructor.terminal) {
         fieldCallTerminalMembers.push({ declaration: node, record: explicitConstructor });
       }
-    } else if (!hasExecutableConstructor && !hasDeclareModifier(node)) {
+    } else if (!hasExecutableConstructor && !isAmbientDeclaration(node)) {
       explicitConstructor = this.addSupportUnit(
         "class-implicit-constructor",
         classRecord.id,
-        topLevelDeclaration ? null : inheritedTerminalOwnerId,
+        inheritedTerminalOwnerId,
         node,
         `${displayName}_new`,
         compilerOrigin ? compilerUnitRole(compilerOrigin) : undefined,
@@ -1405,6 +1398,7 @@ export function buildIrUnitInventory(
   const terminalUnits: IrTerminalUnitRecord[] = [];
   const scannedUnits: IrInventoryScannerMetadata["units"][number][] = [];
   const scannedClasses: IrInventoryScannerMetadata["classes"][number][] = [];
+  const definitionExpressions: IrClassDefinitionExpressionOwner[] = [];
   const pendingFieldCallCandidates: PendingIrNestedClassFieldCallInventoryCandidate[] = [];
   for (let index = 0; index < keyed.length; index++) {
     const builder = new SourceInventoryBuilder(keyed[index]!.sourceFile, sources[index]!, options);
@@ -1414,6 +1408,7 @@ export function buildIrUnitInventory(
     terminalUnits.push(...builder.terminalUnits);
     scannedUnits.push(...builder.unitDeclarations);
     scannedClasses.push(...builder.classDeclarations);
+    definitionExpressions.push(...builder.definitionExpressions);
     pendingFieldCallCandidates.push(...builder.fieldCallCandidates);
   }
   const inventory: IrUnitInventory = Object.freeze({
@@ -1435,6 +1430,8 @@ export function buildIrUnitInventory(
   scannerMetadataByInventory.set(
     inventory,
     Object.freeze({
+      moduleInitMode: options.moduleInitMode ?? "legacy",
+      definitionExpressions: Object.freeze(definitionExpressions.map((entry) => Object.freeze(entry))),
       sources: Object.freeze(
         keyed.map(({ sourceFile }, index) => Object.freeze({ sourceFile, record: sources[index]! })),
       ),

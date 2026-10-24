@@ -231,12 +231,13 @@ export function attachIrPhysicalRefTypeRefs(
         const shape = mapObjectShape(base.shape);
         return shape === base.shape ? base : { ...base, shape };
       }
+      case "class.value.new":
       case "closure.new": {
         const signature = mapSignature(base.signature);
-        const captureFieldTypes = mapArray(base.captureFieldTypes, mapType);
-        return signature === base.signature && captureFieldTypes === base.captureFieldTypes
-          ? base
-          : { ...base, signature, captureFieldTypes };
+        const mapped = signature === base.signature ? base : { ...base, signature };
+        if (mapped.kind !== "closure.new") return mapped;
+        const captureFieldTypes = mapArray(mapped.captureFieldTypes, mapType);
+        return captureFieldTypes === mapped.captureFieldTypes ? mapped : { ...mapped, captureFieldTypes };
       }
       case "vec.new_fixed":
       case "forof.vec": {

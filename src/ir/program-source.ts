@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { createSourceCallableSignatures } from "./source-callable-signatures.js";
+import { classStartupOccurrences } from "./analysis/class-startup.js";
+import * as sourceClassDefinitions from "./source-class-definitions.js";
 import { sourceBooleanAnyResult, assertSourceBooleanAnyReturns } from "../frontend/boolean-return-boundary.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import { prepareSourceClosureInvocations } from "./source-closure-invocation.js";
@@ -16,8 +19,8 @@ import {
   type IrFunctionSourceMapContext,
   type IrSourceMapNodeProjection,
 } from "./from-ast.js";
-import { buildIrUnitInventory, getIrInventoryScannerMetadata, type BuildIrUnitInventoryOptions } from "./identity.js";
-import type { IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
+import { getIrInventoryScannerMetadata, type BuildIrUnitInventoryOptions } from "./identity.js";
+import type { IrSourceId, IrUnitId, IrClassId } from "../shared/contracts/ir-identity.js";
 import type {
   IrUnitInventory,
   IrPreparedSourceMap,
@@ -41,7 +44,7 @@ import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } fro
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
 import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
 import type { IrType } from "./core/types.js";
-import { freezePreparedIrRuntimeValue, preparedIrDataMismatch } from "./program/data.js";
+import { freezePreparedIrRuntimeValue } from "./program/data.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { preparedIrProgramOwner } from "./program.js";
@@ -297,7 +300,14 @@ function sourceMapStartupOccurrences(
       if (identifier && unitId !== undefined && plan.executable && plan.gaps.length === 0)
         occurrences.set(declaration, Object.freeze({ start: binding.start, end: binding.end }));
     }
-    const expected = file.statements.flatMap((statement, statementOrdinal) => {
+    const expected = file.statements.flatMap<{
+      node: ts.Node;
+      statementOrdinal: number;
+      nestedOrdinal: number;
+      kind: string;
+      classId: IrClassId | null;
+      legacyKind: string;
+    }>((statement, statementOrdinal) => {
       if (ts.isVariableStatement(statement))
         return statement.declarationList.declarations.some((declaration) => declaration.initializer !== undefined)
           ? [
@@ -311,25 +321,8 @@ function sourceMapStartupOccurrences(
               },
             ]
           : [];
-      if (ts.isClassDeclaration(statement)) {
-        const nodes = statement.members.flatMap((member) => {
-          const isStatic =
-            ts.canHaveModifiers(member) &&
-            (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false);
-          if (ts.isClassStaticBlockDeclaration(member))
-            return [{ node: member as ts.Node, kind: "class-static-block" }];
-          return isStatic && ts.isPropertyDeclaration(member) && member.initializer
-            ? [{ node: member.initializer as ts.Node, kind: "class-static-field" }]
-            : [];
-        });
-        return nodes.map((row, nestedOrdinal) => ({
-          ...row,
-          statementOrdinal,
-          nestedOrdinal,
-          classId: identity.classIdByDeclaration.get(statement) ?? null,
-          legacyKind: "static",
-        }));
-      }
+      if (ts.isClassDeclaration(statement))
+        return classStartupOccurrences(identity, statement).map((row) => ({ ...row, statementOrdinal }));
       if (population.has(statement) || ts.isExportAssignment(statement))
         return [
           {
@@ -967,85 +960,6 @@ function checkerScalar(checker: ts.TypeChecker, node: ts.Node): IrType | undefin
   return undefined;
 }
 
-/** Shared logical callable conversion; this does not issue a physical carrier. */
-function checkerCallableType(checker: ts.TypeChecker, input: ts.Type, where: string): IrType | null {
-  const active = new Set<ts.Type>();
-  const convert = (type: ts.Type): IrType | null => {
-    if ((type.flags & ts.TypeFlags.Void) !== 0) return null;
-    if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return { kind: "val", val: { kind: "f64" } };
-    if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return { kind: "val", val: { kind: "i32", boolean: true } };
-    if ((type.flags & ts.TypeFlags.StringLike) !== 0) return { kind: "string" };
-    if (active.has(type)) unsupported(`callable annotation in ${where} has a recursive anonymous contract`);
-    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    if (signatures.length !== 1 || checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length)
-      unsupported(`callable annotation in ${where} requires one non-constructing call signature`);
-    const signature = signatures[0]!;
-    if (signature.typeParameters?.length || signature.thisParameter)
-      unsupported(`callable annotation in ${where} has unsupported generic/this parameters`);
-    active.add(type);
-    try {
-      const params = signature.parameters.map((symbol) => {
-        const declaration = symbol.valueDeclaration;
-        if (
-          !declaration ||
-          !ts.isParameter(declaration) ||
-          !declaration.type ||
-          declaration.dotDotDotToken ||
-          declaration.questionToken ||
-          declaration.initializer ||
-          (symbol.flags & ts.SymbolFlags.Optional) !== 0
-        )
-          unsupported(`callable annotation in ${where} requires exact required parameter declarations`);
-        const value = convert(checker.getTypeOfSymbolAtLocation(symbol, declaration));
-        if (!value) unsupported(`callable annotation in ${where} cannot use a void parameter`);
-        return value;
-      });
-      return {
-        kind: "callable",
-        signature: { params, returnType: convert(checker.getReturnTypeOfSignature(signature)) },
-      };
-    } finally {
-      active.delete(type);
-    }
-  };
-  return convert(input);
-}
-
-/** Checker-certified callable annotations; no physical carrier or provider is inferred. */
-function checkerCallable(checker: ts.TypeChecker, node: ts.TypeNode, where: string): IrType | undefined {
-  const declared = checker.getTypeFromTypeNode(node);
-  if (!checker.getSignaturesOfType(declared, ts.SignatureKind.Call).length) return undefined;
-  const result = checkerCallableType(checker, declared, where);
-  const observed = checkerCallableType(checker, checker.getTypeAtLocation(node), where);
-  if (!result || preparedIrDataMismatch(result, observed) !== undefined)
-    unsupported(`callable annotation in ${where} disagrees with its checker contract`);
-  return result;
-}
-
-/** Preserve a real inferred callable return instead of the scalar lattice's null fallback. */
-function checkerInferredCallableResult(
-  checker: ts.TypeChecker,
-  declaration: ts.FunctionDeclaration,
-  where: string,
-): IrType | undefined {
-  if (
-    declaration.type ||
-    !declaration.body ||
-    declaration.asteriskToken ||
-    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-  )
-    return undefined;
-  const signature = checker.getSignatureFromDeclaration(declaration);
-  if (!signature) return undefined;
-  const type = checker.getReturnTypeOfSignature(signature);
-  const parts = type.isUnionOrIntersection() ? type.types : [type];
-  if (!parts.some((part) => checker.getSignaturesOfType(part, ts.SignatureKind.Call).length)) return undefined;
-  if (type.isUnionOrIntersection()) unsupported(`inferred callable result in ${where} has an ambiguous contract`);
-  const result = checkerCallableType(checker, type, where);
-  if (result?.kind !== "callable") unsupported(`inferred callable result in ${where} lost its checker contract`);
-  return result;
-}
-
 /** Canonical any identity excludes TypeScript's separate error-any recovery type. */
 function checkerAny(checker: ts.TypeChecker, node: ts.Node): IrType | undefined {
   return checker.getTypeAtLocation(node) === checker.getAnyType() ? { kind: "dynamic" } : undefined;
@@ -1395,6 +1309,15 @@ function validateNativePromiseDelaySourceLowering(
   inspect(allocations.snapshot());
 }
 
+/** Share the source admission policy across original and lifted callable signatures. */
+function sourceCallableSignatures({ checker, policy }: Pick<IrProgramSourceInput, "checker" | "policy">) {
+  return createSourceCallableSignatures(
+    checker,
+    unsupported,
+    policy.target === "standalone" && policy.backend === "wasmgc",
+  );
+}
+
 /** Keep callable carriers separate from semantic fulfillment signatures. */
 function prepareSourceFunctionSignatures(
   checker: ts.TypeChecker,
@@ -1408,6 +1331,7 @@ function prepareSourceFunctionSignatures(
   bodyResults: Map<IrUnitId, IrType | null>,
   diagnostic: SourceDiagnosticOwner,
 ): void {
+  const callableTypes = sourceCallableSignatures({ checker, policy });
   for (const unit of inventory.terminalUnits) {
     diagnostic.active = unit.id;
     if (unit.kind === "module-init") continue;
@@ -1423,7 +1347,7 @@ function prepareSourceFunctionSignatures(
       declaration.parameters.map((param, index) =>
         param.type
           ? ((hostAsync ? hostAsyncParameter(checker, param) : undefined) ??
-            checkerCallable(checker, param.type, unit.displayName) ??
+            callableTypes.callable(param.type, unit.displayName) ??
             typeNodeToIr(param.type, unit.displayName))
           : propagated?.params[index]
             ? lowerTypeToIrType(propagated.params[index]!)
@@ -1448,9 +1372,9 @@ function prepareSourceFunctionSignatures(
               ? { kind: "val", val: { kind: "externref" } }
               : returnNode
                 ? (sourceBooleanAnyResult(checker, declaration) ??
-                  checkerCallable(checker, returnNode, unit.displayName) ??
+                  callableTypes.callable(returnNode, unit.displayName) ??
                   typeNodeToIr(returnNode, unit.displayName))
-                : (checkerInferredCallableResult(checker, declaration, unit.displayName) ??
+                : (callableTypes.inferredResult(declaration, unit.displayName) ??
                   (propagated ? lowerTypeToIrType(propagated.returnType) : null));
     bodyResults.set(unit.id, result);
     const callableResults = preparedIrProgramCallableResults({
@@ -1592,23 +1516,23 @@ function prepareStartupDirectCalls(
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
+  const callableTypes = sourceCallableSignatures(input);
   const sourceMapRequest = selectSourceMapCapture(input);
   const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const nativeAsyncFamily = selectNativeAsyncFamilyProjection(input);
   const nativeStringValues = selectNativeStringValueProjection(input);
   const nativeStringOutput = selectNativeStringOutputProjection(input);
-  const inventory = buildIrUnitInventory(input.sourceFiles, {
-    ...input.inventoryOptions,
-    entrySource: input.entrySource,
-    checker: input.checker,
-  });
-  if (sourceMapRequest !== undefined) sourceMapPreflightScannerTree(inventory);
-  const identity = buildIrPlanningIdentityContext(inventory);
+  const { inventory, identity } = sourceClassDefinitions.prepareIrSourceDefinitionPopulation(
+    input,
+    sourceMapRequest === undefined ? undefined : sourceMapPreflightScannerTree,
+  );
   const sourceFiles = inventory.sources.map((source) => identity.sourceFileBySourceId.get(source.id)!);
   const sourceMapCatalog =
     sourceMapRequest === undefined
       ? undefined
       : buildPreparedSourceMapCatalog(sourceFiles, inventory, sourceMapRequest, identity);
+  const definitionFailure = sourceClassDefinitions.unloweredSourceClassDefinition(identity);
+  if (definitionFailure) return definitionFailure;
   const derivedSourceRows = sourceMapRequest === undefined ? undefined : new Map<IrUnitId, IrSourceMapDerivedSource>();
   const startup: IrModuleInitPlan[] = [];
   const allocations = new AllocSiteRegistry();
@@ -1762,6 +1686,8 @@ export function prepareIrProgramSources(
         };
       };
       const resolver: IrFromAstResolver = {
+        sourceClosureSignature: (node) => callableTypes.closure(node, unit.displayName),
+        nativeCallableInvocation: (node) => callableTypes.runtimeParameter(node, closureCallableParameters),
         sourceClosureInvocation: (expression) => closureInvocations.get(expression),
         sourceClosureCallableParameter: (node) => closureCallableParameters.has(node),
         resolveModuleBinding: resolveBinding,

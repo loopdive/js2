@@ -3096,7 +3096,7 @@ function resolveExprToFuncNode(
  * value was pushed, `false` when the caller should push `ref.null.extern`.
  *
  * Dual-mode:
- *  - **standalone** (`ctx.standalone`): compile the function as a HOST-FREE
+ *  - **native targets** (`noJsHost`): compile the function as a HOST-FREE
  *    closure (`compileArrowAsClosure`) and convert the closure-struct ref →
  *    externref. This is what makes the stored `$PropEntry.$get/$set` slot hold a
  *    real callable closure that the native accessor arms in `__extern_get`/
@@ -3114,7 +3114,7 @@ function emitAccessorFn(
   fctx: FunctionContext,
   fn: ts.FunctionExpression | ts.ArrowFunction,
 ): boolean {
-  if (ctx.standalone) {
+  if (noJsHost(ctx)) {
     const closureType = compileArrowAsClosure(ctx, fctx, fn);
     if (!closureType) return false;
     // compileArrowAsClosure leaves a closure-struct ref; __defineProperty_accessor

@@ -10,6 +10,7 @@ export const OP = {
   catch: 0x07,
   throw: 0x08,
   rethrow: 0x09,
+  throw_ref: 0x0a,
   end: 0x0b,
   br: 0x0c,
   br_if: 0x0d,

@@ -3,6 +3,7 @@
 import { irCallableBindingKey, irIntrinsicFuncRef } from "../../../ir/core/callable-bindings.js";
 import { IR_STRING_CONCAT_FN, irStringConcatManySymbol } from "../../../ir/core/string-callables.js";
 import { IR_ASYNC_STRING_CONCAT_5_FN } from "../../../ir/core/async-callables.js";
+import type { NativeStringValueReservationInput } from "./native-string-values.js";
 import type { IrType } from "../../../ir/core/types.js";
 import { nativeAsyncCallableValueTypes } from "../../../ir/runtime/native-async-callables.js";
 import { preparedIrCallableSignature } from "../../../ir/program/abi-signatures.js";
@@ -216,4 +217,13 @@ export function nativeStringOutputAbiBindings(
     else bindings.set(key, binding);
   }
   return joinFivePartBindings(program, bindings);
+}
+
+/** Keep the aggregate recipe join with the output resource owner. */
+export function nativeStringOutputInputAbiBindings(input: NativeStringValueReservationInput, baseOrder: number) {
+  if (!input.plan.output) return [];
+  if (!input.outputRequirements) fail("missing output requirements for ABI join");
+  const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
+  if (offset < 0) fail("output recipe is detached from aggregate declarations");
+  return nativeStringOutputAbiBindings(input.outputRequirements, input.plan.output, baseOrder + offset);
 }

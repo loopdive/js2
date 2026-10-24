@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { hasNativeCollectionState } from "../core/native-data-slots.js";
 import { IR_CLASS_SHAPE_CELL } from "../core/types.js";
 import { PreparedIrProgramInvariantError } from "./errors.js";
 
@@ -217,35 +218,6 @@ function immutableCopy(
 
 export function freezePreparedIrValue(value: unknown): unknown {
   return immutableCopy(value);
-}
-
-// Internal collection slots cannot change on an existing object. Only that
-// brand is cached: prototypes, descriptors, values and entries stay live data.
-const nativeCollectionBrand = Object.freeze({
-  cache: new WeakMap<object, boolean>(),
-  get: WeakMap.prototype.get,
-  set: WeakMap.prototype.set,
-  apply: Reflect.apply,
-  probes: Object.freeze([Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]),
-});
-
-function hasNativeCollectionState(value: object): boolean {
-  const { cache, get, set, apply, probes } = nativeCollectionBrand;
-  const cached = apply(get, cache, [value]) as boolean | undefined;
-  if (cached !== undefined) return cached;
-  let hasSlots = false;
-  for (let index = 0; index < probes.length; index++) {
-    try {
-      apply(probes[index]!, value, [value]);
-      // Probe success authenticates the slot, even when membership is false.
-      hasSlots = true;
-      break;
-    } catch {
-      // Native methods authenticate internal slots even when the prototype was erased.
-    }
-  }
-  apply(set, cache, [value, hasSlots]);
-  return hasSlots;
 }
 
 /** Freeze producer-owned attachments without replacing authenticated plan/manifest identities. */

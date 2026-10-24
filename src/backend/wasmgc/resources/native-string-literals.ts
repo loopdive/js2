@@ -207,7 +207,7 @@ const typeOwners = new WeakMap<
 function authenticateTypes(tx: PhysicalModuleReservations, pack: NativeStringLiteralTypeReservations) {
   const owner = typeOwners.get(pack);
   if (!owner || owner.tx !== tx) throw new Error("native strings: foreign or forged type owner");
-  if (tx.state === "reserving") for (const token of pack.types) tx.assertTypeReservation(token);
+  if (tx.state === "reserving") tx.assertTypeReservations(pack.types);
   else tx.physicalIndices(pack.types);
   return owner;
 }

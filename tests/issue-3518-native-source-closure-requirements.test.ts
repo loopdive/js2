@@ -122,6 +122,21 @@ function makeFunctions(data: ReturnType<typeof editable>) {
 }
 
 describe("complete source closure requirements and output owner reconciliation", () => {
+  it.each(["hostOneShot", "domCallbackAuthority"] as const)(
+    "preserves allocation-only %s authority as an unsupported boundary demand",
+    (flag) => {
+      const data = editable();
+      for (const fn of makeFunctions(data))
+        Object.assign(allocation(fn), {
+          [flag]: flag === "hostOneShot" ? true : { ownerUnitId: fn.unitId, liftedOrdinal: 0 },
+        });
+      const plan = requirements(data.program);
+      expect(
+        plan.gaps.some((row) => row.detail === "certified callback carrier needs its exact boundary producer"),
+      ).toBe(true);
+    },
+  );
+
   it.each([false, true])("admits the actual lifted original source owner, decoded=%s", (decoded) => {
     const program = decoded ? decodePreparedIrProgram(encodePreparedIrProgram(original)) : original;
     const plan = requirements(program);

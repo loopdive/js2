@@ -29,6 +29,7 @@ import {
 import {
   requireNativeRealmObjectLayouts,
   requireCompletedNativeRealmObjectLayouts,
+  nativeRealmObjectStateOwner,
   type NativeRealmObjectLayoutReservations,
 } from "./native-realm-object-layouts.js";
 import {
@@ -42,6 +43,8 @@ import {
   type NativeSourceClosureTypes,
 } from "./native-source-closures.js";
 import type { NativeVectorTypeReservations } from "./native-vectors.js";
+
+import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
 
 const ext = { kind: "externref" } as const,
   i32 = { kind: "i32" } as const;
@@ -155,6 +158,11 @@ export interface NativeObjectRealmDeclarations {
   readonly layouts: NativeRealmObjectLayoutReservations;
   readonly exception: NativeObjectRealmException;
   readonly objectPrototype: { readonly type: TypeReservation; readonly singleton: GlobalReservation };
+  readonly ordinaryIntrinsics: readonly {
+    readonly intrinsic: NativeRealmIntrinsic;
+    readonly type: TypeReservation;
+    readonly singleton: GlobalReservation;
+  }[];
   readonly entries: readonly NativeObjectRealmEntry[];
   readonly initialize: FunctionReservation;
   readonly globals: {
@@ -185,7 +193,7 @@ interface Owner {
   filled: boolean;
 }
 const owners = new WeakMap<NativeObjectRealmDeclarations, Owner>();
-const populations = new WeakSet<NativeRealmObjectLayoutReservations>();
+const populations = new WeakSet<ReturnType<typeof nativeRealmObjectStateOwner>>();
 
 function dependencies(
   tx: PhysicalModuleReservations,
@@ -213,12 +221,15 @@ function dependencies(
   if (needsSource) {
     if (!d.source) fail("missing genuine source owner");
     const strings = nativeStringLiteralReservationInventory(tx, request.strings).typePack;
+    const sourceState = nativeSourceClosureRealmState(tx, d.source);
     requireNativeSourceClosureTypes(tx, d.source, source, d.requests, {
       vectors: d.vectors,
       vectorPlan: d.vectorPlan,
       strings: { types: strings, key: strings.key, utf8Storage: strings.utf8Storage },
+      ...(sourceState ? { realmState: sourceState } : {}),
     });
-    if (nativeSourceClosureRealmState(tx, d.source) !== d.layouts) fail("missing or substituted source realm state");
+    if (!sourceState || nativeRealmObjectStateOwner(tx, sourceState) !== nativeRealmObjectStateOwner(tx, d.layouts))
+      fail("missing or substituted source realm state");
     if (d.source.closures !== d.closures || d.source.closurePlan !== d.closurePlan)
       fail("different source closure population");
   } else {
@@ -272,6 +283,9 @@ function resourceKeys(d: NativeObjectRealmDependencies): readonly string[] {
   const key = d.requests.key;
   return [
     key + ":object-prototype",
+    ...d.requests.realm.description.catalog.intrinsics
+      .filter((row) => !row.callable && row.id !== "%Object.prototype%")
+      .map((row) => key + ":" + row.id + ":singleton"),
     key + ":state",
     key + ":whole-realm-ready",
     key + ":initialize",
@@ -291,10 +305,11 @@ export function reserveNativeObjectRealmDeclarations(
 ): NativeObjectRealmDeclarations {
   if (tx.state !== "reserving") fail("declarations require reservation phase");
   const d = dependencies(tx, realm, input);
-  if (populations.has(d.layouts)) fail("realm anchors already have a public population owner");
+  const stateOwner = nativeRealmObjectStateOwner(tx, d.layouts);
+  if (populations.has(stateOwner)) fail("realm anchors already have a public population owner");
   const keys = Object.freeze(resourceKeys(d));
   tx.assertReservationKeysAvailable(keys);
-  populations.add(d.layouts);
+  populations.add(stateOwner);
   const key = d.requests.key,
     request = nativePublicBuiltinFunctionRequestDependencies(tx, d.requests);
   const objectPrototype = Object.freeze({
@@ -306,6 +321,22 @@ export function reserveNativeObjectRealmDeclarations(
       true,
     ),
   });
+  const ordinaryIntrinsics = Object.freeze(
+    realm.description.catalog.intrinsics
+      .filter((row) => !row.callable && row.id !== "%Object.prototype%")
+      .map((intrinsic) =>
+        Object.freeze({
+          intrinsic,
+          type: d.layouts.types.ordinary,
+          singleton: tx.reserveGlobal(
+            key + ":" + intrinsic.id + ":singleton",
+            intrinsic.id,
+            { kind: "ref_null", typeIdx: d.layouts.types.ordinary.typeIndex },
+            true,
+          ),
+        }),
+      ),
+  );
   const state = tx.reserveGlobal(key + ":state", "__realm_initialization_state", i32, true);
   const wholeRealmReady = tx.reserveGlobal(key + ":whole-realm-ready", "__whole_realm_ready", i32, false);
   const initialize = tx.reserveFunction(key + ":initialize", "__initialize_object_function_realm", {
@@ -364,6 +395,7 @@ export function reserveNativeObjectRealmDeclarations(
     layouts: d.layouts,
     exception: d.exception,
     objectPrototype,
+    ordinaryIntrinsics,
     entries,
     initialize,
     globals: Object.freeze({ ...d.layouts.anchors, state, wholeRealmReady }),
@@ -376,6 +408,7 @@ export function reserveNativeObjectRealmDeclarations(
     keys,
     globals: Object.freeze([
       objectPrototype.singleton,
+      ...ordinaryIntrinsics.map((row) => row.singleton),
       state,
       wholeRealmReady,
       ...entries.filter((row) => row.singleton !== d.layouts.anchors.functionPrototype).map((row) => row.singleton),
@@ -394,7 +427,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeObjectRealmDeclarat
   const d = dependencies(tx, pack.realm, owner.original);
   for (const role of [...roles, "source"] as const)
     if (d[role] !== owner.dependencies[role]) fail("changed public dependency identity");
-  if (tx.state === "reserving") pack.entries.forEach((row) => tx.assertTypeReservation(row.type));
+  if (tx.state === "reserving") tx.assertTypeReservations(pack.entries.map((row) => row.type));
   else
     tx.physicalIndices([
       pack.objectPrototype.type,
@@ -459,7 +492,7 @@ export function requireCompletedNativeObjectRealm(
   pack: NativeObjectRealmDeclarations,
 ): never {
   requireCompletedNativeObjectRealmDeclarations(tx, pack);
-  return fail("full Object/Function algorithms and runtime population remain incomplete");
+  return fail("full Object/Function/Promise algorithms and runtime population remain incomplete");
 }
 export function nativeObjectRealmDeclarationInventory(
   tx: PhysicalModuleReservations,

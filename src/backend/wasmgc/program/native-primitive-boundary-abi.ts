@@ -2,6 +2,7 @@
 
 import { irCallableBindingKey, irRuntimeFuncRef } from "../../../ir/core/callable-bindings.js";
 import { INTRINSIC_DEFINITIONS } from "../../../ir/core/intrinsics.js";
+import type { NativeRealmRequirements } from "../../../ir/program/native-realm-requirements.js";
 import type { IrType } from "../../../ir/core/types.js";
 import { BOOLEAN_BOUNDARY_RUNTIME_PROVIDERS, NUMBER_BOUNDARY_RUNTIME_PROVIDERS } from "../../../ir/runtime/manifest.js";
 import { preparedIrCallableSignature } from "../../../ir/program/abi-signatures.js";
@@ -39,10 +40,15 @@ function booleanDemands(demands: NativeStringValueDemands, direction: "box" | "u
   );
 }
 
-/** Actual keyed Get proof is required before the permissive payload reader is selected. */
+/**
+ * The physical planner authenticates the realm through planNativeRealmLiterals
+ * before selecting these internal resources. Keyed Get still needs its own proof
+ * before selecting the permissive payload reader.
+ */
 export function selectNativeBooleans(
   demands: NativeStringValueDemands,
   invocation: NativeInvocationRequirements | undefined,
+  realm?: NativeRealmRequirements,
 ): { readonly selection?: NativeBooleanSelection; readonly gap?: { occurrence: number; detail: string } } {
   if (invocation) {
     assertNativeInvocationRequirementsCurrent(invocation);
@@ -52,6 +58,20 @@ export function selectNativeBooleans(
     )
       fail("different invocation/string demand owner");
   }
+  if (realm) {
+    if (
+      realm.program !== demands.program ||
+      realm.projection !== demands.projection ||
+      realm.source !== invocation?.source
+    )
+      fail("different realm/string/invocation demand owner");
+  }
+  const runtimeBox = realm?.source?.units.some((unit) =>
+    objectResultIsBoolean(
+      realm.source!.demands.owners.find((row) => row.unitId === unit.unitId)?.projectedFunction.closureSubtype
+        ?.signature.returnType,
+    ),
+  );
   const unboxes = booleanDemands(demands, "unbox");
   for (const row of unboxes) {
     const proof = invocation?.objectResults;
@@ -80,6 +100,7 @@ export function selectNativeBooleans(
       },
     };
   const box =
+    runtimeBox ||
     getterBox ||
     (demands.projection.prepared.manifest.policy.booleanBoundary.box === "native" &&
       booleanDemands(demands, "box").length > 0);

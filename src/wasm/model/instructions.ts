@@ -44,7 +44,8 @@ export type ValType =
   // (#6798) `int32` marks a `type i32 = number` destination: an f64 entering it
   // converts with ToInt32 (wrap, like `x | 0`), not the saturating truncation
   // the generic f64 → i32 coercion keeps for indices.
-  | { kind: "i32"; boolean?: true; symbol?: true; int32?: true }
+  // (#7138) uint32 preserves the unsigned source domain for widening/boxing and wrapping stores.
+  | { kind: "i32"; boolean?: true; symbol?: true; int32?: true; uint32?: true }
   | { kind: "i64"; bigint?: boolean }
   | { kind: "f32" }
   // (#2864 wave-2 S1) `undefSentinel` is the same kind of structural-only BRAND
@@ -239,6 +240,7 @@ type InstrBase =
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
   | { op: "try_table"; blockType: BlockType; body: Instr[]; catches: TryTableCatch[] }
   | { op: "throw"; tagIdx: number }
+  | { op: "throw_ref" }
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
   | { op: "extern.convert_any" }

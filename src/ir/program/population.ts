@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import { createDerivedIrUnitId } from "../../shared/contracts/identity-values.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
@@ -157,8 +158,7 @@ export function assertPreparedIrProgramPopulation(input: Population, abi?: Prepa
     for (const buffer of buffers) {
       for (const root of buffer)
         forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call") checkReference(fn.unitId, instruction.target);
-          if (instruction.kind === "closure.new") checkReference(fn.unitId, instruction.liftedFunc);
+          for (const reference of directIrCallableReferences(instruction)) checkReference(fn.unitId, reference);
         });
     }
   }

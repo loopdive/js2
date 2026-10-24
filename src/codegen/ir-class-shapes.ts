@@ -14,6 +14,7 @@ import type { IrClassShape, IrFuncRef } from "../ir/nodes.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningSourceId,
+  requireIrPlanningClassRecord,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
 
@@ -35,6 +36,14 @@ export interface IrClassShapeLookup {
 /** Exact registry plus the deliberately lossy adapter for name-keyed legacy APIs. */
 export interface IrClassShapeSidecar extends IrClassShapeLookup {
   readonly legacyProjection: ReadonlyMap<string, IrClassShape>;
+}
+
+/** Keep exact and compatibility shape projections paired for selection. */
+export function projectIrClassSelectionShapes(sidecar: IrClassShapeSidecar) {
+  return {
+    selectionClassShapes: sidecar.legacyProjection,
+    selectionClassShapesById: new Map([...sidecar.byClassId].map(([id, entry]) => [id, entry.shape] as const)),
+  };
 }
 
 /** Project one exact class-owned source callable into a symbolic IR target. */
@@ -80,28 +89,7 @@ export function requireIrClassShapeClassId(
   declaration: ts.ClassDeclaration | ts.ClassExpression,
   context: IrPlanningIdentityContext,
 ): IrClassId {
-  const sourceFile = declaration.getSourceFile();
-  const sourceId = context.sourceIdBySourceFile.get(sourceFile);
-  if (sourceId === undefined || context.sourceFileBySourceId.get(sourceId) !== sourceFile) {
-    return invariant("source-record-mismatch", `class declaration comes from stale source ${sourceFile.fileName}`);
-  }
-  const classId = context.classIdByDeclaration.get(declaration);
-  const record = context.inventory.classes.find((candidate) => candidate.id === classId);
-  if (
-    classId === undefined ||
-    context.declarationByClassId.get(classId) !== declaration ||
-    !record ||
-    record.sourceId !== sourceId ||
-    record.declarationKind !== (ts.isClassDeclaration(declaration) ? "declaration" : "expression") ||
-    record.declarationStart !== declaration.getStart(sourceFile) ||
-    record.declarationEnd !== declaration.end
-  ) {
-    return invariant(
-      "class-record-mismatch",
-      `class ${declaration.name?.text ?? "<anonymous>"} is not its exact authoritative declaration`,
-    );
-  }
-  return classId;
+  return requireIrPlanningClassRecord(context, declaration).id;
 }
 
 function isStalePlanningSource(sourceFile: ts.SourceFile, context: IrPlanningIdentityContext): boolean {

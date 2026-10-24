@@ -63,6 +63,22 @@ describe("checker-certified whole-program callable annotations", () => {
     expect(requirements!.signatures[2]!.signature).toEqual(outer.returnType.signature);
   });
 
+  it("preserves an opaque argument in a native callable annotation", () => {
+    const result = prepareIrProgramSources(
+      sourceInput({
+        "./entry.ts": `type Consumer = (value: any) => number;
+        export function inspect(value: Consumer): number { return 1; }`,
+      }),
+    );
+    if (result.kind !== "prepared") throw new Error(result.detail);
+    const inspect = result.ir.functions.find((fn) => fn.name === "inspect")!;
+    expect(inspect.params[0]!.type).toEqual({
+      kind: "callable",
+      signature: { params: [{ kind: "dynamic" }], returnType: { kind: "val", val: { kind: "f64" } } },
+    });
+    expect(result.ir.functions.filter((fn) => fn.closureSubtype)).toHaveLength(0);
+  });
+
   const refusals = [
     ["overload", "{ (value: number): number; (value: string): string }", /one non-constructing/],
     ["constructor", "{ (value: number): number; new (value: number): object }", /one non-constructing/],
@@ -71,7 +87,6 @@ describe("checker-certified whole-program callable annotations", () => {
     ["optional", "(value?: number) => number", /exact required parameter/],
     ["rest", "(...values: number[]) => number", /exact required parameter/],
     ["recursive", "(value: Unsupported) => number", /recursive anonymous/],
-    ["any argument", "(value: any) => number", /one non-constructing/],
   ] as const;
   it.each(refusals)("refuses the unsupported %s contract before physical planning", (_label, type, detail) => {
     const result = prepareIrProgramSources(

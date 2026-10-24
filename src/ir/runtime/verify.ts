@@ -20,16 +20,19 @@
 // On failure, returns a list of `IrVerifyError`s rather than throwing, so
 // callers can decide whether to bail or fall back to the legacy path.
 
-import type { IrBlock, IrInstr, IrInstrClassCall, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
+import type { IrBlock, IrInstr, IrLabelId, IrModuleDeclarations, IrValueId } from "../core/nodes.js";
 import type { PreparedIrFunction as IrFunction } from "./contracts/prepared.js";
 import type { IrClassShape, IrType } from "../core/types.js";
-import { forEachInstrDeep, forEachNestedBuffer } from "../core/nodes.js";
+import { forEachInstrDeep, forEachNestedBuffer, forEachSemanticIrInstruction } from "../core/nodes.js";
 import { asVal, irTypeEquals } from "../core/types.js";
+import { classCallTargetMismatch } from "./class-call-verification.js";
+import { classValueNewMismatch } from "../core/class-value-contract.js";
+import { directIrCallableReferences } from "../core/callable-operands.js";
 import { irSupportRef, closureSignatureEquals } from "../core/types.js";
 // #4605 — the module-level declared-type tables and the rules that read them.
 // `verifyIrFunction` stays standalone: the tables arrive as an optional
 // parameter, and their absence is always a conservative skip.
-import { declaredCallProblems, declaredGlobalProblem, irBindingKey } from "../core/declared-types.js";
+import { declaredCallInstructionProblems, declaredGlobalProblem, irBindingKey } from "../core/declared-types.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 // #2949 slice 1 / #3954 phase 1 — the dynamic-operand rules (payload-kind
 // consistency of unbox/tag.test) are DOMAIN questions, not ECMAScript ones:
@@ -236,112 +239,110 @@ export function irTypeReferenceProblem(value: unknown): string | null {
 
 /** Verify direct symbolic refs in every nested instruction buffer. */
 function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): void {
-  for (const block of func.blocks) {
-    for (const instr of block.instrs) {
-      forEachInstrDeep(instr, (nested) => {
-        let site: string;
-        let ref: unknown;
-        if (nested.kind === "call") {
-          site = "call target";
-          ref = nested.target;
-        } else if (nested.kind === "closure.new") {
-          site = "closure.new liftedFunc";
-          ref = nested.liftedFunc;
-        } else if (nested.kind === "global.get" || nested.kind === "global.set") {
-          const problem = irGlobalReferenceProblem(nested.target);
-          if (problem !== null) {
-            errors.push({
-              message: `${nested.kind} target ${problem}`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-          return;
-        } else if (nested.kind === "string.const") {
-          if (nested.storage && nested.materializer) {
-            errors.push({
-              message: "string.const cannot carry both storage and a materializer",
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-          if (nested.storage) {
-            const problem = irGlobalReferenceProblem(nested.storage);
-            if (problem !== null) {
-              errors.push({
-                message: `string.const storage ${problem}`,
-                func: func.name,
-                block: block.id as number,
-              });
-            }
-          }
-          if (nested.materializer) {
-            const problem = callableReferenceProblem(nested.materializer);
-            if (problem !== null) {
-              errors.push({
-                message: `string.const materializer ${problem}`,
-                func: func.name,
-                block: block.id as number,
-              });
-            }
-          }
-          return;
-        } else if (nested.kind === "string.len" && nested.provider) {
-          if (nested.provider.kind === "callable") {
-            const problem = callableReferenceProblem(nested.provider.target);
-            if (problem !== null) {
-              errors.push({
-                message: `string.len provider ${problem}`,
-                func: func.name,
-                block: block.id as number,
-              });
-            }
-          } else {
-            const problem = irTypeReferenceProblem(nested.provider.ownerType);
-            if (
-              problem !== null ||
-              !Number.isSafeInteger(nested.provider.fieldIndex) ||
-              nested.provider.fieldIndex < 0
-            ) {
-              errors.push({
-                message:
-                  problem === null
-                    ? "string.len provider has an invalid struct field index"
-                    : `string.len provider ${problem}`,
-                func: func.name,
-                block: block.id as number,
-              });
-            }
-          }
-          return;
-        } else if (
-          (nested.kind === "string.concat" ||
-            nested.kind === "string.repeat" ||
-            nested.kind === "string.eq" ||
-            nested.kind === "string.char_at" ||
-            nested.kind === "string.char_code_at" ||
-            nested.kind === "forof.string") &&
-          nested.provider
-        ) {
-          const problem = callableReferenceProblem(nested.provider);
-          if (problem !== null) {
-            errors.push({
-              message: `${nested.kind} provider ${problem}`,
-              func: func.name,
-              block: block.id as number,
-            });
-          }
-          return;
-        } else {
-          return;
-        }
+  forEachSemanticIrInstruction(func, (nested, block) => {
+    const direct = directIrCallableReferences(nested);
+    if (direct.length) {
+      const site =
+        nested.kind === "call"
+          ? "call target"
+          : nested.kind === "closure.new"
+            ? "closure.new liftedFunc"
+            : "class.value.new target";
+      for (const ref of direct) {
         const problem = callableReferenceProblem(ref);
+        if (problem !== null)
+          errors.push({
+            message: `${site} ${problem}`,
+            func: func.name,
+            block: block?.id as number | undefined,
+          });
+      }
+      return;
+    } else if (nested.kind === "global.get" || nested.kind === "global.set") {
+      const problem = irGlobalReferenceProblem(nested.target);
+      if (problem !== null) {
+        errors.push({
+          message: `${nested.kind} target ${problem}`,
+          func: func.name,
+          block: block?.id as number | undefined,
+        });
+      }
+      return;
+    } else if (nested.kind === "string.const") {
+      if (nested.storage && nested.materializer) {
+        errors.push({
+          message: "string.const cannot carry both storage and a materializer",
+          func: func.name,
+          block: block?.id as number | undefined,
+        });
+      }
+      if (nested.storage) {
+        const problem = irGlobalReferenceProblem(nested.storage);
         if (problem !== null) {
-          errors.push({ message: `${site} ${problem}`, func: func.name, block: block.id as number });
+          errors.push({
+            message: `string.const storage ${problem}`,
+            func: func.name,
+            block: block?.id as number | undefined,
+          });
         }
-      });
+      }
+      if (nested.materializer) {
+        const problem = callableReferenceProblem(nested.materializer);
+        if (problem !== null) {
+          errors.push({
+            message: `string.const materializer ${problem}`,
+            func: func.name,
+            block: block?.id as number | undefined,
+          });
+        }
+      }
+      return;
+    } else if (nested.kind === "string.len" && nested.provider) {
+      if (nested.provider.kind === "callable") {
+        const problem = callableReferenceProblem(nested.provider.target);
+        if (problem !== null) {
+          errors.push({
+            message: `string.len provider ${problem}`,
+            func: func.name,
+            block: block?.id as number | undefined,
+          });
+        }
+      } else {
+        const problem = irTypeReferenceProblem(nested.provider.ownerType);
+        if (problem !== null || !Number.isSafeInteger(nested.provider.fieldIndex) || nested.provider.fieldIndex < 0) {
+          errors.push({
+            message:
+              problem === null
+                ? "string.len provider has an invalid struct field index"
+                : `string.len provider ${problem}`,
+            func: func.name,
+            block: block?.id as number | undefined,
+          });
+        }
+      }
+      return;
+    } else if (
+      (nested.kind === "string.concat" ||
+        nested.kind === "string.repeat" ||
+        nested.kind === "string.eq" ||
+        nested.kind === "string.char_at" ||
+        nested.kind === "string.char_code_at" ||
+        nested.kind === "forof.string") &&
+      nested.provider
+    ) {
+      const problem = callableReferenceProblem(nested.provider);
+      if (problem !== null) {
+        errors.push({
+          message: `${nested.kind} provider ${problem}`,
+          func: func.name,
+          block: block?.id as number | undefined,
+        });
+      }
+      return;
+    } else {
+      return;
     }
-  }
+  });
 }
 
 export interface IrVerificationOptions {
@@ -1510,6 +1511,8 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     // `callee` once for closure.call (SSA def→use accounting) — the
     // lowerer adds the second count to force a Wasm local for the
     // double-emission pattern.
+    case "class.value.new":
+      return [instr.properties, instr.construct, instr.parent];
     case "closure.new":
       return instr.captures;
     case "closure.cap":
@@ -2162,6 +2165,7 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   if: "checked",
   "object.new": "checked",
   "closure.new": "checked",
+  "class.value.new": "checked",
   "class.new": "checked",
   "class.super_init": "checked",
   "class.instanceof": "checked",
@@ -2266,6 +2270,11 @@ function roadmapError(ctx: RoadmapRuleCtx, blockId: number, message: string): vo
  * same loud failure #4523 wired up.
  */
 function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx): boolean {
+  if (instr.kind === "class.value.new") {
+    const mismatch = classValueNewMismatch(instr, (value) => ctx.typeOf.get(value));
+    if (mismatch) roadmapError(ctx, blockId, mismatch);
+    return true;
+  }
   switch (instr.kind) {
     case "const":
     case "select":
@@ -2289,9 +2298,11 @@ function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx):
     case "global.set":
       checkSymbolicRefCoherence(instr, blockId, ctx);
       return true;
-    case "class.call":
-      checkClassCallTarget(instr, blockId, ctx);
+    case "class.call": {
+      const mismatch = classCallTargetMismatch(instr, (value) => ctx.typeOf.get(value));
+      if (mismatch) roadmapError(ctx, blockId, mismatch);
       return true;
+    }
     default:
       return false;
   }
@@ -2305,25 +2316,6 @@ function checkRoadmapRule(instr: IrInstr, blockId: number, ctx: RoadmapRuleCtx):
  * receiver that is not class-shaped, or a member the walk cannot see, stays
  * resolver-typed and is not judged here.
  */
-function checkClassCallTarget(instr: IrInstrClassCall, blockId: number, ctx: RoadmapRuleCtx): void {
-  const receiver = ctx.typeOf.get(instr.receiver);
-  if (!instr.target || receiver?.kind !== "class") return;
-  for (let shape: IrClassShape | undefined = receiver.shape; shape; shape = shape.parent) {
-    const member = shape.methods.find(
-      (candidate) => candidate.name === instr.methodName && (candidate.memberKind ?? "method") === instr.memberKind,
-    );
-    if (!member) continue;
-    const want = member.target ? bindingKey(member.target.binding) : null;
-    const got = bindingKey(instr.target.binding);
-    if (want !== null && got !== null && want !== got)
-      roadmapError(
-        ctx,
-        blockId,
-        `class.call ${instr.methodName} target ${got} is not ${receiver.shape.className}'s ${want}`,
-      );
-    return;
-  }
-}
 
 /** #4603 — fixed / self-declared result carriers, and the two cond rules. */
 function checkRoadmapCarrierRule(instr: RoadmapCarrierInstr, blockId: number, ctx: RoadmapRuleCtx): void {
@@ -2651,9 +2643,7 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
       }
     }
     if (signature !== undefined) {
-      const want = signature.result ? (asVal(signature.result)?.kind ?? null) : null;
-      const args = instr.args.length;
-      for (const p of declaredCallProblems(instr.target.name, args, resultKind, signature, want)) {
+      for (const p of declaredCallInstructionProblems(instr, signature, ctx.typeOf)) {
         roadmapError(ctx, blockId, p);
       }
       return;

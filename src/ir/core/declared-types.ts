@@ -23,8 +23,8 @@
 // declaration is skipped, not flagged. A verify error demotes the function to
 // the legacy compiler, so a rule that guesses costs conformance.
 
-import type { IrDeclaredSignature, IrFunction, IrModuleDeclarations } from "./nodes.js";
-import type { IrType } from "./types.js";
+import type { IrDeclaredSignature, IrFunction, IrModuleDeclarations, IrInstr, IrValueId } from "./nodes.js";
+import { asVal, type IrType } from "./types.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,6 +120,7 @@ export function declaredCallProblems(
   resultKind: ValType["kind"] | null,
   declared: IrDeclaredSignature,
   declaredResultKind: ValType["kind"] | null,
+  argTypes?: readonly (IrType | undefined)[],
 ): string[] {
   const problems: string[] = [];
   if (argCount !== declared.params.length) {
@@ -127,7 +128,20 @@ export function declaredCallProblems(
       `call ${targetName} passes ${argCount} argument(s) but the module declares ${declared.params.length} parameter(s)`,
     );
   }
-  if (resultKind !== null && declaredResultKind !== null && resultKind !== declaredResultKind) {
+  for (let i = 0; i < (argTypes?.length ?? 0); i++) {
+    const type = argTypes![i],
+      param = declared.params[i];
+    const actual = type ? asVal(type)?.kind : undefined;
+    const expected = param ? asVal(param)?.kind : undefined;
+    const widens = actual === "ref" && expected === "ref_null";
+    if (actual !== undefined && expected !== undefined && actual !== expected && !widens) {
+      problems.push(`call ${targetName} arg ${i} carrier ${actual} contradicts the module-declared ${expected}`);
+    }
+  }
+  // A non-null provider result may be stored in a nullable reference value.
+  // The reverse would assert non-nullness the declaration does not guarantee.
+  const widensReference = resultKind === "ref_null" && declaredResultKind === "ref";
+  if (resultKind !== null && declaredResultKind !== null && resultKind !== declaredResultKind && !widensReference) {
     problems.push(
       `call ${targetName} resultType ${resultKind} contradicts the module-declared result ${declaredResultKind}`,
     );
@@ -148,4 +162,20 @@ export function declaredGlobalProblem(
 ): string | null {
   if (declaredKind === null || declaredKind === observed) return null;
   return `${instrKind} ${targetName} carrier ${observed} contradicts the module-declared ${declaredKind}`;
+}
+
+/** Project one call's known carriers into the shared declaration rule. */
+export function declaredCallInstructionProblems(
+  instr: Extract<IrInstr, { readonly kind: "call" }>,
+  signature: IrDeclaredSignature,
+  types: ReadonlyMap<IrValueId, IrType>,
+): string[] {
+  return declaredCallProblems(
+    instr.target.name,
+    instr.args.length,
+    instr.resultType ? (asVal(instr.resultType)?.kind ?? null) : null,
+    signature,
+    signature.result ? (asVal(signature.result)?.kind ?? null) : null,
+    instr.args.map((value) => types.get(value)),
+  );
 }

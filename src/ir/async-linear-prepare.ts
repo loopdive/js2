@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { mapIrClassAllocationOperands } from "./core/class-operands.js";
 
 /**
  * Generic AST-free producer for a top-level straight-line async function.
@@ -181,6 +182,9 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
       return { ...instr, value: resolve(instr.value) };
     case "object.set":
       return { ...instr, value: resolve(instr.value), newValue: resolve(instr.newValue) };
+    case "class.value.new":
+    case "class.new":
+      return mapIrClassAllocationOperands(instr, resolve);
     case "closure.new":
       return { ...instr, captures: mapIds(instr.captures, resolve) };
     case "closure.cap":
@@ -193,8 +197,6 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
       return { ...instr, cell: resolve(instr.cell) };
     case "refcell.set":
       return { ...instr, cell: resolve(instr.cell), value: resolve(instr.value) };
-    case "class.new":
-      return { ...instr, args: mapIds(instr.args, resolve) };
     case "class.get":
       return { ...instr, value: resolve(instr.value) };
     case "class.set":
@@ -504,7 +506,7 @@ export function prepareLinearSuspendingIrFunction(fn: IrFunction): PreparedLinea
     currentState.body.push(helper.call);
   }
 
-  if (awaitCount === 0 || states.length !== awaitCount + 1) return null;
+  if (states.length !== awaitCount + 1) return null;
   const returned = terminator.values[0];
   const resolvedReturn = returned === undefined ? undefined : resolve(returned);
   if (fn.resultTypes.length === 1 && resolvedReturn === undefined) return null;

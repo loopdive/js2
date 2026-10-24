@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { reserveNativeRefCells } from "../../src/backend/wasmgc/resources/native-ref-cells.js";
 import { createEmptyModule } from "../../src/ir/types.js";
 import { PhysicalModuleReservations, type FunctionReservation } from "../../src/wasm/physical/module-reservations.js";
 import type { PreparedIrProgram } from "../../src/ir/program/prepared-contracts.js";
@@ -19,6 +20,7 @@ import { fillNativeStringValueResources } from "../../src/backend/wasmgc/program
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import {
   reserveNativeInvocationResources,
+  bindNativeInvocationBuiltins,
   fillNativeInvocationResources,
   requireCompletedNativeInvocation,
 } from "../../src/backend/wasmgc/resources/native-invocation.js";
@@ -26,6 +28,7 @@ import {
   beginNativeSourceClosureEmission,
   bindNativeSourceClosureUnits,
   nativeSourceClosureCallableBindings,
+  nativeRealmSourceClosureCallableBindings,
   nativeSourceClosureResolver,
   fillPreparedPrimaryUnit,
   requireCompletedNativeSourceClosures,
@@ -138,6 +141,8 @@ export function realmSource(f: ReturnType<typeof realmFoundation>) {
         tx,
         requirements.source,
         {
+          ...(realm.classRealm ? { realmState: realm.classRealm.state } : {}),
+          ...(requirements.source.refCells.length ? { refCells: reserveNativeRefCells(tx, requirements.source) } : {}),
           vectors: foundation.vectorTypes,
           vectorPlan: f.vectorPlan,
           strings: {
@@ -182,6 +187,7 @@ export function realmSource(f: ReturnType<typeof realmFoundation>) {
 export function realmFixture(program: PreparedIrProgram, utf8Storage = false, displaced = false) {
   const f = realmSource(realmFoundation(program, utf8Storage, displaced));
   const kernel = reserveNativeRealmKernel(f.tx, f.realm, f.source?.types);
+  if (f.invocation) bindNativeInvocationBuiltins(f.tx, f.invocation, kernel);
   return { ...f, kernel };
 }
 export type RealmFixture = ReturnType<typeof realmFixture>;
@@ -201,6 +207,7 @@ export function fillRealmFixture(f: RealmFixture) {
       f.invocation,
       nativeSourceClosureCallableBindings(tx, f.source, f.input.invocationRequirements!),
       f.kernel.exception,
+      { realmCallables: nativeRealmSourceClosureCallableBindings(tx, f.source, f.requirements) },
     );
   const resolver: IrLowerResolver = {
     ...(f.source ? nativeSourceClosureResolver(tx, f.source) : {}),

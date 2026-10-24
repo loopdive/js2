@@ -8,6 +8,7 @@ import { buildOrdinaryObjectDataDescriptorBody } from "../../src/runtime/wasmgc/
 import { buildOrdinaryObjectAccessorDescriptorBody } from "../../src/runtime/wasmgc/values/ordinary-object-descriptor-accessor.js";
 import { buildObjectSameValueBody } from "../../src/runtime/wasmgc/values/object-same-value-body.js";
 import type { Instr, LocalDef, ValType } from "../../src/wasm/model/instructions.js";
+import { beforeAllocationPrefixPreservation } from "./ordinary-allocation-preservation.js";
 import { beforeDescriptorUndefinedCorrection } from "./descriptor-undefined-correction.js";
 
 export const readWriteSource = readBeforeResumeMain;
@@ -69,7 +70,7 @@ export function authenticateWriteExtraction(text = writeExtractionText(), reader
   for (const [file, hash] of Object.entries(receipt.modules)) {
     let historical: string;
     try {
-      historical = beforeDescriptorUndefinedCorrection(file, reader(file));
+      historical = beforeDescriptorUndefinedCorrection(file, beforeAllocationPrefixPreservation(file, reader(file)));
     } catch (cause) {
       throw Error("write relocated module mismatch: " + file, { cause });
     }

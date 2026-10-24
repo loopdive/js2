@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { preparedBackendOptions } from "./compiler/prepared-backend-options.js";
 import { ts } from "./ts-api.js";
 import {
   analyzeFiles,
@@ -43,7 +44,7 @@ import {
   type IrProgramPresentationGap,
   type PreparedIrPipelinePresentationResult,
 } from "./compiler/ir-program-presentation.js";
-import { freezePreparedIrValue, PreparedIrProgramInvariantError, type PreparedIrBackendOptions } from "./ir/program.js";
+import { freezePreparedIrValue, PreparedIrProgramInvariantError } from "./ir/program.js";
 import { buildHostImportInventory, summarizeHostImportInventory } from "./host-import-policy.js";
 import { buildCapabilityRequirements, validatePlatformCapabilityRequirements } from "./capability-registry.js";
 import { createJavaScriptAdapterManifest } from "./adapter-manifest.js";
@@ -1200,16 +1201,8 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
   const targetProfile = resolveCompileTargetProfile(options);
   const sourceFailure = validatePipelineSource(snapshot);
   if (sourceFailure) return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
-  const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
-  const backendOptions: PreparedIrBackendOptions = {
-    backend: targetProfile.backend,
-    target,
-    sharedExceptionTag: options.sharedExceptionTag === true,
-    utf8Storage: options.utf8Storage === true,
-    sourceMap: options.sourceMap === true,
-    moduleName: options.moduleName ?? "module",
-    ...(targetProfile.backend === "linear" ? { linear: buildLinearOptions(options, undefined) } : {}),
-  };
+  const backendOptions = preparedBackendOptions(options, targetProfile.backend);
+  const target = backendOptions.target;
   const prepared = prepareIrProgramPresentation({
     preparation: {
       sourceFiles: multiAst?.sourceFiles ?? [entryAst.sourceFile],

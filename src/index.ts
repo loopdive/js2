@@ -27,6 +27,8 @@
  * @module
  */
 
+import type { CompileRuntimeOptions } from "./shared/contracts/compile-runtime-options.js";
+
 import type { RuntimeGroupFingerprint } from "./emit/canonical-recgroup.js";
 
 /**
@@ -489,7 +491,7 @@ export interface ImportPolicy {
  * Every field is optional; the defaults produce a browser-oriented WasmGC
  * module.
  */
-export interface CompileOptions {
+export interface CompileOptions extends CompileRuntimeOptions {
   /** Emit WAT debug output (default: true) */
   emitWat?: boolean;
   /**
@@ -528,12 +530,6 @@ export interface CompileOptions {
   preserveDebugNames?: boolean;
   /** Source map URL to embed in the wasm binary (default: "module.wasm.map") */
   sourceMapUrl?: string;
-  /** Compilation target: "gc" (WasmGC, default), "linear" (linear memory),
-   *  "wasi" (WASI-compatible GC), or "standalone" (pure WasmGC, no JS host
-   *  and no WASI runtime — #1470). `target: "standalone"` implies
-   *  `nativeStrings: true` and refuses to emit any `wasm:js-string` or
-   *  `env` JS-host string imports. */
-  target?: "gc" | "linear" | "wasi" | "standalone";
   /**
    * Import the canonical realm-global object for a linked standalone runtime.
    *

@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { planNativeClassValueSetup, type NativeClassValueSetup } from "./program-native-class-value-setup.js";
+import { directIrCallableReferences } from "./core/callable-operands.js";
 //
 // #3518 package C — the source-free PHYSICAL SETUP PLAN for one accepted
 // backend/target projection of a `PreparedIrProgram`.
@@ -13,18 +15,20 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
   type NativeInvocationPhysicalSetup,
 } from "../backend/wasmgc/program/native-invocation-abi.js";
-import { nativeStringOutputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { nativeStringOutputInputAbiBindings } from "../backend/wasmgc/program/native-string-output-abi.js";
+import { nativeErrorAbiBindings } from "./program/native-error-setup.js";
 import {
   nativeBooleanAbiBindings,
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
-import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
+import { planPreparedDynamicUnits, preparedOpaqueDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -70,7 +74,7 @@ import { collectNativeStringValueDemands } from "./program/native-string-value-d
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
-import { forEachInstrDeep, type IrFunction, type IrType, type IrInstrIntrinsic } from "./nodes.js";
+import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import {
   freezePreparedIrValue,
@@ -101,6 +105,7 @@ import { nativeRefCellScalarInner } from "./program/native-ref-cell-requirements
 import { planNativePromiseInventoryPreflight } from "./program-native-async-resources.js";
 import {
   planNativeSourceClosureRequirements,
+  nativeSourceClosureDescription,
   type NativeSourceClosureRequirements,
 } from "./program/native-source-closure-requirements.js";
 
@@ -254,6 +259,7 @@ export interface PhysicalSetupPlan {
   readonly numberRemainders: readonly PhysicalNumberRemainder[];
   readonly sourceClosures?: Omit<NativeSourceClosureRequirements, "demands">;
   readonly nativeInvocation?: NativeInvocationPhysicalSetup;
+  readonly classValues?: NativeClassValueSetup;
   readonly nativeRealm?: NativeRealmDescription;
   readonly asyncFrames?: AsyncFrameSetup;
   /** Descriptive only: the issued reservation input stays in the consumer's private record. */
@@ -689,17 +695,8 @@ function nativeStringSetup(
     if (binding) add(binding);
   }
   nativeBooleanAbiBindings(input, baseOrder).forEach(add);
-  if (input.plan.output) {
-    if (!input.outputRequirements) nativeInvalid("missing output requirements for ABI join");
-    const offset = input.plan.declarations.findIndex((row) => row.key === input.plan.output!.declarations[0]?.key);
-    if (offset < 0) nativeInvalid("output recipe is detached from aggregate declarations");
-    for (const binding of nativeStringOutputAbiBindings(
-      input.outputRequirements,
-      input.plan.output,
-      baseOrder + offset,
-    ))
-      add(binding);
-  }
+  nativeErrorAbiBindings(input, baseOrder).forEach(add);
+  nativeStringOutputInputAbiBindings(input, baseOrder).forEach(add);
   const seen = new Set<string>();
   for (const [index, declaration] of input.plan.declarations.entries()) {
     if (seen.has(declaration.key)) nativeInvalid("duplicate resource declaration key");
@@ -994,7 +991,7 @@ function physicalSignatureConverter(
       }
       const value =
         scalar(type) ??
-        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
+        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedOpaqueDynamicCarrier(type) : undefined);
       if (
         type.kind === "support-ref" &&
         native?.formatterScratch &&
@@ -1067,6 +1064,7 @@ function appendAsyncPhysicalResources(
   exports: PhysicalExport[],
 ): void {
   for (const frame of asyncFrames?.frames ?? []) {
+    if (frame.kind !== "host") continue;
     appendPhysicalImports(frame.imports, importedFunctions);
     exports.push(
       ...frame.callbacks.map((row) => ({
@@ -1265,7 +1263,11 @@ export function planPhysicalSetup(
     ...priorBindings.map((row) => row.entry.order.declarationOrder + 1),
   );
   const nativeInvocation = nativeInvocationSetup(invocation.requirements, invocationOrder);
-  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? [])];
+  const classValues = planNativeClassValueSetup(
+    sourceClosures,
+    invocationOrder + (nativeInvocation?.bindings.length ?? 0),
+  );
+  const nativeBindings = [...priorBindings, ...(nativeInvocation?.bindings ?? []), ...(classValues?.bindings ?? [])];
   if (nativeBindings.length) sealNativeBindingPlan(program, nativeBindings);
   const hostNumberOutcome = planHostNumberBoundary(
     program,
@@ -1285,7 +1287,7 @@ export function planPhysicalSetup(
   const asyncFrames = asyncOutcome.kind === "planned" ? asyncOutcome.setup : undefined;
   if (asyncOutcome.kind !== "planned") gaps.add(asyncOutcome.detail, asyncOutcome.unitId);
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
-  const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
+  const dynamic = planPreparedDynamicUnits(program, projection, asyncFrames, sourceClosures, native?.valueRequirements);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
   const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
 
@@ -1403,52 +1405,46 @@ export function planPhysicalSetup(
       formatter && fn === formatter.support.functions[0]
         ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
         : fn.unitId;
-    for (const buffer of [
-      ...fn.blocks.map((block) => block.instrs),
-      ...(fn.asyncPlan?.states.map((s) => s.body) ?? []),
-    ]) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call" || instruction.kind === "closure.new") {
-            const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
-            if (!reserved.has(irCallableBindingKey(ref.binding))) {
-              gaps.add(
-                `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
-            if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
-              gaps.add(
-                `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "intrinsic") {
-            const provider = instruction.provider;
-            if (!provider)
-              gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-            else if (
-              missingIntrinsicMaterialization(
-                instruction,
-                provider,
-                reserved,
-                projection,
-                nativeStrings,
-                hostNumberBoundary,
-              )
-            ) {
-              gaps.add(
-                `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "throw" || instruction.kind === "try") {
-            exceptionRequired = true;
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      const references = directIrCallableReferences(instruction);
+      if (references.length) {
+        for (const ref of references) {
+          if (!reserved.has(irCallableBindingKey(ref.binding))) {
+            gaps.add(
+              `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
+              diagnosticUnit,
+            );
           }
-        });
+        }
+      } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
+        if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
+          gaps.add(
+            `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "intrinsic") {
+        const provider = instruction.provider;
+        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
+        else if (
+          missingIntrinsicMaterialization(
+            instruction,
+            provider,
+            reserved,
+            projection,
+            nativeStrings,
+            hostNumberBoundary,
+          )
+        ) {
+          gaps.add(
+            `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "throw" || instruction.kind === "try") {
+        exceptionRequired = true;
       }
-    }
+    });
   }
 
   const startup = planPhysicalStartup(program, bodies, exportNames, gaps);
@@ -1459,9 +1455,9 @@ export function planPhysicalSetup(
   }
 
   // Preserve the existing first refusal while making missing inventory evidence
-  // part of ordinary acceptance. Runtime configuration is not yet forwarded.
+  // part of ordinary acceptance. Only explicit configuration closes its obligation.
   if (options.backend === "wasmgc" && options.target === "standalone") {
-    const inventory = planNativePromiseInventoryPreflight(program, options, projection, native, undefined);
+    const inventory = planNativePromiseInventoryPreflight(program, options, projection, native, options.nativePromise);
     if (inventory.kind === "unavailable")
       for (const row of inventory.obligations)
         gaps.add(`native Promise inventory ${row.code}: ${row.detail}`, row.unitId);
@@ -1495,19 +1491,11 @@ export function planPhysicalSetup(
     numberRemainders,
     ...(sourceClosures
       ? {
-          sourceClosures: {
-            key: sourceClosures.key,
-            signatures: sourceClosures.signatures,
-            shapes: sourceClosures.shapes,
-            units: sourceClosures.units,
-            allocations: sourceClosures.allocations,
-            refCells: sourceClosures.refCells,
-            refCellAllocations: sourceClosures.refCellAllocations,
-            gaps: sourceClosures.gaps,
-          },
+          sourceClosures: nativeSourceClosureDescription(sourceClosures),
         }
       : {}),
     ...(nativeInvocation ? { nativeInvocation } : {}),
+    ...(classValues ? { classValues } : {}),
     ...(native?.realmRequirements ? { nativeRealm: native.realmRequirements.description } : {}),
     ...(asyncFrames?.frames.length ? { asyncFrames } : {}),
     ...(hostNumberBoundary?.imports.length ? { hostNumberBoundary } : {}),

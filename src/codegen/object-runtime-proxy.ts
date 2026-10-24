@@ -7,7 +7,7 @@
  * `fillProxyDispatch` (so `index.ts`s from "./object-runtime.js" keep resolving)
  * and imports `ensureProxyRuntime` back (still called from `ensureObjectRuntime`).
  */
-import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { nativeInheritedSetRuntimeActive } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { registerProxyConstructChainNatives } from "./object-runtime-proxy-construct-chain.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -1896,7 +1896,7 @@ export function ensureProxyRuntime(
   const setBody = findBody("__extern_set");
   if (setBody) {
     const setResultGlobalIdx = ctx.externSetResultGlobalIdx;
-    const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && setResultGlobalIdx !== undefined;
+    const inheritedSetRuntimeActive = nativeInheritedSetRuntimeActive(ctx) && setResultGlobalIdx !== undefined;
     const isTruthyIdx = ctx.funcMap.get("__is_truthy");
     const resultAwareGuard = inheritedSetRuntimeActive && isTruthyIdx !== undefined;
     const callSetDispatch = (): Instr[] => [

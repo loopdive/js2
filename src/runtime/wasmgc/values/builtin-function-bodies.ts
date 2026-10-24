@@ -1,4 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildStandardRethrowingTry } from "../../../wasm/physical/exception-control.js";
+import { buildArgumentVectorMethodAdapter } from "./argument-vector-call-adapters.js";
 import type { Instr, LocalDef, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
   BFN_ID_FIELD_IDX,
@@ -17,6 +19,7 @@ export interface BuiltinFunctionEntryOperands {
   readonly metadataId: number;
   readonly liftedTypeIdx: number;
   readonly singleton: number;
+  readonly singletonExtern?: boolean;
   readonly lifted: FuncHandle;
   readonly algorithm: FuncHandle;
   readonly initialName: readonly Instr[];
@@ -31,6 +34,7 @@ export interface BuiltinFunctionBodyOperands {
   readonly vectorTypeIdx: number;
   readonly vectorArrayTypeIdx: number;
   readonly realm: number;
+  readonly stateAnchors?: { readonly realm: number; readonly functionPrototype: number; readonly identityType: number };
   readonly objectPrototype: number;
   readonly state: number;
   readonly undefinedGlobal: number;
@@ -51,20 +55,33 @@ export interface BuiltinFunctionBodyOperands {
   readonly errors: readonly (readonly Instr[])[];
   readonly entries: readonly BuiltinFunctionEntryOperands[];
 }
+/** Shared receiver/vector ABI, independent of bootstrap-only algorithms and storage. */
+export type BuiltinFunctionDispatchOperands = Pick<
+  BuiltinFunctionBodyOperands,
+  "rootTypeIdx" | "realm" | "initializer" | "match" | "typeError" | "exceptionTag" | "errors"
+> & {
+  readonly entries: readonly Pick<
+    BuiltinFunctionEntryOperands,
+    "typeIdx" | "metadataId" | "liftedTypeIdx" | "singleton" | "singletonExtern" | "algorithm"
+  >[];
+};
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
 const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
-export function builtinUndefined(d: BuiltinFunctionBodyOperands): Instr[] {
+export function builtinUndefined(d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal">): Instr[] {
   return [global(d.undefinedGlobal), { op: "extern.convert_any" }];
 }
-export function builtinFailure(d: BuiltinFunctionBodyOperands, ordinal = 0): Instr[] {
+export function builtinFailure(
+  d: Pick<BuiltinFunctionDispatchOperands, "errors" | "typeError" | "exceptionTag">,
+  ordinal = 0,
+): Instr[] {
   return [...structuredClone(d.errors[ordinal]!), call(d.typeError), { op: "throw", tagIdx: d.exceptionTag }];
 }
-export function builtinRoot(d: BuiltinFunctionBodyOperands, local = 0): Instr[] {
+export function builtinRoot(d: Pick<BuiltinFunctionDispatchOperands, "rootTypeIdx">, local = 0): Instr[] {
   return [get(local), { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: d.rootTypeIdx }];
 }
-export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionDispatchOperands): BuiltinFunctionDefinition {
   return {
     locals: [{ name: "candidate", type: { kind: "anyref" } }],
     body: [
@@ -75,6 +92,14 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
       ...d.entries.flatMap((entry, index): Instr[] => [
         get(1),
         { op: "ref.test", typeIdx: entry.typeIdx },
+        ...(entry.singletonExtern
+          ? [
+              global(entry.singleton),
+              { op: "any.convert_extern" } as Instr,
+              { op: "ref.test", typeIdx: entry.typeIdx } as Instr,
+              { op: "i32.and" } as Instr,
+            ]
+          : []),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -93,6 +118,9 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
             get(1),
             { op: "ref.cast", typeIdx: entry.typeIdx },
             global(entry.singleton),
+            ...(entry.singletonExtern
+              ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: entry.typeIdx } as Instr]
+              : []),
             { op: "ref.eq" },
             { op: "i32.and" },
             get(1),
@@ -108,28 +136,60 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
     ],
   };
 }
+/** Shared physical allocation; callers own population order and prototype authority. */
+export function buildBuiltinFunctionAllocation(
+  entry: Pick<
+    BuiltinFunctionEntryOperands,
+    "lifted" | "userFormalCount" | "metadataId" | "initialName" | "typeIdx" | "singleton" | "singletonExtern"
+  >,
+  d: { readonly createNull: FuncHandle; readonly realm: number; readonly prototype: readonly Instr[] },
+): Instr[] {
+  return [
+    { op: "ref.func", funcIdx: entry.lifted },
+    { op: "i32.const", value: entry.userFormalCount },
+    call(d.createNull),
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: entry.metadataId },
+    ...structuredClone(d.prototype),
+    global(d.realm),
+    { op: "ref.as_non_null" },
+    ...structuredClone(entry.initialName),
+    { op: "struct.new", typeIdx: entry.typeIdx },
+    ...(entry.singletonExtern ? [{ op: "extern.convert_any" } as Instr] : []),
+    { op: "global.set", index: entry.singleton },
+  ];
+}
 export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
   const allocate: Instr[] = [
     { op: "struct.new", typeIdx: d.realmTypeIdx },
     { op: "global.set", index: d.realm },
     call(d.createNull),
     { op: "global.set", index: d.objectPrototype },
-    ...d.entries.flatMap((entry): Instr[] => [
-      { op: "ref.func", funcIdx: entry.lifted },
-      { op: "i32.const", value: entry.userFormalCount },
-      call(d.createNull),
-      { op: "i32.const", value: 0 },
-      { op: "i32.const", value: entry.metadataId },
-      ...(entry.behavior === "function-prototype"
-        ? [global(d.objectPrototype)]
-        : [global(d.entries[0]!.singleton), { op: "extern.convert_any" } as Instr]),
+    ...d.entries.flatMap((entry) =>
+      buildBuiltinFunctionAllocation(entry, {
+        createNull: d.createNull,
+        realm: d.realm,
+        prototype:
+          entry.behavior === "function-prototype"
+            ? [global(d.objectPrototype)]
+            : [global(d.entries[0]!.singleton), { op: "extern.convert_any" }],
+      }),
+    ),
+  ];
+  if (d.stateAnchors) {
+    const prototype = d.entries.find((entry) => entry.behavior === "function-prototype");
+    if (!prototype) throw Error("builtin realm anchors have no actual Function.prototype");
+    allocate.push(
       global(d.realm),
       { op: "ref.as_non_null" },
-      ...structuredClone(entry.initialName),
-      { op: "struct.new", typeIdx: entry.typeIdx },
-      { op: "global.set", index: entry.singleton },
-    ]),
-  ];
+      { op: "ref.cast", typeIdx: d.stateAnchors.identityType },
+      { op: "global.set", index: d.stateAnchors.realm },
+      global(prototype.singleton),
+      { op: "ref.as_non_null" },
+      { op: "extern.convert_any" },
+      { op: "global.set", index: d.stateAnchors.functionPrototype },
+    );
+  }
   const seed: Instr[] = d.entries.flatMap((entry) => {
     const bag = (): Instr[] => [
       global(entry.singleton),
@@ -181,17 +241,13 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
       { op: "i32.const", value: 1 },
       { op: "global.set", index: d.state },
-      {
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
-        catches: [],
-        catchAll: [
+      buildStandardRethrowingTry(
+        [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
+        [
           { op: "i32.const", value: -1 },
           { op: "global.set", index: d.state },
-          { op: "rethrow", depth: 0 },
         ],
-      },
+      ),
     ],
   };
 }
@@ -206,8 +262,8 @@ export function buildBuiltinFunctionSingletonDefinition(
 }
 /** No source argc/this/extras or active-realm global is touched by this transport. */
 export function buildBuiltinFunctionLiftedDefinition(
-  d: BuiltinFunctionBodyOperands,
-  entry: BuiltinFunctionEntryOperands,
+  d: BuiltinFunctionDispatchOperands,
+  entry: BuiltinFunctionDispatchOperands["entries"][number],
   ordinal: number,
 ): BuiltinFunctionDefinition {
   return {
@@ -226,12 +282,12 @@ export function buildBuiltinFunctionLiftedDefinition(
   };
 }
 export function buildBuiltinFunctionAlgorithmDefinition(
-  d: BuiltinFunctionBodyOperands,
+  d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal" | "errors" | "typeError" | "exceptionTag">,
   behavior: BuiltinFunctionEntryOperands["behavior"],
 ): BuiltinFunctionDefinition {
   return { locals: [], body: behavior === "function-prototype" ? builtinUndefined(d) : builtinFailure(d, 2) };
 }
-export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionDispatchOperands): BuiltinFunctionDefinition {
   return {
     locals: [{ name: "ordinal", type: { kind: "i32" } }],
     body: [
@@ -290,21 +346,12 @@ export function buildBuiltinFunctionMethodDefinition(
   d: BuiltinFunctionBodyOperands,
   arity: number,
 ): BuiltinFunctionDefinition {
-  const vector = arity + 2;
-  return {
-    locals: [{ name: "arguments", type: { kind: "externref" } }],
-    body: [
-      call(d.newVector),
-      { op: "local.set", index: vector },
-      ...Array.from({ length: arity }, (_, index): Instr[] => [get(vector), get(index + 2), call(d.push)]).flat(),
-      get(0),
-      get(1),
-      get(vector),
-      { op: "any.convert_extern" },
-      { op: "ref.cast", typeIdx: d.vectorTypeIdx },
-      call(d.callVector),
-    ],
-  };
+  return buildArgumentVectorMethodAdapter(
+    arity,
+    { newVector: d.newVector, push: d.push, call: d.callVector },
+    "callee-first",
+    d.vectorTypeIdx,
+  );
 }
 export function buildBuiltinFunctionSlotDefinition(
   d: BuiltinFunctionBodyOperands,

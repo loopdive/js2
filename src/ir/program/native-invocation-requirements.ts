@@ -1,11 +1,16 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { createNativeCallableFlow } from "./native-callable-flow.js";
+import { createNativeConstructUse } from "./native-construct-requirements.js";
+import { nativeReceiverRouteGaps } from "./native-receiver-routes.js";
 import type { IrInstr, IrInstrCall, IrValueId, IrType } from "../core/nodes.js";
+import { nativeInvocationParameter } from "./native-invocation-parameter.js";
 import { closureSignatureEquals } from "../core/types.js";
 import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import {
   IR_CLOSURE_VECTOR_APPLY,
   IR_CLOSURE_UNDEFINED,
+  closureInvocationKind,
   closureMethodArity,
 } from "../core/closure-invocation-callables.js";
 import { nativeAsyncCallableValueTypes } from "../runtime/native-async-callables.js";
@@ -36,9 +41,19 @@ import {
 export interface NativeInvocationUse {
   readonly occurrence: number;
   readonly ownerUnitId: IrUnitId;
-  readonly kind: "method" | "apply-vector" | "undefined";
+  readonly kind: "method" | "apply-vector" | "undefined" | "receiver" | "construct";
   readonly arity?: number;
   readonly liftedUnitId?: IrUnitId;
+  readonly parameterIndex?: number;
+  readonly construct?: {
+    readonly calleeOccurrence: number;
+    readonly newTargetOccurrence: number;
+    readonly closureOccurrence: number;
+    readonly calleeCalls: readonly number[];
+    readonly newTargetCalls: readonly number[];
+    readonly argv: IrValueId;
+  };
+  readonly returnedCallee?: { readonly allocationOccurrence: number; readonly calls: readonly number[] };
   readonly callbacks?: readonly {
     readonly argument: number;
     readonly allocationOccurrence: number;
@@ -58,7 +73,7 @@ export interface NativeInvocationRequirements {
   readonly applyVector: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
-  readonly completionScope: "selected-source-invocation";
+  readonly completionScope: "selected-source-invocation" | "selected-source-and-promise-invocation";
 }
 const owners = new WeakMap<NativeInvocationRequirements, unknown>();
 function fail(detail: string): never {
@@ -167,6 +182,8 @@ function calculate(
   const { demands } = source;
   const typeMaps = new Map<IrUnitId, ReturnType<typeof nativeAsyncCallableValueTypes>>();
   const definitions = new Map<IrUnitId, Map<IrValueId, IrInstr>>();
+  const constructUse = createNativeConstructUse(source);
+  const callableFlow = createNativeCallableFlow(source);
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const buffer = demands.buffers[row.bufferIndex]!;
     if (buffer.view !== "projection" || row.instruction.kind !== "call") continue;
@@ -174,14 +191,7 @@ function calculate(
       binding = call.target.binding;
     if (binding.kind !== "intrinsic") continue;
     const arity = closureMethodArity(binding.symbol);
-    const kind =
-      arity !== undefined
-        ? "method"
-        : binding.symbol === IR_CLOSURE_VECTOR_APPLY
-          ? "apply-vector"
-          : binding.symbol === IR_CLOSURE_UNDEFINED
-            ? "undefined"
-            : undefined;
+    const kind = closureInvocationKind(binding.symbol);
     if (!kind) continue;
     const unitId = buffer.ownerUnitId;
     let types = typeMaps.get(unitId);
@@ -192,8 +202,8 @@ function calculate(
     }
     if (call.result === null || !external(call.resultType ?? undefined))
       fail("semantic invocation result is not externref");
-    if (kind === "undefined") {
-      if (call.args.length) fail("canonical undefined callable takes no operands");
+    if (kind === "undefined" || kind === "receiver") {
+      if (call.args.length) fail(`canonical ${kind} callable takes no operands`);
       uses.push({ occurrence, ownerUnitId: unitId, kind });
       continue;
     }
@@ -209,6 +219,12 @@ function calculate(
       if (argv?.kind !== "vec" || !external(argv.elementType) || argv.layout)
         fail("apply lacks its actual native argument-vector input");
     }
+    if (kind === "construct") {
+      const selected = constructUse({ occurrence, ownerUnitId: unitId }, call);
+      uses.push(selected.use);
+      if (selected.gap) gaps.push({ unitId, detail: selected.gap });
+      continue;
+    }
     let defs = definitions.get(unitId);
     if (!defs) {
       defs = new Map();
@@ -219,14 +235,22 @@ function calculate(
       }
       definitions.set(unitId, defs);
     }
-    const { type: calleeType, liftedUnitId } = callableAllocation(
-      source,
-      unitId,
-      callee,
-      defs,
-      types,
-      "invocation callee",
-    );
+    const parameter = nativeInvocationParameter(source, unitId, callee, defs, types);
+    if (parameter) {
+      if (kind !== "method" || arity !== parameter.signature.params.length)
+        fail("source parameter invocation differs from its exact signature");
+      uses.push({ occurrence, ownerUnitId: unitId, kind, arity, parameterIndex: parameter.index });
+      continue;
+    }
+    const selected = callableFlow.resolve(unitId, callee);
+    if (!selected.proof) {
+      gaps.push({ unitId, detail: selected.gap! });
+      uses.push({ occurrence, ownerUnitId: unitId, kind, ...(arity === undefined ? {} : { arity }) });
+      continue;
+    }
+    const proof = selected.proof;
+    const calleeType = { signature: proof.instruction.signature };
+    const liftedUnitId = proof.allocation.liftedUnitId;
     const argv = kind === "apply-vector" ? defs.get(call.args[2]!) : undefined;
     if (
       calleeType.signature.params.some((type) => type.kind === "callable") &&
@@ -266,6 +290,9 @@ function calculate(
       kind,
       ...(arity === undefined ? {} : { arity }),
       liftedUnitId,
+      ...(proof.calls.length
+        ? { returnedCallee: { allocationOccurrence: proof.allocation.occurrence, calls: proof.calls } }
+        : {}),
       callbacks,
     });
   }
@@ -273,6 +300,7 @@ function calculate(
     ? reconcileNativeGetterInvocationRequirements(source, objectAccess)
     : { getterUses: [], gaps: [] };
   gaps.push(...getters.gaps);
+  gaps.push(...nativeReceiverRouteGaps(source, uses));
   return {
     uses,
     getterUses: getters.getterUses,
@@ -298,14 +326,21 @@ export function planNativeInvocationRequirements(
       : undefined);
   const objectResults = objectAccess ? deriveNativeObjectResultRequirements(source, objectAccess) : undefined;
   const data = calculate(source, objectAccess, objectResults);
-  if (!data.uses.length && !data.getterUses.length && !objectResults?.gaps.length) return undefined;
+  if (
+    !data.uses.length &&
+    !data.getterUses.length &&
+    !objectResults?.gaps.length &&
+    !source.promiseClosures &&
+    !source.units.length
+  )
+    return undefined;
   const { program, projection } = source.demands;
   const runtimeCreated = collectNativePromiseSourceCensus(program, projection, {
     backend: projection.backend,
     target: projection.target,
     utf8Storage: options.utf8Storage,
   });
-  if (runtimeCreated.required)
+  if (runtimeCreated.required && !source.promiseClosures)
     data.gaps.push({
       unitId: runtimeCreated.anchorUnitId,
       detail: "runtime-created Promise settlement callables need their issued producer/fill association",
@@ -317,7 +352,9 @@ export function planNativeInvocationRequirements(
     ...(objectAccess ? { objectAccess } : {}),
     ...(objectResults ? { objectResults } : {}),
     ...(freezePreparedIrValue(data) as typeof data),
-    completionScope: "selected-source-invocation" as const,
+    completionScope: source.promiseClosures
+      ? ("selected-source-and-promise-invocation" as const)
+      : ("selected-source-invocation" as const),
   });
   owners.set(pack, freezePreparedIrValue(data));
   return pack;
@@ -351,7 +388,7 @@ export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocation
   if (!snapshot) fail("unissued or copied invocation requirements");
   assertNativePromiseSourceCensusCurrent(pack.runtimeCreated);
   const data = calculate(pack.source, pack.objectAccess, pack.objectResults);
-  if (pack.runtimeCreated.required)
+  if (pack.runtimeCreated.required && !pack.source.promiseClosures)
     data.gaps.push({
       unitId: pack.runtimeCreated.anchorUnitId,
       detail: "runtime-created Promise settlement callables need their issued producer/fill association",
@@ -359,7 +396,8 @@ export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocation
   if (
     pack.runtimeCreated.program !== pack.source.demands.program ||
     pack.runtimeCreated.projection !== pack.source.demands.projection ||
-    pack.completionScope !== "selected-source-invocation" ||
+    pack.completionScope !==
+      (pack.source.promiseClosures ? "selected-source-and-promise-invocation" : "selected-source-invocation") ||
     pack.key !== `${pack.source.key}:invocation` ||
     preparedIrDataMismatch(data, snapshot) !== undefined ||
     preparedIrDataMismatch(data, {

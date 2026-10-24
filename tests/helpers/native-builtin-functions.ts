@@ -3,6 +3,7 @@ import { createEmptyModule } from "../../src/ir/types.js";
 import { emitBinary } from "../../src/emit/binary.js";
 import { PhysicalModuleReservations } from "../../src/wasm/physical/module-reservations.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
+import { reserveTaggedRethrowObserver } from "./native-tagged-rethrow-observer.js";
 import { deriveNativeObjectAccessRequirements } from "../../src/ir/program/native-object-access-requirements.js";
 import { deriveNativeValueResourcePlan } from "../../src/ir/program/native-value-resources.js";
 import {
@@ -478,7 +479,12 @@ export interface BuiltinFunctionRuntime {
   stringSameValue(a: unknown, b: unknown): number;
 }
 /** Observer exports are test-only; no observer is installed in the intrinsic catalog. */
-export function builtinFunctionRuntime(offset = false, withTransportControls = false, withStringControl = false) {
+export function builtinFunctionRuntime(
+  offset = false,
+  withTransportControls = false,
+  withStringControl = false,
+  reserveExtension?: (fixture: ReturnType<typeof builtinFunctionFixture>) => () => void,
+) {
   const f = builtinFunctionFixture(offset),
     { tx } = f,
     kernel = f.kernel!;
@@ -504,9 +510,12 @@ export function builtinFunctionRuntime(offset = false, withTransportControls = f
     catchRethrow: control("catchRethrow", [ext, ext, ext], [ext]),
   };
   const thrown = tx.reserveGlobal("test-control:thrown", "thrown", ext, true);
+  const observeRethrow = reserveTaggedRethrowObserver(tx, "test-control:catch-ref");
   const controls = withTransportControls ? reserveBuiltinTransportControls(f) : undefined;
   const stringControl = withStringControl ? reserveBuiltinStringControl(f) : undefined;
+  const fillExtension = reserveExtension?.(f);
   completeBuiltinFunctionFixture(f);
+  fillExtension?.();
   if (controls) fillBuiltinTransportControls(f, controls);
   if (stringControl) fillBuiltinStringControl(f, stringControl);
   tx.fillGlobal(thrown, [{ op: "ref.null.extern" }]);
@@ -648,22 +657,10 @@ export function builtinFunctionRuntime(offset = false, withTransportControls = f
     { op: "extern.convert_any" },
   ]);
   fill("sourceCall", [...cast(0, f.closures.root.typeIndex), { op: "call", funcIdx: sourceSlot.handle }]);
-  fill("catchRethrow", [
-    {
-      op: "try",
-      blockType: { kind: "val", type: ext },
-      body: structuredClone(callBody),
-      catches: [
-        {
-          tagIdx: tx.physicalIndex(kernel.exception),
-          body: [
-            { op: "global.set", index: tx.physicalIndex(thrown) },
-            { op: "rethrow", depth: 0 },
-          ],
-        },
-      ],
-    },
-  ]);
+  tx.fillFunction(
+    observers.catchRethrow,
+    observeRethrow(callBody, tx.physicalIndex(kernel.exception), tx.physicalIndex(thrown), 3),
+  );
   const exports = {
     ...kernel.functions,
     ...observers,

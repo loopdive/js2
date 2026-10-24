@@ -560,6 +560,9 @@ function checkInstrEmbeddedTypes(
     case "object.new":
       checkType({ kind: "object", shape: instr.shape }, block, "object.new shape");
       return;
+    case "class.value.new":
+      checkType({ kind: "callable", signature: instr.signature }, block, "class.value.new signature");
+      return;
     case "closure.new":
       for (let i = 0; i < instr.captureFieldTypes.length; i++) {
         checkType(instr.captureFieldTypes[i]!, block, `closure.new capture ${i}`);

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { Instr, LocalDef } from "../../../wasm/model/instructions.js";
+import type { Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import {
-  buildOrdinaryObjectCreateBody,
+  buildOrdinaryObjectStoragePrefix,
   buildOrdinaryObjectInsertBody,
   buildOrdinaryObjectGrowBody,
   type OrdinaryObjectCreateResources,
@@ -14,25 +14,34 @@ import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING } from "./ordinary-object-descripto
 export function buildOrdinaryObjectCreateDefinition(
   d: OrdinaryObjectCreateResources,
   prototype: "default" | "null" | "argument",
+  allocationTypeIdx: TypeHandle = d.objectTypeIdx,
 ): { locals: LocalDef[]; body: Instr[] } {
-  const body = buildOrdinaryObjectCreateBody(d);
-  if (prototype === "null") body[5] = { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype };
-  if (prototype === "argument") {
-    body[0] = { op: "local.get", index: 0 };
-    body.splice(
-      5,
-      1,
-      { op: "local.get", index: 0 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [{ op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype }],
-        else: [{ op: "i32.const", value: 0 }],
-      },
-    );
-  }
-  return { locals: [], body };
+  const nullFlag: Instr = { op: "i32.const", value: ORDINARY_OBJECT_DESCRIPTOR_ENCODING.nullPrototype };
+  const flags: Instr[] =
+    prototype === "argument"
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [nullFlag],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ]
+      : [prototype === "null" ? nullFlag : { op: "i32.const", value: 0 }];
+  return {
+    locals: [],
+    body: [
+      ...buildOrdinaryObjectStoragePrefix(
+        d,
+        prototype === "argument" ? [{ op: "local.get", index: 0 }] : undefined,
+        flags,
+      ),
+      { op: "struct.new", typeIdx: allocationTypeIdx },
+      { op: "extern.convert_any" },
+    ],
+  };
 }
 
 export function buildOrdinaryObjectInsertDefinition(d: OrdinaryObjectInsertResources): {

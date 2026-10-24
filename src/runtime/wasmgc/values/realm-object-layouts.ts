@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
+import type { OrdinaryObjectCreateResources } from "./ordinary-object-storage-bodies.js";
+import { buildRealmOrdinaryObjectAllocationBody } from "./realm-object-allocation.js";
+import type { FuncHandle, Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import type { StructTypeDef } from "../../../wasm/model/module-records.js";
 import type { NativeDeclaredType } from "./native-resource-declaration-types.js";
 import { createOpenObjectDeclaration } from "./object-layouts.js";
@@ -85,25 +87,59 @@ export function createRealmSourceClosureType(
   };
 }
 
-/** Structural initializer only. Non-null anchors do not attest complete intrinsic population. */
-export function buildRealmSourceStateInitializer(binding: {
+/** Allocate actual object state from the already-evaluated prototype operand. */
+export function buildRealmObjectStateInitializer(binding: {
   readonly realmGlobal: number;
-  readonly prototypeGlobal: number;
   readonly stateType: number;
+  readonly initializeRealm?: FuncHandle;
 }): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [],
     body: [
+      ...(binding.initializeRealm ? [{ op: "call" as const, funcIdx: binding.initializeRealm }] : []),
       { op: "global.get", index: binding.realmGlobal },
       { op: "ref.is_null" },
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-      { op: "global.get", index: binding.prototypeGlobal },
-      { op: "ref.is_null" },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
-      { op: "global.get", index: binding.prototypeGlobal },
+      { op: "local.get", index: 0 },
       { op: "global.get", index: binding.realmGlobal },
       { op: "ref.as_non_null" },
       { op: "struct.new", typeIdx: binding.stateType },
     ],
   };
+}
+
+/** Source functions use their realm's function prototype through the same allocator. */
+export function buildRealmSourceStateInitializer(binding: {
+  readonly prototypeGlobal: number;
+  readonly initializeState: FuncHandle;
+  readonly initializeRealm?: FuncHandle;
+}): { locals: LocalDef[]; body: Instr[] } {
+  return {
+    locals: [],
+    body: [
+      ...(binding.initializeRealm ? [{ op: "call" as const, funcIdx: binding.initializeRealm }] : []),
+      { op: "global.get", index: binding.prototypeGlobal },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "unreachable" }] },
+      { op: "global.get", index: binding.prototypeGlobal },
+      { op: "call", funcIdx: binding.initializeState },
+    ],
+  };
+}
+
+/** Bootstrap adapter: explicit prototype/realm avoids recursively calling the initializer. */
+export function buildRealmOrdinaryObjectAllocation(
+  storage: OrdinaryObjectCreateResources,
+  state: {
+    readonly allocationTypeIdx: number;
+    readonly stateTypeIdx: number;
+    readonly prototype: readonly Instr[];
+    readonly realm: readonly Instr[];
+  },
+): Instr[] {
+  return buildRealmOrdinaryObjectAllocationBody(storage, state.allocationTypeIdx, [
+    ...state.prototype,
+    ...state.realm,
+    { op: "struct.new", typeIdx: state.stateTypeIdx },
+  ]);
 }

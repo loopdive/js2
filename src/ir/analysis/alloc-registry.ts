@@ -22,6 +22,7 @@
 // This issue adds the hooks only. No analysis is performed here; the namespace
 // table below is reserved by convention for the follow-up issues.
 
+import { hasNativeCollectionState, hasNativeDateState } from "../core/native-data-slots.js";
 import { asAllocSiteId, type AllocKind, type AllocSiteId, type IrSiteId } from "../core/nodes.js";
 import { IR_CLASS_SHAPE_CELL, type IrType } from "../core/types.js";
 import type {
@@ -50,17 +51,7 @@ export function copyIrPreparationData<T>(value: T): T {
     if (typeof value === "function" || typeof value === "symbol") invalid("executable/symbol value");
     if (value === null || typeof value !== "object") return value;
     if (copies.has(value)) return copies.get(value);
-    // The intrinsic tests the Date slot without coercion or toStringTag access,
-    // even when its prototype was erased. NaN still proves an invalid Date.
-    let date = false;
-    try {
-      Reflect.apply(Date.prototype.getTime, value, []);
-      date = true;
-    } catch (error) {
-      if (!(error instanceof TypeError)) throw error;
-      // Only the intrinsic's incompatible-receiver error means "not a Date".
-    }
-    if (date) invalid("unsupported Date instance");
+    if (hasNativeDateState(value)) invalid("unsupported Date instance");
     const prototype = Object.getPrototypeOf(value);
     if (prototype === Map.prototype || prototype === Set.prototype) {
       if (Reflect.ownKeys(value).length) invalid("collection has extra properties");
@@ -77,17 +68,7 @@ export function copyIrPreparationData<T>(value: T): T {
       if (!Object.isExtensible(value)) Object.preventExtensions(copy);
       return copy;
     }
-    // Authenticate native collection slots even if somebody erased a prototype.
-    for (const has of [Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]) {
-      let native = false;
-      try {
-        Reflect.apply(has, value, [value]);
-        native = true;
-      } catch {
-        /* Not this native collection. */
-      }
-      if (native) invalid("unsupported collection prototype");
-    }
+    if (hasNativeCollectionState(value)) invalid("unsupported collection prototype");
     const array = Array.isArray(value);
     if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)
       invalid("unsupported object instance");

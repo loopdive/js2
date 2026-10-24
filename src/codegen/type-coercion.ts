@@ -7,6 +7,8 @@
  */
 import type { ArrayTypeDef, Instr, StructTypeDef, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { coercionPlan } from "./coercion-plan.js";
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
+import { ensureToUint32Helper } from "./helpers/uint32-coercion.js";
 import { recordVecFromExternMaterializer } from "./compiler-support-abi.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -3001,20 +3003,14 @@ export function coerceType(
     }
   }
 
-  // i64 → f64 (Number(bigint))
-  if (from.kind === "i64" && to.kind === "f64") {
-    fctx.body.push({ op: "f64.convert_i64_s" });
-    return;
-  }
-  // f64 → i64 (BigInt(number))
-  if (from.kind === "f64" && to.kind === "i64") {
-    fctx.body.push({ op: "i64.trunc_sat_f64_s" });
-    return;
-  }
-  // i32 → i64
-  if (from.kind === "i32" && to.kind === "i64") {
-    fctx.body.push({ op: "i64.extend_i32_s" });
-    return;
+  // Plain numeric widening belongs to the shared scalar table. The i32
+  // destination rows below retain truthiness and the exact ToInt32 policy.
+  if ((from.kind === "i32" || from.kind === "i64" || from.kind === "f64") && (to.kind === "i64" || to.kind === "f64")) {
+    const plan = coercionPlan(from, to, { boxNumberIdx: null, unboxNumberIdx: null });
+    if (plan) {
+      fctx.body.push(...plan.instrs);
+      return;
+    }
   }
   // i64 → i32
   if (from.kind === "i64" && to.kind === "i32") {
@@ -3023,14 +3019,9 @@ export function coerceType(
     fctx.body.push({ op: "i64.ne" });
     return;
   }
-  // i32 → f64
-  if (from.kind === "i32" && to.kind === "f64") {
-    fctx.body.push({ op: "f64.convert_i32_s" });
-    return;
-  }
   // f64 → i32 (#6798: a native `i32` destination wraps with ToInt32, like `| 0`)
   if (from.kind === "f64" && to.kind === "i32") {
-    if (to.int32 === true) emitToInt32(fctx);
+    if (to.int32 === true || to.uint32 === true) emitToInt32(fctx);
     else fctx.body.push({ op: "i32.trunc_sat_f64_s" });
     return;
   }
@@ -3040,7 +3031,8 @@ export function coerceType(
     const funcIdx = ctx.funcMap.get("__unbox_number");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      if (to.uint32 === true) emitToInt32(fctx);
+      else fctx.body.push({ op: "i32.trunc_sat_f64_s" });
       return;
     }
     fctx.body.push({ op: "ref.is_null" });
@@ -3461,7 +3453,7 @@ export function coerceType(
     // number (or unbranded i32) → __box_number (convert i32 → f64 first).
     const funcIdx = ctx.funcMap.get("__box_number");
     if (funcIdx !== undefined) {
-      fctx.body.push({ op: "f64.convert_i32_s" });
+      fctx.body.push(i32NumberWidening(from));
       fctx.body.push({ op: "call", funcIdx });
       return;
     }
@@ -5129,6 +5121,7 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
       boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
       unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
       boxBigIntIdx: ctx.funcMap.get("__box_bigint") ?? null,
+      toUint32Idx: to.kind === "i32" && to.uint32 ? ensureToUint32Helper(ctx) : null,
     });
     if (plan && !plan.lossy) return plan.instrs;
   }

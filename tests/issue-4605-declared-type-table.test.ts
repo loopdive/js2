@@ -178,6 +178,25 @@ describe("#4605 call — one mistaken call site, coherent with itself", () => {
     );
   });
 
+  it("accepts a non-null provider result in a nullable reference slot", () => {
+    const ref = irVal({ kind: "ref", typeIdx: 0 });
+    const nullable = irVal({ kind: "ref_null", typeIdx: 0 });
+    expect(
+      verify(voidFn("widenResult", [call(1, "__r", [], nullable)]), signatures([["__r", { params: [], result: ref }]])),
+    ).toEqual([]);
+  });
+
+  it("rejects narrowing a nullable provider result to a non-null slot", () => {
+    const ref = irVal({ kind: "ref", typeIdx: 0 });
+    const nullable = irVal({ kind: "ref_null", typeIdx: 0 });
+    expect(
+      verify(
+        voidFn("narrowResult", [call(1, "__r", [], ref)]),
+        signatures([["__r", { params: [], result: nullable }]]),
+      ),
+    ).toContain("call __r resultType ref contradicts the module-declared result ref_null");
+  });
+
   it("is silent on the SAME fixtures without the table — this is the whole gap", () => {
     // Neither of the two negatives above has a second reference to `__h`, so
     // #4603's coherence rule has nothing to compare against and reports

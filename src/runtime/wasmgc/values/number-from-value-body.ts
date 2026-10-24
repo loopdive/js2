@@ -3,6 +3,16 @@
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { cloneInvokerOperand } from "./create-list-from-array-like-body.js";
 
+export const NUMBER_CONVERSION_LITERALS = Object.freeze({
+  numberHint: "number",
+  valueOfKey: "valueOf",
+  toStringKey: "toString",
+  nonCallableError: "@@toPrimitive is not callable",
+  nonPrimitiveError: "Cannot convert object to primitive value",
+  symbolError: "Cannot convert a Symbol value to a number",
+  bigintError: "Cannot convert a BigInt value to a number",
+});
+
 /**
  * Complete bindings for Number(value), not a declaration of provider ownership.
  * Every predicate accepts externref and returns i32. Get is the complete scalar
@@ -41,6 +51,12 @@ export interface NumberFromValueBindings {
   };
 }
 
+/** ToNumber differs from Number(value) only at the resulting BigInt primitive. */
+export interface ToNumberBindings extends Omit<NumberFromValueBindings, "bigintToNumber" | "operands"> {
+  readonly operands: NumberFromValueBindings["operands"] & { readonly bigintError: readonly Instr[] };
+}
+type NumericConversionBindings = NumberFromValueBindings | ToNumberBindings;
+
 const functionKeys = [
   "get",
   "isPrimitive",
@@ -51,7 +67,6 @@ const functionKeys = [
   "method0",
   "method1",
   "primitiveToNumber",
-  "bigintToNumber",
   "typeError",
 ] as const;
 const operandKeys = [
@@ -104,21 +119,23 @@ function auditOperand(input: unknown, active = new Set<object>()): void {
   }
   active.delete(input);
 }
-function captureBindings(input: NumberFromValueBindings): NumberFromValueBindings {
-  const fields = ownRecord(input, [...functionKeys, "exceptionTag", "operands"], "invalid binding record");
-  for (const key of [...functionKeys, "exceptionTag"] as const) {
+function captureBindings(input: NumericConversionBindings, explicitNumber: boolean): NumericConversionBindings {
+  const functions = [...functionKeys, ...(explicitNumber ? ["bigintToNumber"] : [])];
+  const keys = [...operandKeys, ...(explicitNumber ? [] : ["bigintError"])];
+  const fields = ownRecord(input, [...functions, "exceptionTag", "operands"], "invalid binding record");
+  for (const key of [...functions, "exceptionTag"]) {
     const value = fields[key];
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff)
       throw new Error("number from value: unresolved binding " + key);
   }
-  const operands = ownRecord(fields.operands, operandKeys, "invalid operand record");
-  for (const key of operandKeys) {
+  const operands = ownRecord(fields.operands, keys, "invalid operand record");
+  for (const key of keys) {
     if (!Array.isArray(operands[key]) || (operands[key] as unknown[]).length === 0)
       throw new Error("number from value: unresolved operand " + key);
     auditOperand(operands[key]);
     operands[key] = cloneInvokerOperand(operands[key], key);
   }
-  return Object.freeze({ ...fields, operands: Object.freeze(operands) }) as unknown as NumberFromValueBindings;
+  return Object.freeze({ ...fields, operands: Object.freeze(operands) }) as unknown as NumericConversionBindings;
 }
 
 const L_PRIMITIVE = 1,
@@ -126,10 +143,10 @@ const L_PRIMITIVE = 1,
 function operand(body: readonly Instr[]): Instr[] {
   return structuredClone(body) as Instr[];
 }
-function typeError(d: NumberFromValueBindings, message: readonly Instr[]): Instr[] {
+function typeError(d: NumericConversionBindings, message: readonly Instr[]): Instr[] {
   return [...operand(message), { op: "call", funcIdx: d.typeError }, { op: "throw", tagIdx: d.exceptionTag }];
 }
-function getMethod(d: NumberFromValueBindings, key: readonly Instr[]): Instr[] {
+function getMethod(d: NumericConversionBindings, key: readonly Instr[]): Instr[] {
   return [
     { op: "local.get", index: 0 },
     ...operand(key),
@@ -139,7 +156,7 @@ function getMethod(d: NumberFromValueBindings, key: readonly Instr[]): Instr[] {
   ];
 }
 /** Called directly inside the ToPrimitive block, so br_if 1 exits that block. */
-function ordinaryMethod(d: NumberFromValueBindings, key: readonly Instr[]): Instr[] {
+function ordinaryMethod(d: NumericConversionBindings, key: readonly Instr[]): Instr[] {
   return [
     ...getMethod(d, key),
     { op: "local.get", index: L_METHOD },
@@ -165,7 +182,15 @@ function ordinaryMethod(d: NumberFromValueBindings, key: readonly Instr[]): Inst
  * but only an eventual issued backend owner can attest their semantics/completion.
  */
 export function buildNumberFromValueDefinition(input: NumberFromValueBindings): { locals: LocalDef[]; body: Instr[] } {
-  const d = captureBindings(input);
+  return numericConversionDefinition(captureBindings(input, true), true);
+}
+export function buildToNumberDefinition(input: ToNumberBindings): { locals: LocalDef[]; body: Instr[] } {
+  return numericConversionDefinition(captureBindings(input, false), false);
+}
+function numericConversionDefinition(
+  d: NumericConversionBindings,
+  explicitNumber: boolean,
+): { locals: LocalDef[]; body: Instr[] } {
   return {
     locals: [
       { name: "$primitive", type: { kind: "externref" } },
@@ -228,10 +253,12 @@ export function buildNumberFromValueDefinition(input: NumberFromValueBindings): 
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "f64" } },
-        then: [
-          { op: "local.get", index: L_PRIMITIVE },
-          { op: "call", funcIdx: d.bigintToNumber },
-        ],
+        then: explicitNumber
+          ? [
+              { op: "local.get", index: L_PRIMITIVE },
+              { op: "call", funcIdx: (d as NumberFromValueBindings).bigintToNumber },
+            ]
+          : typeError(d, (d as ToNumberBindings).operands.bigintError),
         else: [
           { op: "local.get", index: L_PRIMITIVE },
           { op: "call", funcIdx: d.primitiveToNumber },

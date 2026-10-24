@@ -6,6 +6,8 @@ import type { Instr, ValType } from "../src/wasm/model/instructions.js";
 import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
 import {
   buildNumberFromValueDefinition,
+  buildToNumberDefinition,
+  type ToNumberBindings,
   type NumberFromValueBindings,
 } from "../src/runtime/wasmgc/values/number-from-value-body.js";
 import {
@@ -54,6 +56,8 @@ import {
   requireCompletedNativeBigIntNumber,
 } from "../src/backend/wasmgc/resources/native-bigint-number.js";
 
+import { buildToLengthDefinition } from "../src/runtime/wasmgc/values/to-length-body.js";
+
 const ext: ValType = { kind: "externref" },
   i32: ValType = { kind: "i32" },
   f64: ValType = { kind: "f64" };
@@ -77,7 +81,8 @@ const stringValues = [
   "bad",
   "+0x10",
 ];
-const texts = [...new Set(["number", "valueOf", "toString", ...Object.values(errors), ...stringValues])];
+const bigintError = "Cannot convert a BigInt value to a number";
+const texts = [...new Set([bigintError, "number", "valueOf", "toString", ...Object.values(errors), ...stringValues])];
 const bigints = [0n, -1n, (1n << 53n) + 1n, (1n << 96n) + 1n, -((1n << 200n) + 1n), 1n << 1024n];
 
 /**
@@ -133,7 +138,9 @@ function runtime(offset: boolean) {
     isPrimitive = fn("isPrimitive", [ext], [i32]),
     isNullish = fn("isNullish", [ext], [i32]),
     isSymbol = fn("isSymbol", [ext], [i32]),
-    number = fn("number", [ext], [f64]);
+    number = fn("number", [ext], [f64]),
+    toNumber = fn("toNumber", [ext], [f64]),
+    toLength = fn("toLength", [ext], [f64]);
   const textFunctions = texts.map((_, index) => fn("text" + index, [], [ext]));
   const bigintFunctions = bigints.map((_, index) => fn("bigint" + index, [], [ext]));
   const exception = tx.reserveTag("exception", { params: [ext], results: [] }, { kind: "defined", name: "exception" });
@@ -262,7 +269,23 @@ function runtime(offset: boolean) {
     },
   };
   tx.fillFunction(number, buildNumberFromValueDefinition(bindings));
-  for (const token of [boxNumber, boxBoolean, getUndefined, number, ...textFunctions, ...bigintFunctions])
+  const { bigintToNumber: _bigint, ...shared } = bindings;
+  const toNumberBindings: ToNumberBindings = {
+    ...shared,
+    operands: { ...shared.operands, bigintError: literal(bigintError) },
+  };
+  tx.fillFunction(toNumber, buildToNumberDefinition(toNumberBindings));
+  tx.fillFunction(toLength, buildToLengthDefinition(toNumber.handle));
+  for (const token of [
+    boxNumber,
+    boxBoolean,
+    getUndefined,
+    number,
+    toNumber,
+    toLength,
+    ...textFunctions,
+    ...bigintFunctions,
+  ])
     tx.defineExport("export:" + token.object.name, token.object.name, token);
   tx.defineExport("export:symbol", "boxSymbol", symbols.functions.box);
   tx.defineExport("export:exception", "exception", exception);
@@ -338,12 +361,15 @@ function runtime(offset: boolean) {
   keyValues.set(api.boxSymbol(3), Symbol.toPrimitive);
   return {
     bindings,
+    toNumberBindings,
     bytes,
     trace,
     receivers,
     gets,
     hints,
     exception: api.exception,
+    toNumber: (value: unknown) => api.toNumber(encode(value)) as number,
+    toLength: (value: unknown) => api.toLength(encode(value)) as number,
     run: (value: unknown) => api.number(encode(value)) as number,
     method: <T extends ((...args: any[]) => any) | (new (...args: any[]) => any)>(value: T): T => {
       callable.add(value);
@@ -399,6 +425,90 @@ for (const offset of [false, true])
     });
     beforeEach(() => r.clear());
 
+    it.each(bigints)("ToNumber and ToLength reject canonical BigInt %s", (value) => {
+      for (const convert of [r.toNumber, r.toLength]) {
+        typeError(r, () => convert(value), bigintError);
+        expect(r.trace.splice(0)).toEqual(["throw:TypeError"]);
+        const object = { [Symbol.toPrimitive]: r.method(() => value) };
+        typeError(r, () => convert(object), bigintError);
+        expect(r.trace.splice(0)).toEqual(["get:@@toPrimitive", "call:1", "throw:TypeError"]);
+      }
+    });
+    it.each(primitiveCases.filter(([, value]) => typeof value !== "bigint"))(
+      "ToNumber preserves primitive %s and ToLength clamps it",
+      (_, value) => {
+        const number = Number(value);
+        expect(Object.is(r.toNumber(value), number)).toBe(true);
+        const length = number > 0 ? Math.min(Math.trunc(number), 9007199254740991) : 0;
+        expect(Object.is(r.toLength(value), length)).toBe(true);
+        expect(r.trace).toEqual([]);
+      },
+    );
+    it.each([0.5, -0.5, -4, 4294967297.75, 9007199254740991, 9007199254740992, Infinity])(
+      "ToLength performs one ordered conversion and preserves wide length %s",
+      (value) => {
+        const object = { valueOf: r.method(() => ({})), toString: r.method(() => value) };
+        expect(r.toLength(object)).toBe(value > 0 ? Math.min(Math.trunc(value), 9007199254740991) : 0);
+        expect(r.trace).toEqual(["get:@@toPrimitive", "get:valueOf", "call:0", "get:toString", "call:0"]);
+        expect(r.receivers.every((receiver) => receiver === object)).toBe(true);
+      },
+    );
+    it("ToLength preserves thrown identity and rejects Symbol without swallowing the failure", () => {
+      const failure = {};
+      const object = {
+        get [Symbol.toPrimitive]() {
+          throw failure;
+        },
+      };
+      expect(capture(() => r.toLength(object))).toBe(failure);
+      expect(r.trace.splice(0)).toEqual(["get:@@toPrimitive"]);
+      typeError(r, () => r.toLength(Symbol("length")), errors.symbolError);
+      expect(r.trace).toEqual(["throw:TypeError"]);
+    });
+    it.each(["value", "getter"] as const)("ToNumber ignores an inherited Number port: %s", (kind) => {
+      const expected = buildToNumberDefinition(r.toNumberBindings);
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, "bigintToNumber");
+      let reads = 0;
+      let actual: ReturnType<typeof buildToNumberDefinition>;
+      try {
+        Object.defineProperty(Object.prototype, "bigintToNumber", {
+          configurable: true,
+          ...(kind === "value"
+            ? { value: r.bindings.bigintToNumber }
+            : {
+                get() {
+                  reads++;
+                  return r.bindings.bigintToNumber;
+                },
+              }),
+        });
+        actual = buildToNumberDefinition(r.toNumberBindings);
+      } finally {
+        if (previous) Object.defineProperty(Object.prototype, "bigintToNumber", previous);
+        else Reflect.deleteProperty(Object.prototype, "bigintToNumber");
+      }
+      expect(reads).toBe(0);
+      expect(actual!).toEqual(expected);
+    });
+    it("ToNumber requires its BigInt error and refuses Number's conversion port", () => {
+      expect(() => buildToNumberDefinition(r.toNumberBindings)).not.toThrow();
+      expect(() =>
+        buildToNumberDefinition({
+          ...r.toNumberBindings,
+          bigintToNumber: r.bindings.bigintToNumber,
+        } as ToNumberBindings),
+      ).toThrow();
+      const input = { ...r.toNumberBindings, operands: { ...r.toNumberBindings.operands } };
+      let reads = 0;
+      Object.defineProperty(input.operands, "bigintError", {
+        get() {
+          reads++;
+          return [];
+        },
+      });
+      expect(() => buildToNumberDefinition(input)).toThrow();
+      expect(reads).toBe(0);
+    });
     it("instantiates actual native layouts, scanner and completed BigInt owner with only explicit control imports", () => {
       const imports = WebAssembly.Module.imports(new WebAssembly.Module(r.bytes as BufferSource));
       expect(imports.map((row) => row.name)).toEqual(["get", "isCallable", "method0", "method1", "typeError"]);

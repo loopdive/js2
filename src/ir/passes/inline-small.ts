@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { mapIrClassAllocationOperands } from "../core/class-operands.js";
 //
 // IR-to-IR inlining of small, non-recursive, single-block callees — spec #1167b.
 //
@@ -872,17 +873,9 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       return { ...inst, cell: c, value: v };
     }
     // Slice 4 (#1169d): class ops.
-    case "class.new": {
-      let changed = false;
-      const newArgs: IrValueId[] = [];
-      for (const a of inst.args) {
-        const n = mapId(rename, a);
-        if (n !== a) changed = true;
-        newArgs.push(n);
-      }
-      if (!changed) return inst;
-      return { ...inst, args: newArgs };
-    }
+    case "class.value.new":
+    case "class.new":
+      return mapIrClassAllocationOperands(inst, (value) => mapId(rename, value));
     case "class.get": {
       const v = mapId(rename, inst.value);
       if (v === inst.value) return inst;

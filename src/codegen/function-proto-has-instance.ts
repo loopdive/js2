@@ -12,7 +12,7 @@
  */
 
 import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { hostFreeEnvironment, type CodegenContext, type FunctionContext } from "./context/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./expressions/fnctor-prototype.js";
@@ -54,11 +54,13 @@ export function emitFunctionProtoHasInstanceBody(ctx: CodegenContext, fctx: Func
   const helperIdx = ensureNativeDynamicInstanceOf(ctx);
   if (helperIdx === undefined) return null;
 
-  fctx.body.push(...ownPrototypePropertyArm(ctx, fctx));
+  if (!hostFreeEnvironment(ctx)) {
+    fctx.body.push(...ownPrototypePropertyArm(ctx, fctx));
+  }
   // Native-method closure ABI: local 1 is `this`, local 2 is the first user
   // argument. `__instanceof_dynamic` takes (value, target), in that order.
   fctx.body.push({ op: "local.get", index: 2 });
-  if (ctx.boundFnTypeIdx >= 0) {
+  if (ctx.boundFnTypeIdx >= 0 && !hostFreeEnvironment(ctx)) {
     const targetLocal = allocLocal(fctx, `__has_instance_target_${fctx.locals.length}`, { kind: "externref" });
     fctx.body.push({ op: "local.get", index: 1 });
     fctx.body.push({ op: "local.set", index: targetLocal });
