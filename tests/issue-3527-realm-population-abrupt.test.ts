@@ -65,6 +65,8 @@ function faultKernel(reenter: boolean) {
     initialize,
     buildRealmPopulationInitializer({
       entries: [],
+      ordinaryEntries: [],
+      objectStateType: identity.typeIndex,
       objectPrototype: tx.physicalIndex(object),
       objectPrototypeType: objectType.typeIndex,
       objectIntrinsic: {
@@ -96,7 +98,11 @@ function faultKernel(reenter: boolean) {
       boxNumber: box.handle,
       defineData: data.handle,
       defineAccessor: accessor.handle,
-      hasInstance: symbol.handle,
+      symbols: {
+        "Symbol.hasInstance": symbol.handle,
+        "Symbol.species": symbol.handle,
+        "Symbol.toStringTag": symbol.handle,
+      },
       failure: throwValue(tx.physicalIndex(failed)),
       literal() {
         throw Error("fault control does not select literals");

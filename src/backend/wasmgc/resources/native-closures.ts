@@ -720,7 +720,7 @@ function requireClosureOwner(tx: PhysicalModuleReservations, pack: NativeClosure
     ...pack.metadata.map((row) => row.binding.type),
   ]);
   if (tx.state === "reserving") {
-    for (const token of tokens) tx.assertTypeReservation(token);
+    tx.assertTypeReservations([...tokens]);
   } else {
     // One fresh full-ledger audit covers this private, dense token population.
     // Keep every coordinate check; no audit result survives the current call.

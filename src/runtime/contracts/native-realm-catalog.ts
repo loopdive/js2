@@ -6,7 +6,7 @@
  */
 export type NativeRealmPropertyKey =
   | { readonly kind: "string"; readonly value: string }
-  | { readonly kind: "symbol"; readonly value: "Symbol.hasInstance" };
+  | { readonly kind: "symbol"; readonly value: "Symbol.hasInstance" | "Symbol.species" | "Symbol.toStringTag" };
 export type NativeRealmPropertyValue =
   | { readonly kind: "intrinsic"; readonly id: string }
   | { readonly kind: "string"; readonly value: string }
@@ -19,7 +19,7 @@ export type NativeRealmProperty = {
   readonly legacy?: true;
 } & (
   | { readonly kind: "data"; readonly writable: boolean; readonly value: NativeRealmPropertyValue }
-  | { readonly kind: "accessor"; readonly get: string; readonly set: string }
+  | { readonly kind: "accessor"; readonly get: string; readonly set: string | null }
 );
 export interface NativeRealmIntrinsic {
   readonly id: string;
@@ -144,6 +144,68 @@ function members(parent: string, rows: readonly Method[], legacy = false): Nativ
 }
 const methodProperties = (parent: string, rows: readonly Method[]) =>
   rows.map(([name]) => reference(name, methodId(parent, name)));
+const promiseStatics: readonly Method[] = [
+  ["all", 1, ["NewPromiseCapability", "GetPromiseResolve", "GetIterator", "PerformPromiseAll"]],
+  ["allSettled", 1, ["NewPromiseCapability", "GetPromiseResolve", "GetIterator", "PerformPromiseAllSettled"]],
+  ["any", 1, ["NewPromiseCapability", "GetPromiseResolve", "GetIterator", "PerformPromiseAny"]],
+  ["race", 1, ["NewPromiseCapability", "GetPromiseResolve", "GetIterator", "PerformPromiseRace"]],
+  ["reject", 1, ["NewPromiseCapability", "Call"]],
+  ["resolve", 1, ["PromiseResolve"]],
+  ["try", 1, ["NewPromiseCapability", "Call"]],
+  ["withResolvers", 0, ["NewPromiseCapability", "OrdinaryObjectCreate", "CreateDataPropertyOrThrow"]],
+];
+const promiseMethods: readonly Method[] = [
+  ["catch", 1, ["Invoke"]],
+  ["finally", 1, ["SpeciesConstructor", "IsCallable", "CreateBuiltinFunction", "Invoke"]],
+  ["then", 2, ["IsPromise", "SpeciesConstructor", "NewPromiseCapability", "PerformPromiseThen"]],
+];
+function promiseIntrinsics(): NativeRealmIntrinsic[] {
+  return [
+    callable(
+      "%Promise%",
+      "Promise",
+      1,
+      "Promise",
+      ["OrdinaryCreateFromConstructor", "IsCallable", "CreateResolvingFunctions", "Call"],
+      [
+        ...methodProperties("Promise", promiseStatics.slice(0, 4)),
+        reference("prototype", "%Promise.prototype%", false, false),
+        ...methodProperties("Promise", promiseStatics.slice(4)),
+        {
+          key: { kind: "symbol", value: "Symbol.species" },
+          kind: "accessor",
+          get: "%get Promise[@@species]%",
+          set: null,
+          enumerable: false,
+          configurable: true,
+        },
+      ],
+      true,
+    ),
+    {
+      id: "%Promise.prototype%",
+      aliases: ["%Promise.prototype%", "Promise.prototype"],
+      prototype: objectPrototype,
+      extensible: true,
+      immutablePrototype: false,
+      constructible: false,
+      normativeOptional: false,
+      legacy: false,
+      properties: [
+        reference("catch", "%Promise.prototype.catch%"),
+        reference("constructor", "%Promise%"),
+        ...methodProperties("Promise.prototype", promiseMethods.slice(1)),
+        {
+          ...data("", { kind: "string", value: "Promise" }, false),
+          key: { kind: "symbol", value: "Symbol.toStringTag" },
+        },
+      ],
+    },
+    ...members("Promise", promiseStatics),
+    ...members("Promise.prototype", promiseMethods),
+    callable("%get Promise[@@species]%", "get [Symbol.species]", 0, "get Promise [ Symbol.species ]", []),
+  ];
+}
 function freeze<T>(value: T): T {
   if (value && typeof value === "object") {
     Object.values(value).forEach(freeze);
@@ -249,17 +311,25 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     callable("%Function.prototype[@@hasInstance]%", "[Symbol.hasInstance]", 1, "OrdinaryHasInstance", [
       "OrdinaryHasInstance",
     ]),
+    ...promiseIntrinsics(),
   ];
   return rows.map((row) => ({
     ...row,
     aliases: [
       ...new Set([
         ...row.aliases,
-        ...(row.id === "%Object%" ? ["Object"] : row.id === "%Function%" ? ["Function"] : []),
+        ...(row.id === "%Object%"
+          ? ["Object"]
+          : row.id === "%Function%"
+            ? ["Function"]
+            : row.id === "%Promise%"
+              ? ["Promise"]
+              : []),
         ...rows.flatMap((parent) =>
           parent.properties.flatMap((property) => {
             const path =
-              parent.id.slice(1, -1) + (property.key.kind === "string" ? "." + property.key.value : "[@@hasInstance]");
+              parent.id.slice(1, -1) +
+              (property.key.kind === "string" ? "." + property.key.value : "[@@" + property.key.value.slice(7) + "]");
             return property.kind === "data"
               ? property.value.kind === "intrinsic" && property.value.id === row.id
                 ? [path]
@@ -274,9 +344,9 @@ function catalog(): readonly NativeRealmIntrinsic[] {
     ],
   }));
 }
-/** Complete retained Object/Function population, including Normative Optional legacy members. */
+/** Complete retained Object/Function/Promise population, including Normative Optional legacy members. */
 export const NATIVE_REALM_CATALOG = freeze({
-  version: "ecma262-2026:Object+Function:v1" as const,
+  version: "ecma262-2026:Object+Function+Promise:v2" as const,
   intrinsics: catalog(),
   bootstrap: [functionPrototype, throwTypeError],
   remaining: [

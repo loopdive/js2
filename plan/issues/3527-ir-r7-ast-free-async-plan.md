@@ -3347,3 +3347,101 @@ full run had two passing assertions but a worker RPC timeout and exit 1; that ru
 is not accepted as clean evidence. Source/CI-base gates and focused TS7 pass;
 11 host binaries retain identical hashes. Adversarial review found no remaining
 blocker after inherited operand access and negative-test poisoning were repaired.
+
+### Implementation plan: Promise intrinsic object population
+
+Extend the existing semantic realm catalog with the complete ECMAScript 2026
+Promise family (constructor, prototype, methods, species getter and toStringTag).
+Reserve the non-callable Promise.prototype in native-object-realm.ts using the
+existing realm ordinary-object layout. Extend the existing population recipe to
+allocate those ordinary intrinsic identities and install their descriptors through
+the same descriptor owners and canonical well-known Symbol producers. No Promise
+algorithm completion is inferred from those identities. Mixed Get must observe
+Promise.prototype as an ordinary realm object, including its actual parent,
+constructor/then identity and mutable properties. Reuse the existing allocation
+prefix and descriptor loop; do not introduce a parallel property table.
+
+Acceptance: exact catalog descriptors/attributes and absent species setter;
+executable no-import population through common Get/prototype access, idempotence,
+normal/displaced physical indices and retained abrupt-initialization behavior.
+Keep unsupported algorithms and public Promise admission explicitly unavailable.
+This connects the missing intrinsic object on which real Promise allocation and
+then/capability semantics depend; those remain part of this issue's full scope.
+
+Promise intrinsic population checkpoint (2026-10-24): catalog now retains 59
+intrinsic identities, 57 callable identities and 174 descriptors, including the
+ordinary Promise.prototype and canonical species/toStringTag Symbol properties.
+Source/type/format/lint checks and nine source/CI-base gates pass. Eleven host
+binary hashes match baseline 7371eb505b365e49815f1ddc09afed6c52372540. The broad
+catalog/declaration/mixed-access run has 90 passes and four failures from a stale
+source-invocation expectation introduced before this change (4d66db0c24); the
+corrected four cases and six pollution/snapshot controls pass in the focused
+10/10 rerun. Abrupt-initialization controls pass 2/2.
+
+Adversarial review found premature absence on the ordinary intrinsic singleton;
+its own misses now require genuine population state 2 while ordinary objects
+remain independent. The new executable assertions distinguish ordinary own
+misses from inherited lookup through an incompletely initialized intrinsic.
+A second review found use of the original coordinate-array methods after
+validation; the builder now retains the checked snapshot and the Proxy regression
+passes. Follow-up review found no remaining concrete blocker in the delta.
+The initial executable run failed before Wasm emission on a stale completion-error
+expectation (506 seconds); the later run reproduced the same mismatch (543
+seconds). All three Object/Function-only expectations now include Promise. The
+full six-case acceptance run uses a 900-second per-case allowance because the
+expanded catalog already exceeded the old 480-second limit. Its result is pending;
+neither earlier run is accepted as execution proof. Public Promise admission
+remains incomplete.
+
+Next production integration: issue a same-transaction Promise property owner
+binding the actual Promise pack, realm population and existing ordinary storage.
+Its allocator creates realm ordinary storage with Promise.prototype and actual
+realm identity. Bind the issued owner into prepared-native-async-frame.ts, retain
+it for current-state validation, and initialize field 3 at both prepared frame
+sites (entry handled=0, await adapter handled=1). Mixed access must authenticate
+Promise type, bag type and bag realm before using field 3 for own lookup and
+its state for Get/SetPrototype. Null/foreign bags remain gaps. Reserve all links
+before freeze, fill population/storage then allocator then mixed invocation/Get,
+then Promise bodies and frames; final completion is a group check. Remaining
+non-frame allocations and real then/capability/species are still required.
+
+### Implementation plan: batch reservation-phase type authentication
+
+A CPU profile of ten genuine full-realm declaration validations (59 intrinsics)
+measured 12,455 ms; 5,573 of 8,348 samples pass through the physical ledger's
+full layout audit, mostly repeated once per type. Add a dense own-data batch
+form of type authentication beside physicalIndices in module-reservations.ts.
+Reuse the same descriptor-only input capture, perform one fresh full audit after
+capture, and authenticate every frozen token against the private owner set.
+No validation result is cached across calls, no descriptor checks are removed,
+and no coordinate is exposed during reservation. Use it in the existing closure,
+String-type and realm-entry validation loops. Keep the scalar API as a delegate.
+
+Acceptance: copied/foreign/non-type tokens, sparse/getter arrays, Proxy mutation
+of ledger state/layout during capture, and mutation between successive calls
+must still fail. Existing ledger and closure ownership tests must pass; compare
+the same ten-call real-realm profile before/after. This targets measured compiler
+validation cost, not runtime semantics, and does not relax Promise admission.
+
+Batched type-authentication checkpoint (2026-10-24): the same ten-call measurement
+with 59 intrinsics decreases from 12,455 ms to 8,197 ms. The ledger/closure/type
+run has 185 passes and one failure: the module-record relocation hash assertion.
+Both its test and source input are byte-identical to HEAD 6f3ada90a5; evaluating
+the same receipt on the committed input reproduces the mismatch (expected
+490bf9a7, actual 1e50d9cd). This is recorded as an existing failure, not a green
+suite or a reason to weaken the receipt. The new batch mutation controls pass.
+Read-only adversarial review found no blocker; no audit survives its call.
+Source/CI-base gates and focused TS7 pass. The full 96-case catalog/declaration/
+mixed-access rerun passes before this performance-only delta. The six-case realm
+acceptance run has passed four negatives and is executing its two Wasm cases;
+it began before the type-batching change, so it cannot establish its speedup.
+
+The final batch ownership controls pass 18/18 after adding the review-suggested
+transaction-poisoning case during the layout audit. Focused TS7 including the
+new test and lint pass after narrowing the test's TypeDef before mutation and
+preserving a real sparse array with Reflect.deleteProperty. All eleven host
+binary hashes remain identical after batching. A first host comparison attempt
+failed on an existing temporary symlink before executing tests; a fresh archive
+retry passed. Both superseded realm execution runs ended with their stale
+expectation failures plus worker RPC timeouts; only the current acceptance run
+can supply the missing execution evidence.

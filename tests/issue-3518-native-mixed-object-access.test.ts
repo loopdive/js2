@@ -245,41 +245,61 @@ for (const displaced of [false, true])
       expect(api().get(tail, key("own"), tail)).toEqual([1, 94]);
       expect(api().has(tail, key("absent"))).toBe(0);
     });
-    it("ignores inherited population coordinates and getters without granting absence", () => {
-      const expected = buildMixedObjectOwn(runtime.operands);
-      const saved = Object.getOwnPropertyDescriptor(Object.prototype, "intrinsicPopulationState");
-      let reads = 0;
-      try {
-        for (const descriptor of [
-          { value: 123456 },
-          {
+    it.each(["intrinsicPopulationState", "ordinaryIntrinsicSingletons"])(
+      "ignores inherited %s and getters without granting absence",
+      (role) => {
+        const expected = buildMixedObjectOwn(runtime.operands);
+        const saved = Object.getOwnPropertyDescriptor(Object.prototype, role);
+        let reads = 0;
+        try {
+          for (const descriptor of [
+            { value: 123456 },
+            {
+              get() {
+                reads++;
+                throw Error("inherited getter must not run");
+              },
+            },
+          ]) {
+            Object.defineProperty(Object.prototype, role, { ...descriptor, configurable: true });
+            const actual = buildMixedObjectOwn(runtime.operands);
+            Reflect.deleteProperty(Object.prototype, role);
+            expect(actual).toEqual(expected);
+          }
+          expect(reads).toBe(0);
+          expect(() =>
+            buildMixedObjectOwn({ ...runtime.operands, [role]: role === "intrinsicPopulationState" ? -1 : [-1] }),
+          ).toThrow(/coordinate/);
+          const ownGetter = { ...runtime.operands };
+          Object.defineProperty(ownGetter, role, {
+            enumerable: true,
             get() {
               reads++;
-              throw Error("inherited getter must not run");
+              return 1;
             },
-          },
-        ]) {
-          Object.defineProperty(Object.prototype, "intrinsicPopulationState", { ...descriptor, configurable: true });
-          const actual = buildMixedObjectOwn(runtime.operands);
-          Reflect.deleteProperty(Object.prototype, "intrinsicPopulationState");
-          expect(actual).toEqual(expected);
+          });
+          expect(() => buildMixedObjectOwn(ownGetter)).toThrow(/accessor/);
+          expect(reads).toBe(0);
+        } finally {
+          if (saved) Object.defineProperty(Object.prototype, role, saved);
+          else Reflect.deleteProperty(Object.prototype, role);
         }
-        expect(reads).toBe(0);
-        expect(() => buildMixedObjectOwn({ ...runtime.operands, intrinsicPopulationState: -1 })).toThrow(/coordinate/);
-        const ownGetter = { ...runtime.operands };
-        Object.defineProperty(ownGetter, "intrinsicPopulationState", {
-          enumerable: true,
-          get() {
-            reads++;
-            return 1;
-          },
-        });
-        expect(() => buildMixedObjectOwn(ownGetter)).toThrow(/accessor/);
-        expect(reads).toBe(0);
-      } finally {
-        if (saved) Object.defineProperty(Object.prototype, "intrinsicPopulationState", saved);
-        else Reflect.deleteProperty(Object.prototype, "intrinsicPopulationState");
-      }
+      },
+    );
+    it("uses the checked singleton coordinate snapshot instead of caller array methods", () => {
+      const expected = buildMixedObjectOwn({ ...runtime.operands, ordinaryIntrinsicSingletons: [0] });
+      let reads = 0;
+      const coordinates = new Proxy([0], {
+        get(target, key, receiver) {
+          if (key === "flatMap") {
+            ++reads;
+            throw Error("caller flatMap must not run");
+          }
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      expect(buildMixedObjectOwn({ ...runtime.operands, ordinaryIntrinsicSingletons: coordinates })).toEqual(expected);
+      expect(reads).toBe(0);
     });
     it("rejects getter-bearing/hidden/sparse pure operands without invoking callbacks", () => {
       let calls = 0;

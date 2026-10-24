@@ -348,6 +348,7 @@ function operands(
     symbolTypeIdx: own.layoutDependencies.symbols.types.symbol.typeIndex,
     realm: realm!,
     objectPrototype: objectPrototype!,
+    ordinaryIntrinsicSingletons: tx.physicalIndices(d.realm.ordinaryIntrinsics.map((entry) => entry.singleton)),
     ...(population ? { intrinsicPopulationState: tx.physicalIndex(d.realm.globals.state) } : {}),
     carriers,
     metadataTypes: [...new Set(d.realmDependencies.closures.metadata.map((row) => row.binding.type.typeIndex))],

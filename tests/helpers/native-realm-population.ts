@@ -71,11 +71,15 @@ export function reserveRealmPopulationFixture(
     declareNativeObjectDescriptorResources("population:descriptors"),
   );
   const symbolDependencies = { symbols: r.symbols, strings: f.strings };
-  const symbolPlan = declareNativeWellKnownSymbolResources("population:symbols", ["hasInstance"]);
+  const symbolPlan = declareNativeWellKnownSymbolResources("population:symbols", [
+    "hasInstance",
+    "species",
+    "toStringTag",
+  ]);
   const symbols = reserveNativeWellKnownSymbolResources(
     tx,
     "population:symbols",
-    ["hasInstance"],
+    ["hasInstance", "species", "toStringTag"],
     symbolPlan,
     symbolDependencies,
   );

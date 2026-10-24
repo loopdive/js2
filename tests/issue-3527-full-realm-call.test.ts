@@ -87,7 +87,7 @@ function fixture(displaced = false) {
     return function captured(value: number): number { return seed + value; };
   }
   export function makeEmpty(): () => number { return function empty(): number { return 7; }; }`,
-      ["then"],
+      ["then", "missingPromiseProperty"],
     ),
     { tx, f, c } = r;
   const source = publicRealmSourceSlots(f, c);
@@ -256,7 +256,9 @@ describe("full public realm Call joins", { timeout: 240000 }, () => {
     const r = fixture();
     join(r);
     await fill(r);
-    expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls, true)).toThrow(/full Object\/Function algorithms/);
+    expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls, true)).toThrow(
+      /full Object\/Function\/Promise algorithms/,
+    );
     expect(() => fillNativeRealmPopulation(r.tx, r.population.pack)).toThrow(/duplicate/);
     expect(() => fillNativeObjectRealmCalls(r.tx, r.calls)).toThrow(/duplicate/);
     expect(() => fillNativeMixedObjectGet(r.tx, r.access)).toThrow(/duplicate/);
@@ -557,6 +559,7 @@ async function executable(displaced: boolean) {
   const catalog = realm.realm.description.catalog.intrinsics;
   const literalNames = [
     "then",
+    "missingPromiseProperty",
     ...new Set(
       catalog.flatMap((entry) =>
         entry.properties.flatMap((p) => [
@@ -597,8 +600,9 @@ async function executable(displaced: boolean) {
     state: realm.globals.state,
     wholeRealmReady: realm.globals.wholeRealmReady,
     objectPrototype: realm.objectPrototype.singleton,
+    promisePrototype: realm.ordinaryIntrinsics.find((entry) => entry.intrinsic.id === "%Promise.prototype%")!.singleton,
     same: r.population.sameValue.sameValue,
-    hasInstance: r.population.symbols.producers[0]!.function,
+    ...Object.fromEntries(r.population.symbols.producers.map((row) => [row.name, row.function])),
     findOwn: r.lookup.findOwn,
     accessor: own,
     get: r.access.get,
@@ -618,9 +622,11 @@ async function executable(displaced: boolean) {
   };
   for (const [name, token] of Object.entries(exports)) tx.defineExport("control:export:" + name, name, token);
   // Even a fully filled ledger of controls must not be confused with implemented standard algorithms.
-  expect(() => requireCompletedNativeInvocation(tx, r.invocation)).toThrow(/full Object\/Function algorithms/);
+  expect(() => requireCompletedNativeInvocation(tx, r.invocation)).toThrow(/full Object\/Function\/Promise algorithms/);
   await setImmediate();
-  expect(() => requireCompletedNativeMixedObjectAccess(tx, r.access)).toThrow(/full Object\/Function algorithms/);
+  expect(() => requireCompletedNativeMixedObjectAccess(tx, r.access)).toThrow(
+    /full Object\/Function\/Promise algorithms/,
+  );
   tx.seal();
   const wasm = new WebAssembly.Module(emitBinary(f.module) as BufferSource);
   expect(WebAssembly.Module.imports(wasm)).toEqual([]);
@@ -681,7 +687,7 @@ for (const displaced of [false, true])
   it(`executes all full-catalog adapters and source Get through common Call (displaced=${displaced})`, async () => {
     const { api, count, catalog, literalNames, implemented } = await executable(displaced);
     api.populate();
-    expect(count).toBe(44);
+    expect(count).toBe(57);
     expect(api.state.value).toBe(2);
     expect(api.wholeRealmReady.value).toBe(0);
     const identities = Array.from({ length: count }, (_, i) => api["native" + i].value);
@@ -694,7 +700,9 @@ for (const displaced of [false, true])
     const intrinsic = (id: string) =>
       id === "%Object.prototype%"
         ? api.objectPrototype.value
-        : api["native" + catalog.filter((entry) => entry.callable).findIndex((entry) => entry.id === id)].value;
+        : id === "%Promise.prototype%"
+          ? api.promisePrototype.value
+          : api["native" + catalog.filter((entry) => entry.callable).findIndex((entry) => entry.id === id)].value;
     let descriptors = 0;
     for (const entry of catalog) {
       const object = intrinsic(entry.id);
@@ -703,7 +711,8 @@ for (const displaced of [false, true])
       if (entry.prototype === null) expect(parent[1]).toBe(null);
       else expect(api.same(parent[1], intrinsic(entry.prototype))).toBe(1);
       for (const [ordinal, property] of entry.properties.entries()) {
-        const key = property.key.kind === "string" ? literalValue(property.key.value) : api.hasInstance();
+        const key =
+          property.key.kind === "string" ? literalValue(property.key.value) : api[property.key.value.slice(7)]();
         const [flags, seq, value, getter, setter] = api.inspect(object, key);
         expect(seq).toBe(ordinal);
         expect(flags).toBe(
@@ -711,7 +720,8 @@ for (const displaced of [false, true])
         );
         if (property.kind === "accessor") {
           expect(api.same(getter, intrinsic(property.get))).toBe(1);
-          expect(api.same(setter, intrinsic(property.set))).toBe(1);
+          if (property.set === null) expect(setter).toBe(null);
+          else expect(api.same(setter, intrinsic(property.set))).toBe(1);
         } else if (property.value.kind === "number") expect(api.unbox(value)).toBe(property.value.value);
         else
           expect(
@@ -723,11 +733,33 @@ for (const displaced of [false, true])
         ++descriptors;
       }
     }
-    expect(catalog).toHaveLength(45);
-    expect(descriptors).toBe(133);
+    expect(catalog).toHaveLength(59);
+    expect(descriptors).toBe(174);
+    const promisePrototype = intrinsic("%Promise.prototype%");
+    expect(api.isCallable(promisePrototype)).toBe(0);
+    const inheritor = api.object(promisePrototype);
+    const missing = literalValue("missingPromiseProperty");
+    for (const state of [0, 1, -1]) {
+      api.state.value = state;
+      expect(api.own(promisePrototype, missing)[0]).toBe(2);
+      expect(api.get(promisePrototype, missing, promisePrototype)[0]).toBe(2);
+      expect(api.own(inheritor, missing)[0]).toBe(0);
+      expect(api.get(inheritor, missing, inheritor)[0]).toBe(2);
+    }
+    api.state.value = 2;
+    expect(api.own(promisePrototype, missing)[0]).toBe(0);
+    expect(api.get(inheritor, missing, inheritor)[0]).toBe(0);
+    const inheritedThen = api.get(inheritor, literalValue("then"), inheritor);
+    expect(inheritedThen[0]).toBe(1);
+    expect(api.same(inheritedThen[1], intrinsic("%Promise.prototype.then%"))).toBe(1);
+    expect(api.isCallable(inheritedThen[1])).toBe(1);
+    expect(api.same(api.get(inheritor, literalValue("constructor"), inheritor)[1], intrinsic("%Promise%"))).toBe(1);
+    expect(api.same(api.get(inheritor, api.toStringTag(), inheritor)[1], literalValue("Promise"))).toBe(1);
+    api.populate();
+    expect(api.same(promisePrototype, intrinsic("%Promise.prototype%"))).toBe(1);
     checkIntrinsicAbsence(
       api,
-      catalog.map((entry) => intrinsic(entry.id)),
+      catalog.filter((entry) => entry.id !== "%Promise.prototype%").map((entry) => intrinsic(entry.id)),
       literalValue("then"),
     );
     expect(api.inspect(intrinsic("%Function.prototype%"), api.hasInstance())[0]).toBe(0);
@@ -917,4 +949,4 @@ for (const displaced of [false, true])
       expect(api.state.value).toBe(state);
       expect(identities.every((value, i) => api.same(value, api["native" + i].value) === 1)).toBe(true);
     }
-  }, 480000);
+  }, 900000);

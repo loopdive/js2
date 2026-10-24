@@ -8,6 +8,7 @@ import {
 } from "./builtin-function-bodies.js";
 import { buildOrdinaryObjectCreateDefinition } from "./ordinary-object-storage-definitions.js";
 import { buildPrototypeSeedDataTail } from "./prototype-seeder-bodies.js";
+import { buildOrdinaryObjectCreateBody } from "./ordinary-object-storage-bodies.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
 
@@ -17,7 +18,15 @@ export interface RealmPopulationEntry extends Pick<
 > {
   readonly intrinsic: NativeRealmIntrinsic;
 }
+export interface RealmPopulationObjectEntry {
+  readonly intrinsic: NativeRealmIntrinsic;
+  readonly typeIdx: number;
+  readonly singleton: number;
+}
+type PopulationEntry = RealmPopulationEntry | RealmPopulationObjectEntry;
 export interface RealmPopulationOperands {
+  readonly ordinaryEntries: readonly RealmPopulationObjectEntry[];
+  readonly objectStateType: number;
   readonly entries: readonly RealmPopulationEntry[];
   readonly objectPrototype: number;
   readonly objectPrototypeType: number;
@@ -31,7 +40,7 @@ export interface RealmPopulationOperands {
   readonly boxNumber: FuncHandle;
   readonly defineData: FuncHandle;
   readonly defineAccessor: FuncHandle;
-  readonly hasInstance: FuncHandle;
+  readonly symbols: Readonly<Record<"Symbol.hasInstance" | "Symbol.species" | "Symbol.toStringTag", FuncHandle>>;
   readonly failure: readonly Instr[];
   readonly literal: (text: string, external?: boolean) => Instr[];
 }
@@ -39,26 +48,29 @@ const global = (index: number): Instr => ({ op: "global.get", index });
 const n = (value: number): Instr => ({ op: "i32.const", value });
 function value(d: RealmPopulationOperands, id: string): Instr[] {
   if (id === d.objectIntrinsic.id) return [global(d.objectPrototype), { op: "extern.convert_any" }];
-  const entry = d.entries.find((entry) => entry.intrinsic.id === id);
+  const entry = [...d.entries, ...d.ordinaryEntries].find((entry) => entry.intrinsic.id === id);
   if (!entry) throw Error("realm population: missing intrinsic " + id);
-  return [global(entry.singleton), ...(entry.singletonExtern ? [] : [{ op: "extern.convert_any" } as Instr])];
+  return [
+    global(entry.singleton),
+    ...("singletonExtern" in entry && entry.singletonExtern ? [] : [{ op: "extern.convert_any" } as Instr]),
+  ];
 }
-function bag(d: RealmPopulationOperands, entry?: RealmPopulationEntry): Instr[] {
-  return entry
+function bag(d: RealmPopulationOperands, entry?: PopulationEntry): Instr[] {
+  return entry && "lifted" in entry
     ? [
         ...value(d, entry.intrinsic.id),
         { op: "any.convert_extern" },
         { op: "ref.cast", typeIdx: entry.typeIdx },
         { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: CLOSURE_BAG_FIELD_IDX },
       ]
-    : value(d, d.objectIntrinsic.id);
+    : value(d, entry?.intrinsic.id ?? d.objectIntrinsic.id);
 }
-function install(d: RealmPopulationOperands, property: NativeRealmProperty, entry?: RealmPopulationEntry): Instr[] {
+function install(d: RealmPopulationOperands, property: NativeRealmProperty, entry?: PopulationEntry): Instr[] {
   const prefix: Instr[] = [
     ...bag(d, entry),
     ...(property.key.kind === "string"
       ? d.literal(property.key.value)
-      : [{ op: "call", funcIdx: d.hasInstance } as Instr]),
+      : [{ op: "call", funcIdx: d.symbols[property.key.value] } as Instr]),
   ];
   const attributes =
     flags.enumerableSpecified |
@@ -69,7 +81,7 @@ function install(d: RealmPopulationOperands, property: NativeRealmProperty, entr
     return [
       ...prefix,
       ...value(d, property.get),
-      ...value(d, property.set),
+      ...(property.set === null ? [{ op: "ref.null.extern" } as Instr] : value(d, property.set)),
       ...buildPrototypeSeedDataTail(d.defineAccessor, attributes | flags.getterSpecified | flags.setterSpecified),
     ];
   const v = property.value;
@@ -87,6 +99,24 @@ function install(d: RealmPopulationOperands, property: NativeRealmProperty, entr
       d.defineData,
       attributes | flags.writableSpecified | flags.hasValue | (property.writable ? flags.writable : 0),
     ),
+  ];
+}
+function allocateOrdinary(d: RealmPopulationOperands, entry: RealmPopulationObjectEntry): Instr[] {
+  const prefix = buildOrdinaryObjectCreateBody({
+    objectTypeIdx: d.objectType,
+    propMapTypeIdx: d.propMapType,
+    initialCapacity: 8,
+  });
+  return [
+    ...prefix.slice(0, -2),
+    ...(entry.intrinsic.prototype === null
+      ? [{ op: "ref.null.extern" } as Instr]
+      : value(d, entry.intrinsic.prototype)),
+    global(d.realm),
+    { op: "ref.as_non_null" },
+    { op: "struct.new", typeIdx: d.objectStateType },
+    { op: "struct.new", typeIdx: entry.typeIdx },
+    { op: "global.set", index: entry.singleton },
   ];
 }
 function populate(d: RealmPopulationOperands): Instr[] {
@@ -108,6 +138,7 @@ function populate(d: RealmPopulationOperands): Instr[] {
     { op: "ref.cast", typeIdx: d.objectPrototypeType },
     { op: "global.set", index: d.objectPrototype },
   ];
+  allocate.push(...d.ordinaryEntries.flatMap((entry) => allocateOrdinary(d, entry)));
   for (const entry of d.entries)
     allocate.push(
       ...buildBuiltinFunctionAllocation(entry, {
@@ -118,7 +149,7 @@ function populate(d: RealmPopulationOperands): Instr[] {
       }),
     );
   const seed = d.objectIntrinsic.properties.flatMap((property) => install(d, property));
-  for (const entry of d.entries) {
+  for (const entry of [...d.entries, ...d.ordinaryEntries]) {
     seed.push(...entry.intrinsic.properties.flatMap((property) => install(d, property, entry)));
     if (!entry.intrinsic.extensible)
       seed.push(

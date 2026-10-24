@@ -673,9 +673,19 @@ export class PhysicalModuleReservations {
 
   /** Authenticate a prerequisite before allocating dependents; exposes no final index. */
   assertTypeReservation(token: TypeReservation): void {
+    this.assertTypeReservations([token]);
+  }
+
+  /** One fresh full-ledger audit; no reservation-phase physical indices escape. */
+  assertTypeReservations(tokens: readonly TypeReservation[]): void {
+    if (this.#state !== "reserving") this.#fail(`operation requires reserving, observed ${this.#state}`);
+    const captured = this.#captureReservationList(tokens, "type reservations");
     this.#require("reserving");
-    this.#owned(token);
-    if (token.kind !== "type") this.#fail("expected type reservation token");
+    if (this.#state !== "reserving") this.#fail("type authentication changed phase");
+    for (const token of captured) {
+      this.#owned(token);
+      if (token.kind !== "type") this.#fail("expected type reservation token");
+    }
   }
 
   /** Authenticate a borrowed exception before allocating any dependent resource. */
@@ -854,19 +864,24 @@ export class PhysicalModuleReservations {
     }
   }
 
-  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
-  physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
-    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    if (!Array.isArray(tokens)) this.#fail("physical indices require a dense own-data array");
+  #captureReservationList(tokens: readonly PhysicalReservation[], context: string): PhysicalReservation[] {
+    if (!Array.isArray(tokens)) this.#fail(`${context} require a dense own-data array`);
     const length = Object.getOwnPropertyDescriptor(tokens, "length");
     if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0)
-      this.#fail("physical indices require an own-data length");
+      this.#fail(`${context} require an own-data length`);
     const captured: PhysicalReservation[] = [];
     for (let index = 0; index < length.value; index++) {
       const descriptor = Object.getOwnPropertyDescriptor(tokens, index);
-      if (!descriptor || !("value" in descriptor)) this.#fail("physical indices require dense own-data entries");
+      if (!descriptor || !("value" in descriptor)) this.#fail(`${context} require dense own-data entries`);
       captured.push(descriptor.value);
     }
+    return captured;
+  }
+
+  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
+  physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    const captured = this.#captureReservationList(tokens, "physical indices");
     // A Proxy descriptor trap can run during capture. Audit only after capture,
     // then use private frozen tokens/positions without reading public arrays.
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);

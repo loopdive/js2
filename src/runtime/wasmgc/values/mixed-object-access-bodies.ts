@@ -25,6 +25,7 @@ export interface MixedObjectAccessOperands {
   readonly objectPrototype: number;
   /** Authenticated complete descriptor initializer; runtime state 2 alone admits intrinsic absence. */
   readonly intrinsicPopulationState?: number;
+  readonly ordinaryIntrinsicSingletons?: readonly number[];
   readonly metadataTypes: readonly number[];
   /** String precedes ordinary storage; metadata families precede source families. */
   readonly carriers: readonly MixedObjectCarrier[];
@@ -88,8 +89,17 @@ function operands(input: MixedObjectAccessOperands): MixedObjectAccessOperands {
     "findOrdinary",
     "findString",
   ];
-  const d = data(input, [...keys, "carriers", "metadataTypes"], ["intrinsicPopulationState"]);
+  const d = data(
+    input,
+    [...keys, "carriers", "metadataTypes"],
+    ["intrinsicPopulationState", "ordinaryIntrinsicSingletons"],
+  );
   if (Object.hasOwn(d, "intrinsicPopulationState")) coordinate(d.intrinsicPopulationState);
+  if (Object.hasOwn(d, "ordinaryIntrinsicSingletons")) {
+    const singletons = rows(d.ordinaryIntrinsicSingletons);
+    singletons.forEach(coordinate);
+    d.ordinaryIntrinsicSingletons = singletons;
+  }
   keys.forEach((key) => coordinate(d[key]));
   const metadataTypes = rows(d.metadataTypes);
   metadataTypes.forEach(coordinate);
@@ -232,15 +242,30 @@ export function buildMixedObjectClassify(input: MixedObjectAccessOperands): Mixe
   };
 }
 
-function ownAbsence(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
-  if (c.kind === "source") return [n(2)];
-  if (c.kind !== "native" && c.kind !== "object-prototype") return [n(0)];
+function intrinsicAbsence(d: MixedObjectAccessOperands): Instr[] {
   if (!Object.hasOwn(d, "intrinsicPopulationState")) return [n(2)];
   return [
     global(d.intrinsicPopulationState!),
     n(2),
     { op: "i32.eq" },
     { op: "if", blockType: { kind: "val", type: i32 }, then: [n(0)], else: [n(2)] },
+  ];
+}
+function ownAbsence(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
+  if (c.kind === "source") return [n(2)];
+  if (c.kind === "native" || c.kind === "object-prototype") return intrinsicAbsence(d);
+  const singletons = Object.hasOwn(d, "ordinaryIntrinsicSingletons") ? d.ordinaryIntrinsicSingletons! : [];
+  if (c.kind !== "ordinary" || !singletons.length) return [n(0)];
+  // These identities are published before descriptor seeding. A normal ordinary
+  // object has complete own storage; an intrinsic still depends on population.
+  return [
+    ...singletons.flatMap((index, ordinal): Instr[] => [
+      ...cast(0, c.typeIdx),
+      global(index),
+      { op: "ref.eq" },
+      ...(ordinal ? [{ op: "i32.or" } as Instr] : []),
+    ]),
+    { op: "if", blockType: { kind: "val", type: i32 }, then: intrinsicAbsence(d), else: [n(0)] },
   ];
 }
 

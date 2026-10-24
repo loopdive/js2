@@ -73,7 +73,12 @@ function authenticate(tx: PhysicalModuleReservations, d: NativeRealmPopulationDe
   const binding = nativeObjectRealmInvocationBinding(tx, d.calls),
     dd = d.descriptorDependencies;
   const descriptors = nativeObjectDescriptorReservationInventory(tx, d.descriptors, dd);
-  const symbols = nativeWellKnownSymbolProducer(tx, d.symbols, "hasInstance", d.symbolPlan, d.symbolDependencies);
+  const symbols = Object.fromEntries(
+    (["hasInstance", "species", "toStringTag"] as const).map((name) => [
+      "Symbol." + name,
+      nativeWellKnownSymbolProducer(tx, d.symbols, name, d.symbolPlan, d.symbolDependencies).handle,
+    ]),
+  ) as RealmPopulationOperands["symbols"];
   const storage = dd.storageDependencies.lookupDependencies,
     sameValue = dd.sameValueDependencies;
   if (
@@ -147,6 +152,12 @@ function operands(tx: PhysicalModuleReservations, pack: NativeRealmPopulation): 
       singleton: tx.physicalIndex(entry.singleton),
       singletonExtern: entry.singleton.object.type.kind === "externref",
     })),
+    ordinaryEntries: realm.ordinaryIntrinsics.map((entry) => ({
+      intrinsic: entry.intrinsic,
+      typeIdx: entry.type.typeIndex,
+      singleton: tx.physicalIndex(entry.singleton),
+    })),
+    objectStateType: realm.layouts.types.state.typeIndex,
     objectPrototype: tx.physicalIndex(realm.objectPrototype.singleton),
     objectPrototypeType: realm.objectPrototype.type.typeIndex,
     objectIntrinsic,
@@ -159,7 +170,7 @@ function operands(tx: PhysicalModuleReservations, pack: NativeRealmPopulation): 
     boxNumber: binding.values.functions.boxNumber.handle,
     defineData: descriptors.functions[0]!.handle,
     defineAccessor: descriptors.functions[1]!.handle,
-    hasInstance: symbols.handle,
+    symbols,
     literal,
     failure: [
       ...literal("TypeError: native builtin initialization failed"),
