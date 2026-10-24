@@ -1029,10 +1029,13 @@ function verifyInstrStructure(
       });
     }
   }
-  // #7106 S3c — dyn.current_this: no operands, result dynamic.
-  if (instr.kind === "dyn.current_this" && (instr.resultType === null || instr.resultType.kind !== "dynamic")) {
+  // #7106 S3c — dyn.current_this / dyn.global_object: no operands, result dynamic.
+  if (
+    (instr.kind === "dyn.current_this" || instr.kind === "dyn.global_object") &&
+    (instr.resultType === null || instr.resultType.kind !== "dynamic")
+  ) {
     errors.push({
-      message: `dyn.current_this result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3c)`,
+      message: `${instr.kind} result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3c)`,
       func: func.name,
       block: block.id as number,
     });
@@ -1466,6 +1469,7 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
       return [instr.value];
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
     case "dyn.instanceof_fn":
@@ -2069,6 +2073,9 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "dyn.current_this": {
     skip: "checked-elsewhere: no-operand + result-dynamic rules in verifyInstrStructure (#7106 S3c)",
+  },
+  "dyn.global_object": {
+    skip: "checked-elsewhere: no-operand + result-dynamic rules in verifyInstrStructure (#7106)",
   },
   "dyn.instanceof_fn": {
     skip: "checked-elsewhere: operand-dynamic + unit-target + result-i32 rules in verifyInstrStructure (#7106 S3c)",
