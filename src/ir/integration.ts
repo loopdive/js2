@@ -9435,7 +9435,7 @@ function preregisterDynamicSupport(
     if (dynamicRuntimeNeeds.has("member-call"))
       observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
-  if (usesFunctionMemberStrictSet && nativeSemanticProviders && !ctx.fast) {
+  if (usesFunctionMemberStrictSet && !ctx.fast) {
     ensureObjectRuntime(ctx);
     observeNativeRuntimeProvider(ctx, "__extern_set_strict");
   }
