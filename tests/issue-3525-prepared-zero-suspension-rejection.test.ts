@@ -263,6 +263,7 @@ describe("#3525 genuine zero-suspension conditional null rejection", () => {
     expect(exports[0]!.desc.kind).toBe("func");
     const frame = plan.asyncFrames!.frames[0]!;
     expect(frame).toBeDefined();
+    if (frame.kind !== "host") throw new Error("expected a host frame");
     // All actual async entry aliases must resolve to the certified target, not guessed callback names.
     for (const callback of frame.callbacks) {
       expect(plan.asyncFrames!.entries.filter((row) => row.id === callback.entry.id)).toEqual([callback.entry]);

@@ -97,7 +97,7 @@
  * of trapping.
  */
 import { isSyntheticStructName } from "./emit-helpers.js"; // (#6774 S10)
-import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { nativeInheritedSetRuntimeActive } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -264,7 +264,7 @@ export function fillInstanceTombstones(ctx: CodegenContext): void {
   // active.  The marker belongs to the hidden bag's OWN table; a prototype
   // setter on Object.prototype must neither observe delete nor replace it.
   const externSetOwnIdx = ctx.funcMap.get("__extern_set_own");
-  const inheritedSetRuntimeActive = ctx.standalone && inheritedSetAnyDirty(ctx) && externSetOwnIdx !== undefined;
+  const inheritedSetRuntimeActive = nativeInheritedSetRuntimeActive(ctx) && externSetOwnIdx !== undefined;
   if (lookupIdx === undefined || ensureIdx === undefined || externGetIdx === undefined || externSetIdx === undefined) {
     return;
   }

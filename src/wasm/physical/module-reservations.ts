@@ -673,9 +673,43 @@ export class PhysicalModuleReservations {
 
   /** Authenticate a prerequisite before allocating dependents; exposes no final index. */
   assertTypeReservation(token: TypeReservation): void {
+    this.assertTypeReservations([token]);
+  }
+
+  /** One fresh full-ledger audit; no reservation-phase physical indices escape. */
+  assertTypeReservations(tokens: readonly TypeReservation[]): void {
+    if (this.#state !== "reserving") this.#fail(`operation requires reserving, observed ${this.#state}`);
+    const captured = this.#captureReservationList(tokens, "type reservations");
+    this.#require("reserving");
+    if (this.#state !== "reserving") this.#fail("type authentication changed phase");
+    for (const token of captured) {
+      this.#owned(token);
+      if (token.kind !== "type") this.#fail("expected type reservation token");
+    }
+  }
+
+  /** Authenticate a borrowed exception before allocating any dependent resource. */
+  assertTagReservation(token: TagReservation | TagImportReservation, signature: PhysicalFunctionSignature): void {
+    if (this.#state === "failed") this.#fail("tag authentication on failed ledger");
+    this.#owned(token);
+    if (token.kind !== "tag" && token.kind !== "tag-import") this.#fail("expected tag reservation token");
+    const descriptor = token.kind === "tag-import" ? token.object.desc : undefined;
+    const index = token.kind === "tag" ? token.object.typeIdx : descriptor?.kind === "tag" ? descriptor.typeIdx : -1;
+    const type = this.#flatTypes()[index];
+    if (
+      !type ||
+      type.kind !== "func" ||
+      !sameValTypes(type.params, signature.params) ||
+      !sameValTypes(type.results, signature.results)
+    )
+      this.#fail("borrowed tag signature mismatch");
+  }
+
+  /** Authenticate a deferred initializer dependency without exposing a pre-freeze index. */
+  assertFunctionReservation(token: FunctionReservation): void {
     this.#require("reserving");
     this.#owned(token);
-    if (token.kind !== "type") this.#fail("expected type reservation token");
+    if (token.kind !== "function") this.#fail("expected defined function reservation token");
   }
 
   /** Reserve the emitter-affecting descriptor before freeze, including future members. */
@@ -837,19 +871,24 @@ export class PhysicalModuleReservations {
     }
   }
 
-  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
-  physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
-    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
-    if (!Array.isArray(tokens)) this.#fail("physical indices require a dense own-data array");
+  #captureReservationList(tokens: readonly PhysicalReservation[], context: string): PhysicalReservation[] {
+    if (!Array.isArray(tokens)) this.#fail(`${context} require a dense own-data array`);
     const length = Object.getOwnPropertyDescriptor(tokens, "length");
-    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0)
-      this.#fail("physical indices require an own-data length");
+    if (!length || !Object.hasOwn(length, "value") || !Number.isSafeInteger(length.value) || length.value < 0)
+      this.#fail(`${context} require an own-data length`);
     const captured: PhysicalReservation[] = [];
     for (let index = 0; index < length.value; index++) {
       const descriptor = Object.getOwnPropertyDescriptor(tokens, index);
-      if (!descriptor || !("value" in descriptor)) this.#fail("physical indices require dense own-data entries");
+      if (!descriptor || !Object.hasOwn(descriptor, "value")) this.#fail(`${context} require dense own-data entries`);
       captured.push(descriptor.value);
     }
+    return captured;
+  }
+
+  /** One fresh layout audit for a dense own-data list; never invoke its getters or iterator. */
+  physicalIndices(tokens: readonly PhysicalReservation[]): readonly number[] {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
+    const captured = this.#captureReservationList(tokens, "physical indices");
     // A Proxy descriptor trap can run during capture. Audit only after capture,
     // then use private frozen tokens/positions without reading public arrays.
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`physical index requested in ${this.#state}`);
@@ -875,14 +914,24 @@ export class PhysicalModuleReservations {
 
   /** Authenticate producer completion without sealing unrelated reservations. */
   assertCompletedReservation(token: FunctionReservation | GlobalReservation): void {
+    this.assertCompletedReservations([token]);
+  }
+
+  /** A fresh whole-ledger audit for captured tokens; no completion result survives this call. */
+  assertCompletedReservations(tokens: readonly (FunctionReservation | GlobalReservation)[]): void {
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
+    const captured = this.#captureReservationList(tokens, "completed reservations");
     if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
     this.#verifyLayout();
-    this.#owned(token);
-    if (token.kind === "function") {
-      if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
-    } else if (token.kind === "global") {
-      if (!this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
-    } else this.#fail("completion requires a defined function or global");
+    if (this.#state !== "filling" && this.#state !== "sealed") this.#fail(`completion requested in ${this.#state}`);
+    for (const token of captured) {
+      this.#owned(token);
+      if (token.kind === "function") {
+        if (!this.#filledFunctions.has(token)) this.#fail(`missing function fill ${token.key}`);
+      } else if (token.kind === "global") {
+        if (!this.#filledGlobals.has(token)) this.#fail(`missing global fill ${token.key}`);
+      } else this.#fail("completion requires a defined function or global");
+    }
   }
 
   fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
@@ -1066,6 +1115,7 @@ export class PhysicalModuleReservations {
 
   #validateValue(value: ValType): void {
     if (value.kind === "ref" || value.kind === "ref_null") {
+      if (value.typeIdx === -23) return; // Standard EH abstract heap type exn, not a module type index.
       this.#type(value.typeIdx);
     }
   }

@@ -40,6 +40,7 @@
  * Applies to BOTH gc/host and standalone (the dual-struct-type compile-order
  * hazard is mode-independent — acorn dogfoods in gc/host mode).
  */
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { classMemberFuncKey, isInstanceAccessorKey, resolveMethodOwnerClass } from "./class-member-keys.js"; // (#2963) method-arm candidates
 import { ensureMethodClosureSingleton } from "./closures.js"; // (#2963) canonical method-value singleton
@@ -996,7 +997,7 @@ export function fillTypedMemberGetF64Dispatch(ctx: CodegenContext): void {
         { op: "local.get", index: 1 }, // __any
         { op: "ref.cast", typeIdx: cand.structTypeIdx },
         { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.fieldIdx },
-        ...(cand.fieldType.kind === "i32" ? ([{ op: "f64.convert_i32_s" }] satisfies Instr[]) : []),
+        ...(cand.fieldType.kind === "i32" ? ([i32NumberWidening(cand.fieldType)] satisfies Instr[]) : []),
       ];
       const armBody: Instr[] = !numericSlot
         ? fallback

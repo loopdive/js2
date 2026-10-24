@@ -3,6 +3,7 @@
 // Canonical prepared function values and ordered property calls. The AST driver
 // supplies its current recursive/coercion operations; this module never imports it.
 import { ts } from "../ts-api.js";
+import { emitNativeTypeError } from "./native-errors.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import type { IrImportedCallLoweringPlan, IrTopLevelFunctionValueLoweringPlan } from "./ast-lowering-plans.js";
 import type { IrFunctionMemberClosures } from "./function-member-closure-plan.js";
@@ -168,10 +169,7 @@ export function lowerFunctionObjectMemberCall(
   const callable = cx.builder.emitCall(irRuntimeFuncRef("__is_callable"), [externalCallee], irVal({ kind: "i32" }));
   if (callable === null) throw new Error("native callable classifier returned void");
   const refusal = cx.builder.collectBodyInstrs(() => {
-    const message = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst("Value is not callable"));
-    const error = cx.builder.emitCall(irRuntimeFuncRef("__new_TypeError"), [message], irVal({ kind: "externref" }));
-    if (error === null) throw new Error("native TypeError constructor returned void");
-    cx.builder.emitThrow(error);
+    emitNativeTypeError(cx.builder, "Value is not callable");
   });
   cx.builder.emitIfStmt({
     cond: cx.builder.emitUnary("i32.eqz", callable, irVal({ kind: "i32" })),

@@ -2,6 +2,8 @@
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import type { ArgumentVectorLayout } from "./argument-vector-bodies.js";
 
+export const ARRAY_LIKE_OBJECT_ERROR = "CreateListFromArrayLike requires an object";
+
 /** Semantic dependencies only. Coordinates do not authenticate resource ownership.
  * Get preserves its original receiver; ToLength returns an integral f64 up to 2^53-1.
  * NewVector returns externref and Push returns void, using this exact vector layout.

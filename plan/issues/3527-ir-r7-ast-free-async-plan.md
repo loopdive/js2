@@ -43,10 +43,15 @@ files:
   - src/codegen/expressions.ts
   - tests/issue-3527-ir-async-plan.test.ts
 loc-budget-allow:
+  # 2026-10-24: reviewed 1606->1615 LOC for host/native narrowing at existing reads and explicit target rejection.
+  - src/compiler/ir-program-presentation.ts
   - src/ir/from-ast.ts
   - src/codegen/ir-prepared-free-functions.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
+import-cycles-allow:
+  - ir->backend: 26 # 2026-10-24 (#3527): checked IR coordinator joins the dedicated Promise callable-association owner; no new reverse dependency.
+  - backend->ir: 119 # 2026-10-24 (#3527): frame materializer joins (+3) and shared Promise demand selection in the string planner (+1); literals stay in a runtime contract.
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
   - src/codegen/async-ir-planning.ts
@@ -2243,6 +2248,248 @@ graph remains open; reachability certifies preservation (6/6 full and cut), not
 retirement. Exact-base checker/coercion/verdict gates pass, and the post-projection
 TypeScript 7 check exits zero.
 
+## Native prepared-frame carrier repair — 2026-10-24
+
+A no-import module using the real queue and Promise settlement builders exposed
+invalid Wasm in the native prepared-frame engine: entry supplied four constructor
+operands for the canonical five-field Promise, and resume read a non-defaultable
+Promise scratch local outside the branch that initialized it.
+
+Implementation: share the existing carrier schema between native declarations,
+frame preflight and construction. Reject missing, mistyped or immutable fields
+before publishing frame bodies. Initialize the scratch reference before dispatch;
+classification replaces it before installing any pending reaction. Reuse the
+existing default-value, queue, settlement and reservation builders. No new host
+imports or size-budget allowances.
+
+Validation on isolated main ff27bb4de9c8162535dc663043facc1b7d3c3b12 plus this
+repair: 77/77 tests across native frame execution (9), existing prepared-frame
+runtime (21), and native Promise reservations (47). The six execution cases use
+zero-import Wasm: plain-value identity, queue growth with twelve independent
+frames, fulfilled/rejected native inputs, and pending fulfillment/rejection.
+Three negative cases reject malformed carrier layouts before entry publication.
+The previous engine fails Wasm validation (five constructor operands required,
+four supplied); all twelve emitted host fixtures are byte-identical between base
+and candidate. Source/focused-test typechecks and targeted lint pass.
+
+This repairs the runtime kernel. Whole-program standalone frame admission,
+thenable assimilation, true Linear/WASI integration and the original R7 retirement
+requirements remain open; these kernel tests do not claim source-level coverage.
+
+## Native frame planning design — 2026-10-24
+
+Move scalar/layout checks, state-operation validation and supplementary ABI
+machinery into shared planning modules. Keep the existing host entry point and
+its exact imports/callback publication. Add a native entry point using the same
+state validator, with symbolic native Promise storage and explicit native bridge
+requirements derived from canonical selected providers. Native helpers are
+requirements, not fabricated callable ABI entries or physical function indices.
+
+Acceptance: original and decoded source-produced native async plans produce
+identical layouts, call demands and conversion requirements without host imports
+or callback exports; missing or mismatched providers/owners/signatures reject.
+Existing host plans and emitted binaries must remain identical. No new resource
+admission exception, guessed bindings, duplicate state parser or budget grant.
+This producer is a prerequisite for checked resource materialization; the complete
+native Promise composition and source-execution obligations remain required.
+
+Native planning validation: 12/12 source-plan tests cover two awaits, live spills,
+bare returns, original/decoded equality, exact selected provider ownership and
+rejection of foreign target/runtime/callback requests. Together with existing
+host planning, frame runtime, whole-program async consumer and dynamic async
+regressions, 76/76 tests pass. A separate base/candidate checkout comparison
+observes 28 identical host planning outcomes and 11 byte-identical host binaries.
+Source/focused-test TS7, lint, formatting, layering and size checks pass.
+
+The native plan is descriptive and has no imports, callback exports or physical
+function indices. It requests native number box/unbox and canonical undefined
+bridges from authenticated provider selection, with symbolic native Promise
+result storage. The next required join is resource materialization plus complete
+carrier/dispatch/construction inventory; this change does not enable whole-program
+native async admission or claim source execution, Linear/WASI completion or
+retirement. The full original acceptance scope remains unchanged.
+
+### Native frame materialization implementation plan (2026-10-24)
+
+Bind the native frame recipe in backend/wasmgc/resources to actual same-ledger
+Promise, reaction, queue, settlement and value bridge reservations. Reuse a shared
+layout/machinery allocator with the host resource path; preserve host publication.
+Native filling must validate the retained source/runtime, physical ownership and
+complete parent acceptance before detached body construction and publication.
+No public whole-program admission is enabled by a resource recipe alone.
+
+Correctness: execute genuine original and decoded source-owned async functions
+with two awaits and live spill values, using shared native number, settlement and
+queue builders without host imports or substitute helper bodies. Reject foreign
+ledger dependencies, wrong bridge signatures and changed layouts before filling.
+Quality: share allocation logic, keep native adaptation separate from scheduling
+semantics, and retain complete-program inventory/retirement obligations.
+
+Materialization validation: 96/96 tests across seven native/host async suites;
+after final association-check extraction, 20/20 native execution/runtime tests
+pass. Genuine original and decoded source functions execute two awaits and a
+live spill through native frame materialization, preserving -0, NaN, infinities,
+fractional values and queue growth. The source-frame integration emits no host
+imports; original/decoded live-spill binaries are identical. Eleven host binaries
+are byte-identical to the parent commit. Source and focused-test TS7, lint,
+layering and size checks pass.
+
+This is kernel integration using the real shared queue, settlement and number
+builders, not public whole-program admission. Complete native resource inventory,
+thenable/return-resolution composition, broader source coverage, true Linear/WASI,
+full conformance/performance and reviewed retirement remain open. The reservation
+adapter requires the parent's complete acceptance callback; tests explicitly use
+a narrower kernel assertion and do not issue whole-program authority.
+
+### Native frame PromiseResolve integration plan (2026-10-24)
+
+Prepared native frames currently fulfill terminal values directly and omit the
+native await classifier's thenable-adoption binding. Wire the existing native
+Promise resolver through the frame contract and ledger-checked materializer as
+a required dependency. Native return resolves through this function; non-Promise
+await operands use a fresh handled pending Promise and the same resolver. Keep
+host code generation byte-identical, and retain pre/post-emission dependency
+identity/signature checks. Do not add an optional silent plain-value fallback.
+
+Reuse existing resolution, thenable lookup/job, resolving-pair, settlement,
+argument-vector and microtask builders in a bounded executable test kernel.
+Exercise native Promise adoption, thenable job ordering, rejection and nested
+adoption, plus missing/foreign/wrong-signature resolver rejection before frame
+publication. The test kernel is not whole-program source admission. Real public
+inventory composition, Linear/WASI and retirement remain required separately.
+
+Resolution validation: 87/87 tests across seven native/host async suites, followed
+by 22/22 resolver tests after adding two queue-interleaving cases. The observer
+runs in the real native queue: a thenable-return result is fulfilled before the
+observer, while an await result remains pending until its later continuation.
+Coverage includes nested thenables, throwing getters (exactly one read), abrupt
+then methods, first-call-wins before pending adoption, rejection identity,
+indirect self-resolution TypeError, and missing/foreign/wrong-signature resolver
+rejection before publication. All emitted kernel modules have zero imports.
+Eleven host binaries are byte-identical between parent e9dd538daf94dcb6997f46f113210a9d069ffef5
+and the candidate using the existing whole-program host async test harness.
+Source/focused-test TS7, targeted lint and formatting pass. Fresh-context
+adversarial review found no actionable defects; its ordering coverage limitation
+was closed by the two observer cases and re-reviewed without findings.
+
+This binds the production resolver at the prepared-frame seam and tests it using
+real resolution/job/vector/settlement builders with a finite explicit carrier
+inventory. It does not establish full public native inventory composition,
+source admission, successful captured-accessor then dispatch, own-Promise then
+shadowing, Linear/WASI support or legacy retirement. Those original obligations
+remain open.
+### Async representation scope repair plan (2026-10-24)
+
+The full native async example currently crashes during ordinary consumer planning
+with ambiguous prepared SSA definition: the retained semantic async plan and its
+lowered executable states reuse value IDs, but native access/result/prototype
+analysis indexes both in one definition table. The physical dependency census
+also visits semantic clock requests that execution replaced with constants.
+
+Extract the existing representation-aware definition/alias helper and migrate
+all three native value consumers to it. Preserve separate semantic and executable
+operation comparison against source; duplicates within either representation,
+missing/foreign attachments and changed property regions must still reject.
+Use one authenticated executable-instruction traversal for consumer references
+and physical resource demand. Preserve semantic traversal for semantic callers.
+
+Acceptance: original/decoded genuine async example reaches located inventory
+refusal rather than an internal SSA crash, with lowered-away clock requirements
+absent. Getter operations after await remain accounted for. Existing ordinary
+object/prototype and host async behavior must pass without exceptions or weakened
+gates. Keep units bounded and remove duplicated definition/alias loops. This is
+an independent port of prior local work; class changes and frozen index remain
+untouched. Public native async admission and full migration remain incomplete.
+
+The isolated implementation shares representation selection and alias indexing
+across access/result/prototype analysis, and authenticates executable traversal
+before reference or resource collection. The full example and codec replay now
+reach the existing structured native-inventory refusal; semantic-only clock
+requests no longer appear as missing executable providers. Genuine property
+operations, duplicate definitions within one representation and invalid runtime
+attachments remain checked.
+
+The focused regressions pass 14/14; source and focused-test TypeScript 7 checks
+pass. An isolated archive of base `ff27bb4de9` and the candidate emit 11/11
+byte-identical host async binaries. Formatting, lint, layering and source budgets
+pass without allowances. Fresh-context adversarial review of the diff, plan and
+validation callers found an unused occurrence array; it was removed and the
+reviewer confirmed no outstanding findings. The reviewer did not run tests.
+
+The reachability command exits zero under its preservation contract: core nodes
+12/12 observed (dispatch-cut unknown), core types 10/10 full and cut, preservation
+6/6 full and cut. The strict graph remains open at the nonliteral imports in
+`src/optimize.ts` and `src/runtime/platform-capability-adapter.ts`; retirement is
+not certified. This change does not close the native Promise inventory,
+whole-program native async execution, Linear/WASI or the overall IR migration.
+
+The expanded regression run exposed a previously unreachable stale inventory
+expectation. On an isolated unchanged `ff27bb4de9` archive, the inventory-planning
+suite fails 8/12 cases, including the ambiguous-SSA crash. Direct source-census
+probes on that same base, with GVN both off and on, identify the actual
+`__sh_num_toString_radix` support as 43 buffers / 222 occurrences, not the old
+31 / 157. Update the planning test's exact counts and named owner accordingly;
+retain its source hash, all owner/carrier counts, all six unresolved obligations
+and the prohibition on acceptance/emission.
+
+Final regression result: 122/122 cases in the other seven suites, plus 12/12 in
+the corrected inventory-planning suite (134/134 across eight suites). The final
+focused scope suite separately passes 14/14 after review cleanup; both changed
+test files pass TypeScript 7. The reviewer also verified 1,985 archived
+source/fixture/helper blobs against the base with zero mismatches and accepted
+the inventory test correction. No new production allowances or acceptance
+exceptions were introduced.
+
+
+### Integrated native async delivery and boundary inventory (2026-10-24)
+
+Combine the carrier repair, shared planner, source-owned materializer, required
+PromiseResolve binding and semantic/execution scope repair on one unpublished
+integration branch. Existing PR heads and holds remain unchanged. CI on the
+scope-only PR exposed two unclassified new modules; the combined branch exposed
+nine more from the preceding frame changes. Classify all eleven exact modules
+in their existing active layers after inspecting their imports. Do not change
+allowed edges, weaken cleanliness rules, lower floors or claim architectural
+completion. Run the boundary inventory against current main, combined runtime
+regressions and a fresh base/candidate host binary comparison before publishing
+this complete integration diff ready for review.
+
+The first classified inventory then exposed a real forbidden type-only edge:
+native-value-definitions imported IrUnitId through the legacy mixed identity
+facade. Point that import directly at the canonical shared identity contract.
+No exemption or allowed-edge change is introduced.
+
+The import-cycle ratchet separately measures directory-edge counts, not just
+actual strongly connected components. The native materializer adds three
+backend-to-IR dependencies: its planner, canonical data comparison and runtime
+attachment authentication. All three are permitted by the layer policy and
+needed to retain rejection before publication. Largest SCC and SCC count do not
+grow. Record the exact 115-to-118 directory-edge allowance on this owning issue;
+leave the global baseline and architecture edge rules unchanged.
+
+Integrated verification: 219 distinct tests across 14 suites pass (103 across
+8 frame/scope suites, 38 across 3 plan/inventory/scope suites, 92 across 4 object
+planning suites; the 14 scope tests occur in both first groups). Source TS7 and
+all six changed test files typecheck; full repository lint/format checks pass.
+All eleven host fixture binaries remain byte-identical to upstream main
+7371eb505b365e49815f1ddc09afed6c52372540 after overlaying the complete production
+diff. The boundary inventory validates all 1,991 modules and explicitly reports
+architecture incomplete. Fresh read-only review found no remaining integration
+or policy-classification defect; the issue-scoped directory-edge grant is
+recognized by the actual gate. LOC/function, dialect/kind, host-import, layering,
+fallback, stack, boxing and rollback checks pass. Tests and gates do not establish
+whole-program retirement: the reachability command exits successfully only under
+the preservation contract (12/12 core-node observations, 10/10 full/cut core types,
+6/6 full/cut witnesses); two unknown dynamic import targets leave the strict graph
+OPEN and deletion NOT CERTIFIED.
+
+Local gate execution notes: the initial tsx CLI invocations were denied IPC
+socket creation; the same scripts pass through node --import tsx. Two unchanged
+gates misdecode spaces in this checkout path; exact source/script copies under a
+space-free temporary directory pass. Initial failure logs are retained locally.
+No baseline, test expectation, CI workflow or global architecture rule was
+weakened for these environment failures.
+
 ## Native Promise composition repair — 2026-10-24
 
 Implementation plan: keep inherited metadata type identity in
@@ -2265,3 +2512,1432 @@ zero-import Wasm kernels. The staged-closure suite passes 20/20. Fresh-context a
 quality or correctness defect. Source and focused test TypeScript checks pass.
 The legacy reachability check remains preservation-only: its strict graph is
 open, so this repair does not certify retirement.
+
+## Implementation Plan — 2026-10-24 — flat async owners without await
+
+The ordinary whole-program producer currently rejects a straight-line async
+owner such as `async function run(seed: number) { return seed; }` solely
+because its body contains no await. This also prevents preparing a caller
+that awaits such an owner. Extend `src/ir/async-linear-prepare.ts` through its
+existing single terminal resolve state; reuse slot aliasing, derived helper
+construction, canonical Promise ABI, and whole-program numeric bridge
+completion. Do not add a second no-await producer or bypass unsupported
+control-flow checks.
+
+Acceptance: verify zero-suspension scalar, void and reference plans, computed
+slot values and unsupported control; prepare a real async callee/caller pair;
+execute source-owned immediate numeric returns in the existing native frame
+kernel before and after codec replay, including negative zero and NaN. These
+kernels establish frame behavior only; complete public native runtime
+composition remains a separate required integration. Quality acceptance: no
+new production module, helper duplication, selector exception or runtime
+shortcut.
+
+Validation: 96/102 tests passed across eight suites. The six failing cases
+all belong to the older linear-suspension runtime suite; the unchanged
+predecessor e4f0d1bd45fcdac1547e66d011375b34c6098d02 reproduces the exact six
+test names and error texts (1/7 passes there). Source and changed-test TS7,
+full lint (7,315 files), formatting, size/coercion/oracle ratchets, compiler
+boundary inventory and import-cycle checks pass. Eleven existing host
+consumer binaries remain byte-identical against main 7371eb505b365e49815f1ddc09afed6c52372540.
+Fresh adversarial review found no actionable correctness or quality defect.
+Void/dynamic return execution, computed call-chain execution and complete
+public native runtime composition are not established by these tests. The
+legacy reachability gate remains preservation-only: strict closure is OPEN
+at the two existing nonliteral dynamic imports; deletion is not certified.
+
+## Implementation Plan — 2026-10-24 — target-aware program frame join
+
+`program/async-frame-setup.ts` currently invokes the host planner for every
+selected target, even though the native planner and materializer already
+exist. Join the native planner into this existing whole-program ABI pass
+using the requested backend/target and a discriminated frame union. Reuse
+the ordering, collision and ABI validation; host imports/callbacks and host
+dynamic carriers stay limited to host frames. The consumer must refuse a
+native frame until its genuine Promise resource group is available; native
+inventory obligations remain enforced. This is the planning part of the
+full composition work, not native acceptance or migration completion.
+
+Acceptance: source-owned whole-program frame joins use native recipes for
+standalone, preserve them through codec replay and carry no host imports or
+callbacks; public physical planning reaches the concrete missing native
+resource obligations instead of calling the wrong target planner. Retain
+host byte identity. Quality: extend the existing join, no parallel ABI join
+or fabricated producer observations.
+
+Target-aware join validation: the native frame suite passes 15/15, including
+two source owners with eight unique supplemental bindings and codec replay.
+The first combined frame/formatter/host-consumer run passes 52/54; its two
+formatter count failures (43 actual buffers versus 31 expected) reproduce
+on unchanged predecessor e4f0d1bd45fcdac1547e66d011375b34c6098d02. The presentation
+run passes 44/47; the exact same three adapter-policy failures reproduce on
+that predecessor. Final frame/formatter run after the two-owner test passes
+42/44, with only those two baseline formatter failures. No failure is waived
+as an end-to-end migration success. All eleven host consumer binaries remain
+byte-identical against main. Public return/await/call probes now all reach
+the seven concrete native runtime inventory obligations, with no wrong-target
+frame rejection. Fresh review found and prompted the missing presentation
+type narrowing; re-review has no open findings and approves the nine-line
+presentation budget exception.
+
+Source TS7 and focused TS7 covering all changed tests pass after repairing
+three pre-existing malformed test type fixtures. The physical observation
+suite passes 20/20 after its BufferSource type correction. Full lint, boundary
+inventory, import-cycle and size/coercion/oracle gates pass. Legacy closure
+remains OPEN under the same preservation-only reachability result.
+
+## Implementation Plan — 2026-10-24 — native Promise value/string ownership
+
+Connect runtime-created Promise demand to the existing native string/value
+producer, including async source with no string literals or explicit boxing
+instructions. Share the demand predicate between the resource plan, source
+census and string planner in `program/native-promise-resources.ts`; retain
+the existing scanner, AnyValue, canonical undefined and number producers.
+Declare Promise-owned lookup/error literals through the same literal owner.
+Do not manufacture observations or admit the still-incomplete Promise group.
+
+Acceptance: source-created immediate-return and await programs, both string
+storage modes and codec replay obtain actual reserved and filled values;
+execute number roundtrips and inspect canonical undefined through emitted
+Wasm. Public acceptance must advance beyond missing string/value input while
+preserving the remaining composition obligations. Synchronous no-demand
+programs keep their existing selection. Quality: one shared demand predicate,
+no duplicate value runtime and no special-case source recognizer.
+
+Value/string integration validation: the new source-based matrix failed all
+eight async cases before the change (synchronous control passed). The first
+resource regression run passes 156/156. Five wider suites initially pass
+73/88: four failures pin the former 24-resource inventory; the other eleven
+also reproduce on archived unchanged HEAD 81bf738ef59062656419dda7c273cedff3dd89e2.
+Independent inventory probes identify exactly thirteen added resources,
+24→37 declarations, 27→43 steps and 6→10 carriers. Existing support remains
+43 buffers / 222 instructions from `__sh_num_toString_radix`. Expectations
+now retain exact counts and assert all seven shared value roles. Final
+planning/source-value run passes 21/21; inventory rerun passes 28/28 after
+correcting the options-mutation error expectation. Across the exercised
+suites, 244 distinct cases have passing results; this is not full Test262.
+
+Source and changed-test TS7, full lint (7,317 files), formatting and required
+ratchets pass. Eleven host consumer binaries are byte-identical to main
+7371eb505b365e49815f1ddc09afed6c52372540. Fresh review required moving the
+Promise literals out of the IR planner into an independent runtime contract;
+the repaired diff has no open findings. Import SCC sizes are unchanged; the
+shared demand predicate accounts for the reviewed backend→IR edge 119.
+Compiler inventory is valid but architecture incomplete. Legacy reachability
+is preservation-only: its two existing nonliteral imports leave strict
+closure OPEN. Full Promise execution and migration completion remain unproven.
+
+## Implementation Plan — 2026-10-24 — Promise-owned shared vector storage
+
+Extend the existing `program/native-vector-resources.ts` selector to include
+the shared externref vector and exception resource required by native Promise
+resolution even when there is no source-level vector operation. Reuse the
+shared Promise demand predicate and existing vector reservations; do not add
+a second vector layout or fake a source helper demand. Keep host selection
+unchanged. Extend the actual async source matrix to reserve the selected
+vector types alongside values and execute an array allocation through those
+types. Synchronous no-demand input must still reserve no vector layout.
+
+Vector integration validation: all eight async source cases failed before
+selection and now execute shared vector allocation alongside values in both
+storage modes and after codec replay. The synchronous control reserves no
+vector. The final changed suites pass 40/40; native frame execution passes
+15/15, giving 55 distinct passing cases. Four stale vector diagnostic
+expectations reproduce on archived unchanged HEAD 81bf738e and now assert
+the explicit incomplete-composition refusal. Focused TS7 also exposed older
+BufferSource, Tag-import and invalid-provider fixture typing; those fixtures
+are repaired without changing runtime behavior. Source and changed-test TS7,
+full lint (7,317 files), formatting and size/coercion/oracle gates pass.
+Eleven host binaries remain byte-identical to main 7371eb50. Fresh production
+and test review reports no actionable findings. The import graph retains the
+119-edge allowance and unchanged SCC size. Boundary inventory remains valid
+but architecture incomplete; dead-export preservation passes while strict
+closure remains OPEN at its two existing nonliteral imports. This proves
+shared vector ownership and allocation, not complete Promise execution or
+exception-tag use by native Promise resolution.
+
+## Implementation Plan — 2026-10-24 — native invocation argument-vector ABI
+
+The Promise job passes the invocation substrate's external ArgumentVector,
+whereas the existing source apply entry accepts a typed source vector. Extend
+the existing vector-apply body builder with an explicit external-carrier input
+mode and use it from the same invocation owner for an `(extern, extern,
+extern) -> extern` entry over its actual ArgumentVector. Reuse the existing
+source callable associations, argument conversion and receiver/argc/extras
+save/restore; no separate dispatcher implementation or borrowed raw handle.
+Validate external carriers before field access and use the existing native
+TypeError failure path. Keep the typed source apply entry byte-equivalent.
+
+Exercise the issued entry with actual source closures and substrate-created
+vectors, empty/missing and excess arguments, growth, invalid carriers and
+exception restoration. The runtime-created settlement association and property
+`then` dispatch remain separate obligations; this entry alone cannot certify
+whole Promise composition. Quality acceptance: one body algorithm for both
+carrier representations and one invocation owner for both entry points.
+
+Review refinement: reserve the external ArgumentVector entry only when a
+consumer requests it from the issued invocation owner during reservation.
+Repeated requests reuse the same function; source-only invocation does not
+allocate another dispatcher. Completion includes every requested entry.
+
+Argument-vector integration validation: the initial four new cases failed
+because the runtime entry did not exist. All seven final cases pass, including
+owned/borrowed substrate, codec replay, displaced indices, grown vectors,
+missing/excess arguments for the exercised source body, invalid carrier/callee,
+and exact exception/state restoration from an actual source getter. The public
+source-only consumer still executes its result without allocating the runtime
+entry. An intermediate broad run had 107/110 passing cases: three inventory
+failures exposed unconditional selection, corrected after review. The final
+substrate rerun passes 45/45; the 61 consumer cases passed in the broad run.
+These results cover 113 distinct cases across runs, not complete Promise or
+Test262 execution. Source/focused TS7, lint (7,318 files), formatting, import
+cycles and required ratchets pass. Eleven host consumer binaries remain
+byte-identical to main 7371eb50. Review has no remaining findings. Boundary
+inventory is valid; architecture and strict legacy closure remain incomplete.
+The argument entry retains selected-source invocation authority: it does not
+yet associate or certify compiler-created Promise settlement callables.
+
+## Implementation Plan — 2026-10-24 — shared source/Promise closure declarations
+
+Retain an issued closure requirement owner for actual standalone WasmGC
+Promise demand even when its source signature/shape/unit/allocation lists are
+empty. Derive stable settlement signature/metadata request IDs alongside that
+owner from the existing shared Promise demand predicate. The source closure
+reservoir already combines source and intrinsic requests; append settlement
+requests there, reusing the sole signature cache and root rather than making
+a parallel closure pack. Existing currentness checks must recalculate the
+runtime request selection and reject copied or stale requirements.
+
+Acceptance: actual immediate-return/await programs, with and without source
+closures and after codec replay, reserve the genuine Promise resources against
+that same closure root and settlement metadata. Source populations stay exact;
+non-Promise programs keep their prior request population. Preserve runtime
+callable-completion and whole Promise refusal until real bodies are joined.
+Quality: no invented source records, no second closure issuer, and no new
+backend-to-IR dependency when the existing requirement owner carries the data.
+
+Validation for shared source/Promise closure declarations: 100/100 cases in
+five suites (source closure requirements/consumer, Promise resources, actual
+async values and the new 9-case owner suite). Source and focused test TS7 pass;
+lint checks 7,319 files. LOC/function/coercion/oracle and preservation gates
+pass against main 7371eb505b365e49815f1ddc09afed6c52372540. The strict
+legacy reachability result remains OPEN at the two recorded dynamic import
+sites; inventory validity does not certify architectural completion. Eleven
+existing host binaries remain byte-identical to that main baseline.
+Adversarial review found no blocking declaration issue. An additional
+source/settlement signature-cache-hit case is not claimed: attempted source
+extern-to-void fixtures hit earlier frontend/carrier restrictions. Existing
+whole-source mixed numeric signatures and Promise-only declarations are tested.
+This change reserves real shared resources; it does not certify Promise body
+execution or public async acceptance.
+
+## Implementation Plan — 2026-10-24 — Promise settlement invocation association
+
+Connect real Promise settlement functions to the existing invocation dispatcher.
+The Promise resource module exposes an authenticated settlement binding from
+its private reservation records: exact shared closure pack, metadata request,
+source resource plan, capture carrier and resolve/reject slots. A small backend
+association module retains this binding with the actual source closure owner;
+the IR coordinator constructs it using the checked whole-program Promise plan.
+Reservation association and completed canonical Promise bodies are separate
+proofs, avoiding a recursive fill/completion cycle.
+
+Retain native invocation demand for standalone Promise-only programs even with
+no source calls. Replace its blanket runtime-callable gap with a requirement
+for that actual association before reserving anything. Extend the existing
+ancestry and central invocation recipe with the concrete settlement capture,
+before source rows; void uses canonical undefined. Reuse the existing external
+ArgumentVector entry. No fake source units, structural function permissions,
+or second dispatcher. Public whole-Promise refusal remains until all runtime
+and source bodies, object dispatch and configuration are connected.
+
+Acceptance: real prepared async programs retain empty source populations but
+select invocation; source-only invocation remains unchanged. Reject foreign
+source/ledger/metadata/plan, copied bindings, changed signatures and unfilled
+Promise bodies. Review requires exact slot ownership, no extra backend-to-IR
+value dependencies and no mutually recursive completion checks.
+
+Validation for settlement invocation association: 77/77 cases in the final
+three-suite run (new 7-case association/fill suite, 9 shared-closure cases,
+61 public native invocation consumer cases). The existing 49-case Promise
+resource suite and 7-case source ArgumentVector execution suite also passed
+in intermediate combined runs whose new negative test initially expected the
+later error rather than the ledger's earlier descriptor rejection. That test
+now respects the ledger's terminal failed state after tampering.
+Source/focused-test TS7 pass. Lint checks 7,321 files. All mandatory source
+ratchets pass in preservation mode; strict retirement remains OPEN. Boundary
+inventory is valid, architecture incomplete. Eleven host binaries are still
+byte-identical to refreshed main 7371eb505b365e49815f1ddc09afed6c52372540.
+The dedicated backend association adds one forward ir->backend edge (25->26);
+the largest SCC stays 725, four SCCs and ten two-way directory pairs. No new
+reverse backend->ir value edge was added. Its exact backend layer registration
+is included; no broad boundary exception was introduced.
+Adversarial review found an omitted preflight key and mismatched exception-tag
+possibility. Both are fixed with negative tests; final review found no further
+actionable issue. Promise-only programs now reserve and fill the real shared
+invocation dispatcher, but full Promise body fill and actual settlement-call
+execution are not certified. The public whole-Promise guard remains intact.
+
+## Implementation Plan — 2026-10-24 — mixed invocation execution
+
+Extend the existing closure ArgumentVector recipe with an explicit receiver/vector
+transport branch. Its matcher and caller come from the same canonical builtin
+producer: the matcher checks metadata, realm and singleton identity, while the
+caller passes the original receiver and vector to the lifted builtin. Perform
+this branch before installing source argc/this/extras; builtin transport does not
+consume the source parameter protocol. Keep positional source/settlement calls
+in the existing shared branch, and retain ArgumentVector validation before either
+branch. Do not allocate a second builtin population or infer builtin authority
+from structural type tests.
+
+Connect the existing mixed Get recipe to the external ArgumentVector ABI without
+copying its lookup/getter algorithm. Test actual prepared-source getters and real
+Function.prototype/ThrowTypeError algorithms in the same import-free module,
+including displaced indices, forged/foreign builtin identities, argument-vector
+validation and saved invocation state. These execution tests do not grant public
+realm completion: canonical public realm initialization, all-source population
+and mixed property owner composition remain required for public async emission.
+Quality acceptance: one vector dispatcher, existing builtin brand/call algorithms,
+existing Get algorithm; no placeholder bodies or new duplicate realm.
+
+### Mixed invocation execution evidence — 2026-10-24
+
+The shared ArgumentVector recipe now dispatches authentic builtin receiver/vector
+calls before positional source calls. After a builtin identity mismatch, concrete
+builtin carriers cannot fall through to a structurally compatible source entry.
+A negative control demonstrates that omitting this exclusion invokes a foreign
+builtin through its actual lifted signature. Mixed Get explicitly selects typed
+or external ArgumentVector transport and reuses the existing lookup algorithm.
+
+The final four-suite run passed 84/84 cases, including four new executions with
+normal and displaced coordinates, real prepared-source getters, Function.prototype
+and ThrowTypeError, forged/foreign identities and saved invocation state. Source
+and focused-test TS7 passed. LOC/function, coercion/oracle, import-cycle and
+preservation gates passed; eleven host binaries remain identical to main
+7371eb505b365e49815f1ddc09afed6c52372540. Independent review found no remaining
+actionable issue after the fallback fix. Strict legacy closure remains OPEN at
+the two already documented dynamic imports; retirement is not certified.
+
+This proves runtime recipe execution, not a completed public mixed owner. That
+owner must authenticate matcher, caller and the complete builtin carrier family
+together, join the canonical public realm and all source callables, and provide
+the remaining Promise Get/then-dispatch dependencies before public native async
+can be admitted.
+
+## Implementation Plan — 2026-10-24 — productive builtin/source invocation join
+
+Join the already emitted synchronous builtin kernel to the existing native
+invocation owner before reservation freeze. Derive its matcher, caller and entire
+concrete carrier population from the genuine kernel owner; require the same
+closure root, arguments, values, strings and errors. Reauthenticate canonical
+kernel completion during invocation fill and final completion. No raw-handle
+binder, replacement realm or fabricated empty source population is permitted.
+
+The public consumer supplies its existing physical exception tag to the kernel.
+Validate borrowed tag ownership and the externref exception signature before
+allocating dependent resources; omit borrowed tags from the kernel-owned census.
+Unselected callers retain the existing tag reservation. Descriptor errors,
+builtin throws and source throws must use the same tag in a composed program.
+
+For a joined kernel, fixed-arity method entries forward (receiver, callee, args)
+through the common (callee, receiver, ArgumentVector) entry. Typed vector apply
+copies its ordered inputs into the canonical runtime ArgumentVector, with null
+normalized to the existing empty-list behavior. Share fixed-arity vector packing
+with builtin-only calls. Authenticate the builtin branch before source fallback
+and retain the complete concrete builtin-carrier exclusion. Existing unjoined
+source-only recipes remain unchanged.
+
+Verify execution of the actual public consumer's generated dispatcher, decoded
+replay, both native string storage modes and displaced coordinates; run existing
+source call/apply/getter/state tests and foreign/copy/tag negative controls. Keep
+bootstrap completion distinct from full public Object/Function/Promise acceptance.
+
+Implementation result: the productive consumer now joins the authentic existing
+builtin kernel to native invocation and uses one physical exception tag. Public
+method/apply entries reach the shared dispatcher; unjoined resource fixtures keep
+their explicit opt-in. The new recipe is registered as clean native runtime.
+
+Validation: six suites completed with 142/143 passing. The sole failure asserted
+that the public consumer must omit the shared entry, an obsolete pre-integration
+expectation. Its actual execution still returned 94; after changing the assertion
+to exactly one shared entry, the targeted rerun passed (1/1, six unrelated cases
+skipped). Thus all 143 exercised cases have passing evidence: 11 new productive
+integration, 61 source invocation, 36 builtin, four mixed execution, seven argument
+invocation and 24 realm/source cases. Source and focused-test TS7 passed. LOC and
+function budgets passed both merge-base and main-tip comparisons; coercion, oracle,
+import-cycle and boundary-inventory checks passed. Eleven host binaries remain
+byte-identical to main 7371eb505b365e49815f1ddc09afed6c52372540.
+
+Independent review found a negative test reusing an already failed ledger; each
+negative and positive now has its own fixture. No further production finding
+remained. The legacy audit passes preservation only; strict closure is still OPEN
+at the two documented dynamic imports. Full public realm, all-source association,
+mixed Get/then dispatch and public Promise execution remain unfinished.
+
+## Implementation Plan — 2026-10-24 — runtime source call population
+
+The productive realm's common Call entry must use the original complete source
+slot association, rather than the subset selected by static call/apply/getter
+sites. Keep the selected association for frontend demand authentication; join
+`NativeRealmSourceClosureCallables` separately and recheck every original slot at
+completion. Do not filter unsupported or async units out of this population:
+missing conversions and missing async completion remain explicit failures until
+the corresponding genuine producers are connected.
+
+Reuse the existing row builder for both populations. Derive internal Boolean
+result boxing from all issued realm source signatures without granting a new
+frontend Boolean boundary provider. Boolean arguments use the joined kernel's
+authenticated isBoolean/unboxBoolean pair. Extend the existing argument-carrier
+matcher, which already validates reference arguments, before reading the typed
+payload. Do not turn arbitrary objects, numbers, omitted arguments or strings
+into Booleans: typed i32 lowering cannot preserve their JavaScript identities.
+
+Adversarial review identified that ToBoolean would silently change the meaning of
+`(x: boolean) => x === true` when passed an object. The runtime boundary therefore
+refuses incompatible values until value-preserving generic source lowering is
+connected. This typed boundary is not a general JavaScript Call implementation
+and does not license full Promise execution. The same representation obligation
+must be resolved for scalar Number arguments, including omission/undefined.
+Joined Number entries now also require genuine Number carriers; only parameters
+with an actual numeric default admit the undefined sentinel consumed by that
+default. Existing static invocation proof and unsupported-signature gaps remain.
+
+Quality acceptance: one source-row builder, the existing argument-carrier matcher
+and actual Boolean producers, no second realm/singleton population or raw-handle
+grant. Correctness acceptance: execute an exported source factory with no static
+call sites through the emitted public common Call, including actual Boolean
+arguments/results, codec replay and both string storage modes; refuse incompatible
+values, reject foreign associations and recheck original source body completion.
+Full native Promise execution, Linear/WASI and legacy retirement remain required.
+
+Implementation result: productive native Call now associates every original
+prepared source closure, including units with no static invocation sites, and
+revalidates their canonical body completion. Boolean and Number scalar arguments
+are checked against their genuine runtime producers before payload extraction.
+The physical planner already authenticates realm requirements through its literal
+planner; removing the duplicated assertion in Boolean selection avoids a new
+backend-to-IR value-import edge without weakening the reservation boundary.
+
+Validation: 79/79 cases across runtime source population (7), existing source
+invocation (61), and productive mixed invocation (11) passed. Source and focused
+test TS7 passed. LOC/function gates passed against both the branch merge-base and
+main 7371eb505b365e49815f1ddc09afed6c52372540; coercion, oracle and import-cycle
+ratchets passed. Compiler-boundary inventory is valid; complete architecture is
+still false. Legacy preservation/core checks passed, with strict modeled closure
+still OPEN at the two existing dynamic-import sites. Eleven host binaries were
+byte-identical to that main revision. Independent adversarial review found no
+remaining actionable findings after the typed argument correction, including a
+separate check of the authentication-preserving import repair.
+
+A temporary Vitest configuration accidentally selected the whole repository.
+That separate run contains failures and is not full-suite acceptance evidence;
+it was left running under the user's no-cancellation constraint. The 79-case
+result above is the separately scoped, completed run. General value-preserving
+JavaScript Call, public Promise execution, Linear/WASI, full Test262/performance
+acceptance and reviewed legacy retirement remain incomplete.
+
+## Implementation Plan — 2026-10-24 — value-preserving source closures
+
+A scalar adapter cannot recover a value erased by typed body lowering. Connect
+logical dynamic source signatures to the native runtime's existing opaque value
+carrier, preserving the source function and its actual closure slot. Reuse the
+existing source signature planning and per-unit dynamic operation census; keep
+logical signature admission separate from physical representation selection.
+Native dynamic lowering must use the same canonical value producers as common
+Call, never a host import or a newly invented box population. Unsupported dynamic
+operations must remain explicit until their real native implementation is joined.
+
+Start validation from a source-produced generic closure with heterogeneous runtime
+arguments, omitted arguments and object/function identity, including codec replay.
+This is a path through the real public compiler, not a hand-built Wasm function.
+Typed source bodies still need value-preserving generic preparation before their
+runtime guards can be removed. Full generic Call and Promise integration remain
+the acceptance target; identity transport alone is not completion.
+
+Signature conversion is extracted into `src/ir/source-callable-signatures.ts`
+beside existing source closure lowering. It reuses the checker and prepared-data
+comparison, removes the converter from the oversized program source driver, and
+shares annotation/inference admission. Its AST dependency remains explicit
+frontend migration debt in the boundary inventory; this extraction does not
+claim frontend activation. The existing void-return proof also applies to the
+new closure-signature path.
+
+Validation of this slice: four actual native Call executions cover both string
+storage modes and original/decoded programs, including annotated and inferred
+factories. Nine signature/void rejection cases pass. The 14-case run initially
+reported 13 passed and one test failure because dynamic addition is refused
+already during preparation (`__ir_dyn_add` lacks a canonical declaration),
+rather than at physical admission as the test expected. The corrected explicit
+preparation-refusal case passed separately (1/1; 13 unrelated cases skipped).
+Source/focused-test TS7, all nine quality checks including the CI-base budgets,
+and eleven byte-identical host binaries against main 7371eb505 passed.
+Independent review found and verified the void-return guard repair; no further
+actionable findings remained. Opaque value transport is implemented here;
+dynamic operations, typed-body generic preparation, full Promise execution,
+Linear/WASI and strict legacy retirement remain open.
+
+The commit hook exposed four formatter-fixture failures. An isolated archive of
+published 4d66db0c reproduces the same four failures (25/29 pass), so these are
+not caused by the new opaque-value lowering. The fixture dropped the issued
+invocation requirement returned by the real string/value planner; preserve that
+exact owner. Its old 31-buffer snapshot also disagrees with the actual canonical
+formatter's 43 buffers, with or without GVN. Pin the current population and add
+an independent deep-instruction identity census so the update cannot conceal
+missing support instructions. Rerun the complete 29-case fixture suite.
+
+Formatter repair result: 29/29 pass in the complete targeted suite; focused
+TS7 also passes. The earlier slow commit hook had additionally passed 61/61
+source invocation and the mixed-object-access suite before stopping at the
+formatter failures. Remaining hook files were not reached and are not claimed
+as checked by that run. The commit retry uses the repository's documented fast
+hook after repairing the observed failure; no failed result is suppressed.
+
+### Implementation plan: connect full-realm Call and mixed Get
+
+Join the existing common native invocation producer to the actual full public
+realm declarations, shared source closures, argument vector, primitive values,
+Boolean conversion and exception owner. Reserve and canonically fill the full
+catalog identity matcher, receiver/vector dispatcher and lifted adapters; reuse
+the bootstrap recipes with explicit typed/external singleton representation.
+Bind mixed Get to that issued invocation before freeze and fill its existing
+OrdinaryGet recipe using the exact shared value/argument resources. No arbitrary
+Call handle, bootstrap population substitution, or caller-filled body can grant
+whole-realm completion. Completion continues to require the unfinished full
+realm algorithms and population, so native Promise/public admission stays closed.
+
+Validate executable dispatch recipes with genuine source/native carriers and
+receiver/argument/error identity, plus full-realm binding/foreign-owner rejection,
+canonical Get fill and unchanged incomplete-realm refusal. This connects an
+actual dependency edge toward public execution; it does not complete Promise,
+Linear/WASI, conformance, or legacy retirement.
+
+The full-realm Call/Get connection is implemented with one Call owner per realm.
+Independent review found and fixed an invalid externref-singleton comparison,
+a selected-only source fallback on the public path, and competing lifted-slot
+ownership. Public invocation now requires the exact complete source callable
+association. Null or wrong-carrier external Function.prototype anchors fail the
+matcher before a cast. Completed bindings audit canonical adapters and actual
+Boolean/value/String/substrate producers before asking the still-incomplete
+full realm for authority.
+
+The canonical executable-body audit is shared with mixed object access; the
+existing value owner also supports an exact program/projection requirement.
+This avoids a second backend-to-IR authentication implementation and requires
+no additional cycle allowance. The first test run exposed fixture mistakes
+(an absent storage helper and an invalid post-failure ledger probe); a following
+run exposed the test timeout and the required-number argument refusal. The
+corrected source control uses a real zero-parameter getter; a required-number
+getter is an explicit rejection control. All 44 native control algorithms are
+transport observers only: none is claimed as a standard builtin implementation.
+Public native Promise and full realm admission remain unavailable.
+
+Validation of the full-realm Call/Get connection: the final new suite passes
+4/4, executing both normal and displaced coordinates. The regression run
+passes 82/84 (36 builtin, 11 productive invocation, 35 mixed access); two mixed
+completion-error ordering regressions were repaired and both pass in a focused
+rerun (2/2, 35 unrelated cases skipped). Preserve the original failing run as
+evidence rather than describing it as an all-green suite. Source and focused
+test TS7 pass; nine quality/inventory/preservation gates pass; eleven host
+binaries remain byte-identical to main 7371eb505. Strict legacy closure remains
+OPEN. The executable native catalog bodies in the new suite are transport
+controls, not full standard builtin algorithms. Public Promise admission,
+Linear/WASI, full Test262/performance and reviewed retirement remain unfinished.
+
+### Implementation plan: real full-catalog runtime population
+
+Replace the full-realm Call test's fabricated singleton population with a
+production initializer bound once to the genuine realm declarations. Reuse the
+existing builtin allocation recipe and ordinary object/descriptor owners.
+Allocate Object.prototype's real subtype and all callable identities before
+installing the catalog's descriptors, including canonical Symbol.hasInstance,
+restricted accessors and exact flags. Authenticate shared values, storage,
+closures, exceptions and Symbol owners. Initialization state must reject
+reentrance, retain failure and publish ready only after installation; this is
+population readiness, not complete algorithm or Promise admission. Exercise
+actual catalog contents, stable identities, failure/reentrance and source Call
+through this initializer. Keep unfinished builtin algorithms and whole-realm
+completion closed; do not claim full IR migration from component coverage.
+
+The real population initializer now installs 45 intrinsic identities and 133
+catalog descriptors through genuine shared allocation, descriptor and canonical
+Symbol producers. It preserves Object.prototype's dedicated subtype, prototype
+links, exact flags, restricted accessors and identity across repeat calls. The
+population authority certifies only identities/descriptors; the 44 algorithm
+bodies in the executable integration suite remain explicit transport controls.
+Whole-realm and public Promise completion remain refused.
+
+Validation: the complete population integration suite passes 4/4. After moving
+the subtype allocation extension into the existing definition wrapper to retain
+the historical body receipt unchanged, both executable variants pass again
+(2/2, two unrelated cases skipped). Two additional import-free Wasm tests pass
+2/2 for real initialization failure and recursive entry, preserving the original
+exception and permanent failure state. The builtin regression passes 36/36.
+The storage suite passes 37/51: all 14 failure signatures reproduce identically
+on pristine base b8fe4ea444, and remain recorded as historical source/adapter
+receipt failures rather than a green suite. Initial fixture dependency identity
+and missing module-classification failures were repaired before these checks.
+
+Final focused TS7, lint/format and all nine quality/inventory/preservation gates
+pass; the CI budget baseline is main 2976e9d58e. Eleven existing host binaries
+remain byte-identical to main 7371eb505. Independent adversarial review of the
+population owner, shared allocation and subtype wrapper found no remaining
+blockers. Strict legacy closure remains OPEN. Standard algorithm execution,
+public Promise composition, real Linear/WASI, full Test262/performance and
+reviewed legacy retirement are still required for the migration.
+
+### Implementation plan: genuine core Function algorithms
+
+Replace the Function.prototype, ThrowTypeError and Function.prototype.call
+transport controls with production algorithms bound to the existing full realm
+and common invocation owners. Reuse the tested Function.prototype invoker
+recipe and the bootstrap undefined/TypeError recipe; separate call's required
+ports from apply's extra array-like conversion ports rather than supplying dummy
+dependencies. Authenticate source/native callability and shared argument/value/
+exception resources through the genuine invocation owner. Keep exact receiver,
+omitted undefined, arbitrary argument count, source captures and abrupt identity.
+The core algorithm owner may certify only its fixed implemented entries, never
+whole-realm or Promise completion. Exercise the actual population and common
+Call in both storage/coordinate variants with negative ownership controls.
+Reuse canonical builders and existing identity checks without copied dispatch
+or new cycle allowances; obtain independent adversarial review before delivery.
+
+The core Function owner now fills those three genuine algorithms against the
+existing full-realm singleton slots. Function.prototype.call uses the tested
+invoker recipe with an explicit external argument-vector edge into common Call.
+The shared identity recipe rejects foreign runtime-instance source closures in
+both IsCallable and Call while retaining the previous non-realm instructions.
+The predicate does not inspect user arguments or change invocation state.
+
+Independent review identified a completion hole: a caller-filled public realm
+dispatcher could otherwise satisfy the new core owner's cyclic dependency.
+Factor the existing canonical dispatcher/private-fill check into a narrow proof
+and require it before core completion. The isolated negative test genuinely
+fills source units before supplying a fake public dispatcher. Review confirms
+the fix without granting whole-realm authority. Call/apply mode validation and
+same-shape foreign realm tests cover the corresponding runtime boundaries.
+
+The first integration run passed 246/246 across the full-realm suite (4 cases)
+and existing invoker suite (242 cases). Subsequent negative tests extend these
+suites; their final results are recorded separately below. Expanded focused TS7
+exposed two existing test-helper typing defects (missing immutable field marker
+and the DOM library's missing Tag import union); both are corrected. The invoker
+suite then passed 243/243, and focused TS7 passes. All nine quality gates pass
+against main 2976e9d58e, eleven host binaries remain byte-identical to main
+7371eb505, and lint reports no errors (existing test any-type warnings remain).
+Three actual catalog algorithms now run; the other 41 native bodies remain
+explicit transport controls. Public Promise admission, complete builtin
+semantics, Linear/WASI, full conformance/performance and retirement stay open.
+
+Final integration recheck passes 3/3 selected cases (2 unrelated cases skipped):
+the isolated caller-filled dispatcher refusal and executable normal/displaced
+realm variants, including real Function core behavior and foreign realm closure
+rejection. Final invoker coverage passes 243/243. Focused TS7, all nine gates,
+format/diff checks and eleven host binary identity checks remain passing.
+
+### Implementation plan: array-like length coercion for Function.prototype.apply
+
+Reuse the Number-from-value recipe for the shared ordered number-hint
+ToPrimitive sequence. Add a distinct ToNumber binding that rejects BigInt
+instead of admitting Number's explicit BigInt conversion; do not supply a dummy
+BigInt conversion function. Add ToLength over that conversion with a single
+observable conversion, positive-zero normalization and the 2^53-1 cap. Join the
+existing primitive classifier, native string scanner, mixed Get and common Call
+through genuine backend owners before granting any array-like/apply completion.
+Reuse CreateListFromArrayLike for ordered length/index Gets and retain the
+external argument-vector edge. Acceptance requires receiver/order/abrupt tests,
+BigInt and Symbol rejection, fractional/infinite/large lengths, both string
+layouts, canonical dependency checks, unchanged Number behavior and no new host
+imports or duplicated ToPrimitive implementation. Full-realm/public Promise
+admission remains separate until all required algorithms are genuine.
+
+The native numeric owner now joins canonical primitive classification,
+Symbol.toPrimitive, mixed Get and common Call. ToNumber shares Number(value)'s
+ordered conversion recipe with an explicit mode that rejects BigInt; ToLength
+performs the conversion once and clamps in f64 without narrowing wide lengths.
+Unsupported mixed-Get families remain explicit traps and cannot be mistaken for
+missing properties. This is a prerequisite for apply, not apply completion.
+
+Adversarial review found two P2 defects: an inherited bigintToNumber field could
+change the conversion mode, and invalid dependencies or a late duplicate key
+could leave earlier reservations behind. Explicit recipe mode and complete
+dependency/key preflight fix both. Regression controls cover inherited values
+and getters, copied owners, late collisions and unchanged reservation counts.
+The ledger intentionally becomes failed after a duplicate key; the negative
+test now respects that contract rather than attempting reuse. Review found no
+further concrete blockers.
+
+Pure conversion and scalar-Get coverage passes 341/341. Focused TS7 and all nine
+quality/preservation gates pass; eleven host binaries remain byte-identical to
+main 7371eb505. The initial large integration attempt exceeded its 240-second
+construction limit and is retained as a failed run. Redundant dependency checks
+were removed and the measured integration allowance was raised to 480 seconds.
+The final executable results are recorded below. Full apply, remaining builtin
+algorithms, public Promise execution, Linear/WASI and legacy retirement remain
+open.
+
+Final integration passes 3/3 selected cases (3 unrelated cases skipped): the
+reservation negative and both import-free executable realm variants. Normal
+and displaced layouts pass numeric conversion, source valueOf/@@toPrimitive,
+original abrupt identity and recovery checks in 233 and 231 seconds respectively.
+The scalar-Get source-family gap remains an asserted unsupported trap; these
+results do not certify full Get, apply or public Promise completion.
+
+### Implementation plan: native Function.prototype.apply execution
+
+Join the existing CreateListFromArrayLike and apply bodies to the native numeric
+owner, genuine common Call and shared strings. Reuse the existing Ryu decimal
+algorithm through an explicit all-Ryu ToString entry, including explicit signed
+zero normalization; preserve the existing radix fast-path recipe byte-for-byte.
+A small decimal resource owner borrows an authenticated Ryu pack rather than
+allocating duplicate tables when the full formatter already owns one. Extend
+the Ryu owner's private-fill completion proof to validate filled resources and
+strings before seal, retaining the sealed public completion contract. Expose
+the numeric owner's authenticated scalar Get rather than copying status logic.
+
+Reserve and fill only apply's actual slot and dependencies. Preserve callable
+validation before any length/index access, exactly one length conversion, ordered
+index Gets, prototype lookup, original exceptions, recovery and receiver/argument
+identity. Unsupported object families must remain explicit Get gaps; this cannot
+confer whole-realm or public Promise completion. Test real import-free modules in
+both layouts, numeric edge cases through 2^53-1, source/native invocation and
+negative owner/canonical-fill controls. Measure the all-Ryu per-index allocation
+tradeoff; full performance acceptance remains part of migration completion.
+No duplicate formatter or new cycle allowances; independent adversarial review
+must cover the final ownership boundaries and shared-recipe changes.
+
+
+### Native apply composition validation
+
+The genuine apply slot now uses the original mixed scalar Get, numeric ToLength,
+common Call and shared ArgumentVector. The decimal owner borrows a privately
+filled Ryu population and authenticates its exact strings, functions and tables
+before seal; the sealed public Ryu contract remains intact. The retained radix
+formatter's instruction construction still reconstructs the immutable donor.
+Independent adversarial review found no remaining production blocker and
+accepted the updated inverse proof. Boundary inventory adds only two owners
+(ten lines), without cycle allowances.
+
+Decimal execution passes 6/6 tests, including 535 numeric values in each of two
+string layouts. The first formatter/invoker regression run passed 275/278; three
+old source-structure inverse assumptions failed after extracting the shared
+builder. Their repaired complete suite passes 13/13 with the original donor and
+mutation controls retained. The other 265 cases passed in the initial run.
+Four full-realm ownership/refusal tests pass (two executable cases selected in
+a separate run). Focused TS7, all nine quality/preservation gates and eleven
+byte-identical host binaries against main 7371eb505 pass.
+
+The all-Ryu mode allocates a 256-code-unit scratch buffer for small indices too.
+A local Node 25.9.0 standalone-WasmGC measurement used 10,000 warmup conversions
+and seven batches of 100,000 index conversions: median 45.3 ns for UTF-16 and
+50.2 ns for UTF-8. This measures the formatter alone, not full apply, a radix
+speed comparison or migration performance acceptance. The initial scratch
+measurement failed on CLI IPC permissions, then on its missing return; both
+failed attempts are retained separately from the successful measurement.
+
+There are now four genuine Function algorithms in the full-realm integration;
+the other 40 bodies are explicit transport controls. Unsupported source-object
+Get still traps. Complete runtime algorithms, public Promise execution,
+Linear/WASI, full conformance/performance and legacy retirement remain open.
+
+Final import-free integration passes 2/2 executable variants (four negatives
+selected separately), in 311 and 326 seconds for normal/displaced layouts.
+The combined split execution covers all six cases: callable-first ordering,
+length/index getters, prototype lookup and holes, source/native receivers and
+arguments, original abrupt identity, recovery, lengths above 2^32 and Infinity
+with early exceptions, and explicit unsupported source-object Get traps.
+
+
+### Implementation plan: intrinsic descriptor absence for native Promise Get
+
+Current mixed Get returns unready for every missing property on native
+intrinsics and Object.prototype even after the genuine initializer has
+installed all catalog descriptors. Consequently an ordinary object inheriting
+Object.prototype cannot report an absent then property. Join mixed access to
+the authenticated same-realm population owner before freeze. Require its
+canonical private fill at structural fill/completion, and use the actual
+runtime initialization state: intrinsic misses become absent only at state 2.
+State 0/1/-1, null/foreign/corrupt bags and unsupported source families retain
+explicit gaps. Do not grant algorithm or whole-realm completion.
+
+Test every intrinsic's own/inherited absence, nearer properties and accessors,
+present undefined, runtime initialization states and copied/foreign/changed
+population proof. Preserve the existing unbound structural component behavior.
+This is a prerequisite for common Get/IsCallable Promise then capture, not a
+substitute for source property metadata or the public Promise coordinator.
+
+
+### Implementation plan: common native Promise resolution
+
+2026-10-24 producer join: put the guarded one-read recipe in
+`runtime/wasmgc/promise/common-then-lookup-body.ts` and its issued owner in
+`backend/wasmgc/resources/native-promise-then-lookup.ts`. Reuse the existing
+`nativeRealmNumberCoercionBinding` scalar Get, primitive classifier and shared
+invocation instead of allocating a second Get adapter or duplicating type
+classification. The owner checks canonical producer completion and retains
+the exact invocation association. Extend the existing full-realm executable
+fixture to exercise inherited then, one getter call with the original receiver,
+captured identity, thrown identity, primitives and unsupported object families.
+Quality acceptance: one small lookup recipe, no new property implementation,
+no runtime import cycle, no claim of complete Promise algorithms from lookup.
+
+Producer-join checkpoint: the guarded lookup and existing common-resolution
+recipe tests pass **9/9**. Focused TS7 and all nine source/CI-base architecture
+gates pass. Read-only review found no production blocker; its opaque-reference
+identity finding is fixed with explicit Object.is assertions, and native
+Boolean cases are added. Full-realm execution is pending; the initial live run
+predates those tightened test assertions and is not final acceptance. The
+resource fill does not yet select this owner for full Promise resolution.
+
+Join the real mixed Get, primitive classifier and common IsCallable owners;
+read then once with the original receiver and retain the captured function for
+the existing ThenableJob. Keep primitive resolutions free of property access.
+Authenticate shared values, strings, exception, closure root and invocation.
+Settlement closures already participate in that invocation; final Promise
+completion must follow the fill cycle rather than being inferred from Call.
+
+Add an explicit native common-Get mode to the shared resolution recipe. After
+self-resolution rejection, native Promise objects must use the same guarded
+lookup as other objects. The current own-bag/adoption path bypasses inherited
+changes and runs getters outside the lookup catch; do not retain it after a
+preliminary Get. Preserve the existing default output exactly. Test native and
+ordinary values, one read, captured identity, thrown identity, self-resolution
+and queue ordering with actual Wasm execution. Reject accessor/inherited mode
+forgery without executing a getter. No duplicate resolution or queue algorithm.
+
+The actual Promise carrier also needs complete property/prototype production
+and mixed-Get integration. An unknown Promise carrier remains unsupported until
+that owner is connected. Public admission, source metadata and genuine remaining
+builtin algorithms must not be inferred from this internal mode or a test spy.
+
+
+Common-Get resolution validation (2026-10-24): the executable recipe and existing
+instruction-preservation suite pass 63/63. Focused TS7 passes after naming the two
+fixture struct types; the common dispatch is extracted into its own helper to
+stay under the function budget. All nine source/CI-base gates pass; 11 emitted
+host binaries match baseline 7371eb505b365e49815f1ddc09afed6c52372540 exactly.
+Read-only adversarial review finds no remaining blocker in this recipe change.
+These are seam tests with explicit lookup/queue observers, not public Promise
+runtime acceptance. The mode is not selected by the native resource fill yet.
+
+The production prerequisite is a real Promise property/prototype owner. Reuse
+the realm ordinary storage inside Promise field 3 rather than adding a parallel
+property implementation; all allocation sites, including prepared frame creation,
+must initialize it. Populate the actual Promise.prototype chain and callable then
+with capability/species behavior before treating native Promise misses as absent.
+Mixed Get must authenticate that carrier and use its stored prototype; null bags
+remain incomplete. Only then join common Get/IsCallable and select the new mode.
+
+
+### Implementation plan: shared Promise reaction registration
+
+Move the state-based reaction registration from emitStandalonePromiseThen and
+native-state adoption into runtime/wasmgc/promise/reaction-registration-body.ts.
+The recipe receives concrete type/function/local coordinates, enqueues the matching
+reaction of a settled Promise, or prepends one immutable callback node for a pending
+Promise. Reuse the existing settlement reversal for FIFO order. Keep the rejection
+tracking action at its existing position and keep capability/species construction
+outside this recipe. Both existing production consumers must call it, removing
+the duplicate instruction trees; no second scheduling algorithm or speculative
+completion owner. Verify emitted instruction preservation and execute all states,
+queue ordering, distinct handler captures and rejection handling. This extracts a
+real prerequisite for the full prototype method; it does not certify that method.
+
+
+Reaction registration validation (2026-10-24): four direct Wasm tests cover
+settled fulfillment/rejection and pending FIFO settlement, distinct capture and
+value identity, deferred execution and one-shot settlement. The existing
+resolution-preservation/common-Get suites pass 63/63; compiler async/queue and
+pending/reentrant regressions pass 7/7 (the latter use the Deno hostBridge fixture).
+Focused TS7, lint/format and nine source/CI-base gates pass after adding the new
+module to the compiler-boundary inventory. Eleven host binary hashes remain equal
+to baseline 7371eb505b365e49815f1ddc09afed6c52372540. Review found structurally equal
+empty captures weakened FIFO assertions; corrected tests now assert per-index
+identity and distinct labels. Follow-up read-only review accepts both corrections.
+
+
+Intrinsic absence validation (2026-10-24): the final full-realm executable run
+passes both normal/displaced variants (410/435 seconds), with exit 0 and no
+unhandled worker errors. It covers all 45 intrinsic identities, ordinary
+inheritance, present undefined, original receiver getters, nearer properties,
+initialization states and unsupported/foreign carriers. The earlier 48/48 mixed
+access/population/scalar-Get regressions and three corrected dependency/pollution
+controls passed; pollution controls were rerun after lint cleanup. Initial
+negative-test expectation/foreign-carrier assertions were corrected. The earlier
+full run had two passing assertions but a worker RPC timeout and exit 1; that run
+is not accepted as clean evidence. Source/CI-base gates and focused TS7 pass;
+11 host binaries retain identical hashes. Adversarial review found no remaining
+blocker after inherited operand access and negative-test poisoning were repaired.
+
+### Implementation plan: Promise intrinsic object population
+
+Extend the existing semantic realm catalog with the complete ECMAScript 2026
+Promise family (constructor, prototype, methods, species getter and toStringTag).
+Reserve the non-callable Promise.prototype in native-object-realm.ts using the
+existing realm ordinary-object layout. Extend the existing population recipe to
+allocate those ordinary intrinsic identities and install their descriptors through
+the same descriptor owners and canonical well-known Symbol producers. No Promise
+algorithm completion is inferred from those identities. Mixed Get must observe
+Promise.prototype as an ordinary realm object, including its actual parent,
+constructor/then identity and mutable properties. Reuse the existing allocation
+prefix and descriptor loop; do not introduce a parallel property table.
+
+Acceptance: exact catalog descriptors/attributes and absent species setter;
+executable no-import population through common Get/prototype access, idempotence,
+normal/displaced physical indices and retained abrupt-initialization behavior.
+Keep unsupported algorithms and public Promise admission explicitly unavailable.
+This connects the missing intrinsic object on which real Promise allocation and
+then/capability semantics depend; those remain part of this issue's full scope.
+
+Promise intrinsic population checkpoint (2026-10-24): catalog now retains 59
+intrinsic identities, 57 callable identities and 174 descriptors, including the
+ordinary Promise.prototype and canonical species/toStringTag Symbol properties.
+Source/type/format/lint checks and nine source/CI-base gates pass. Eleven host
+binary hashes match baseline 7371eb505b365e49815f1ddc09afed6c52372540. The broad
+catalog/declaration/mixed-access run has 90 passes and four failures from a stale
+source-invocation expectation introduced before this change (4d66db0c24); the
+corrected four cases and six pollution/snapshot controls pass in the focused
+10/10 rerun. Abrupt-initialization controls pass 2/2.
+
+Adversarial review found premature absence on the ordinary intrinsic singleton;
+its own misses now require genuine population state 2 while ordinary objects
+remain independent. The new executable assertions distinguish ordinary own
+misses from inherited lookup through an incompletely initialized intrinsic.
+A second review found use of the original coordinate-array methods after
+validation; the builder now retains the checked snapshot and the Proxy regression
+passes. Follow-up review found no remaining concrete blocker in the delta.
+The initial executable run failed before Wasm emission on a stale completion-error
+expectation (506 seconds); the later run reproduced the same mismatch (543
+seconds). All three Object/Function-only expectations now include Promise. The
+full six-case acceptance run uses a 900-second per-case allowance because the
+expanded catalog already exceeded the old 480-second limit. Its result is pending;
+neither earlier run is accepted as execution proof. Public Promise admission
+remains incomplete.
+
+Next production integration: issue a same-transaction Promise property owner
+binding the actual Promise pack, realm population and existing ordinary storage.
+Its allocator creates realm ordinary storage with Promise.prototype and actual
+realm identity. Bind the issued owner into prepared-native-async-frame.ts, retain
+it for current-state validation, and initialize field 3 at both prepared frame
+sites (entry handled=0, await adapter handled=1). Mixed access must authenticate
+Promise type, bag type and bag realm before using field 3 for own lookup and
+its state for Get/SetPrototype. Null/foreign bags remain gaps. Reserve all links
+before freeze, fill population/storage then allocator then mixed invocation/Get,
+then Promise bodies and frames; final completion is a group check. Remaining
+non-frame allocations and real then/capability/species are still required.
+
+### Implementation plan: batch reservation-phase type authentication
+
+A CPU profile of ten genuine full-realm declaration validations (59 intrinsics)
+measured 12,455 ms; 5,573 of 8,348 samples pass through the physical ledger's
+full layout audit, mostly repeated once per type. Add a dense own-data batch
+form of type authentication beside physicalIndices in module-reservations.ts.
+Reuse the same descriptor-only input capture, perform one fresh full audit after
+capture, and authenticate every frozen token against the private owner set.
+No validation result is cached across calls, no descriptor checks are removed,
+and no coordinate is exposed during reservation. Use it in the existing closure,
+String-type and realm-entry validation loops. Keep the scalar API as a delegate.
+
+Acceptance: copied/foreign/non-type tokens, sparse/getter arrays, Proxy mutation
+of ledger state/layout during capture, and mutation between successive calls
+must still fail. Existing ledger and closure ownership tests must pass; compare
+the same ten-call real-realm profile before/after. This targets measured compiler
+validation cost, not runtime semantics, and does not relax Promise admission.
+
+Batched type-authentication checkpoint (2026-10-24): the same ten-call measurement
+with 59 intrinsics decreases from 12,455 ms to 8,197 ms. The ledger/closure/type
+run has 185 passes and one failure: the module-record relocation hash assertion.
+Both its test and source input are byte-identical to HEAD 6f3ada90a5; evaluating
+the same receipt on the committed input reproduces the mismatch (expected
+490bf9a7, actual 1e50d9cd). This is recorded as an existing failure, not a green
+suite or a reason to weaken the receipt. The new batch mutation controls pass.
+Read-only adversarial review found no blocker; no audit survives its call.
+Source/CI-base gates and focused TS7 pass. The full 96-case catalog/declaration/
+mixed-access rerun passes before this performance-only delta. The six-case realm
+acceptance run has passed four negatives and is executing its two Wasm cases;
+it began before the type-batching change, so it cannot establish its speedup.
+
+The final batch ownership controls pass 18/18 after adding the review-suggested
+transaction-poisoning case during the layout audit. Focused TS7 including the
+new test and lint pass after narrowing the test's TypeDef before mutation and
+preserving a real sparse array with Reflect.deleteProperty. All eleven host
+binary hashes remain identical after batching. A first host comparison attempt
+failed on an existing temporary symlink before executing tests; a fresh archive
+retry passed. Both superseded realm execution runs ended with their stale
+expectation failures plus worker RPC timeouts; only the current acceptance run
+can supply the missing execution evidence.
+
+Promise population publication (2026-10-24): commit ffc14bb84e is verified on
+PR 6889. Normal pre-commit and pre-push checks passed, including 18/18 numeric
+IR parity tests. The six-case acceptance run terminated with all six assertions
+passing (normal/displaced execution 525/515 seconds), but exit code 1 from one
+unhandled onTaskUpdate worker RPC timeout. It is not clean whole-run acceptance.
+Vitest's runner sends task updates without waiting for their RPC acknowledgement;
+the fixed timeout can expire while synchronous audits prevent IPC processing.
+The existing single afterEach immediate did not prevent this. Add two event-loop
+turns both before and after each case, then rerun all six cases on the published
+batched-validation source. Keep the prior failing run and do not ignore unhandled
+errors or count the repair as verified until its own process exits successfully.
+
+A real-source reservation probe adding an async function to the existing two
+source closures confirms that the Promise settlement owner and full realm use
+the exact same source owner, with the actual Promise carrier and existing
+Promise.prototype singleton and zero imports. This validates the next producer
+join; it does not implement Promise properties or public async execution.
+
+### Promise objects and prepared frame allocation checkpoint (2026-10-24)
+
+The issued `NativePromiseObjects` allocator joins the actual Promise carrier,
+shared source owner and populated realm. Promise bags and ordinary intrinsic
+population share the ordinary allocation recipe. Mixed access validates the
+bag's ordinary type and realm identity before own/property/prototype lookup;
+missing bags and incomplete population remain explicit gaps.
+
+Prepared frames require that completed issued owner and use its allocator for
+both the result (handled=0) and await adapter (handled=1). The filler retains and
+reauthenticates the owner and its Promise/tag association before publishing
+bodies. Parent acceptance still owns whole-program/source admission. Adversarial
+review caught raw allocator substitution and inherited bag-type getter attacks;
+both are rejected. Foreign-token controls use isolated transactions, while
+shared negative controls verify the primary transaction remains filling.
+
+The real-source fixture combines the actual realm, frames, queue and settlement
+with an explicitly finite resolver. It observes the internal await adapter's
+identity, storage, prototype and handled bit. This does not certify public
+Promise algorithms, the complete classifier or whole-program async admission.
+The remaining runtime allocation sites, public methods/capabilities/species,
+standalone WasmGC and actual Linear/WASI integration, codec/public matrices,
+Test262/performance, reviewed legacy retirement and merged delivery remain open.
+
+Combined execution exposed mixed legacy and standard Wasm exception handling.
+Realm population, native builtin initialization and native closure cleanup now
+use shared standard `catch_all_ref`/`throw_ref`, preserving the original exception
+and restoring state without assuming a tag. Binary/object/WAT emission and
+terminator consumers support the instruction. Physical validation and type-group
+planning recognize abstract exn references without treating them as concrete
+type dependencies. Invalid concrete indices remain rejected. Older test-only
+catch/rethrow observers now use standard `catch_ref` and preserve both the tag
+payload and original exception. No new size-budget allowance was added.
+
+Current measured evidence:
+
+- Native builtin execution, physical type layout and cleanup: **66/66**, exit 0.
+  Cleanup executes both encoders, with/without stack balancing, across foreign
+  Wasm tags with multiple payloads, JS objects, thrown undefined and nested cleanup.
+- Realm initialization failure/reentry: **2/2**, exit 0. Finite frame/binding/
+  resolution controls: **34/34**, exit 0. Prior mixed/frame regression: **79/79**.
+- Focused TS7 and all nine source/CI-base architecture gates pass. **11/11** host
+  binary hashes remain identical to 7371eb505b365e49815f1ddc09afed6c52372540.
+- The broad invocation/builtin/getter/closure/IC/stack run was **153/162**, exit 1.
+  Five mixed-EH builtin failures are repaired by the subsequent 66-case run.
+  The remaining getter expectation and three missing `env.__str_from_mem` import
+  failures reproduce on pristine ffc14bb84e07608d48837c3ca9b01052ea99d39c. That
+  broad run remains failed and is not described as complete acceptance.
+- Actual realm/Promise/frame allocation execution: **3/3**, exit 0, including
+  normal and displaced type coordinates (1358.65 seconds). The complete source
+  rerun includes the production rejection controls and await-adapter observer.
+  The getter fixture now supplies canonical native undefined as its absent
+  setter; the former explicit null correctly threw. The generated-Wasm replay
+  was diagnostic only; acceptance comes from the complete source rerun in
+  `.tmp/promise-realm-final-setter.log`. Earlier failures remain recorded.
+
+Read-only adversarial review found no remaining concrete EH/observer blocker.
+Standard EH reference:
+https://webassembly.github.io/exception-handling/core/binary/instructions.html
+
+
+### Common native Promise runtime integration checkpoint (2026-10-24)
+
+Implementation structure in progress: extract the existing queue/settlement
+assembly into `backend/wasmgc/resources/native-promise-kernel.ts` and the shared
+resolver/job assembly into `native-promise-resolution.ts`; join genuine Get,
+Call, source and Promise-object owners in `native-common-promise-runtime.ts`.
+The captured job invocation recipe lives in
+`runtime/wasmgc/promise/thenable-job-call-body.ts`. Preserve the default recipe
+exactly and require shared-path byte preservation, focused tests, boundary/cycle
+gates and adversarial review before publishing this increment.
+
+The preceding full-realm common lookup execution has now completed **2/2**
+(normal and displaced layout; 1362.84 s). This run predates the strengthened
+identity/Boolean assertions and the current shared helper extraction, so it is
+not current-working-tree acceptance.
+
+The new integration executes an actual source `then(resolve)` body against
+runtime-created settlement closures. Preparing that source exposed an unsupported
+closure-parameter carrier. Higher-order parameters now retain checker-owned
+logical callable signatures and invoke the shared realm Call with boxed
+arguments. Closed callbacks with complete source proofs retain their existing
+specialized path. The native invocation census authenticates the actual lifted
+parameter and requires the full realm dispatcher.
+
+Open callback return annotations are not runtime value proofs: numeric results
+remain explicitly rejected until a value-preserving result path is implemented.
+Adversarial review caught that distinction and a missing default-mode fallback
+handle check; both are fixed, with targeted tests, and follow-up inspection found
+no further concrete defect. The review did not assess pending integration runs.
+
+Current evidence for this increment:
+
+- Focused preservation, captured Call, open parameters and source contracts:
+  **75/75**, exit 0. Four GVN/codec combinations preserve the open parameter.
+- The previous callable regression run was **70/71**, exit 1. Its single `any`
+  annotation refusal also failed in a pristine archive of published head e4cd5ffe0579ffa11853f397f95337cac06a2ec3. The stale
+  assertion is replaced with a check of the actual dynamic argument contract,
+  included in the 75-case run. The original failure remains recorded.
+- Focused TS7 and lint pass. All nine source/CI-base gates pass after extracting
+  the parameter predicate and keeping call dispatch below its existing budget.
+  The reachability gate is preservation-only: strict retirement is not certified.
+- The final host comparison confirms **11/11** byte-identical binaries against
+  baseline 7371eb505b365e49815f1ddc09afed6c52372540, including the final
+  predicate/call-site refactor.
+- Full common-runtime execution and the strengthened full-realm lookup checks
+  are still running; no runtime acceptance is claimed yet.
+
+Native callback parameter plan: reuse checker-owned `callable` signatures for
+standalone higher-order closure parameters, rather than minting a new typed
+wrapper carrier. Lower their direct invocation through the existing semantic
+closure-call intrinsic with boxed arguments and canonical undefined receiver.
+The native invocation census must distinguish and authenticate an actual
+parameter of the current lifted source body from a local closure allocation;
+execution of this open parameter path requires the full realm dispatch owner.
+Keep host lowering unchanged. The integration must still execute the real
+source `then(resolve)` body against runtime-created settlement closures.
+
+### Implementation Plan — completion validation cost (2026-10-24)
+
+The strengthened full-realm lookup execution completed **2/2**, exit 0
+(1330.28 seconds; four unrelated cases filtered out), and invocation consumers
+completed **61/61**, exit 0. The actual common-runtime execution is still live.
+A native process sample shows recursive data traversal in JavaScript; it does
+not identify a particular JS function or prove the cost attribution.
+
+`PhysicalModuleReservations.assertCompletedReservation` currently scans the
+whole ledger for every function in the canonical runtime loop. Add a batch
+completion check beside the existing type/index batch APIs, reusing descriptor
+capture and private ownership/fill records. Share the single-token check with
+that implementation. Add a canonical-function batch helper in
+`native-resource-declarations.ts`, reusing its plain-data snapshot and existing
+canonical comparator. Capture tokens and independent expected definitions,
+authenticate before reading token objects, compare, then audit again. Use it
+only for the common Promise runtime function loop; retain final dependency
+revalidation and all global checks. Never cache success across public calls.
+
+Quality/correctness acceptance: no new snapshot algorithm or budget allowance;
+reject sparse/accessor input, forged/foreign/wrong-kind/unfilled tokens, capture
+side effects, late mutation of an already compared function, and changes between
+calls. Expected definitions must be independent of caller mutation. Measure
+scan reduction on a positive fixture without claiming end-to-end speed from it;
+review the implementation adversarially and rerun affected checks.
+
+The implementation passes **115/115** focused completion, canonical-function,
+snapshot and type-authentication tests. Adversarial review found inherited
+descriptor `value` pollution could bypass own-data checks; capture now requires
+an own `value` field and four getter-counting regression cases pass. Follow-up
+review found no remaining concrete blocker in this delta. Focused TS7 passes.
+The earlier broad run remains **259/260**, exit 1: the unchanged module-record
+hash pin fails identically in a pristine archive of aab6af248c295c4d4b9994c06d81d3e4f8db5709
+(initial archive startup failed for missing scripts; the complete rerun reached
+and reproduced the actual assertion). No hash pin or baseline is changed here.
+
+Synthetic validation measurement, 32 canonical functions with 128 instructions
+each: the new path uses **2 audits instead of 32**. For the small ledger,
+warmed single checks took 20–21 ms and the batch took 62–81 ms; copying expected
+definitions has a cost. With 128 additional filled functions of 512 instructions
+each, single checks took 301–378 ms and the batch took 98–104 ms across three
+trials. These measurements justify use in the large composed runtime; they do
+not measure its total compile time. The single-function API retains its one
+fresh audit and the common runtime retains final dependency revalidation.
+
+### Implementation Plan — measured token-group callers (2026-10-24)
+
+A diagnostic rerun of the actual full-realm execution on 3da80ffb8dd834e9b0e0763bd7643586a005d99d
+instruments ledger API calls without changing their arguments or results.
+At 150.07 seconds it recorded 12,253 `physicalIndex` calls consuming 66.43
+seconds, plus 3,053 `physicalIndices` calls consuming 16.57 seconds. Sampled
+call stacks include argument-vector inventories and Symbol authentication.
+This is an in-progress diagnostic, not terminal integration acceptance.
+The original common-runtime test subsequently terminated with its 1,800-second
+timeout after 3,465 seconds wall time and an additional worker RPC timeout.
+Attaching the Node inspector had failed because its sandbox disallows opening
+a diagnostic port; no diagnostic listener was established.
+
+Reuse the existing `assertTypeReservations`/`physicalIndices` APIs for fixed
+token groups in `native-argument-vectors.ts` and `native-symbol-carrier.ts`.
+Keep producer/plan identity checks, canonical layout comparisons and coordinate
+equality. Capture inventory records first and audit again after layout
+comparison, including in reservation phase, so comparison-triggered mutation
+cannot escape. Quality acceptance: replace per-token loops without adding a
+cache, new validation machinery or size allowance; adversarially review the
+delta and run the actual resource execution/preservation suites.
+
+
+The token-group change passes **79/79** focused tests, including an actual
+no-import Wasm argument-vector allocation/growth run, comparison-triggered
+mutation in both reservation/filling phases, and Symbol type/global/function
+mutation between inventory requests. Focused TS7 and lint pass. All nine
+source/preservation ratchet invocations pass; preservation does not establish
+legacy retirement. The first new Wasm test failed because its export key
+collided with its function key; distinct export keys fix the test setup.
+
+The broader resource/source-composition run remains failed (45 passed, 59
+failed, plus argument-vector collection failure): a historical dependency pin
+rejects `src/codegen/builtin-ctor-value-invoke.ts`. A pristine archive of
+3da80ffb8dd834e9b0e0763bd7643586a005d99d reproduces that same argument-vector
+collection failure. The new standalone tests exercise the changed resource
+code without changing historical pins or counting the broad run as passing.
+The earlier expanded TS7 configuration also failed on historical test typing;
+the successful focused configuration covers both changed source modules and
+the new test. A fresh complete common-runtime execution is running against
+the updated source; its outcome remains unproven.
+
+The adversarial follow-up found no concrete regression or quality violation.
+The growth control checks length, not every payload. The unchanged host lane
+produces **11/11 byte-identical outputs** against the pinned preservation base.
+
+The instrumented full-realm normal-coordinate run on 3da80ff completed **1/1**
+selected case (five filtered out), exit 0, in 680.33 seconds. Its final ledger
+profile recorded 58,787 single index checks taking 420.01 seconds and 13,560
+batch index checks taking 96.73 seconds. This is diagnostic execution of the
+previous commit, not performance acceptance of the token-group change.
+
+### Implementation Plan — Promise/class stack integration (2026-10-24)
+
+Integrate published Promise head `9850f3e9d59ef30ed7f76763a640ca33385589ee`
+with class head `4373949d849412cdf2203b3ace94fda0c3976ad6` in the isolated
+`codex/3527-native-promise-class-integration-20261024` worktree. This resolves
+existing implementations, without claiming generic public Construct or Species.
+The architecture review requires preserving semantic/execution definition
+selection while retaining void effect rows; physical callable checks traverse
+prepared runtime instructions and enumerate class callable operands. Invocation
+keeps callback-parameter authentication before callable flow, both Promise and
+class owners, and explicit optional fill context. Public Call/IsCallable excludes
+actual internal Construct protocol entries, not entries selected by signature.
+Class construction keeps its private metadata owner and exact source slot.
+
+Unify ordinary allocation on the shared storage-prefix and state-tail recipe;
+keep separate bootstrap and checked initializer adapters to avoid recursive realm
+initialization. Preserve Promise bag/population guards and class same-realm bag
+validation. Inspect automatically merged source closure/state ownership joins so
+only one actual owner initializes shared anchors. Existing historical hash pins
+remain unchanged. Validate focused type checking, token/batch/Call contracts,
+class Construct execution and private/public partition regressions; retain exact
+failure logs and distinguish historical baseline failures from integration bugs.
+
+#### Integration findings and remaining production join (2026-10-24)
+
+The resolved integration preserves both branches' existing owners. Shared
+ordinary allocation now uses one storage-prefix/state-tail recipe; the bootstrap
+adapter supplies explicit state operands and the class adapter calls the issued
+initializer. Public realm population binds that initializer through the same
+single-owner bootstrap boundary used by private class realms, rejecting competing
+writers. Invocation fill receives explicit `realmCallables` and `classValues`
+roles. Public Call excludes class-owned internal Construct entries using the
+existing storage/signature/fixed-parameter/effect proof, shared with the Construct
+use validator; it does not require a local Construct call site. Occurrences and
+definitions both select the execution representation.
+
+Validation so far: source TS7 passes; Promise callback/settlement, captured Call,
+completion/token contracts and the initial partition control pass **63/63**.
+Shared layout and allocation preservation pass **12/12**. The first real class
+execution run was **43/50**, with all seven execution failures caused by the test
+worker rejecting `exn` heap types, plus one worker RPC timeout. Merely passing the
+flag to the outer Node process did not enable it in Vitest's configured forks.
+A temporary config then printed the actual worker argv and validated an exnref
+Wasm positive control (**1/1**); with that configuration the actual original class
+Construct/receiver restoration case passed **1/1**, six cases filtered out
+(57.60 seconds test time). No historical pins were changed. Logs are under this
+worktree's `.tmp/integration-*.log`.
+
+A constructed Prepared program combining class dispatch with the already-known
+native Promise.all intrinsic prepares successfully but is refused before runtime
+with **8 physical-setup gaps**. This is explicit refusal evidence, not combined
+execution acceptance. The temporary smoke helper is retained only in `.tmp/`.
+Architecture review identifies the missing production sequence:
+
+- Carry an explicitly selected NativePromiseConfiguration from canonical backend
+  options through acceptance into the private acceptance record.
+- Feed that checked composition into the physical plan before runtime binding and
+  body-reference checks. The current Promise preflight is called without config;
+  its remaining producer, carrier, dispatch, construction and composition gaps
+  are unconditional placeholders, not an implemented successful proof issuer.
+- Reserve actual Promise resources, source/settlement association, shared Call,
+  public realm population/mixed Get, Promise objects/then lookup, and common
+  Promise runtime before the consumer's single reservation freeze. Bind original
+  source slots and fill each existing owner once, then issue full composition
+  evidence. The current consumer still explicitly refuses native async frames.
+- Delay/All currently has declaration/reservation but no complete fill producer.
+  Existing combinator bodies allocate Promise payloads with null own-property
+  bags; they cannot substitute for the canonical public realm Promise allocator.
+  The `support` source-closure settlement mode and `ordinary` combinator mode
+  also need a coherent choice, not a compatibility assertion.
+
+The common Promise runtime binding certifies core resolution/settlement only.
+None of the above gates may be removed or replaced with simulated evidence.
+Queued Promise Job -> public Call -> retained class Construct, with original and
+codec replay, remains an unmet acceptance condition for that next production join.
+
+Final merge checkpoint: all **17/17** conflicts are resolved. The shared storage
+proof now has discriminated outcomes: a genuine ordinary callable payload keeps
+its existing semantics, an authenticated internal protocol is private, and an
+unsupported private protocol propagates a failure instead of becoming public.
+The final partition/Construct-contract run passes **11/11**, including stored
+private code with no Construct call and a negative raw-body control. The latter
+was changed to an immutable fixture update after focused TS7 caught its readonly
+array mutation, then rerun successfully (**1/1**, two filtered out).
+Full source TS7, focused partition-test TS7 and lint pass. The required
+reachability command exits 0 with preservation **6/6** full and **6/6** cut
+witnesses, core nodes **12/12**, and core types **10/10**. It still explicitly
+reports the open dynamic-import graph and does not certify strict retirement.
+An earlier audit raced formatting and reported source changes; the final audit
+ran with source writes stopped and passed. This checkpoint is staged for root
+review, without a commit or push; full combined Promise/class execution remains
+blocked on the production composition described above.
+
+### Integration gate correction — 2026-10-24
+
+The root review measured three integration-specific gate failures: consumer LOC
+1537/1531 and materialization size 302/300, three added backend-to-IR value
+imports (122/119), and missing exact boundary inventory entries for class modules.
+Before editing, the correction is to extract the complete invocation fill join
+into its existing IR integration owner, and calculate private Construct storage
+proofs while deriving authenticated source requirements. Backend admission will
+consume and reauthenticate that result, retaining unsupported-private gaps rather
+than falling back to public Call. Execution-view filtering stays with the IR
+proof. No allowance or import-cycle exemption is needed. Class module inventory
+entries will follow their actual dependency closure; frontend/backend mixed code
+remains explicit migration debt, and existing debt/closure thresholds stay intact.
+Targeted partition and source contracts, typecheck, and the failing gates will
+qualify the correction. Root retains ownership of the ongoing remaining class
+execution run; its mixed legacy/new EH failures are a distinct unresolved runtime
+finding, not evidence that the worker flag is absent.
+
+The exact inventory inspection also found pre-existing class-branch placement
+violations: frontend `program/source-class-definitions`, physical setup files in
+`ir/program`, and runtime provider checks reaching program snapshot utilities.
+The narrow correction relocates the three new mixed files beside their actual
+integration callers (still marked debt), moves the pure class-value operand
+contract into `ir/core`, and gives runtime provider records a local exact data
+comparison that rejects executable/accessor/foreign object data. It also replaces
+erased `ir/identity` imports in new pure flow/effect helpers with the canonical
+shared identity contract. These are dependency repairs, not layer exemptions or
+promotion of existing debt. All forty previously missing modules receive exact
+entries; activated roots and previous closure denominators are preserved.
+
+The final boundary split keeps error ABI planning in `ir/program`: its only
+backend dependencies were erased types for a much larger reservation input. It
+now takes the actual descriptive demands/declarations/error selection it reads.
+The source association helper owns the extracted consumer check; resource fill
+remains at its existing backend boundary, avoiding two new reverse value edges.
+
+Root's remaining class run ended with five explicit mixed legacy/standard EH
+failures, then a V8 fatal assertion and IPC closure before the sixth result. The
+resolver omitted the existing standardized-EH policy, and the copy inspector
+also injected legacy try/rethrow. Pass the accepted target to the resolver's
+policy and use the existing standard rethrow helper for inspection; preserve host
+legacy bytes. Root's original common Promise execution (session 97757) also ended
+without a pass: 1/1 timed out (configured 1,800,000 ms, actual 3,217,550 ms), plus
+an onTaskUpdate RPC timeout. That performance diagnosis is separate root work.
+
+Gate-correction checkpoint: source TS7 and focused changed-test TS7 pass; LOC and
+function-size gates pass after extracting source-carrier reservation and source
+association into the existing invocation integration owner. The import-cycle
+gate passes at backend->IR **119** and IR->backend **26**, using only the already
+existing allowances. Boundary inventory passes with **zero errors**, explicitly
+`inventory-valid-architecture-incomplete`. The added inventory has 41 exact
+entries; existing states, active roots and closure denominators are unchanged.
+Three new class modules were relocated (pure class-value contract into core;
+source-class definitions and mixed class physical setup outside pure program).
+Error setup stays pure through its minimal descriptive input contract.
+
+Partition/Construct contracts pass **11/11** after relocating proof derivation.
+The changed class boundary/source suite is **46/52**: two added provider controls
+pass (nested accessors never evaluated, foreign prototypes and added symbols
+rejected); six pre-existing class-call-error tests refuse at source preparation
+with `runtime-supplied callable result needs a value-preserving carrier; an
+annotation does not prove its returned value`. They never reach their intended
+error owner checks. This remains unresolved fixture/source-admission
+incompatibility; no gate was removed to admit those values.
+
+With actual worker exnref capability and the corrected standalone EH policy,
+`decoded=true` real class execution passes **1/1** (six filtered), **57.93s** test
+time, including original runtime result checks and positive instrumented
+Construct/internal-entry counts with zero bad receiver/argument frames. Log:
+`.tmp/integration-class-eh-decoded.log`. The other six cases need requalification
+against this correction; the failed prior run cannot count as that evidence.
+Root will own further gate/host-byte/reviewer checks. Source edits stop at this
+checkpoint; no commit or push, and no claim of complete Promise/class composition.
+
+### Review follow-up — finite providers and class Call fixture
+
+Before editing: the reviewer identified duplicated generic comparison in the
+new runtime provider helper. Replace it with an explicit finite contract for the
+class allocator and error providers: fixed top-level fields, ordered scalar
+arrays, host/runtime callable payloads, and the error-only externref->externref
+signature. Own data descriptors and exact field populations must still reject
+accessors, foreign prototypes and added symbol fields without executing them.
+No generic recursive traversal or program snapshot/Map/Set logic belongs here.
+
+The six error-contract failures originate in source `invoke(f,x){return f(x)}`:
+its arbitrary callable parameter cannot establish an f64 result carrier. Keep
+that production refusal. The constructed class fixture will obtain the same
+source/unit signature inventory from an explicit scalar placeholder and replace
+that one body with typed `closure.call` IR, just as it already replaces allocation
+and class Call bodies. This tests the actual private typed class Call ABI and its
+throwing body without claiming broader runtime-supplied scalar Call admission.
+Re-run error contracts and actual class Call TypeError execution, plus source and
+focused test TS7, before freezing again. Root's last host-byte comparison passed
+11/11 for the prior handoff hash; do not reuse that receipt for changed source.
+
+Follow-up results: class error contracts and prepared class validation now pass
+**15/15**, including all six formerly blocked contract cases. Real mixed
+ReferenceError/class Call TypeError execution with codec replay and UTF-16 passes
+**1/1**, eight filtered; the final run takes **28.12s** test time and preserves
+error tags/messages, fresh thrown identities, exported retained invocation and
+zero imports. The first identical execution passed in 31.80s; focused TS7 then
+found an existing un-narrowed string-resource union in its assertion. An explicit
+`errors`-plan presence check fixes that test typing and was included in the final
+runtime pass. Source TS7, focused test TS7, Biome (four files) and diff whitespace
+checks pass. Logs: `.tmp/integration-review-{contracts,class-typeerror-final,
+typecheck,test-typecheck-final,biome-final}.log`. No broad gates were duplicated.
+Five paths changed since the last handoff; edits stop for review again.
+
+### Guarded child engine capability — 2026-10-24
+
+Before editing: the guarded class Call replay explicitly creates a child argv
+containing only the TS loader. Vitest's exnref fork flag does not propagate to
+that child. Add `--experimental-wasm-exnref` to this test's explicit child engine
+arguments, preserving its frontend guard, timeout, oracle and assertions. Only
+the guarded-child test will run here; root owns the other execution cases and
+final gates. No production change is involved.
+
+Guarded-child validation passes **1/1**, eight other cases filtered, **33.66s**
+test time. Child receipt `.tmp/class-call-error-replay-OlBasl/result.json` records
+exit 0, both actual runtime results (1703 and 1698) matching the oracle, no
+frontend or TypeScript modules, identical codec re-encoding and `ok: true`.
+Suite log: `.tmp/integration-class-guarded-child.log`. Biome and diff whitespace
+checks pass. Only the test and this plan changed; production source is untouched.
+The test file was frozen before root started the other eight cases, and all
+edits now stop for final review.
+
+### Final integration validation checkpoint — 2026-10-24
+
+Read and verified the final receipts on the frozen integration source:
+
+- `.tmp/integration-final-class-execution.log`: **7/7 passed**, 405.37s
+  total, covering original/codec Construct execution, actual arguments, nested
+  calls, throws, newTarget and argument-vector identity/restoration.
+- `.tmp/integration-final-class-call-errors.log`: **8/8 selected passed**,
+  224.52s total, covering mixed/unmixed error populations, original/codec replay
+  and UTF-8/UTF-16. The filtered guarded-child ninth case independently passed
+  **1/1**, as recorded above; it is not counted twice.
+- `.tmp/integration-final-gates.json`: all **9 gates exit 0** (LOC, function
+  size, coercion, oracle, import cycles, boundary inventory, dead exports,
+  CI LOC and CI function size). The boundary report has zero errors and retains
+  `inventory-valid-architecture-incomplete` with `architectureComplete: false`.
+
+These successful reruns qualify the repaired class integration; all earlier
+failed runs and their diagnoses remain recorded. They do not certify full IR
+migration, strict legacy retirement or queued Promise Job -> Call -> class
+Construct composition. The common Promise execution timeout and missing Promise
+production coordinator remain open. Root owns the final host-byte rerun and
+merge checkpoint; subsequent work targets Promise reservation performance. This
+update changes only this issue file, with no production or test edits.

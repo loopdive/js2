@@ -85,7 +85,7 @@ function fixture(source = family) {
     hasHostNumberToString: physical,
     nativeNumberToStringAvailable: physical,
     jsHostExterns: physical,
-    standaloneConsoleSinkAvailable: physical,
+    nativeConsoleOutputAvailable: physical,
     consoleArgVariant: physical,
     isAmbientBinding: (id) =>
       ast.checker
@@ -347,7 +347,7 @@ describe("prepared native main operations remain symbolic before physical admiss
         logicalVectorTypes: undefined,
         resolver: {
           jsHostExterns: () => false,
-          standaloneConsoleSinkAvailable: () => false,
+          nativeConsoleOutputAvailable: () => false,
           consoleArgVariant: () => "string",
         },
       }),

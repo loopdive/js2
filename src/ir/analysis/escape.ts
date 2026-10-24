@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directUses } from "../core/nodes.js";
 //
 // Escape analysis for stack allocation (#747, Phase 1).
 //
@@ -134,6 +135,9 @@ export function analyzeEscape(
         break;
       case "refcell.set":
         raise(instr.value, "stored");
+        break;
+      case "class.value.new":
+        for (const value of directUses(instr)) raise(value, "captured");
         break;
       case "closure.new":
         for (const cap of instr.captures) raise(cap, "captured");

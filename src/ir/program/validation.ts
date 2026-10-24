@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import type { TypedIrProgramInput } from "./input-contracts.js";
 import type { IrModuleInitPlan, IrModuleInitBindingIntent } from "./startup.js";
@@ -342,12 +343,13 @@ export function assertPreparedIrProgram(program: PreparedIrProgram, options?: Ir
     for (const buffer of buffers)
       for (const root of buffer)
         forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call" && !calls.has(irCallableBindingKey(instruction.target.binding)))
-            invalid(
-              `body ${fn.unitId} calls an undeclared callable ${irCallableBindingKey(instruction.target.binding)}`,
-            );
-          if (instruction.kind === "closure.new" && !calls.has(irCallableBindingKey(instruction.liftedFunc.binding)))
-            invalid(`body ${fn.unitId} captures an undeclared callable`);
+          for (const reference of directIrCallableReferences(instruction))
+            if (!calls.has(irCallableBindingKey(reference.binding)))
+              invalid(
+                instruction.kind === "closure.new"
+                  ? `body ${fn.unitId} captures an undeclared callable`
+                  : `body ${fn.unitId} calls an undeclared callable ${irCallableBindingKey(reference.binding)}`,
+              );
           if (
             (instruction.kind === "global.get" || instruction.kind === "global.set") &&
             !globals.has(irGlobalBindingKey(instruction.target.binding))
@@ -593,9 +595,14 @@ function sourceMapStartupEvaluations(
       row.statementOrdinal < statement ||
       !Number.isSafeInteger(row.nestedOrdinal) ||
       row.nestedOrdinal < 0 ||
-      !["statement", "variable-initializer", "export-assignment", "class-static-field", "class-static-block"].includes(
-        row.kind,
-      ) ||
+      ![
+        "statement",
+        "variable-initializer",
+        "export-assignment",
+        "class-definition",
+        "class-static-field",
+        "class-static-block",
+      ].includes(row.kind) ||
       (row.classId !== null && (typeof row.classId !== "string" || !row.classId)) ||
       typeof row.legacyKey !== "string" ||
       row.bindingIds.some((id) => typeof id !== "string" || !id) ||

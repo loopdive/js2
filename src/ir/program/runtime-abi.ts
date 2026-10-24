@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { directIrCallableReferences } from "../core/callable-operands.js";
 
 import { irCallableBindingKey } from "../core/callable-bindings.js";
 import { forEachInstrDeep } from "../core/nodes.js";
@@ -58,34 +59,31 @@ export function prepareIrProgramRuntimeCallables(
       for (const root of buffer)
         forEachInstrDeep(root, (instruction) => {
           if (failure) return;
-          const ref =
-            instruction.kind === "call"
-              ? instruction.target
-              : instruction.kind === "closure.new"
-                ? instruction.liftedFunc
-                : undefined;
-          if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
-          const declaration = irRuntimeCallableDeclaration(ref);
-          const key = irCallableBindingKey(ref.binding);
-          if (declaration) {
-            declarations.set(key, declaration);
-            return;
+          for (const ref of directIrCallableReferences(instruction)) {
+            if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") continue;
+            const declaration = irRuntimeCallableDeclaration(ref);
+            const key = irCallableBindingKey(ref.binding);
+            if (declaration) {
+              declarations.set(key, declaration);
+              continue;
+            }
+            // Other intrinsic families retain their existing independent admission paths.
+            if (ref.binding.kind === "intrinsic") continue;
+            const owner = preparedIrProgramOwner(input, fn.unitId);
+            if (!owner)
+              throw new PreparedIrProgramInvariantError(
+                "invalid-prepared-data",
+                `runtime demand in ${fn.unitId} has no exact original owner`,
+              );
+            failure = Object.freeze({
+              kind: "invariant",
+              code: "unknown-function-ref",
+              stage: "resolve",
+              detail: `runtime callable ${key} has no canonical declaration`,
+              ...owner,
+            });
+            break;
           }
-          // Other intrinsic families retain their existing independent admission paths.
-          if (ref.binding.kind === "intrinsic") return;
-          const owner = preparedIrProgramOwner(input, fn.unitId);
-          if (!owner)
-            throw new PreparedIrProgramInvariantError(
-              "invalid-prepared-data",
-              `runtime demand in ${fn.unitId} has no exact original owner`,
-            );
-          failure = Object.freeze({
-            kind: "invariant",
-            code: "unknown-function-ref",
-            stage: "resolve",
-            detail: `runtime callable ${key} has no canonical declaration`,
-            ...owner,
-          });
         });
     if (failure) return failure;
   }

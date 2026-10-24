@@ -38,11 +38,15 @@ export type RuntimeFeature =
   | "js.closure.method"
   | "js.closure.apply-vector"
   | "js.closure.undefined"
+  | "js.closure.receiver"
+  | "class.value.allocate"
+  | "js.construct"
   | VectorCallableRuntimeFeature
   | OrdinaryObjectRuntimeFeature
   | NumberRemainderRuntimeFeature
   | "js.number.from-value"
-  | ReferenceErrorRuntimeFeature;
+  | ReferenceErrorRuntimeFeature
+  | "error.type.construct";
 
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
@@ -437,6 +441,8 @@ export const NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS = Object.freeze([
 export type NumberRemainderRuntimeProviderId = (typeof NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS)[number];
 
 export type RuntimeProviderId =
+  | "native.error.type.construct"
+  | "native.class.value.allocate"
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
   | NumberBoundaryRuntimeProviderId

@@ -6,6 +6,7 @@ import type {
   GlobalReservation,
   TypeReservation,
   TagReservation,
+  TagImportReservation,
 } from "../../../wasm/physical/module-reservations.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
@@ -71,13 +72,23 @@ import {
 } from "./native-object-descriptors.js";
 import { requireNativeStringLiteral } from "./native-string-literals.js";
 
+import {
+  requireNativeRealmObjectState,
+  requireCompletedNativeRealmObjectState,
+  bindNativeRealmObjectBootstrap,
+  requireNativeRealmObjectBootstrap,
+  type NativeRealmObjectStateReservations,
+} from "./native-realm-object-layouts.js";
+
 export { declareNativeBuiltinFunctionRequests as declareNativeBuiltinFunctionResources };
 export interface NativeBuiltinFunctionDependencies {
+  readonly realmState?: NativeRealmObjectStateReservations;
   readonly requests: NativeBuiltinFunctionRequests;
   readonly closures: NativeClosureReservations;
   readonly closurePlan: NativeClosureDeclarationPlan;
   readonly descriptors: NativeObjectDescriptorReservations;
   readonly descriptorDependencies: NativeObjectDescriptorDependencies;
+  readonly exception?: TagReservation | TagImportReservation;
 }
 const functionRoles = [
   "initialize",
@@ -135,7 +146,8 @@ export interface NativeBuiltinFunctionReservations {
     readonly realmReady: GlobalReservation;
   };
   readonly realmType: TypeReservation;
-  readonly exception: TagReservation;
+  readonly exception: TagReservation | TagImportReservation;
+  readonly ownsException: boolean;
   readonly completionScope: "synchronous-builtin-object-kernel";
 }
 interface Owner {
@@ -161,12 +173,31 @@ function same(a: unknown, b: unknown, detail: string): void {
 function dependencies(tx: PhysicalModuleReservations, d: NativeBuiltinFunctionDependencies) {
   assertBuiltinFunctionDataRecord(d);
   if (
-    Object.keys(d).length !== 5 ||
+    Object.keys(d).length !== 5 + Number(Object.hasOwn(d, "exception")) + Number(Object.hasOwn(d, "realmState")) ||
     Object.keys(d).some(
-      (key) => !["requests", "closures", "closurePlan", "descriptors", "descriptorDependencies"].includes(key),
+      (key) =>
+        ![
+          "requests",
+          "closures",
+          "closurePlan",
+          "descriptors",
+          "descriptorDependencies",
+          "exception",
+          "realmState",
+        ].includes(key),
     )
   )
     fail("unexpected dependency input");
+  if ("exception" in d && !Object.hasOwn(d, "exception")) fail("inherited exception selection");
+  if (Object.hasOwn(d, "exception")) {
+    if (!d.exception) fail("present exception requires an issued tag");
+    tx.assertTagReservation(d.exception, { params: [ext], results: [] });
+  }
+  if ("realmState" in d && !Object.hasOwn(d, "realmState")) fail("inherited realm state selection");
+  if (Object.hasOwn(d, "realmState")) {
+    if (!d.realmState) fail("realm state requires an issued owner");
+    requireNativeRealmObjectState(tx, d.realmState);
+  }
   requireNativeBuiltinFunctionRequests(tx, d.requests);
   const input = nativeBuiltinFunctionRequestDependencies(tx, d.requests),
     dd = d.descriptorDependencies;
@@ -245,7 +276,9 @@ export function reserveNativeBuiltinFunctionResources(
   if (tx.state !== "reserving") fail("invalid reservation phase");
   const inventory = dependencies(tx, d),
     input = nativeBuiltinFunctionRequestDependencies(tx, d.requests);
-  const keys = Object.freeze(resourceKeys(d.requests));
+  const keys = Object.freeze(
+    resourceKeys(d.requests).filter((key) => !d.exception || key !== d.requests.requirements.key + ":exception"),
+  );
   tx.assertReservationKeysAvailable(keys);
   const key = d.requests.requirements.key,
     realmType = tx.reserveType(key + ":realm-type", createBuiltinFunctionRealmType(key + ":realm"));
@@ -331,11 +364,9 @@ export function reserveNativeBuiltinFunctionResources(
       ]),
     ),
   ) as Readonly<Record<FunctionRole, FunctionReservation>>;
-  const exception = tx.reserveTag(
-    key + ":exception",
-    { params: [ext], results: [] },
-    { kind: "defined", name: key + ":exception" },
-  ) as TagReservation;
+  const exception =
+    d.exception ??
+    tx.reserveTag(key + ":exception", { params: [ext], results: [] }, { kind: "defined", name: key + ":exception" });
   const globals = Object.freeze({ realm, objectPrototype, state, realmReady });
   const pack = Object.freeze({
     requests: d.requests,
@@ -344,6 +375,7 @@ export function reserveNativeBuiltinFunctionResources(
     globals,
     realmType,
     exception,
+    ownsException: d.exception === undefined,
     completionScope: "synchronous-builtin-object-kernel" as const,
   });
   owners.set(pack, {
@@ -359,14 +391,18 @@ export function reserveNativeBuiltinFunctionResources(
     descriptorInventory: inventory,
     filled: false,
   });
+  if (d.realmState) bindNativeRealmObjectBootstrap(tx, d.realmState, functions.initialize);
   return pack;
 }
 function current(tx: PhysicalModuleReservations, pack: NativeBuiltinFunctionReservations): Owner {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied builtin owner");
+  if (owner.dependencies.realmState)
+    requireNativeRealmObjectBootstrap(tx, owner.dependencies.realmState, pack.functions.initialize);
   assertBuiltinFunctionDataRecord(owner.dependencies);
   for (const key of Object.keys(owner.identities) as (keyof NativeBuiltinFunctionDependencies)[])
     if (owner.dependencies[key] !== owner.identities[key]) fail("substituted dependency identity");
+  if (owner.dependencies.exception !== owner.identities.exception) fail("changed exception selection");
   const inventory = dependencies(tx, owner.dependencies);
   if (inventory.functions !== owner.descriptorInventory.functions || inventory.plan !== owner.descriptorInventory.plan)
     fail("changed descriptor inventory");
@@ -395,6 +431,7 @@ function completedDependencies(
   pack: NativeBuiltinFunctionReservations,
   owner: Owner,
 ): void {
+  if (owner.dependencies.realmState) requireCompletedNativeRealmObjectState(tx, owner.dependencies.realmState);
   requireCompletedNativeObjectDescriptors(
     tx,
     owner.dependencies.descriptors,
@@ -452,6 +489,15 @@ function operands(
     objectTypeIdx: lookup.layouts.object.typeIndex,
     vectorTypeIdx: input.arguments.carrier.typeIndex,
     vectorArrayTypeIdx: input.arguments.array.typeIndex,
+    ...(owner.dependencies.realmState
+      ? {
+          stateAnchors: {
+            realm: tx.physicalIndex(owner.dependencies.realmState.anchors.realm),
+            functionPrototype: tx.physicalIndex(owner.dependencies.realmState.anchors.functionPrototype),
+            identityType: tx.physicalIndex(owner.dependencies.realmState.types.identity),
+          },
+        }
+      : {}),
     realm: tx.physicalIndex(pack.globals.realm),
     objectPrototype: tx.physicalIndex(pack.globals.objectPrototype),
     state: tx.physicalIndex(pack.globals.state),
@@ -623,4 +669,29 @@ export function nativeBuiltinFunctionSingletonBinding(
   const index = pack.requests.requirements.intrinsics.findIndex((row) => row.aliases.includes(alias));
   if (index < 0) fail("unknown intrinsic alias");
   return pack.entries[index]!;
+}
+
+/** Authentic transport and its complete carrier family; no caller-selected handles. */
+export function nativeBuiltinFunctionInvocationBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeBuiltinFunctionReservations,
+  completed = false,
+) {
+  const owner = current(tx, pack),
+    d = owner.dependencies;
+  if (completed) requireCompletedNativeBuiltinFunctionKernel(tx, pack, d);
+  const input = nativeBuiltinFunctionRequestDependencies(tx, pack.requests);
+  return Object.freeze({
+    closures: d.closures,
+    closurePlan: d.closurePlan,
+    arguments: input.arguments,
+    strings: input.strings,
+    values: d.descriptorDependencies.sameValueDependencies.values,
+    errors: d.descriptorDependencies.errors,
+    booleans: d.descriptorDependencies.sameValueDependencies.booleans,
+    exception: pack.exception,
+    match: pack.functions.match,
+    call: pack.functions.callVector,
+    carriers: Object.freeze(pack.entries.map((entry) => entry.type)),
+  });
 }

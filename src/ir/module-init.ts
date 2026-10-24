@@ -1,17 +1,34 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { isAmbientDeclaration } from "./analysis/ambient-declarations.js";
+import type { IrPreparationFailure } from "../shared/contracts/ir-preparation-failure.js";
 
 /** (#3142) The synthetic claim-unit name for the module-level statement list. */
 export const MODULE_INIT_UNIT_NAME = "<module-init>";
 
-/** Collect the runtime top-level statements routed into legacy `__module_init`. */
-export function collectModuleInitPopulation(sourceFile: ts.SourceFile): ts.Statement[] {
+export const LEGACY_STATIC_CLASS_INIT_FAILURE: IrPreparationFailure = Object.freeze({
+  kind: "unsupported",
+  code: "static-class-initialization",
+  stage: "select",
+  detail: "class static initialization is still emitted by the direct module-init path",
+});
+
+export type IrModuleInitPopulationMode = "legacy" | "source-complete";
+
+/** The whole-source producer also owns class definition evaluation. */
+export function collectModuleInitPopulation(
+  sourceFile: ts.SourceFile,
+  mode: IrModuleInitPopulationMode = "legacy",
+): ts.Statement[] {
   const population: ts.Statement[] = [];
   for (const stmt of sourceFile.statements) {
+    if (ts.isClassDeclaration(stmt)) {
+      if (mode === "source-complete" && !isAmbientDeclaration(stmt)) population.push(stmt);
+      continue;
+    }
     if (
       ts.isFunctionDeclaration(stmt) ||
-      ts.isClassDeclaration(stmt) ||
       ts.isInterfaceDeclaration(stmt) ||
       ts.isTypeAliasDeclaration(stmt) ||
       ts.isImportDeclaration(stmt) ||

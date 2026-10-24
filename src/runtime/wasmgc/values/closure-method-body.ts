@@ -12,7 +12,10 @@ import { buildClosureMethodArgument, type ClosureArgumentConversion } from "./cl
 import { buildClosureResultBody, type ClosureResultConversion } from "./closure-result-bodies.js";
 import { buildInstallableClosureReceiver } from "./closure-receiver-bodies.js";
 
-export interface NativeClosureMethodEntry extends ClosureInvocationArityEntry {
+import { buildNativeClosureIdentityMatch, type NativeClosureIdentity } from "./closure-callable-body.js";
+import { buildStandardRethrowingTry } from "../../../wasm/physical/exception-control.js";
+
+export interface NativeClosureMethodEntry extends ClosureInvocationArityEntry, NativeClosureIdentity {
   /** Exact selected allocation carrier, including capture or builtin metadata identity. */
   readonly allocationTypeIdx: number;
   readonly params: readonly ValType[];
@@ -70,15 +73,34 @@ export function buildClosureInvocationBoundary(
     { op: "local.set", index: slots.previousArgc },
     { op: "global.get", index: state.extrasArgv },
     { op: "local.set", index: slots.previousExtras },
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [...structuredClone([...body]), { op: "local.set", index: slots.result }],
-      catches: [],
-      catchAll: [...restore(), { op: "rethrow", depth: 0 }],
-    },
+    buildStandardRethrowingTry([...structuredClone([...body]), { op: "local.set", index: slots.result }], restore()),
     ...restore(),
     { op: "local.get", index: slots.result },
+  ];
+}
+
+/** Typed scalar entries must not silently coerce a different JavaScript value. */
+function scalarArgumentMatch(entry: NativeClosureMethodEntry, type: ValType, index: number, local: number): Instr[] {
+  const test =
+    type.kind === "f64"
+      ? entry.arguments.isNumber
+      : type.kind === "i32" && type.boolean === true
+        ? entry.arguments.isBoolean
+        : undefined;
+  if (test === undefined) return [];
+  return [
+    { op: "local.get", index: local },
+    { op: "call", funcIdx: test },
+    ...(type.kind === "f64" &&
+    entry.arguments.isUndefined !== undefined &&
+    index >= (entry.arguments.defaultParameterStart ?? Infinity)
+      ? ([
+          { op: "local.get", index: local },
+          { op: "call", funcIdx: entry.arguments.isUndefined },
+          { op: "i32.or" },
+        ] satisfies Instr[])
+      : []),
+    { op: "i32.and" },
   ];
 }
 
@@ -89,21 +111,18 @@ export function buildNativeClosureMethodMatch(
   argumentLocals: readonly number[],
 ): Instr[] {
   return [
-    { op: "local.get", index: anyLocal },
-    { op: "ref.test", typeIdx: entry.allocationTypeIdx },
-    { op: "local.get", index: funcLocal },
-    { op: "ref.test", typeIdx: entry.funcTypeIdx },
-    { op: "i32.and" },
-    ...entry.params.flatMap((type, index): Instr[] =>
-      type.kind !== "ref"
+    ...buildNativeClosureIdentityMatch(entry, anyLocal, funcLocal),
+    ...entry.params.flatMap((type, index): Instr[] => [
+      ...scalarArgumentMatch(entry, type, index, argumentLocals[index]!),
+      ...(type.kind !== "ref"
         ? []
-        : [
+        : ([
             { op: "local.get", index: argumentLocals[index]! },
             { op: "any.convert_extern" },
             { op: "ref.test", typeIdx: type.typeIdx },
             { op: "i32.and" },
-          ],
-    ),
+          ] satisfies Instr[])),
+    ]),
   ];
 }
 

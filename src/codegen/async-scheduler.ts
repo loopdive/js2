@@ -1,3 +1,4 @@
+import { buildPromiseReactionRegistration } from "../runtime/wasmgc/promise/reaction-registration-body.js";
 import {
   buildPromiseSettleClosureValue,
   buildPromiseSettleClosureBody,
@@ -3903,64 +3904,22 @@ export function emitStandalonePromiseThen(
   fctx.body.push({ op: "local.set", index: rejectedCapsLocal });
 
   fctx.body.push(
-    { op: "local.get", index: promiseLocal },
-    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "ref.func", funcIdx: fulfillWrapperFuncIdx },
-        { op: "local.get", index: fulfilledCapsLocal },
-        { op: "local.get", index: promiseLocal },
-        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
-        { op: "call", funcIdx: state.enqueueFuncIdx },
-      ],
-      else: [
-        { op: "local.get", index: promiseLocal },
-        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
-        { op: "i32.const", value: PROMISE_STATE_REJECTED },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // (#2958) A reaction attached to an ALREADY-REJECTED promise means it
-            // is now handled: clear its unhandled-list flag so the exit-time
-            // reporter skips it (satisfies "adding `.catch` silences it" and
-            // same-turn late-attach). No-op when tracking is inactive.
-            ...(state.markRejectionHandledFuncIdx >= 0
-              ? ([
-                  { op: "local.get", index: promiseLocal },
-                  { op: "call", funcIdx: state.markRejectionHandledFuncIdx },
-                ] satisfies Instr[])
-              : []),
-            { op: "ref.func", funcIdx: rejectWrapperFuncIdx },
-            { op: "local.get", index: rejectedCapsLocal },
-            { op: "local.get", index: promiseLocal },
-            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
-            { op: "call", funcIdx: state.enqueueFuncIdx },
-          ],
-          else: [
-            // Pending receiver: push a callback node in front of the current
-            // callback list. This preserves every continuation needed for
-            // chaining. Settlement reverses multi-node lists before enqueueing
-            // to restore registration order without changing immutable nodes.
-            { op: "local.get", index: promiseLocal },
-            { op: "ref.func", funcIdx: fulfillWrapperFuncIdx },
-            { op: "local.get", index: fulfilledCapsLocal },
-            { op: "ref.func", funcIdx: rejectWrapperFuncIdx },
-            { op: "local.get", index: rejectedCapsLocal },
-            { op: "local.get", index: promiseLocal },
-            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 2 },
-            { op: "struct.new", typeIdx: callbackTypeIdx },
-            { op: "extern.convert_any" },
-            { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 2 },
-          ],
-        },
-      ],
-    },
+    ...buildPromiseReactionRegistration({
+      promiseTypeIdx,
+      callbackTypeIdx,
+      promiseFields: { state: 0, value: 1, callbacks: 2 },
+      promiseLocal,
+      fulfilled: { function: fulfillWrapperFuncIdx, capturesLocal: fulfilledCapsLocal },
+      rejected: { function: rejectWrapperFuncIdx, capturesLocal: rejectedCapsLocal },
+      enqueue: state.enqueueFuncIdx,
+      beforeRejected:
+        state.markRejectionHandledFuncIdx >= 0
+          ? [
+              { op: "local.get", index: promiseLocal },
+              { op: "call", funcIdx: state.markRejectionHandledFuncIdx },
+            ]
+          : [],
+    }),
     ...(sp && species && speciesFwd
       ? speciesForwardAndResultInstrs(ctx, species, sp, chainedLocal, {
           callbackTypeIdx,

@@ -14,12 +14,22 @@ const SCRIPT = "scripts/check-ir-kind-neutrality.mjs";
 const BASELINE = "scripts/ir-kind-neutrality-baseline.json";
 const NODES = "src/ir/nodes.ts";
 const CORE_NODES = "src/ir/core/nodes.ts";
+const CLASS_NODES = "src/ir/core/class-nodes.ts";
 const VALUE_REFERENCES = "src/ir/value-references.ts";
 const CORE_TYPES = "src/ir/core/types.ts";
 const CORE_VALUE_REFERENCES = "src/ir/core/value-references.ts";
 const DIALECT = "src/ir/dialect/js.ts";
 const CORE_DIALECT = "src/ir/core/dialect/js.ts";
-const SCANNED_FILES = [NODES, CORE_NODES, VALUE_REFERENCES, CORE_TYPES, CORE_VALUE_REFERENCES, DIALECT, CORE_DIALECT];
+const SCANNED_FILES = [
+  NODES,
+  CORE_NODES,
+  CLASS_NODES,
+  VALUE_REFERENCES,
+  CORE_TYPES,
+  CORE_VALUE_REFERENCES,
+  DIALECT,
+  CORE_DIALECT,
+];
 // Explicit relocation only: these reversible prefixes preserve the full
 // PR5742 record before recovering the earlier two shape-citation moves.
 const NODE_MOVES = [
@@ -201,10 +211,13 @@ describe("#3518 core type relocation preserves kind-neutrality evidence", () => 
     );
   });
 
-  it.each([CORE_TYPES, CORE_VALUE_REFERENCES, CORE_NODES, CORE_DIALECT])("requires canonical source %s", (file) => {
-    rmSync(path.join(sandbox, file));
-    expectFailure(`${file}: required kind-population source is missing or unreadable`);
-  });
+  it.each([CORE_TYPES, CORE_VALUE_REFERENCES, CORE_NODES, CLASS_NODES, CORE_DIALECT])(
+    "requires canonical source %s",
+    (file) => {
+      rmSync(path.join(sandbox, file));
+      expectFailure(`${file}: required kind-population source is missing or unreadable`);
+    },
+  );
 
   it.each(REFERENCES)("does not forgive removal of excluded $name", ({ name, file }) => {
     writeIn(file, readIn(file).replace(declaration(file, name), ""));

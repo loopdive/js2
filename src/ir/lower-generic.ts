@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { emitIrClassAllocation } from "./backend/class-allocation.js";
 //
 // IR → Wasm emission pass.
 //
@@ -44,6 +45,7 @@
 // historically declared now live in `backend/handles.js`.
 import type { BackendEmitter, BackendI32BitwiseOp } from "./backend/emitter.js";
 import type { IrLowerResolver, IrLoweredBody, IrLoweredSignature } from "./backend/lower-contracts.js";
+import { createIrSelectLowering } from "./lowering/select.js";
 import { emitStringOperation, type StringOperationContext } from "./lowering/string-operations.js";
 import type { TypeConverter } from "./backend/contract.js";
 import { type IrBackendKind, verifyIrBackendLegality } from "./backend/legality.js";
@@ -1195,6 +1197,7 @@ export function lowerIrFunctionBody<S, Slot>(
   };
 
   const stringOperationContext: StringOperationContext<S> = { emitter, emitValue };
+  const emitSelect = createIrSelectLowering(emitter, typeConverter, emitValue, allocScratchLocal);
 
   const emitInstrTree = (instr: IrInstr, out: S): void => {
     switch (instr.kind) {
@@ -1540,13 +1543,7 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitUnary(instr.op, out);
         return;
       case "select":
-        // Wasm `select` pops [val1, val2, cond] and pushes val1 if cond != 0
-        // else val2 — so `cond ? whenTrue : whenFalse` pushes whenTrue,
-        // whenFalse, cond, then `select`.
-        emitValue(instr.whenTrue, out);
-        emitValue(instr.whenFalse, out);
-        emitValue(instr.condition, out);
-        emitter.emitSelect(out);
+        emitSelect(instr, out);
         return;
       case "if": {
         // (#1392) Value-producing short-circuiting if/else. Lowers to:
@@ -2335,18 +2332,10 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       // Slice 4 (#1169d): class ops.
-      case "class.new": {
-        const cl = resolver.resolveClass?.(instr.shape);
-        if (!cl) {
-          throw new Error(`ir/lower: resolver cannot lower class ${instr.shape.className} (${func.name})`);
-        }
-        for (const a of instr.args) emitValue(a, out);
-        emitter.pushRaw(out, {
-          op: "call",
-          funcIdx: resolver.resolveFunc(instr.target ?? cl.constructorFunc),
-        });
+      case "class.value.new":
+      case "class.new":
+        emitIrClassAllocation(instr, resolver, emitter, emitValue, func.name, out);
         return;
-      }
       case "class.get": {
         const recvT = typeOf(instr.value);
         if (recvT.kind !== "class") {
@@ -3964,6 +3953,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "object.set":
       return [instr.value, instr.newValue];
     // Slice 3 (#1169c): closure / ref-cell ops.
+    case "class.value.new":
+      return [instr.properties, instr.construct, instr.parent];
     case "closure.new":
       return instr.captures;
     case "closure.cap":

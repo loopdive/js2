@@ -253,3 +253,29 @@ export function superMethodCallIsBuildable(
   }
   return undefined;
 }
+
+export function unwrapParenthesizedExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
+/** A native dynamic operand can pair with a proven primitive value carrier. */
+export function nativeInstanceofValueOperands(
+  expression: ts.BinaryExpression,
+  evidence: {
+    readonly dynamic: (expression: ts.Expression) => boolean;
+    readonly primitive: (expression: ts.Expression) => "number" | "boolean" | "string" | undefined;
+  },
+): boolean {
+  const leftDynamic = evidence.dynamic(expression.left);
+  const rightDynamic = evidence.dynamic(expression.right);
+  const concrete = (expression: ts.Expression): boolean =>
+    unwrapParenthesizedExpression(expression).kind === ts.SyntaxKind.NullKeyword ||
+    evidence.primitive(expression) !== undefined;
+  return (
+    (leftDynamic || rightDynamic) &&
+    (leftDynamic || concrete(expression.left)) &&
+    (rightDynamic || concrete(expression.right))
+  );
+}

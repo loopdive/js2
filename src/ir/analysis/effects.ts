@@ -176,6 +176,7 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "class.static_call": // (#3144) — static method body, arbitrary heap effect
     case "closure.call":
     case "extern.call":
+    case "class.value.new":
     case "class.new":
     case "fnctor.new":
     // #7106 S3a — runs an arbitrary user constructor body.
@@ -496,6 +497,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     // `this.x = computeAndLogX()`). Conservatively keep all three live.
     i.kind === "class.call" ||
     i.kind === "class.set" ||
+    i.kind === "class.value.new" ||
     i.kind === "class.new" ||
     i.kind === "fnctor.new" ||
     i.kind === "dyn.construct" || // #7106 S3a — the constructor body runs for its effects

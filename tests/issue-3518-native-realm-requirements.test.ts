@@ -59,9 +59,9 @@ const intrinsic = (id: string) => NATIVE_REALM_CATALOG.intrinsics.find((row) => 
 const property = (id: string, name: string) => intrinsic(id).properties.find((row) => row.key.value === name)!;
 
 describe("semantic native realm catalog and real selected demands", () => {
-  it("retains the complete Object/Function identity graph and unavailable algorithms", () => {
+  it("retains the complete Object/Function/Promise identity graph and unavailable algorithms", () => {
     const rows = NATIVE_REALM_CATALOG.intrinsics;
-    expect(rows).toHaveLength(45);
+    expect(rows).toHaveLength(59);
     expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
     expect(
       rows.filter((row) => row.callable?.implementation !== "unavailable" && row.callable).map((row) => row.id),
@@ -71,14 +71,62 @@ describe("semantic native realm catalog and real selected demands", () => {
       if (row.prototype !== null) expect(rows.some((parent) => parent.id === row.prototype)).toBe(true);
       for (const p of row.properties) {
         const refs = p.kind === "accessor" ? [p.get, p.set] : p.value.kind === "intrinsic" ? [p.value.id] : [];
-        for (const id of refs) expect(rows.some((target) => target.id === id)).toBe(true);
+        for (const id of refs.filter((id) => id !== null)) expect(rows.some((target) => target.id === id)).toBe(true);
       }
       if (row.callable?.implementation === "unavailable") {
         expect(row.callable.algorithm.length).toBeGreaterThan(0);
-        expect(row.callable.requires.length).toBeGreaterThan(0);
+        if (row.id !== "%get Promise[@@species]%") expect(row.callable.requires.length).toBeGreaterThan(0);
       }
     }
     expect(NATIVE_REALM_CATALOG.remaining).toContain("public Number(value) provider");
+  });
+  it("retains the Promise prototype, generic methods and getter-only species descriptor", () => {
+    const promise = intrinsic("%Promise%"),
+      prototype = intrinsic("%Promise.prototype%");
+    expect(promise.aliases).toContain("Promise");
+    expect(promise.constructible).toBe(true);
+    expect(promise.prototype).toBe("%Function.prototype%");
+    expect(prototype.callable).toBeUndefined();
+    expect(prototype.prototype).toBe("%Object.prototype%");
+    expect(prototype.immutablePrototype).toBe(false);
+    expect(prototype.properties.map((p) => p.key.value)).toEqual([
+      "catch",
+      "constructor",
+      "finally",
+      "then",
+      "Symbol.toStringTag",
+    ]);
+    expect(prototype.properties.at(-1)).toMatchObject({
+      kind: "data",
+      value: { kind: "string", value: "Promise" },
+      writable: false,
+      configurable: true,
+      enumerable: false,
+    });
+    expect(promise.properties.find((p) => p.key.value === "prototype")).toMatchObject({
+      kind: "data",
+      writable: false,
+      configurable: false,
+    });
+    expect(promise.properties.at(-1)).toEqual({
+      key: { kind: "symbol", value: "Symbol.species" },
+      kind: "accessor",
+      get: "%get Promise[@@species]%",
+      set: null,
+      enumerable: false,
+      configurable: true,
+    });
+    for (const [id, length] of [
+      ["%Promise%", 1],
+      ["%Promise.prototype.then%", 2],
+      ["%Promise.prototype.catch%", 1],
+      ["%Promise.prototype.finally%", 1],
+      ["%Promise.try%", 1],
+      ["%Promise.withResolvers%", 0],
+      ["%get Promise[@@species]%", 0],
+    ] as const)
+      expect(intrinsic(id).callable).toMatchObject({ length, implementation: "unavailable" });
+    expect(intrinsic("%get Promise[@@species]%").aliases).toContain("Promise[@@species].get");
   });
   it("retains callable prototype, constructor cycles and immutable Object prototype semantics", () => {
     expect(intrinsic("%Object.prototype%")).toMatchObject({

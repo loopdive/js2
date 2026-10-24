@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { classStartupOccurrences } from "./analysis/class-startup.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId } from "./abi-bindings.js";
 import { irUnitCallableBindingId } from "./callable-bindings.js";
 import { createIrBindingId, type IrBindingId } from "./identity.js";
@@ -296,36 +297,29 @@ export function buildIrModuleInitPlan(input: BuildIrModuleInitPlanInput): IrModu
     }
 
     if (ts.isClassDeclaration(statement)) {
-      const classId = identityContext.classIdByDeclaration.get(statement) ?? null;
-      let nestedOrdinal = 0;
-      for (const member of statement.members) {
-        const isStatic =
-          ts.canHaveModifiers(member) &&
-          (ts.getModifiers(member)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ?? false);
-        const node = ts.isClassStaticBlockDeclaration(member)
-          ? member
-          : isStatic && ts.isPropertyDeclaration(member) && member.initializer
-            ? member.initializer
-            : undefined;
-        if (!node) continue;
-        const { start, end } = sourceRange(node, sourceFile);
+      const occurrences = classStartupOccurrences(identityContext, statement);
+      for (const occurrence of occurrences) {
+        const { start, end } = sourceRange(occurrence.node, sourceFile);
         evaluations.push(
           frozen({
             key: `${sourceId}:eval:${sourceOrdinal}`,
-            kind: ts.isClassStaticBlockDeclaration(member) ? "class-static-block" : "class-static-field",
+            kind: occurrence.kind,
             sourceOrdinal: sourceOrdinal++,
             statementOrdinal,
-            nestedOrdinal: nestedOrdinal++,
+            nestedOrdinal: occurrence.nestedOrdinal,
             start,
             end,
-            classId,
+            classId: occurrence.classId,
             bindingIds: Object.freeze([]),
-            legacyKey: legacyNodeKey("static", node, sourceFile),
+            legacyKey: legacyNodeKey(occurrence.legacyKind, occurrence.node, sourceFile),
           }),
         );
       }
       if (hasExportModifier(statement) && statement.name) {
-        const unitId = identityContext.unitIdByDeclaration.get(statement);
+        // A source constructor body is not the per-evaluation class value.
+        const unitId = occurrences.some((row) => row.kind === "class-definition")
+          ? undefined
+          : identityContext.unitIdByDeclaration.get(statement);
         pushExportIntent(exports, exported, {
           externalName: hasDefaultModifier(statement) ? "default" : statement.name.text,
           localName: statement.name.text,

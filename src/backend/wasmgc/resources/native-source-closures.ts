@@ -19,6 +19,7 @@ import {
   nativeClosureReservationInventory,
   reserveNativeClosureResources,
   type NativeClosureDeclarationPlan,
+  type NativeClosureDeclarationRequirements,
   type NativeClosureReservations,
 } from "./native-closures.js";
 import {
@@ -37,9 +38,9 @@ import {
 } from "./native-builtin-function-requests.js";
 import { createRealmSourceClosureType } from "../../../runtime/wasmgc/values/realm-object-layouts.js";
 import {
-  requireNativeRealmObjectLayouts,
-  requireCompletedNativeRealmObjectLayouts,
-  type NativeRealmObjectLayoutReservations,
+  requireNativeRealmObjectState,
+  requireCompletedNativeRealmObjectState,
+  type NativeRealmObjectStateReservations,
 } from "./native-realm-object-layouts.js";
 
 /** A future mixed dispatcher may exclude metadata only while these actual fields are disjoint. */
@@ -50,7 +51,7 @@ function requireSourceMetadataSeparation(type: TypeReservation): void {
 }
 
 export interface NativeSourceClosureCarriers {
-  readonly realmState?: NativeRealmObjectLayoutReservations;
+  readonly realmState?: NativeRealmObjectStateReservations;
   readonly refCells?: NativeRefCellReservations;
   readonly vectors: NativeVectorTypeReservations;
   readonly vectorPlan: NativeVectorResourcePlan;
@@ -71,6 +72,7 @@ export interface NativeSourceClosureTypes {
   }[];
 }
 export interface NativeSourceClosureSharedCarriers {
+  readonly realmState?: NativeRealmObjectStateReservations;
   readonly vectors: NativeVectorTypeReservations;
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly strings: NonNullable<NativeSourceClosureCarriers["strings"]>;
@@ -100,7 +102,7 @@ interface Owner {
   readonly strings: NativeSourceClosureCarriers["strings"];
   readonly stringTypes: NativeStringLiteralTypeReservations | undefined;
   readonly builtins: NativeBuiltinFunctionRequestIssuer | undefined;
-  readonly realmState: NativeRealmObjectLayoutReservations | undefined;
+  readonly realmState: NativeRealmObjectStateReservations | undefined;
   readonly shapeTypes: readonly {
     readonly id: string;
     readonly captures: readonly ValType[];
@@ -123,7 +125,7 @@ function realmStateCarrier(tx: PhysicalModuleReservations, carriers: NativeSourc
   }
   if (!Object.hasOwn(field, "value") || !field.enumerable || field.value === undefined)
     fail("realm state carrier requires an issued own data value");
-  return requireNativeRealmObjectLayouts(tx, field.value);
+  return requireNativeRealmObjectState(tx, field.value);
 }
 function authenticateCarriers(
   tx: PhysicalModuleReservations,
@@ -138,6 +140,7 @@ function authenticateCarriers(
     requireNativeStringLiteralTypes(tx, carriers.strings.types, carriers.strings.key, carriers.strings.utf8Storage);
 }
 function carrierValue(tx: PhysicalModuleReservations, carriers: NativeSourceClosureCarriers, type: IrType): ValType {
+  if (type.kind === "dynamic" && type.tag === undefined) return { kind: "externref" };
   if (type.kind === "boxed") {
     const inner = nativeRefCellScalarInner(type);
     const cell = inner && carriers.refCells && resolveNativeRefCell(tx, carriers.refCells, inner);
@@ -178,7 +181,7 @@ function physicalPlan(
     references.set(token.key, token);
     return { kind: value.kind, typeKey: token.key };
   };
-  const requests = requirements.signatures.map((row) => ({
+  const requests: NativeClosureDeclarationRequirements["requests"][number][] = requirements.signatures.map((row) => ({
     kind: "signature" as const,
     id: row.id,
     allocationMode: "ordinary" as const,
@@ -186,6 +189,13 @@ function physicalPlan(
     results: row.signature.returnType ? [declared(row.signature.returnType)] : [],
     minimumArgumentCount: row.signature.defaultParamStart ?? row.signature.params.length,
   }));
+  if (requirements.promiseClosures) {
+    const { signatureId, metadataId } = requirements.promiseClosures;
+    requests.push(
+      { kind: "signature", id: signatureId, allocationMode: "support", params: [{ kind: "externref" }], results: [] },
+      { kind: "metadata", id: metadataId, signatureId, key: "promise:settle", name: "", length: 1 },
+    );
+  }
   if (builtins !== undefined) {
     requireNativeBuiltinFunctionRequestIssuer(tx, builtins);
     for (const token of builtins.referenceTypes) {
@@ -263,7 +273,7 @@ export function reserveNativeSourceClosureTypes(
         return capture + CLOSURE_CAPTURE_FIELD_BASE;
       },
     });
-    if (builtins) requireSourceMetadataSeparation(type);
+    if (builtins || requirements.promiseClosures) requireSourceMetadataSeparation(type);
     return Object.freeze({ id: shape.id, type, lowering });
   });
   const pack = Object.freeze({ requirements, closures, closurePlan, shapes: Object.freeze(shapes) });
@@ -297,9 +307,15 @@ export function requireNativeSourceClosureTypes(
     if (owner.builtins !== expectedBuiltinRequests) fail("foreign builtin request issuer");
   }
   if (expectedSharedCarriers !== undefined) {
-    const expected = expectedData(expectedSharedCarriers, ["vectors", "vectorPlan", "strings"]),
+    const expected = expectedData(expectedSharedCarriers, [
+        "vectors",
+        "vectorPlan",
+        "strings",
+        ...(Object.hasOwn(expectedSharedCarriers, "realmState") ? ["realmState"] : []),
+      ]),
       strings = expectedData(expected.strings, ["types", "key", "utf8Storage"]);
     if (
+      owner.realmState !== expected.realmState ||
       owner.vectors !== expected.vectors ||
       owner.vectorPlan !== expected.vectorPlan ||
       owner.stringTypes !== strings.types ||
@@ -382,7 +398,7 @@ export function requireCompletedNativeSourceClosureState(
   // Its caller already authenticates the source owner; there is no initializer to complete.
   if (owner.realmState) {
     requireNativeSourceClosureTypes(tx, pack, pack.requirements);
-    requireCompletedNativeRealmObjectLayouts(tx, owner.realmState);
+    requireCompletedNativeRealmObjectState(tx, owner.realmState);
   }
 }
 
@@ -390,7 +406,7 @@ export function requireCompletedNativeSourceClosureState(
 export function nativeSourceClosureRealmState(
   tx: PhysicalModuleReservations,
   pack: NativeSourceClosureTypes,
-): NativeRealmObjectLayoutReservations | undefined {
+): NativeRealmObjectStateReservations | undefined {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) fail("foreign or copied source type owner");
   requireNativeSourceClosureTypes(tx, pack, pack.requirements);

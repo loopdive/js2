@@ -285,19 +285,34 @@ export function buildNumberFormatFinalizeBody(types: NumberFormatStringTypes): N
   };
 }
 
-export function buildNumberFormatToStringBody(resources: {
+interface DecimalFormatResources {
   readonly types: NumberFormatStringTypes;
   readonly finalize: FuncHandle;
-  readonly radix: FuncHandle;
   readonly ryuToBuffer: FuncHandle;
+}
+interface IntegerFormatResources {
+  readonly radix: FuncHandle;
   readonly integerBeforeScratch: boolean;
-}): NativeNumberFormatBody {
+}
+export function buildNumberFormatToStringBody(
+  resources: DecimalFormatResources & IntegerFormatResources,
+): NativeNumberFormatBody {
+  return numberToStringDefinition(resources, resources);
+}
+/** Full decimal conversion using the shared Ryu algorithm, without a radix dependency. */
+export function buildRyuNumberToStringBody(resources: DecimalFormatResources): NativeNumberFormatBody {
+  return numberToStringDefinition(resources);
+}
+function numberToStringDefinition(
+  resources: DecimalFormatResources,
+  integer?: IntegerFormatResources,
+): NativeNumberFormatBody {
   const strDataTypeIdx = resources.types.dataTypeIdx;
   const finalizeIdx = resources.finalize;
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
   const bufType: ValType = { kind: "ref", typeIdx: strDataTypeIdx };
-  const radixIdx = resources.radix;
+  const radixIdx = integer?.radix;
   const ryuToBufIdx = resources.ryuToBuffer;
   // params: 0 value:f64 ; locals: 1 buf 2 pos 3 tmp 4 neg 5 abs.
   // The Ryū path keeps its own scratch inside __num_ryu_to_buf, so this function
@@ -316,7 +331,7 @@ export function buildNumberFormatToStringBody(resources: {
   // Test the integer regime first so those calls avoid the dead allocation.
   // Keep an emission kill switch for exact A/B attribution and emergency
   // rollback; disabled output retains the former post-prologue guard.
-  const integerBeforeScratch = resources.integerBeforeScratch;
+  const integerBeforeScratch = integer?.integerBeforeScratch;
 
   const safeIntegerReturn = (integerValue: Instr[], magnitude: Instr[]): Instr[] => [
     ...integerValue,
@@ -333,7 +348,7 @@ export function buildNumberFormatToStringBody(resources: {
       then: [
         { op: "local.get", index: L_VALUE },
         { op: "f64.const", value: 10 },
-        { op: "call", funcIdx: radixIdx },
+        { op: "call", funcIdx: radixIdx! },
         { op: "return" },
       ],
     },
@@ -369,7 +384,20 @@ export function buildNumberFormatToStringBody(resources: {
     // Safe integers can reuse the radix-10 formatter exactly. With the fast
     // path enabled this branch already returned before scratch allocation; the
     // disabled form is deliberately the former byte-for-byte position/shape.
-    ...(integerBeforeScratch ? [] : postScratchIntegerReturn()),
+    ...(integer
+      ? integerBeforeScratch
+        ? []
+        : postScratchIntegerReturn()
+      : [
+          { op: "local.get", index: L_ABS } as Instr,
+          { op: "f64.const", value: 0 } as Instr,
+          { op: "f64.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...putConst(strDataTypeIdx, L_BUF, L_POS, C_ZERO), ...finalizeReturn()],
+          } as Instr,
+        ]),
 
     // Fractional / unsafe-magnitude branch: shortest-roundtrip Ryū (#1537).
     // `__num_ryu_to_buf(abs, neg, buf, pos)` writes the §6.1.6.1.13-formatted

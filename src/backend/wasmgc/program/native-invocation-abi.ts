@@ -36,7 +36,7 @@ export interface NativeInvocationPhysicalSetup {
   readonly applyVector: boolean;
   readonly sourceUseCount: number;
   readonly getterUseCount: number;
-  readonly completionScope: "selected-source-invocation";
+  readonly completionScope: NativeInvocationRequirements["completionScope"];
 }
 
 /** Select from actual source/Get occurrences, retaining the issued C1/C2 graph. */

@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { CLASS_OBJECT_STATE_FIELD } from "./class-constructor-layouts.js";
 import type { FuncHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 
 /** Internal results, not a scalar JavaScript Get/Has ABI. */
 export const MIXED_ACCESS_STATUS = Object.freeze({ absent: 0, present: 1, unready: 2, unsupported: 3 });
 export interface MixedObjectCarrier {
-  readonly kind: "ordinary" | "wrapper" | "string" | "source" | "native" | "object-prototype";
+  readonly kind: "ordinary" | "wrapper" | "string" | "class" | "source" | "native" | "object-prototype" | "promise";
   readonly typeIdx: number;
   readonly stateField?: number;
+  readonly bagTypeIdx?: number;
   readonly native?: {
     readonly metadataId: number;
     readonly liftedTypeIdx: number;
@@ -23,6 +25,9 @@ export interface MixedObjectAccessOperands {
   readonly symbolTypeIdx: number;
   readonly realm: number;
   readonly objectPrototype: number;
+  /** Authenticated complete descriptor initializer; runtime state 2 alone admits intrinsic absence. */
+  readonly intrinsicPopulationState?: number;
+  readonly ordinaryIntrinsicSingletons?: readonly number[];
   readonly metadataTypes: readonly number[];
   /** String precedes ordinary storage; metadata families precede source families. */
   readonly carriers: readonly MixedObjectCarrier[];
@@ -86,25 +91,44 @@ function operands(input: MixedObjectAccessOperands): MixedObjectAccessOperands {
     "findOrdinary",
     "findString",
   ];
-  const d = data(input, [...keys, "carriers", "metadataTypes"]);
+  const d = data(
+    input,
+    [...keys, "carriers", "metadataTypes"],
+    ["intrinsicPopulationState", "ordinaryIntrinsicSingletons"],
+  );
+  if (Object.hasOwn(d, "intrinsicPopulationState")) coordinate(d.intrinsicPopulationState);
+  if (Object.hasOwn(d, "ordinaryIntrinsicSingletons")) {
+    const singletons = rows(d.ordinaryIntrinsicSingletons);
+    singletons.forEach(coordinate);
+    d.ordinaryIntrinsicSingletons = singletons;
+  }
   keys.forEach((key) => coordinate(d[key]));
   const metadataTypes = rows(d.metadataTypes);
   metadataTypes.forEach(coordinate);
   const carriers = rows(d.carriers).map((row) => {
-    const c = data(row, ["kind", "typeIdx"], ["stateField", "native"]);
+    const c = data(row, ["kind", "typeIdx"], ["stateField", "native", "bagTypeIdx"]);
     coordinate(c.typeIdx);
-    if (!["ordinary", "wrapper", "string", "source", "native", "object-prototype"].includes(c.kind as string))
+    if (
+      !["ordinary", "wrapper", "string", "class", "source", "native", "object-prototype", "promise"].includes(
+        c.kind as string,
+      )
+    )
       throw Error("mixed object bodies: unknown family");
-    if (["ordinary", "wrapper", "string", "source"].includes(c.kind as string)) {
+    if (["ordinary", "wrapper", "string", "class", "source", "promise"].includes(c.kind as string)) {
       coordinate(c.stateField);
       if (
         c.native !== undefined ||
-        (c.kind === "ordinary" && c.stateField !== 6) ||
+        (["ordinary", "promise"].includes(c.kind as string) && c.stateField !== 6) ||
         (["wrapper", "string"].includes(c.kind as string) && c.stateField !== 7) ||
+        (c.kind === "class" && c.stateField !== CLASS_OBJECT_STATE_FIELD) ||
         (c.kind === "source" && c.stateField < 3)
       )
         throw Error("mixed object bodies: invalid state tail");
     } else if (Object.hasOwn(c, "stateField")) throw Error("mixed object bodies: unexpected state tail");
+    if (c.kind === "promise") {
+      if (!Object.hasOwn(c, "bagTypeIdx")) throw Error("mixed object bodies: missing bag type");
+      coordinate(c.bagTypeIdx);
+    } else if (Object.hasOwn(c, "bagTypeIdx")) throw Error("mixed object bodies: unexpected bag type");
     if (c.kind === "native") {
       const entry = data(c.native, ["metadataId", "liftedTypeIdx", "singleton", "singletonExtern"]);
       [entry.metadataId, entry.liftedTypeIdx, entry.singleton].forEach(coordinate);
@@ -138,7 +162,14 @@ const field = (local: number, typeIdx: number, fieldIdx: number): Instr[] => [
   { op: "struct.get", typeIdx, fieldIdx },
 ];
 const state = (d: MixedObjectAccessOperands, c: MixedObjectCarrier, local = 0): Instr[] =>
-  field(local, c.typeIdx, c.stateField!);
+  c.kind === "promise"
+    ? [
+        ...field(local, c.typeIdx, 3),
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: c.bagTypeIdx! },
+        { op: "struct.get", typeIdx: c.bagTypeIdx!, fieldIdx: c.stateField! },
+      ]
+    : field(local, c.typeIdx, c.stateField!);
 const gap = (local: number): Instr[] => [
   get(local),
   n(-2),
@@ -160,7 +191,42 @@ function carrierArm(local: number, ordinal: number, body: Instr[]): Instr[] {
   return when([get(local), n(ordinal + 1), { op: "i32.eq" }], body);
 }
 function ownBag(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
-  return c.kind === "native" || c.kind === "source" ? field(0, c.typeIdx, 2) : [get(0)];
+  return c.kind === "promise"
+    ? field(0, c.typeIdx, 3)
+    : c.kind === "native" || c.kind === "source" || c.kind === "class"
+      ? field(0, c.typeIdx, 2)
+      : [get(0)];
+}
+
+function promiseBagGuards(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
+  return [
+    ...when([...field(0, c.typeIdx, 3), { op: "ref.is_null" }], ret(n(-2))),
+    ...when(
+      [
+        ...field(0, c.typeIdx, 3),
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: c.bagTypeIdx! },
+        { op: "i32.eqz" },
+      ],
+      ret(n(0)),
+    ),
+    ...(Object.hasOwn(d, "intrinsicPopulationState")
+      ? when([global(d.intrinsicPopulationState!), n(2), { op: "i32.ne" }], ret(n(-2)))
+      : ret(n(-2))),
+  ];
+}
+
+/** Class own storage must be a complete same-realm ordinary bag, never an exotic prefix. */
+function validateClassBag(
+  d: MixedObjectAccessOperands,
+  c: MixedObjectCarrier,
+  local: number,
+  failed: Instr[],
+): Instr[] {
+  if (c.kind !== "class") return [];
+  const ordinary = d.carriers.findIndex((row) => row.kind === "ordinary");
+  if (ordinary < 0) throw Error("mixed object bodies: class access requires ordinary storage");
+  return when([get(local), call(d.classify), n(ordinary + 1), { op: "i32.ne" }], failed);
 }
 
 /** Exact carrier/realm checks precede every private field read. -2 is pending authority. */
@@ -202,7 +268,10 @@ export function buildMixedObjectClassify(input: MixedObjectAccessOperands): Mixe
         { op: "ref.eq" },
       ];
     }
-    const matched = when(checks, ret(n(c.kind === "source" ? -2 : d.carriers.indexOf(c) + 1)));
+    const matched = [
+      ...(c.kind === "promise" ? promiseBagGuards(d, c) : []),
+      ...when(checks, ret(n(c.kind === "source" ? -2 : d.carriers.indexOf(c) + 1))),
+    ];
     return when(
       [get(0), { op: "any.convert_extern" }, { op: "ref.test", typeIdx: c.typeIdx }],
       c.native?.singletonExtern
@@ -229,7 +298,34 @@ export function buildMixedObjectClassify(input: MixedObjectAccessOperands): Mixe
   };
 }
 
-/** Actual own entries only. Incomplete intrinsic/source misses are unready, never absence. */
+function intrinsicAbsence(d: MixedObjectAccessOperands): Instr[] {
+  if (!Object.hasOwn(d, "intrinsicPopulationState")) return [n(2)];
+  return [
+    global(d.intrinsicPopulationState!),
+    n(2),
+    { op: "i32.eq" },
+    { op: "if", blockType: { kind: "val", type: i32 }, then: [n(0)], else: [n(2)] },
+  ];
+}
+function ownAbsence(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
+  if (c.kind === "source") return [n(2)];
+  if (c.kind === "native" || c.kind === "object-prototype") return intrinsicAbsence(d);
+  const singletons = Object.hasOwn(d, "ordinaryIntrinsicSingletons") ? d.ordinaryIntrinsicSingletons! : [];
+  if (c.kind !== "ordinary" || !singletons.length) return [n(0)];
+  // These identities are published before descriptor seeding. A normal ordinary
+  // object has complete own storage; an intrinsic still depends on population.
+  return [
+    ...singletons.flatMap((index, ordinal): Instr[] => [
+      ...cast(0, c.typeIdx),
+      global(index),
+      { op: "ref.eq" },
+      ...(ordinal ? [{ op: "i32.or" } as Instr] : []),
+    ]),
+    { op: "if", blockType: { kind: "val", type: i32 }, then: intrinsicAbsence(d), else: [n(0)] },
+  ];
+}
+
+/** Intrinsic misses require both canonical descriptor construction and runtime initialization. */
 export function buildMixedObjectOwn(input: MixedObjectAccessOperands): MixedObjectDefinition {
   const d = operands(input);
   return {
@@ -267,14 +363,12 @@ export function buildMixedObjectOwn(input: MixedObjectAccessOperands): MixedObje
             [get(3), { op: "any.convert_extern" }, { op: "ref.test", typeIdx: d.objectTypeIdx }, { op: "i32.eqz" }],
             missing(d, [n(3)]),
           ),
+          ...validateClassBag(d, c, 3, missing(d, [n(3)])),
           ...cast(3, d.objectTypeIdx),
           get(1),
           call(c.kind === "string" ? d.findString : d.findOrdinary),
           set(4),
-          ...when(
-            [get(4), { op: "ref.is_null" }],
-            missing(d, [n(["native", "source", "object-prototype"].includes(c.kind) ? 2 : 0)]),
-          ),
+          ...when([get(4), { op: "ref.is_null" }], missing(d, ownAbsence(d, c))),
           ...ret(n(1), get(4)),
         ]),
       ),
@@ -456,6 +550,7 @@ export function buildMixedObjectSetPrototype(input: MixedObjectAccessOperands): 
                   ],
                   ret(n(3)),
                 ),
+                ...validateClassBag(d, c, 4, ret(n(3))),
                 ...when([...field(4, d.objectTypeIdx, 4), n(flags.nonExtensible), { op: "i32.and" }], ret(n(0))),
               ],
         ),
@@ -514,7 +609,7 @@ export function buildMixedObjectSetPrototype(input: MixedObjectAccessOperands): 
 
 export interface MixedObjectGetOperands {
   readonly entryTypeIdx: number;
-  readonly vectorTypeIdx: number;
+  readonly argumentVector: { readonly kind: "externref" } | { readonly kind: "typed"; readonly typeIdx: number };
   readonly undefinedGlobal: number;
   readonly lookup: FuncHandle;
   readonly newVector: FuncHandle;
@@ -525,13 +620,17 @@ export interface MixedObjectGetOperands {
 export function buildMixedObjectGet(input: MixedObjectGetOperands): MixedObjectDefinition {
   const d = data(input, [
     "entryTypeIdx",
-    "vectorTypeIdx",
+    "argumentVector",
     "undefinedGlobal",
     "lookup",
     "newVector",
     "call",
   ]) as unknown as MixedObjectGetOperands;
-  Object.values(d).forEach(coordinate);
+  [d.entryTypeIdx, d.undefinedGlobal, d.lookup, d.newVector, d.call].forEach(coordinate);
+  const vector = data(d.argumentVector, ["kind"], ["typeIdx"]);
+  if (vector.kind === "typed") coordinate(vector.typeIdx);
+  else if (vector.kind !== "externref" || Object.hasOwn(vector, "typeIdx"))
+    throw Error("mixed object bodies: invalid argument-vector ABI");
   const undefinedValue: Instr[] = [global(d.undefinedGlobal), { op: "extern.convert_any" }];
   const read = (fieldIdx: number): Instr[] => [
     get(3),
@@ -564,8 +663,12 @@ export function buildMixedObjectGet(input: MixedObjectGetOperands): MixedObjectD
             get(5),
             get(2),
             call(d.newVector),
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: d.vectorTypeIdx },
+            ...(d.argumentVector.kind === "externref"
+              ? []
+              : ([
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: d.argumentVector.typeIdx },
+                ] satisfies Instr[])),
             call(d.call),
           ),
         ],

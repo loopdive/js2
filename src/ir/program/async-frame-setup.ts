@@ -9,10 +9,15 @@ import {
   type PreparedHostAsyncFramePlan,
   type PreparedHostAsyncFrameOutcome,
 } from "./prepared-async-frame-plan.js";
+import {
+  planPreparedNativeAsyncFrame,
+  type PreparedNativeAsyncFramePlan,
+  type PreparedNativeAsyncFrameOutcome,
+} from "./prepared-native-async-frame-plan.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 
 export interface AsyncFrameSetup {
-  readonly frames: readonly PreparedHostAsyncFramePlan[];
+  readonly frames: readonly (PreparedHostAsyncFramePlan | PreparedNativeAsyncFramePlan)[];
   readonly entries: readonly ProgramAbiPlanEntry[];
 }
 
@@ -25,7 +30,7 @@ export function planAsyncFrameSetup(
   anchor: IrSourceRecord,
 ):
   | { readonly kind: "planned"; readonly setup: AsyncFrameSetup }
-  | Extract<PreparedHostAsyncFrameOutcome, { kind: "unsupported" }> {
+  | Extract<PreparedHostAsyncFrameOutcome | PreparedNativeAsyncFrameOutcome, { kind: "unsupported" }> {
   if (!program.inventory.sources.includes(anchor) || anchor.kind !== "entry")
     throw new Error("async frame anchor does not belong to this program");
   const entries = new Map(program.abi.entries.map((row) => [row.plan.id, row.plan]));
@@ -54,24 +59,30 @@ export function planAsyncFrameSetup(
     while (names.has(`__cb_${nextCallback}`)) nextCallback++;
     return nextCallback++;
   };
-  const frames: PreparedHostAsyncFramePlan[] = [];
+  const frames: (PreparedHostAsyncFramePlan | PreparedNativeAsyncFramePlan)[] = [];
   for (const fn of projection.prepared.functions) {
     if (!fn.asyncPlan && !fn.asyncRuntime) continue;
     let order = 0;
     for (const row of entries.values())
       if (row.order.sourceOrder === anchor.order) order = Math.max(order, row.order.declarationOrder + 1);
-    const outcome = planPreparedHostAsyncFrame({
+    const input = {
       fn,
       backend: options.backend,
       target: options.target,
       abiEntries: program.abi.entries,
       anchor,
       declarationOrderStart: order,
-      callbacks: { fulfill: callback(), reject: callback(), occupiedIds: ids, occupiedNames: [...names] },
-    });
+    };
+    const outcome =
+      options.backend === "wasmgc" && options.target === "standalone"
+        ? planPreparedNativeAsyncFrame(input)
+        : planPreparedHostAsyncFrame({
+            ...input,
+            callbacks: { fulfill: callback(), reject: callback(), occupiedIds: ids, occupiedNames: [...names] },
+          });
     if (outcome.kind !== "planned") return outcome;
     outcome.plan.entries.forEach(join);
-    for (const published of outcome.plan.callbacks) {
+    for (const published of outcome.plan.kind === "host" ? outcome.plan.callbacks : []) {
       if (names.has(published.externalName)) throw new Error("async callback export collides with another owner");
       names.add(published.externalName);
       ids.push(published.id);

@@ -1,9 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { FuncHandle, TypeHandle, Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import { buildTargetTaggedTry } from "../../../wasm/physical/exception-control.js";
-import { PROMISE_STATE_FULFILLED, PROMISE_STATE_REJECTED } from "./settlement-bodies.js";
+import { buildPromiseReactionRegistration } from "./reaction-registration-body.js";
 import { buildPromiseReactionHandled } from "./rejection-event-bodies.js";
 import { buildPromiseResolvingPairGuard } from "./resolving-pair-bodies.js";
+import { buildThenableJobCall } from "./thenable-job-call-body.js";
 
 export interface PromiseResolutionBindings {
   readonly hasCallableThenFuncIdx: FuncHandle;
@@ -13,6 +14,8 @@ export interface PromiseResolutionBindings {
   readonly newTypeErrorFuncIdx: FuncHandle;
 }
 export interface PromiseResolveValueResources {
+  /** Native composition: every object uses the captured common Get path. Absent retains existing output. */
+  readonly resolutionMode?: "common-get";
   readonly rejectionDispatchFuncIdx?: FuncHandle;
   readonly target: { wasi: boolean; standalone: boolean };
   readonly state: {
@@ -244,6 +247,9 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
   const peeledLocal = 7;
   const peelPrelude = buildResolutionPeelPrelude(thenable, valueLocal, peeledLocal);
 
+  if (Object.hasOwn(resources, "resolutionMode"))
+    return buildCommonGetResolution(promiseTypeIdx, peeledLocal, innerLocal, peelPrelude, selfCheck, nonPromiseArm);
+
   // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, "then")` for EVERY
   // object, including a native promise. The `$Promise` arm below adopts the
   // native state directly, so `nativePromise.then = f` was never observed. The
@@ -345,54 +351,16 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
         { op: "struct.new", typeIdx: capsTypeIdx },
         { op: "extern.convert_any" },
         { op: "local.set", index: capsLocal },
-        // dispatch on inner.state
-        { op: "local.get", index: innerLocal },
-        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.state },
-        { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // already fulfilled: schedule fulfill reaction with inner.value
-            { op: "ref.func", funcIdx: state.identityFulfillWrapperFuncIdx },
-            { op: "local.get", index: capsLocal },
-            { op: "local.get", index: innerLocal },
-            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.value },
-            { op: "call", funcIdx: state.enqueueFuncIdx },
-          ],
-          else: [
-            { op: "local.get", index: innerLocal },
-            { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.state },
-            { op: "i32.const", value: PROMISE_STATE_REJECTED },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                // already rejected: schedule reject reaction with inner.value
-                { op: "ref.func", funcIdx: state.identityRejectWrapperFuncIdx },
-                { op: "local.get", index: capsLocal },
-                { op: "local.get", index: innerLocal },
-                { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.value },
-                { op: "call", funcIdx: state.enqueueFuncIdx },
-              ],
-              else: [
-                // pending: prepend a reaction node onto inner.callbacks
-                { op: "local.get", index: innerLocal },
-                { op: "ref.func", funcIdx: state.identityFulfillWrapperFuncIdx },
-                { op: "local.get", index: capsLocal },
-                { op: "ref.func", funcIdx: state.identityRejectWrapperFuncIdx },
-                { op: "local.get", index: capsLocal },
-                { op: "local.get", index: innerLocal },
-                { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.callbacks },
-                { op: "struct.new", typeIdx: callbackTypeIdx },
-                { op: "extern.convert_any" },
-                { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: resources.promiseFields.callbacks },
-              ],
-            },
-          ],
-        },
+        ...buildPromiseReactionRegistration({
+          promiseTypeIdx,
+          callbackTypeIdx,
+          promiseFields: resources.promiseFields,
+          promiseLocal: innerLocal,
+          fulfilled: { function: state.identityFulfillWrapperFuncIdx, capturesLocal: capsLocal },
+          rejected: { function: state.identityRejectWrapperFuncIdx, capturesLocal: capsLocal },
+          enqueue: state.enqueueFuncIdx,
+          beforeRejected: [],
+        }),
         // result (unused by the microtask drain, but the type must be externref)
         { op: "local.get", index: valueLocal },
       ],
@@ -401,7 +369,40 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
   ];
 }
 
+/** All objects take the guarded lookup after native Promise identity checking. */
+function buildCommonGetResolution(
+  promiseTypeIdx: TypeHandle,
+  peeledLocal: number,
+  innerLocal: number,
+  peelPrelude: readonly Instr[],
+  selfCheck: readonly Instr[],
+  lookupArm: readonly Instr[],
+): Instr[] {
+  return [
+    ...peelPrelude,
+    { op: "local.get", index: peeledLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: promiseTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: peeledLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: promiseTypeIdx },
+        { op: "local.set", index: innerLocal },
+        ...selfCheck,
+      ],
+    },
+    // Includes native Promise objects: no direct adoption or second own-then read.
+    ...lookupArm,
+  ];
+}
+
 function validatePromiseResolveValueResources(resources: PromiseResolveValueResources): PromiseResolveValueResources {
+  const mode = Object.getOwnPropertyDescriptor(resources, "resolutionMode");
+  if (mode && (!mode.enumerable || !Object.hasOwn(mode, "value") || mode.value !== "common-get" || !resources.thenable))
+    throw new Error("Promise resolution requires an explicit common-Get mode and native bindings");
   if (
     resources.callbackFields?.join(",") !== "0,1,2,3,4" ||
     resources.capsFields?.callback !== 0 ||
@@ -464,6 +465,7 @@ export function buildPromiseSettleClosureBody(
   ];
 }
 export interface PromiseThenableJobResources {
+  readonly invocationMode?: "captured";
   readonly target: { wasi: boolean; standalone: boolean };
   readonly promiseTypeIdx: TypeHandle;
   readonly promiseRejectFuncIdx: FuncHandle;
@@ -477,27 +479,15 @@ export interface PromiseThenableJobResources {
   };
   readonly applyClosureIdx: FuncHandle | undefined;
   readonly peelValueFuncIdx: FuncHandle;
-  readonly varargThenFuncIdx: FuncHandle;
+  readonly varargThenFuncIdx?: FuncHandle;
   readonly exnTag: number;
 }
 export function buildPromiseThenableJob(resources: PromiseThenableJobResources): { locals: LocalDef[]; body: Instr[] } {
-  const {
-    target,
-    capsTypeIdx,
-    capsFields,
-    objVecNewIdx,
-    objVecPushIdx,
-    execClosures,
-    applyClosureIdx,
-    peelValueFuncIdx,
-    varargThenFuncIdx,
-    exnTag,
-  } = resources;
+  const { target, capsTypeIdx, capsFields, objVecNewIdx, objVecPushIdx, execClosures, exnTag } = resources;
   const state = resources;
   const promiseLocal = 2;
   const reasonLocal = 3;
   const vecLocal = 4;
-  const capturedThenLocal = 5;
   const rejectClosureLocal = 6;
   const guardLocal = 7;
   // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call
@@ -535,47 +525,7 @@ export function buildPromiseThenableJob(resources: PromiseThenableJobResources):
       ? emitSettleCap(execClosures.rejectClFuncIdx)
       : ([{ op: "local.get", index: rejectClosureLocal }] satisfies Instr[])),
     { op: "call", funcIdx: objVecPushIdx },
-    // __call_m_then_vararg(peel(thenable), argvec) — `then.call(thenable,
-    // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
-    // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW
-    // object as the receiver.
-    // When Resolve captured the `then` FUNCTION (ordinary lookup or own `then`
-    // on a native promise), call THAT value — the spec captures `then` at Resolve
-    // time (step 9) and calls it as a job (step 14), so a reassignment between
-    // the two must not change which function runs. Otherwise re-dispatch
-    // through the vararg `then` method dispatcher exactly as before.
-    ...(applyClosureIdx === undefined
-      ? [
-          { op: "local.get", index: 1 } as Instr,
-          { op: "call", funcIdx: peelValueFuncIdx } as Instr,
-          { op: "local.get", index: vecLocal } as Instr,
-          { op: "call", funcIdx: varargThenFuncIdx } as Instr,
-        ]
-      : ([
-          { op: "local.get", index: 0 },
-          { op: "any.convert_extern" },
-          { op: "ref.cast", typeIdx: capsTypeIdx },
-          { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: capsFields.callback },
-          { op: "local.tee", index: capturedThenLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "val", type: { kind: "externref" } },
-            then: [
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: peelValueFuncIdx },
-              { op: "local.get", index: vecLocal },
-              { op: "call", funcIdx: varargThenFuncIdx },
-            ],
-            else: [
-              { op: "local.get", index: capturedThenLocal },
-              { op: "local.get", index: 1 },
-              { op: "call", funcIdx: peelValueFuncIdx },
-              { op: "local.get", index: vecLocal },
-              { op: "call", funcIdx: applyClosureIdx },
-            ],
-          },
-        ] satisfies Instr[])),
+    ...buildThenableJobCall(resources, vecLocal),
     { op: "drop" },
   ];
   return {

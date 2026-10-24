@@ -39,6 +39,7 @@ export interface AllocVerifyError {
 const ALLOC_INSTR_KIND: Readonly<Record<string, AllocKind>> = {
   "object.new": "object",
   "closure.new": "closure",
+  "class.value.new": "closure",
   "refcell.new": "refcell",
   // class.new constructs an object via its <Class>_new ctor (black-box body).
   "class.new": "object",

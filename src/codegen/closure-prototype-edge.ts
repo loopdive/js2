@@ -77,11 +77,10 @@
  * vivifies identically, so whichever site runs first, all three agree on ONE
  * object identity — the invariant the whole #2660 substrate rests on.
  *
- * The CLASS arm deliberately does NOT vivify. `ctx.protoGlobals` is populated by
- * `class-proto-object.ts` / `emitLazyProtoGet`, which build a specific
- * `$Object` with the class's methods installed at §17 attributes; minting an
- * empty object here would be a SECOND, wrong prototype identity. A null class
- * proto global answers `null` and the consumer keeps its conservative answer.
+ * The CLASS arm reuses the registered class prototype builder when a native
+ * consumer recorded demand. It never creates an empty replacement: the builder
+ * owns methods, constructor identity and parent links. Without such a builder,
+ * a null class proto global still answers `null`.
  *
  * ## Index-space discipline
  *
@@ -96,7 +95,7 @@
  * output is byte-identical.
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
+import { hostFreeEnvironment, type CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
@@ -537,6 +536,22 @@ export function fillClosurePrototypeEdge(ctx: CodegenContext): void {
           ],
         },
       );
+    }
+    // The canonical Get arm invokes the class builder at runtime. Resolving
+    // that arm now would snapshot the multi-source pipeline before its builders.
+    const externGetIdx = ctx.funcMap.get("__extern_get");
+    if (
+      !edge.vivify &&
+      hostFreeEnvironment(ctx) &&
+      ctx.standaloneRuntimeKeyClassProtos.has(edge.name) &&
+      externGetIdx !== undefined
+    ) {
+      return [
+        { op: "local.get", index: P_TARGET },
+        ...nativeStringLiteralInstrs(ctx, "prototype"),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: externGetIdx },
+      ];
     }
     out.push({ op: "global.get", index: edge.protoGlobalIdx });
     return out;

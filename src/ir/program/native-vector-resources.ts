@@ -18,6 +18,8 @@ import type { PreparedIrAbiEntry } from "./prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../../runtime/contracts/provider-policy.js";
 import type { RuntimeProviderDefinition } from "../runtime/contracts/manifest.js";
 
+import { nativePromiseResourcesRequired } from "./native-promise-resources.js";
+
 export type NativeVectorElement = "f64" | "externref";
 export interface NativeVectorResourcePlan {
   readonly anchor: string;
@@ -52,6 +54,8 @@ export function deriveNativeVectorResourcePlan(input: NativeVectorResourceInput)
   const demands = collectVectorCallableDemands(input.functions);
   const layouts = new Set<NativeVectorElement>();
   const supported = input.backend === "wasmgc" && input.target === "standalone";
+  const promises = supported && nativePromiseResourcesRequired(input.functions, input.providers);
+  if (promises) layouts.add("externref");
   const note = (type: IrType): void => {
     if (!supported || type.kind !== "vec" || type.layout || type.elementType.kind !== "val" || type.elementType.typeRef)
       return;
@@ -122,6 +126,6 @@ export function deriveNativeVectorResourcePlan(input: NativeVectorResourceInput)
     layouts: (["f64", "externref"] as const).filter((element) => layouts.has(element)),
     demands,
     ...(helper ? { helper } : {}),
-    exceptionRequired: helper !== undefined,
+    exceptionRequired: helper !== undefined || promises,
   }) as NativeVectorResourcePlan;
 }

@@ -843,6 +843,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "object.set":
       return [instr.value, instr.newValue];
     // Slice 3 (#1169c): closure / ref-cell ops.
+    case "class.value.new":
+      return [instr.properties, instr.construct, instr.parent];
     case "closure.new":
       return instr.captures;
     case "closure.cap":

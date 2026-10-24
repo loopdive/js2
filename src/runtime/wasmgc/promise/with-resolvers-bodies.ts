@@ -21,7 +21,7 @@
 import type { FuncHandle, Instr, LocalDef, TypeHandle } from "../../../wasm/model/instructions.js";
 import type { PromiseSettleClosureResources } from "./resolution-bodies.js";
 import { buildPromiseSettleClosureValue } from "./resolution-bodies.js";
-import { PROMISE_STATE_PENDING } from "./settlement-bodies.js";
+import { buildNativePromiseAllocation } from "./promise-layout.js";
 
 export interface PromiseWithResolversResources {
   readonly closures: PromiseSettleClosureResources & {
@@ -60,12 +60,7 @@ function pendingPromiseInstrs(r: PromiseWithResolversResources, promise: number,
     { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: r.closures.guardTypeIdx },
     { op: "local.set", index: guard },
-    { op: "i32.const", value: PROMISE_STATE_PENDING },
-    { op: "ref.null.extern" },
-    { op: "ref.null.extern" },
-    r.promiseBagInit,
-    { op: "i32.const", value: 0 },
-    { op: "struct.new", typeIdx: r.promiseTypeIdx },
+    ...buildNativePromiseAllocation(r.promiseTypeIdx, [r.promiseBagInit], [{ op: "i32.const", value: 0 }]),
     { op: "local.set", index: promise },
     ...r.initHook([{ op: "local.get", index: promise }]),
   ];

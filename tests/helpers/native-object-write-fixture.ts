@@ -437,7 +437,7 @@ export function objectWriteRuntime(
     },
   };
   const bytes = emitBinary(f.module),
-    exports = new WebAssembly.Instance(new WebAssembly.Module(bytes), imports).exports;
+    exports = new WebAssembly.Instance(new WebAssembly.Module(bytes as BufferSource), imports).exports;
   const runtime = {
     ...exports,
     key: (index: number) => (exports["key" + index] as () => object)(),

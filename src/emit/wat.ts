@@ -315,9 +315,9 @@ function formatValType(t: ValType): string {
     case "ref_extern":
       return "(ref extern)";
     case "ref":
-      return `(ref ${t.typeIdx})`;
+      return `(ref ${t.typeIdx === -23 ? "exn" : t.typeIdx})`;
     case "ref_null":
-      return `(ref null ${t.typeIdx})`;
+      return `(ref null ${t.typeIdx === -23 ? "exn" : t.typeIdx})`;
     case "v128":
       return "v128";
     case "i8":
@@ -522,6 +522,8 @@ function formatInstr(instr: Instr, _depth: number): string {
       return `return_call_ref ${instr.typeIdx}`;
     case "throw":
       return `throw ${instr.tagIdx}`;
+    case "throw_ref":
+      return "throw_ref";
     case "rethrow":
       return `rethrow ${instr.depth}`;
     // Memory load/store (linear memory)
