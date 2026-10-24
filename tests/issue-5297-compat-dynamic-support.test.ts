@@ -124,13 +124,21 @@ describe("#5297 compatibility-lane dynamic support symbolization", () => {
         expect((instance.exports as Record<string, () => unknown>).test?.()).toBe(2);
       });
 
-      it("still demotes a box whose lowering calls nothing — the arm does not over-claim", async () => {
+      it("names an identity box only on the qualified native environment", async () => {
         const result = await compileIn(ANY_STRING, cell);
         const row = moduleInit(result.irOutcomes ?? []);
-        expect(row.kind).toBe("unsupported");
-        expect(String((row as { detail?: string }).detail ?? "")).toContain(
-          "box resolves dynamic carrier/helper support",
-        );
+        if (cell.target === "standalone") {
+          expect(row.kind).toBe("emitted");
+          expect(row).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
+          const { instance } = await WebAssembly.instantiate(result.binary, {});
+          (instance.exports.__module_init as (() => void) | undefined)?.();
+          expect((instance.exports.test as () => number)()).toBe(1);
+        } else {
+          expect(row.kind).toBe("unsupported");
+          expect(String((row as { detail?: string }).detail ?? "")).toContain(
+            "box resolves dynamic carrier/helper support",
+          );
+        }
       });
     });
   }

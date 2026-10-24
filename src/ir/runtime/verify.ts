@@ -29,7 +29,7 @@ import { irSupportRef, closureSignatureEquals } from "../core/types.js";
 // #4605 — the module-level declared-type tables and the rules that read them.
 // `verifyIrFunction` stays standalone: the tables arrive as an optional
 // parameter, and their absence is always a conservative skip.
-import { declaredCallProblems, declaredGlobalProblem, irBindingKey } from "../core/declared-types.js";
+import { declaredCallInstructionProblems, declaredGlobalProblem, irBindingKey } from "../core/declared-types.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 // #2949 slice 1 / #3954 phase 1 — the dynamic-operand rules (payload-kind
 // consistency of unbox/tag.test) are DOMAIN questions, not ECMAScript ones:
@@ -2651,9 +2651,7 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
       }
     }
     if (signature !== undefined) {
-      const want = signature.result ? (asVal(signature.result)?.kind ?? null) : null;
-      const args = instr.args.length;
-      for (const p of declaredCallProblems(instr.target.name, args, resultKind, signature, want)) {
+      for (const p of declaredCallInstructionProblems(instr, signature, ctx.typeOf)) {
         roadmapError(ctx, blockId, p);
       }
       return;

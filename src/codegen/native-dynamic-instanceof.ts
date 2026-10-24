@@ -1,167 +1,30 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
- * (#2916 Slice B) The host-free substrate for the FULLY-DYNAMIC `instanceof`
- * right-hand side under `--target standalone` / `--target wasi`.
+ * Shared native OrdinaryHasInstance and InstanceofOperator.
  *
- * ## The leak this closes
+ * The ordinary helper is also called by Function.prototype[@@hasInstance], so
+ * it never consults a custom handler. For host-free values it validates the
+ * left operand, performs canonical Get(target, "prototype") once and reuses the
+ * existing representation-aware prototype walk. Missing/non-object prototypes
+ * return the TypeError sentinel. The operator owns RHS validation, GetMethod,
+ * handler Call/ToBoolean and the final ordinary delegation.
  *
- * `emitDynamicInstanceOf` (identifiers.ts) is the residual arm for an RHS whose
- * constructor identity is NOT knowable at compile time — an `any`-typed local, a
- * function-valued parameter, a property access, a call result, a comma
- * expression. Every static rule ahead of it (the #2998 primitive-LHS fold, the
- * #2916 non-callable-RHS throw, the builtin-alias rewrite, #3962's user-fnctor
- * arm, Slice A's builtin membership) declines there by construction, so the arm
- * fell through to `ensureLateImport(ctx, "__instanceof_check", …)` and emitted
- * `env::__instanceof_check`. A host-free binary cannot satisfy that import, so
- * the module does not instantiate and the #2961 leak guard refuses the test.
+ * Bound functions are resolved by a reserve/fill dispatcher: their carrier type
+ * can be registered after the first operator site. It delegates each bound
+ * target through the full operator, preserving a target's custom handler.
+ * Identity probes use the same 0/1/2/UNKNOWN protocol and are filled after all
+ * value globals exist. Every emitted instruction array is fresh for index
+ * finalization; no body is minted during the final fill.
  *
- * **Scale, measured on the branch base rather than quoted from the baseline.**
- * The 2026-08-15 standalone baseline lists 59 files naming
- * `env::__instanceof_check` as their SOLE host import, and ~1,500 more naming it
- * alongside others. Both figures are STALE and neither should be quoted. Compiled
- * on current main: **20** of the 59 still emit it, and of a 150-file
- * deterministic sample of the ~1,500, **zero** do — earlier slices (#2998,
- * #3962, Slice A, #4276) resolve those sites statically now.
- *
- * So the live population is **20 files**, and this closes all of them. It is the
- * single import standing between ordinary `instanceof` code and a genuinely
- * host-free module — which is the deliverable. Conformance rows are the secondary
- * metric (see the issue's tiering); the measured yield is +3.
- *
- * ## What the runtime can actually decide, and what it cannot
- *
- * The helper is a DEFINED function, so every question it asks must be answerable
- * from the VALUE. Three classifiers already exist and are shared rather than
- * re-derived here (a second, silently-diverging copy is the hazard
- * `closure-classifier.ts` was created to end):
- *
- *  - `__typeof_function` — IsCallable. Finalize-corrected
- *    (`typeof-natives-finalize.ts`), so it sees EVERY closure root registered
- *    anywhere in the module plus the #4120 `OBJ_FLAG_CALLABLE`-branded builtin
- *    constructor carriers. Calling it instead of snapshotting
- *    `closureInfoByTypeIdx` at build time is what makes this helper immune to
- *    the order-dependence that #4276 documents for a membership list.
- *  - `__typeof_object` / `__typeof_undefined` — Type(V) is Object, and the
- *    `undefined` singleton (#2106 S1).
- *  - `__isPrototypeOf` — the §7.3.20 step 6/7 chain walk over `$Object.$proto`
- *    with `ref.eq` per level (object-runtime-prototype.ts). ONE walk, shared
- *    with #3962 and Slice C; no parallel `[[Prototype]]` mechanism.
- *  - The two tri-state identity probes below — the canonical `Object` carrier
- *    and `$NativeProto`'s `Object` brand. They answer only exact identities;
- *    an unknown probe leaves the ordinary conservative path untouched.
- *
- * ## The closure → prototype edge (#2660 M3) — and the remaining gap
- *
- * Until #2660 M3, `Get(C, "prototype")` was unanswerable for a **closure**: a
- * standalone function value is a WasmGC closure-wrapper struct, and its
- * prototype object lives in a module GLOBAL keyed by the COMPILE-TIME symbol
- * name (`fnctor-prototype.ts`, and `ctx.protoGlobals` for classes), with no
- * runtime edge from the value. So a closure RHS answered the conservative
- * `false` and the arbitrary runtime-`Function(...)` prototype cases remained
- * unresolved. The explicit `FACTORY.prototype = Object.prototype` join is a
- * separate, exact `$NativeProto` identity that the probes below can answer.
- *
- * Three arms close the modeled cases, in this precedence order:
- *
- * 1. **Own `prototype` on a NON-`$Object` callable.** The `ref.test $Object`
- *    branch below gained an `else`. `__hasOwnProperty`/`__extern_get` dispatch
- *    on the receiver kind themselves and route a closure into its own-property
- *    bag (#3468), where `F.prototype = v` actually lands — so the read is
- *    exactly as authoritative there as on a branded carrier. This is what lets
- *    `FACTORY.prototype = undefined` / `= "error"` on a `new Function` value
- *    reach the §7.3.20 step-5 TypeError (`S15.3.5.3_A2_T2` and `_A2_T6`,
- *    measured fail→pass) instead of the conservative `false`.
- * 2. **The identity edge**, `__closure_proto_of`
- *    (`closure-prototype-edge.ts`), consulted when NO own `prototype` exists —
- *    which is why the hasOwn miss now falls through instead of returning 0. It
- *    matches the value against the canonical singleton global for each user
- *    constructor / class by `ref.eq` and answers the SAME object the
- *    `[[Prototype]]` seeding uses, so a hit is the genuine `Get(C,"prototype")`
- *    and a miss is `null`. It is also consulted on the NOT-callable tail,
- *    because a CLASS value is `typeof "object"` in this backend (reason 2
- *    there) yet is callable per spec.
- * 3. **The canonical `Object.prototype` identity.** A runtime-created
- *    `Function()` can be joined to that native prototype by an own-property
- *    assignment. The Object-brand probe recognizes that exact value and
- *    answers the ordinary object-family membership without guessing about any
- *    other runtime-created prototype.
- *
- * The closure edge emits NOTHING when the module has no edges, and neither
- * identity arm can produce a wrong `true`: the closure edge is an exact
- * singleton match, the Object-brand arm is an exact native-proto brand match,
- * and the own-property arm reads a property the program itself wrote.
- *
- * ## The answers, and why each is the least-wrong one available
- *
- * The tri-state is the one `emitInstanceofThrowGuard` already consumes: 0 false,
- * 1 true, 2 throw a wasm-level TypeError.
- *
- * | RHS at runtime                                 | answer       | why                                                                                                       |
- * | ---------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------- |
- * | `null` / `undefined`                           | 0            | host dynamic-path parity (`runtime.ts:2353`). This backend still lowers some `Function(a,b)` forms to null, and `primitive instanceof FACTORY` must stay `false`, not throw (`S15.3.5.3_A1_T1…T8`). |
- * | callable, OWNS a `prototype` property          | full §7.3.20 | an own-property read on a real `$Object` is authoritative: a present-but-non-object `prototype` is genuinely the program's state ⇒ 2, otherwise the chain walk decides. |
- * | callable, no modelled `prototype`              | 0            | **documented residual**, see below.                                                                        |
- * | anything else (incl. genuine primitives)       | 0            | there is no SOUND runtime primitive test in this backend — see the "no wrong throws" section.               |
- *
- * ### The residual, stated plainly
- *
- * `obj instanceof FACTORY` where `FACTORY` holds a runtime closure still
- * answers **`false`, not the spec's true/TypeError**, unless its own
- * `prototype` is a modelled value (including the exact `Object.prototype`
- * identity). `S15.3.5.3_A2_T2/T5/T6` (which want a TypeError for an arbitrary
- * non-object `F.prototype`) remain residuals; `_A3_T1` is the expected initial
- * false, while `_A3_T2` is closed by the Object-brand join. That is deliberate.
- * Both alternatives are WORSE: answering `2` asserts "F.prototype really is a
- * non-object", and answering `1` asserts membership — neither is known. A
- * missed conversion is a missed conversion; a wrong `true` passes a test
- * vacuously and a wrong throw is observable in a `catch`. Closing the remaining
- * cases needs a general runtime closure→prototype edge, not a guess in this
- * module.
- *
- * ### No wrong throws — the second thing this module measured and changed
- *
- * §13.10.2 steps 1/4 mandate a TypeError for a non-object / non-callable RHS,
- * and the first cut emitted one whenever the target was not classifiable as an
- * object. That is unsound HERE, because an unmodelled builtin constructor is
- * lowered to a boxed-primitive carrier: the shared classifiers answer
- * `typeof Int8Array === "boolean"` (probe-verified on this branch). So every
- * "is the target a primitive" predicate built on them mistakes a real
- * constructor for a primitive. Measured consequence:
- * `typedArray instanceof TypedArray` threw "Right-hand side of 'instanceof' is
- * not callable" where the host predicate answers `false`
- * (`built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js`).
- *
- * Nothing PROVABLE was lost by dropping it: a statically-primitive RHS and a
- * provably non-callable object RHS both still throw at codegen, one dispatch
- * step earlier, where the evidence is the static TYPE rather than a runtime
- * representation the backend gets wrong.
- *
- * ## Why this cannot regress a passing test
- *
- * The arm runs ONLY under `noJsHost`, and ONLY where the code it replaces
- * emitted `env::__instanceof_check`. Under the authoritative measurement (the CI
- * worker / `scripts/test262-worker.mjs`, which applies `standaloneHostImportError`)
- * every reaching test is already a `compile_error`: a leaking module never
- * instantiates. So a native answer can only CONVERT such a test, never turn a
- * passing one into a failure. The JS-host lane never enters this module and is
- * byte-identical.
- *
- * NOTE for anyone re-measuring locally: `runTest262File`'s ORIGINAL-HARNESS lane
- * does NOT apply that guard, so a leaking module still runs there with the host
- * supplying the import. A local pass/fail on a leaking file is therefore an
- * upper bound on the host answer, NOT the lane CI scores.
- *
- * ## Index-space discipline
- *
- * The helper is minted with `mintDefinedFunc` (a STABLE handle — no shifter
- * touches it, `resolveLayout` resolves it once at emit) and pushed in the same
- * call, so its baked callee indices are walked by the late-import body shifter
- * like any other defined function. Nothing is minted at finalize (the #4221
- * hazard); the only finalize-time correction it depends on is a BODY rewrite of
- * `__typeof_function`, which changes no index at all.
+ * Class/closure prototype materialization, getter calls and exceptions remain
+ * owned by the canonical property runtime. The JavaScript boundary keeps its
+ * existing compatibility instruction selection until its reviewed retirement.
+ * This runtime cannot repair a source producer that supplied an incorrect
+ * carrier; those remaining program-level gaps are tracked in issue 7139.
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { hostFreeEnvironment, type CodegenContext, type FunctionContext } from "./context/types.js";
+import { recordStandaloneRuntimeKeyClassMemberRead } from "./standalone-class-dyn-member.js";
 import type { ts } from "../ts-api.js";
 import { OBJ_FLAG_CALLABLE } from "./builtin-callable-brand.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
@@ -193,6 +56,7 @@ const OBJECT_PROTO_INSTANCE_HELPER = "__instanceof_object_prototype";
 /** (#6651 I3) `target === %Function.prototype%` — an exact carrier probe, 0/1. */
 const FUNCTION_PROTO_TARGET_HELPER = "__instanceof_function_prototype_target";
 const UNKNOWN_RESULT = 3;
+const BOUND_INSTANCEOF_HELPER = "__instanceof_bound_dispatch";
 
 /** Param / local slots of the helper body. */
 const P_VALUE = 0;
@@ -211,48 +75,26 @@ const L_OBJECT_PROTO_CODE = 5;
  * helper is present while the dynamic body is built, and its body is filled
  * only after all source expressions have published their canonical globals.
  */
-function reserveBuiltinCtorIdentityHelper(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get(BUILTIN_CTOR_IDENTITY_HELPER);
+function reserveBinaryInstanceofProbe(ctx: CodegenContext, name: string): number {
+  const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
   const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
   const funcIdx = mintDefinedFunc(ctx);
-  const fn: WasmFunction = {
-    name: BUILTIN_CTOR_IDENTITY_HELPER,
-    typeIdx,
-    locals: [],
-    // 0/1 are definitive results; 3 means that this target is not the
-    // canonical Object constructor carrier known to this module (and, #7120,
-    // not an Error-family carrier whose `$tag` set proves membership).
-    body: [{ op: "i32.const", value: UNKNOWN_RESULT }],
-    exported: false,
-  };
-  pushDefinedFunc(ctx, funcIdx, fn);
-  ctx.funcMap.set(BUILTIN_CTOR_IDENTITY_HELPER, funcIdx);
-  return funcIdx;
-}
-
-/** Reserve the Object.prototype identity probe used by OrdinaryHasInstance. */
-function reserveObjectPrototypeInstanceHelper(ctx: CodegenContext): number {
-  const existing = ctx.funcMap.get(OBJECT_PROTO_INSTANCE_HELPER);
-  if (existing !== undefined) return existing;
-  const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
-  const funcIdx = mintDefinedFunc(ctx);
-  const fn: WasmFunction = {
-    name: OBJECT_PROTO_INSTANCE_HELPER,
+  pushDefinedFunc(ctx, funcIdx, {
+    name,
     typeIdx,
     locals: [],
     body: [{ op: "i32.const", value: UNKNOWN_RESULT }],
     exported: false,
-  };
-  pushDefinedFunc(ctx, funcIdx, fn);
-  ctx.funcMap.set(OBJECT_PROTO_INSTANCE_HELPER, funcIdx);
+  });
+  ctx.funcMap.set(name, funcIdx);
   return funcIdx;
 }
 
 /**
  * (#6651 I3) Reserve the `%Function.prototype%` TARGET-identity probe.
  *
- * Same reserve/fill shape as {@link reserveObjectPrototypeInstanceHelper}, and
+ * Same reserve/fill shape as {@link reserveBinaryInstanceofProbe}, and
  * for the same ordering reason: the `$NativeProto` type and the Function brand
  * are published by operand lowering, which runs AFTER the dynamic helper's body
  * is baked. The unfilled answer is `0` ("not proven to be the carrier"), which
@@ -575,6 +417,59 @@ function linkedPeerPrototypeArm(ctx: CodegenContext, externGetIdx: number, guard
   ];
 }
 
+/** OrdinaryHasInstance's bound arm delegates to the full target operator. */
+function fillBoundInstanceofDispatch(ctx: CodegenContext): void {
+  const index = ctx.funcMap.get(BOUND_INSTANCEOF_HELPER);
+  const operator = ctx.funcMap.get(NATIVE_INSTANCEOF_OPERATOR);
+  if (index === undefined || operator === undefined || ctx.boundFnTypeIdx < 0) return;
+  const fn = definedFuncAt(ctx, index);
+  if (!fn) return;
+  fn.body = [
+    { op: "local.get", index: P_TARGET },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.boundFnTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: P_VALUE },
+        { op: "local.get", index: P_TARGET },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.boundFnTypeIdx },
+        { op: "struct.get", typeIdx: ctx.boundFnTypeIdx, fieldIdx: 0 },
+        { op: "call", funcIdx: operator },
+        { op: "return" },
+      ],
+    },
+    { op: "i32.const", value: UNKNOWN_RESULT },
+  ];
+}
+
+/** Settle the same (value,target) tri-state protocol used by identity probes. */
+function settledInstanceofProbe(funcIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: P_VALUE },
+    { op: "local.get", index: P_TARGET },
+    { op: "call", funcIdx },
+    { op: "local.tee", index: L_BUILTIN_CODE },
+    { op: "i32.const", value: UNKNOWN_RESULT },
+    { op: "i32.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "local.get", index: L_BUILTIN_CODE }, { op: "return" }] },
+  ];
+}
+
+/** Positive primitive proof; unknown values remain unclassified. */
+function provenPrimitiveInstrs(slot: number, primitiveIdxs: readonly (number | undefined)[]): Instr[] {
+  const out: Instr[] = [
+    { op: "local.get", index: slot },
+    { op: "call", funcIdx: primitiveIdxs[0]! },
+  ];
+  for (const idx of primitiveIdxs.slice(1)) {
+    out.push({ op: "local.get", index: slot }, { op: "call", funcIdx: idx! }, { op: "i32.or" });
+  }
+  return out;
+}
+
 /**
  * Register (once) the native `__instanceof_dynamic` helper and return its stable
  * function handle, or `undefined` when the standalone substrate it needs is
@@ -582,6 +477,9 @@ function linkedPeerPrototypeArm(ctx: CodegenContext, externGetIdx: number, guard
  * than emit a partial answer.
  */
 export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | undefined {
+  // The operator implicitly reads the runtime constructor prototype. Record
+  // the explicit-read demand before reuse; finalize builds the identity edge.
+  if (hostFreeEnvironment(ctx)) recordStandaloneRuntimeKeyClassMemberRead(ctx);
   const existing = ctx.funcMap.get(HELPER_NAME);
   if (existing !== undefined) return existing;
 
@@ -606,9 +504,12 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
   // finalize, once every fnctor/class prototype global exists. `undefined` only
   // when the reservation did not happen, in which case every arm below that
   // depends on it emits nothing and this helper keeps its previous answers.
+  const boundDispatchIdx = hostFreeEnvironment(ctx)
+    ? reserveBinaryInstanceofProbe(ctx, BOUND_INSTANCEOF_HELPER)
+    : undefined;
   const closureProtoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
-  const builtinCtorIdentityIdx = reserveBuiltinCtorIdentityHelper(ctx);
-  const objectProtoInstanceIdx = reserveObjectPrototypeInstanceHelper(ctx);
+  const builtinCtorIdentityIdx = reserveBinaryInstanceofProbe(ctx, BUILTIN_CTOR_IDENTITY_HELPER);
+  const objectProtoInstanceIdx = reserveBinaryInstanceofProbe(ctx, OBJECT_PROTO_INSTANCE_HELPER);
   const functionProtoTargetIdx = reserveFunctionPrototypeTargetHelper(ctx);
   flushLateImportShifts(ctx, null);
 
@@ -642,17 +543,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
     { op: "call", funcIdx: typeofUndefinedIdx },
     { op: "i32.or" },
   ];
-  /** Positive primitive proof; unknown values must remain conservative false. */
-  const isProvenPrimitive = (slot: number): Instr[] => {
-    const out: Instr[] = [
-      { op: "local.get", index: slot },
-      { op: "call", funcIdx: primitiveIdxs[0]! },
-    ];
-    for (const idx of primitiveIdxs.slice(1)) {
-      out.push({ op: "local.get", index: slot }, { op: "call", funcIdx: idx! }, { op: "i32.or" });
-    }
-    return out;
-  };
+  const isProvenPrimitive = (slot: number): Instr[] => provenPrimitiveInstrs(slot, primitiveIdxs);
   const returnConst = (value: number): Instr[] => [{ op: "i32.const", value }, { op: "return" }];
 
   addStringConstantGlobal(ctx, "prototype");
@@ -663,7 +554,9 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
   /** §7.3.20 steps 5–7 for a `prototype` value already in `L_PROTO`. */
   const ordinaryHasInstanceTail = (): Instr[] => [
     ...isNullish(L_PROTO),
-    ...isProvenPrimitive(L_PROTO),
+    ...(hostFreeEnvironment(ctx)
+      ? [...isObjectValue(L_PROTO), { op: "i32.eqz" as const }]
+      : isProvenPrimitive(L_PROTO)),
     { op: "i32.or" },
     { op: "if", blockType: { kind: "empty" }, then: returnConst(2) },
     { op: "local.get", index: L_PROTO },
@@ -753,28 +646,18 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
   ];
 
   const body: Instr[] = [
-    // §13.10.2 step 1, with the host dynamic path's ONE documented divergence:
-    // null / undefined answer `false` instead of throwing, because this backend
-    // still lowers some `Function(params, body)` forms to null and
-    // `primitive instanceof FACTORY` must stay `false` (S15.3.5.3_A1_T1…T8).
+    // OrdinaryHasInstance returns false for a non-callable target. The full
+    // operator validates its RHS before delegating here.
     ...isNullish(P_TARGET),
     { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
+
+    ...(boundDispatchIdx === undefined ? [] : settledInstanceofProbe(boundDispatchIdx)),
 
     // A runtime alias may still carry the canonical Object constructor after
     // its source binding was written (e.g. `var O = 0; O = Object`).  The
     // identity probe is deliberately tri-state: only the exact carrier match
     // is decisive, and every other target keeps the normal callable path.
-    { op: "local.get", index: P_VALUE },
-    { op: "local.get", index: P_TARGET },
-    { op: "call", funcIdx: builtinCtorIdentityIdx },
-    { op: "local.tee", index: L_BUILTIN_CODE },
-    { op: "i32.const", value: UNKNOWN_RESULT },
-    { op: "i32.ne" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: L_BUILTIN_CODE }, { op: "return" }],
-    },
+    ...settledInstanceofProbe(builtinCtorIdentityIdx),
 
     // IsCallable(C) — the shared, finalize-corrected classifier.
     { op: "local.get", index: P_TARGET },
@@ -787,44 +670,54 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
         // read. Order matters: a primitive V must not fire a `prototype`
         // accessor nor throw on a non-object prototype (#2702).
         ...requireObjectValue(),
-        // A #4120-branded builtin constructor carrier is a real `$Object`, so
-        // its `prototype` own property is an authoritative read. Tested by
-        // reading the brand bit DIRECTLY rather than through
-        // `buildBuiltinBrandTestArm`, whose emptiness depends on whether any
-        // carrier had been branded YET at build time — an order dependence this
-        // helper must not inherit (it is minted at the first dynamic-instanceof
-        // site, which can precede every carrier).
-        { op: "local.get", index: P_TARGET },
-        { op: "any.convert_extern" },
-        { op: "local.set", index: L_TARGET_ANY },
-        { op: "local.get", index: L_TARGET_ANY },
-        { op: "ref.test", typeIdx: objectTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          // (#2660 M3) The ELSE arm is new: a callable that is NOT an `$Object`
-          // is a WasmGC closure carrier, whose own `prototype` lives in the
-          // #3468 side bag — an equally authoritative read. Module header, "the
-          // closure → prototype edge", half 1.
-          else: ownedPrototypeOrdinaryHasInstance(),
-          then: [
-            { op: "local.get", index: L_TARGET_ANY },
-            { op: "ref.cast", typeIdx: objectTypeIdx },
-            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
-            { op: "i32.const", value: OBJ_FLAG_CALLABLE },
-            { op: "i32.and" },
-            { op: "if", blockType: { kind: "empty" }, then: ownedPrototypeOrdinaryHasInstance() },
-          ],
-        },
-        // (#2660 M3) No own `prototype` anywhere — try the identity edge to the
-        // compile-time prototype registry before giving up.
-        ...prototypeEdgeArm(),
-        // (#6644) …and the linked provider, for a target it owns.
-        ...linkedPeerPrototypeArm(ctx, externGetIdx, [...requireObjectValue(), ...ordinaryHasInstanceTail()]),
-        // Callable, and its `[[Prototype]]` source is not reachable from the
-        // value — see the module header's "residual". Conservative `false`,
-        // never a wrong `true` or a wrong throw.
-        ...returnConst(0),
+        ...(hostFreeEnvironment(ctx)
+          ? ([
+              { op: "local.get", index: P_TARGET },
+              ...stringConstantExternrefInstrs(ctx, "prototype"),
+              { op: "call", funcIdx: externGetIdx },
+              { op: "local.set", index: L_PROTO },
+              ...ordinaryHasInstanceTail(),
+            ] satisfies Instr[])
+          : ([
+              // A #4120-branded builtin constructor carrier is a real `$Object`, so
+              // its `prototype` own property is an authoritative read. Tested by
+              // reading the brand bit DIRECTLY rather than through
+              // `buildBuiltinBrandTestArm`, whose emptiness depends on whether any
+              // carrier had been branded YET at build time — an order dependence this
+              // helper must not inherit (it is minted at the first dynamic-instanceof
+              // site, which can precede every carrier).
+              { op: "local.get", index: P_TARGET },
+              { op: "any.convert_extern" },
+              { op: "local.set", index: L_TARGET_ANY },
+              { op: "local.get", index: L_TARGET_ANY },
+              { op: "ref.test", typeIdx: objectTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // (#2660 M3) The ELSE arm is new: a callable that is NOT an `$Object`
+                // is a WasmGC closure carrier, whose own `prototype` lives in the
+                // #3468 side bag — an equally authoritative read. Module header, "the
+                // closure → prototype edge", half 1.
+                else: ownedPrototypeOrdinaryHasInstance(),
+                then: [
+                  { op: "local.get", index: L_TARGET_ANY },
+                  { op: "ref.cast", typeIdx: objectTypeIdx },
+                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                  { op: "i32.const", value: OBJ_FLAG_CALLABLE },
+                  { op: "i32.and" },
+                  { op: "if", blockType: { kind: "empty" }, then: ownedPrototypeOrdinaryHasInstance() },
+                ],
+              },
+              // (#2660 M3) No own `prototype` anywhere — try the identity edge to the
+              // compile-time prototype registry before giving up.
+              ...prototypeEdgeArm(),
+              // (#6644) …and the linked provider, for a target it owns.
+              ...linkedPeerPrototypeArm(ctx, externGetIdx, [...requireObjectValue(), ...ordinaryHasInstanceTail()]),
+              // Callable, and its `[[Prototype]]` source is not reachable from the
+              // value — see the module header's "residual". Conservative `false`,
+              // never a wrong `true` or a wrong throw.
+              ...returnConst(0),
+            ] satisfies Instr[])),
       ],
     },
 
@@ -879,6 +772,7 @@ export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | und
     body,
     exported: false,
   });
+  if (hostFreeEnvironment(ctx) && ensureInstanceofOperator(ctx) === undefined) return undefined;
   return funcIdx;
 }
 
@@ -1105,6 +999,7 @@ function fillBuiltinCtorIdentityHelper(ctx: CodegenContext, typeofObjectIdx: num
  * conservative path.
  */
 export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
+  fillBoundInstanceofDispatch(ctx);
   const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined) return;
@@ -1197,77 +1092,30 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
 }
 
 /** `__instanceof_operator(value, target) -> i32` — §13.10.2 over the ordinary helper. */
-const OPERATOR_HELPER_NAME = "__instanceof_operator";
+export const NATIVE_INSTANCEOF_OPERATOR = "__instanceof_operator";
 
 /** Local slots of the §13.10.2 operator wrapper (params are P_VALUE / P_TARGET). */
 const OP_L_HANDLER = 2;
 const OP_L_ARGS = 3;
 
 /**
- * (#6651 I2) §13.10.2 InstanceofOperator steps 2-4 — the `@@hasInstance`
- * dispatch — as a WRAPPER around `__instanceof_dynamic`, not as an arm inside
- * it.
- *
- * ## Why a wrapper
- *
- * `__instanceof_dynamic` IS §7.3.20 OrdinaryHasInstance, and
- * `%Function.prototype%[@@hasInstance]` (`function-proto-has-instance.ts`) is
- * that abstract operation's public spelling — it calls the helper directly.
- * OrdinaryHasInstance must NEVER consult `@@hasInstance`; an arm inside the
- * helper would make `Function.prototype[Symbol.hasInstance].call(F, x)`
- * re-enter `F`'s own handler, which no step of the spec does. The handler
- * dispatch therefore belongs one level up, in the OPERATOR, and the ordinary
- * helper stays byte-identical for every existing caller.
- *
- * ## The steps, and what each one costs at runtime
- *
- *   2. `instOfHandler = GetMethod(C, @@hasInstance)` — `__extern_get` against
- *      the interned well-known `$Symbol` carrier `__box_symbol(2)`, the same
- *      identity a user's `F[Symbol.hasInstance] = …` write lands on. A
- *      THROWING accessor propagates: there is no catch here, which is exactly
- *      §13.10.2 step 3's `?` (`symbol-hasinstance-get-err.js`, which measured
- *      "Expected a Test262Error but got a TypeError" before this).
- *   4. `ToBoolean(Call(instOfHandler, C, «O»))` — the generic open-`any`
- *      bridge `__apply_closure(handler, C, argvec)` with a one-element
- *      `__objvec` holding `O`, then `__is_truthy`. That gives the handler the
- *      spec's `this` (`C`) and argument list (`«O»`, length 1) without a host
- *      import (`symbol-hasinstance-invocation.js`), and coerces whatever it
- *      returns (`symbol-hasinstance-to-boolean.js`).
- *
- * Everything else — a null/undefined handler (§13.10.2 step 4's "is not
- * undefined" is false, `GetMethod` having already mapped both to `undefined`),
- * and steps 5-6 — falls through to `__instanceof_dynamic` unchanged.
- *
- * ## Absent-not-wrong, twice
- *
- *  - A handler that is present but which `__typeof_function` cannot classify as
- *    callable falls through instead of throwing. The spec would throw (Call on
- *    a non-callable), but this backend's classifier is conservative about
- *    carrier shapes, so a wrong THROW would be catchable and observable while a
- *    fall-through is only a missed conversion. The statically provable
- *    non-callable spelling (`F[Symbol.hasInstance] = null`) never reaches here:
- *    `tryEmitNonCallableRhsThrow` answers it, and still does.
- *  - A `null` target skips the read entirely, so `__extern_get` is never handed
- *    a null receiver.
- *
- * ## Why this is not emitted everywhere
- *
- * The wrapper is built only for a source file that INSTALLS a possibly-callable
- * `@@hasInstance` (`moduleInstallsCallableHasInstance`). That is the same
- * module-scope question `tryEmitNonCallableRhsThrow` already asks, and it keeps
- * `__apply_closure` plus the argument-vector runtime out of every standalone
- * binary that merely uses `instanceof`. Residual, stated plainly: in a
- * MULTI-FILE compilation where the first dynamic `instanceof` site lives in a
- * file that does not install a handler and a later site lives in one that does,
- * the wrapper is minted once, from the first site, and the later site keeps the
- * ordinary helper. That is a missed conversion, never a wrong answer.
+ * GetMethod/Call/ToBoolean are operator semantics, separate from the public
+ * ordinary-instance method. Native invalid RHS/handler values return 2; the IR
+ * or existing Wasm caller turns that into a real native TypeError. Getter and
+ * handler exceptions propagate directly. IR reserves this entry regardless of
+ * source-local handler installation; the compatibility AST caller retains its
+ * previous demand scan.
  */
-function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
-  const existing = ctx.funcMap.get(OPERATOR_HELPER_NAME);
+export function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
+  const strict = hostFreeEnvironment(ctx);
+  const existing = ctx.funcMap.get(NATIVE_INSTANCEOF_OPERATOR);
   if (existing !== undefined) return existing;
 
   const ordinaryIdx = ensureNativeDynamicInstanceOf(ctx);
   if (ordinaryIdx === undefined) return undefined;
+  // Ordinary registration may have completed this reciprocal dependency.
+  const reserved = ctx.funcMap.get(NATIVE_INSTANCEOF_OPERATOR);
+  if (reserved !== undefined) return reserved;
 
   // Every callee must be registered BEFORE the body bakes its index; the object
   // runtime (which owns `__objvec_new` / `__objvec_push`) is already up via
@@ -1276,6 +1124,8 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
   const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [I32], [EXTERNREF]);
   const isTruthyIdx = ensureLateImport(ctx, "__is_truthy", [EXTERNREF], [I32]);
   const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [I32]);
+  const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [I32]);
+  const isCallableIdx = strict ? ensureLateImport(ctx, "__is_callable", [EXTERNREF], [I32]) : typeofFunctionIdx;
   const typeofUndefinedIdx = ensureLateImport(ctx, "__typeof_undefined", [EXTERNREF], [I32]);
   const applyClosureIdx = reserveApplyClosure(ctx);
   flushLateImportShifts(ctx, null);
@@ -1288,6 +1138,8 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
     boxSymbolIdx === undefined ||
     isTruthyIdx === undefined ||
     typeofFunctionIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    isCallableIdx === undefined ||
     typeofUndefinedIdx === undefined ||
     objVecNewIdx === undefined ||
     objVecPushIdx === undefined ||
@@ -1312,6 +1164,21 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
   ];
 
   const body: Instr[] = [
+    ...(strict
+      ? ([
+          // InstanceofOperator validates the RHS before GetMethod or the LHS kind.
+          { op: "local.get", index: P_TARGET },
+          { op: "ref.is_null" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 2 }, { op: "return" }] },
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofObjectIdx },
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.or" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 2 }, { op: "return" }] },
+        ] satisfies Instr[])
+      : []),
     { op: "local.get", index: P_TARGET },
     { op: "ref.is_null" },
     { op: "i32.eqz" },
@@ -1335,12 +1202,25 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
           blockType: { kind: "empty" },
           then: [
             { op: "local.get", index: OP_L_HANDLER },
-            { op: "call", funcIdx: typeofFunctionIdx },
-            { op: "if", blockType: { kind: "empty" }, then: callHandler },
+            { op: "call", funcIdx: isCallableIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: callHandler,
+              else: strict ? [{ op: "i32.const", value: 2 }, { op: "return" }] : undefined,
+            },
           ],
         },
       ],
     },
+    ...(strict
+      ? ([
+          { op: "local.get", index: P_TARGET },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 2 }, { op: "return" }] },
+        ] satisfies Instr[])
+      : []),
     // steps 5-6: OrdinaryHasInstance(C, O), tri-state, unchanged.
     { op: "local.get", index: P_VALUE },
     { op: "local.get", index: P_TARGET },
@@ -1349,9 +1229,9 @@ function ensureInstanceofOperator(ctx: CodegenContext): number | undefined {
 
   const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
   const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(OPERATOR_HELPER_NAME, funcIdx);
+  ctx.funcMap.set(NATIVE_INSTANCEOF_OPERATOR, funcIdx);
   pushDefinedFunc(ctx, funcIdx, {
-    name: OPERATOR_HELPER_NAME,
+    name: NATIVE_INSTANCEOF_OPERATOR,
     typeIdx,
     locals: [
       { name: "hasInstanceHandler", type: EXTERNREF },
@@ -1391,7 +1271,7 @@ export function tryEmitNativeDynamicInstanceOf(
   const operatorIdx = moduleInstallsCallableHasInstance(expr.getSourceFile())
     ? ensureInstanceofOperator(ctx)
     : undefined;
-  const entryName = operatorIdx === undefined ? HELPER_NAME : OPERATOR_HELPER_NAME;
+  const entryName = operatorIdx === undefined ? HELPER_NAME : NATIVE_INSTANCEOF_OPERATOR;
   const helperIdx = operatorIdx ?? ensureNativeDynamicInstanceOf(ctx);
   if (helperIdx === undefined) return null;
   flushLateImportShifts(ctx, fctx);

@@ -1,3 +1,4 @@
+import { projectAstSourceFacts } from "./ast-source-facts.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Integration point between the legacy codegen pipeline and the IR path.
@@ -22,6 +23,11 @@
 // `shiftLateImportIndices` pass is a no-op for every body produced here.
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
+import {
+  nativeConsoleOutputAvailable,
+  ensureIrNativeConsoleProvider,
+  IR_NATIVE_CONSOLE_SYMBOLS,
+} from "../codegen/helpers/ir-native-console.js";
 import { notePreparedFunctionMemberClosures } from "./function-member-closure-plan.js";
 import { projectFunctionValueLoweringPlans } from "./function-object-lowering.js";
 import {
@@ -70,7 +76,7 @@ import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
   irDynamicRuntimeNeedForSymbol,
-  observeIrFunctionObjectCallProviders,
+  observeIrDynamicRuntimeProviders,
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
@@ -155,13 +161,8 @@ import {
   VEC_NEW_SIZED_PREFIX,
 } from "../codegen/vec-elem-set.js"; // (#2856 C2) on-demand vec helpers
 import { ensureHoleyArrayFilter } from "../codegen/hof-native.js";
-import { getOrRegisterHoleyArrayType } from "../codegen/registry/types.js";
 import { classMemberFuncKey } from "../codegen/class-member-keys.js"; // (#1983) collision-free class-member funcMap keys
-import {
-  ensureNativeStringHelpers,
-  standaloneConsoleSinkAvailable,
-  STANDALONE_STDOUT_APPEND_FN,
-} from "../codegen/native-strings.js";
+import { ensureNativeStringHelpers, STANDALONE_STDOUT_APPEND_FN } from "../codegen/native-strings.js";
 import { ensureNativeBatchedConcat } from "../codegen/native-batched-concat.js";
 import {
   nativeStringLiteralMaterialization,
@@ -189,6 +190,7 @@ import { isBooleanType, isNumberType, isStringType } from "../checker/type-mappe
 import {
   addFuncType,
   getArrTypeIdxFromVec,
+  getOrRegisterHoleyArrayType,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
 } from "../codegen/registry/types.js";
@@ -204,7 +206,7 @@ import {
   irNativeNumberToFixedAvailable,
   irNativeNumberToStringAvailable,
 } from "../codegen/number-format-native.js"; // #4462 — host-free Number formatting for the IR string carrier
-import { IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import { IR_NATIVE_PROMISE_DELAY_FN } from "./promise-delay-lowering.js";
 import {
   ensureHostCharCodeAtGuarded,
@@ -343,6 +345,7 @@ import {
   type IrInstr,
   type IrInstrStringConst,
   type IrModule,
+  type IrModuleDeclarations,
   type IrObjectShape,
   type IrStringLengthProvider,
   type IrType,
@@ -365,8 +368,11 @@ import {
   planIrCompilation,
   type IrSelection,
 } from "./select.js";
-import { verifyIrFunction } from "./verify.js";
-import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
+import { verifyIrFunction, type IrVerificationOptions } from "./verify.js";
+import {
+  programAbiModuleDeclarations,
+  verifyRegisteredProviderArtifacts,
+} from "../codegen/program-abi-declared-globals.js";
 import {
   prepareIrRuntimeManifest,
   preparedGeneratorNumberBoxProvider,
@@ -2260,6 +2266,23 @@ function verifyFinalAllocArtifacts(
   return verified;
 }
 
+function requireVerifiedIrFunction(
+  fn: IrFunction,
+  declarations: IrModuleDeclarations | undefined,
+  options: IrVerificationOptions,
+  phase: string,
+): void {
+  const errors = verifyIrFunction(fn, undefined, declarations, options);
+  if (errors.length > 0) {
+    throw new IrInvariantError(
+      "verifier-failure",
+      "verify",
+      `${phase}: ${errors.map((error) => error.message).join("; ")}`,
+      errors,
+    );
+  }
+}
+
 function fillSealedPreparedCallable(
   componentId: string,
   previous: WasmFunction,
@@ -2572,7 +2595,7 @@ export function compileIrPathFunctions(
       // narrower table, or a direct caller would demote where production claims.
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
-      supportsStandaloneConsoleSink: standaloneConsoleSinkAvailable(ctx),
+      supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
       supportsLiteralStringReplace: true,
       ...(loweringPlans?.fnctorNativeStringBoundaries
         ? {
@@ -3256,6 +3279,8 @@ export function compileIrPathFunctions(
         const o = effectiveOverride(name);
         const ambientThisStrict = irFunctionThisStrictness(ctx, stmt); // (#7106 S3c)
         const lowered = lowerFunctionAstToIr(stmt, {
+          dynamicNumericReturn:
+            !ctx.fast && ctx.targetProfile.environment !== "javascript" ? "number-boundary" : undefined,
           exported: hasExportModifier(stmt),
           funcName: name,
           ownerUnitId,
@@ -3281,11 +3306,7 @@ export function compileIrPathFunctions(
           allocRegistry,
           // #2780 (hybrid Row 6): thread the TS checker so `lowerArrayLiteral`
           // can discharge the widening-escape proof via `getContextualType`.
-          checker: ctx.checker,
-          oracle: ctx.oracle,
-          // #3765: share direct-codegen's grounded numeric-local oracle with IR.
-          numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+          ...projectAstSourceFacts(ctx),
         });
         const result = prepareSuspendingAsyncLowering(
           lowered,
@@ -3509,10 +3530,7 @@ export function compileIrPathFunctions(
           classShapes,
           resolver: fromAstResolver,
           allocRegistry,
-          checker: ctx.checker,
-          oracle: ctx.oracle,
-          numericLocalScalarForDecl: (decl: ts.VariableDeclaration) => ctx.usageInference.scalarForDecl(decl),
-          hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+          ...projectAstSourceFacts(ctx),
         };
         let result: LoweredFunctionResult;
         if (ts.isClassDeclaration(member) || ts.isClassExpression(member)) {
@@ -3711,10 +3729,7 @@ export function compileIrPathFunctions(
             allocRegistry,
             // #2780 (hybrid Row 6): thread the TS checker for the
             // ArrayLiteral widening-escape proof in method bodies too.
-            checker: ctx.checker,
-            oracle: ctx.oracle,
-            numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-            hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+            ...projectAstSourceFacts(ctx),
           });
           if (result.main.unitId !== ownerUnitId) {
             throw new IrInvariantError(
@@ -3907,10 +3922,7 @@ export function compileIrPathFunctions(
         classShapes: moduleInitInput.classShapes ?? classShapes,
         resolver: fromAstResolver,
         allocRegistry,
-        checker: ctx.checker,
-        oracle: ctx.oracle,
-        numericLocalScalarForDecl: (decl) => ctx.usageInference.scalarForDecl(decl),
-        hostDynamicClassMethodNames: ctx.hostDynamicClassMethodNames,
+        ...projectAstSourceFacts(ctx),
       });
       if (result.main.unitId !== moduleInitUnitId) {
         throw new IrInvariantError(
@@ -4031,15 +4043,7 @@ export function compileIrPathFunctions(
         throw new Error("injected synthetic hygiene failure");
       }
       const optimized = runHygienePasses(entry.fn, allocRegistry);
-      const postErrors = verifyIrFunction(optimized, undefined, undefined, verifyOptions);
-      if (postErrors.length > 0) {
-        throw new IrInvariantError(
-          "verifier-failure",
-          "verify",
-          `post-hygiene verify: ${postErrors.map((error) => error.message).join("; ")}`,
-          postErrors,
-        );
-      }
+      requireVerifiedIrFunction(optimized, undefined, verifyOptions, "post-hygiene verify");
       assertAllocProvenance(optimized, allocRegistry);
       hygieneCandidates.push({ ...entry, fn: optimized });
     } catch (error) {
@@ -4109,15 +4113,7 @@ export function compileIrPathFunctions(
       }
       const changed = after !== before.fn;
       const final = changed ? runHygienePasses(after, allocRegistry) : after;
-      const verifyErrors = verifyIrFunction(final, undefined, declsAfterInline, verifyOptions);
-      if (verifyErrors.length > 0) {
-        throw new IrInvariantError(
-          "verifier-failure",
-          "verify",
-          `post-inline verify: ${verifyErrors.map((error) => error.message).join("; ")}`,
-          verifyErrors,
-        );
-      }
+      requireVerifiedIrFunction(final, declsAfterInline, verifyOptions, "post-inline verify");
       if (readEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW") === "provenance-synthetic" && before.synthesized) {
         throw new IrInvariantError(
           "allocation-provenance-failure",
@@ -4405,15 +4401,7 @@ export function compileIrPathFunctions(
           ? hygienic
           : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(batchPolicy.batch));
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
-      const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU, verifyOptions);
-      if (verifyErrors.length > 0) {
-        throw new IrInvariantError(
-          "verifier-failure",
-          "verify",
-          `post-mono verify: ${verifyErrors.map((error) => error.message).join("; ")}`,
-          verifyErrors,
-        );
-      }
+      requireVerifiedIrFunction(final, declsAfterTU, verifyOptions, "post-mono verify");
       assertAllocProvenance(final, allocRegistry);
       readyForLower.push({
         artifactUnitId: fn.unitId,
@@ -4883,6 +4871,19 @@ export function compileIrPathFunctions(
     failedOwners,
     preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest, fuseNativeNumberFormatCarriers),
   );
+  healthyForLower = retainHealthyOwners(healthyForLower);
+  if (healthyForLower.length === 0) return finishReport();
+  if (
+    !runGlobalPreparation(() =>
+      verifyRegisteredProviderArtifacts(
+        ctx,
+        healthyForLower,
+        (fn, declarations) => verifyIrFunction(fn, undefined, declarations, verifyOptions),
+        (entry, error) => markOwnerFailure(terminalOwnerOf(entry), entry.artifactUnitId, entry.name, error, "verify"),
+      ),
+    )
+  )
+    return finishReport();
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
   // This vector is intentionally captured only after every final IR/resource
@@ -7272,11 +7273,9 @@ function makeFromAstResolver(
     nativeNumberToFixedAvailable(): boolean {
       return irNativeNumberToFixedAvailable(ctx);
     },
-    // (#4462) Standalone's host-free console sink (#3469). Minted in the
-    // pre-body window, which precedes both IR planning and body lowering, so
-    // `funcMap` presence is the same fact at claim time and at build time.
-    standaloneConsoleSinkAvailable(): boolean {
-      return standaloneConsoleSinkAvailable(ctx);
+    // Planning and lowering share the native output-provider capability.
+    nativeConsoleOutputAvailable(): boolean {
+      return nativeConsoleOutputAvailable(ctx);
     },
     // (#2955 slice 5) String for-of strategy — the LAST from-ast mode read,
     // relocated. Native strings iterate via the `__str_charAt` counter loop;
@@ -7562,12 +7561,8 @@ function resolveAndObserveCallableProvider(
     index = ensureIrNativePromiseDelayProvider(ctx);
   } else if (ref.binding.kind === "runtime" && symbol === IR_ASYNC_PROMISE_ALL_NATIVE_FN) {
     index = ensureIrNativePromiseAllProvider(ctx);
-  } else if (ref.binding.kind === "runtime" && symbol === IR_CONSOLE_SINK_APPEND_FN) {
-    // (#4462) Host-free console sink. Never minted here: `ensureStandaloneStdoutSink`
-    // owns it and runs in the pre-body window so the funcidx is final. Absence is
-    // a claim/capability disagreement, which the `null` turns into the standard
-    // "cannot materialize callable provider" invariant rather than a silent miss.
-    index = ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null;
+  } else if (ref.binding.kind === "runtime" && IR_NATIVE_CONSOLE_SYMBOLS.has(symbol)) {
+    index = ensureIrNativeConsoleProvider(ctx, symbol);
   } else if (ref.binding.kind === "runtime" && symbol === "__hof_holey_array_filter") {
     index = ensureHoleyArrayFilter(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(VEC_ELEM_SET_PREFIX)) {
@@ -9472,8 +9467,7 @@ function preregisterDynamicSupport(
   if (dynamicRuntimeNeeds.size > 0) {
     addUnionImports(ctx);
     ensureIrDynamicRuntime(ctx, dynamicRuntimeNeeds);
-    if (dynamicRuntimeNeeds.has("member-call"))
-      observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
+    observeIrDynamicRuntimeProviders(dynamicRuntimeNeeds, (symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
   if (usesFunctionMemberStrictSet && nativeSemanticProviders && !ctx.fast) {
     ensureObjectRuntime(ctx);

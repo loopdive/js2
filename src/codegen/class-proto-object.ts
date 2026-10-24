@@ -151,7 +151,7 @@ export function installableInstanceMethodNames(ctx: CodegenContext, className: s
  * branch before committing to a body.
  */
 export function standaloneClassProtoObjectApplies(ctx: CodegenContext, className: string): boolean {
-  if (!ctx.standalone) return false;
+  if (!ctx.standalone && !ctx.wasi) return false;
   if (ctx.structMap.get(className) === undefined) return false;
   // No class-object singleton ⇒ no value to install `constructor` with, and
   // `tryEmitConstructorViaTag`'s `__tag` route would stop working. Keep the
@@ -193,7 +193,7 @@ export function standaloneClassProtoObjectApplies(ctx: CodegenContext, className
  * which carries every value.
  */
 export function isStandaloneClassProtoObjectExpression(ctx: CodegenContext, expression: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
+  if (!ctx.standalone && !ctx.wasi) return false;
   let bare = expression;
   while (ts.isParenthesizedExpression(bare) || ts.isAsExpression(bare) || ts.isNonNullExpression(bare)) {
     bare = bare.expression;
@@ -260,7 +260,7 @@ function staticThisClassName(ctx: CodegenContext, expression: ts.Expression): st
  * (which predate this module's `$Object` and answered `null` / `C.prototype`).
  */
 export function isStandaloneBaseClassOrPrototype(ctx: CodegenContext, expression: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
+  if (!ctx.standalone && !ctx.wasi) return false;
   let bare = expression;
   while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
   const classExpr = ts.isPropertyAccessExpression(bare) && bare.name.text === "prototype" ? bare.expression : bare;

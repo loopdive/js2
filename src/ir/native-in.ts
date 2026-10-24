@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { emitNativeTypeError } from "./native-errors.js";
 import type { IrFunctionBuilder } from "./builder.js";
 import { irTypeIsBoolean, irBool } from "./boolean-brand.js";
 import { asVal, irDynamic, irVal, type IrValueId } from "./nodes.js";
@@ -52,13 +53,7 @@ export function lowerNativeIn(builder: IrFunctionBuilder, key: IrValueId, receiv
   const valid = builder.emitBinary("i32.or", object, callable, irBool());
   const invalid = builder.emitUnary("i32.eqz", valid, irBool());
   const then = builder.collectBodyInstrs(() => {
-    const message = builder.emitBox(
-      builder.emitStringConst("Cannot use 'in' operator to search for property in a non-object"),
-      irDynamic(JS_TAG_IDS.String),
-    );
-    const error = builder.emitCall(irRuntimeFuncRef("__new_TypeError"), [message], irVal({ kind: "externref" }));
-    if (error === null) throw new Error("TypeError constructor returned no value for native in");
-    builder.emitThrow(error);
+    emitNativeTypeError(builder, "Cannot use 'in' operator to search for property in a non-object");
   });
   builder.emitIfStmt({ cond: invalid, then, else: [] });
   const propertyKey = builder.emitCall(irRuntimeFuncRef("__to_property_key"), [key], irDynamic());

@@ -4,5 +4,6 @@ export {
   irBindingKey,
   irModuleDeclarations,
   declaredCallProblems,
+  declaredCallInstructionProblems,
   declaredGlobalProblem,
 } from "./core/declared-types.js";

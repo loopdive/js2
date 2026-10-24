@@ -4,6 +4,7 @@
  * subsystem: state shape, factory, per-node visitor, and the finalizer that
  * materializes host imports. Extracted verbatim from codegen/declarations.ts (#3268).
  */
+import { CONSOLE_METHOD_NAMES as CONSOLE_METHODS_SET } from "../../shared/contracts/console-output.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -158,8 +159,6 @@ export interface UnifiedCollectorState {
   // context
   sourceFile: ts.SourceFile;
 }
-
-const CONSOLE_METHODS_SET = new Set(["log", "warn", "error", "info", "debug"]);
 
 /**
  * (#3912) The pure-Wasm §7.1.4.1 StringToNumber helper.
@@ -1592,8 +1591,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   if (!hostFreeEnvironment(ctx)) {
-    const CONSOLE_METHODS = ["log", "warn", "error", "info", "debug"] as const;
-    for (const method of CONSOLE_METHODS) {
+    for (const method of CONSOLE_METHODS_SET) {
       const needed = state.consoleNeededByMethod.get(method);
       if (!needed) continue;
       if (needed.has("number")) {
@@ -2065,7 +2063,8 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     ) {
       addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
     }
-    if (state.getterCallbackFound) {
+    if (state.getterCallbackFound && !hostFreeEnvironment(ctx)) {
+      // Native accessor values use the shared closure ABI, including WASI.
       // __make_getter_callback: same signature — wraps a function so 'this' is bound (#929)
       // Used for Object.defineProperty accessor descriptors (getter/setter callbacks).
       addImport(ctx, "env", "__make_getter_callback", { kind: "func", typeIdx });
