@@ -8,7 +8,7 @@
 // via funcMap. It returns `undefined` when the callee is not one of these
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
-import { guardedExternRefResultBridge } from "./dispatch-extern-result-bridge.js";
+import { liveResultBridge, liveResultBridgeable } from "./dispatch-extern-result-bridge.js";
 import { ts } from "../../ts-api.js";
 import { widenJsDefaultGuessSlot } from "../js-default-param-type-guess.js";
 import {
@@ -76,6 +76,7 @@ import { resolveVariadicBuiltinStaticPlainAlias } from "../builtin-static-plain-
 import { bindingMayReceiveHostCallable } from "../analysis/mixed-assignment-carrier.js";
 import { ensureStandaloneBuiltinStaticMethodClosure } from "../builtin-value-read.js";
 import { localBindingShadowsCapturingFunction } from "../function-declaration-observation.js";
+import { blockBindingShadowsNestedDeclaration } from "../function-declaration-observation.js"; // (#6994)
 import { genericIdentityReturnParamIndex, genericStructFactoryCall } from "../generic-struct-factory.js";
 import { isUnaliasedNodeFsImportBinding, standaloneDependencyNodeFsThrowMessage } from "../node-fs-binding-identity.js";
 import { compileDiscardedArgument } from "./inline-iife-arguments.js";
@@ -92,6 +93,7 @@ import {
   pushParamSentinel,
 } from "../type-coercion.js";
 import { compileAnnexBEscapeCall } from "../annexb-escape-call.js"; // (#3064 / #4556)
+import { ensureHostFreeCallableResultHelper, hostFreeCallableResultBridge } from "./callable-result-unbox.js"; // (#7080)
 import { annexBDeclaringRange } from "../annexb-cancel.js";
 import { URI_DECODE_MASK, URI_ENCODE_MASK } from "../uri-encoding-native.js";
 import { ensureWasiWriteFileStringsHelper } from "../wasi.js";
@@ -1622,7 +1624,9 @@ function compileBoundIdentifierCall(
           break;
         }
       }
-      isOutOfScopeNestedBinding = !visible;
+      // (#6994) Lexical precedence: an in-scope block `let`/`const` of that name shadows it too.
+      isOutOfScopeNestedBinding =
+        !visible || blockBindingShadowsNestedDeclaration(ctx, expr.expression, nestedOwnerDecl);
     }
 
     const locallyShadowsFunction = localBindingShadowsCapturingFunction(ctx, fctx, expr.expression);
@@ -2275,6 +2279,7 @@ function compileBoundIdentifierCall(
             addUnionImports(ctx);
             flushLateImportShifts(ctx, fctx);
           }
+          ensureHostFreeCallableResultHelper(ctx, fctx, expectedReturn); // (#7080)
           const dispatchBridgePlan = (
             from: ValType,
             to: ValType,
@@ -2453,7 +2458,8 @@ function compileBoundIdentifierCall(
                 canExportCandidateReferenceResult(info.funcTypeIdx),
               ) === null &&
               !declaredRefSubtypeOf(info.returnType, expectedReturn) &&
-              !canProjectImplementationReturn(info.returnType, expectedReturn)
+              !canProjectImplementationReturn(info.returnType, expectedReturn) &&
+              !liveResultBridgeable(ctx, info.returnType, expectedReturn) // (#7025)
             ) {
               paramsMatch = false;
             }
@@ -3112,7 +3118,9 @@ function compileBoundIdentifierCall(
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );
                   const guardedRefBridge =
-                    bridge ?? guardedExternRefResultBridge(ctx, fctx, fc.returnType!, expectedReturn!);
+                    bridge ??
+                    liveResultBridge(ctx, fctx, fc.returnType!, expectedReturn!) ??
+                    hostFreeCallableResultBridge(ctx, fc.returnType!, expectedReturn!); // (#7080)
                   if (guardedRefBridge !== null) {
                     fcCallBody.push(...guardedRefBridge);
                   } else {

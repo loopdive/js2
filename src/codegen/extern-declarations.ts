@@ -25,7 +25,7 @@ import { FS_PATH_BASED_MEMBERS, WASI_NODE_FS_ALIAS_SENTINEL } from "../checker/n
 import { addFuncType } from "./registry/types.js";
 import { addImport, addStringConstantGlobal, addStringImports } from "./registry/imports.js";
 import { brandExternMethodResult } from "./shared.js";
-import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureNativeStringBoundaryBridge, ensureNativeStringHelpers } from "./native-strings.js";
 import { nativeTypeFromTypeNode } from "./native-type-annotations.js";
 import { reportError } from "./context/errors.js";
 import { registerHostIntlExternClasses } from "./helpers/host-intl-classes.js";
@@ -42,7 +42,11 @@ import {
   typeRefName,
   type LibDeclIndex,
 } from "./lib-decl-index.js";
-import { isStandaloneUnprovidedExternClass } from "./standalone-unavailable-globals.js";
+import { isStandaloneUnprovidedExternClass, skipStandalonePackageStub } from "./standalone-unavailable-globals.js";
+
+/** (#7095) A wasm value type a native carrier can cross in (any reference). */
+const isRefValType = (type: ValType): boolean => !/^(?:i32|i64|f32|f64|v128|i8|i16)$/.test(type.kind);
+
 // ── Built-in extern class registration ───────────────────────────────
 
 /** Helper to create an extern method signature with externref params and results */
@@ -757,6 +761,7 @@ function collectExternDeclarationsImpl(
     }
     // Top-level declare class (e.g. user-defined or import-resolver stubs)
     if (!skipExternClasses && ts.isClassDeclaration(stmt) && stmt.name && hasDeclareModifier(stmt)) {
+      if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host class
       collectExternClass(ctx, stmt, [], libIndex);
     }
     // Top-level declare function stubs — registered as Wasm imports so that calls
@@ -846,10 +851,15 @@ function collectExternDeclarationsImpl(
       // (correct semantics — standalone has no structuredClone). Host mode still
       // registers the import so a real host can satisfy it.
       if ((ctx.wasi || ctx.standalone) && name === "structuredClone") continue;
+      // (#7079) `atob`/`btoa` have pure-Wasm lowerings on the host-free targets
+      // (base64-native.ts, emitted by the import-collector finalize): never
+      // retain an unsatisfiable `env.atob`/`env.btoa`.
+      if ((ctx.wasi || ctx.standalone) && (name === "atob" || name === "btoa")) continue;
       // (#6664) standalone `queueMicrotask(cb)` enqueues on the module's own
       // microtask queue (standalone-queue-microtask.ts), never on the host.
       if (ctx.standalone && name === "queueMicrotask") continue;
       if (isStandaloneUnavailableTimerGlobal(ctx, name)) continue; // #6675: no event loop, no env.<timer>
+      if (skipStandalonePackageStub(ctx, sourceFile, stmt.name)) continue; // #6843: not a host global
       if (!ctx.funcMap.has(name)) {
         // (#4238) Under `externNativeTypes` an explicit native annotation
         // (`type i32 = number` & friends) wins over the default mapping, so
@@ -885,6 +895,17 @@ function collectExternDeclarationsImpl(
             // wasm-to-wasm provider namespace (`js2wasm:qjs`) instead of the
             // `env` JS-host module. Unset for every user compile.
             registerAmbientParseImport(ctx, sourceFile, name, typeIdx);
+            // (#7095) A JS-environment regime module hands this host function
+            // Wasm-owned strings; export the bridge the runtime marshal reads.
+            const userHostFunction = !name.startsWith("__"); // `__*` stubs are injected runtime preludes (timers, stdin)
+            if (
+              ctx.nativeStrings &&
+              userHostFunction &&
+              !ctx.externImportModule &&
+              [...params, ...results].some(isRefValType)
+            ) {
+              ensureNativeStringBoundaryBridge(ctx);
+            }
           }
         }
       }
@@ -938,7 +959,10 @@ function collectExternDeclarationsImpl(
             // late imports used by the Promise-specific handler. (#966)
             "Promise",
           ]);
-          if (!BUILTIN_SKIP.has(varName)) {
+          // (#7011) The native regime owns SharedArrayBuffer (buffers/shared-array-buffer.ts);
+          // only the opt-in host-assisted profile keeps the host extern class.
+          const nativeSab = varName === "SharedArrayBuffer" && (ctx.wasi || ctx.standalone);
+          if (!BUILTIN_SKIP.has(varName) && !nativeSab) {
             const hasCtor = libIndex
               ? libConstructSignatures(typeRefName(decl.type.typeName), libIndex).length > 0
               : ctx.checker.getTypeAtLocation(decl.type).getConstructSignatures().length > 0;
@@ -1549,7 +1573,7 @@ export function collectDeclaredGlobals(
         ctx.standalone && ctx.requiresStandaloneDomCapability === true && name === "document";
       // (#6708) The regime in a JS environment keeps DOM globals: they are
       // platform capabilities of the embedder, not ECMAScript semantics.
-      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && DOM_ONLY_GLOBALS.has(name);
+      const jsEnvironmentPlatformGlobal = !hostFreeEnvironment(ctx) && isJsEnvironmentPlatformGlobalName(name);
       if (ctx.strictNoHostImports || (ctx.standalone && !certifiedStandaloneDocument && !jsEnvironmentPlatformGlobal))
         continue;
       const importName = `global_${name}`;
@@ -1715,6 +1739,14 @@ export function usesJsEnvironmentPlatformGlobal(ctx: CodegenContext): boolean {
  * DOM-only globals that require a browser host and are not available in WASI.
  * Used to emit a compile error when `--target wasi` is combined with DOM usage.
  */
+/**
+ * (#6708/#7091) The ambient DOM globals the regime keeps in a JS environment
+ * (`global_<name>` handles); the IR platform lane admits exactly these.
+ */
+export function isJsEnvironmentPlatformGlobalName(name: string): boolean {
+  return DOM_ONLY_GLOBALS.has(name);
+}
+
 const DOM_ONLY_GLOBALS = new Set([
   "document",
   "window",

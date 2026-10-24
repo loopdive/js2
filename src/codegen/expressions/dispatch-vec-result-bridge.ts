@@ -22,6 +22,7 @@
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { buildVecFromExternMaterializer, getVecInfo, vecFromExternFuncIdx } from "../type-coercion.js";
+import { addUnionImports } from "../registry/imports.js";
 import { flushLateImportShifts } from "./late-imports.js";
 
 function noHostVecTarget(ctx: CodegenContext, to: ValType | null): number | undefined {
@@ -47,4 +48,26 @@ export function dispatchVecResultBridge(ctx: CodegenContext, from: ValType, to: 
   if (vecTypeIdx === undefined) return null;
   const funcIdx = vecFromExternFuncIdx(ctx, vecTypeIdx);
   return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
+}
+
+/**
+ * (#7025) Before a no-host ladder is built: register the number / boolean
+ * boxers that `boxedScalarResultBridge` (dispatch-extern-result-bridge.ts)
+ * needs when an externref call site dispatches to a scalar-returning
+ * candidate. On these lanes `addUnionImports` defines native helpers (no host
+ * import); it runs before any arm bakes an index, never inside one (#2174).
+ * It lives here, not beside the bridge, so that leaf module stays out of the
+ * codegen import cycle.
+ */
+export function reserveScalarResultBoxers(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  candidates: readonly { readonly returnType: ValType | null }[],
+  expectedReturn: ValType | null,
+): void {
+  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
+  if (expectedReturn.kind !== "externref" && expectedReturn.kind !== "ref_extern") return;
+  if (!candidates.some(({ returnType }) => returnType?.kind === "f64" || returnType?.kind === "i32")) return;
+  addUnionImports(ctx);
+  flushLateImportShifts(ctx, fctx);
 }

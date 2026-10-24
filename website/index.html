@@ -4681,12 +4681,19 @@ console.log(instance.exports.run()); // &rarr; 55</pre
     <script>
       const IR_SELECTED = window.t262ViewState.read().ir;
       window.t262ViewState.bindIrToggle(document.getElementById("conformance-ir-toggle"));
-      const showIrProvenance = (measured, mode) => {
-        if (!IR_SELECTED) return;
+      const showIrProvenance = (measured, mode, report) => {
         const node = document.getElementById("conformance-ir-provenance");
+        if (!IR_SELECTED) {
+          node.hidden = mode !== "host";
+          if (mode === "host") node.textContent = window.t262ViewState.historicalHostLabel(report);
+          return;
+        }
         node.hidden = false;
         const filename = mode === "host" ? "test262-ir-report.json" : "test262-standalone-ir-report.json";
-        node.textContent = measured ? `IR · ${mode} · benchmarks/results/${filename}` : `IR · ${mode} · unmeasured`;
+        node.textContent = measured
+          ? (report ? window.t262ViewState.irMeasurementLabel(report, mode) : `IR requested · ${mode} · measured`) +
+            ` · benchmarks/results/${filename}`
+          : `IR requested · ${mode} · unmeasured`;
       };
       if (IR_SELECTED) {
         const view = window.t262ViewState.read();
@@ -4709,7 +4716,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           const message = document.createElement("div");
           message.className = "conformance-unavailable";
           message.setAttribute("role", "status");
-          message.textContent = "IR conformance is unmeasured. No verified IR results are available.";
+          message.textContent = "IR conformance is unmeasured. No completed IR measurement is available.";
           document.getElementById("conformance-donut-slot").replaceChildren(message);
           document.getElementById("compat-pass-rate").textContent = "Unmeasured";
           document.getElementById("compat-pass-rate-label").textContent = message.textContent;
@@ -5493,7 +5500,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           donut.setAttribute("caption-sub", IR_SELECTED ? `IR ${captionSub}` : captionSub);
           donut.setAttribute("style", donutStyle);
           updateHeadlineStat(
-            { pass, fail, ce, skip, total },
+            { pass, fail, ce, skip, total, ir_only_pass: summary?.ir_only_pass, ir_measured: summary?.ir_measured },
             captionMain,
             IR_SELECTED ? `IR ${captionSub}` : captionSub,
           );
@@ -5536,6 +5543,14 @@ console.log(instance.exports.run()); // &rarr; 55</pre
           window.__conformanceHeadlineHydrated = true;
           rateEl.textContent = `${pct}%`;
           rateLabelEl.textContent = `${captionMain} ${captionSub}: ${pass.toLocaleString()} / ${total.toLocaleString()} test262 tests passing`;
+          // Separate percentage for passes that took no legacy (direct AST)
+          // body at all — the honest IR-path number on the hybrid route.
+          const irOnly = Number(summary?.ir_only_pass);
+          const irMeasured = Number(summary?.ir_measured);
+          if (Number.isFinite(irOnly) && Number.isFinite(irMeasured) && irMeasured > 0) {
+            const irPct = ((irOnly / total) * 100).toFixed(1);
+            rateLabelEl.textContent += ` · IR path (no legacy fallback): ${irOnly.toLocaleString()} (${irPct}%)`;
+          }
         };
         const updateHeadlineUnavailable = (captionMain, captionSub, detail) => {
           if (!rateEl || !rateLabelEl) return;
@@ -5859,6 +5874,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
                 return;
               }
               renderDonut(standalone.summary, captionMain, options.captionSub);
+              showIrProvenance(true, "standalone", standaloneData.report);
               return;
             }
             if (IR_SELECTED && !hasUsableSummary(report?.summary)) {
@@ -5871,6 +5887,7 @@ console.log(instance.exports.run()); // &rarr; 55</pre
             }
             const { summary } = applyConformanceOptions(hostSummary, { exactStrictSummary });
             renderDonut(summary, captionMain, options.captionSub);
+            showIrProvenance(true, "host", report);
           };
           const applyScopeFromDetail = (detail) => {
             if (!detail) return;

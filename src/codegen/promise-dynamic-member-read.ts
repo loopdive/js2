@@ -51,6 +51,23 @@
  * `Promise`, and from the combinator drives that `Invoke` `then` dynamically.
  * The finalize arm answers only members that were both demanded and minted, so
  * a module with neither emits exactly what it emitted before.
+ *
+ * ## (#7092) The prototype's data properties: `constructor`, `@@toStringTag`
+ *
+ * `%Promise.prototype%` also owns two data properties (§27.2.5.2, §27.2.5.5),
+ * which the arm answered as "absent": `p.constructor` read `undefined`, so
+ * `p.constructor === Promise` was false and `p.constructor.resolve(…)` threw.
+ * They take the same steps 1-2. Step 3 reads the prototype's live own-property
+ * table (`__protoidx_get_r`) when the module seeded the Promise companion — a
+ * module that writes or deletes prototype members does — so an overwrite or
+ * `delete` is observed; otherwise the intrinsic values are unchanged by
+ * construction: `constructor` is the `__builtin_ctor_Promise` singleton (the
+ * very reference the bare `Promise` value read yields, through the
+ * `__promise_proto_ctor` accessor minted at demand time, never at finalize) and
+ * `@@toStringTag` is `"Promise"`. Demanded by a VALUE read of `.constructor` /
+ * `["constructor"]` / `[Symbol.toStringTag]` in a file that names `Promise`;
+ * the `@@toStringTag` key arm exists only when the module has the `$Symbol`
+ * carrier, since without it no such key can reach `__extern_get`.
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -58,12 +75,28 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensurePromiseNativeProtoGlue } from "./array-object-proto.js";
 import { builtinBrandOffsetOf } from "./builtin-brands.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
-import { ensureStandaloneNativeMethodClosure, seededNativeProtoOwnMembersByBrand } from "./native-proto.js";
+import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import {
+  ensureStandaloneNativeMethodClosure,
+  getNativeProtoBuiltinGlue,
+  seededNativeProtoOwnMembersByBrand,
+} from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { addFuncType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
 
 /** The `%Promise.prototype%` methods a dynamic read can name (§27.2.5). */
 const PROMISE_PROTO_MEMBERS: ReadonlySet<string> = new Set(["catch", "finally", "then"]);
+
+/** (#7092) Demand spelling of the `@@toStringTag` key (§27.2.5.5). */
+const TO_STRING_TAG = "@@toStringTag";
+/** `Symbol.toStringTag`'s fixed well-known id (literals.ts `WELL_KNOWN_SYMBOLS`). */
+const TO_STRING_TAG_SYMBOL_ID = 4;
+/** `object-proto-symbol-tag.ts` `OBJECT_PROTO_SYMBOL_TAG_FN` (not imported: it would join the codegen SCC). */
+const OBJECT_PROTO_SYMBOL_TAG_FN = "__opts_symbol_tag";
+/** (#7092) `%Promise.prototype%`'s own data properties a dynamic read can name. */
+const PROMISE_PROTO_DATA_KEYS: ReadonlySet<string> = new Set(["constructor", TO_STRING_TAG]);
 
 /** §27.2.5.1/.3/.4 — the members' `length` (`lib.es5.d.ts` marks every parameter optional). */
 const PROMISE_PROTO_MEMBER_LENGTH: Readonly<Record<string, number>> = { catch: 1, finally: 1, then: 2 };
@@ -94,13 +127,15 @@ const mentionsPromise = new WeakMap<ts.SourceFile, boolean>();
  * import flush repairs `fctx`'s live bodies.
  */
 export function demandPromiseDynamicMember(ctx: CodegenContext, member: string, fctx: FunctionContext | null): void {
-  if (!ctx.standalone || ctx.wasi || !PROMISE_PROTO_MEMBERS.has(member)) return;
-
+  if (!ctx.standalone || ctx.wasi) return;
+  const isData = PROMISE_PROTO_DATA_KEYS.has(member);
+  if (!isData && !PROMISE_PROTO_MEMBERS.has(member)) return;
   let demanded = demandedByCtx.get(ctx);
   if (demanded?.has(member)) return;
   const brand = ensurePromiseNativeProtoGlue(ctx);
   if (brand === undefined) return;
-  if (!ensureStandaloneNativeMethodClosure(ctx, brand, member, "method")) return;
+  if (member === "constructor") ensurePromiseCtorAccessor(ctx);
+  else if (!isData && !ensureStandaloneNativeMethodClosure(ctx, brand, member, "method")) return;
   if (!demanded) demandedByCtx.set(ctx, (demanded = new Set()));
   demanded.add(member);
   flushLateImportShifts(ctx, fctx);
@@ -114,17 +149,30 @@ function dynamicReadMemberName(expr: ts.Expression): string | undefined {
     name = expr.name.text;
   } else if (ts.isElementAccessExpression(expr)) {
     const key = expr.argumentExpression;
-    if (!key || !ts.isStringLiteralLike(key)) return undefined;
-    name = key.text;
+    if (key && isSymbolToStringTag(key)) name = TO_STRING_TAG;
+    else if (!key || !ts.isStringLiteralLike(key)) return undefined;
+    else name = key.text;
   } else {
     return undefined;
   }
-  if (!PROMISE_PROTO_MEMBERS.has(name)) return undefined;
+  if (!PROMISE_PROTO_MEMBERS.has(name) && !PROMISE_PROTO_DATA_KEYS.has(name)) return undefined;
   // A call's callee is lowered by the call compiler (the native `.then(...)`
   // bridge), not by this read — only a VALUE read reaches `__extern_get`.
   const parent = expr.parent;
   if (parent && ts.isCallExpression(parent) && parent.expression === expr) return undefined;
   return name;
+}
+
+/** The key expression `Symbol.toStringTag` (through parentheses). */
+function isSymbolToStringTag(key: ts.Expression): boolean {
+  let inner = key;
+  while (ts.isParenthesizedExpression(inner)) inner = inner.expression;
+  return (
+    ts.isPropertyAccessExpression(inner) &&
+    ts.isIdentifier(inner.expression) &&
+    inner.expression.text === "Symbol" &&
+    inner.name.text === "toStringTag"
+  );
 }
 
 function fileMentionsPromise(node: ts.Node): boolean {
@@ -211,10 +259,126 @@ function writtenMemberArm(
 }
 
 /** Demanded members whose closure exists, sorted. */
-function answerableMembers(ctx: CodegenContext, brand: number): string[] {
+function answerableMembers(ctx: CodegenContext, brand: number | undefined): string[] {
   const demanded = demandedByCtx.get(ctx);
-  if (!demanded) return [];
-  return [...demanded].filter((member) => ctx.funcMap.has(`__proto_method_${brand}_${member}`)).sort();
+  if (!demanded || brand === undefined) return [];
+  return [...demanded]
+    .filter((member) => PROMISE_PROTO_MEMBERS.has(member) && ctx.funcMap.has(`__proto_method_${brand}_${member}`))
+    .sort();
+}
+
+/** (#7092) Accessor for the identity-stable `%Promise%` carrier. */
+const PROMISE_CTOR_ACCESSOR = "__promise_proto_ctor";
+
+/**
+ * (#7092) Mint `__promise_proto_ctor() -> externref`: the `__builtin_ctor_Promise`
+ * singleton the bare `Promise` value read yields, with its guarded lazy init
+ * inside (the `.constructor` read may be the module's first use of it). Same
+ * contract as `ensureWrapperConstructorCarriers`: ordinary codegen only, never
+ * finalize; the caller flushes late imports.
+ */
+function ensurePromiseCtorAccessor(ctx: CodegenContext): void {
+  if (ctx.funcMap.has(PROMISE_CTOR_ACCESSOR)) return;
+  const resultType: ValType = { kind: "externref" };
+  const fctx: FunctionContext = {
+    name: PROMISE_CTOR_ACCESSOR,
+    params: [],
+    locals: [],
+    localMap: new Map(),
+    returnType: resultType,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  // Emit BEFORE minting: the carrier's own-property seed mints helpers first.
+  emitBuiltinConstructorIdentity(ctx, fctx, "Promise");
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: PROMISE_CTOR_ACCESSOR,
+    typeIdx: addFuncType(ctx, [], [resultType]),
+    locals: fctx.locals,
+    body: fctx.body,
+    exported: false,
+  });
+  ctx.funcMap.set(PROMISE_CTOR_ACCESSOR, funcIdx);
+}
+
+/**
+ * (#7092) Step 3 for each demanded data key of `%Promise.prototype%`. When the
+ * module seeded the prototype's companion (the live own-property table, so a
+ * user overwrite or `delete` is observed) the answer is `__protoidx_get_r`, as
+ * for a seeded method; otherwise nothing can have changed the intrinsic value:
+ * `%Promise%` through its accessor, and the string `"Promise"`. The
+ * `@@toStringTag` arm needs the `$Symbol` carrier — without it no symbol key
+ * can reach `__extern_get`.
+ */
+function protoDataReads(
+  ctx: CodegenContext,
+  brand: number | undefined,
+  protoGetIdx: number | undefined,
+  written: (key: string) => Instr[],
+): { ctor?: Instr[]; tag?: Instr[] } {
+  const demanded = demandedByCtx.get(ctx) ?? new Set<string>();
+  const seeded = (brand === undefined ? undefined : seededNativeProtoOwnMembersByBrand(ctx).get(brand)) ?? [];
+  const live: Instr[] | undefined =
+    protoGetIdx === undefined
+      ? undefined
+      : [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: protoGetIdx },
+        ];
+  const out: { ctor?: Instr[]; tag?: Instr[] } = {};
+  const accessorIdx = ctx.funcMap.get(PROMISE_CTOR_ACCESSOR);
+  if (demanded.has("constructor")) {
+    if (live && seeded.includes("constructor")) out.ctor = live;
+    else if (accessorIdx !== undefined) out.ctor = [...written("constructor"), { op: "call", funcIdx: accessorIdx }];
+  }
+  if (demandsToStringTag(ctx)) {
+    out.tag =
+      live && seeded.length > 0 && brand !== undefined && getNativeProtoBuiltinGlue(ctx, brand)?.symbolTag !== undefined
+        ? live
+        : [...written(TO_STRING_TAG), ...nativeStringLiteralInstrs(ctx, "Promise"), { op: "extern.convert_any" }];
+  }
+  return out;
+}
+
+/**
+ * A `@@toStringTag` read can reach `__extern_get`: a source
+ * `[Symbol.toStringTag]` read, or `Object.prototype.toString`'s step-14
+ * consult (`__opts_symbol_tag`, object-proto-symbol-tag.ts) — and the module
+ * has the `$Symbol` carrier the key arrives as.
+ */
+function demandsToStringTag(ctx: CodegenContext): boolean {
+  const demanded = demandedByCtx.get(ctx);
+  return (
+    ctx.symbolTypeIdx >= 0 && (demanded?.has(TO_STRING_TAG) === true || ctx.funcMap.has(OBJECT_PROTO_SYMBOL_TAG_FN))
+  );
+}
+
+/** `key` (param 1) is the `$Symbol` carrier of `Symbol.toStringTag` — an i32. */
+function keyIsToStringTagSymbol(symbolTypeIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: symbolTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: symbolTypeIdx },
+        { op: "struct.get", typeIdx: symbolTypeIdx, fieldIdx: 0 }, // $Symbol.id
+        { op: "i32.const", value: TO_STRING_TAG_SYMBOL_ID },
+        { op: "i32.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
 }
 
 /**
@@ -227,9 +391,13 @@ export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
   const brand = ctx.builtinBrandMap?.get("Promise");
   const promiseTypeIdx = ctx.structMap.get("$Promise");
   const objTypes = ctx.objectRuntimeTypes;
-  if (brand === undefined || promiseTypeIdx === undefined || objTypes === undefined) return;
+  // (#7092) `brand` is undefined when no `Promise.prototype` member was ever
+  // named; only the toString consult's `@@toStringTag` arm can apply then.
+  if (promiseTypeIdx === undefined || objTypes === undefined) return;
   const members = answerableMembers(ctx, brand);
-  if (members.length === 0) return;
+  const externGetIdx = ctx.funcMap.get("__extern_get"); // the D4 subclass arm
+  const ctorDemanded = demandedByCtx.get(ctx)?.has("constructor") === true;
+  if (members.length === 0 && !ctorDemanded && !demandsToStringTag(ctx)) return;
   const fn = ctx.mod.functions.find((candidate) => candidate.name === "__extern_get");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
@@ -239,10 +407,9 @@ export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
   const bagField = promiseDef?.kind === "struct" ? promiseDef.fields.findIndex((f) => f.name === "$bag") : -1;
   if (!fn || strFlattenIdx === undefined || strEqualsIdx === undefined || objFindIdx === undefined) return;
   if (anyStr < 0 || bagField < 0) return;
-  const externGetIdx = ctx.funcMap.get("__extern_get");
   const externHasIdx = ctx.funcMap.get("__extern_has");
   const protoGetIdx = ctx.funcMap.get("__protoidx_get_r");
-  const seeded = new Set(seededNativeProtoOwnMembersByBrand(ctx).get(brand) ?? []);
+  const seeded = new Set(brand === undefined ? [] : (seededNativeProtoOwnMembersByBrand(ctx).get(brand) ?? []));
   const { objectTypeIdx } = objTypes;
 
   const keyLocal = 2 + fn.locals.length;
@@ -273,7 +440,8 @@ export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
       ];
     } else {
       // Idempotent: resolves the minted closure, emits nothing new.
-      const closure = ensureStandaloneNativeMethodClosure(ctx, brand, member, "method");
+      const closure =
+        brand === undefined ? undefined : ensureStandaloneNativeMethodClosure(ctx, brand, member, "method");
       if (!closure) continue;
       value = [
         // Unseeded, but the program may have WRITTEN the member onto
@@ -290,12 +458,68 @@ export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
       then: [...value, { op: "return" }],
     });
   }
-  if (protoLadder.length === 0) return;
+  // (#7092) Step 3 for the data keys (see protoDataReads). A program write onto
+  // an unseeded `Promise.prototype` key lands in the brand companion; an entry
+  // there is the live value, exactly as for an unseeded method.
+  const data = protoDataReads(ctx, brand, protoGetIdx, () =>
+    writtenMemberArm(ctx, { protoGetIdx, objFindIdx, objectTypeIdx, anyLocal }),
+  );
+  if (data.ctor)
+    protoLadder.push(...keyIs("constructor"), {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [...data.ctor, { op: "return" }],
+    });
+  if (protoLadder.length === 0 && !data.tag) return;
 
+  const stringKeys = data.ctor ? [...members, "constructor"] : members;
   let isMember: Instr[] = [];
-  for (const member of members) {
+  for (const member of stringKeys) {
     isMember = isMember.length === 0 ? keyIs(member) : [...isMember, ...keyIs(member), { op: "i32.or" }];
   }
+  // Steps 0 — receiver and key filter. With no `@@toStringTag` arm this is the
+  // pre-#7092 sequence exactly (byte identity for the then/catch/finally arm).
+  const flattenKey: Instr[] = [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: anyStr },
+    { op: "call", funcIdx: strFlattenIdx },
+    { op: "local.set", index: keyLocal },
+  ];
+  const keyFilter: Instr[] = !data.tag
+    ? [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: anyStr },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
+        ...flattenKey,
+        ...isMember,
+      ]
+    : [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: anyStr },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [...flattenKey, ...(isMember.length > 0 ? isMember : [{ op: "i32.const", value: 0 } as Instr])],
+          else: keyIsToStringTagSymbol(ctx.symbolTypeIdx),
+        },
+      ];
+  // (#7092) Step 3 for `@@toStringTag`: the only non-string key that passes the
+  // filter, so a null flattened key identifies it.
+  const tagArm: Instr[] = !data.tag
+    ? []
+    : [
+        { op: "local.get", index: keyLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...data.tag, { op: "return" }],
+        },
+      ];
 
   // Step 2 — a D4 subclass instance: `bag.$proto` is `C.prototype`.
   const subclassArm: Instr[] =
@@ -340,17 +564,7 @@ export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
     { op: "ref.test", typeIdx: promiseTypeIdx },
     { op: "i32.eqz" },
     { op: "br_if", depth: 0 },
-    { op: "local.get", index: 1 },
-    { op: "any.convert_extern" },
-    { op: "ref.test", typeIdx: anyStr },
-    { op: "i32.eqz" },
-    { op: "br_if", depth: 0 },
-    { op: "local.get", index: 1 },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: anyStr },
-    { op: "call", funcIdx: strFlattenIdx },
-    { op: "local.set", index: keyLocal },
-    ...isMember,
+    ...keyFilter,
     { op: "i32.eqz" },
     { op: "br_if", depth: 0 },
     // Step 1 — an OWN entry shadows: leave it to the existing bag path.
@@ -378,6 +592,7 @@ export function unshiftExternGetPromiseMemberArm(ctx: CodegenContext): void {
         ...subclassArm,
       ],
     },
+    ...tagArm,
     ...protoLadder,
   ];
   fn.locals.push(...newLocals);

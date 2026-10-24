@@ -17,11 +17,11 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 
 <!-- AUTO:conformance-end -->
 
-The line above is the retired **host-assisted** JS-host profile, frozen when its CI lane was retired on 2026-10-12. Since #6708 the default `gc` target compiles with the same native semantic core as standalone (`semanticProviders: "native-first"`); a JS environment only adds the value bridge and platform APIs. The JS-environment number is therefore the regime number: it measured 42,014 on the last regime nightly (2026-10-09), and the standalone line below guards the same semantic arms on every merge. `--semantic-providers host-assisted` restores the old profile for one release.
+The line above is the retired **host-assisted** JS-host profile, frozen when its CI lane was retired on 2026-10-12. Since #6708 the default `gc` target compiles with the same native semantic core as standalone (`semanticProviders: "native-first"`); a JS environment only adds the value bridge and platform APIs. The JS-environment number is therefore the regime number: it measured 42,014 on the last regime nightly (2026-10-09), and the standalone line below guards the same semantic arms on every merge. The `host-assisted` profile and its `--semantic-providers` flag were removed in #6979 (S7); js2wasm 0.71.0 was the last release that accepted them.
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 42,070 / 48,232 (87.2 %)
+**standalone (host-free) test262 conformance**: 42,460 / 48,232 (88.0 %)
 
 <!-- AUTO:conformance-standalone-end -->
 

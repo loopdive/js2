@@ -58,6 +58,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 // `__extern_get_idx` readers the index-based `__extern_slice` copies through.
 import {
   boxVecElementToExternref,
+  ensureBoundaryCallableKind,
   ensureObjectRuntime,
   ensureWrapperStringValueHelper,
   reserveApplyClosure,
@@ -434,6 +435,10 @@ interface ObjCarrierDeps {
   objectTypeIdx: number;
   /** `$Proxy` struct typeIdx — Proxy iterators use the same property path. */
   proxyTypeIdx?: number;
+  /** (#6980) JS value boundary: an admitted caller-owned object (non-null,
+   *  outside every GC heap subhierarchy) also takes the property path —
+   *  `__extern_get` answers it through `__boundary_object_get`. */
+  boundaryHostObjects?: boolean;
   /** `__sget_value(externref) -> externref` — closed-struct `{value,done}` step
    *  results (an object-literal `next()` result often pre-shapes into a closed
    *  struct, which `__extern_get` cannot read). Optional: absent when the
@@ -501,6 +506,96 @@ function objCarrierTest(deps: ObjCarrierDeps, load: () => Instr[]): Instr[] {
     ...(deps.proxyTypeIdx === undefined
       ? []
       : [...load(), { op: "ref.test", typeIdx: deps.proxyTypeIdx } satisfies Instr, { op: "i32.or" } satisfies Instr]),
+    ...(deps.boundaryHostObjects ? boundaryHostObjectTest(load) : []),
+  ];
+}
+
+/** (#6980) `∨ (nonnull ∧ ¬struct ∧ ¬array ∧ ¬i31)` — an admitted host object. */
+function boundaryHostObjectTest(load: () => Instr[]): Instr[] {
+  return [
+    ...load(),
+    { op: "ref.is_null" },
+    ...load(),
+    { op: "ref.test", typeIdx: HEAP_TYPE_STRUCT },
+    { op: "i32.or" },
+    ...load(),
+    { op: "ref.test", typeIdx: HEAP_TYPE_ARRAY },
+    { op: "i32.or" },
+    ...load(),
+    { op: "ref.test", typeIdx: HEAP_TYPE_I31 },
+    { op: "i32.or" },
+    { op: "i32.eqz" },
+    { op: "i32.or" },
+  ];
+}
+
+/**
+ * (#6980) `gen[Symbol.iterator]()` returns the generator itself (§27.5.1
+ * %GeneratorPrototype%[@@iterator] is `return this`), but the native GetIterator
+ * helper wraps a driven generator frame in a fresh `$IterRec`. Applied to the
+ * helper's result at an explicit `[Symbol.iterator]()` call site: a
+ * GENSTATE/ASYNCGEN record unwraps to its frame; every other value is kept.
+ * `scratch` is an externref local. Fresh instrs per call (#2169b).
+ */
+export function generatorSelfIteratorInstrs(ctx: CodegenContext, scratch: number): Instr[] {
+  const { iterRecTypeIdx } = iterRuntimeTypes(ctx);
+  const rec = (): Instr[] => [
+    { op: "local.get", index: scratch },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: iterRecTypeIdx },
+  ];
+  const kindIs = (kind: number): Instr[] => [
+    ...rec(),
+    { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: kind },
+    { op: "i32.eq" },
+  ];
+  return [
+    { op: "local.tee", index: scratch },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: iterRecTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [...kindIs(ITER_KIND_GENSTATE), ...kindIs(ITER_KIND_ASYNCGEN), { op: "i32.or" }],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [...rec(), { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 }],
+      else: [{ op: "local.get", index: scratch }],
+    },
+  ];
+}
+
+/**
+ * (#6980) GetIterator arm for a closed-struct ITERATOR whose `next` is a
+ * closure-valued field: when `__sget_next(iter)` is truthy, wrap it as an OBJ
+ * record (the OBJ step/close arms read `next`/`return` via `__sget_*` on
+ * non-`$Object` carriers). Empty when the module has no `next` field bucket.
+ */
+function closedNextFieldObjArm(types: IterRuntimeTypes, od: ObjCarrierDeps, iterLocal: number): Instr[] {
+  if (od.sgetNextIdx === undefined) return [];
+  return [
+    { op: "local.get", index: iterLocal },
+    { op: "call", funcIdx: od.sgetNextIdx },
+    { op: "call", funcIdx: od.isTruthyIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "i32.const", value: ITER_KIND_OBJ },
+        { op: "ref.null", typeIdx: types.vecTypeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "local.get", index: iterLocal },
+        iterFamilyOperand(ITER_FAMILY_UNKNOWN),
+        { op: "struct.new", typeIdx: types.iterRecTypeIdx },
+        { op: "extern.convert_any" },
+        { op: "return" },
+      ],
+      else: [],
+    },
   ];
 }
 
@@ -1425,6 +1520,12 @@ export function ensureNativeIteratorRuntime(ctx: CodegenContext): void {
   // read a stable, already-registered funcIdx (no #2043 finalize shift).
   ensureNonIterableThrowDeps(ctx);
   ensureNotAnObjectThrowDeps(ctx);
+  // (#6980) JS environment: an admitted caller-owned iterable (a JS array, a
+  // host `{ [Symbol.iterator]() }`) reaches the OBJ arm, whose `@@iterator` /
+  // `next` calls go through `__apply_closure` — that bridge only routes a JS
+  // function to `__boundary_object_apply` when the callable classifier exists.
+  // No-op outside native-first + JS value boundary (standalone byte-identical).
+  ensureBoundaryCallableKind(ctx);
 
   const types = iterRuntimeTypes(ctx);
   const { iterRecTypeIdx, vecTypeIdx, arrTypeIdx } = types;
@@ -2770,6 +2871,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
         boxSymbolIdx,
         objectTypeIdx,
         proxyTypeIdx: ctx.objectRuntimeTypes?.proxyTypeIdx,
+        boundaryHostObjects: ctx.funcMap.has("__boundary_object_get") || undefined,
         isTruthyIdx,
         applyClosureIdx: reserveApplyClosure(ctx),
         sgetValueIdx: ctx.funcMap.get("__sget_value"),
@@ -4416,6 +4518,8 @@ function buildIteratorBody(
         { op: "local.set", index: 2 },
         // (#5188) A delegating `@@iterator` already handed back a record.
         ...iterRecAdoptArm(types, 2),
+        // (#6980) closure-valued `next` field → OBJ (see `closedNextFieldObjArm`).
+        ...(objDeps ? closedNextFieldObjArm(types, objDeps, 2) : []),
         // (#3146) kind selection: a closed iterable's `@@iterator` can return
         // a PLAIN-`$Object` iterator (closure-property `next`/`return`) — the
         // closed-struct USER dispatchers cannot drive that; route it through
@@ -4476,6 +4580,11 @@ function buildIteratorBody(
             ],
             else: [],
           },
+          // (#6980) A closed-struct iterator whose `next` is a closure-valued
+          // FIELD (`{ next: () => … }`) has no `<Struct>_next` method, so the
+          // USER dispatchers never assemble — but the OBJ step arm already
+          // reads `next` through `__sget_next` on a non-`$Object` carrier.
+          ...closedNextFieldObjArm(types, objDeps, 2),
           // (#3388) Non-`$Object`, non-iterable subject: throw §7.4.1 TypeError
           // (catchable) rather than the legacy `ref.cast $Vec` trap. Legacy
           // trap only when no throw was supplied.

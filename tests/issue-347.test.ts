@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildImports } from "./equivalence/helpers.js";
+import { buildImports } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
   const result = await compile(source);
@@ -9,7 +9,14 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, buildImports(result));
+  // (#7029) Link against the production resolver, not the equivalence
+  // helper's hand-rolled `env`: the named-function-expression-in-a-local case
+  // now emits an `__extern_set` on the closure struct, which the stub performs
+  // as a plain JS `obj[key] = v` and V8 rejects with "WebAssembly objects are
+  // opaque". The real resolver routes struct receivers through the bridge.
+  const imports = buildImports(result.imports, undefined, result.stringPool);
+  const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+  imports.setExports?.(instance.exports as Record<string, Function>);
   return (instance.exports as any)[fn](...args);
 }
 

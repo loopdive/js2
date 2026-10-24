@@ -1,0 +1,499 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-18T01:29:49.064Z",
+  "commit": "32b225260e86d348c755704fc21739e0a85a40c9",
+  "target": "standalone",
+  "corpus": {
+    "description": "all website/playground/examples .ts files + every 40th file of the sorted test262/test .js list (_FIXTURE excluded, compiled raw without the harness)",
+    "stride": 40,
+    "playgroundFiles": 13,
+    "test262Files": 1340
+  },
+  "jobs": 3,
+  "seconds": 294,
+  "playground": {
+    "files": 13,
+    "compileOk": 13,
+    "compileFail": 0,
+    "threw": 0,
+    "noTelemetry": 0,
+    "units": 73,
+    "byOutcomeKind": {
+      "emitted": 48,
+      "unsupported": 14,
+      "non-executable": 11
+    },
+    "byBodyRoute": {
+      "ir": 48,
+      "legacy": 14,
+      "neither": 11
+    },
+    "byUnitKind": {
+      "function": {
+        "units": 50,
+        "byOutcomeKind": {
+          "emitted": 36,
+          "unsupported": 14
+        },
+        "byBodyRoute": {
+          "ir": 36,
+          "legacy": 14
+        }
+      },
+      "module-init": {
+        "units": 13,
+        "byOutcomeKind": {
+          "non-executable": 11,
+          "emitted": 2
+        },
+        "byBodyRoute": {
+          "neither": 11,
+          "ir": 2
+        }
+      },
+      "class-member": {
+        "units": 10,
+        "byOutcomeKind": {
+          "emitted": 10
+        },
+        "byBodyRoute": {
+          "ir": 10
+        }
+      }
+    },
+    "unsupportedByStageCode": {
+      "select:host-surface-unavailable": 12,
+      "select:body-shape-rejected": 1,
+      "select:call-graph-closure": 1
+    },
+    "selectReasons": {},
+    "invariantCodes": {},
+    "noTelemetryFiles": [],
+    "threwFiles": [],
+    "slowestFiles": [
+      {
+        "path": "website/playground/examples/benchmarks.ts",
+        "ms": 7441
+      },
+      {
+        "path": "website/playground/examples/js/async.ts",
+        "ms": 2908
+      },
+      {
+        "path": "website/playground/examples/dom/calendar.ts",
+        "ms": 2808
+      },
+      {
+        "path": "website/playground/examples/benchmarks/array.ts",
+        "ms": 2318
+      },
+      {
+        "path": "website/playground/examples/js/algorithms.ts",
+        "ms": 1727
+      },
+      {
+        "path": "website/playground/examples/js/builtins.ts",
+        "ms": 1698
+      },
+      {
+        "path": "website/playground/examples/benchmarks/helpers.ts",
+        "ms": 1364
+      },
+      {
+        "path": "website/playground/examples/benchmarks/style.ts",
+        "ms": 1355
+      },
+      {
+        "path": "website/playground/examples/benchmarks/string.ts",
+        "ms": 1290
+      },
+      {
+        "path": "website/playground/examples/js/classes.ts",
+        "ms": 1022
+      },
+      {
+        "path": "website/playground/examples/benchmarks/dom.ts",
+        "ms": 1000
+      },
+      {
+        "path": "website/playground/examples/benchmarks/loop.ts",
+        "ms": 982
+      },
+      {
+        "path": "website/playground/examples/benchmarks/fib.ts",
+        "ms": 816
+      }
+    ]
+  },
+  "test262": {
+    "files": 1340,
+    "compileOk": 1087,
+    "compileFail": 234,
+    "threw": 19,
+    "noTelemetry": 193,
+    "units": 1720,
+    "byOutcomeKind": {
+      "unsupported": 1621,
+      "invariant": 69,
+      "emitted": 22,
+      "non-executable": 8
+    },
+    "byBodyRoute": {
+      "legacy": 1592,
+      "neither": 106,
+      "both": 13,
+      "ir": 9
+    },
+    "byUnitKind": {
+      "module-init": {
+        "units": 1128,
+        "byOutcomeKind": {
+          "unsupported": 1117,
+          "non-executable": 8,
+          "emitted": 3
+        },
+        "byBodyRoute": {
+          "legacy": 1116,
+          "neither": 9,
+          "both": 3
+        }
+      },
+      "class-member": {
+        "units": 308,
+        "byOutcomeKind": {
+          "unsupported": 234,
+          "invariant": 69,
+          "emitted": 5
+        },
+        "byBodyRoute": {
+          "legacy": 234,
+          "neither": 69,
+          "ir": 5
+        }
+      },
+      "function": {
+        "units": 284,
+        "byOutcomeKind": {
+          "unsupported": 270,
+          "emitted": 14
+        },
+        "byBodyRoute": {
+          "legacy": 242,
+          "neither": 28,
+          "both": 10,
+          "ir": 4
+        }
+      }
+    },
+    "unsupportedByStageCode": {
+      "select:body-shape-rejected": 1233,
+      "select:class-member-unsupported": 162,
+      "select:class-method": 34,
+      "select:return-type-not-resolvable": 23,
+      "select:constructor-resolution-unsupported": 22,
+      "select:param-shape-rejected": 22,
+      "select:async-generator": 21,
+      "select:async-function": 19,
+      "select:class-projection-unsupported": 14,
+      "select:error-constructor-unsupported": 12,
+      "select:template-substitution-unsupported": 12,
+      "select:call-resolution-unsupported": 11,
+      "select:param-type-not-resolvable": 8,
+      "select:external-call": 7,
+      "select:call-graph-closure": 5,
+      "select:logical-value-unsupported": 3,
+      "select:array-method-unsupported": 2,
+      "select:operand-coercion-unsupported": 2,
+      "select:regexp-constructor-unsupported": 2,
+      "resolve:abi-signature-parity": 1,
+      "resolve:late-preparation-unsupported": 1,
+      "select:call-arity-unsupported": 1,
+      "select:destructuring-param-complex": 1,
+      "select:function-invocation-method-unsupported": 1,
+      "select:host-surface-unavailable": 1,
+      "select:static-class-initialization": 1
+    },
+    "selectReasons": {},
+    "invariantCodes": {
+      "patch:body-emission-evidence": 69
+    },
+    "noTelemetryFiles": [
+      "test262/test/annexB/built-ins/RegExp/prototype/compile/pattern-regexp-immutable-lastindex.js",
+      "test262/test/built-ins/Array/prototype/at/index-non-numeric-argument-tointeger.js",
+      "test262/test/built-ins/Array/prototype/every/15.4.4.16-4-8.js",
+      "test262/test/built-ins/Array/prototype/includes/return-abrupt-tonumber-length-symbol.js",
+      "test262/test/built-ins/Array/prototype/indexOf/calls-only-has-on-prototype-after-length-zeroed.js",
+      "test262/test/built-ins/Atomics/isLockFree/corner-cases.js",
+      "test262/test/built-ins/BigInt/infinity-throws-rangeerror.js",
+      "test262/test/built-ins/DataView/prototype/getFloat64/to-boolean-littleendian.js",
+      "test262/test/built-ins/DataView/prototype/setInt16/toindex-byteoffset.js",
+      "test262/test/built-ins/DataView/prototype/setInt8/return-abrupt-from-tonumber-byteoffset.js",
+      "test262/test/built-ins/DataView/return-abrupt-tonumber-bytelength.js",
+      "test262/test/built-ins/Date/S15.9.3.1_A4_T2.js",
+      "test262/test/built-ins/Date/prototype/setMinutes/this-value-non-date.js",
+      "test262/test/built-ins/Date/prototype/setUTCMinutes/arg-coercion-order.js",
+      "test262/test/built-ins/GeneratorPrototype/return/try-finally-following-finally.js",
+      "test262/test/built-ins/NaN/S15.1.1.1_A2_T2.js",
+      "test262/test/built-ins/Object/create/15.2.3.5-4-229.js",
+      "test262/test/built-ins/Object/create/15.2.3.5-4-94.js",
+      "test262/test/built-ins/Object/defineProperties/property-description-must-be-an-object-not-undefined.js",
+      "test262/test/built-ins/Object/defineProperty/15.2.3.6-3-118.js",
+      "test262/test/built-ins/Object/defineProperty/15.2.3.6-3-58.js",
+      "test262/test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-232.js",
+      "test262/test/built-ins/Object/getOwnPropertyDescriptors/tamper-with-object-keys.js",
+      "test262/test/built-ins/Object/keys/15.2.3.14-5-15.js",
+      "test262/test/built-ins/Promise/create-resolving-functions-reject.js",
+      "test262/test/built-ins/Promise/prototype/finally/invokes-then-with-non-function.js",
+      "test262/test/built-ins/Reflect/defineProperty/target-is-symbol-throws.js",
+      "test262/test/built-ins/Reflect/setPrototypeOf/target-is-not-object-throws.js",
+      "test262/test/built-ins/RegExp/property-escapes/generated/Script_-_Sidetic.js",
+      "test262/test/built-ins/RegExp/property-escapes/generated/strings/RGI_Emoji_Modifier_Sequence-negative-P.js",
+      "test262/test/built-ins/RegExp/property-escapes/loose-matching-01.js",
+      "test262/test/built-ins/RegExp/property-escapes/non-existent-binary-property.js",
+      "test262/test/built-ins/RegExp/property-escapes/unsupported-binary-property-Other_Lowercase-negated.js",
+      "test262/test/built-ins/RegExp/prototype/Symbol.replace/result-get-matched-err.js",
+      "test262/test/built-ins/RegExp/prototype/Symbol.split/coerce-limit-err.js",
+      "test262/test/built-ins/RegExp/prototype/exec/success-lastindex-access.js",
+      "test262/test/built-ins/RegExp/prototype/unicodeSets/breaking-change-from-u-to-v-15.js",
+      "test262/test/built-ins/RegExp/regexp-modifiers/add-ignoreCase-does-not-affect-alternatives-outside.js",
+      "test262/test/built-ins/RegExp/regexp-modifiers/remove-ignoreCase-does-not-affect-ignoreCase-property.js",
+      "test262/test/built-ins/Set/prototype/difference/size-is-a-number.js",
+      "test262/test/built-ins/Set/prototype/isSupersetOf/allows-set-like-class.js",
+      "test262/test/built-ins/String/fromCharCode/touint16-tonumber-throws-bigint.js",
+      "test262/test/built-ins/String/prototype/charCodeAt/S15.5.4.5_A1_T6.js",
+      "test262/test/built-ins/String/prototype/concat/S15.5.4.6_A1_T6.js",
+      "test262/test/built-ins/String/prototype/repeat/count-coerced-to-zero-returns-empty-string.js",
+      "test262/test/built-ins/Symbol/desc-to-string-symbol.js",
+      "test262/test/built-ins/Temporal/PlainYearMonth/compare/leap-second.js",
+      "test262/test/intl402/DisplayNames/options-languagedisplay-abrupt-throws.js",
+      "test262/test/language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-async-generator.js",
+      "test262/test/language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-async-function.js",
+      "test262/test/language/comments/S7.4_A2_T1.js",
+      "test262/test/language/directive-prologue/func-decl-no-semi-parse.js",
+      "test262/test/language/expressions/arrow-function/dstr/dflt-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/expressions/arrow-function/dstr/syntax-error-ident-ref-debugger-escaped.js",
+      "test262/test/language/expressions/arrow-function/syntax/early-errors/arrowparameters-cover-no-duplicates-rest.js",
+      "test262/test/language/expressions/assignment/dstr/syntax-error-ident-ref-import-escaped.js",
+      "test262/test/language/expressions/assignment/target-boolean.js",
+      "test262/test/language/expressions/assignmenttargettype/direct-bitwiseorexpression-bitwise-or-bitwisexorexpression-0.js",
+      "test262/test/language/expressions/assignmenttargettype/direct-lefthandsideexpression-assignment-assignmentexpression-2.js",
+      "test262/test/language/expressions/assignmenttargettype/direct-primaryexpression-regularexpressionliteral.js",
+      "test262/test/language/expressions/assignmenttargettype/direct-unaryexpression-plus-unaryexpression-0.js",
+      "test262/test/language/expressions/assignmenttargettype/parenthesized-bitwiseorexpression-bitwise-or-bitwisexorexpression-0.js",
+      "test262/test/language/expressions/assignmenttargettype/parenthesized-lefthandsideexpression-logical-and-assignment-assignmentexpression-0.js",
+      "test262/test/language/expressions/assignmenttargettype/parenthesized-relationalexpression-greater-than-or-equal-to-shiftexpression-1.js",
+      "test262/test/language/expressions/assignmenttargettype/parenthesized-unaryexpression-tilde-unaryexpression-1.js",
+      "test262/test/language/expressions/async-function/named-dflt-params-duplicates.js",
+      "test262/test/language/expressions/async-function/nameless-rest-param-strict-body.js",
+      "test262/test/language/expressions/async-generator/dstr/named-ary-ptrn-rest-not-final-id.js",
+      "test262/test/language/expressions/async-generator/named-yield-as-label-identifier-escaped.js",
+      "test262/test/language/expressions/async-generator/yield-as-identifier-reference-escaped.js",
+      "test262/test/language/expressions/await/await-BindingIdentifier-nested.js",
+      "test262/test/language/expressions/class/async-gen-method-static/yield-star-sync-return.js",
+      "test262/test/language/expressions/class/dstr/async-gen-meth-ary-ptrn-elem-ary-rest-iter.js",
+      "test262/test/language/expressions/class/dstr/async-gen-meth-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/expressions/class/dstr/async-private-gen-meth-ary-ptrn-rest-init-id.js",
+      "test262/test/language/expressions/class/dstr/async-private-gen-meth-obj-ptrn-id-init-skipped.js",
+      "test262/test/language/expressions/class/dstr/gen-meth-ary-ptrn-elem-ary-rest-iter.js",
+      "test262/test/language/expressions/class/dstr/gen-meth-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/expressions/class/dstr/meth-static-ary-ptrn-rest-init-obj.js",
+      "test262/test/language/expressions/class/dstr/private-meth-ary-ptrn-rest-init-id.js",
+      "test262/test/language/expressions/class/dstr/private-meth-obj-ptrn-id-init-skipped.js",
+      "test262/test/language/expressions/class/elements/async-gen-private-method-static/yield-star-async-return.js",
+      "test262/test/language/expressions/class/elements/fields-literal-name-static-propname-constructor.js",
+      "test262/test/language/expressions/class/elements/nested-comp-name-init-err-contains-arguments.js",
+      "test262/test/language/expressions/class/elements/nested-private-typeof-init-err-contains-arguments.js",
+      "test262/test/language/expressions/class/elements/string-literal-name-init-err-contains-super.js",
+      "test262/test/language/expressions/class/elements/syntax/early-errors/delete/field-delete-twice-covered-err-delete-call-expression-private-method-gen.js",
+      "test262/test/language/expressions/class/elements/syntax/early-errors/delete/method-delete-err-delete-member-expression-private-method-gen.js",
+      "test262/test/language/expressions/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-meth-get.js",
+      "test262/test/language/expressions/class/elements/syntax/early-errors/grammar-special-meth-contains-super-private-method.js",
+      "test262/test/language/expressions/class/elements/syntax/early-errors/invalid-names/method-call-expression-bad-reference.js",
+      "test262/test/language/expressions/class/gen-method-static/yield-as-identifier-reference-escaped.js",
+      "test262/test/language/expressions/class/getter-param-dflt.js",
+      "test262/test/language/expressions/coalesce/cannot-chain-tail-with-logical-or.js",
+      "test262/test/language/expressions/compound-assignment/div-non-simple.js",
+      "test262/test/language/expressions/dynamic-import/catch/nested-async-gen-await-import-defer-specifier-tostring-abrupt-rejects.js",
+      "test262/test/language/expressions/dynamic-import/catch/nested-if-import-catch-import-source-specifier-tostring.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/invalid-assignmenttargettype-syntax-error-5-lhs-equals-assignment-expression.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-async-arrow-function-await-import-call-unknown.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-async-function-await-import-source-assignment-expr-not-optional.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-async-function-return-await-typeof-import.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-block-labeled-import-source-no-rest-param.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-else-braceless-import-source-no-new-call-expression-prop-access.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-function-return-assignment-expr-not-optional.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-if-import-defer-no-new-call-expression-prop-access.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/nested-with-expression-import-source-no-new-call-expression.js",
+      "test262/test/language/expressions/dynamic-import/syntax/invalid/top-level-typeof-import-source.js",
+      "test262/test/language/expressions/dynamic-import/syntax/valid/nested-block-import-defer-script-code-valid.js",
+      "test262/test/language/expressions/dynamic-import/syntax/valid/nested-while-import-defer-empty-str-is-valid-assign-expr.js",
+      "test262/test/language/expressions/function/dstr/dflt-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/expressions/function/early-params-super-call.js",
+      "test262/test/language/expressions/generators/dstr/dflt-ary-ptrn-elem-id-iter-val-array-prototype.js",
+      "test262/test/language/expressions/generators/named-yield-as-identifier-reference-escaped.js",
+      "test262/test/language/expressions/logical-assignment/left-hand-side-private-reference-method-short-circuit-or.js",
+      "test262/test/language/expressions/object/dstr/async-gen-meth-obj-ptrn-prop-ary-value-null.js",
+      "test262/test/language/expressions/object/dstr/meth-dflt-ary-ptrn-rest-not-final-obj.js",
+      "test262/test/language/expressions/object/method-definition/async-gen-await-as-identifier-reference-escaped.js",
+      "test262/test/language/expressions/object/method-definition/generator-param-id-yield.js",
+      "test262/test/language/expressions/prefix-increment/target-cover-newtarget.js",
+      "test262/test/language/global-code/new.target-arrow.js",
+      "test262/test/language/identifiers/part-unicode-17.0.0-escaped.js",
+      "test262/test/language/identifiers/val-delete.js",
+      "test262/test/language/identifiers/val-instanceof-via-escape-hex.js",
+      "test262/test/language/identifiers/val-void-via-escape-hex4.js",
+      "test262/test/language/keywords/ident-ref-default.js",
+      "test262/test/language/literals/bigint/numeric-separators/numeric-separator-literal-bil-nsl-bd-err.js",
+      "test262/test/language/literals/bigint/octal-invalid-digit.js",
+      "test262/test/language/literals/numeric/S7.8.3_A6.2_T2.js",
+      "test262/test/language/literals/numeric/octal-invalid-digit.js",
+      "test262/test/language/literals/regexp/S7.8.5_A2.5_T1.js",
+      "test262/test/language/literals/regexp/early-err-arithmetic-modifiers-reverse-add-remove-i.js",
+      "test262/test/language/literals/regexp/early-err-modifiers-other-code-point-combining-s.js",
+      "test262/test/language/literals/regexp/named-groups/invalid-dangling-groupname-u.js",
+      "test262/test/language/literals/regexp/named-groups/invalid-numeric-groupspecifier-u.js",
+      "test262/test/language/literals/string/S7.8.4_A7.2_T1.js",
+      "test262/test/language/module-code/parse-err-decl-pos-export-for-in-let.js",
+      "test262/test/language/module-code/parse-err-decl-pos-import-do-while.js",
+      "test262/test/language/module-code/parse-err-return.js",
+      "test262/test/language/module-code/top-level-await/early-errors-await-not-simple-assignment-target.js",
+      "test262/test/language/punctuators/S7.7_A2_T4.js",
+      "test262/test/language/statements/async-generator/await-as-binding-identifier-escaped.js",
+      "test262/test/language/statements/block/12.1-3.js",
+      "test262/test/language/statements/class/async-method/await-as-identifier-reference-escaped.js",
+      "test262/test/language/statements/class/dstr/async-gen-meth-static-ary-ptrn-elem-ary-rest-iter.js",
+      "test262/test/language/statements/class/dstr/async-gen-meth-static-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-elem-ary-rest-iter.js",
+      "test262/test/language/statements/class/dstr/gen-meth-static-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/statements/class/dstr/private-gen-meth-static-ary-ptrn-rest-init-id.js",
+      "test262/test/language/statements/class/dstr/private-gen-meth-static-obj-ptrn-id-init-skipped.js",
+      "test262/test/language/statements/class/elements/async-gen-private-method-static/yield-as-identifier-reference.js",
+      "test262/test/language/statements/class/elements/async-gen-private-method/yield-as-label-identifier-escaped.js",
+      "test262/test/language/statements/class/elements/gen-private-method/yield-as-label-identifier-escaped.js",
+      "test262/test/language/statements/class/elements/nested-literal-name-init-err-contains-super.js",
+      "test262/test/language/statements/class/elements/syntax/early-errors/class-heritage-array-literal-arrow-heritage.js",
+      "test262/test/language/statements/class/elements/syntax/early-errors/delete/field-delete-twice-covered-err-delete-call-expression-private-no-reference.js",
+      "test262/test/language/statements/class/elements/syntax/early-errors/delete/method-delete-err-delete-member-expression-private-no-reference.js",
+      "test262/test/language/statements/class/elements/syntax/early-errors/grammar-privatemeth-duplicate-meth-set.js",
+      "test262/test/language/statements/class/elements/syntax/early-errors/grammar-special-meth-ctor-async-gen.js",
+      "test262/test/language/statements/class/elements/syntax/early-errors/invalid-names/method-fn-call-expression-bad-reference.js",
+      "test262/test/language/statements/class/gen-method-static/yield-as-identifier-reference-escaped.js",
+      "test262/test/language/statements/class/getter-param-dflt.js",
+      "test262/test/language/statements/const/syntax/const-declaring-let-split-across-two-lines.js",
+      "test262/test/language/statements/do-while/decl-let.js",
+      "test262/test/language/statements/for-await-of/async-gen-decl-dstr-array-rest-put-prop-ref-no-get.js",
+      "test262/test/language/statements/for-await-of/async-gen-dstr-const-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/statements/for-await-of/async-gen-dstr-let-ary-ptrn-rest-init-id.js",
+      "test262/test/language/statements/for-await-of/async-gen-dstr-var-ary-ptrn-rest-init-obj.js",
+      "test262/test/language/statements/for-in/dstr/array-elem-put-obj-literal-optchain-prop-ref-init.js",
+      "test262/test/language/statements/for-in/head-lhs-cover-non-asnmt-trgt.js",
+      "test262/test/language/statements/for-of/dstr/array-rest-before-element.js",
+      "test262/test/language/statements/for-of/dstr/let-ary-ptrn-rest-init-ary.js",
+      "test262/test/language/statements/for-of/head-const-init.js",
+      "test262/test/language/statements/for/S12.6.3_A4_T2.js",
+      "test262/test/language/statements/for/dstr/const-ary-ptrn-rest-init-obj.js",
+      "test262/test/language/statements/function/dstr/ary-ptrn-elem-id-iter-val-array-prototype.js",
+      "test262/test/language/statements/function/early-errors/invalid-names-call-expression-bad-reference.js",
+      "test262/test/language/statements/generators/dstr/dflt-ary-ptrn-rest-not-final-id.js",
+      "test262/test/language/statements/generators/yield-as-parameter.js",
+      "test262/test/language/statements/let/syntax/with-initialisers-in-statement-positions-for-statement.js",
+      "test262/test/language/statements/switch/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js",
+      "test262/test/language/statements/switch/syntax/redeclaration/generator-name-redeclaration-attempt-with-var.js",
+      "test262/test/language/statements/using/syntax/using-invalid-arraybindingpattern.js",
+      "test262/test/language/statements/while/decl-async-gen.js",
+      "test262/test/language/statements/with/S12.10_A1.11_T4.js",
+      "test262/test/language/statements/with/S12.10_A3.5_T3.js",
+      "test262/test/language/statements/with/decl-fun.js",
+      "test262/test/language/types/string/S8.4_A14_T1.js",
+      "test262/test/language/white-space/S7.2_A5_T1.js",
+      "test262/test/staging/explicit-resource-management/async-disposable-stack-disposed-getter.js",
+      "test262/test/staging/sm/Function/bound-length-and-name.js",
+      "test262/test/staging/sm/Proxy/trap-null.js",
+      "test262/test/staging/sm/RegExp/split-limit.js",
+      "test262/test/staging/sm/String/IsRegExp.js"
+    ],
+    "threwFiles": [
+      "test262/test/built-ins/Map/iterator-close-after-set-failure.js",
+      "test262/test/built-ins/Object/prototype/propertyIsEnumerable/symbol_property_toPrimitive.js",
+      "test262/test/built-ins/Promise/race/iter-next-val-err-no-close.js",
+      "test262/test/built-ins/isFinite/toprimitive-result-is-object-throws.js",
+      "test262/test/language/expressions/array/spread-err-sngl-err-itr-step.js",
+      "test262/test/language/expressions/assignment/dstr/array-elem-trlg-iter-get-err.js",
+      "test262/test/language/expressions/async-generator/dstr/dflt-ary-ptrn-elem-id-iter-val-err.js",
+      "test262/test/language/expressions/call/eval-spread-empty.js",
+      "test262/test/language/expressions/class/dstr/async-private-gen-meth-ary-init-iter-close.js",
+      "test262/test/language/expressions/class/dstr/meth-ary-init-iter-close.js",
+      "test262/test/language/expressions/class/dstr/private-meth-ary-init-iter-close.js",
+      "test262/test/language/expressions/object/dstr/async-gen-meth-dflt-ary-ptrn-elem-id-iter-val-err.js",
+      "test262/test/language/expressions/object/dstr/gen-meth-dflt-ary-init-iter-no-close.js",
+      "test262/test/language/expressions/yield/star-rhs-iter-nrml-res-done-err.js",
+      "test262/test/language/statements/class/dstr/meth-static-ary-init-iter-close.js",
+      "test262/test/language/statements/class/dstr/private-gen-meth-static-ary-init-iter-close.js",
+      "test262/test/language/statements/for-of/dstr/array-elem-trlg-iter-list-rtrn-close-err.js",
+      "test262/test/language/statements/for-of/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js",
+      "test262/test/language/statements/for-of/iterator-as-proxy.js"
+    ],
+    "slowestFiles": [
+      {
+        "path": "test262/test/annexB/language/eval-code/direct/func-if-decl-else-decl-a-eval-func-skip-early-err-for-of.js",
+        "ms": 9276
+      },
+      {
+        "path": "test262/test/annexB/language/eval-code/direct/func-if-decl-else-stmt-eval-func-skip-early-err.js",
+        "ms": 8730
+      },
+      {
+        "path": "test262/test/annexB/built-ins/Array/from/iterator-method-emulates-undefined.js",
+        "ms": 7835
+      },
+      {
+        "path": "test262/test/annexB/language/eval-code/direct/func-switch-case-eval-func-existing-block-fn-update.js",
+        "ms": 7466
+      },
+      {
+        "path": "test262/test/annexB/language/eval-code/direct/global-if-decl-else-decl-b-eval-global-existing-global-update.js",
+        "ms": 4638
+      },
+      {
+        "path": "test262/test/annexB/language/eval-code/direct/global-block-decl-eval-global-existing-global-update.js",
+        "ms": 4490
+      },
+      {
+        "path": "test262/test/annexB/built-ins/RegExp/RegExp-trailing-escape.js",
+        "ms": 3646
+      },
+      {
+        "path": "test262/test/annexB/language/eval-code/direct/global-if-decl-no-else-eval-global-existing-global-update.js",
+        "ms": 3484
+      },
+      {
+        "path": "test262/test/built-ins/Array/prototype/filter/create-species-null.js",
+        "ms": 3446
+      },
+      {
+        "path": "test262/test/built-ins/Error/prototype/stack/setter-not-a-constructor.js",
+        "ms": 3123
+      },
+      {
+        "path": "test262/test/built-ins/Iterator/zip/proto.js",
+        "ms": 3113
+      },
+      {
+        "path": "test262/test/annexB/built-ins/String/prototype/trimLeft/reference-trimStart.js",
+        "ms": 3037
+      },
+      {
+        "path": "test262/test/built-ins/GeneratorFunction/length.js",
+        "ms": 2802
+      },
+      {
+        "path": "test262/test/built-ins/Function/S15.3.2.1_A1_T5.js",
+        "ms": 2740
+      },
+      {
+        "path": "test262/test/built-ins/AsyncFunction/AsyncFunctionPrototype-prototype.js",
+        "ms": 2624
+      }
+    ]
+  }
+}

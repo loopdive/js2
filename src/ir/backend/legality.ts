@@ -23,7 +23,15 @@ export type IrBackendTargetCapability =
   | "standalone-wrapper-instanceof"
   | "primitive-wrapper-loose-equality"
   | "legacy-numeric-array-global"
-  | "number-to-string";
+  | "number-to-string"
+  | "native-json-codec"
+  | "native-object-tostring-tag"
+  | "native-dynamic-construct"
+  | "native-string-carrier-coercion"
+  | "native-arguments-length"
+  | "native-current-this"
+  | "native-own-property-test"
+  | "native-own-property-descriptor";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -109,6 +117,64 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "native-current-this":
+    // (#7106 S3c) the `__current_this` receiver ladder and the per-function
+    // prototype chain walk on the host-free lanes.
+    case "native-own-property-test":
+    // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
+    // alias reaches the object runtime's native `__getOwnPropertyDescriptor`.
+    case "native-own-property-descriptor":
+      // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
+      // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-arguments-length":
+      // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
+      // host-free lanes (`__ir_arguments_length`).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-string-carrier-coercion":
+      // (#7106 S1c) the checked externref → $AnyString recovery ladder legacy
+      // emits on the native-string host-free lanes (`__ir_string_carrier`).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-dynamic-construct":
+      // (#7106 S3a) `new <value>(…)` through the ordinary-[[Construct]] driver
+      // (`__native_construct_<N>`), which legacy reserves only on the host-free
+      // lanes (`tryCompileNativeConstructFromValue`, `noJsHost`).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-object-tostring-tag":
+      // (#7106 S1c) `Object.prototype.toString.call(v)` through the standalone
+      // runtime classifier `__object_proto_to_string_runtime`, which legacy
+      // registers only on the host-free lanes (`ensureObjectProtoToStringRuntimeHelper`).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "native-json-codec":
+      // (#7106 S1b) `JSON.stringify(v)` through the native JSON codec
+      // (`__json_stringify_root`, `anyref -> ref $AnyString`): a native-strings
+      // lane with the non-fast externref dynamic carrier, which
+      // `any.convert_extern` turns into the codec's anyref operand.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
     case "number-to-string":
       // (#4467) §7.1.17 Number::toString as a callable provider. Both wasmgc
       // lanes own one: host binds `env.number_toString`, whose externref IS

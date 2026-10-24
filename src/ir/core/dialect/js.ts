@@ -134,6 +134,183 @@ export interface IrInstrDynTruthy extends IrInstrBase {
 }
 
 /**
+ * `dyn.undefined` — the JS `undefined` value on the boxed-any carrier
+ * (#7104). No operands; result (via `IrInstrBase.result`) is
+ * `IrType.dynamic` refined to the Undefined partition. Lowering routes to
+ * the SAME `undefined` representation legacy uses on each lane via
+ * `IrDynamicLowering.emitUndefined` (the standalone `$undefined` singleton /
+ * `ref.null.extern`, the host `__get_undefined` import), so a dynamic-return
+ * function's bare `return;`, its fall-through after an `if` tail, and an
+ * explicit `return undefined` carry exactly legacy's value.
+ */
+export interface IrInstrDynUndefined extends IrInstrBase {
+  readonly kind: "dyn.undefined";
+}
+
+/**
+ * `dyn.typeof{value}` — JS `typeof` (§13.5.3) over EVERY partition of a
+ * boxed-any carrier (#7104). `value` MUST be `IrType.dynamic`; result (via
+ * `IrInstrBase.result`) is `string`. Lowering routes to the SAME runtime
+ * `__typeof` legacy calls for an `any`-typed operand (host import or the
+ * native-first function), re-tagged into the lane's string carrier — one
+ * typeof engine. The static two-family fast path (`tag.test` + string consts)
+ * stays for producers that prove the partition set.
+ */
+export interface IrInstrDynTypeof extends IrInstrBase {
+  readonly kind: "dyn.typeof";
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.to_string{value}` — JS `ToString` (§7.1.17) over EVERY partition of a
+ * boxed-any carrier (#7106 S1): the general `String(v)` on a dynamic operand.
+ * `value` MUST be `IrType.dynamic`; result (via `IrInstrBase.result`) is
+ * `string`. Lowering routes to the SAME `__extern_toString` legacy calls for
+ * an `any`-typed `String(v)` argument (host import, or the native-first
+ * function `ensureObjectRuntime` registers), re-tagged into the lane's string
+ * carrier — one ToString engine. The static arms (`String(number)`,
+ * `String(boolean)`, the #5092 mixed conditional) stay inline.
+ */
+export interface IrInstrDynToString extends IrInstrBase {
+  readonly kind: "dyn.to_string";
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.json_stringify{value}` — `JSON.stringify(value)` (§25.5.2, one argument,
+ * no replacer, no space) over a boxed-any carrier (#7106 S1b). `value` MUST be
+ * `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`. Lowering
+ * routes to the SAME native codec root legacy's one-argument
+ * `JSON.stringify(anyVar)` calls (`__json_stringify_root`), so the two
+ * frontends serialise identically, substrate limitations included. Admitted
+ * only where the `native-json-codec` backend capability holds.
+ */
+export interface IrInstrDynJsonStringify extends IrInstrBase {
+  readonly kind: "dyn.json_stringify";
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.object_tag{value}` — `Object.prototype.toString.call(value)` (§20.1.3.6,
+ * the `[object Tag]` classifier) over a boxed-any carrier (#7106 S1c). `value`
+ * MUST be `IrType.dynamic`; result (via `IrInstrBase.result`) is `string`.
+ * Lowering calls the SAME standalone runtime classifier legacy's `.call` arm
+ * does (`__object_proto_to_string_runtime(unusedSelf, value)`), re-tagged into
+ * the lane's string carrier. Admitted only where the
+ * `native-object-tostring-tag` backend capability holds.
+ */
+export interface IrInstrDynObjectTag extends IrInstrBase {
+  readonly kind: "dyn.object_tag";
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.construct{callee, args}` — `new callee(...args)` (§13.3.5.1
+ * EvaluateNew) where the constructor is a runtime VALUE on the boxed-any
+ * carrier (#7106 S3a). Callee and every argument are dynamic carriers,
+ * evaluated callee-first then left to right exactly once; the result is the
+ * constructed object as a dynamic carrier. Lowering delegates to the SAME
+ * ordinary-[[Construct]] driver legacy calls for a dynamic constructor value
+ * (`__native_construct_<N>`, including its `$__ta_ctor` arm), so an IR caller
+ * and a legacy caller construct byte-for-byte the same instance.
+ */
+export interface IrInstrDynConstruct extends IrInstrBase {
+  readonly kind: "dyn.construct";
+  /** The constructor value carrier (`dynamic`). */
+  readonly callee: IrValueId;
+  /** The argument carriers (`dynamic`), in source order. */
+  readonly args: readonly IrValueId[];
+}
+
+/**
+ * `dyn.string_carrier{value}` — the checked recovery of the native string
+ * carrier from a boxed-any value (#7106 S1c): legacy's `coerceType(externref →
+ * $AnyString)` ladder (`ref.test $AnyString` → cast; a boxed `new String(…)`
+ * wrapper's [[StringData]]; the `$AnyValue` tag-5 payload; null otherwise),
+ * which legacy emits for `return <dynamic>` into a string-registered result.
+ * NOT ToString — no user `toString`/`valueOf` runs. Result `string`.
+ */
+export interface IrInstrDynStringCarrier extends IrInstrBase {
+  readonly kind: "dyn.string_carrier";
+  /** The dynamic carrier to recover a native string from. */
+  readonly value: IrValueId;
+}
+
+/**
+ * `dyn.arguments_length{formals}` — the ECMAScript `arguments.length` of the
+ * current function invocation (#7106 S1e): the number of arguments actually
+ * passed (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the actual
+ * argument count, not the formal count). Reads and clears the call site's
+ * published count exactly as legacy's arguments prologue does, at function
+ * entry; an unknown caller yields `formals`. Result `f64`. No operands.
+ */
+export interface IrInstrDynArgumentsLength extends IrInstrBase {
+  readonly kind: "dyn.arguments_length";
+  /** The declared formal-parameter count (the unknown-caller fallback). */
+  readonly formals: number;
+}
+
+/**
+ * `dyn.current_this{strict}` — the `this` binding of an ordinary top-level
+ * function invocation (#7106 S3c): the receiver the caller installed
+ * (OrdinaryCallBindThis §10.2.1.2, a `[[Construct]]` or a method call), else
+ * the unbound answer, which depends on the function's own strictness — the
+ * global object for sloppy code, `undefined` for strict (§10.2.1.2 step 5).
+ * Reads the same receiver protocol legacy's `this` ladder reads, so both
+ * frontends see the same receiver. Result `dynamic`. No operands.
+ */
+export interface IrInstrDynCurrentThis extends IrInstrBase {
+  readonly kind: "dyn.current_this";
+  /** The function's code is strict (unbound `this` stays `undefined`). */
+  readonly strict: boolean;
+}
+
+/**
+ * `dyn.instanceof_fn{value, target}` — `value instanceof F` (§13.10.2) where F
+ * is a known top-level function constructor of this module (#7106 S3c):
+ * OrdinaryHasInstance (§7.3.20) walks `value`'s prototype chain for
+ * `F.prototype`, read through the SAME per-function prototype object legacy's
+ * `instanceof F` and `new F()` use. `value` is `dynamic`; result `i32` (0/1).
+ */
+export interface IrInstrDynInstanceOfFunction extends IrInstrBase {
+  readonly kind: "dyn.instanceof_fn";
+  readonly value: IrValueId;
+  /** The constructor function's exact unit identity. */
+  readonly target: IrFuncRef;
+}
+
+/**
+ * `dyn.publish_argc{count}` — the caller half of the same count protocol
+ * (#7106 S1i): publishes the number of arguments actually passed at a direct
+ * call whose callee reads its own `arguments` (§10.4.4.6: "length" is the
+ * number of arguments passed), immediately before that call — exactly
+ * legacy's `emitSetArgc` for an under-arity call site. The callee's entry
+ * prologue consumes and clears it. No operands, no result.
+ */
+export interface IrInstrDynPublishArgc extends IrInstrBase {
+  readonly kind: "dyn.publish_argc";
+  /** The call site's actual argument count (fewer than the callee's formals). */
+  readonly count: number;
+}
+
+/**
+ * `dyn.own_property{receiver, key, test}` — the ECMAScript
+ * `Object.prototype.hasOwnProperty` ([[GetOwnProperty]] ≠ undefined,
+ * §20.1.3.2) or `Object.prototype.propertyIsEnumerable` (§20.1.3.4) predicate
+ * applied to a boxed-any receiver and key (#7106 S1g): the test262
+ * propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
+ * `__propertyIsEnumerable(obj, name)` aliases, which legacy lowers to the
+ * lane's `__hasOwnProperty` / `__propertyIsEnumerable` provider over two
+ * externref arguments. Result `bool` (i32).
+ */
+export interface IrInstrDynOwnProperty extends IrInstrBase {
+  readonly kind: "dyn.own_property";
+  readonly receiver: IrValueId;
+  readonly key: IrValueId;
+  readonly test: "hasOwnProperty" | "propertyIsEnumerable";
+}
+
+/**
  * `dyn.to_number{value}` — `ToNumber(value)` (§7.1.4) on a boxed-any carrier,
  * result `f64` (#2949 S5.3). The single-operand ToNumber primitive that the
  * numeric-abstract relational lowering (`< > <= >=`) uses: from-ast converts a
@@ -244,6 +421,11 @@ export interface IrInstrDynMemberSet extends IrInstrBase {
   readonly key: IrValueId;
   /** The assigned value carrier (`dynamic`). */
   readonly value: IrValueId;
+  /**
+   * (#7106 S3c) Sloppy-mode PutValue (§6.2.5.6 step 6.d): a failed `[[Set]]`
+   * is ignored instead of throwing — legacy's `__extern_set`. Absent → strict.
+   */
+  readonly sloppy?: true;
 }
 
 /**

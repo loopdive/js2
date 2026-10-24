@@ -157,6 +157,13 @@ export interface ImportDescriptor {
    * drop arguments.
    */
   paramCount?: number;
+  /**
+   * (#7095) Set on a `declared_function` import (a user `declare function`,
+   * #6979) when its single wasm result is a reference. The compiled caller then reads a native carrier, so the runtime
+   * adapts a JS primitive the embedder returns; a numeric result is left to the
+   * JS-API's ToNumber/ToInt32. Absent everywhere else.
+   */
+  refResult?: true;
 }
 
 /** A separately compiled core-Wasm provider used by a project link plan. */

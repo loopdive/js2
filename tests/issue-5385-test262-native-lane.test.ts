@@ -73,8 +73,8 @@ describe("#5385 worker compile branches", () => {
     const worker = readFileSync(join(root, "scripts/test262-worker.mjs"), "utf8");
     const start = worker.indexOf("async function doCompile(");
     const end = worker.indexOf("\n/**", start);
-    // Run the real dispatch function against compiler doubles. This proves the
-    // option reaches the compiler, including compileMulti, without a provider build.
+    // Run the real dispatch function against compiler doubles. This proves all
+    // branches omit the removed option, including compileMulti and linked builds.
     const observed: unknown[] = [];
     const single = (_source: unknown, options: unknown) => {
       observed.push(options);
@@ -85,35 +85,56 @@ describe("#5385 worker compile branches", () => {
     const linked = (_source: unknown, _provider: unknown, options: unknown) => {
       observed.push(options);
     };
+    // Free variables of `doCompile` that live at worker module scope.
+    // (1de31aa63c, #6776) the branches now spread `WORKER_SELF_VALIDATES`, and
+    // (f1ad427b98) the fixture-graph arm checks `isFixtureFileRecord`.
     const doCompile = new Function(
       "restoreBuiltins",
-      "hasFixtureGraph",
+      "isFixtureFileRecord",
       "compileMultipleSources",
       "compileSingleSource",
       "compilerBundle",
+      "WORKER_SELF_VALIDATES",
+      "HARNESS_HOST_BRIDGE",
       `${worker.slice(start, end)}; return doCompile;`,
     )(
       () => ({ recycle: false }),
-      (files: unknown) => !!files,
+      (files: unknown) => !!files && typeof files === "object" && !Array.isArray(files),
       multi,
       single,
       { compileWithTemporalGlobal: linked },
+      { validate: false },
+      { hostBridge: "always" },
     );
-    await doCompile("source", undefined, undefined, false, false, undefined, undefined, false, undefined, null);
-    await doCompile("source", undefined, undefined, false, true, undefined, undefined, false, undefined, null);
-    await doCompile(
-      "source",
-      undefined,
-      undefined,
-      false,
-      true,
-      { "fixture.js": "export const x=1;" },
-      "main.js",
-      false,
-      undefined,
-      null,
-    );
-    await doCompile("source", undefined, undefined, false, true, undefined, undefined, false, undefined, {});
+    // The parameter list keeps growing in the middle (f1ad427b98 inserted
+    // `moduleGraph`, 668d3cf93b `linkedHarness`, 06dbc8d88f `scriptGoal`), which
+    // silently shifted every positional argument here. Bind by NAME, read off
+    // the real signature, so the next insertion cannot do that again.
+    const params = worker
+      .slice(start, worker.indexOf(") {", start))
+      .replace(/^async function doCompile\(/, "")
+      .replace(/\/\/[^\n]*/g, "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    expect(params).toEqual(expect.arrayContaining(["moduleGraph", "temporal"]));
+    expect(params).not.toContain("semanticProviders");
+    const call = (named: Record<string, unknown>) =>
+      doCompile(...params.map((p) => (p === "source" ? "source" : named[p])));
+    // literal JavaScript (original harness off -> synthetic TS lane)
+    await call({ inferModuleStrictArguments: false, originalHarness: false });
+    // literal original-harness assembly
+    await call({ inferModuleStrictArguments: false, originalHarness: true });
+    // fixture module graph -> compileMulti
+    await call({
+      inferModuleStrictArguments: false,
+      originalHarness: true,
+      fixtureFiles: { "fixture.js": "export const x=1;" },
+      entryFile: "main.js",
+      moduleGraph: true,
+    });
+    // linked Temporal provider
+    await call({ inferModuleStrictArguments: false, originalHarness: true, temporal: {} });
     expect(observed).toHaveLength(4);
     for (const options of observed) {
       expect(options).toMatchObject({ deferTopLevelInit: true });

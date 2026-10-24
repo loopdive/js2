@@ -206,7 +206,7 @@ import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-inde
 import { tryCompileIntlHostOnlyNew } from "./new-intl-host-bridge.js"; // (#5355) standalone Intl refusal
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
-import { funcConstructorForCallee } from "../fnctor-ctor-decl.js"; // (#6974) a bare name is not a binding
+import { calleeIsStandaloneSelfGuardedConstructor, funcConstructorForCallee } from "../fnctor-ctor-decl.js"; // (#6974) a bare name is not a binding
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
 import { isPrototypeStoreValue, newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#4506 S1) the site-level reconstruct predicate the slot typer shares
 import {
@@ -6517,7 +6517,8 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   // (e.g. `function Foo() { this.x = 1; }; new Foo()`)
   // (#3163) `calleeIdent` — the cast/paren-unwrapped identifier — so
   // `new (Foo as any)()` takes the same fnctor build path as `new Foo()`.
-  if ((!className || !ctx.classSet.has(className)) && calleeIdent) {
+  const selfGuard = calleeIdent !== undefined && calleeIsStandaloneSelfGuardedConstructor(ctx, calleeIdent); // (#7106 S3c)
+  if ((!className || !ctx.classSet.has(className)) && calleeIdent && !selfGuard) {
     const fnName = calleeIdent.text;
     // (#4506 S1) The reconstruct decision is per-SITE, so it has to be asked
     // BEFORE the per-FNCTOR constructor cache. A non-approved sibling
@@ -6642,7 +6643,7 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
     isFunctionIntrinsicValueCallee(ctx, expr.expression) || // (#6651 W2a)
     (noJsHost(ctx) && ts.isTaggedTemplateExpression(expr.expression)) // (#6774 S3)
   ) {
-    const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? []);
+    const nativeCtor = tryCompileNativeConstructFromValue(ctx, fctx, expr.expression, expr.arguments ?? [], selfGuard);
     if (nativeCtor) return nativeCtor;
   }
 

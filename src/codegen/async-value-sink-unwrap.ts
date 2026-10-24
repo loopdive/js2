@@ -10,7 +10,8 @@
  */
 import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { getOrRegisterPromiseType } from "./async-scheduler.js";
+import { PROMISE_STATE_REJECTED, getOrRegisterPromiseType } from "./async-scheduler.js";
+import { ensureExnTag } from "./registry/imports.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
@@ -19,8 +20,8 @@ import { VOID_RESULT } from "./shared.js";
 /**
  * (#2865 AG0) Emit a one-level native-`$Promise` await unwrap, host-free.
  * Consumes one externref on the stack and leaves one externref:
- *   - if it is a `$Promise` struct → push its `value` field (the resolved
- *     value the awaiter wants);
+ *   - if it is a `$Promise` struct → mark it handled and push its `value`
+ *     field (the resolved value the awaiter wants);
  *   - otherwise → push the original externref unchanged (a plain value / a
  *     non-Promise thenable is already "the value" under the standalone
  *     synchronous-settlement model).
@@ -32,10 +33,17 @@ import { VOID_RESULT } from "./shared.js";
  * f64 → NaN). Genuinely-pending awaits (a promise that only settles on a later
  * microtask) need true frame suspension — deferred to #2865 AG1 (PATH B).
  *
+ * (#6995) `throwOnRejected` makes the `await` consumer honest: a REJECTED
+ * `$Promise` throws its reason through the module exception tag (the same
+ * `throw $exn` a `throw` statement emits), so the enclosing `try`/`catch`
+ * runs and an uncaught rejection rejects the async function's promise —
+ * before it, the reason was read as if it were the fulfilled value and the
+ * function fulfilled. The #6428 value sink passes `false` (unchanged).
+ *
  * `src/ir/lower-generic.ts`'s `await` arm mirrors this EXACTLY — keep the two in
  * lockstep (see `ir/backend/lower-contracts.ts` L272).
  */
-export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionContext, throwOnRejected = false): void {
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const tmp = allocTempLocal(fctx, { kind: "externref" });
   // stack: externref(operand) → stash, then test the stashed copy.
@@ -43,15 +51,17 @@ export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionCon
   fctx.body.push({ op: "local.get", index: tmp });
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.test", typeIdx: promiseTypeIdx });
-  const thenBody: Instr[] = [
+  const asPromise: Instr[] = [
     { op: "local.get", index: tmp },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: promiseTypeIdx },
+  ];
+  const thenBody: Instr[] = [
+    ...asPromise,
     { op: "i32.const", value: 1 },
     { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 4 },
-    { op: "local.get", index: tmp },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: promiseTypeIdx },
+    ...(throwOnRejected ? rejectedAwaitThrow(asPromise, promiseTypeIdx, ensureExnTag(ctx)) : []),
+    ...asPromise,
     // $Promise field 1 = `value` (externref). See getOrRegisterPromiseType.
     { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
   ];
@@ -63,6 +73,30 @@ export function emitStandaloneAwaitUnwrap(ctx: CodegenContext, fctx: FunctionCon
     else: elseBody,
   });
   releaseTempLocal(fctx, tmp);
+}
+
+/**
+ * (#6995) `if ($Promise.state == REJECTED) throw $exn($Promise.value)` for a
+ * `$Promise` the `asPromise` sequence pushes. The IR `await` arm
+ * (`src/ir/lower-generic.ts`) emits the identical sequence — keep in lockstep.
+ */
+function rejectedAwaitThrow(asPromise: readonly Instr[], promiseTypeIdx: number, exnTagIdx: number): Instr[] {
+  return [
+    ...asPromise,
+    // $Promise field 0 = `state` (PENDING 0 / FULFILLED 1 / REJECTED 2).
+    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
+    { op: "i32.const", value: PROMISE_STATE_REJECTED },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        ...asPromise,
+        { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 1 },
+        { op: "throw", tagIdx: exnTagIdx },
+      ],
+    },
+  ];
 }
 
 /**

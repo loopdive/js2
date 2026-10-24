@@ -3444,12 +3444,11 @@ function compileMathCall(
   // ToUint32: NaN/±Infinity → 0; otherwise truncate then modulo 2^32.
   // Use the collected in-module helper for exact edge-case handling.
   if (method === "clz32" && expr.arguments.length >= 1) {
-    const toU32Idx = ctx.funcMap.get("__toUint32");
-    if (toU32Idx === undefined) {
+    if (ctx.funcMap.get("__toUint32") === undefined) {
       throw new Error("Math.clz32 requires the collected __toUint32 helper");
     }
     compileExpression(ctx, fctx, expr.arguments[0]!, f64Hint);
-    fctx.body.push({ op: "call", funcIdx: toU32Idx });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__toUint32")! });
     fctx.body.push({ op: "i32.clz" });
     fctx.body.push({ op: "f64.convert_i32_s" });
     return { kind: "f64" };
@@ -3457,14 +3456,14 @@ function compileMathCall(
 
   // Math.imul(a, b) → ToUint32(a) * ToUint32(b), result as signed i32
   if (method === "imul" && expr.arguments.length >= 2) {
-    const toU32Idx = ctx.funcMap.get("__toUint32");
-    if (toU32Idx === undefined) {
+    if (ctx.funcMap.get("__toUint32") === undefined) {
       throw new Error("Math.imul requires the collected __toUint32 helper");
     }
+    // (#7014) Re-read after each argument: coercing one may add a late import.
     compileExpression(ctx, fctx, expr.arguments[0]!, f64Hint);
-    fctx.body.push({ op: "call", funcIdx: toU32Idx });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__toUint32")! });
     compileExpression(ctx, fctx, expr.arguments[1]!, f64Hint);
-    fctx.body.push({ op: "call", funcIdx: toU32Idx });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__toUint32")! });
     fctx.body.push({ op: "i32.mul" });
     fctx.body.push({ op: "f64.convert_i32_s" });
     return { kind: "f64" };

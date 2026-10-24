@@ -22,6 +22,52 @@ Consequences:
 - **The "One native semantic core" principle below replaces the older
   "Dual-mode: JS host optional" one** (#6708).
 
+## ⚠ IR path: code quality comes first (project-lead rule, 2026-10-22)
+
+**Applies to every change under `src/ir/` and to the codegen seams the IR
+calls.** Quality outranks coverage: never take a claim faster at the cost of
+messier code, because the IR is meant to replace the legacy hacks, not
+reproduce them.
+
+What "clean" means here:
+
+- **Modular.** One concern per module, following the IR layering (core,
+  dialects, selection, lowering, backend). A new arm goes next to its
+  siblings, in the same shape: same file layout, same naming, same helper
+  pattern.
+- **No duplication.** Before adding a predicate, wrapper, lowering arm or
+  helper, look for an existing one and extend it. Two arms that differ by a
+  name or a flag become one parameterised arm. Copy-paste is a defect, not a
+  shortcut.
+- **No AI slop.** That means:
+  - no long files or functions (split by concern instead of growing them);
+  - no inconsistent structure between sibling arms;
+  - no defensive branches for cases that cannot occur;
+  - no speculative abstractions with one user;
+  - no dead parameters;
+  - no comments that narrate the code instead of explaining why.
+- **Size budgets are a ceiling, not a target.** A `func-budget-allow:` or
+  `loc-budget-allow:` grant is the exception, and the review must agree that
+  the growth cannot reasonably be split.
+
+How it is enforced:
+
+1. **Design.** Every IR issue's `## Implementation Plan` states the target
+   structure before code is written:
+   - which module the change lives in;
+   - what it reuses, and what duplicate it removes;
+   - an acceptance criterion for code quality, next to the correctness
+     criteria.
+2. **Adversarial review.** Before a PR's hold is released, run a review agent
+   with fresh context. Give it the diff and the plan, not the author's
+   conclusion, and ask it to prove the quality goal was **not** met:
+   duplication, misplaced code, oversized units, inconsistent structure,
+   needless branches. Every finding is fixed or rebutted in the PR before
+   release. Record the review verdict in the PR body.
+3. **Leave it better.** When a change touches duplicated or tangled IR code,
+   fold the duplicate into the shared helper in the same PR, or file the
+   cleanup as its own issue and link it.
+
 ## Answering style
 
 Be concise. Lead with the answer, then only the context needed to act on it.

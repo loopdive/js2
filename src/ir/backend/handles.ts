@@ -311,6 +311,102 @@ export interface IrDynamicLowering {
    */
   emitBox(from: ValType, hint?: JsTag): readonly Instr[];
   /**
+   * (#7104) Carrier value for JS `undefined` on the stack — the lane's
+   * canonical representation (gc: the `$undefined` tag-1 singleton; host: the
+   * `__get_undefined` import, pre-registered by `preregisterDynamicSupport`;
+   * standalone externref carrier: the extern-wrapped singleton or
+   * `ref.null.extern`, exactly legacy's `emitUndefined`).
+   */
+  emitUndefined(): readonly Instr[];
+  /**
+   * (#7104) Carrier on the stack → the lane's string carrier holding JS
+   * `typeof` of the value, through the SAME runtime `__typeof` legacy calls
+   * (host union import / native-first function; externref result re-tagged
+   * into the native string carrier under native strings). Throws on the fast
+   * `$AnyValue` strategy, which the selector never claims for this op.
+   */
+  emitTypeof(): readonly Instr[];
+  /**
+   * (#7106 S1) Carrier on the stack → the lane's string carrier holding JS
+   * `ToString` of the value, through the SAME runtime `__extern_toString`
+   * legacy's `String(any)` calls (host import / native-first function;
+   * externref result re-tagged into the native string carrier under native
+   * strings). Throws on the fast `$AnyValue` strategy, which the selector
+   * never claims for this op.
+   */
+  emitToString(): readonly Instr[];
+  /**
+   * (#7106 S1b) Carrier on the stack → the native string carrier holding
+   * `JSON.stringify(value)`, through the SAME native codec root legacy calls
+   * (`__json_stringify_root`, `anyref -> ref $AnyString`). Only on the lanes
+   * where the `native-json-codec` capability holds; throws elsewhere, which
+   * the selector's capability gate makes unreachable.
+   */
+  emitJsonStringify(): readonly Instr[];
+  /**
+   * (#7106 S1c) Carrier on the stack → the lane's string carrier holding
+   * `Object.prototype.toString.call(value)`, through the SAME standalone
+   * runtime classifier legacy calls (`__object_proto_to_string_runtime
+   * (unusedSelf, value)`); `scratch` lends the externref local that lets the
+   * null self slot be pushed beneath the value. Throws where the
+   * `native-object-tostring-tag` capability does not hold.
+   */
+  emitObjectToStringTag(scratch: () => number): readonly Instr[];
+  /**
+   * (#7106 S3a) `callee, arg0 … argN-1` carriers on the stack → the
+   * constructed object's carrier, through the SAME ordinary-[[Construct]]
+   * driver legacy calls for a dynamic constructor value
+   * (`__native_construct_<N>` behind the `__ir_dyn_construct_<N>` wrapper
+   * `ensureIrDynamicConstructHelper` builds). Throws where the
+   * `native-dynamic-construct` capability does not hold.
+   */
+  emitConstruct(arity: number): readonly Instr[];
+  /**
+   * (#7106 S1c) Carrier on the stack → the lane's string carrier (null when
+   * the value holds no native string), through the SAME `coerceType(externref
+   * → $AnyString)` ladder legacy emits for a dynamic value returned into a
+   * string-registered result (`__ir_string_carrier`). Throws where the
+   * `native-string-carrier-coercion` capability does not hold.
+   */
+  emitStringCarrier(): readonly Instr[];
+  /**
+   * (#7106 S1e) Nothing on the stack → the invocation's `arguments.length`
+   * as f64: the count half of legacy's arguments prologue (read + clear
+   * `__argc`, consume `__extras_argv`; an unknown caller yields `formals`),
+   * wrapped once per module (`__ir_arguments_length`). Throws where the
+   * `native-arguments-length` capability does not hold.
+   */
+  emitArgumentsLength(formals: number): readonly Instr[];
+  /**
+   * (#7106 S3c) Nothing on the stack → the ordinary function invocation's
+   * `this` as the carrier: legacy's `__current_this` ladder (the installed
+   * receiver, else the global object for sloppy code / `undefined` for strict),
+   * wrapped once per strictness (`__ir_current_this_{sloppy,strict}`). Throws
+   * where the `native-current-this` capability does not hold.
+   */
+  emitCurrentThis(strict: boolean): readonly Instr[];
+  /**
+   * (#7106 S3c) Carrier on the stack → i32 `value instanceof F` for the
+   * top-level function constructor legacy names `functionName`: the chain walk
+   * against legacy's per-function prototype object, wrapped once per function
+   * (`__ir_instanceof_fn_<F>`). Throws where the `native-current-this`
+   * capability does not hold.
+   */
+  emitInstanceOfFunction(functionName: string): readonly Instr[];
+  /**
+   * (#7106 S1i) Nothing on the stack → nothing: publish a direct call site's
+   * actual argument count to `__argc` (legacy's `emitSetArgc`), wrapped once
+   * per module (`__ir_publish_argc`). Same `native-arguments-length` lanes.
+   */
+  emitPublishArgc(count: number): readonly Instr[];
+  /**
+   * (#7106 S1g) Receiver then key on the stack (both carriers) → i32 bool:
+   * the lane's `__hasOwnProperty` / `__propertyIsEnumerable` provider, exactly
+   * legacy's lowering of the propertyHelper uncurried aliases. Throws where the
+   * `native-own-property-test` capability does not hold.
+   */
+  emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[];
+  /**
    * Carrier on the stack → the partition's payload. Caller must hold a
    * `tag.test` proof (verifier R2); a wasm-null carrier here is a producer
    * bug and traps (gc) / host-coerces (host). Result kind: NumberF64 → f64,
@@ -434,8 +530,10 @@ export interface IrDynamicLowering {
    * the canonical `__dyn_member_set` helper, which preserves receiver/key/value
    * evaluation order and delegates to the existing strict object-runtime
    * setter. Assignment-as-value is intentionally not represented.
+   * (#7106 S3c) `sloppy` selects `__dyn_member_set_sloppy`, which ignores a
+   * failed `[[Set]]` exactly as legacy's sloppy `__extern_set` store does.
    */
-  emitMemberSet(): readonly Instr[];
+  emitMemberSet(sloppy: boolean): readonly Instr[];
 }
 
 /**

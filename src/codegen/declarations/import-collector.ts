@@ -26,6 +26,7 @@ import {
 import { hasStaticModifier } from "../ast-modifiers.js"; // (#3132 S2) method-drive pre-pass gates
 import { bodyNeedsArgumentsObject } from "../helpers/body-uses-arguments.js";
 import { emitNativeEscape, emitNativeUnescape } from "../escape-native.js";
+import { emitNativeAtob, emitNativeBtoa } from "../helpers/base64-native.js"; // (#7079)
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
 import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
@@ -757,6 +758,12 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // never leaks an unsatisfiable import). A pure-Wasm standalone lowering is a
     // follow-up (mirrors the uri-encoding-native.ts machinery).
     if (name === "escape" || name === "unescape") {
+      state.escapeNeeded.add(name);
+    }
+    // (#7079) The HTML Base64 pair joins the same native family on the
+    // host-free targets only (base64-native.ts); the JS-host lane keeps its
+    // `env.atob`/`env.btoa` import from the ambient declaration, byte-identical.
+    if ((name === "atob" || name === "btoa") && (ctx.standalone || ctx.wasi)) {
       state.escapeNeeded.add(name);
     }
     if (name === "Number") {
@@ -1579,6 +1586,9 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   for (const name of state.escapeNeeded) {
     if (ctx.funcMap.has(name)) continue;
     if (name === "escape") emitNativeEscape(ctx);
+    else if (name === "atob")
+      emitNativeAtob(ctx); // (#7079)
+    else if (name === "btoa") emitNativeBtoa(ctx);
     else emitNativeUnescape(ctx);
   }
 

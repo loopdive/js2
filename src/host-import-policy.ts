@@ -59,6 +59,15 @@ const VALUE_ADAPTER_BUILTINS = new Set([
 const INSTANCE_LIFECYCLE_PREFIXES = ["__register_"] as const;
 
 /**
+ * (#7091) Is this extern class an ECMAScript builtin rather than a platform
+ * capability? The IR's platform-extern lane (JS environment, native regime)
+ * admits only the classes `classifyHostImport` calls `platform-capability`.
+ */
+export function isEcmascriptExternClass(className: string): boolean {
+  return ECMASCRIPT_EXTERN_CLASSES.has(className);
+}
+
+/**
  * (#6979) ECMAScript builtins. The native semantic regime owns them, so a host
  * extern-class import of one is a retired host-semantic import (compile error),
  * while any other declared class stays an embedder capability. RegExp, Date and
@@ -107,14 +116,14 @@ const ECMASCRIPT_EXTERN_CLASSES = new Set([
  * (#6979) Would a host extern-class import of `className` be a retired
  * host-semantic import under these accelerators? ECMAScript builtins are owned
  * by the native regime; RegExp/Date reach the host only through their selected
- * accelerator, and SharedArrayBuffer is a named regime gap. Codegen uses this
- * to stop registering imports the publication gate would reject.
+ * accelerator. Codegen uses this to stop registering imports the publication
+ * gate would reject.
  */
 export function isRetiredEcmaScriptExternClass(
   className: string,
   accelerators: readonly HostAcceleratorFamily[] | undefined,
 ): boolean {
-  if (!ECMASCRIPT_EXTERN_CLASSES.has(className) || className === "SharedArrayBuffer") return false;
+  if (!ECMASCRIPT_EXTERN_CLASSES.has(className)) return false;
   if (className === "RegExp") return accelerators?.includes("regexp") !== true;
   if (className === "Date") return accelerators?.includes("date") !== true;
   return true;
@@ -166,15 +175,15 @@ function retired(reason: string): HostImportPolicy {
 
 /**
  * (#6979, #5385) Named regime gaps: host imports that are still the ONLY
- * implementation of a construct on the native regime. Exactly these three
- * families; `scripts/check-host-import-policy.ts` holds the explicit name
- * ceiling so a fourth cannot slip in. Each is a #5385 regime slice to close.
+ * implementation of a construct on the native regime. Exactly this family;
+ * `scripts/check-host-import-policy.ts` holds the explicit name ceiling so a
+ * second cannot slip in. Each is a #5385 regime slice to close.
+ * (`shared-array-buffer` closed with #7011's native provider and
+ * `temporal-strings` with #7012's in-module helpers.)
  */
 export const REGIME_GAP_FAMILIES = {
   "eager-generator-buffer":
     "eager-buffer generator fallback for generator shapes the native generator lowering declines (#680)",
-  "shared-array-buffer": "SharedArrayBuffer construction has no native provider",
-  "temporal-strings": "Temporal string parsing/formatting and duration field arithmetic have no native provider",
 } as const;
 export type RegimeGapFamily = keyof typeof REGIME_GAP_FAMILIES;
 
@@ -186,7 +195,7 @@ function regimeGapOfBuiltin(name: string): HostImportPolicy | undefined {
   if (name.startsWith("__gen_") || name === "__create_generator" || name === "__create_async_generator") {
     return regimeGap("eager-generator-buffer");
   }
-  return name.startsWith("__temporal_") ? regimeGap("temporal-strings") : undefined;
+  return undefined;
 }
 
 /**
@@ -302,7 +311,6 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
     case "console_log":
       return policy("platform-capability", "console", 4398, false, "explicit host console capability");
     case "extern_class":
-      if (intent.className === "SharedArrayBuffer") return regimeGap("shared-array-buffer");
       return ECMASCRIPT_EXTERN_CLASSES.has(intent.className)
         ? retired(`host ECMAScript builtin '${intent.className}'`)
         : policy("platform-capability", `extern:${intent.className}`, 4398, false, "declared external API capability");

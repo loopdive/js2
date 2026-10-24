@@ -163,8 +163,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
-  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
-   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  /** (#5247) Provider build — exports are wasm→wasm call targets that no
+   *  JS host consumes directly. */
   exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
@@ -459,6 +459,8 @@ export interface NativeGeneratorInfo {
   nativeDelegates?: boolean;
   /** Generic protocol callbacks must reject reentrant next/return/throw. */
   executingFieldIdx?: number;
+  /** (#6980) Numeric-carrier `.return(v)` provenance — see `frame-core.ts` RETURN_ORIGIN_*. */
+  returnOriginFieldIdx?: number;
   /** Source-level generator function name. */
   functionName: string;
   /**
@@ -4671,6 +4673,14 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * `typed-this.ts` for why the indirection exists and what each field means.
    */
   directCallTrampolines?: Map<string, import("../typed-this.js").DirectCallTrampoline>;
+  /**
+   * Method names whose CLOSED dispatcher (`__call_m_<name>_<arity>`) must ask
+   * the receiver for an own slot before running a user-class arm. Recorded at
+   * dispatcher-reserve time, when the call's SourceFile is still in hand — the
+   * finalize fill has no node to scan. See
+   * `expressions/own-property-method-shadow.ts`.
+   */
+  ownShadowDispatchNames?: Set<string>;
   /**
    * (#3683 S3) `"<F>/<m>"` → the compiled typed TWIN of that prototype method:
    * its wasm function NAME (never a raw index — funcMap is the shift-maintained

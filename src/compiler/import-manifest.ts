@@ -320,6 +320,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   return mod.declaredFunctionImports?.has(name) ? { type: "declared_function", name } : { type: "builtin", name };
 }
 
+const NUMERIC_VAL_KINDS: ReadonlySet<string> = new Set(["i32", "i64", "f32", "f64", "v128", "i8", "i16"]);
+
 function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
   const manifest: ImportDescriptor[] = [];
   // Codegen can request the same adapter helper from more than one lowering
@@ -335,9 +337,13 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
     // (#4150) Carry the declared parameter count for func imports so the host
     // side can build fixed-arity wrappers (see ImportDescriptor.paramCount).
     let paramCount: number | undefined;
+    let refResult = false;
     if (imp.desc.kind === "func") {
       const t = mod.types[imp.desc.typeIdx];
-      if (t && t.kind === "func") paramCount = t.params.length;
+      if (t && t.kind === "func") {
+        paramCount = t.params.length;
+        refResult = t.results.length === 1 && !NUMERIC_VAL_KINDS.has(t.results[0]!.kind);
+      }
     }
     const descriptor: ImportDescriptor = {
       module: "env",
@@ -346,6 +352,9 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
       intent: classifyImport(imp.name, mod),
       paramCount,
     };
+    // (#7095) Result shape of a user `declare function` (the #6979
+    // `declared_function` intent), read by the runtime's declared-function marshal.
+    if (refResult && descriptor.intent.type === "declared_function") descriptor.refResult = true;
     const key = JSON.stringify(descriptor);
     if (seenExact.has(key)) continue;
     seenExact.add(key);

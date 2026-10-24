@@ -12,13 +12,15 @@
 //   Lane A (V8 reference): `node <program.js>` via spawnSync, capture stdout
 //   Lane B (js2wasm):       compile in-process via `compile()`, instantiate via
 //                           `buildImports`/`instantiateWasm` against a monkey-
-//                           patched `console.log` that buffers output
+//                           patched `console.log` that buffers output. This is
+//                           the explicit `host-assisted` compatibility lane.
 //
 // Why not wasmtime: the `--target wasi` codegen has a known type-mismatch in
 // `__wasi_write_i32` that prevents non-trivial programs from running through
 // wasmtime today. The Node-host lane exercises the primary codegen target
-// (WasmGC + wasm:js-string + JS host imports) and gives signal on the path
-// most users will hit. wasmtime/SpiderMonkey lanes are documented follow-ups.
+// (WasmGC + wasm:js-string + JS host imports). Native-first coverage belongs
+// to the standalone/equivalence lanes; wasmtime/SpiderMonkey lanes are
+// documented follow-ups.
 //
 // Output: `benchmarks/results/diff-test.json` — per-file results.
 // Triage:  `scripts/diff-triage.ts` — buckets mismatches by category.
@@ -204,8 +206,15 @@ export async function runJs2wasm(file: string): Promise<{
   const r = await compile(
     source,
     OPTIMIZE
-      ? { fileName: file, optimize: true, deferTopLevelInit: true }
-      : { fileName: file, deferTopLevelInit: true },
+      ? {
+          fileName: file,
+          optimize: true,
+          deferTopLevelInit: true,
+        }
+      : {
+          fileName: file,
+          deferTopLevelInit: true,
+        },
   );
   if (!r.success) {
     return {

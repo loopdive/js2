@@ -2466,6 +2466,12 @@ export function compileTypeofComparison(
       // Compile the operand
       const operandType = compileExpression(ctx, fctx, operand);
       if (!operandType) return null;
+      // (#6981) The declared type is `any`, but a usage-specialized slot (an
+      // `any` local only ever written numbers → `f64`) arrives unboxed. Box it
+      // so the tag read sees an `$AnyValue`, never a scalar.
+      if (!isAnyValue(operandType, ctx)) {
+        coerceType(ctx, fctx, operandType, { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx });
+      }
       // Get the tag field
       fctx.body.push({ op: "struct.get", typeIdx: ctx.anyValueTypeIdx, fieldIdx: 0 });
       // Check if tag matches any of the expected values

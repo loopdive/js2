@@ -122,6 +122,16 @@ hard-fails (masking guard, so #3341's invalid-Wasm-catch is preserved).
 ## Test Results
 
 - `tests/issue-3565.test.ts`: 5/5 pass.
+
+## 2026-10-18 S6 lane normalization
+
+The JS-host rows in this issue specifically guard designed
+**demote-to-legacy** contracts. After S6, an omitted provider selection no
+longer means the legacy lane and the extern-element read can be handled by the
+native provider instead of producing the post-claim demote diagnostic this
+test owns. Those host controls now select `host-assisted` explicitly; the
+standalone controls remain standalone/native. No diagnostic expectation or
+hard-invariant masking guard was relaxed.
 - Full required guard suite (`run-guard-suite.mjs`): green (incl. #680, #3519 siblings).
 - `tests/issue-3519-ir-outcomes.test.ts` (over-promotion outcomes): 29/29 —
   the injected verify failure (non-contiguous block id) stays `invariant`.

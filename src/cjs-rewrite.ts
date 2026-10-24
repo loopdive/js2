@@ -46,6 +46,12 @@ export function rewriteCjsRequire(source: string, opts?: CjsRewriteOptions): str
 export interface CjsRewriteOptions {
   /** Set `false` to force the AST pass even when the source has no CJS token. */
   prefilter?: boolean;
+  /**
+   * #6751 — observe `module.exports` writes made through an alias of `module`
+   * (lodash's `freeModule = … && module; freeModule.exports = _`). Host-free
+   * targets only: the JS-host output stays byte-identical.
+   */
+  aliasedModuleExports?: boolean;
 }
 
 /**
@@ -148,18 +154,28 @@ export function rewriteCjsRequireWithMap(
     return { source, positionMap: PositionMap.identity() };
   }
 
+  // #6751 — only the literal `module.exports` spelling is rewritten to the
+  // export cell above. A write through an alias of `module` lands on the
+  // `module` object instead, so seed its `exports` slot and adopt the slot when
+  // the body replaced it.
+  const observeAlias = wrapModuleExports && opts?.aliasedModuleExports === true && moduleIsAliased(sf);
   const modulePrelude =
     hoistedImports +
     (wrapModuleExports
       ? "/** @type {any} */ let __cjs_default_export = Object.create(Object.prototype);\n" +
         "/** @type {any} */ const exports = __cjs_default_export;\n" +
-        "/** @type {any} */ const module = {};\n"
+        (observeAlias
+          ? "/** @type {any} */ const module = { exports: __cjs_default_export };\n"
+          : "/** @type {any} */ const module = {};\n")
       : "");
   // Export the binding, not an `export default <expression>` snapshot. CommonJS
   // is allowed to replace `module.exports` while the module executes; importers
   // must observe that final/live cell rather than the empty object seeded by the
   // prelude before the assignment runs.
-  const moduleFooter = wrapModuleExports ? "\nexport { __cjs_default_export as default };\n" : "";
+  const moduleFooter = wrapModuleExports
+    ? (observeAlias ? "\nif (module.exports !== exports) __cjs_default_export = module.exports;" : "") +
+      "\nexport { __cjs_default_export as default };\n"
+    : "";
 
   const positionMap = new PositionMap([
     ...(modulePrelude ? [{ origStart: 0, origEnd: 0, newLength: modulePrelude.length }] : []),
@@ -231,8 +247,71 @@ function tryRewriteSingleModuleExportsAssignment(sf: ts.SourceFile): RequireRewr
   return {
     start: candidate.statement.getStart(sf),
     end: candidate.statement.end,
-    text: `export default ${candidate.assignment.right.getText(sf)};`,
+    text: `export default ${candidate.assignment.right.getText(sf)};${namedExportsOf(sf, candidate.assignment.right)}`,
   };
+}
+
+/**
+ * (#1277) `module.exports = { inc, times2: _double }` names its exports. The
+ * CJS export walker in `declarations.ts` (pattern 1c) surfaced each
+ * function-valued property as its own Wasm export, but since the single-
+ * assignment rewrite above (ad543a660e) the walker only ever sees
+ * `export default { … }`, so `inc` / `times2` silently stopped being exported.
+ * Importers lost the names too: a multi-file `const { Config } =
+ * require("./config.js")` (rewritten to a named import) failed type-checking
+ * with TS2614 against a default-only module (eslint `lib/config/config.js`,
+ * `lib/shared/deep-merge-arrays.js`). Re-state the names as an ESM named-export
+ * clause — the names Node's CommonJS named-export detection gives importers —
+ * for every shorthand / `key: identifier` property whose identifier is a
+ * TOP-LEVEL declaration of this file (function, class or variable, including
+ * a destructured `const { Linter } = require(…)` — eslint's `lib/api.js`).
+ * The Wasm export walker still surfaces only the function-valued ones, as
+ * pattern 1c did. Anything else (computed keys, methods, other values,
+ * `default`) keeps the default-export-only rewrite.
+ */
+/** Every name a (possibly destructuring) binding introduces. */
+function addBindingNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) addBindingNames(element.name, into);
+  }
+}
+
+function namedExportsOf(sf: ts.SourceFile, value: ts.Expression): string {
+  if (!ts.isObjectLiteralExpression(value)) return "";
+  const declared = new Set<string>();
+  for (const statement of sf.statements) {
+    if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
+      declared.add(statement.name.text);
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        addBindingNames(declaration.name, declared);
+      }
+    }
+  }
+  const specifiers: string[] = [];
+  const seen = new Set<string>();
+  for (const property of value.properties) {
+    let key: string | undefined;
+    let local: string | undefined;
+    if (ts.isShorthandPropertyAssignment(property) && property.objectAssignmentInitializer === undefined) {
+      key = local = property.name.text;
+    } else if (
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      ts.isIdentifier(property.initializer)
+    ) {
+      key = property.name.text;
+      local = property.initializer.text;
+    }
+    if (!key || !local || key === "default" || seen.has(key) || !declared.has(local)) continue;
+    seen.add(key);
+    specifiers.push(key === local ? key : `${local} as ${key}`);
+  }
+  return specifiers.length === 0 ? "" : `\nexport { ${specifiers.join(", ")} };`;
 }
 
 /** True for a script that mutates the ambient CommonJS `module.exports`. */
@@ -287,6 +366,33 @@ function shouldWrapModuleExports(sf: ts.SourceFile): boolean {
   };
   visit(sf);
   return found;
+}
+
+/**
+ * #6751 — true when `module` is read as a value anywhere other than the
+ * literal `module.exports` spelling (e.g. `var freeModule = … && module`), so a
+ * `module.exports` write can reach the module object through an alias. A
+ * shadowing local named `module` over-approximates, which only costs the
+ * footer's identity check.
+ */
+function moduleIsAliased(sf: ts.SourceFile): boolean {
+  let aliased = false;
+  const visit = (node: ts.Node): void => {
+    if (aliased) return;
+    if (ts.isIdentifier(node) && node.text === "module") {
+      const parent = node.parent;
+      const isExportsAccess =
+        ts.isPropertyAccessExpression(parent) && parent.expression === node && parent.name.text === "exports";
+      const isNameSlot =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node);
+      if (!isExportsAccess && !isNameSlot) aliased = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return aliased;
 }
 
 /**

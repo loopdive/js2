@@ -453,6 +453,34 @@ if (test262RunsStandaloneEditionsIndexSource) {
 
 // IR measurements have their own namespace. Missing files mean unmeasured;
 // neither a legacy snapshot nor an IR-first hybrid run is a replacement.
+const measuredIrData = (data, target) => {
+  if (data?.compilerPath !== "ir" || data.requestedCompilerPath !== "ir" || data.measurementState !== "measured")
+    return false;
+  if (target && data.mode?.target !== target) return false;
+  const counts = [
+    "attemptedCases",
+    "completedCases",
+    "skippedCases",
+    "compileErrorCases",
+    "compileTimeoutCases",
+    "verifiedExecutionCases",
+    "unverifiedExecutionCases",
+  ];
+  if (!counts.every((key) => Number.isSafeInteger(data[key]) && data[key] >= 0)) return false;
+  const nonSkipped = data.completedCases - data.skippedCases;
+  if (
+    data.attemptedCases <= 0 ||
+    nonSkipped <= 0 ||
+    data.verifiedExecutionCases + data.unverifiedExecutionCases !== nonSkipped ||
+    data.compileErrorCases + data.compileTimeoutCases > data.unverifiedExecutionCases
+  )
+    return false;
+  if (data.compilerPathVerified === true)
+    return (
+      data.executionCompilerPath === "ir" && data.verifiedExecutionCases > 0 && data.unverifiedExecutionCases === 0
+    );
+  return data.compilerPathVerified === false && ["unknown", "mixed"].includes(data.executionCompilerPath);
+};
 for (const relativePath of [
   "test262-ir-status.json",
   "test262-standalone-ir-status.json",
@@ -471,6 +499,23 @@ for (const relativePath of [
   "ir/runs/editions-index.json",
   "ir/runs/standalone-editions-index.json",
 ]) {
+  const statusName = relativePath.includes("standalone")
+    ? "test262-standalone-ir-status.json"
+    : "test262-ir-status.json";
+  const statusSource = resolvePreferredFileOrNull(
+    join(BENCHMARKS_RESULTS_DIR, statusName),
+    join(PUBLIC_BENCH, statusName),
+  );
+  if (
+    !relativePath.endsWith("-status.json") &&
+    statusSource &&
+    JSON.parse(readFileSync(statusSource, "utf8")).state === "unavailable"
+  ) {
+    // An explicit absence wins over an old bundled score for the same lane.
+    rmSync(join(PAGES_DIST, "benchmarks", "results", relativePath), { force: true });
+    rmSync(join(PLAYGROUND_BENCHMARKS_RESULTS_DIR, relativePath), { force: true });
+    continue;
+  }
   const source = resolvePreferredFileOrNull(
     join(BENCHMARKS_RESULTS_DIR, relativePath),
     join(PUBLIC_BENCH, relativePath),
@@ -482,7 +527,7 @@ for (const relativePath of [
     data.compilerPath !== "ir" ||
     (unavailable
       ? data.compilerPathVerified !== false || typeof data.reason !== "string" || !data.reason
-      : data.compilerPathVerified !== true || data.executionCompilerPath !== "ir")
+      : !measuredIrData(data, relativePath.includes("standalone") ? "standalone" : "gc"))
   ) {
     throw new Error(`IR Test262 artifact lacks explicit path provenance: ${source}`);
   }

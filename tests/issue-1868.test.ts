@@ -17,17 +17,38 @@ import { compile } from "../src/index.js";
 
 // Constructs the linear backend does NOT lower. Each previously produced an
 // invalid binary with `success: true`.
+//
+// (#7014) `String.prototype.repeat` used to be the main entry here. The linear
+// backend has lowered it natively since 5d028548eb ("feat(linear): add native
+// String.repeat support", 2026-08-09), so those three rows moved to
+// FORMERLY_UNSUPPORTED_LINEAR below, which asserts the stronger property the
+// fallback test at the end of this file anticipated: a valid binary that
+// computes the JS answer.
 const UNSUPPORTED_LINEAR = [
-  ['"x".repeat(n) bound to a const', `export function run(): number { const c = "x".repeat(8); return c.length; }`],
-  ['"x".repeat(n) inline', `export function run(): number { return "ab".repeat(4).length; }`],
-  ["indexOf after repeat", `export function run(): number { const h = "ab".repeat(10); return h.indexOf("a"); }`],
   [
     "String.prototype.replace",
     `export function run(): number { const t = "the quick brown fox"; return t.replace("fox", "cat").length; }`,
   ],
 ] as const;
 
+// (#7014) Rows that were unsupported when #1868 landed and are lowered now —
+// each must compile, validate and return what JS returns.
+const FORMERLY_UNSUPPORTED_LINEAR = [
+  ['"x".repeat(n) bound to a const', `export function run(): number { const c = "x".repeat(8); return c.length; }`, 8],
+  ['"x".repeat(n) inline', `export function run(): number { return "ab".repeat(4).length; }`, 8],
+  ["indexOf after repeat", `export function run(): number { const h = "ab".repeat(10); return h.indexOf("a"); }`, 0],
+] as const;
+
 describe("#1868 — linear backend never emits invalid wasm with success:true", () => {
+  for (const [label, src, expected] of FORMERLY_UNSUPPORTED_LINEAR) {
+    it(`lowers ${label} to valid wasm with the JS result`, async () => {
+      const result = await compile(src, { target: "linear" });
+      expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+      const { instance } = await WebAssembly.instantiate(result.binary);
+      expect((instance.exports as Record<string, Function>).run()).toBe(expected);
+    });
+  }
+
   for (const [label, src] of UNSUPPORTED_LINEAR) {
     it(`reports success:false for ${label}`, async () => {
       const result = await compile(src, { target: "linear" });

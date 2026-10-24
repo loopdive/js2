@@ -91,9 +91,9 @@ describe("#1004 counted string-append aggregation", () => {
     expect(testBody).not.toContain("i32.lt_s");
     const targets = watCallTargets(result.wat, testBody);
     // The final optimizer inlines the validated f64 adapter into `test`; the
-    // remaining physical call is its exact native i32 repeat kernel.
+    // remaining repeat call is the exact-rope self-hosted native kernel.
     expect(
-      targets.filter((target) => target === "__str_repeat"),
+      targets.filter((target) => target === "__sh_str_repeat"),
       `test call targets: ${JSON.stringify(targets)}`,
     ).toHaveLength(1);
     expect(targets.filter((target) => /^__str_concat(?:_owned)?$/.test(target))).toHaveLength(1);
@@ -125,7 +125,7 @@ describe("#1004 counted string-append aggregation", () => {
     });
     const targets = watCallTargets(result.wat, watFunctionBody(result.wat, "test"));
     expect(
-      targets.filter((target) => target === "__str_repeat"),
+      targets.filter((target) => target === "__sh_str_repeat"),
       `test call targets: ${JSON.stringify(targets)}`,
     ).toHaveLength(1);
     const { instance } = await WebAssembly.instantiate(result.binary);
@@ -218,11 +218,6 @@ describe("#1004 counted string-append aggregation", () => {
         kind: "build",
         func: "test",
         message: expect.stringContaining("dependency-complete component"),
-      },
-      {
-        kind: "build",
-        func: "test",
-        message: expect.stringContaining("failed after its exact proof was retained and cannot retry direct"),
       },
     ]);
     expect(result.irOutcomes?.find((outcome) => outcome.displayName === "test")).toMatchObject({

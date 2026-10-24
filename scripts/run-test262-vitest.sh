@@ -81,9 +81,11 @@ fi
 case "$TEST262_COMPILER_PATH" in
   legacy) ;;
   ir)
-    node "$SCRIPT_DIR/check-test262-compiler-path.mjs" --compiler-path ir \
-      --status "$RESULTS_DIR/${RESULT_PREFIX}-ir-status.json"
-    exit 2
+    if [ "$TEST262_TARGET" != "standalone" ]; then
+      echo "ERROR: explicit IR Test262 measurement requires standalone; historical JS-host results are preserved"
+      exit 2
+    fi
+    RESULT_PREFIX="${RESULT_PREFIX}-ir"
     ;;
   *) echo "ERROR: compiler path must be legacy or ir"; exit 2 ;;
 esac
@@ -306,7 +308,9 @@ fi
 # pre-#5353 behaviour, loudly announced on stderr, never a per-row timeout.
 # JS2WASM_TEST262_TEMPORAL=0 skips the build and the linking together.
 export JS2WASM_TEMPORAL_CACHE="${JS2WASM_TEMPORAL_CACHE:-$MAIN_DIR/.test262-cache/temporal}"
-if [ "${JS2WASM_TEST262_TEMPORAL:-1}" = "0" ]; then
+if [ "$TEST262_COMPILER_PATH" = "ir" ]; then
+  echo "Strict IR: original Temporal source retained; no unowned linked provider prewarm"
+elif [ "${JS2WASM_TEST262_TEMPORAL:-1}" = "0" ]; then
   echo "Temporal provider: DISABLED (JS2WASM_TEST262_TEMPORAL=0)"
 else
   echo "Pre-warming Temporal provider into $JS2WASM_TEMPORAL_CACHE ..."
@@ -352,8 +356,11 @@ fi
 # quickjs prebuild makes a missing/mis-keyed quickjs cache harder to diagnose
 # and wastes minutes, while the selector is deliberately forbidden from
 # falling back between engines.
-# (#5385, #6708) The JS-host regime lane (the default) links the same provider.
-if [ "$TEST262_TARGET" = "standalone" ] || [ "$JS_HOST_REGIME_LANE" = "1" ]; then
+# (#5385, #6708) Existing non-IR regime lanes retain their provider selection.
+if [ "$TEST262_COMPILER_PATH" = "ir" ]; then
+  echo "Strict IR: fixed owned native runtime; no legacy runtime-eval provider is linked or prebuilt"
+  echo "Eval engine request: $EVAL_ENGINE (external provider unavailable on strict native route)"
+elif [ "$TEST262_TARGET" = "standalone" ] || [ "$JS_HOST_REGIME_LANE" = "1" ]; then
   echo "Eval engine selection: $EVAL_ENGINE"
   case "$EVAL_ENGINE" in
     quickjs)
@@ -523,12 +530,18 @@ if [ "$COMPLETENESS_OK" = true ]; then
     --output "$REPORT_FILE"
     --target "$TEST262_TARGET"
     --compiler-path "$TEST262_COMPILER_PATH"
+    --eval-engine "$EVAL_ENGINE"
     --baseline-generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   )
   if [ "$INCLUDE_PROPOSALS" = "1" ]; then
     report_args+=(--include-proposals)
   fi
-  if [ "$TEST262_TARGET" = "standalone" ]; then
+  if [ "$TEST262_COMPILER_PATH" = "ir" ]; then
+    # Non-promoting measurement: retain every unknown cause instead of preventing
+    # an honestly failing requested-IR population from being reported at all.
+    IR_FAILURE_ROWS=$(node -e 'const fs=require("node:fs"); const rows=fs.readFileSync(process.argv[1],"utf8").trim().split("\n").filter(Boolean).map(JSON.parse); process.stdout.write(String(rows.filter(r=>r.status!=="pass"&&r.status!=="skip").length))' "$JSONL_FILE")
+    report_args+=(--max-unclassified-root-causes "$IR_FAILURE_ROWS")
+  elif [ "$TEST262_TARGET" = "standalone" ]; then
     report_args+=(--max-unclassified-root-causes "${TEST262_MAX_UNCLASSIFIED_ROOT_CAUSES:-0}")
   fi
   if node "${report_args[@]}"; then
@@ -613,8 +626,10 @@ if [ "$COMPLETED" = true ]; then
     echo "  run must not post a partial total. Override with TEST262_PUBLISH_HISTORY=1."
   elif [ -f "$RUN_REPORT" ]; then
     RUNS_DIR="$RESULTS_DIR/runs"
+    if [ "$TEST262_COMPILER_PATH" = "ir" ]; then RUNS_DIR="$RESULTS_DIR/ir/runs"; fi
     mkdir -p "$RUNS_DIR"
     INDEX_FILE="$RUNS_DIR/index.json"
+    if [ "$TEST262_COMPILER_PATH" = "ir" ]; then INDEX_FILE="$RUNS_DIR/standalone-index.json"; fi
     if [ ! -f "$INDEX_FILE" ]; then echo '[]' > "$INDEX_FILE"; fi
     python3 -c "
 import json, sys

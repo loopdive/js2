@@ -332,7 +332,15 @@ async function aggregate(): Promise<{
     }
     let productionResult: Awaited<ReturnType<typeof compileFiles>> | undefined;
     try {
-      productionResult = await compileFiles(filePath, { experimentalIR: true, trackIrOutcomes: true });
+      // The production receipt is the DEFAULT profile (native-first since
+      // #6708). #7091 lets the IR claim the JS environment's platform
+      // capabilities (DOM, declared APIs) under the native regime, so the
+      // `#3214 A+B1` invariant below holds on what users actually compile;
+      // the selector ledger above still names the browser/JS-host shapes.
+      productionResult = await compileFiles(filePath, {
+        experimentalIR: true,
+        trackIrOutcomes: true,
+      });
       if (
         IMPORTED_HOF_ENTRY_FILES.has(resolve(filePath)) &&
         !(productionResult.irCompiledFuncs ?? []).includes("main")

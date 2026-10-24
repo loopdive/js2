@@ -47,7 +47,8 @@ import {
   undefinedExternInstrs,
 } from "./any-helpers.js";
 import { collectClosureBaseWrapperTypeIdxs } from "./closure-classifier.js"; // (#3125) IsCallable arms
-import type { CodegenContext, OptionalParamInfo } from "./context/types.js";
+import type { CodegenContext, OptionalParamInfo, RestParamInfo } from "./context/types.js";
+import { restDispatchInfo, restVecArgInstrs } from "./object-model/closed-dispatch-rest-arm.js"; // (#7021)
 import { classMemberFuncKey } from "./class-member-keys.js";
 import {
   DYN_ARRAY_PRODUCER_METHODS,
@@ -79,6 +80,7 @@ import { defaultValueInstrs } from "./type-coercion.js";
 // (#5383 S2g) The externref-argument marshalling this file used to own inline;
 // `standalone-class-construct.ts` is the second caller.
 import { buildCoerceIdxs, type CoerceIdxs, externArgCoercionInstrs, resultBoxingInstrs } from "./extern-arg-marshal.js";
+import { closedDispatchGuardsOwnSlot } from "./expressions/own-property-method-shadow.js";
 import { classArmClaimInstrs } from "./class-arm-tag-guard.js"; // (#6608) nominal `__tag` arm guard
 import { arraySubclassOwnMethodShadowTest } from "./array-subclass-receiver.js"; // (#2917)
 import { standaloneDispatchArityPads } from "./zero-arg-method-pad.js"; // (#6693) JS call arity
@@ -571,6 +573,8 @@ type MethodEntry = {
   hostDynamic: boolean;
   /** (#6693) Standalone stand-ins for omitted formals, by param index. */
   absentPads: Map<number, Instr[]> | null;
+  /** (#7021) Rest ABI the fixed-arity arm packs extra arguments into. */
+  restAbi?: RestParamInfo;
 };
 
 /**
@@ -626,17 +630,21 @@ function collectMethodEntries(ctx: CodegenContext, methodName: string, exactArit
       return type?.kind === "f64"; // the one lane with an absence sentinel
     };
     let absentPads: Map<number, Instr[]> | null = null;
+    // (#7021) With a rest formal only the formals before it are positional; `buildEntryArm` packs the rest.
+    const rest = exactArity !== null ? restDispatchInfo(ctx, fullName, paramTypes) : null;
+    const positional = rest ? paramTypes.slice(0, rest.restIndex) : paramTypes;
     if (exactArity !== null) {
       const covered =
-        paramTypes.length >= exactArity &&
-        (hostDynamic || paramTypes.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
+        (rest !== null || paramTypes.length >= exactArity) &&
+        (hostDynamic || positional.slice(exactArity).every((type, i) => canSynthesizeOmitted(exactArity + i, type)));
       // (#6693) Standalone JS call arity: pad omitted formals, drop extras.
-      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, paramTypes, optionalParams, exactArity);
+      if (!covered) absentPads = standaloneDispatchArityPads(ctx, fullName, positional, optionalParams, exactArity);
       if (!covered && !absentPads) continue;
     }
     if (funcType.params.length < 1) continue;
     const resultType: ValType = funcType.results.length > 0 ? funcType.results[0]! : { kind: "externref" };
     entries.push({ structName, typeIdx, funcIdx, paramTypes, resultType, optionalParams, hostDynamic, absentPads });
+    if (rest) entries[entries.length - 1]!.restAbi = rest; // (#7021)
   }
   return entries;
 }
@@ -706,6 +714,11 @@ function buildEntryArm(
   ];
   for (let a = 0; a < entry.paramTypes.length; a++) {
     const want = entry.paramTypes[a] ?? { kind: "externref" };
+    if (entry.restAbi?.restIndex === a && providedArity !== null) {
+      const coerce = (elem: ValType) => externArgCoercionInstrs(ci, elem, false, allowObjectCoercion);
+      arm.push(...restVecArgInstrs(entry.restAbi, providedArity, pushArg, coerce));
+      continue;
+    }
     const missing = providedArity !== null && a >= providedArity;
     if (missing) {
       const opt = entry.optionalParams.find((candidate) => candidate.index === a);
@@ -1880,12 +1893,41 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
         arity,
         mixedClassAndLiteralEntries,
       );
+      // An own property installed at runtime beats this class's prototype
+      // method for THIS receiver (marked's `use()` hooks). Only user classes,
+      // only names the reserve saw a callable member write for; object-literal
+      // carriers keep their arm untouched (their own slot IS the struct field
+      // the arm already reads).
+      const armBodyForEntry =
+        hasOwnIdx !== undefined &&
+        methodCallIdx !== undefined &&
+        objVecNewIdx !== undefined &&
+        (arity === 0 || objVecPushIdx !== undefined) &&
+        ctx.classSet.has(entry.structName) &&
+        closedDispatchGuardsOwnSlot(ctx, methodName)
+          ? ([
+              { op: "local.get", index: 0 },
+              ...stringConstantExternrefInstrs(ctx, methodName),
+              { op: "call", funcIdx: hasOwnIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: [
+                  { op: "local.get", index: 0 },
+                  ...stringConstantExternrefInstrs(ctx, methodName),
+                  ...buildFixedArgVec(arity, anyLocalIdx + 1, objVecNewIdx, objVecPushIdx),
+                  { op: "call", funcIdx: methodCallIdx },
+                ],
+                else: callAndCoerce,
+              },
+            ] satisfies Instr[])
+          : callAndCoerce;
       current = [
         // (#6608) NOMINAL claim: `ref.test` alone is structural, and every
         // same-shaped class in the ladder passes it — so the outermost arm ran
         // for every receiver. Byte-identical when no layout collides.
         ...classArmClaimInstrs(ctx, entry.structName, entry.typeIdx, anyLocalIdx),
-        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callAndCoerce, else: current },
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: armBodyForEntry, else: current },
       ];
     }
 

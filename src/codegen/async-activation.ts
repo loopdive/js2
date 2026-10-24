@@ -22,7 +22,12 @@ import { addFuncType } from "./registry/types.js";
 import { reportError } from "./context/errors.js";
 import type { AsyncCpsPlan } from "./async-cps.js";
 import { ASYNC_CPS_ENABLED, analyzeAsyncBody } from "./async-cps.js";
-import { emitAsyncFrameStateMachine, asyncFnNeedsDrive, asyncGenConsumerNeedsDrive } from "./async-frame.js";
+import {
+  awaitOperandProvablySettled,
+  emitAsyncFrameStateMachine,
+  asyncFnNeedsDrive,
+  asyncGenConsumerNeedsDrive,
+} from "./async-frame.js";
 import { widenAsyncThenableResults } from "./async-thenable-return.js";
 
 /**
@@ -153,13 +158,20 @@ function isNestedFunctionScope(node: ts.Node): boolean {
  * function scopes), or `null`. Awaits inside `catch`/`finally` blocks only
  * count when an ENCLOSING `try` block wraps them.
  */
-function findSuspensionInsideTry(decl: ts.FunctionLikeDeclaration): ts.Node | null {
+function findSuspensionInsideTry(
+  decl: ts.FunctionLikeDeclaration,
+  awaitIsHazard: (a: ts.AwaitExpression) => boolean = () => true,
+): ts.Node | null {
   const body = decl.body;
   if (body === undefined) return null;
   let found: ts.Node | null = null;
   const walk = (node: ts.Node, inTry: boolean): void => {
     if (found !== null || isNestedFunctionScope(node)) return;
-    if (inTry && (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined))) {
+    if (inTry && ts.isAwaitExpression(node) && awaitIsHazard(node)) {
+      found = node;
+      return;
+    }
+    if (inTry && ts.isForOfStatement(node) && node.awaitModifier !== undefined) {
       found = node;
       return;
     }
@@ -175,17 +187,30 @@ function findSuspensionInsideTry(decl: ts.FunctionLikeDeclaration): ts.Node | nu
   return found;
 }
 
+/** (#6995) A top-level, non-generator async declaration — what the native drive engine can claim. */
+function isNativeDriveEntryPoint(decl: ts.FunctionLikeDeclaration): boolean {
+  return ts.isFunctionDeclaration(decl) && ts.isSourceFile(decl.parent) && decl.asteriskToken === undefined;
+}
+
 /**
  * (#3587) Report the loud-refusal compile error for a declined async
- * function-like whose body genuinely suspends inside a `try`. HOST lane only:
- * the wasi/standalone drive lanes have their own claim/decline programs
- * (#2865/#2867/#2980) and their declined populations are tracked there.
- * No-op when the body cannot really suspend (statically-resolved awaits
+ * function-like whose body genuinely suspends inside a `try`. On the
+ * wasi/standalone drive lanes (#6995) only for the engine's claimable entry
+ * points (top-level declarations). No-op when the body cannot really suspend (statically-resolved awaits
  * cannot reject) or when no suspension sits inside a `try`.
  */
 function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.FunctionLikeDeclaration): void {
   if (!ASYNC_CPS_ENABLED || decl.body === undefined) return;
-  if (ctx.wasi === true || ctx.standalone === true) return;
+  // (#6995) The native-carrier lanes (standalone/wasi) used to return here, so
+  // the decline was SILENT exactly where it miscompiled. Their drive engine
+  // claims only top-level declarations (closures and nested declarations are
+  // parked in `planAsyncClosureActivation`, methods in #2957), so a decline of
+  // one of those is a SHAPE residue — the same subset this guard covers on the
+  // host lane. The parked population is never claimed at any shape; refusing it
+  // would refuse a population, not a residue (cf. the methods carve-out above),
+  // so it relies on the honest unwrap (`emitStandaloneAwaitUnwrap`
+  // `throwOnRejected`) instead: a settled rejection throws into the `try`.
+  if ((ctx.wasi === true || ctx.standalone === true) && !isNativeDriveEntryPoint(decl)) return;
   const seen = hazardReportedByCtx.get(ctx);
   if (seen?.has(decl)) return;
   const plan = analyzeAsyncBody(ctx, decl);
@@ -202,7 +227,11 @@ function reportDeclinedAsyncRejectionHazard(ctx: CodegenContext, decl: ts.Functi
   // errors trades a latent rejection bug for 402 certain failures. Any future
   // widening has to name a SUBSET (e.g. by decline reason), never the whole
   // population.
-  const hazard = findSuspensionInsideTry(decl);
+  // (#6995) On the native lanes the honest unwrap delivers a SETTLED operand
+  // exactly (value, or a thrown rejection), so only an await whose operand may
+  // still be PENDING is a hazard there. The host lane keeps every await.
+  const nativeLane = ctx.wasi === true || ctx.standalone === true;
+  const hazard = findSuspensionInsideTry(decl, (a) => !nativeLane || !awaitOperandProvablySettled(ctx, a, plan));
   if (hazard === null) return;
   if (seen === undefined) hazardReportedByCtx.set(ctx, new WeakSet([decl]));
   else seen.add(decl);

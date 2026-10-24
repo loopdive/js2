@@ -46,6 +46,7 @@ import {
   buildThrowJsErrorInstrs,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
+  noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
@@ -56,8 +57,12 @@ import { tryStaticToNumber } from "./expressions/misc.js";
 import { emitNativeParseNumber } from "./parse-number-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { admitsObjectAddition, emitObjectAdd } from "./addition-to-primitive.js";
-import { admitsObjectRelational, reduceRelationalOperandsToPrimitive } from "./relational-to-primitive.js";
-import { compileToPrimitiveCascadeOperand } from "./classes/class-symbol-to-primitive-operand.js"; // (#6982)
+import {
+  admitsAnyRelational,
+  admitsObjectRelational,
+  compileRelationalOperands,
+  reduceRelationalOperandsToPrimitive,
+} from "./relational-to-primitive.js";
 // (#4491 T4) §13.15.3 `+` over object operands.
 import { admitsObjectAdd } from "./add-to-primitive.js";
 import { addStringImports, addUnionImports, resolveWasmType } from "./index.js";
@@ -2049,18 +2054,14 @@ export function compileBinaryExpression(
   // ToNumber both sides, so `("a" as any) < ("b" as any)` yielded `false`.
   // Route to the runtime-dispatched compare before the f64 hint is applied.
   //
-  // Two arms, deliberately gated differently — see relational-to-primitive.ts:
-  //  - ANY arm: unchanged, including its `anyValueTypeIdx < 0` exclusion.
-  //  - OBJECT arm (§7.2.12): standalone only, and NOT subject to that exclusion
-  //    (the AnyValue helpers do not in fact own this shape). #1374's host
-  //    comparator hazard cannot recur there — no host operator is involved.
+  // Two arms, gated in relational-to-primitive.ts: ANY (`any`/`unknown`, plus
+  // string-mixed unions without a JS host — #6999) and OBJECT (§7.2.12, no host
+  // only). #1374's host comparator hazard cannot recur without a host operator.
   if (isRelational) {
-    const leftIsAnyish = (leftTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const rightIsAnyish = (rightTsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const anyArm = ctx.anyValueTypeIdx < 0 && (leftIsAnyish || rightIsAnyish);
+    const anyArm = admitsAnyRelational(ctx, leftTsType, rightTsType);
     const objArm = admitsObjectRelational(ctx, leftTsType, rightTsType);
     if ((anyArm || objArm) && !isBigIntType(leftTsType) && !isBigIntType(rightTsType)) {
-      return emitAnyRelational(ctx, fctx, expr, op);
+      return emitAnyRelational(ctx, fctx, expr, op, anyArm);
     }
   }
 
@@ -2612,20 +2613,17 @@ export function emitAnyRelational(
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
+  numericShortcut = false, // (#6999) host-free any-arm: two Wasm numbers skip the cascade
 ): ValType {
   // Registered before the operands compile, so its setup cannot desync funcIdxs.
   if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureObjectRuntime(ctx);
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
-  const l = compileToPrimitiveCascadeOperand(ctx, fctx, expr.left);
-  if (!l) return { kind: "i32" };
+  const operands = compileRelationalOperands(ctx, fctx, expr, op, numericShortcut && noJsHost(ctx));
+  if (operands === null) return { kind: "i32" };
+  const { l, r } = operands;
   const lTmp = l.tmp;
-  const r = compileToPrimitiveCascadeOperand(ctx, fctx, expr.right);
-  if (!r) {
-    releaseTempLocal(fctx, lTmp);
-    return { kind: "i32" };
-  }
   const rTmp = r.tmp;
 
   // Map a -1/0/1/2 `cmp` (or an f64 comparison) to the operator's boolean result.

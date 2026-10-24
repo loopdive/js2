@@ -23,6 +23,7 @@
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./ast-scope.js";
+import { isLexicalBindingWrite } from "../../shared/binding-writes.js";
 
 /**
  * Detect integer loop counter pattern: for (let i = INT; i < EXPR; i++)
@@ -496,25 +497,7 @@ export function findHeadBindingsCapturedByClosures(stmt: ts.ForStatement, headNa
  */
 export function findAllNamesCapturedByClosuresInLoop(stmt: ts.IterationStatement): Set<string> {
   const captured = new Set<string>();
-  function visit(node: ts.Node | undefined): void {
-    if (!node) return;
-    if (
-      ts.isArrowFunction(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isFunctionDeclaration(node) ||
-      ts.isMethodDeclaration(node) ||
-      ts.isGetAccessorDeclaration(node) ||
-      ts.isSetAccessorDeclaration(node) ||
-      ts.isClassDeclaration(node) ||
-      ts.isClassExpression(node)
-    ) {
-      const refs = new Set<string>();
-      collectReferencedIdentifiers(node, refs);
-      for (const n of refs) captured.add(n);
-      return;
-    }
-    forEachChild(node, visit);
-  }
+  const visit = (node: ts.Node | undefined): void => collectNamesCapturedByClosures(node, captured);
   if (ts.isForStatement(stmt)) {
     visit(stmt.condition);
     visit(stmt.incrementor);
@@ -526,6 +509,30 @@ export function findAllNamesCapturedByClosuresInLoop(stmt: ts.IterationStatement
   }
   visit(stmt.statement);
   return captured;
+}
+
+/**
+ * Add to `out` every identifier name referenced from a nested closure (arrow,
+ * function expression/declaration, method, accessor, class) inside `node`.
+ * Scope-aware per closure (`collectReferencedIdentifiers`). Shared by the loop
+ * pre-box (#1589) and the try/finally pre-box (#6993).
+ */
+export function collectNamesCapturedByClosures(node: ts.Node | undefined, out: Set<string>): void {
+  if (!node) return;
+  if (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node)
+  ) {
+    collectReferencedIdentifiers(node, out);
+    return;
+  }
+  forEachChild(node, (child) => collectNamesCapturedByClosures(child, out));
 }
 
 /** Push every identifier name inside an assignment target (destructuring included). */
@@ -560,24 +567,17 @@ export function findForInOfHeadNames(stmt: ts.IterationStatement): Set<string> {
  * purpose: over-approximating only boxes a binding that did not strictly need
  * it. The pre-box admits a parameter, or any binding of a non-`for` loop, only
  * when it is in this set, so read-only captures keep their unboxed slot.
+ * (#6993) Node-generic: the try/finally pre-box scans a whole `TryStatement`.
  */
-export function findNamesWrittenInLoop(stmt: ts.IterationStatement): Set<string> {
+export function findNamesWrittenInLoop(stmt: ts.Node): Set<string> {
   const written = new Set<string>();
   function visit(node: ts.Node): void {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      collectAssignmentTargetNames(node.left, written);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      collectAssignmentTargetNames(node.operand, written);
+    // (#6992) The shared write contract: assignment / update / destructuring
+    // targets and for-in/for-of heads.
+    if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) {
+      written.add(node.text);
     } else if (ts.isVariableDeclaration(node)) {
       for (const n of collectPatternBindingNames(node.name)) written.add(n);
-    } else if (
-      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
-      !ts.isVariableDeclarationList(node.initializer)
-    ) {
-      collectAssignmentTargetNames(node.initializer, written);
     }
     forEachChild(node, visit);
   }

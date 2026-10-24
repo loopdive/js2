@@ -2242,3 +2242,26 @@ is retained as `integration-commit.log`. Inventory is valid but the architecture
 graph remains open; reachability certifies preservation (6/6 full and cut), not
 retirement. Exact-base checker/coercion/verdict gates pass, and the post-projection
 TypeScript 7 check exits zero.
+
+## Native Promise composition repair — 2026-10-24
+
+Implementation plan: keep inherited metadata type identity in
+`src/backend/wasmgc/resources/native-promises.ts`, while preserving the entire
+declared capture suffix during physical reservation. Reuse the existing
+settle-closure value/body builders in a test kernel using the actual reserved
+type table. No new production helper or alternate Promise layout is needed.
+
+Acceptance: emitted Wasm validates with the reserved seven-field capture;
+resolve/reject share one guard, only the first callback runs even while the
+Promise remains pending, and separate pairs remain independent. Exercise both
+the settlement signature as the first closure root and an unrelated first
+signature. This type/kernel regression does not certify complete native
+Promise inventory composition or public source admission.
+
+Validation: the prior 47 resource tests passed before the repair, while the
+two added executable cases failed with `unresolved struct field index 6`.
+After preserving the suffix, all 49 resource tests pass, including both
+zero-import Wasm kernels. The staged-closure suite passes 20/20. Fresh-context adversarial review found no actionable
+quality or correctness defect. Source and focused test TypeScript checks pass.
+The legacy reachability check remains preservation-only: its strict graph is
+open, so this repair does not certify retirement.

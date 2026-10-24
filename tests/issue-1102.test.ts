@@ -62,6 +62,8 @@ async function runHost(src: string): Promise<unknown> {
   const result = await compile(src, {
     fileName: "issue-1102-host-eval.ts",
     skipSemanticDiagnostics: true,
+    // (#6708 S7) Host-scope eval is the host-assisted profile.
+    semanticProviders: "host-assisted",
   });
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   expect(

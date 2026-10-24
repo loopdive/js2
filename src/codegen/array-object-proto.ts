@@ -177,6 +177,7 @@ import {
 // vararg `then` dispatcher the thenable-assimilation job already uses.
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
 import { ARRAY_PROTO_SYMBOL_DATA_PROPS } from "./array/array-unscopables.js"; // (#6771 S5)
+import { emitSabProtoMemberBody, sabProtoMemberParamSlots } from "./buffers/shared-array-buffer.js"; // (#7011)
 // (#6651 E4) Real §23.2.2.1/§23.2.2.2 bodies for the `%TypedArray%` statics.
 import {
   emitTaStaticFromOfBody,
@@ -3319,16 +3320,17 @@ export function ensureSharedArrayBufferNativeProtoGlue(ctx: CodegenContext): num
   const brand = getBuiltinBrand(ctx, "SharedArrayBuffer");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(
-      ctx,
-      makeGlueWithGetters(
-        brand,
-        "SharedArrayBuffer",
-        SHAREDARRAYBUFFER_PROTO_METHODS,
-        SHAREDARRAYBUFFER_PROTO_GETTERS,
-        SHAREDARRAYBUFFER_PROTO_METHOD_LENGTH,
-      ),
+    const glue = makeGlueWithGetters(
+      brand,
+      "SharedArrayBuffer",
+      SHAREDARRAYBUFFER_PROTO_METHODS,
+      SHAREDARRAYBUFFER_PROTO_GETTERS,
+      SHAREDARRAYBUFFER_PROTO_METHOD_LENGTH,
     );
+    // (#7011) Real reflective member bodies: the native provider's helpers.
+    glue.memberParamSlots = sabProtoMemberParamSlots;
+    glue.emitMemberBody = (c, fctx, member) => emitSabProtoMemberBody(c, fctx, member);
+    registerNativeProtoBuiltin(ctx, glue);
   }
   return brand;
 }

@@ -916,6 +916,20 @@ export function compileObjectDefineProperty(
     if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx, { falsyIsRejection: true });
     return r;
   }
+  // (#7061) A METHOD-SHORTHAND `value() {…}` in an inline descriptor: the
+  // inline fast paths below read `value` only from a property assignment, so
+  // the define stored `undefined` (axios' `AxiosHeaders.accessor` installs its
+  // `get<Header>` methods exactly this way). The runtime applier reads the
+  // literal's `value` field whatever its spelling — the route an
+  // identifier-bound descriptor already takes.
+  if (
+    ts.isObjectLiteralExpression(descArg) &&
+    descArg.properties.some((p) => ts.isMethodDeclaration(p) && ts.isIdentifier(p.name) && p.name.text === "value")
+  ) {
+    const r = emitDefinePropertyDescRuntime(ctx, fctx, objArg, propArg, descArg, descriptorUndefinedFields(descArg));
+    if (r !== null) emitDefinePropertyRejectionThrow(ctx, fctx);
+    return r;
+  }
 
   // Check if descriptor is an object literal with a `value`, `get`, or `set` property
   let valueExpr: ts.Expression | undefined;
