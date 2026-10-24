@@ -47,6 +47,8 @@ loc-budget-allow:
   - src/codegen/ir-prepared-free-functions.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
+import-cycles-allow:
+  - backend->ir: 118 # 2026-10-24 (#3527): native frame materializer adds planner, plan comparison and attachment authentication; SCC counts do not grow.
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
   - src/codegen/async-ir-planning.ts
@@ -2434,3 +2436,53 @@ test files pass TypeScript 7. The reviewer also verified 1,985 archived
 source/fixture/helper blobs against the base with zero mismatches and accepted
 the inventory test correction. No new production allowances or acceptance
 exceptions were introduced.
+
+
+### Integrated native async delivery and boundary inventory (2026-10-24)
+
+Combine the carrier repair, shared planner, source-owned materializer, required
+PromiseResolve binding and semantic/execution scope repair on one unpublished
+integration branch. Existing PR heads and holds remain unchanged. CI on the
+scope-only PR exposed two unclassified new modules; the combined branch exposed
+nine more from the preceding frame changes. Classify all eleven exact modules
+in their existing active layers after inspecting their imports. Do not change
+allowed edges, weaken cleanliness rules, lower floors or claim architectural
+completion. Run the boundary inventory against current main, combined runtime
+regressions and a fresh base/candidate host binary comparison before publishing
+this complete integration diff ready for review.
+
+The first classified inventory then exposed a real forbidden type-only edge:
+native-value-definitions imported IrUnitId through the legacy mixed identity
+facade. Point that import directly at the canonical shared identity contract.
+No exemption or allowed-edge change is introduced.
+
+The import-cycle ratchet separately measures directory-edge counts, not just
+actual strongly connected components. The native materializer adds three
+backend-to-IR dependencies: its planner, canonical data comparison and runtime
+attachment authentication. All three are permitted by the layer policy and
+needed to retain rejection before publication. Largest SCC and SCC count do not
+grow. Record the exact 115-to-118 directory-edge allowance on this owning issue;
+leave the global baseline and architecture edge rules unchanged.
+
+Integrated verification: 219 distinct tests across 14 suites pass (103 across
+8 frame/scope suites, 38 across 3 plan/inventory/scope suites, 92 across 4 object
+planning suites; the 14 scope tests occur in both first groups). Source TS7 and
+all six changed test files typecheck; full repository lint/format checks pass.
+All eleven host fixture binaries remain byte-identical to upstream main
+7371eb505b365e49815f1ddc09afed6c52372540 after overlaying the complete production
+diff. The boundary inventory validates all 1,991 modules and explicitly reports
+architecture incomplete. Fresh read-only review found no remaining integration
+or policy-classification defect; the issue-scoped directory-edge grant is
+recognized by the actual gate. LOC/function, dialect/kind, host-import, layering,
+fallback, stack, boxing and rollback checks pass. Tests and gates do not establish
+whole-program retirement: the reachability command exits successfully only under
+the preservation contract (12/12 core-node observations, 10/10 full/cut core types,
+6/6 full/cut witnesses); two unknown dynamic import targets leave the strict graph
+OPEN and deletion NOT CERTIFIED.
+
+Local gate execution notes: the initial tsx CLI invocations were denied IPC
+socket creation; the same scripts pass through node --import tsx. Two unchanged
+gates misdecode spaces in this checkout path; exact source/script copies under a
+space-free temporary directory pass. Initial failure logs are retained locally.
+No baseline, test expectation, CI workflow or global architecture rule was
+weakened for these environment failures.
