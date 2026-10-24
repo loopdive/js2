@@ -18,7 +18,9 @@
  *     separator is a proven string.
  */
 
+import type { TypeOracle } from "../../checker/oracle.js";
 import { ts } from "../../ts-api.js";
+import { inferEmptyArrayElementTypes, type EmptyArrayElementInference } from "../array-element-inference.js";
 import { IR_VEC_SEARCH_JOIN_METHODS } from "./vec-search-join.js";
 
 /** Element family of an array-typed expression the IR can scan. */
@@ -112,19 +114,77 @@ function isLiteralStringVec(node: ts.Expression, checker: ts.TypeChecker): boole
   );
 }
 
+type InferenceFunction = Parameters<typeof inferEmptyArrayElementTypes>[0];
+
+function isInferenceFunction(node: ts.Node): node is InferenceFunction {
+  return (
+    (ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isMethodDeclaration(node) ||
+      ts.isConstructorDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node) ||
+      ts.isSetAccessorDeclaration(node)) &&
+    node.body !== undefined
+  );
+}
+
+/**
+ * (#7122) An identifier bound in this function to `[]` whose may-alias group
+ * the empty-array inference closes as `string[]` — the exact proof from-ast
+ * consults to allocate it as a vec of the string carrier, so the selector and
+ * the lowering cannot disagree. Every store into such a vec is a `.push` of a
+ * proven string (no holes, no coercion).
+ */
+function isInferredStringVec(
+  node: ts.Expression,
+  checker: ts.TypeChecker,
+  oracle: TypeOracle,
+  cache: WeakMap<InferenceFunction, EmptyArrayElementInference>,
+): boolean {
+  if (!ts.isIdentifier(node)) return false;
+  const declaration = checker.getSymbolAtLocation(node)?.valueDeclaration;
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined ||
+    !ts.isArrayLiteralExpression(declaration.initializer) ||
+    declaration.initializer.elements.length !== 0
+  ) {
+    return false;
+  }
+  let fn: ts.Node | undefined = declaration.parent;
+  while (fn !== undefined && !isInferenceFunction(fn)) fn = fn.parent;
+  if (fn === undefined) return false;
+  let use: ts.Node | undefined = node.parent;
+  while (use !== undefined && use !== fn && !isInferenceFunction(use)) use = use.parent;
+  if (use !== fn) return false;
+  let inference = cache.get(fn);
+  if (inference === undefined) {
+    inference = inferEmptyArrayElementTypes(fn, oracle);
+    cache.set(fn, inference);
+  }
+  const result = inference.resultForLiteral(declaration.initializer);
+  return result?.kind === "resolved" && result.elementKind === "string";
+}
+
 /**
  * Checker-backed element family of an expression whose type is a plain
  * `Array<T>` (not a tuple, not a union of arrays) with `T` entirely `number`
  * or entirely `string` (the latter only for an IR-materialized literal vec,
- * see {@link isLiteralStringVec}).
+ * see {@link isLiteralStringVec}, or an empty literal the inference closes as
+ * `string[]`, see {@link isInferredStringVec}).
  */
 export function makeIrArrayElementFamilyClassifier(
   checker: ts.TypeChecker,
+  oracle: TypeOracle,
 ): (expr: ts.Expression) => IrArrayElementFamily | undefined {
+  const inferenceCache = new WeakMap<InferenceFunction, EmptyArrayElementInference>();
   return (expr) => {
     try {
       let node: ts.Expression = expr;
       while (ts.isParenthesizedExpression(node)) node = node.expression;
+      if (isInferredStringVec(node, checker, oracle, inferenceCache)) return "string";
       const type = checker.getTypeAtLocation(node);
       if (!checker.isArrayType(type)) return undefined;
       const element = checker.getTypeArguments(type as ts.TypeReference)[0];

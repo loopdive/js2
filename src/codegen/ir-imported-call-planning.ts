@@ -43,6 +43,7 @@ import { planProgramAbiFunctionValue } from "./program-abi-planning.js";
 import { makeIrFunctionMemberClosures } from "./function-member-closure-planning.js";
 import { computeClosureWrapperSig } from "./closures.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+import { irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
 
 /** Apply the same live-binding exclusions as the canonical direct value reader. */
 export function makeIrFunctionObjectValueResolver(
@@ -843,8 +844,17 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
               (ts.isBinaryExpression(use) &&
                 use.left === access &&
                 use.operatorToken.kind === ts.SyntaxKind.EqualsToken));
+          // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
+          // callee (`dyn.construct`) or the `x instanceof F` operand
+          // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
+          const isSelfGuardedValue =
+            ((ts.isNewExpression(access) && access.expression === node) ||
+              (ts.isBinaryExpression(access) &&
+                access.right === node &&
+                access.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) &&
+            irSelfGuardedConstructorValue(ctx, node);
           const target =
-            isReceiver && options.sourceOwnerUnitId(node) === ownerUnitId
+            (isReceiver || isSelfGuardedValue) && options.sourceOwnerUnitId(node) === ownerUnitId
               ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
               : undefined;
           if (target?.legacyProjection === "unambiguous") {
