@@ -3233,6 +3233,9 @@ function dynamicUsesAreMoveOnly(
     if (ts.isIdentifier(e)) {
       // (#7106 item 1) `undefined` as a value is only ever the dynamic carrier.
       if (e.text === "undefined" && !dynNames.has("undefined")) return expectDyn;
+      // (#7118) An ambient intrinsic is read off the realm as a dynamic value
+      // (`isDynShaped` already says so); it is never a moved binding.
+      if (expectDyn && !dynNames.has(e.text) && isAmbientIntrinsicValue(e, dynNames, new Set())) return true;
       return dynNames.has(e.text) === expectDyn;
     }
     // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: every
