@@ -47,6 +47,15 @@ import { LinearEmitter } from "./backend/linear-emitter.js";
 import type { IrBackendKind } from "./backend/legality.js";
 import type { NativeBuiltinFunctionRequestIssuer } from "../backend/wasmgc/resources/native-builtin-function-requests.js";
 
+import { planNativePromiseResources } from "./program-native-async-resources.js";
+import type { PreparedIrBackendOptions } from "./program.js";
+import type { NativePromiseConfiguration } from "./program/native-promise-resources.js";
+import type {
+  NativePromiseReservations,
+  NativePromiseDeclarationPlan,
+} from "../backend/wasmgc/resources/native-promises.js";
+import { bindNativePromiseInvocation } from "../backend/wasmgc/resources/native-promise-invocation.js";
+
 export interface NativeSourceClosureEmission {
   readonly requirements: NativeSourceClosureRequirements;
   readonly types: NativeSourceClosureTypes;
@@ -270,4 +279,19 @@ export function requireCompletedNativeSourceClosures(
     tx.assertCompletedReservation(row.slot);
   }
   return pack;
+}
+
+/** Join the reserved Promise producer to this exact checked program's closure population. */
+export function bindPreparedNativePromiseInvocation(
+  tx: PhysicalModuleReservations,
+  source: NativeSourceClosureEmission,
+  promise: NativePromiseReservations,
+  declaration: NativePromiseDeclarationPlan,
+  options: PreparedIrBackendOptions,
+  configuration: NativePromiseConfiguration,
+) {
+  requireOwner(tx, source);
+  const { program, projection } = source.requirements.demands;
+  const plan = planNativePromiseResources(program, options, projection, configuration);
+  return bindNativePromiseInvocation(tx, source.types, promise, declaration, plan);
 }

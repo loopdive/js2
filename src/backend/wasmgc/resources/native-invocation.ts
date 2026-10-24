@@ -56,6 +56,8 @@ import {
 } from "./native-booleans.js";
 import { objectResultIsBoolean } from "../../../ir/program/native-object-result-values.js";
 
+import { requireNativePromiseInvocation, type NativePromiseInvocation } from "./native-promise-invocation.js";
+
 export interface NativeInvocationDependencies {
   readonly source: NativeSourceClosureTypes;
   readonly values: NativeValueReservations;
@@ -66,6 +68,7 @@ export interface NativeInvocationDependencies {
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly booleanBoxes?: NativeBooleanBoxReservations;
   readonly substrate?: NativeInvocationSubstrateReservations;
+  readonly promise?: NativePromiseInvocation;
 }
 export interface NativeInvocationReservations {
   readonly requirements: NativeInvocationRequirements;
@@ -115,6 +118,9 @@ function authenticate(
   requirements: NativeInvocationRequirements,
   dependencies: NativeInvocationDependencies,
 ): void {
+  if (Boolean(requirements.source.promiseClosures) !== Boolean(dependencies.promise))
+    fail("selected native Promise callables require their exact producer association");
+  if (dependencies.promise) requireNativePromiseInvocation(tx, dependencies.promise, dependencies.source);
   const selected = substrateSelection(dependencies);
   if (selected.value !== undefined)
     requireNativeInvocationSubstrateReservations(tx, selected.value, substrateDependencies(dependencies));
@@ -151,9 +157,17 @@ function authenticate(
 }
 
 /** Flattened coordinates come only from actual ledger tokens, never outer rec-group positions. */
-function invocationLayout(source: NativeSourceClosureTypes): ClosureInvocationLayout {
+function invocationLayout(
+  tx: PhysicalModuleReservations,
+  dependencies: NativeInvocationDependencies,
+): ClosureInvocationLayout {
+  const source = dependencies.source;
+  const settlement = dependencies.promise
+    ? requireNativePromiseInvocation(tx, dependencies.promise, source)
+    : undefined;
   const tokens = [
     source.closures.root,
+    ...(settlement ? [settlement.capture] : []),
     ...source.closures.signatures.map((row) => row.binding.type),
     ...source.shapes.map((row) => row.type),
     ...source.closures.registrations.flatMap((row) => (row.kind === "type" || row.kind === "root" ? [row.type] : [])),
@@ -190,7 +204,7 @@ export function reserveNativeInvocationResources(
 ): NativeInvocationReservations {
   if (tx.state !== "reserving") fail("reservation requires the owning ledger's reserving phase");
   authenticate(tx, requirements, dependencies);
-  const layout = invocationLayout(dependencies.source);
+  const layout = invocationLayout(tx, dependencies);
   const key = (role: string) => `${requirements.key}:${role}`;
   const borrowedSubstrate = substrateSelection(dependencies);
   const substrateRequirements = Object.freeze({ key: requirements.key });
@@ -204,6 +218,7 @@ export function reserveNativeInvocationResources(
     ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
+    ...(dependencies.promise ? [key("apply-arguments")] : []),
   ]);
   const substrate =
     borrowedSubstrate.value ??
@@ -278,6 +293,7 @@ export function reserveNativeInvocationResources(
       ...(applyVector ? [applyVector] : []),
     ]),
   });
+  if (dependencies.promise) reserveNativeInvocationArgumentApply(tx, pack);
   return pack;
 }
 
@@ -290,8 +306,7 @@ function requireOwner(tx: PhysicalModuleReservations, pack: NativeInvocationRese
   for (const key of Object.keys(owner.dependenciesSnapshot) as (keyof NativeInvocationDependencies)[])
     if (owner.dependencies[key] !== owner.dependenciesSnapshot[key]) fail("substituted dependency identity");
   authenticate(tx, pack.requirements, owner.dependencies);
-  if (preparedIrDataMismatch(invocationLayout(owner.dependencies.source), owner.layout))
-    fail("changed closure ancestry");
+  if (preparedIrDataMismatch(invocationLayout(tx, owner.dependencies), owner.layout)) fail("changed closure ancestry");
   requireNativeInvocationSubstrateReservations(tx, owner.substrate, substrateDependencies(owner.dependencies));
   return owner;
 }
@@ -346,6 +361,33 @@ export function reserveNativeInvocationArgumentApply(
   return owner.argumentApply;
 }
 
+function voidResult(owner: Owner): NativeClosureMethodEntry["result"] {
+  return {
+    kind: "void",
+    undefinedValue: [
+      { op: "global.get", index: owner.tx.physicalIndex(owner.dependencies.values.globals.undefined) },
+      { op: "extern.convert_any" },
+    ],
+  };
+}
+function settlementEntries(owner: Owner, pack: NativeInvocationReservations): NativeClosureMethodEntry[] {
+  const { promise, source, values } = owner.dependencies;
+  if (!promise) return [];
+  const binding = requireNativePromiseInvocation(owner.tx, promise, source);
+  const signature = binding.metadata.signature;
+  return [
+    {
+      allocationTypeIdx: binding.capture.typeIndex,
+      selfTypeIdx: signature.liftedSelfTypeIndex,
+      funcTypeIdx: signature.liftedFuncTypeIndex,
+      closureArity: signature.info.paramTypes.length,
+      params: signature.info.paramTypes,
+      arguments: { unboxNumber: values.functions.unboxNumber.handle, isUndefined: pack.isUndefined.handle },
+      result: voidResult(owner),
+    },
+  ];
+}
+
 function entries(
   owner: Owner,
   callables: NativeSourceClosureCallables,
@@ -378,13 +420,7 @@ function entries(
             boxNumber: values.functions.boxNumber.handle,
             ...(booleanResult ? { boxBoolean: owner.dependencies.booleanBoxes!.boxBoolean.handle } : {}),
           }
-        : {
-            kind: "void",
-            undefinedValue: [
-              { op: "global.get", index: owner.tx.physicalIndex(values.globals.undefined) },
-              { op: "extern.convert_any" },
-            ],
-          },
+        : voidResult(owner),
     };
   });
 }
@@ -398,10 +434,15 @@ export function fillNativeInvocationResources(
 ): void {
   const owner = requireOwner(tx, pack);
   if (owner.filled) fail("duplicate fill");
+  if (
+    owner.dependencies.promise &&
+    requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source).exceptionTag !== exception
+  )
+    fail("invocation and Promise producer use different exception tags");
   requireNativeSourceClosureCallables(tx, callables, owner.dependencies.source);
   if (callables.requirements !== pack.requirements) fail("selected callable requirements differ");
   const exceptionTag = tx.physicalIndex(exception);
-  const rows = entries(owner, callables, pack);
+  const rows = [...settlementEntries(owner, pack), ...entries(owner, callables, pack)];
   const { values, strings } = owner.dependencies;
   requireCompletedNativeValues(tx, values, owner.dependencies.valuePlan, owner.dependencies.valueDependencies);
   if (owner.dependencies.booleanBoxes)
@@ -477,6 +518,8 @@ export function requireCompletedNativeInvocation(
   const owner = requireOwner(tx, pack);
   if (!owner.filled || !owner.callables) fail("incomplete selected source-invocation population");
   requireNativeSourceClosureCallables(tx, owner.callables, owner.dependencies.source, true);
+  if (owner.dependencies.promise)
+    requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source, true);
   requireCompletedNativeValues(
     tx,
     owner.dependencies.values,

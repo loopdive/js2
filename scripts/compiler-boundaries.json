@@ -313,6 +313,7 @@
         "src/backend/wasmgc/resources/native-ref-cells.ts",
         "src/backend/wasmgc/program/native-invocation-abi.ts",
         "src/backend/wasmgc/resources/native-invocation.ts",
+        "src/backend/wasmgc/resources/native-promise-invocation.ts",
         "src/backend/wasmgc/resources/native-source-closure-callables.ts",
         "src/backend/wasmgc/resources/native-object-access-declarations.ts",
         "src/backend/wasmgc/resources/native-object-access.ts",
@@ -14659,6 +14660,11 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-invocation.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-invocation.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

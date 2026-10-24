@@ -58,7 +58,7 @@ export interface NativeInvocationRequirements {
   readonly applyVector: boolean;
   readonly gaps: readonly { readonly unitId: IrUnitId; readonly detail: string }[];
   /** This owner cannot certify other compiler-created callable producers. */
-  readonly completionScope: "selected-source-invocation";
+  readonly completionScope: "selected-source-invocation" | "selected-source-and-promise-invocation";
 }
 const owners = new WeakMap<NativeInvocationRequirements, unknown>();
 function fail(detail: string): never {
@@ -298,14 +298,15 @@ export function planNativeInvocationRequirements(
       : undefined);
   const objectResults = objectAccess ? deriveNativeObjectResultRequirements(source, objectAccess) : undefined;
   const data = calculate(source, objectAccess, objectResults);
-  if (!data.uses.length && !data.getterUses.length && !objectResults?.gaps.length) return undefined;
+  if (!data.uses.length && !data.getterUses.length && !objectResults?.gaps.length && !source.promiseClosures)
+    return undefined;
   const { program, projection } = source.demands;
   const runtimeCreated = collectNativePromiseSourceCensus(program, projection, {
     backend: projection.backend,
     target: projection.target,
     utf8Storage: options.utf8Storage,
   });
-  if (runtimeCreated.required)
+  if (runtimeCreated.required && !source.promiseClosures)
     data.gaps.push({
       unitId: runtimeCreated.anchorUnitId,
       detail: "runtime-created Promise settlement callables need their issued producer/fill association",
@@ -317,7 +318,9 @@ export function planNativeInvocationRequirements(
     ...(objectAccess ? { objectAccess } : {}),
     ...(objectResults ? { objectResults } : {}),
     ...(freezePreparedIrValue(data) as typeof data),
-    completionScope: "selected-source-invocation" as const,
+    completionScope: source.promiseClosures
+      ? ("selected-source-and-promise-invocation" as const)
+      : ("selected-source-invocation" as const),
   });
   owners.set(pack, freezePreparedIrValue(data));
   return pack;
@@ -351,7 +354,7 @@ export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocation
   if (!snapshot) fail("unissued or copied invocation requirements");
   assertNativePromiseSourceCensusCurrent(pack.runtimeCreated);
   const data = calculate(pack.source, pack.objectAccess, pack.objectResults);
-  if (pack.runtimeCreated.required)
+  if (pack.runtimeCreated.required && !pack.source.promiseClosures)
     data.gaps.push({
       unitId: pack.runtimeCreated.anchorUnitId,
       detail: "runtime-created Promise settlement callables need their issued producer/fill association",
@@ -359,7 +362,8 @@ export function assertNativeInvocationRequirementsCurrent(pack: NativeInvocation
   if (
     pack.runtimeCreated.program !== pack.source.demands.program ||
     pack.runtimeCreated.projection !== pack.source.demands.projection ||
-    pack.completionScope !== "selected-source-invocation" ||
+    pack.completionScope !==
+      (pack.source.promiseClosures ? "selected-source-and-promise-invocation" : "selected-source-invocation") ||
     pack.key !== `${pack.source.key}:invocation` ||
     preparedIrDataMismatch(data, snapshot) !== undefined ||
     preparedIrDataMismatch(data, {

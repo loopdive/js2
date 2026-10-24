@@ -586,6 +586,37 @@ export function assertNativePromiseResourcePlanFor(
   same(owner.sourcePlan, expectedSource, "Promise source requirements differ from checked source plan");
 }
 
+/** Reservation association only; completion additionally requires this producer's canonical fill. */
+export function requireNativePromiseSettlementBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativePromiseReservations,
+  declaration: NativePromiseDeclarationPlan,
+  source: NativePromiseResourcePlan,
+  closures: NativeClosureReservations,
+  metadataRequestId: string,
+  completed = false,
+) {
+  assertNativePromiseResourcePlanFor(tx, pack, declaration, source);
+  const owner = owners.get(pack)!;
+  if (owner.dependencies.closures !== closures || owner.dependencies.settleMetadataRequestId !== metadataRequestId)
+    fail("settlement belongs to a different closure owner or metadata request");
+  const metadata = owner.settleMetadata;
+  for (const [role, token] of [
+    ["resolve-closure", pack.functions.resolveClosure],
+    ["reject-closure", pack.functions.rejectClosure],
+  ] as const) {
+    const row = declaration.declarations.find((item) => item.role[1] === role && item.space === "function");
+    if (!row || owner.records.get(row.key) !== token || token.object.typeIdx !== metadata.signature.liftedFuncTypeIndex)
+      fail("settlement function differs from its canonical slot or signature");
+  }
+  if (completed) {
+    if (!owner.filled) fail("incomplete canonical Promise bodies");
+    for (const token of Object.values(pack.functions)) tx.assertCompletedReservation(token);
+    for (const token of Object.values(pack.globals)) tx.assertCompletedReservation(token);
+  }
+  return Object.freeze({ metadata, capture: pack.types.settleCapture, exceptionTag: owner.dependencies.exceptionTag });
+}
+
 /** No fallback: resolution/classification/value dependencies must all be real same-ledger reservations. */
 export function fillNativePromiseResources(
   tx: PhysicalModuleReservations,

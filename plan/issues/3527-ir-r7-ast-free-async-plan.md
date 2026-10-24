@@ -50,6 +50,7 @@ loc-budget-allow:
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
 import-cycles-allow:
+  - ir->backend: 26 # 2026-10-24 (#3527): checked IR coordinator joins the dedicated Promise callable-association owner; no new reverse dependency.
   - backend->ir: 119 # 2026-10-24 (#3527): frame materializer joins (+3) and shared Promise demand selection in the string planner (+1); literals stay in a runtime contract.
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
@@ -2729,3 +2730,50 @@ extern-to-void fixtures hit earlier frontend/carrier restrictions. Existing
 whole-source mixed numeric signatures and Promise-only declarations are tested.
 This change reserves real shared resources; it does not certify Promise body
 execution or public async acceptance.
+
+## Implementation Plan — 2026-10-24 — Promise settlement invocation association
+
+Connect real Promise settlement functions to the existing invocation dispatcher.
+The Promise resource module exposes an authenticated settlement binding from
+its private reservation records: exact shared closure pack, metadata request,
+source resource plan, capture carrier and resolve/reject slots. A small backend
+association module retains this binding with the actual source closure owner;
+the IR coordinator constructs it using the checked whole-program Promise plan.
+Reservation association and completed canonical Promise bodies are separate
+proofs, avoiding a recursive fill/completion cycle.
+
+Retain native invocation demand for standalone Promise-only programs even with
+no source calls. Replace its blanket runtime-callable gap with a requirement
+for that actual association before reserving anything. Extend the existing
+ancestry and central invocation recipe with the concrete settlement capture,
+before source rows; void uses canonical undefined. Reuse the existing external
+ArgumentVector entry. No fake source units, structural function permissions,
+or second dispatcher. Public whole-Promise refusal remains until all runtime
+and source bodies, object dispatch and configuration are connected.
+
+Acceptance: real prepared async programs retain empty source populations but
+select invocation; source-only invocation remains unchanged. Reject foreign
+source/ledger/metadata/plan, copied bindings, changed signatures and unfilled
+Promise bodies. Review requires exact slot ownership, no extra backend-to-IR
+value dependencies and no mutually recursive completion checks.
+
+Validation for settlement invocation association: 77/77 cases in the final
+three-suite run (new 7-case association/fill suite, 9 shared-closure cases,
+61 public native invocation consumer cases). The existing 49-case Promise
+resource suite and 7-case source ArgumentVector execution suite also passed
+in intermediate combined runs whose new negative test initially expected the
+later error rather than the ledger's earlier descriptor rejection. That test
+now respects the ledger's terminal failed state after tampering.
+Source/focused-test TS7 pass. Lint checks 7,321 files. All mandatory source
+ratchets pass in preservation mode; strict retirement remains OPEN. Boundary
+inventory is valid, architecture incomplete. Eleven host binaries are still
+byte-identical to refreshed main 7371eb505b365e49815f1ddc09afed6c52372540.
+The dedicated backend association adds one forward ir->backend edge (25->26);
+the largest SCC stays 725, four SCCs and ten two-way directory pairs. No new
+reverse backend->ir value edge was added. Its exact backend layer registration
+is included; no broad boundary exception was introduced.
+Adversarial review found an omitted preflight key and mismatched exception-tag
+possibility. Both are fixed with negative tests; final review found no further
+actionable issue. Promise-only programs now reserve and fill the real shared
+invocation dispatcher, but full Promise body fill and actual settlement-call
+execution are not certified. The public whole-Promise guard remains intact.
