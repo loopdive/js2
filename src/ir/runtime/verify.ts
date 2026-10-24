@@ -1035,7 +1035,7 @@ function verifyInstrStructure(
     (instr.resultType === null || instr.resultType.kind !== "dynamic")
   ) {
     errors.push({
-      message: `${instr.kind} result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3c)`,
+      message: `${instr.kind} result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106)`,
       func: func.name,
       block: block.id as number,
     });

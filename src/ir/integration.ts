@@ -9360,8 +9360,8 @@ function preregisterDynamicSupport(
     if (ensureIrGlobalObjectHelper(ctx) === undefined) {
       throw new Error("ir/integration: dyn.global_object has no realm wrapper on this lane (#7106)");
     }
-    observeNativeRuntimeProvider(ctx, IR_GLOBAL_OBJECT_HELPER);
     flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_GLOBAL_OBJECT_HELPER);
   }
   if ((currentThisStrictness.size > 0 || instanceOfFunctions.size > 0) && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     // (#7106 S3c) legacy's receiver ladder and per-function chain walk, wrapped.
