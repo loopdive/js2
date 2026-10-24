@@ -3646,3 +3646,55 @@ each, single checks took 301–378 ms and the batch took 98–104 ms across thre
 trials. These measurements justify use in the large composed runtime; they do
 not measure its total compile time. The single-function API retains its one
 fresh audit and the common runtime retains final dependency revalidation.
+
+### Implementation Plan — measured token-group callers (2026-10-24)
+
+A diagnostic rerun of the actual full-realm execution on 3da80ffb8dd834e9b0e0763bd7643586a005d99d
+instruments ledger API calls without changing their arguments or results.
+At 150.07 seconds it recorded 12,253 `physicalIndex` calls consuming 66.43
+seconds, plus 3,053 `physicalIndices` calls consuming 16.57 seconds. Sampled
+call stacks include argument-vector inventories and Symbol authentication.
+This is an in-progress diagnostic, not terminal integration acceptance.
+The original common-runtime test subsequently terminated with its 1,800-second
+timeout after 3,465 seconds wall time and an additional worker RPC timeout.
+Attaching the Node inspector had failed because its sandbox disallows opening
+a diagnostic port; no diagnostic listener was established.
+
+Reuse the existing `assertTypeReservations`/`physicalIndices` APIs for fixed
+token groups in `native-argument-vectors.ts` and `native-symbol-carrier.ts`.
+Keep producer/plan identity checks, canonical layout comparisons and coordinate
+equality. Capture inventory records first and audit again after layout
+comparison, including in reservation phase, so comparison-triggered mutation
+cannot escape. Quality acceptance: replace per-token loops without adding a
+cache, new validation machinery or size allowance; adversarially review the
+delta and run the actual resource execution/preservation suites.
+
+
+The token-group change passes **79/79** focused tests, including an actual
+no-import Wasm argument-vector allocation/growth run, comparison-triggered
+mutation in both reservation/filling phases, and Symbol type/global/function
+mutation between inventory requests. Focused TS7 and lint pass. All nine
+source/preservation ratchet invocations pass; preservation does not establish
+legacy retirement. The first new Wasm test failed because its export key
+collided with its function key; distinct export keys fix the test setup.
+
+The broader resource/source-composition run remains failed (45 passed, 59
+failed, plus argument-vector collection failure): a historical dependency pin
+rejects `src/codegen/builtin-ctor-value-invoke.ts`. A pristine archive of
+3da80ffb8dd834e9b0e0763bd7643586a005d99d reproduces that same argument-vector
+collection failure. The new standalone tests exercise the changed resource
+code without changing historical pins or counting the broad run as passing.
+The earlier expanded TS7 configuration also failed on historical test typing;
+the successful focused configuration covers both changed source modules and
+the new test. A fresh complete common-runtime execution is running against
+the updated source; its outcome remains unproven.
+
+The adversarial follow-up found no concrete regression or quality violation.
+The growth control checks length, not every payload. The unchanged host lane
+produces **11/11 byte-identical outputs** against the pinned preservation base.
+
+The instrumented full-realm normal-coordinate run on 3da80ff completed **1/1**
+selected case (five filtered out), exit 0, in 680.33 seconds. Its final ledger
+profile recorded 58,787 single index checks taking 420.01 seconds and 13,560
+batch index checks taking 96.73 seconds. This is diagnostic execution of the
+previous commit, not performance acceptance of the token-group change.

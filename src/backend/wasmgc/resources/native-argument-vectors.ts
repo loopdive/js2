@@ -225,19 +225,19 @@ export function nativeArgumentVectorReservationInventory(
     expectedPlan,
     "stale argument-vector requirements",
   );
-  for (const type of [pack.vectorBase, pack.array, pack.carrier]) {
-    if (tx.state === "reserving") tx.assertTypeReservation(type);
-    else tx.physicalIndex(type);
-  }
+  const types = [pack.vectorBase, pack.array, pack.carrier];
+  if (tx.state === "reserving") tx.assertTypeReservations(types);
+  else tx.physicalIndices(types);
   validateLayouts(pack);
-  return Object.freeze(
-    expectedPlan.declarations.map((row) => {
-      const token = owner.records.get(row.key);
-      if (!token) fail("missing argument-vector reservation");
-      if (tx.state !== "reserving") tx.physicalIndex(token);
-      return token;
-    }),
-  );
+  const records = expectedPlan.declarations.map((row) => {
+    const token = owner.records.get(row.key);
+    if (!token) fail("missing argument-vector reservation");
+    return token;
+  });
+  // Layout comparison may invoke Proxy traps; retain a fresh audit after it.
+  if (tx.state === "reserving") tx.assertTypeReservations(types);
+  else tx.physicalIndices(records);
+  return Object.freeze(records);
 }
 
 /** Fill both actual implementations; never freeze, seal, allocate, or publish here. */
@@ -250,11 +250,9 @@ export function fillNativeArgumentVectorResources(
   if (owner.filled) fail("duplicate fill");
   // Authenticate every dependency BEFORE filling either function. The ledger
   // also rejects replaced descriptors and stale nested layout objects here.
-  for (const token of [pack.vectorBase, pack.array, pack.carrier]) {
-    if (tx.physicalIndex(token) !== token.typeIndex) fail("type coordinate mismatch");
-  }
-  tx.physicalIndex(pack.newVector);
-  tx.physicalIndex(pack.push);
+  const types = [pack.vectorBase, pack.array, pack.carrier];
+  const indices = tx.physicalIndices([...types, pack.newVector, pack.push]);
+  if (types.some((token, index) => indices[index] !== token.typeIndex)) fail("type coordinate mismatch");
   validateLayouts(pack);
   tx.fillFunction(pack.newVector, { locals: [], body: buildArgumentVectorNewBody(pack.layout) });
   tx.fillFunction(pack.push, {

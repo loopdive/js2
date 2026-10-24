@@ -141,10 +141,9 @@ function authenticate(tx: PhysicalModuleReservations, pack: NativeSymbolCarrierR
   if (!owner || owner.tx !== tx) fail("foreign or copied resource owner");
   nativeStringLiteralReservationInventory(tx, owner.strings);
   if (tx.state === "reserving") {
-    tx.assertTypeReservation(pack.types.symbol);
-    tx.assertTypeReservation(pack.types.internArray);
+    tx.assertTypeReservations([pack.types.symbol, pack.types.internArray]);
   } else {
-    for (const row of owner.inventory.resources) tx.physicalIndex(row.reservation);
+    tx.physicalIndices(owner.inventory.resources.map((row) => row.reservation));
   }
   return owner;
 }
