@@ -25,6 +25,7 @@ import {
 } from "../../src/backend/wasmgc/resources/native-invocation-substrate.js";
 import {
   reserveNativeInvocationResources,
+  reserveNativeInvocationArgumentApply,
   fillNativeInvocationResources,
   requireCompletedNativeInvocation,
 } from "../../src/backend/wasmgc/resources/native-invocation.js";
@@ -263,9 +264,15 @@ export function sourceSubstrateBase(program: PreparedIrProgram, borrowed = true,
     dependencies,
   };
 }
-export function sourceSubstrateFixture(program: PreparedIrProgram, borrowed = true, displaced = false) {
+export function sourceSubstrateFixture(
+  program: PreparedIrProgram,
+  borrowed = true,
+  displaced = false,
+  runtimeArguments = false,
+) {
   const f = sourceSubstrateBase(program, borrowed, displaced);
   const pack = reserveNativeInvocationResources(f.tx, f.invocation, f.dependencies);
+  const argumentApply = runtimeArguments ? reserveNativeInvocationArgumentApply(f.tx, pack) : undefined;
   const slots = new Map<IrUnitId, FunctionReservation>(),
     signatures = new Map<IrUnitId, { params: ValType[]; results: ValType[] }>();
   for (const unit of f.source.units) {
@@ -284,9 +291,12 @@ export function sourceSubstrateFixture(program: PreparedIrProgram, borrowed = tr
     { params: [ext], results: [] },
     { kind: "defined", name: "__exn" },
   );
-  return { ...f, pack, slots, signatures, exception };
+  return { ...f, pack, slots, signatures, exception, argumentApply };
 }
 export interface SourceSubstrateRuntime extends SubstrateRuntime {
+  applyArguments(fn: unknown, receiver: unknown, args: unknown): unknown;
+  boxNumber(value: number): unknown;
+  unboxNumber(value: unknown): number;
   makeCall(capture: number): unknown;
   makeGetter(capture: number): unknown;
   call3(receiver: unknown, fn: unknown, a: number, b: number, c: number): number;
@@ -352,9 +362,16 @@ export function throwingGetterSubstrateRuntime(f: ReturnType<typeof sourceSubstr
   });
   requireCompletedNativeInvocation(tx, f.pack);
   control.fill();
-  for (const [name, token] of Object.entries({ make, run, exception: f.exception, ...f.pack.globals }))
+  for (const [name, token] of Object.entries({
+    make,
+    run,
+    ...(f.argumentApply ? { applyArguments: f.argumentApply } : {}),
+    exception: f.exception,
+    ...f.pack.globals,
+  }))
     tx.defineExport("substrate-control:throw-export:" + name, name, token);
   return instantiate(f) as unknown as SubstrateRuntime & {
+    applyArguments(fn: unknown, receiver: unknown, args: unknown): unknown;
     make(message: unknown): unknown;
     run(receiver: unknown, getter: unknown): unknown;
     currentThis: WebAssembly.Global;
@@ -475,6 +492,9 @@ export function sourceSubstrateRuntime(f: ReturnType<typeof sourceSubstrateFixtu
   requireCompletedNativeInvocation(tx, f.pack);
   control.fill();
   for (const [name, token] of Object.entries({
+    ...(f.argumentApply ? { applyArguments: f.argumentApply } : {}),
+    boxNumber: f.values.functions.boxNumber,
+    unboxNumber: f.values.functions.unboxNumber,
     makeCall,
     makeGetter,
     call3,

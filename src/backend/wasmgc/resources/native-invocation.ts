@@ -90,6 +90,7 @@ interface Owner {
   readonly borrowedSubstrate: ReturnType<typeof substrateSelection>;
   readonly functions: readonly FunctionReservation[];
   callables?: NativeSourceClosureCallables;
+  argumentApply?: FunctionReservation;
   filled: boolean;
 }
 const owners = new WeakMap<NativeInvocationReservations, Owner>();
@@ -327,7 +328,22 @@ export function nativeInvocationFunctions(
   tx: PhysicalModuleReservations,
   pack: NativeInvocationReservations,
 ): readonly FunctionReservation[] {
-  return requireOwner(tx, pack).functions;
+  const owner = requireOwner(tx, pack);
+  return Object.freeze([...owner.functions, ...(owner.argumentApply ? [owner.argumentApply] : [])]);
+}
+
+/** A runtime consumer requests this entry before freeze; source-only calls do not allocate it. */
+export function reserveNativeInvocationArgumentApply(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+): FunctionReservation {
+  const owner = requireOwner(tx, pack);
+  if (tx.state !== "reserving") fail("argument apply requires reservation phase");
+  owner.argumentApply ??= tx.reserveFunction(`${pack.requirements.key}:apply-arguments`, "__apply_closure_arguments", {
+    params: [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    results: [{ kind: "externref" }],
+  });
+  return owner.argumentApply;
 }
 
 function entries(
@@ -441,6 +457,15 @@ export function fillNativeInvocationResources(
       }),
     );
   }
+  if (owner.argumentApply)
+    tx.fillFunction(
+      owner.argumentApply,
+      buildNativeClosureVectorApplyDefinition(owner.layout, rows, state, failure, {
+        vectorTypeIdx: pack.arguments.carrier.typeIndex,
+        arrayTypeIdx: pack.arguments.array.typeIndex,
+        external: true,
+      }),
+    );
   owner.callables = callables;
   owner.filled = true;
 }
@@ -459,6 +484,6 @@ export function requireCompletedNativeInvocation(
     owner.dependencies.valueDependencies,
   );
   requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
-  for (const token of owner.functions) tx.assertCompletedReservation(token);
+  for (const token of nativeInvocationFunctions(tx, pack)) tx.assertCompletedReservation(token);
   for (const token of Object.values(pack.globals)) tx.assertCompletedReservation(token);
 }

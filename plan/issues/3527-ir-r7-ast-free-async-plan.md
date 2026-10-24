@@ -2654,3 +2654,44 @@ but architecture incomplete; dead-export preservation passes while strict
 closure remains OPEN at its two existing nonliteral imports. This proves
 shared vector ownership and allocation, not complete Promise execution or
 exception-tag use by native Promise resolution.
+
+## Implementation Plan — 2026-10-24 — native invocation argument-vector ABI
+
+The Promise job passes the invocation substrate's external ArgumentVector,
+whereas the existing source apply entry accepts a typed source vector. Extend
+the existing vector-apply body builder with an explicit external-carrier input
+mode and use it from the same invocation owner for an `(extern, extern,
+extern) -> extern` entry over its actual ArgumentVector. Reuse the existing
+source callable associations, argument conversion and receiver/argc/extras
+save/restore; no separate dispatcher implementation or borrowed raw handle.
+Validate external carriers before field access and use the existing native
+TypeError failure path. Keep the typed source apply entry byte-equivalent.
+
+Exercise the issued entry with actual source closures and substrate-created
+vectors, empty/missing and excess arguments, growth, invalid carriers and
+exception restoration. The runtime-created settlement association and property
+`then` dispatch remain separate obligations; this entry alone cannot certify
+whole Promise composition. Quality acceptance: one body algorithm for both
+carrier representations and one invocation owner for both entry points.
+
+Review refinement: reserve the external ArgumentVector entry only when a
+consumer requests it from the issued invocation owner during reservation.
+Repeated requests reuse the same function; source-only invocation does not
+allocate another dispatcher. Completion includes every requested entry.
+
+Argument-vector integration validation: the initial four new cases failed
+because the runtime entry did not exist. All seven final cases pass, including
+owned/borrowed substrate, codec replay, displaced indices, grown vectors,
+missing/excess arguments for the exercised source body, invalid carrier/callee,
+and exact exception/state restoration from an actual source getter. The public
+source-only consumer still executes its result without allocating the runtime
+entry. An intermediate broad run had 107/110 passing cases: three inventory
+failures exposed unconditional selection, corrected after review. The final
+substrate rerun passes 45/45; the 61 consumer cases passed in the broad run.
+These results cover 113 distinct cases across runs, not complete Promise or
+Test262 execution. Source/focused TS7, lint (7,318 files), formatting, import
+cycles and required ratchets pass. Eleven host consumer binaries remain
+byte-identical to main 7371eb50. Review has no remaining findings. Boundary
+inventory is valid; architecture and strict legacy closure remain incomplete.
+The argument entry retains selected-source invocation authority: it does not
+yet associate or certify compiler-created Promise settlement callables.
