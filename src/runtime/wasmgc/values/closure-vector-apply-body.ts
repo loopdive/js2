@@ -81,7 +81,18 @@ export function buildNativeClosureVectorApplyDefinition(
   entries: readonly NativeClosureMethodEntry[],
   state: ClosureInvocationState,
   failure: ClosureInvocationFailure,
-  input: { readonly vectorTypeIdx: number; readonly arrayTypeIdx: number; readonly external?: boolean },
+  input: {
+    readonly vectorTypeIdx: number;
+    readonly arrayTypeIdx: number;
+    readonly external?: boolean;
+    /** Same producer's identity matcher and (callee, receiver, ref argv) caller. */
+    readonly receiverVector?: {
+      readonly match: number;
+      readonly call: number;
+      /** Issued builtin carriers must never fall through into positional source calls. */
+      readonly carriers: readonly number[];
+    };
+  },
 ): { readonly locals: LocalDef[]; readonly body: Instr[] } {
   const anyLocal = 3,
     funcLocal = 4,
@@ -127,7 +138,7 @@ export function buildNativeClosureVectorApplyDefinition(
     },
     { op: "local.set", index: local },
   ]);
-  const vector: Instr[] = [
+  const vector = (): Instr[] => [
     { op: "local.get", index: 2 },
     ...(input.external
       ? ([{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: input.vectorTypeIdx }] as Instr[])
@@ -156,6 +167,29 @@ export function buildNativeClosureVectorApplyDefinition(
             { op: "if", blockType: { kind: "empty" }, then: buildClosureInvocationFailure(failure) },
           ] as Instr[])
         : []),
+      ...(input.receiverVector
+        ? ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: input.receiverVector.match },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 0 },
+                { op: "local.get", index: 1 },
+                ...vector(),
+                { op: "call", funcIdx: input.receiverVector.call },
+                { op: "return" },
+              ],
+            },
+            ...input.receiverVector.carriers.flatMap((typeIdx): Instr[] => [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx },
+              { op: "if", blockType: { kind: "empty" }, then: buildClosureInvocationFailure(failure) },
+            ]),
+          ] satisfies Instr[])
+        : []),
       ...buildClosureInvocationBoundary(state, slots, [
         ...(state.receiverPolicy === "exact"
           ? [{ op: "local.get", index: 1 } as Instr]
@@ -171,10 +205,10 @@ export function buildNativeClosureVectorApplyDefinition(
             { op: "local.set", index: length },
           ],
           else: [
-            ...vector,
+            ...vector(),
             { op: "struct.get", typeIdx: input.vectorTypeIdx, fieldIdx: 0 },
             { op: "local.set", index: length },
-            ...vector,
+            ...vector(),
             { op: "struct.get", typeIdx: input.vectorTypeIdx, fieldIdx: 1 },
             { op: "local.set", index: data },
           ],

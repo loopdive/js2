@@ -478,7 +478,12 @@ export interface BuiltinFunctionRuntime {
   stringSameValue(a: unknown, b: unknown): number;
 }
 /** Observer exports are test-only; no observer is installed in the intrinsic catalog. */
-export function builtinFunctionRuntime(offset = false, withTransportControls = false, withStringControl = false) {
+export function builtinFunctionRuntime(
+  offset = false,
+  withTransportControls = false,
+  withStringControl = false,
+  reserveExtension?: (fixture: ReturnType<typeof builtinFunctionFixture>) => () => void,
+) {
   const f = builtinFunctionFixture(offset),
     { tx } = f,
     kernel = f.kernel!;
@@ -506,7 +511,9 @@ export function builtinFunctionRuntime(offset = false, withTransportControls = f
   const thrown = tx.reserveGlobal("test-control:thrown", "thrown", ext, true);
   const controls = withTransportControls ? reserveBuiltinTransportControls(f) : undefined;
   const stringControl = withStringControl ? reserveBuiltinStringControl(f) : undefined;
+  const fillExtension = reserveExtension?.(f);
   completeBuiltinFunctionFixture(f);
+  fillExtension?.();
   if (controls) fillBuiltinTransportControls(f, controls);
   if (stringControl) fillBuiltinStringControl(f, stringControl);
   tx.fillGlobal(thrown, [{ op: "ref.null.extern" }]);

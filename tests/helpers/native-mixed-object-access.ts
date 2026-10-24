@@ -431,7 +431,7 @@ export function mixedRuntime(displaced = false) {
     tokens.get!,
     buildMixedObjectGet({
       entryTypeIdx: f.objects.propEntry.typeIndex,
-      vectorTypeIdx: f.substrate.arguments.carrier.typeIndex,
+      argumentVector: { kind: "typed", typeIdx: f.substrate.arguments.carrier.typeIndex },
       undefinedGlobal: tx.physicalIndex(r.values.globals.undefined),
       lookup: tokens.lookup!.handle,
       newVector: f.substrate.arguments.newVector.handle,

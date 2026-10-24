@@ -260,7 +260,7 @@ for (const displaced of [false, true])
       expect(() =>
         buildMixedObjectGet({
           entryTypeIdx: 0,
-          vectorTypeIdx: 0,
+          argumentVector: { kind: "typed", typeIdx: 0 },
           undefinedGlobal: 0,
           lookup: 0,
           newVector: 0,

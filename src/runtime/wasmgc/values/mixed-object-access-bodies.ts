@@ -514,7 +514,7 @@ export function buildMixedObjectSetPrototype(input: MixedObjectAccessOperands): 
 
 export interface MixedObjectGetOperands {
   readonly entryTypeIdx: number;
-  readonly vectorTypeIdx: number;
+  readonly argumentVector: { readonly kind: "externref" } | { readonly kind: "typed"; readonly typeIdx: number };
   readonly undefinedGlobal: number;
   readonly lookup: FuncHandle;
   readonly newVector: FuncHandle;
@@ -525,13 +525,17 @@ export interface MixedObjectGetOperands {
 export function buildMixedObjectGet(input: MixedObjectGetOperands): MixedObjectDefinition {
   const d = data(input, [
     "entryTypeIdx",
-    "vectorTypeIdx",
+    "argumentVector",
     "undefinedGlobal",
     "lookup",
     "newVector",
     "call",
   ]) as unknown as MixedObjectGetOperands;
-  Object.values(d).forEach(coordinate);
+  [d.entryTypeIdx, d.undefinedGlobal, d.lookup, d.newVector, d.call].forEach(coordinate);
+  const vector = data(d.argumentVector, ["kind"], ["typeIdx"]);
+  if (vector.kind === "typed") coordinate(vector.typeIdx);
+  else if (vector.kind !== "externref" || Object.hasOwn(vector, "typeIdx"))
+    throw Error("mixed object bodies: invalid argument-vector ABI");
   const undefinedValue: Instr[] = [global(d.undefinedGlobal), { op: "extern.convert_any" }];
   const read = (fieldIdx: number): Instr[] => [
     get(3),
@@ -564,8 +568,12 @@ export function buildMixedObjectGet(input: MixedObjectGetOperands): MixedObjectD
             get(5),
             get(2),
             call(d.newVector),
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: d.vectorTypeIdx },
+            ...(d.argumentVector.kind === "externref"
+              ? []
+              : ([
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: d.argumentVector.typeIdx },
+                ] satisfies Instr[])),
             call(d.call),
           ),
         ],

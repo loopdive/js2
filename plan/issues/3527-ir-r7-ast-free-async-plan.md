@@ -2777,3 +2777,49 @@ possibility. Both are fixed with negative tests; final review found no further
 actionable issue. Promise-only programs now reserve and fill the real shared
 invocation dispatcher, but full Promise body fill and actual settlement-call
 execution are not certified. The public whole-Promise guard remains intact.
+
+## Implementation Plan — 2026-10-24 — mixed invocation execution
+
+Extend the existing closure ArgumentVector recipe with an explicit receiver/vector
+transport branch. Its matcher and caller come from the same canonical builtin
+producer: the matcher checks metadata, realm and singleton identity, while the
+caller passes the original receiver and vector to the lifted builtin. Perform
+this branch before installing source argc/this/extras; builtin transport does not
+consume the source parameter protocol. Keep positional source/settlement calls
+in the existing shared branch, and retain ArgumentVector validation before either
+branch. Do not allocate a second builtin population or infer builtin authority
+from structural type tests.
+
+Connect the existing mixed Get recipe to the external ArgumentVector ABI without
+copying its lookup/getter algorithm. Test actual prepared-source getters and real
+Function.prototype/ThrowTypeError algorithms in the same import-free module,
+including displaced indices, forged/foreign builtin identities, argument-vector
+validation and saved invocation state. These execution tests do not grant public
+realm completion: canonical public realm initialization, all-source population
+and mixed property owner composition remain required for public async emission.
+Quality acceptance: one vector dispatcher, existing builtin brand/call algorithms,
+existing Get algorithm; no placeholder bodies or new duplicate realm.
+
+### Mixed invocation execution evidence — 2026-10-24
+
+The shared ArgumentVector recipe now dispatches authentic builtin receiver/vector
+calls before positional source calls. After a builtin identity mismatch, concrete
+builtin carriers cannot fall through to a structurally compatible source entry.
+A negative control demonstrates that omitting this exclusion invokes a foreign
+builtin through its actual lifted signature. Mixed Get explicitly selects typed
+or external ArgumentVector transport and reuses the existing lookup algorithm.
+
+The final four-suite run passed 84/84 cases, including four new executions with
+normal and displaced coordinates, real prepared-source getters, Function.prototype
+and ThrowTypeError, forged/foreign identities and saved invocation state. Source
+and focused-test TS7 passed. LOC/function, coercion/oracle, import-cycle and
+preservation gates passed; eleven host binaries remain identical to main
+7371eb505b365e49815f1ddc09afed6c52372540. Independent review found no remaining
+actionable issue after the fallback fix. Strict legacy closure remains OPEN at
+the two already documented dynamic imports; retirement is not certified.
+
+This proves runtime recipe execution, not a completed public mixed owner. That
+owner must authenticate matcher, caller and the complete builtin carrier family
+together, join the canonical public realm and all source callables, and provide
+the remaining Promise Get/then-dispatch dependencies before public native async
+can be admitted.
