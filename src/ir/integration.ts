@@ -97,6 +97,10 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
+import {
+  ensureIrDynamicMethodCallHelper,
+  irDynamicMethodCallWrapperLane,
+} from "../codegen/object-model/ir-dynamic-method-call.js";
 import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
 import {
   ensureIrArgumentsLengthHelper,
@@ -107,8 +111,6 @@ import {
 import {
   ensureIrCurrentThisHelper,
   ensureIrDynamicConstructHelper,
-  ensureIrDynamicMethodCallHelper,
-  irDynamicMethodCallWrapperLane,
   ensureIrInstanceOfFunctionHelper,
   IR_CURRENT_THIS_SLOPPY_HELPER,
   IR_CURRENT_THIS_STRICT_HELPER,

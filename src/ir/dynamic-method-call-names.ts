@@ -12,7 +12,8 @@ const IR_DYN_MCALL_PREFIX = "__ir_dyn_mcall_";
 /** Small fixed arity range: one wrapper per (method, arity) actually used. */
 const IR_DYN_MCALL_MAX_ARITY = 3;
 
-const METHOD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Identifier-safe and wasm-name-safe: `$` is legal in both. */
+const METHOD_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 /** May the IR name a wrapper for `recv.<method>(…arity args)`? (Identifier-safe names only.) */
 export function irDynamicMethodCallIsNameable(method: string, arity: number): boolean {
