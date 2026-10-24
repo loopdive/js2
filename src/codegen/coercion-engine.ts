@@ -31,6 +31,7 @@
  * `coercionPlan` (coercion-plan.ts); this module is the JS-semantic layer on
  * top and never re-hand-rolls a box/unbox row.
  */
+import { i32NumberWidening } from "../wasm/physical/numeric-carriers.js";
 import { isBooleanType, isStringType } from "../checker/type-mapper.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { TypeFact } from "../checker/oracle.js";
@@ -389,7 +390,7 @@ export function emitToString(
     if (native && toStrIdx === undefined) {
       return valType;
     }
-    if (valType.kind === "i32") fctx.body.push({ op: "f64.convert_i32_s" });
+    if (valType.kind === "i32") fctx.body.push(i32NumberWidening(valType));
     else if (valType.kind === "i64") fctx.body.push({ op: "f64.convert_i64_s" });
     // (#6423) An UNDEF-SENTINEL-branded f64 stringifies as "undefined", not
     // as the sentinel's "NaN". Unbranded operands (including i32/i64, which
@@ -634,7 +635,7 @@ export function emitToNumber(ctx: CodegenContext, fctx: FunctionContext, valType
 
   // i32 (number or boolean) → f64.
   if (valType.kind === "i32") {
-    fctx.body.push({ op: "f64.convert_i32_s" });
+    fctx.body.push(i32NumberWidening(valType));
     return { kind: "f64" };
   }
 
