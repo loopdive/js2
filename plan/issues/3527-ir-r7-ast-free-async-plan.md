@@ -43,6 +43,8 @@ files:
   - src/codegen/expressions.ts
   - tests/issue-3527-ir-async-plan.test.ts
 loc-budget-allow:
+  # 2026-10-24: reviewed 1606->1615 LOC for host/native narrowing at existing reads and explicit target rejection.
+  - src/compiler/ir-program-presentation.ts
   - src/ir/from-ast.ts
   - src/codegen/ir-prepared-free-functions.ts
 func-budget-allow:
@@ -2542,3 +2544,43 @@ Void/dynamic return execution, computed call-chain execution and complete
 public native runtime composition are not established by these tests. The
 legacy reachability gate remains preservation-only: strict closure is OPEN
 at the two existing nonliteral dynamic imports; deletion is not certified.
+
+## Implementation Plan — 2026-10-24 — target-aware program frame join
+
+`program/async-frame-setup.ts` currently invokes the host planner for every
+selected target, even though the native planner and materializer already
+exist. Join the native planner into this existing whole-program ABI pass
+using the requested backend/target and a discriminated frame union. Reuse
+the ordering, collision and ABI validation; host imports/callbacks and host
+dynamic carriers stay limited to host frames. The consumer must refuse a
+native frame until its genuine Promise resource group is available; native
+inventory obligations remain enforced. This is the planning part of the
+full composition work, not native acceptance or migration completion.
+
+Acceptance: source-owned whole-program frame joins use native recipes for
+standalone, preserve them through codec replay and carry no host imports or
+callbacks; public physical planning reaches the concrete missing native
+resource obligations instead of calling the wrong target planner. Retain
+host byte identity. Quality: extend the existing join, no parallel ABI join
+or fabricated producer observations.
+
+Target-aware join validation: the native frame suite passes 15/15, including
+two source owners with eight unique supplemental bindings and codec replay.
+The first combined frame/formatter/host-consumer run passes 52/54; its two
+formatter count failures (43 actual buffers versus 31 expected) reproduce
+on unchanged predecessor e4f0d1bd45fcdac1547e66d011375b34c6098d02. The presentation
+run passes 44/47; the exact same three adapter-policy failures reproduce on
+that predecessor. Final frame/formatter run after the two-owner test passes
+42/44, with only those two baseline formatter failures. No failure is waived
+as an end-to-end migration success. All eleven host consumer binaries remain
+byte-identical against main. Public return/await/call probes now all reach
+the seven concrete native runtime inventory obligations, with no wrong-target
+frame rejection. Fresh review found and prompted the missing presentation
+type narrowing; re-review has no open findings and approves the nine-line
+presentation budget exception.
+
+Source TS7 and focused TS7 covering all changed tests pass after repairing
+three pre-existing malformed test type fixtures. The physical observation
+suite passes 20/20 after its BufferSource type correction. Full lint, boundary
+inventory, import-cycle and size/coercion/oracle gates pass. Legacy closure
+remains OPEN under the same preservation-only reachability result.

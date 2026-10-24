@@ -1372,6 +1372,7 @@ function materializePhysicalProgram(
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
   for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
   for (const frame of plan.asyncFrames?.frames ?? []) {
+    if (frame.kind !== "host") emissionFailed("native async frame requires the complete native Promise resource group");
     const entry = slots.get(frame.owner);
     if (!entry || !exceptionTag) emissionFailed("async frame has no reserved entry or exception tag");
     const pack = reservePreparedAsyncFrame(reservations, frame, entry);

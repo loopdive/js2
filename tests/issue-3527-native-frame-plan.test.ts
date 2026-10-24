@@ -8,6 +8,8 @@ import {
 } from "../src/ir/program/prepared-native-async-frame-plan.js";
 import { planPreparedHostAsyncFrame } from "../src/ir/program/prepared-async-frame-plan.js";
 import { sourceInput, requireProgram } from "./helpers/typed-program-fixtures.js";
+import { planAsyncFrameSetup } from "../src/ir/program/async-frame-setup.js";
+import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { irUnitCallableBindingId } from "../src/ir/core/callable-bindings.js";
 
 const policy = {
@@ -59,6 +61,62 @@ function planned(value = input()) {
   return outcome.plan;
 }
 describe("native frame plans from source-owned prepared IR", () => {
+  it.each([false, true])("joins native frames into the whole-program ABI, replay=%s", (replay) => {
+    const original = programs.get("number")!;
+    const program = replay ? decodePreparedIrProgram(encodePreparedIrProgram(original)) : original;
+    const outcome = planAsyncFrameSetup(
+      program,
+      policy,
+      program.runtime[0]!,
+      [],
+      program.inventory.sources.find((s) => s.kind === "entry")!,
+    );
+    expect(outcome.kind).toBe("planned");
+    if (outcome.kind !== "planned") throw Error(outcome.detail);
+    expect(outcome.setup.frames).toEqual([planned(input("number", replay))]);
+    expect(outcome.setup.entries).toEqual(outcome.setup.frames[0]!.entries);
+    const accepted = acceptPreparedIrProgram(program, {
+      backend: "wasmgc",
+      target: "standalone",
+      sharedExceptionTag: false,
+      utf8Storage: false,
+      sourceMap: false,
+      moduleName: "frame-join",
+    });
+    expect(accepted.kind).toBe("unsupported");
+    if (accepted.kind !== "unsupported") throw Error("incomplete native runtime was accepted");
+    expect(accepted.detail).not.toContain("async frames do not support wasmgc:standalone");
+    expect(accepted.detail).toContain("native Promise inventory missing-runtime-configuration");
+    expect(accepted.detail).toContain("complete native Promise inventory composition has not been issued");
+  });
+  it("allocates distinct supplemental bindings for multiple native owners", () => {
+    const program = requireProgram(
+      prepareWholeIrProgram({
+        ...sourceInput({
+          "./entry.ts":
+            "async function first(n:number):Promise<number>{return await n;} export async function run(n:number):Promise<number>{return await first(n);}",
+        }),
+        policy,
+      }),
+    );
+    const join = (value: typeof program) =>
+      planAsyncFrameSetup(
+        value,
+        policy,
+        value.runtime[0]!,
+        [],
+        value.inventory.sources.find((s) => s.kind === "entry")!,
+      );
+    const outcome = join(program);
+    expect(outcome.kind).toBe("planned");
+    if (outcome.kind !== "planned") throw Error(outcome.detail);
+    expect(outcome.setup.frames).toHaveLength(2);
+    expect(outcome.setup.frames.every((frame) => frame.kind === "native")).toBe(true);
+    expect(outcome.setup.entries).toHaveLength(8);
+    expect(new Set(outcome.setup.entries.map((entry) => entry.id)).size).toBe(8);
+    expect(new Set(outcome.setup.entries.map((entry) => entry.order.declarationOrder)).size).toBe(8);
+    expect(join(decodePreparedIrProgram(encodePreparedIrProgram(program)))).toEqual(outcome);
+  });
   it.each(Object.keys(sources))(
     "preserves %s source planning through codec replay without host publication",
     (name) => {

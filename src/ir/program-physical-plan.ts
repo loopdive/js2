@@ -1068,6 +1068,7 @@ function appendAsyncPhysicalResources(
   exports: PhysicalExport[],
 ): void {
   for (const frame of asyncFrames?.frames ?? []) {
+    if (frame.kind !== "host") continue;
     appendPhysicalImports(frame.imports, importedFunctions);
     exports.push(
       ...frame.callbacks.map((row) => ({

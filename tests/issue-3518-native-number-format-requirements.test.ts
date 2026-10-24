@@ -126,7 +126,7 @@ describe("complete prepared formatter demand joins", () => {
       const { program, projection, options } = fixture;
       const prior = planPhysicalSetup(program, options, projection);
       if (prior.kind !== "unsupported") throw new Error("expected the existing async materialization refusal");
-      expect(prior.detail).toContain("async frames do not support wasmgc:standalone");
+      expect(prior.detail).toContain("native Promise inventory missing-runtime-configuration");
       expect(prior.detail).toContain(
         "intrinsic callable async.console.log-string needs runtime function materialization",
       );
@@ -280,7 +280,12 @@ describe("complete prepared formatter demand joins", () => {
           row === plan.declaration
             ? {
                 ...plan.declaration,
-                shape: { kind: "array" as const, element: { kind: "i16" as const }, mutable: false },
+                shape: {
+                  kind: "array" as const,
+                  name: "immutable-string-data",
+                  element: { kind: "i16" as const },
+                  mutable: false,
+                },
               }
             : row,
         ),
@@ -413,7 +418,7 @@ describe("complete prepared formatter demand joins", () => {
             providers,
             policy:
               change === "policy"
-                ? { ...selected.prepared.manifest.policy, stringConst: undefined }
+                ? { ...selected.prepared.manifest.policy, stringConst: { storage: "host" as const } }
                 : selected.prepared.manifest.policy,
           },
         },

@@ -389,7 +389,7 @@ describe("#3525 genuine mixed prepared presentation and detached finalization", 
     const current = prepared();
     const plan = emittedPhysicalSetupPlan(current.emission);
     const imports = current.emission.module.imports.filter((x) => x.desc.kind === "func").length;
-    const callbacks = plan.asyncFrames!.frames.flatMap((x) => x.callbacks);
+    const callbacks = plan.asyncFrames!.frames.flatMap((x) => (x.kind === "host" ? x.callbacks : []));
     expect(callbacks.length).toBeGreaterThan(0);
     for (const callback of callbacks) {
       const entry = plan.asyncFrames!.entries.filter((x) => x.id === callback.entry.id);
@@ -401,8 +401,8 @@ describe("#3525 genuine mixed prepared presentation and detached finalization", 
         externalName: callback.externalName,
         targetId: callback.targetBindingId,
       });
-      const frame = plan.asyncFrames!.frames.filter((row) =>
-        row.callbacks.some((value) => value.entry.id === callback.entry.id),
+      const frame = plan.asyncFrames!.frames.filter(
+        (row) => row.kind === "host" && row.callbacks.some((value) => value.entry.id === callback.entry.id),
       );
       expect(frame).toHaveLength(1);
       const auxiliary = [frame[0]!.auxiliaries.fulfillStep, frame[0]!.auxiliaries.rejectStep].filter(

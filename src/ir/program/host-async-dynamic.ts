@@ -48,6 +48,7 @@ export function planHostAsyncDynamicUnits(
 ): { readonly units: readonly IrUnitId[]; readonly gaps: readonly { unitId: IrUnitId; detail: string }[] } {
   const candidates = new Set<IrUnitId>();
   for (const frame of setup?.frames ?? []) {
+    if (frame.kind !== "host") continue;
     candidates.add(frame.owner);
     const calls = new Set(frame.calls.map((call) => call.bindingId));
     for (const derived of program.derivedUnits)
