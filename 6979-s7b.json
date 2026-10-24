@@ -1,11 +1,11 @@
 {
   "id": "6979",
   "slice": "s7b",
-  "assignee": "ttraenkler/opus-s7b-legacy-semantic",
-  "requested_by": "ttraenkler/opus-s7b-legacy-semantic",
+  "assignee": "ttraenkler/opus-s7b-remerge",
+  "requested_by": "ttraenkler/opus-s7b-remerge",
   "status": "in-progress",
   "branch": "issue-6979-s7b-legacy-semantic-removal",
-  "claimed_at": "2026-10-20T12:53:13Z",
-  "updated_at": "2026-10-20T12:53:13Z",
-  "write_id": "76366-mdabktmd"
+  "claimed_at": "2026-10-24T21:51:30Z",
+  "updated_at": "2026-10-24T21:51:30Z",
+  "write_id": "71800-8guz4b38"
 }
