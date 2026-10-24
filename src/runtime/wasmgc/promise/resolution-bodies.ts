@@ -13,6 +13,8 @@ export interface PromiseResolutionBindings {
   readonly newTypeErrorFuncIdx: FuncHandle;
 }
 export interface PromiseResolveValueResources {
+  /** Native composition: every object uses the captured common Get path. Absent retains existing output. */
+  readonly resolutionMode?: "common-get";
   readonly rejectionDispatchFuncIdx?: FuncHandle;
   readonly target: { wasi: boolean; standalone: boolean };
   readonly state: {
@@ -244,6 +246,9 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
   const peeledLocal = 7;
   const peelPrelude = buildResolutionPeelPrelude(thenable, valueLocal, peeledLocal);
 
+  if (Object.hasOwn(resources, "resolutionMode"))
+    return buildCommonGetResolution(promiseTypeIdx, peeledLocal, innerLocal, peelPrelude, selfCheck, nonPromiseArm);
+
   // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, "then")` for EVERY
   // object, including a native promise. The `$Promise` arm below adopts the
   // native state directly, so `nativePromise.then = f` was never observed. The
@@ -401,7 +406,40 @@ export function buildPromiseResolveValueBody(resources: PromiseResolveValueResou
   ];
 }
 
+/** All objects take the guarded lookup after native Promise identity checking. */
+function buildCommonGetResolution(
+  promiseTypeIdx: TypeHandle,
+  peeledLocal: number,
+  innerLocal: number,
+  peelPrelude: readonly Instr[],
+  selfCheck: readonly Instr[],
+  lookupArm: readonly Instr[],
+): Instr[] {
+  return [
+    ...peelPrelude,
+    { op: "local.get", index: peeledLocal },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: promiseTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: peeledLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: promiseTypeIdx },
+        { op: "local.set", index: innerLocal },
+        ...selfCheck,
+      ],
+    },
+    // Includes native Promise objects: no direct adoption or second own-then read.
+    ...lookupArm,
+  ];
+}
+
 function validatePromiseResolveValueResources(resources: PromiseResolveValueResources): PromiseResolveValueResources {
+  const mode = Object.getOwnPropertyDescriptor(resources, "resolutionMode");
+  if (mode && (!mode.enumerable || !Object.hasOwn(mode, "value") || mode.value !== "common-get" || !resources.thenable))
+    throw new Error("Promise resolution requires an explicit common-Get mode and native bindings");
   if (
     resources.callbackFields?.join(",") !== "0,1,2,3,4" ||
     resources.capsFields?.callback !== 0 ||

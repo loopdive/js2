@@ -3245,3 +3245,64 @@ The combined split execution covers all six cases: callable-first ordering,
 length/index getters, prototype lookup and holes, source/native receivers and
 arguments, original abrupt identity, recovery, lengths above 2^32 and Infinity
 with early exceptions, and explicit unsupported source-object Get traps.
+
+
+### Implementation plan: intrinsic descriptor absence for native Promise Get
+
+Current mixed Get returns unready for every missing property on native
+intrinsics and Object.prototype even after the genuine initializer has
+installed all catalog descriptors. Consequently an ordinary object inheriting
+Object.prototype cannot report an absent then property. Join mixed access to
+the authenticated same-realm population owner before freeze. Require its
+canonical private fill at structural fill/completion, and use the actual
+runtime initialization state: intrinsic misses become absent only at state 2.
+State 0/1/-1, null/foreign/corrupt bags and unsupported source families retain
+explicit gaps. Do not grant algorithm or whole-realm completion.
+
+Test every intrinsic's own/inherited absence, nearer properties and accessors,
+present undefined, runtime initialization states and copied/foreign/changed
+population proof. Preserve the existing unbound structural component behavior.
+This is a prerequisite for common Get/IsCallable Promise then capture, not a
+substitute for source property metadata or the public Promise coordinator.
+
+
+### Implementation plan: common native Promise resolution
+
+Join the real mixed Get, primitive classifier and common IsCallable owners;
+read then once with the original receiver and retain the captured function for
+the existing ThenableJob. Keep primitive resolutions free of property access.
+Authenticate shared values, strings, exception, closure root and invocation.
+Settlement closures already participate in that invocation; final Promise
+completion must follow the fill cycle rather than being inferred from Call.
+
+Add an explicit native common-Get mode to the shared resolution recipe. After
+self-resolution rejection, native Promise objects must use the same guarded
+lookup as other objects. The current own-bag/adoption path bypasses inherited
+changes and runs getters outside the lookup catch; do not retain it after a
+preliminary Get. Preserve the existing default output exactly. Test native and
+ordinary values, one read, captured identity, thrown identity, self-resolution
+and queue ordering with actual Wasm execution. Reject accessor/inherited mode
+forgery without executing a getter. No duplicate resolution or queue algorithm.
+
+The actual Promise carrier also needs complete property/prototype production
+and mixed-Get integration. An unknown Promise carrier remains unsupported until
+that owner is connected. Public admission, source metadata and genuine remaining
+builtin algorithms must not be inferred from this internal mode or a test spy.
+
+
+Common-Get resolution validation (2026-10-24): the executable recipe and existing
+instruction-preservation suite pass 63/63. Focused TS7 passes after naming the two
+fixture struct types; the common dispatch is extracted into its own helper to
+stay under the function budget. All nine source/CI-base gates pass; 11 emitted
+host binaries match baseline 7371eb505b365e49815f1ddc09afed6c52372540 exactly.
+Read-only adversarial review finds no remaining blocker in this recipe change.
+These are seam tests with explicit lookup/queue observers, not public Promise
+runtime acceptance. The mode is not selected by the native resource fill yet.
+
+The production prerequisite is a real Promise property/prototype owner. Reuse
+the realm ordinary storage inside Promise field 3 rather than adding a parallel
+property implementation; all allocation sites, including prepared frame creation,
+must initialize it. Populate the actual Promise.prototype chain and callable then
+with capability/species behavior before treating native Promise misses as absent.
+Mixed Get must authenticate that carrier and use its stored prototype; null bags
+remain incomplete. Only then join common Get/IsCallable and select the new mode.
