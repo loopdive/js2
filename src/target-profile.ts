@@ -9,20 +9,20 @@
  * compound `standalone || wasi || strictNoHostImports` predicates.
  */
 
-import { readEnv } from "./env.js";
-
 export type CompileTarget = "gc" | "linear" | "wasi" | "standalone";
 export type CompileBackend = "wasmgc" | "linear";
 export type CompileEnvironment = "javascript" | "wasi" | "none" | "unknown";
 export type CapabilityPolicy = "ambient-js" | "explicit-only" | "backend-defined";
 /**
- * Public semantic-provider spelling (#6708 S6). `"native-first"` is the
- * default in every environment; `"host-assisted"` is the compatibility
- * profile (byte-identical to the pre-S6 `gc` default), scheduled for removal
- * in S7; `"auto"` is a deprecated alias of `"native-first"`.
+ * Public semantic-provider spelling. Since #6979 (S7) the native semantic
+ * regime is the only ECMAScript implementation on the WasmGC backend, so
+ * `"native-first"` — the default — is the one accepted spelling. The former
+ * `"host-assisted"` rollback and the `"auto"` alias are compile errors (see
+ * `REMOVED_SEMANTIC_PROVIDER_RELEASE`).
  */
-export type SemanticProviderSelection = "native-first" | "host-assisted" | "auto";
-export type SemanticProviderPolicy = "host-assisted" | "native-first" | "backend-defined";
+export type SemanticProviderSelection = "native-first";
+/** `backend-defined` is the linear backend's own provider choice. */
+export type SemanticProviderPolicy = "native-first" | "backend-defined";
 export type HostValueInteropPolicy = "required" | "enabled" | "off";
 export type AmbientPlatform = "node" | "deno";
 
@@ -54,11 +54,12 @@ export interface TargetProfileInput {
   /** Internal CodegenOptions compatibility projection. Public callers use target. */
   readonly standalone?: boolean;
   readonly strictNoHostImports?: boolean;
-  /** Select migrated Wasm-native semantic families independently of the host. */
+  /** The only spelling is `"native-first"`, the default (#6979). */
   readonly semanticProviders?: SemanticProviderSelection;
   /**
-   * Rejects a contradictory explicit native-first request; with no explicit
-   * selection, `false` keeps the pre-S6 host-assisted profile (deprecated).
+   * The native regime runs on native strings: `false` is rejected for an
+   * explicit native-first request and in the JavaScript environment, where it
+   * used to select the removed host-assisted profile (#6979).
    */
   readonly nativeStrings?: boolean;
   readonly hostBridge?: "auto" | "always" | "off";
@@ -86,9 +87,8 @@ export interface CompileTargetProfile {
   readonly nativeStringsRequiredByPolicy: boolean;
   /**
    * (#5385) Whether codegen lowers with the native semantic REGIME — the
-   * `ctx.standalone` provider arms — rather than the host-assisted one. True
-   * for the standalone target and for an explicitly selected native-first
-   * policy in a JavaScript environment. This answers "which ECMAScript
+   * `ctx.standalone` provider arms. True for the standalone target and the
+   * JavaScript environment (#6979). This answers "which ECMAScript
    * implementation runs?"; `environment` / `hostValueInterop` still answer
    * "who instantiates it and does it keep the JS value bridge?".
    */
@@ -112,31 +112,27 @@ export function hasHostAccelerator(
 }
 
 /**
- * (#6986) Does this build have a host `Intl` to call? Yes on the host-assisted
- * lane and under the selected `intl` accelerator; no on every other WasmGC
- * build (native-first in a JS environment, standalone, WASI, strict). There is
- * no native Intl beyond the `Intl.ListFormat` prelude (#6839), so a host-free
- * build that uses `Intl` is a compile error naming the accelerator rather than a
- * silent run-time failure. The linear backend keeps its own behaviour.
+ * (#6986) Does this build have a host `Intl` to call? On WasmGC only under the
+ * selected `intl` accelerator (#6979 removed the host-assisted lane, the other
+ * way to get one). There is no native Intl beyond the `Intl.ListFormat`
+ * prelude (#6839), so a build that uses `Intl` without the accelerator is a
+ * compile error naming it rather than a silent run-time failure. The linear
+ * backend keeps its own behaviour.
  */
-export function hostIntlAvailable(
-  profile: Pick<CompileTargetProfile, "backend" | "environment" | "semanticProviders" | "accelerators">,
-): boolean {
+export function hostIntlAvailable(profile: Pick<CompileTargetProfile, "backend" | "accelerators">): boolean {
   if (profile.backend !== "wasmgc") return true;
-  if (profile.environment !== "javascript") return false;
-  return profile.semanticProviders !== "native-first" || hasHostAccelerator(profile, "intl");
+  return hasHostAccelerator(profile, "intl");
 }
 
 /**
  * (#6978) Validate a host-accelerator request against the resolved policy. An
  * accelerator swaps a native provider for the JS host's, so it needs a JS
- * environment that permits host imports and a native-first policy to swap out
- * of; anything else is a compile error, never a silent no-op.
+ * environment that permits host imports; anything else is a compile error,
+ * never a silent no-op.
  */
 function resolveHostAccelerators(
   requested: readonly string[] | undefined,
   facts: { target: CompileTarget; environment: CompileEnvironment; capabilityPolicy: CapabilityPolicy },
-  semanticProviders: SemanticProviderPolicy,
 ): readonly HostAcceleratorFamily[] {
   if (requested === undefined || requested.length === 0) return [];
   const known: readonly string[] = HOST_ACCELERATOR_FAMILIES;
@@ -155,12 +151,6 @@ function resolveHostAccelerators(
   }
   if (facts.capabilityPolicy !== "ambient-js") {
     throw new Error(`Host accelerator(s) ${list} need host imports, which strictNoHostImports forbids.`);
-  }
-  if (semanticProviders !== "native-first") {
-    throw new Error(
-      `Host accelerator(s) ${list} only apply to the native-first semantic regime; the host-assisted ` +
-        `profile already uses every host provider. Select semanticProviders: "native-first".`,
-    );
   }
   const pending = families.filter((family) => PENDING_HOST_ACCELERATORS[family] !== undefined);
   if (pending.length > 0) {
@@ -197,8 +187,7 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
   // check (#2961), so changing its strict-gate projection here would not be a
   // behavior-neutral refactor.
   const strictEnvImportGate = input.strictNoHostImports ?? target === "wasi";
-  const { selection: semanticProviderSelection, explicit: semanticProvidersExplicit } =
-    normalizeSemanticProviderSelection(input);
+  const semanticProvidersExplicit = validateSemanticProviderSelection(input);
 
   let capabilityPolicy: CapabilityPolicy;
   let semanticProviders: SemanticProviderPolicy;
@@ -206,22 +195,16 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     // The legacy linear target does not itself identify its embedder/provider
     // policy. Say unknown instead of silently treating it as JS or host-free.
     capabilityPolicy = "backend-defined";
-    semanticProviders =
-      semanticProvidersExplicit && semanticProviderSelection === "native-first" ? "native-first" : "backend-defined";
+    semanticProviders = semanticProvidersExplicit ? "native-first" : "backend-defined";
   } else {
     const implicitJsSemanticsAllowed = target !== "standalone" && !strictEnvImportGate;
     capabilityPolicy = implicitJsSemanticsAllowed ? "ambient-js" : "explicit-only";
-    // `host-assisted` is the pre-S6 rule verbatim: implicit JS semantics where
-    // the target allows them, native providers where it does not.
-    semanticProviders =
-      semanticProviderSelection === "host-assisted" && implicitJsSemanticsAllowed ? "host-assisted" : "native-first";
+    if (implicitJsSemanticsAllowed && input.nativeStrings === false)
+      throw removedSemanticProviderError("nativeStrings: false");
+    semanticProviders = "native-first";
   }
 
-  const accelerators = resolveHostAccelerators(
-    input.hostAccelerators,
-    { target, environment, capabilityPolicy },
-    semanticProviders,
-  );
+  const accelerators = resolveHostAccelerators(input.hostAccelerators, { target, environment, capabilityPolicy });
 
   const hostBridge = input.hostBridge ?? "auto";
   const hostValueInterop: HostValueInteropPolicy =
@@ -235,21 +218,12 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
           ? "required"
           : "off";
 
-  // (#5385 S5, #6708 S6) The JS-environment arm is ON for the native-first
-  // policy, which is the default since S6: the regime lane led the
-  // host-assisted lane on every nightly from 2026-09-27 (35,384 vs 34,099) to
-  // 2026-10-07 (41,816 vs 39,700), and its arms are the `ctx.standalone` arms
-  // the standalone edition ratchet guards on every merge. `JS2WASM_NATIVE_REGIME_JS=0`
-  // stays the one-release kill switch: it now also applies to the DEFAULT and
-  // restores the pre-S5 per-family reroute (native-first providers without the
-  // regime). The whole pre-S6 profile is `semanticProviders: "host-assisted"`.
-  const nativeRegime =
-    target === "standalone" ||
-    (target === "gc" &&
-      environment === "javascript" &&
-      capabilityPolicy === "ambient-js" &&
-      semanticProviderSelection === "native-first" &&
-      readEnv("JS2WASM_NATIVE_REGIME_JS") !== "0");
+  // (#5385 S5, #6708 S6, #6979 S7) The regime is the only semantic
+  // implementation in a JavaScript environment, with or without ambient host
+  // imports: S7-b moved the strict (`strictNoHostImports`) gc build onto it,
+  // because the host-semantic arms it used to run are retired. WASI keeps its
+  // own lowering until S7-c classifies the remaining `ctx.standalone` arms.
+  const nativeRegime = target === "standalone" || target === "gc";
 
   return Object.freeze({
     target,
@@ -260,66 +234,46 @@ export function resolveCompileTargetProfile(input: TargetProfileInput = {}): Com
     hostValueInterop,
     strictEnvImportGate,
     nativeRegime,
-    nativeStringsRequiredByPolicy:
-      target === "standalone" || target === "wasi" || strictEnvImportGate || semanticProviders === "native-first",
+    nativeStringsRequiredByPolicy: strictEnvImportGate || semanticProviders === "native-first",
     ambientPlatform: input.ambientPlatform ?? ambientPlatformOf(input),
     ...(accelerators.length > 0 ? { accelerators } : {}),
   });
 }
 
-type NormalizedSemanticProviderSelection = "native-first" | "host-assisted";
+/**
+ * (#6979) The last js2wasm release whose compiler accepted a host-semantic
+ * spelling: `semanticProviders: "auto"` and the implicit host-assisted
+ * profile behind `nativeStrings: false`. The S6 `"host-assisted"` spelling
+ * never shipped in a release.
+ */
+export const REMOVED_SEMANTIC_PROVIDER_RELEASE = "0.71.0";
 
-const warnedSemanticProviderDeprecations = new Set<string>();
-
-function warnSemanticProviderDeprecationOnce(key: string, message: string): void {
-  if (warnedSemanticProviderDeprecations.has(key)) return;
-  warnedSemanticProviderDeprecations.add(key);
-  console.warn(`js2wasm: ${message}`);
-}
-
-/** Test-only: forget which once-per-process deprecation warnings were printed. */
-export function resetSemanticProviderDeprecationWarnings(): void {
-  warnedSemanticProviderDeprecations.clear();
+function removedSemanticProviderError(spelling: string): Error {
+  return new Error(
+    `Compile option ${spelling} selected the host-assisted semantic profile, which #6979 removed ` +
+      `(last accepted by js2wasm ${REMOVED_SEMANTIC_PROVIDER_RELEASE}). The native semantic regime is the only ` +
+      "ECMAScript implementation; omit the option. Host `wasm:js-string` strings, RegExp, Date and Intl stay " +
+      "available as named host accelerators (hostAccelerators, #6978).",
+  );
 }
 
 /**
- * (#6708 S6) Resolve the public spelling to the policy it selects.
- *
- * - no selection → `native-first` (the default in every environment), except
- *   that an explicit `nativeStrings: false` with no selection keeps the pre-S6
- *   `host-assisted` profile those callers relied on (deprecated, warns once);
- * - `"auto"` → same as omitting the option, i.e. `native-first` (deprecated
- *   alias, warns once per process);
- * - an explicit `"native-first"` with `nativeStrings: false` throws.
- *
- * `explicit` says whether the caller spelled a policy: the target-derived
- * linear/standalone/WASI defaults keep their established behaviour.
+ * (#6979) Validate the public spelling. `"native-first"` (or nothing) is the
+ * only accepted selection; `"auto"` and `"host-assisted"` are compile errors.
+ * An explicit `"native-first"` with `nativeStrings: false` is a contradiction.
+ * Returns whether the caller spelled the policy explicitly: the linear backend
+ * keeps its own provider choice unless it did.
  */
-export function normalizeSemanticProviderSelection(
-  input: Pick<TargetProfileInput, "semanticProviders" | "nativeStrings"> = {},
-): { readonly selection: NormalizedSemanticProviderSelection; readonly explicit: boolean } {
-  const requested = input.semanticProviders;
-  if (requested === "auto") {
-    warnSemanticProviderDeprecationOnce(
-      "auto-alias",
-      'semanticProviders: "auto" is a deprecated alias of "native-first" (the default since #6708); omit the option.',
-    );
+function validateSemanticProviderSelection(
+  input: Pick<TargetProfileInput, "semanticProviders" | "nativeStrings">,
+): boolean {
+  const requested: unknown = input.semanticProviders;
+  if (requested === undefined) return false;
+  if (requested === "auto" || requested === "host-assisted") {
+    throw removedSemanticProviderError(`semanticProviders: "${requested}"`);
   }
-  if (requested === undefined || requested === "auto") {
-    // `"auto"` meant "the default policy" before S6 and keeps meaning exactly
-    // that — the default is now native-first — so it resolves like an omitted
-    // option (target-derived standalone/WASI behaviour included).
-    if (input.nativeStrings !== false) return { selection: "native-first", explicit: false };
-    warnSemanticProviderDeprecationOnce(
-      "implicit-native-strings-false",
-      'nativeStrings: false without semanticProviders selects the "host-assisted" compatibility profile; ' +
-        'spell semanticProviders: "host-assisted" explicitly (the profile is removed in S7, #6708).',
-    );
-    return { selection: "host-assisted", explicit: false };
-  }
-  if (requested === "host-assisted") return { selection: "host-assisted", explicit: true };
   if (requested !== "native-first") {
-    throw new Error(`Compile option semanticProviders expects native-first | host-assisted (got ${String(requested)})`);
+    throw new Error(`Compile option semanticProviders expects native-first (got ${String(requested)})`);
   }
   if (input.nativeStrings === false) {
     throw new Error(
@@ -328,17 +282,5 @@ export function normalizeSemanticProviderSelection(
         '"js-string" host accelerator, #6978)',
     );
   }
-  return { selection: "native-first", explicit: true };
-}
-
-/**
- * Cache-key spelling of the selected policy. Provider caches keyed the raw
- * option (`?? "auto"`) before S6; keying the normalized policy makes `{}` and
- * `"native-first"` share an entry and keeps a pre-S6 `"auto"` entry (built
- * host-assisted) from being served for the new native-first default.
- */
-export function semanticProviderCacheKey(
-  input: Pick<TargetProfileInput, "semanticProviders" | "nativeStrings">,
-): string {
-  return normalizeSemanticProviderSelection(input).selection;
+  return true;
 }

@@ -26,7 +26,6 @@ import {
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
 import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
@@ -51,7 +50,6 @@ import {
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
-import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
 import { promoteTrampolineTailCalls, ensureFuncClosureSingletonAccessor } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { funnelRepeatedReturnTails } from "./helpers/return-tail-funnel.js";
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
@@ -64,7 +62,6 @@ import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/
 import { fillLinkedRealmPropertyRead } from "./object-model/linked-realm-property-read.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import {
-  isBigIntType,
   isBooleanType,
   isExternalDeclaredClass,
   isHeterogeneousPrimitiveUnion,
@@ -328,7 +325,6 @@ import type {
   OptionalParamInfo,
   RestParamInfo,
 } from "./context/types.js";
-import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
@@ -381,7 +377,6 @@ import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynam
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillPromiseSpeciesOfClass } from "./promise-species-then.js"; // (#5197 r3)
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
-import { fillOwnShadowWrappers } from "./expressions/own-property-method-shadow.js";
 import { noteRetUnboxStats, retUnboxNumericFilterEnabled } from "./ret-unbox-abi.js"; // (#4406) return-ABI funnel census + the Phase-4 admission filter
 import { noteParamUnboxStats } from "./param-unbox-abi.js"; // (#4406 Phase 3) parameter-ABI funnel census
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
@@ -3073,12 +3068,7 @@ function planIrOverlay(
       ? makeIrAmbientClassCallResolver(ast.checker)
       : undefined;
   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
-  const supportsStandalonePromiseDelay =
-    ctx.standalone &&
-    ctx.nativeStrings &&
-    !ctx.wasi &&
-    !ctx.fast &&
-    ctx.targetProfile.semanticProviders === "native-first";
+  const supportsStandalonePromiseDelay = ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast;
   const resolvePromiseDelay =
     (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
@@ -4555,7 +4545,6 @@ function preparedExactLexicalModuleInit(
     (ctx.nativeStrings &&
       ctx.standalone &&
       !ctx.wasi &&
-      ctx.targetProfile.semanticProviders === "native-first" &&
       planning?.plan.invocation.target === "standalone" &&
       (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     // (#3523 R4 gap 3) The WASI lane. `nativeStrings` auto-enables for WASI, so
@@ -5922,14 +5911,7 @@ export function generateModule(
     noteRegexPropertySource(ctx, ast.sourceFile); // (#6677) link the \p{…} table only if spellable
     noteUntypedRegExpDemand(ctx, ast.sourceFile); // (#6651 B10)
 
-    if (
-      options?.experimentalIR &&
-      ctx.standalone &&
-      ctx.nativeStrings &&
-      !ctx.wasi &&
-      !ctx.fast &&
-      ctx.targetProfile.semanticProviders === "native-first"
-    ) {
+    if (options?.experimentalIR && ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast) {
       registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
     }
     prepareIdentityPreservingStructuralParams(ctx, [ast.sourceFile]);
@@ -6677,9 +6659,6 @@ export function generateModule(
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     fillDirectCallTrampolines(ctx);
-    // Fill the reserved `__ownshadow_<C>_<m>_<n>` own-property guards. Read-only
-    // over funcMap/stringGlobalMap (deps registered at reserve time).
-    fillOwnShadowWrappers(ctx);
     // (#4406 Phase 0) The return-ABI funnel. A statement, never a condition —
     // inert without `JS2WASM_RET_UNBOX_STATS=1`.
     noteRetUnboxStats(ctx);
@@ -7221,12 +7200,6 @@ export function generateModule(
     // provider build, before DCE so their exports keep the full dependency
     // closure alive and all type references are remapped together.
     emitSharedRuntimeProviderExports(ctx);
-
-    // (#5247) Re-point each host-facing function export at a wrapper that
-    // unwraps an escaping `__exn` payload. After every export is published,
-    // before dead-elim remaps the rewritten descriptors. No-op unless the
-    // module can throw and targets a JS host.
-    wrapHostFacingExportsForThrow(ctx);
 
     // Dead import and type elimination pass
     // (#4645) Every whole-module finalize pass below is named so a pathological
@@ -11449,8 +11422,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     profilePhase("fill-direct-call-trampolines", () => fillDirectCallTrampolines(ctx));
-    // Same guard fill for the multi-source pipeline.
-    profilePhase("fill-own-shadow-wrappers", () => fillOwnShadowWrappers(ctx));
     // (#4406 Phase 0) Same funnel report in the linked lane.
     profilePhase("note-ret-unbox-stats", () => noteRetUnboxStats(ctx));
     profilePhase("note-param-unbox-stats", () => noteParamUnboxStats(ctx));
@@ -11972,10 +11943,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // #2527 — same provider publication point as the single-source pipeline.
     profilePhase("emit-shared-runtime-provider-exports", () => emitSharedRuntimeProviderExports(ctx));
-
-    // (#5247) Same export-boundary throw unwrapping + placement as the
-    // single-source pipeline above.
-    profilePhase("wrap-host-facing-exports-for-throw", () => wrapHostFacingExportsForThrow(ctx));
 
     // Dead import and type elimination pass
     // (#4645) Module-scale marker, then main's phase names/signatures.
@@ -12845,9 +12812,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // the existing i64 carrier until they have a native arbitrary-precision
   // implementation. Explicit native `i64` annotations returned above remain
   // i64 on every target.
-  if (usesHostBigIntCarrier(ctx) && isBigIntType(tsType)) {
-    return { kind: "externref" };
-  }
+
   const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
   if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
   // (#6774 S21) An accessor object literal is ALWAYS an open `$Object` at run
@@ -15497,9 +15462,7 @@ export {
   addStringImports,
   addUnionImports,
   addIteratorImports,
-  addArrayIteratorImports,
   addGeneratorImports,
-  addForInImports,
 } from "./registry/imports.js";
 export {
   addFuncType,

@@ -15,9 +15,7 @@ import {
 import { forEachChild, ts } from "../../ts-api.js";
 import { exactIndirectEvalStatement } from "../../eval-call-shape.js";
 import { ensureWrapperTypes } from "../any-helpers.js";
-import { ASYNC_CPS_ENABLED, analyzeAsyncBody, asyncFnNeedsCps } from "../async-cps.js";
-import { asyncFnNeedsHostDrive, asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
+import { asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
 import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
 import {
   functionBodyReferencesThis,
@@ -32,13 +30,10 @@ import { emitNativeAtob, emitNativeBtoa } from "../helpers/base64-native.js"; //
 import { isNativeGeneratorCandidate, sourceNeedsGeneratorHostImports } from "../generators-native.js";
 import { reportEagerGeneratorAbruptResumptions } from "../generator-eager-refusal.js";
 import {
-  FUNCTIONAL_ARRAY_METHODS,
   KNOWN_CONSTRUCTORS,
   MATH_HOST_METHODS_1ARG,
   MATH_HOST_METHODS_2ARG,
   STRING_METHODS,
-  addArrayIteratorImports,
-  addForInImports,
   addGeneratorImports,
   addIteratorImports,
   addStringImports,
@@ -48,10 +43,9 @@ import {
   parseRegExpLiteral,
   resolveWasmType,
 } from "../index.js";
-import { isPlainNamedMethodDeclaration, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
 import { registerBigIntToStringDemand } from "../bigint-string-context.js";
-import { emitNativeNumberFormat, usesNativeNumberFormat } from "../number-format-native.js";
+import { emitNativeNumberFormat } from "../number-format-native.js";
 import { emitNativeBigIntFormat } from "../bigint-format-native.js";
 import { emitNativeParseNumber } from "../parse-number-native.js";
 import { resolveGlobalParseBuiltin } from "../global-builtin-resolution.js";
@@ -104,33 +98,9 @@ export interface UnifiedCollectorState {
   // -- collectStringStaticImports --
   needsFromCharCode: boolean;
   needsFromCodePoint: boolean;
-  // -- collectPromiseImports --
-  promiseNeeded: Set<string>;
-  promiseNeedConstructor: boolean;
-  promiseNeedThen2: boolean;
-  // -- collectJsonImports --
-  jsonNeedStringify: boolean;
-  jsonNeedParse: boolean;
   // -- collectCallbackImports --
   callbackFound: boolean;
   getterCallbackFound: boolean; // Object.defineProperty accessor descriptors (#929)
-  // -- collectAsyncCpsImports (#1042) --
-  // A CPS-eligible async function (single tail-await, no try-across-await) needs
-  // __make_callback + Promise_then2 + Promise_resolve registered UPFRONT so the
-  // outer-body driver gets stable funcMap indices (the outer body is not in
-  // ctx.liveBodies during emission, so a late import would not have its `call`
-  // opcodes shifted — the #1384 hazard). Only set when ASYNC_CPS_ENABLED.
-  asyncCpsFound: boolean;
-  // (#1042 host drive) A host-drive-eligible async fn (linear multi-await /
-  // try-finally-across-await, shapes the CPS lane rejects) needs the six host
-  // settle-backend imports registered UPFRONT — same #1384 stable-index
-  // rationale as asyncCpsFound.
-  asyncHostDriveFound: boolean;
-  // -- collectFunctionalArrayImports --
-  funcArrayNeed1: boolean;
-  funcArrayNeed2: boolean;
-  /** Reference-valued Array.map callback needs the externref-preserving bridge. */
-  funcArrayNeedDyn1: boolean;
   // -- collectUnionImports --
   unionFound: boolean;
   // -- collectGeneratorImports --
@@ -139,10 +109,6 @@ export interface UnifiedCollectorState {
   // repeat stem is a collision (second gen falls to legacy), so it flips the
   // module to non-drivable (carrier off). See widenAsyncGenFallback.
   asyncGenDrivableStems: Set<string>;
-  // -- collectIteratorImports --
-  iteratorFound: boolean;
-  // -- collectArrayIteratorImports --
-  arrayIteratorFound: boolean;
   // -- collectForInStringLiterals --
   forInFound: boolean;
   forInLiterals: Set<string>;
@@ -207,23 +173,11 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
     escapeNeeded: new Set(),
     needsFromCharCode: false,
     needsFromCodePoint: false,
-    promiseNeeded: new Set(),
-    promiseNeedConstructor: false,
-    promiseNeedThen2: false,
-    jsonNeedStringify: false,
-    jsonNeedParse: false,
     callbackFound: false,
     getterCallbackFound: false,
-    asyncCpsFound: false,
-    asyncHostDriveFound: false,
-    funcArrayNeed1: false,
-    funcArrayNeed2: false,
-    funcArrayNeedDyn1: false,
     unionFound: false,
     generatorFound: false,
     asyncGenDrivableStems: new Set(),
-    iteratorFound: false,
-    arrayIteratorFound: false,
     forInFound: false,
     forInLiterals: new Set(),
     inExprLiterals: new Set(),
@@ -300,112 +254,6 @@ function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolea
   return (
     !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
   );
-}
-
-/**
- * (#4454) True when this object literal will install a PLAIN-NAMED method
- * shorthand (`m() {}`, `"m"() {}`, `0() {}`) through the
- * `this`-forwarding `env::__make_getter_callback` bridge, so the collector must
- * pre-register that import.
- *
- * A SPREAD-bearing literal with no concrete contextual type is diverted to the
- * host plain-object path by `objectLiteralSpreadTakesHostPath` (#2804), whose
- * MethodDeclaration arm materializes each method as a real runtime own property
- * via `emitObjectLiteralMethodFn` → `compileArrowAsCallback({needsThis:true})` →
- * the bridge. The collector previously registered it only for get/set accessors
- * (#1239) and computed method keys (#1433/#3048), so `{ ...src, m() {…} }`
- * reached the emit site with an empty `funcMap` and hard-CE'd with
- * "Missing __make_getter_callback import" — found by the #4420 self-hosting
- * sweep, where `src/ts-api.ts` synthesizes its TS7 shim as
- * `{ ...astMod, ...isMod, createProgram() {…}, … }` typed `Record<string, unknown>`.
- *
- * Gating on the EMITTER'S OWN predicate rather than on "has a spread" keeps
- * pre-pass and emit site in lockstep — the discipline that avoids re-introducing
- * the late-import index-shift hazard (#1384) — and leaves a concretely-annotated
- * target (`const o: { a: number; m(): number } = { ...s, m() {…} }`) on the
- * struct path with no unused import.
- *
- * Host/GC only, mirroring `emitObjectLiteralMethodFn`'s own branch: standalone /
- * native-first lowers the method to a host-free closure (#2194) and must not
- * declare the unsatisfiable `env::` import.
- */
-function objectLiteralMethodNeedsGetterBridge(ctx: CodegenContext, node: ts.Node): boolean {
-  if (!ts.isObjectLiteralExpression(node)) return false;
-  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") return false;
-  if (!node.properties.some((p) => ts.isSpreadAssignment(p))) return false;
-  if (!node.properties.some((p) => isPlainNamedMethodDeclaration(p))) return false;
-  return objectLiteralSpreadTakesHostPath(ctx, node);
-}
-
-/**
- * Whether an array-like receiver's TypeScript element arguments lower to a
- * reference carrier. This is deliberately a pre-scan predicate: the dynamic
- * callback import must exist before callback closures are emitted, otherwise a
- * late import can shift the closure's embedded function index (#4527).
- */
-function arrayReceiverMayCarryReferenceElements(ctx: CodegenContext, receiver: ts.Expression): boolean {
-  const refLike = (fact: import("../../checker/oracle.js").TypeFact): boolean => {
-    if (fact.kind === "union") return fact.parts.some(refLike);
-    return !(
-      fact.kind === "number" ||
-      fact.kind === "boolean" ||
-      fact.kind === "bigint" ||
-      fact.kind === "undefined" ||
-      fact.kind === "null" ||
-      fact.kind === "void" ||
-      fact.kind === "unresolvable"
-    );
-  };
-
-  const elementFact = ctx.oracle.elementFactOf(receiver);
-  if (elementFact.kind !== "unresolvable") return refLike(elementFact);
-
-  // Context-free array literals may not expose a TypeReference yet. Their
-  // element expressions still provide the same generic carrier proof.
-  if (ts.isArrayLiteralExpression(receiver)) {
-    return receiver.elements.some(
-      (element) => !ts.isOmittedExpression(element) && refLike(ctx.oracle.typeFactOf(element)),
-    );
-  }
-  return false;
-}
-
-/**
- * (#5319, generalising #4527) The single-callback array HOFs whose unresolved
- * callback must reach the element through the reference-preserving
- * `__call_dyn_1` bridge rather than the numeric `__call_1_f64` one. #4527 armed
- * `map` alone; every other member of this family lowered the SAME
- * `setupArrayCallback` fallback and therefore applied ToNumber to a reference
- * element — `["x","y"].filter(Boolean)` dropped every entry.
- *
- * `reduce`/`reduceRight` are deliberately absent: they take a 2-arg callback and
- * there is no `__call_dyn_2` bridge yet.
- */
-const DYNAMIC_ELEMENT_BRIDGE_METHODS = new Set(["map", "filter", "forEach", "find", "findIndex", "some", "every"]);
-
-function collectFunctionalArrayImports(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
-  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
-  const method = node.expression.name.text;
-  if (FUNCTIONAL_ARRAY_METHODS.has(method)) {
-    if (method === "reduce" || method === "reduceRight") state.funcArrayNeed2 = true;
-    else state.funcArrayNeed1 = true;
-    if (
-      DYNAMIC_ELEMENT_BRIDGE_METHODS.has(method) &&
-      !ctx.standalone &&
-      !ctx.wasi &&
-      node.arguments.length > 0 &&
-      !ts.isArrowFunction(node.arguments[0]!) &&
-      !ts.isFunctionExpression(node.arguments[0]!) &&
-      arrayReceiverMayCarryReferenceElements(ctx, node.expression.expression)
-    ) {
-      state.funcArrayNeedDyn1 = true;
-    }
-  }
-  if (method !== "call" || !ts.isPropertyAccessExpression(node.expression.expression)) return;
-  const innerMethod = node.expression.expression.name.text;
-  if (!FUNCTIONAL_ARRAY_METHODS.has(innerMethod)) return;
-  if (innerMethod === "reduce" || innerMethod === "reduceRight") state.funcArrayNeed2 = true;
-  else state.funcArrayNeed1 = true;
 }
 
 /** Single-pass visitor called on every AST node */
@@ -878,10 +726,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       //   numeric arg  → `number_toString`
       //   boolean arg  → "true"/"false" string literals (emitBoolToString)
       //   void arg     → "undefined" literal
-      if (
-        (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi) &&
-        node.arguments.length >= 1
-      ) {
+      if (node.arguments.length >= 1) {
         const arg0 = node.arguments[0]!;
         const arg0Type = ctx.checker.getTypeAtLocation(arg0);
         const isStr = isStringType(arg0Type);
@@ -1014,51 +859,19 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (node.expression.name.text === "fromCodePoint") state.needsFromCodePoint = true;
   }
 
-  // ── collectPromiseImports ──
+  // ── collectJsonImports ── `JSON.stringify(<number>)` needs the native
+  // number formatter (the host `JSON_*` imports are retired, #6979).
   if (
     ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
     ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "Promise"
+    node.expression.expression.text === "JSON" &&
+    node.expression.name.text === "stringify"
   ) {
-    const method = node.expression.name.text;
-    if (
-      method === "all" ||
-      method === "race" ||
-      method === "resolve" ||
-      method === "reject" ||
-      method === "allSettled" ||
-      method === "any"
-    ) {
-      state.promiseNeeded.add(method);
+    const arg = node.arguments[0];
+    if (arg && isNumberType(ctx.checker.getTypeAtLocation(arg))) {
+      state.primitiveNeeded.add("number_toString");
     }
-  }
-  // NOTE: Promise instance methods (.then/.catch/.finally) are NOT detected here.
-  // Pre-registering them adds func types that shift struct type indices, breaking
-  // non-Promise code in the same module. They're handled at codegen time instead.
-  if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Promise") {
-    state.promiseNeedConstructor = true;
-  }
-
-  // ── collectJsonImports ──
-  if (
-    ts.isCallExpression(node) &&
-    ts.isPropertyAccessExpression(node.expression) &&
-    ts.isIdentifier(node.expression.expression) &&
-    node.expression.expression.text === "JSON"
-  ) {
-    const method = node.expression.name.text;
-    if (method === "stringify") {
-      state.jsonNeedStringify = true;
-      const arg = node.arguments[0];
-      if (arg) {
-        const argType = ctx.checker.getTypeAtLocation(arg);
-        if (isNumberType(argType)) {
-          state.primitiveNeeded.add("number_toString");
-        }
-      }
-    }
-    if (method === "parse") state.jsonNeedParse = true;
   }
 
   // ── collectCallbackImports ──
@@ -1068,52 +881,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     }
   }
 
-  // ── collectAsyncCpsImports (#1042) ──
-  // Detect a CPS-eligible async function so the host imports the driver emits
-  // (__make_callback / Promise_then2 / Promise_resolve) are registered upfront
-  // with STABLE funcMap indices. Mirrors the activation gate exactly (single
-  // tail-await canonical shape, no try-across-await, JS-host).
-  //
-  // (#2957 phase 2) Widened to async ARROWS and FUNCTION EXPRESSIONS: those
-  // shapes now activate the CPS machine too (via `closures.ts`), so their host
-  // imports must likewise be pre-registered. If they were not, a module whose
-  // only async fns are arrows would reach `emitAsyncStateMachine` with the
-  // imports missing → it bails and the arrow silently falls back to the legacy
-  // sync pass-through. Method shapes remain phase 3.
-  if (
-    ASYNC_CPS_ENABLED &&
-    (!state.asyncCpsFound || !state.asyncHostDriveFound) &&
-    !isStandalonePromiseActive(ctx) &&
-    (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) &&
-    node.body !== undefined &&
-    hasAsyncModifier(node)
-  ) {
-    const plan = analyzeAsyncBody(ctx, node);
-    // Mirror the function-body.ts activation gate EXACTLY (#1936
-    // `asyncFnNeedsCps`): genuine suspension + single canonical tail-await
-    // shape. Pre-registering imports for a fn that won't actually be CPS-lowered
-    // would add unused imports (harmless) but a mismatch the other way would
-    // re-introduce the late-import shift hazard, so keep the predicates identical.
-    if (!state.asyncCpsFound && asyncFnNeedsCps(node, plan)) {
-      state.asyncCpsFound = true;
-    }
-    // (#1042 host drive) Same discipline for the host settle backend of the
-    // #2906 N-state resume machine: mirror `asyncFnNeedsHostDrive` exactly so
-    // its six imports (__make_callback / Promise_resolve / Promise_then2 /
-    // Promise_new_pending / Promise_settle_resolve / Promise_settle_reject)
-    // carry stable import indices.
-    //
-    // (#2967) Post-flip both predicates can be true for the same fn (host-drive
-    // claims the CPS shapes on declarations AND — since slice 2a — on lifted
-    // closures; only the shapes host-drive declines, e.g. concise arrow bodies
-    // and the pattern-param carve-out, still emit CPS). Registering both sets
-    // is the safe superset (the CPS trio is a subset of the host-drive six);
-    // the hazard-free direction — every emit path's imports pre-registered —
-    // holds for every routing outcome.
-    if (!state.asyncHostDriveFound && asyncFnNeedsHostDrive(ctx, node, plan)) {
-      state.asyncHostDriveFound = true;
-    }
-  }
   // (#1239) Object literals carrying get/set accessor declarations also
   // route through `__make_getter_callback` via compileObjectLiteralWithAccessors.
   //
@@ -1157,9 +924,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
           break;
         }
       }
-    }
-    if (!state.getterCallbackFound && objectLiteralMethodNeedsGetterBridge(ctx, node)) {
-      state.getterCallbackFound = true;
     }
   }
   // ── getterCallbackFound: Object.defineProperty / Reflect.defineProperty with accessor descriptor (#929) ──
@@ -1210,9 +974,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       }
     }
   }
-
-  // ── collectFunctionalArrayImports ──
-  collectFunctionalArrayImports(ctx, state, node);
 
   // ── collectUnionImports ──
   if (!state.unionFound) {
@@ -1409,31 +1170,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     }
   }
 
-  // ── collectArrayIteratorImports ──
-  if (!state.arrayIteratorFound && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-    const methodName = node.expression.name.text;
-    if (methodName === "entries" || methodName === "keys" || methodName === "values") {
-      const recvType = ctx.checker.getTypeAtLocation(node.expression.expression);
-      const sym = (recvType as ts.TypeReference).symbol ?? (recvType as ts.Type).symbol;
-      if (sym?.name === "Array") {
-        state.arrayIteratorFound = true;
-      }
-    }
-  }
-
-  // ── collectIteratorImports ──
-  if (!state.iteratorFound && ts.isForOfStatement(node)) {
-    const exprType = ctx.checker.getTypeAtLocation(node.expression);
-    const sym = (exprType as ts.TypeReference).symbol ?? (exprType as ts.Type).symbol;
-    if (sym?.name !== "Array") {
-      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 && isStringType(exprType)) {
-        // In fast mode, strings are iterated natively
-      } else {
-        state.iteratorFound = true;
-      }
-    }
-  }
-
   // ── collectForInStringLiterals ──
   if (ts.isForInStatement(node)) {
     state.forInFound = true;
@@ -1616,76 +1352,31 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectPrimitiveMethodImports finalize ──
-  const nativeNumberFormat = usesNativeNumberFormat(ctx);
-  // #1759/#3912: wherever strings are natively represented, template
-  // interpolation and String(number) need the pure-Wasm Number::toString, NOT
-  // env.number_toString — the host import hands back a real JS string, which
-  // every native consumer then mis-reads as an `$AnyString` box. All three
-  // gates below read that ONE predicate, so they cannot re-diverge.
-  const needsNativeNumberToString = state.primitiveNeeded.has("number_toString") && nativeNumberFormat;
-  if (state.primitiveNeeded.has("number_toString") && !needsNativeNumberToString) {
-    const t = addFuncType(ctx, [{ kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "number_toString", { kind: "func", typeIdx: t });
+  // (#6979) Number/BigInt formatting is always the WasmGC-native formatter
+  // (registered under the historical funcMap names): every WasmGC profile is
+  // the native regime or WASI, and the `env.number_*` / `env.bigint_toString*`
+  // host formatters are retired. Emit order matters: number_toPrecision
+  // delegates to the toFixed/toExponential helpers, so emitNativeNumberFormat
+  // emits those first. The defined funcs participate in the late-import
+  // index-shift fixup like emitNativeParseNumber's.
+  const fmtNative = new Set<string>();
+  for (const n of [
+    "number_toString",
+    "number_toString_radix",
+    "number_toFixed",
+    "number_toExponential",
+    "number_toPrecision",
+  ]) {
+    if (state.primitiveNeeded.has(n) && !ctx.funcMap.has(n)) fmtNative.add(n);
   }
-  // #1321: 2-arg `number_toString_radix(value, radix)` for `toString(radix)` calls.
-  // Without this, the codegen validates the radix range but then calls 1-arg
-  // `number_toString(value)`, silently producing decimal output for any radix.
-  // #1335 Phase 1: standalone/WASI emits the safe-integer radix formatter in
-  // pure Wasm instead of requesting the JS host import.
-  const needsNativeNumberToStringRadix = state.primitiveNeeded.has("number_toString_radix") && nativeNumberFormat;
-  if (state.primitiveNeeded.has("number_toString_radix") && !needsNativeNumberToStringRadix) {
-    const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "number_toString_radix", { kind: "func", typeIdx: t });
+  if (fmtNative.size > 0) {
+    emitNativeNumberFormat(ctx, fmtNative);
   }
-  // (#1644 Slice D) BigInt#toString — i64 receiver, optional i32 radix.
-  if (state.primitiveNeeded.has("bigint_toString") && !nativeNumberFormat) {
-    const t = addFuncType(ctx, [{ kind: "i64" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "bigint_toString", { kind: "func", typeIdx: t });
+  const bigintNative = new Set<string>();
+  for (const name of ["bigint_toString", "bigint_toString_radix"]) {
+    if (state.primitiveNeeded.has(name)) bigintNative.add(name);
   }
-  if (state.primitiveNeeded.has("bigint_toString_radix") && !nativeNumberFormat) {
-    const t = addFuncType(ctx, [{ kind: "i64" }, { kind: "i32" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "bigint_toString_radix", { kind: "func", typeIdx: t });
-  }
-  // #1321 / #1335 Phase 2: in standalone / WASI mode there is no JS host to
-  // satisfy the `number_toFixed` / `number_toPrecision` / `number_toExponential`
-  // imports. Emit WasmGC-native implementations (registered under the same
-  // funcMap names) instead. Emit order matters: number_toPrecision delegates to
-  // the toFixed/toExponential helpers, so emitNativeNumberFormat emits those
-  // first. The defined funcs participate in the late-import index-shift fixup
-  // like emitNativeParseNumber's.
-  if (nativeNumberFormat) {
-    const fmtNative = new Set<string>();
-    for (const n of [
-      "number_toString",
-      "number_toString_radix",
-      "number_toFixed",
-      "number_toExponential",
-      "number_toPrecision",
-    ]) {
-      if (state.primitiveNeeded.has(n) && !ctx.funcMap.has(n)) fmtNative.add(n);
-    }
-    if (fmtNative.size > 0) {
-      emitNativeNumberFormat(ctx, fmtNative);
-    }
-    const bigintNative = new Set<string>();
-    for (const name of ["bigint_toString", "bigint_toString_radix"]) {
-      if (state.primitiveNeeded.has(name)) bigintNative.add(name);
-    }
-    if (bigintNative.size > 0) emitNativeBigIntFormat(ctx, bigintNative);
-  } else {
-    if (state.primitiveNeeded.has("number_toFixed")) {
-      const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "number_toFixed", { kind: "func", typeIdx: t });
-    }
-    if (state.primitiveNeeded.has("number_toPrecision")) {
-      const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "number_toPrecision", { kind: "func", typeIdx: t });
-    }
-    if (state.primitiveNeeded.has("number_toExponential")) {
-      const t = addFuncType(ctx, [{ kind: "f64" }, { kind: "f64" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "number_toExponential", { kind: "func", typeIdx: t });
-    }
-  }
+  if (bigintNative.size > 0) emitNativeBigIntFormat(ctx, bigintNative);
   if (state.primitiveNeeded.has("string_compare") && !ctx.nativeStrings) {
     // In native strings mode, __str_compare Wasm helper handles this — no host import needed
     const t = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -1759,13 +1450,10 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       }
       // #682/#1474: standalone refuses RegExp-consuming string methods during
       // lowering, so do not pre-register JS-host string_* imports for them.
-      if (
-        ctx.targetProfile.semanticProviders === "native-first" &&
-        (method === "match" || method === "matchAll" || method === "search")
-      ) {
+      if (method === "match" || method === "matchAll" || method === "search") {
         continue;
       }
-      if (ctx.targetProfile.semanticProviders === "native-first" && state.stringRegexpMethodNeeded.has(method)) {
+      if (state.stringRegexpMethodNeeded.has(method)) {
         continue;
       }
       if (nativeStringMethod && !state.stringRegexpMethodNeeded.has(method)) continue;
@@ -1794,12 +1482,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       // already registered EARLY by registerWasiImports (before any defined
       // functions) so adding it here doesn't shift indices of helpers like
       // `__str_copy_tree`.
-      if (ctx.wasi || ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-        ctx.pendingMathMethods.add(method);
-      } else {
-        const typeIdx = addFuncType(ctx, [], [{ kind: "f64" }]);
-        addImport(ctx, "env", `Math_${method}`, { kind: "func", typeIdx });
-      }
+      ctx.pendingMathMethods.add(method);
     } else {
       ctx.pendingMathMethods.add(method);
     }
@@ -1833,26 +1516,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       // and `Number("42")` returned NaN across the whole gc-native lane. Always
       // emit it natively; `parseInt` / `parseFloat` keep their host imports
       // off-target, and those are real JS globals the host DOES provide.
-      if (
-        ctx.targetProfile.semanticProviders === "native-first" ||
-        ctx.wasi ||
-        ctx.standalone ||
-        name === STR_TO_NUMBER_HELPER
-      ) {
-        parseNative.add(name);
-        continue;
-      }
-      const shadowed = ctx.funcMap.get(name);
-      if (name === "parseInt") {
-        const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
-        addImport(ctx, "env", name, { kind: "func", typeIdx });
-      } else {
-        const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "f64" }]);
-        addImport(ctx, "env", name, { kind: "func", typeIdx });
-      }
-      const builtinIdx = ctx.funcMap.get(name);
-      if (builtinIdx !== undefined) ctx.ambientBuiltinFuncMap.set(name, builtinIdx);
-      if (shadowed !== undefined) ctx.funcMap.set(name, shadowed);
+      parseNative.add(name);
     }
     if (parseNative.size > 0) {
       const shadowed = new Map<string, number>();
@@ -1885,32 +1549,19 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   }
 
   // ── collectURIImports finalize ──
-  // #2500 — the four URI globals are JS-host `env.*` imports in host mode. Under
-  // `--target wasi`/`--target standalone` there is no host, so the call site
-  // previously fell through to a `ref.test`/`ref.cast` of the argument and
-  // returned `null`. Emit the pure-Wasm `__uri_encode` / `__uri_decode` helpers
-  // instead (registered as DEFINED funcs; the batched late-import shift keeps
-  // their funcMap index + sibling-call targets correct as later imports
-  // register). The four NAMES remain mapped to the host import in host mode; in
-  // standalone mode the call site (calls.ts) routes each name through the native
-  // helper with its per-function preserved/reserved mask.
+  // #2500, #6979 — the four URI globals are the pure-Wasm `__uri_encode` /
+  // `__uri_decode` helpers on every profile (registered as DEFINED funcs; the
+  // batched late-import shift keeps their funcMap index + sibling-call targets
+  // correct as later imports register). The call site (calls.ts) routes each
+  // name through the native helper with its per-function preserved/reserved
+  // mask; the host `env.*URI*` imports are retired.
   {
     let needsNativeEncode = false;
     let needsNativeDecode = false;
     for (const name of state.uriNeeded) {
       if (ctx.funcMap.has(name)) continue;
-      if (ctx.targetProfile.semanticProviders === "native-first" || ctx.wasi || ctx.standalone) {
-        if (name === "encodeURI" || name === "encodeURIComponent") {
-          needsNativeEncode = true;
-          continue;
-        }
-        if (name === "decodeURI" || name === "decodeURIComponent") {
-          needsNativeDecode = true;
-          continue;
-        }
-      }
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", name, { kind: "func", typeIdx });
+      if (name === "encodeURI" || name === "encodeURIComponent") needsNativeEncode = true;
+      else needsNativeDecode = true;
     }
     if (needsNativeEncode) {
       emitNativeUriEncode(ctx);
@@ -1934,16 +1585,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // guard skips it in both lanes.
   for (const name of state.escapeNeeded) {
     if (ctx.funcMap.has(name)) continue;
-    if (ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone || ctx.wasi) {
-      if (name === "escape") emitNativeEscape(ctx);
-      else if (name === "atob")
-        emitNativeAtob(ctx); // (#7079)
-      else if (name === "btoa") emitNativeBtoa(ctx);
-      else emitNativeUnescape(ctx);
-      continue;
-    }
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", name, { kind: "func", typeIdx });
+    if (name === "escape") emitNativeEscape(ctx);
+    else if (name === "atob")
+      emitNativeAtob(ctx); // (#7079)
+    else if (name === "btoa") emitNativeBtoa(ctx);
+    else emitNativeUnescape(ctx);
   }
 
   // ── collectStringStaticImports finalize ──
@@ -1969,54 +1615,6 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     }
   }
 
-  // ── collectPromiseImports finalize ──
-  // Only register STATIC Promise methods (e.g., Promise.resolve, Promise.all).
-  // Instance methods (.then/.catch/.finally) are NOT pre-registered because
-  // adding their func types here shifts struct type indices, breaking
-  // non-Promise code in the same module (#855 regression fix).
-  //
-  // (#1326 Phase 1B) In standalone (WASI) mode, skip pre-registration of
-  // `Promise_resolve` / `Promise_reject` — these are unsatisfiable host
-  // imports there; the codegen call site emits Wasm-native `struct.new
-  // $Promise` instead. Other Promise methods (all/race/allSettled/any)
-  // are still host-routed in 1B; Phase 3 will add native combinators.
-  //
-  // (#1368) Aggregators (all/race/allSettled/any) take (thisArg, iterable) so
-  // the codegen can pass through `Promise.all.call(C, …)` thisArg semantics
-  // and the runtime can default to globalThis.Promise when wasm passes null.
-  // Resolve/reject keep their original 1-arg signature.
-  for (const method of state.promiseNeeded) {
-    if (method === "then" || method === "catch" || method === "finally") continue;
-    if (isStandalonePromiseActive(ctx) && (method === "resolve" || method === "reject")) continue;
-    // (#2867 Gap 4) Under the native-`$Promise` carrier, `Promise.all`/`Promise.race`
-    // over an array literal lower to the host-free native combinator (no host
-    // import). Skip the unsatisfiable `Promise_all`/`Promise_race` pre-registration
-    // here; the host path (generic iterables / subclass receivers) still
-    // lazily `ensureLateImport`s it at the call site when actually needed.
-    // (#3137) `allSettled`/`any` are native on the same machinery now — same skip.
-    if (
-      isStandalonePromiseActive(ctx) &&
-      (method === "all" || method === "race" || method === "allSettled" || method === "any")
-    )
-      continue;
-    const importName = `Promise_${method}`;
-    if (!ctx.funcMap.has(importName)) {
-      const isAggregator = method === "all" || method === "race" || method === "allSettled" || method === "any";
-      // (#1116) Aggregators take (thisArg, iterable, directCall) so the runtime
-      // can distinguish a codegen-default thisArg from an explicit user-provided
-      // one (which may need to throw TypeError per spec).
-      const params: ValType[] = isAggregator
-        ? [{ kind: "externref" }, { kind: "externref" }, { kind: "i32" }]
-        : [{ kind: "externref" }];
-      const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
-      addImport(ctx, "env", importName, { kind: "func", typeIdx });
-    }
-  }
-  if (state.promiseNeedConstructor && !isStandalonePromiseActive(ctx) && !ctx.funcMap.has("Promise_new")) {
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "Promise_new", { kind: "func", typeIdx });
-  }
-
   // ── collectJsonImports finalize ──
   // (#1599 Phase 1) In standalone (no-JS-host) / WASI mode there is no JS
   // host to provide `env::JSON_stringify` / `env::JSON_parse`. Registering
@@ -2025,28 +1623,9 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // call site in expressions/calls.ts emits a clear compile error for the
   // unsupported (non-primitive) shapes. The primitive `JSON.stringify`
   // slice (#1324) is still lowered to pure Wasm and needs no host import.
-  const jsonUsesNativeProvider = ctx.targetProfile.semanticProviders === "native-first";
-  if (!jsonUsesNativeProvider && (state.jsonNeedStringify || state.jsonNeedParse)) {
-    addUnionImports(ctx);
-  }
-  if (!jsonUsesNativeProvider && state.jsonNeedStringify) {
-    // (value: externref, replacer: externref, space: externref) -> externref
-    const typeIdx = addFuncType(
-      ctx,
-      [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-    addImport(ctx, "env", "JSON_stringify", { kind: "func", typeIdx });
-  }
-  if (!jsonUsesNativeProvider && state.jsonNeedParse) {
-    // #2013 — (text, reviver) so JSON.parse can apply §25.5.1
-    // InternalizeJSONProperty. The reviver is `ref.null.extern` when absent.
-    const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-    addImport(ctx, "env", "JSON_parse", { kind: "func", typeIdx });
-  }
 
   // ── collectCallbackImports finalize ──
-  if (state.callbackFound || state.getterCallbackFound || state.asyncCpsFound) {
+  if (state.callbackFound || state.getterCallbackFound) {
     const typeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
     // (#3235) `callbackFound` fires for ANY arrow/function-expr — coarse. In
     // JS-host mode the upfront registration gives `__make_callback` a stable
@@ -2058,107 +1637,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // async-CPS `!ctx.standalone` gate below); any residual host-callback site
     // degrades to the native closure struct (see compileArrowAsCallback). JS-host
     // lane byte-identical.
-    if (
-      !isStandalonePromiseActive(ctx) &&
-      (state.callbackFound || state.asyncCpsFound) &&
-      !ctx.funcMap.has("__make_callback")
-    ) {
-      addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
-    }
+
     if (state.getterCallbackFound) {
       // __make_getter_callback: same signature — wraps a function so 'this' is bound (#929)
       // Used for Object.defineProperty accessor descriptors (getter/setter callbacks).
       addImport(ctx, "env", "__make_getter_callback", { kind: "func", typeIdx });
-    }
-  }
-
-  // ── collectAsyncCpsImports finalize (#1042) ──
-  // The CPS driver (emitAsyncStateMachine) emits `Promise_resolve` (wrap the
-  // awaited value) and `Promise_then2` (chain the continuation) by stable
-  // funcMap index. Register both upfront so the outer async body never takes
-  // the late-import path (its `call` opcodes would not be shifted — #1384).
-  // `__make_callback` is registered above. Idempotent via funcMap guard so a
-  // module that also uses `.then(cb1,cb2)` / `Promise.resolve` is unaffected.
-  if (!isStandalonePromiseActive(ctx) && (state.asyncCpsFound || state.asyncHostDriveFound)) {
-    if (!ctx.funcMap.has("Promise_resolve")) {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "Promise_resolve", { kind: "func", typeIdx });
-    }
-    if (!ctx.funcMap.has("Promise_then2")) {
-      const typeIdx = addFuncType(
-        ctx,
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      addImport(ctx, "env", "Promise_then2", { kind: "func", typeIdx });
-    }
-  }
-
-  // ── collectAsyncHostDriveImports finalize (#1042 host drive) ──
-  // The host settle backend of the #2906 resume machine additionally needs
-  // `__make_callback` (its step adapters are `__cb_<id>` reactions) and the
-  // deferred-promise trio: `Promise_new_pending` allocates the result promise
-  // the async fn returns; the resume machine settles it later from a microtask
-  // via `Promise_settle_resolve`/`Promise_settle_reject` (runtime.ts stashes
-  // the resolve/reject capabilities on the promise as `__r`/`__j`). The settle
-  // imports declare an externref result (the JS fns return undefined) so the
-  // shared `call <fulfill>; drop` settle shape stays uniform across backends.
-  if (!isStandalonePromiseActive(ctx) && state.asyncHostDriveFound) {
-    if (!ctx.funcMap.has("__make_callback")) {
-      const typeIdx = addFuncType(ctx, [{ kind: "i32" }, { kind: "externref" }], [{ kind: "externref" }]);
-      addImport(ctx, "env", "__make_callback", { kind: "func", typeIdx });
-    }
-    if (!ctx.funcMap.has("Promise_new_pending")) {
-      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
-      addImport(ctx, "env", "Promise_new_pending", { kind: "func", typeIdx });
-    }
-    const settleTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-    if (!ctx.funcMap.has("Promise_settle_resolve")) {
-      addImport(ctx, "env", "Promise_settle_resolve", { kind: "func", typeIdx: settleTypeIdx });
-    }
-    if (!ctx.funcMap.has("Promise_settle_reject")) {
-      addImport(ctx, "env", "Promise_settle_reject", { kind: "func", typeIdx: settleTypeIdx });
-    }
-    // (#5372) `Promise_then2_frame(p, onFulfilled, onRejected, resultPromise)`
-    // — the reaction registration the resume machine uses instead of
-    // `Promise_then2`. A wasm TRAP raised while a state resumes (a `ref.cast`
-    // failure is uncatchable by `catch_all`, even after crossing JS frames)
-    // used to escape the reaction as an unhandled rejection and kill the host
-    // process; the runtime now catches it in the reaction wrapper and REJECTS
-    // the frame's result promise, as the synchronous pass-through's caller
-    // would have observed a thrown error.
-    if (!ctx.funcMap.has("Promise_then2_frame")) {
-      const typeIdx = addFuncType(
-        ctx,
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      addImport(ctx, "env", "Promise_then2_frame", { kind: "func", typeIdx });
-    }
-  }
-
-  // ── collectFunctionalArrayImports finalize ──
-  if (state.funcArrayNeed1) {
-    if (ctx.fast) {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }], [{ kind: "i32" }]);
-      addImport(ctx, "env", "__call_1_i32", { kind: "func", typeIdx });
-    } else {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
-      addImport(ctx, "env", "__call_1_f64", { kind: "func", typeIdx });
-    }
-  }
-  if (state.funcArrayNeedDyn1 && !ctx.funcMap.has("__call_dyn_1")) {
-    const externref: ValType = { kind: "externref" };
-    const typeIdx = addFuncType(ctx, [externref, externref], [externref]);
-    addImport(ctx, "env", "__call_dyn_1", { kind: "func", typeIdx });
-  }
-  if (state.funcArrayNeed2) {
-    if (ctx.fast) {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }]);
-      addImport(ctx, "env", "__call_2_i32", { kind: "func", typeIdx });
-    } else {
-      const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }, { kind: "f64" }], [{ kind: "f64" }]);
-      addImport(ctx, "env", "__call_2_f64", { kind: "func", typeIdx });
     }
   }
 
@@ -2181,19 +1664,9 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
   }
 
-  // ── collectIteratorImports finalize ──
-  if (state.iteratorFound && !ctx.standalone && !ctx.wasi) {
-    addIteratorImports(ctx);
-  }
-
-  // ── collectArrayIteratorImports finalize ──
-  if (state.arrayIteratorFound && !ctx.standalone && !ctx.wasi) {
-    addArrayIteratorImports(ctx);
-    // Array iterator results are externref iterators consumed via for-of generic path
-    if (!state.iteratorFound) {
-      addIteratorImports(ctx);
-    }
-  }
+  // (#6979) The host iterator / array-iterator import bundles are gone: the
+  // regime and WASI route `__iterator*` to the native iterator runtime on
+  // demand, and array iterators are native (`compileNativeArrayIterator`).
 
   // ── collectForInStringLiterals finalize ──
   // (#2572) Only register the `__for_in_*` host imports in JS-host mode. A
@@ -2202,9 +1675,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // mode `compileForInStatement` routes through the native object runtime
   // (`__object_keys` + `__extern_length/_get_idx/_has`) instead, so leaving the
   // host imports unregistered is exactly what selects the native path there.
-  if (state.forInFound && ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone && !ctx.wasi) {
-    addForInImports(ctx);
-  }
+
   if (state.forInLiterals.size > 0) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -2268,7 +1739,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // unchanged.
     // #1473 — standalone mode has no JS host either, so it needs the same
     // in-module Error constructors as WASI mode.
-    if (ctx.targetProfile.semanticProviders === "native-first" && isWasiErrorName(name)) {
+    if (isWasiErrorName(name)) {
       emitWasiErrorConstructor(ctx, name, argCount);
       continue;
     }

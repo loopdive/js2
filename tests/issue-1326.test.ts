@@ -22,10 +22,9 @@ import {
   PROMISE_STATE_FULFILLED,
   PROMISE_STATE_REJECTED,
   MICROTASK_QUEUE_INITIAL_SLOTS,
-  isStandalonePromiseActive,
 } from "../src/codegen/async-scheduler.js";
 
-describe("#1326 — async-scheduler module constants and gates", () => {
+describe("#1326 — async-scheduler module constants", () => {
   it("exports the right state constants", () => {
     expect(PROMISE_STATE_PENDING).toBe(0);
     expect(PROMISE_STATE_FULFILLED).toBe(1);
@@ -38,29 +37,6 @@ describe("#1326 — async-scheduler module constants and gates", () => {
     // without forcing a grow on first use. The `SLOT_BYTES` constant from
     // Phase 1A was dropped (linear-memory artifact, never used).
     expect(MICROTASK_QUEUE_INITIAL_SLOTS).toBe(8192);
-  });
-
-  // (dbccc693f6) The gate also reads `ctx.targetProfile.semanticProviders`
-  // ("native-first" turns it on), so a fake ctx must carry a profile. Use the
-  // JS-host profile's value; the `wasi` axis under test is unchanged.
-  const fakeCtx = (wasi: boolean) =>
-    ({ wasi, targetProfile: { semanticProviders: "host-assisted" } }) as unknown as Parameters<
-      typeof isStandalonePromiseActive
-    >[0];
-
-  it("isStandalonePromiseActive returns false in JS-host mode", () => {
-    // Default mode (`ctx.wasi === false`). The existing JS-host Promise
-    // path stays bit-identical; non-WASI test262 baseline must not move.
-    expect(isStandalonePromiseActive(fakeCtx(false))).toBe(false);
-  });
-
-  it("isStandalonePromiseActive returns true in WASI target mode", () => {
-    // WASI mode auto-enables the standalone Promise codegen (1B).
-    expect(isStandalonePromiseActive(fakeCtx(true))).toBe(true);
-  });
-
-  it("keeps the standalone Promise gate tied to WASI mode", () => {
-    expect(isStandalonePromiseActive(fakeCtx(true))).toBe(true);
   });
 });
 
@@ -90,7 +66,7 @@ describe("#1326 Phase 1B — JS-host mode (default) is unchanged", () => {
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
   });
 
-  it("JS-host mode emits Promise_resolve host import (unchanged)", async () => {
+  it("default gc uses the native Promise implementation", async () => {
     const r = await compile(
       `
       export async function test(): Promise<number> {
@@ -100,13 +76,8 @@ describe("#1326 Phase 1B — JS-host mode (default) is unchanged", () => {
       { target: "gc" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
-    // The legacy import path remains for non-WASI builds.
-    expect(r.wat).toContain("Promise_resolve");
-    // No standalone Promise struct should be registered when wasi=false.
-    // (393e42bd96, #2895 PATH B) `$state` is no longer unique to the
-    // standalone Promise: the async function's own `$AsyncFrame_<fn>` resume
-    // struct carries one on every lane. Assert on the `$Promise` type itself.
-    expect(r.wat).not.toMatch(/\(type \$\$Promise \(struct/);
+    expect(r.wat).not.toContain("Promise_resolve_import");
+    expect(r.wat).toMatch(/\(type \$\$Promise \(struct/);
   });
 });
 

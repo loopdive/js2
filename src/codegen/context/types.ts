@@ -163,8 +163,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
-  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
-   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  /** (#5247) Provider build — exports are wasm→wasm call targets that no
+   *  JS host consumes directly. */
   exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
@@ -4673,14 +4673,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * `typed-this.ts` for why the indirection exists and what each field means.
    */
   directCallTrampolines?: Map<string, import("../typed-this.js").DirectCallTrampoline>;
-  /**
-   * `"__ownshadow_<Class>_<method>_<arity>"` → the reserved own-property guard
-   * wrapper for that class method. Reserved at the first static call site whose
-   * file could install an own callable member of that name, and FILLED at
-   * finalize (`fillOwnShadowWrappers`) so the reserve stays index-safe.
-   * See `expressions/own-property-method-shadow.ts`.
-   */
-  ownShadowWrappers?: Map<string, import("../expressions/own-property-method-shadow.js").OwnShadowWrapper>;
   /**
    * Method names whose CLOSED dispatcher (`__call_m_<name>_<arity>`) must ask
    * the receiver for an own slot before running a user-class arm. Recorded at

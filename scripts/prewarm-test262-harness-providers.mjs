@@ -27,14 +27,10 @@
  *   JS2WASM_TEST262_HARNESS_CACHE=<dir> node --import tsx scripts/prewarm-test262-harness-providers.mjs
  *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --cache-dir <dir> --target standalone
  *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --limit 8   # smoke
- *   node --import tsx scripts/prewarm-test262-harness-providers.mjs --semantic-providers host-assisted
  *
- * (#6930, #6708) The default warms the regime providers the default JS-host
- * linked lane asks for (native-first since S6; a regime provider is a
- * several-fold larger cold build than a host-assisted one, which under load can
- * exceed a row's compile budget on its own). `--semantic-providers
- * host-assisted` warms the control lane's. Defaults to
- * `TEST262_SEMANTIC_PROVIDERS`, as the worker does.
+ * (#6930, #6708, #6979) It warms the regime providers the JS-host linked lane
+ * asks for (a regime provider is a large cold build, which under load can
+ * exceed a row's compile budget on its own).
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -46,13 +42,11 @@ import {
   test262HarnessProviderLaneCacheDir,
   writeHarnessPrewarmStamp,
 } from "./test262-harness-cache.mjs";
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 
 function parseArgs(argv) {
   const args = {
     cacheDir: undefined,
     target: undefined,
-    semanticProviders: parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS),
     limit: Infinity,
     strict: false,
     root: "test262/test",
@@ -61,13 +55,11 @@ function parseArgs(argv) {
     const flag = argv[i];
     if (flag === "--cache-dir") args.cacheDir = argv[++i];
     else if (flag === "--target") args.target = argv[++i] === "host" ? undefined : argv[i];
-    else if (flag === "--semantic-providers") args.semanticProviders = parseTest262SemanticProviders(argv[++i]);
     else if (flag === "--limit") args.limit = Number(argv[++i]);
     else if (flag === "--root") args.root = argv[++i];
     else if (flag === "--strict") args.strict = true;
     else if (flag === "--help" || flag === "-h") {
       console.log("usage: prewarm-test262-harness-providers.mjs [--cache-dir D] [--target host|standalone]");
-      console.log("                                            [--semantic-providers native-first|host-assisted]");
       console.log("                                            [--root DIR] [--limit N] [--strict]");
       process.exit(0);
     } else {
@@ -93,10 +85,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   // `--cache-dir` is a ROOT, like the env override: the compiler-bundle suffix
   // (#6723 P1) is appended here exactly as the worker appends it.
-  const cacheDir = test262HarnessProviderLaneCacheDir({
-    root: args.cacheDir,
-    semanticProviders: args.semanticProviders,
-  });
+  const cacheDir = test262HarnessProviderLaneCacheDir({ root: args.cacheDir });
 
   // The runner's own split and metadata parse — imported, never reimplemented.
   // A pre-warm keyed by a DIFFERENT prefix than the worker asks for is not a
@@ -137,7 +126,7 @@ async function main() {
   // (#6930) The worker's own option builder, never a copy: the copy that lived
   // here lacked the worker's `hostBridge: "always"` (#6723 D4), so every key it
   // warmed was one the worker never asked for.
-  const compileOptions = harnessProviderCompileOptions(args.target, args.semanticProviders);
+  const compileOptions = harnessProviderCompileOptions(args.target);
   const providers = [];
   let failed = 0;
   const started = Date.now();
@@ -165,7 +154,7 @@ async function main() {
     }
   }
 
-  writeHarnessPrewarmStamp(cacheDir, { providers }, args.target, args.semanticProviders);
+  writeHarnessPrewarmStamp(cacheDir, { providers }, args.target);
   console.log(
     `[prewarm-harness] ${providers.length} provider(s) warm, ${failed} failed, ` +
       `${((Date.now() - started) / 1000).toFixed(1)}s, cache ${cacheDir}`,

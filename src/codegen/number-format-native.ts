@@ -141,43 +141,6 @@ function emitFinalize(ctx: CodegenContext): number {
  */
 
 /**
- * (#3912) Does this module provide the number-format family
- * (`number_toString`, `number_toString_radix`, `number_toFixed`,
- * `number_toPrecision`, `number_toExponential`) as WASM-NATIVE functions rather
- * than as `env.number_*` JS-host imports?
- *
- * ## Why this predicate exists
- *
- * The number-format family and the string family used to be gated on DIFFERENT
- * conditions in `collectPrimitiveMethodImports`'s finalize block: number format
- * on `wasi || standalone`, strings on `nativeStrings`. `fast: true` sets
- * `nativeStrings` (see `create-context.ts`) but neither `wasi` nor `standalone`,
- * so it was the one reachable config that paired a **host** `number_toString`
- * with **native** string helpers. The two disagree about representation — the
- * host import returns a real JS string as an externref, while every native
- * consumer (`__str_concat`, the template compiler, `join`) expects that
- * externref to wrap a `$AnyString`. That mismatch is what made six of nine
- * number→string operations trap at runtime in the whole gc-native lane.
- *
- * Each family's gates were internally consistent, which is why the bug read as
- * fine when inspecting either one alone; it lived *between* the two. Keying both
- * on the same question — "are strings natively represented in this module?" —
- * is what removes the mismatched cell.
- *
- * ## Why the disjunction, and not bare `ctx.nativeStrings`
- *
- * `wasi` / `standalone` normally *imply* `nativeStrings`, but the implication is
- * an `options?.nativeStrings ?? …` default, so a caller can pass
- * `{ standalone: true, nativeStrings: false }` and switch it off. Those targets
- * have no JS host at all, so they must keep the native formatter regardless.
- * Spelling out all three keeps standalone/WASI behaviour byte-identical and adds
- * only the previously-missing `nativeStrings` cell.
- */
-export function usesNativeNumberFormat(ctx: CodegenContext): boolean {
-  return ctx.wasi || ctx.standalone || ctx.nativeStrings;
-}
-
-/**
  * (#4462) IR-facing symbol for the native `Number::toString` in the string
  * carrier the IR actually types. The IR's `<number>.toString()` result is
  * `IrType.string`, which `resolveString()` lowers to `(ref $AnyString)` in every
@@ -252,7 +215,7 @@ export function ensureIrNativeNumberToString(ctx: CodegenContext, fuseCarrier = 
  * Both lanes that answer true here can mint the formatter on demand.
  */
 export function irNativeNumberToStringAvailable(ctx: CodegenContext): boolean {
-  return ctx.nativeStrings && usesNativeNumberFormat(ctx);
+  return ctx.nativeStrings;
 }
 
 /** Native `toFixed` uses the same carrier and number-format substrate. */

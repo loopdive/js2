@@ -28,8 +28,9 @@ describe("#4401 host import policy inventory", () => {
       ownerIssue: 4399,
     });
     expect(classifyHostImport(descriptor("string_trim", { type: "string_method", method: "trim" }))).toMatchObject({
-      classification: "legacy-semantic",
-      family: "strings",
+      classification: "unknown",
+      family: "retired-host-semantics",
+      ownerIssue: 6979,
     });
     expect(classifyHostImport(descriptor("Math_sin", { type: "math", method: "sin" }))).toMatchObject({
       classification: "host-accelerator",
@@ -51,33 +52,45 @@ describe("#4401 host import policy inventory", () => {
     });
     expect(classifyHostImport(descriptor("mystery", { type: "builtin", name: "mystery" }))).toMatchObject({
       classification: "unknown",
-      ownerIssue: 4401,
+      ownerIssue: 6979,
     });
     expect(classifyHostImport(descriptor("__reflect_get", { type: "builtin", name: "__reflect_get" }))).toMatchObject({
-      classification: "legacy-semantic",
-      family: "ecmascript-runtime",
-      ownerIssue: 4397,
+      classification: "unknown",
+      family: "retired-host-semantics",
+      ownerIssue: 6979,
+    });
+    expect(classifyHostImport(descriptor("el", { type: "declared_function", name: "el" }))).toMatchObject({
+      classification: "platform-capability",
+      family: "declared:el",
     });
   });
 
-  it("reports the compatibility string provider as legacy semantics", async () => {
-    const result = await compile(`export function size(): number { return " x ".trim().length; }`, {
-      fileName: "issue-4401-legacy-string.ts",
-      // (#6708) the compatibility profile is no longer the default; spell it.
-      semanticProviders: "host-assisted",
+  it("names exactly three regime-gap families (#6979, #5385)", () => {
+    const gap = (name: string, intent: ImportDescriptor["intent"]) => classifyHostImport(descriptor(name, intent));
+    expect(gap("__gen_next", { type: "builtin", name: "__gen_next" })).toMatchObject({
+      classification: "regime-gap",
+      family: "eager-generator-buffer",
+      ownerIssue: 5385,
     });
-    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
-    expect(result.hostImportInventory).toEqual(
-      expect.arrayContaining([expect.objectContaining({ classification: "legacy-semantic", family: "strings" })]),
-    );
-    expect(result.hostImportSummary).toMatchObject({
-      total: result.hostImportInventory?.length,
-      byClassification: { "legacy-semantic": expect.any(Number), unknown: 0 },
+    expect(gap("__create_async_generator", { type: "builtin", name: "__create_async_generator" })).toMatchObject({
+      classification: "regime-gap",
+      family: "eager-generator-buffer",
     });
-    expect(result.hostImportSummary!.byClassification["legacy-semantic"]).toBeGreaterThan(0);
+    // (#6979 S7-b) Closed gaps: #7011 (native SharedArrayBuffer) and #7012
+    // (in-module Temporal helpers) retired their host imports.
+    expect(
+      gap("SharedArrayBuffer_new", { type: "extern_class", className: "SharedArrayBuffer", action: "new" }),
+    ).toMatchObject({ classification: "unknown", ownerIssue: 6979 });
+    expect(
+      gap("__temporal_plain_date_to_string", { type: "builtin", name: "__temporal_plain_date_to_string" }),
+    ).toMatchObject({ classification: "unknown", ownerIssue: 6979 });
+    expect(gap("Map_new", { type: "extern_class", className: "Map", action: "new" })).toMatchObject({
+      classification: "unknown",
+      ownerIssue: 6979,
+    });
   });
 
-  it("fails native-first compilation before publishing an implicit semantic fallback", async () => {
+  it("publishes a Promise subclass on the native provider with no implicit semantic fallback", async () => {
     const source = `
       class P<T> extends Promise<T> {}
       export async function run(): Promise<number> {
@@ -93,57 +106,20 @@ describe("#4401 host import policy inventory", () => {
       semanticProviders: "native-first",
     });
     expect(native.success, native.errors.map((error) => error.message).join("; ")).toBe(true);
-    expect(native.hostImportSummary?.byClassification["legacy-semantic"]).toBe(0);
     expect(native.hostImportSummary?.byClassification.unknown).toBe(0);
 
-    // The kill switch restores the pre-regime per-family reroute, where the
-    // same source is refused BEFORE publication rather than silently recovering
-    // the host Promise semantic fallback.
-    const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-    process.env.JS2WASM_NATIVE_REGIME_JS = "0";
-    try {
-      const refused = await compile(source, {
-        fileName: "issue-4401-native-first-refusal.ts",
-        semanticProviders: "native-first",
-      });
-      expect(refused.success).toBe(false);
-      expect(refused.binary).toHaveLength(0);
-      const diagnostic = refused.errors.map((error) => error.message).join("; ");
-      expect(diagnostic).toContain("Native-first semantic-provider policy rejected");
-      expect(diagnostic).toContain("env::__new_Promise (legacy-semantic");
-      expect(diagnostic).toContain("env::__tag_user_class (unknown");
-      expect(diagnostic).not.toContain("FileSystemDirectoryHandle_resolve");
-    } finally {
-      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-      else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-    }
-
-    const compatibility = await compile(source, {
-      fileName: "issue-4401-compatibility-promise-subclass.ts",
-      semanticProviders: "host-assisted",
-    });
-    expect(compatibility.success, compatibility.errors.map((error) => error.message).join("; ")).toBe(true);
-    expect(compatibility.hostImportInventory).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "__new_Promise", classification: "legacy-semantic" })]),
-    );
+    // (#6979) The S6 kill switch and the host-assisted profile, the two ways to
+    // reach the host Promise semantic fallback, are gone.
   });
 
   describe("#6707 linker-owned shared exception tag", () => {
     const source = `export function boom(n: number): number { if (n > 0) throw new Error("x"); return n; }`;
-    const compileShared = async (regime: "1" | "0") => {
-      const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-      process.env.JS2WASM_NATIVE_REGIME_JS = regime;
-      try {
-        return await compile(source, {
-          fileName: `issue-6707-shared-exn-${regime}.ts`,
-          semanticProviders: "native-first",
-          sharedExceptionTag: true,
-        });
-      } finally {
-        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-        else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-      }
-    };
+    const compileShared = () =>
+      compile(source, {
+        fileName: "issue-6707-shared-exn.ts",
+        semanticProviders: "native-first",
+        sharedExceptionTag: true,
+      });
 
     it("keys on the non-func manifest kind, not on the name alone", () => {
       const intent = { type: "builtin", name: "__exn" } as const;
@@ -155,28 +131,25 @@ describe("#4401 host import policy inventory", () => {
       });
       expect(classifyHostImport(descriptor("__exn", intent))).toMatchObject({ classification: "unknown" });
     });
-
-    for (const regime of ["1", "0"] as const) {
-      it(`classifies env.__exn as instance-lifecycle and publishes (JS2WASM_NATIVE_REGIME_JS=${regime})`, async () => {
-        const result = await compileShared(regime);
-        expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
-        expect(result.binary.length).toBeGreaterThan(0);
-        const tags = (result.hostImportInventory ?? []).filter((entry) => entry.name === "__exn");
-        expect(tags).toEqual([
-          expect.objectContaining({
-            module: "env",
-            kind: "tag",
-            classification: "instance-lifecycle",
-            family: "shared-exception-tag",
-            ownerIssue: 5226,
-            nativeFallback: true,
-          }),
-        ]);
-        expect(result.hostImportSummary).toMatchObject({
-          byClassification: { "legacy-semantic": 0, unknown: 0 },
-        });
+    it("classifies env.__exn as instance-lifecycle and publishes", async () => {
+      const result = await compileShared();
+      expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+      expect(result.binary.length).toBeGreaterThan(0);
+      const tags = (result.hostImportInventory ?? []).filter((entry) => entry.name === "__exn");
+      expect(tags).toEqual([
+        expect.objectContaining({
+          module: "env",
+          kind: "tag",
+          classification: "instance-lifecycle",
+          family: "shared-exception-tag",
+          ownerIssue: 5226,
+          nativeFallback: true,
+        }),
+      ]);
+      expect(result.hostImportSummary).toMatchObject({
+        byClassification: { "regime-gap": 0, unknown: 0 },
       });
-    }
+    });
   });
 
   it("keeps a standalone generator on the native carrier whether or not native-first is spelled out", async () => {
@@ -203,8 +176,32 @@ describe("#4401 host import policy inventory", () => {
       expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
       expect(result.targetProfile?.semanticProviders).toBe("native-first");
       expect(result.hostImportSummary?.total).toBe(0);
-      expect(result.hostImportSummary?.byClassification["legacy-semantic"]).toBe(0);
       expect(result.hostImportSummary?.byClassification.unknown).toBe(0);
     }
+  });
+});
+
+describe("#6979 universal publication gate", () => {
+  const retiredHostImport = `export function run(): number { return 1; }`;
+  it("publishes a user-declared host function as a platform capability", async () => {
+    const source = `declare function el(x: string): number; export function f(): number { return el("a"); }`;
+    const result = await compile(source, { fileName: "issue-6979-declared.ts" });
+    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    expect(result.hostImportInventory?.find((entry) => entry.name === "el")).toMatchObject({
+      intentType: "declared_function",
+      classification: "platform-capability",
+      family: "declared:el",
+    });
+  });
+  it("rejects a retired host-semantic import on every WasmGC profile", () => {
+    const string = descriptor("string_trim", { type: "string_method", method: "trim" });
+    for (const environment of ["javascript", "wasi", "none"] as const) {
+      expect(classifyHostImport(string, environment).classification).toBe("unknown");
+    }
+  });
+  it("moves the strict gc build onto the native regime", async () => {
+    const result = await compile(retiredHostImport, { fileName: "issue-6979-strict.ts", strictNoHostImports: true });
+    expect(result.success).toBe(true);
+    expect(result.targetProfile?.nativeRegime).toBe(true);
   });
 });

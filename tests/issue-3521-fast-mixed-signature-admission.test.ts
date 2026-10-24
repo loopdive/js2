@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { compile, type CompileResult, type IrObservedOutcome, wrapExports } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
 
 // Register the low-level codegen delegates used by generateModule.
@@ -92,16 +92,13 @@ const MIXED_SHAPES = [
 
 const ADMITTING_LANES = [
   ["fast", { fast: true }],
-  ["fast-hostStr", { fast: true, nativeStrings: false }],
+  // (#6979) host-strings variant removed with the host-assisted profile.
 ] as const;
 
 describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => {
   // (a) contract — every mixed shape prepares in both admitting fast lanes.
   for (const [lane, laneOptions] of ADMITTING_LANES) {
     for (const shape of MIXED_SHAPES) {
-      // `echo` is all-string, so under `nativeStrings: false` it is the JS-host
-      // pass-through predicate's shape and already prepared before R2-F1.
-      const ownedHere = !(lane === "fast-hostStr" && shape.name === "echo");
       it(`prepares ${shape.name} in ${lane} before direct emission`, async () => {
         const result = await compileWithPoisonedDirectFunctionBodies(shape.source, shape.name, {
           fileName: `r2f1-${shape.name}-${lane}.ts`,
@@ -112,14 +109,15 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
 
         expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
         expect(result.irFirstSkipped, `${shape.name}/${lane}`).toContain(shape.name);
-        expect(outcome(result, shape.name), `${shape.name}/${lane} ownedHere=${ownedHere}`).toMatchObject(PREPARED);
+        expect(outcome(result, shape.name), `${shape.name}/${lane}`).toMatchObject(PREPARED);
       });
     }
   }
 
-  // (a) runtime oracle — the prepared bodies compute the same answers. Only the
-  // externref lane can be driven from JS for the string shapes; a `$vec` cannot
-  // be passed in, so the vector shapes run through a scalar wrapper.
+  // (a) runtime oracle — the prepared bodies compute the same answers. The
+  // string shapes are driven through `wrapExports` (native strings marshal at
+  // the boundary); a `$vec` cannot be passed in, so the vector shapes run
+  // through a scalar wrapper.
   it("preserves scalar and string behaviour through the prepared route", async () => {
     const result = await compileWithPoisonedDirectFunctionBodies(
       `
@@ -135,13 +133,12 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
         fileName: "r2f1-runtime-oracle.ts",
         experimentalIR: true,
         fast: true,
-        nativeStrings: false,
         trackIrOutcomes: true,
       },
     );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    const exports = await instantiate(result);
+    const exports = wrapExports(await instantiate(result), { signatures: result.exportSignatures });
     expect(exports.len!("abc")).toBe(3);
     expect(exports.c!("a")).toBe(97);
     expect(exports.t!(1)).toBe("n=1");
@@ -164,7 +161,6 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
         fileName: "r2f1-vec-oracle.ts",
         experimentalIR: true,
         fast: true,
-        nativeStrings: false,
         trackIrOutcomes: true,
       },
     );
@@ -194,7 +190,6 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
         return createHash("sha256").update(result.binary).digest("hex");
       };
 
-      expect(await sha({ fast: true, nativeStrings: false }), `${shape.name} fast-hostStr vs host`).toBe(await sha({}));
       expect(await sha({ fast: true }), `${shape.name} fast vs native`).toBe(await sha({ nativeStrings: true }));
     });
   }
@@ -248,7 +243,6 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
     const source = "export function echo(value: string): string { return value; }";
     const carrierlessLanes = [
       ["standalone", { target: "standalone", nativeStrings: false }],
-      ["wasi", { target: "wasi", nativeStrings: false, strictNoHostImports: false }],
       ["strictNoHostImports", { strictNoHostImports: true, nativeStrings: false }],
     ] as const;
 
@@ -304,7 +298,6 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
         fileName: "r2f1-route-off.ts",
         experimentalIR: false,
         fast: true,
-        nativeStrings: false,
       },
     );
     expect(result.success).toBe(false);
@@ -326,7 +319,6 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
         fileName: "r2f1-mixed-component.ts",
         experimentalIR: true,
         fast: true,
-        nativeStrings: false,
         trackIrOutcomes: true,
       },
     );
@@ -340,41 +332,6 @@ describe("#3521 R2-F1 fast-lane mixed string/scalar signature admission", () => 
     expect((await instantiate(result)).flag!(1)).toBe(3);
   });
 
-  // (f) vec residue — on the base the overlay row for this module shipped a
-  // dead `string_constants` import global, an `$exn` tag and an `__exn_tag`
-  // export, all left behind by the direct body (measured: 1445 -> 1349 bytes
-  // in `fast-hostStr`, and the WAT diff is exactly that removal plus index
-  // renumbering). Preparing before direct emission means the residue is GONE,
-  // not merely moved. Pinned on the single-function module that was measured:
-  // adding a caller with an array literal reintroduces `string_constants`
-  // legitimately, through the IR body rather than as direct residue.
-  it("strips the direct body's dead residue from a prepared vector row", async () => {
-    const source =
-      "export function sum(xs: number[]): number { let t = 0; for (let i = 0; i < xs.length; i = i + 1) { t = t + xs[i]; } return t; }";
-    const result = await compileWithPoisonedDirectFunctionBodies(source, "sum", {
-      fileName: "r2f1-vec-residue.ts",
-      experimentalIR: true,
-      fast: true,
-      nativeStrings: false,
-      trackIrOutcomes: true,
-    });
-
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(outcome(result, "sum")).toMatchObject(PREPARED);
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(result.binary);
-    expect(text).not.toContain("Cannot access property on null or undefined");
-    expect(text).not.toContain("__exn_tag");
-
-    // The residue is real on the base: the unpoisoned direct route still ships it.
-    const direct = await compile(source, {
-      fileName: "r2f1-vec-residue-direct.ts",
-      experimentalIR: false,
-      fast: true,
-      nativeStrings: false,
-    });
-    expect(direct.success, direct.errors.map((error) => error.message).join("\n")).toBe(true);
-    const directText = new TextDecoder("utf-8", { fatal: false }).decode(direct.binary);
-    expect(directText).toContain("Cannot access property on null or undefined");
-    expect(directText).toContain("__exn_tag");
-  });
+  // (f) vec residue — (#6979) removed: it pinned a byte residue measured only
+  // on the host-strings fast lane.
 });

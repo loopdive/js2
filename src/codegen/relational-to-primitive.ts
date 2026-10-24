@@ -96,7 +96,6 @@ export function isObjectOperandType(t: ts.Type): boolean {
 
 /** Should a relational with these operand types take the standalone cascade? */
 export function admitsObjectRelational(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   if ((left.flags & EXCLUDED) !== 0 || (right.flags & EXCLUDED) !== 0) return false;
   return isObjectOperandType(left) || isObjectOperandType(right);
@@ -132,7 +131,6 @@ function isStringMixedPrimitiveUnion(t: ts.Type): boolean {
 export function admitsAnyRelational(ctx: CodegenContext, left: ts.Type, right: ts.Type): boolean {
   const anyish = (left.flags & ANYISH) !== 0 || (right.flags & ANYISH) !== 0;
   if (ctx.anyValueTypeIdx < 0 && anyish) return true;
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
   return anyish || isStringMixedPrimitiveUnion(left) || isStringMixedPrimitiveUnion(right);
 }

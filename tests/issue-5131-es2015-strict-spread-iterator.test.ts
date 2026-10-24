@@ -452,9 +452,7 @@ describe("#5131 strict spread iterator provider", () => {
     expect(inventory.length).toBeGreaterThan(0);
     expect(inventory.some((entry) => entry.family === "js-value-bridge")).toBe(true);
     expect(inventory.some((entry) => entry.module === "env" && entry.name === "__iterator")).toBe(false);
-    expect(
-      inventory.filter((entry) => entry.classification === "legacy-semantic" || entry.classification === "unknown"),
-    ).toEqual([]);
+    expect(inventory.filter((entry) => entry.classification === "unknown")).toEqual([]);
   }, 180_000);
 
   for (const lane of ["host", "standalone"] as const) {

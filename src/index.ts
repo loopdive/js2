@@ -51,12 +51,12 @@ export type ImportIntent =
     }
   | { type: "string_method"; method: string }
   | { type: "builtin"; name: string }
+  | { type: "declared_function"; name: string } // (#6979) an ambient `declare function` the embedder supplies
   // `constructible` marks the #4394 sibling bridge (`__make_callback_ctor`),
   // built for compiled ordinary function definitions so the host object it
   // hands out has [[Construct]] like the source callable does.
   | { type: "callback_maker"; constructible?: boolean }
   | { type: "getter_callback_maker" }
-  | { type: "await" }
   | { type: "typeof_check"; targetType: string }
   | { type: "box"; targetType: string }
   | { type: "unbox"; targetType: string }
@@ -122,11 +122,10 @@ export type ImportIntent =
   | { type: "node_filename" }
   | { type: "node_import_meta_url" }
   | {
-      // (#1540) JSX runtime binding — `_jsx`/`_jsxs`/`_Fragment`/`_jsxDEV`
-      // emitted by TypeScript when `jsx: react-jsx` is set. The host binding
-      // is either a user-supplied runtime (`deps.jsxRuntime`) or a built-in
-      // React-shaped fallback that constructs `{ $$typeof, type, props, key,
-      // ref }` objects suitable for `React.isValidElement` consumers.
+      // (#1540) JSX runtime binding — `_jsx`/`_jsxs`/`_Fragment`/`_jsxDEV` emitted
+      // by TypeScript when `jsx: react-jsx` is set. The host binding is a user
+      // runtime (`deps.jsxRuntime`) or a built-in React-shaped fallback building
+      // `{ $$typeof, type, props, key, ref }` for `React.isValidElement` consumers.
       type: "jsx_runtime";
       method: "jsx" | "jsxs" | "Fragment" | "jsxDEV";
       specifier: string;
@@ -159,9 +158,8 @@ export interface ImportDescriptor {
    */
   paramCount?: number;
   /**
-   * (#7095) Set on a `builtin` func import the host-import policy cannot
-   * classify (a user `declare function`) when its single wasm result is a
-   * reference. The compiled caller then reads a native carrier, so the runtime
+   * (#7095) Set on a `declared_function` import (a user `declare function`,
+   * #6979) when its single wasm result is a reference. The compiled caller then reads a native carrier, so the runtime
    * adapts a JS primitive the embedder returns; a numeric result is left to the
    * JS-API's ToNumber/ToInt32. Absent everywhere else.
    */
@@ -645,17 +643,16 @@ export interface CompileOptions {
    * Semantic implementation policy, independent of the execution environment,
    * platform capabilities, and the JS value bridge (#4397).
    *
-   * `"native-first"` (default since #6708 S6, in every environment) lowers
-   * with the Wasm-native semantic core even when JavaScript instantiates the
-   * module; JS boundary wrappers remain enabled according to `hostBridge`,
-   * and explicit platform APIs remain available. `"host-assisted"` is the
-   * compatibility profile — byte-identical to the pre-S6 JS-host default —
-   * scheduled for removal in S7. `"auto"` is a deprecated alias of the
-   * default (warns once per process). Omitting the option while passing
-   * `nativeStrings: false` keeps the pre-S6 host-assisted profile (deprecated).
+   * `"native-first"` — the default and, since #6979, the only accepted
+   * spelling — lowers with the Wasm-native semantic core even when
+   * JavaScript instantiates the module; JS boundary wrappers remain enabled
+   * according to `hostBridge`, and explicit platform APIs remain available.
+   * The removed `"host-assisted"` / `"auto"` spellings, and `nativeStrings:
+   * false` on the JS target, are compile errors; host semantics for a single
+   * family are the named `hostAccelerators`.
    */
   semanticProviders?: import("./target-profile.js").SemanticProviderSelection;
-  /** (#6978) Families that use the JS host's provider under native-first (JS target only). */
+  /** (#6978) Families that use the JS host's provider instead of the native one (JS target only). */
   hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[];
   /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:

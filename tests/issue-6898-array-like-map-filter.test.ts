@@ -10,18 +10,9 @@
 //  - a callback with no return value answers `undefined`, which is falsy for
 //    `filter` (was: the void arm pushed the constant 1).
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildCompiledImports } from "../src/runtime.js";
-
-const previous = process.env.JS2WASM_NATIVE_REGIME_JS;
-beforeAll(() => {
-  process.env.JS2WASM_NATIVE_REGIME_JS = "1";
-});
-afterAll(() => {
-  if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-  else process.env.JS2WASM_NATIVE_REGIME_JS = previous;
-});
 
 const SOURCE = `
 function noResult(v: any): void {}

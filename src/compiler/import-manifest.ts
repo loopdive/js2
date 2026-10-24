@@ -3,7 +3,6 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { TypedAST } from "../checker/index.js";
 import type { CompileError, ImportDescriptor, ImportIntent } from "../index.js";
 import type { WasmModule } from "../ir/types.js";
-import { classifyHostImport } from "../host-import-policy.js";
 import { hasExportModifier } from "./validation.js";
 
 function classifyImport(name: string, mod: WasmModule): ImportIntent {
@@ -85,9 +84,6 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // (#4394) Same maker, constructible bridge — see closures.ts.
   if (name === "__make_callback_ctor") return { type: "callback_maker", constructible: true };
   if (name === "__make_getter_callback") return { type: "getter_callback_maker" };
-
-  // Async/await
-  if (name === "__await") return { type: "await" };
 
   // Dynamic import()
   if (name === "__dynamic_import") return { type: "dynamic_import" };
@@ -320,8 +316,8 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
     return { type: "extern_class", className: name.slice(6), action: "new" };
   }
 
-  // Fallback
-  return { type: "builtin", name };
+  // Fallback: an ambient `declare function` the embedder supplies (#6979), else a builtin helper.
+  return mod.declaredFunctionImports?.has(name) ? { type: "declared_function", name } : { type: "builtin", name };
 }
 
 const NUMERIC_VAL_KINDS: ReadonlySet<string> = new Set(["i32", "i64", "f32", "f64", "v128", "i8", "i16"]);
@@ -356,14 +352,9 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
       intent: classifyImport(imp.name, mod),
       paramCount,
     };
-    // (#7095) Result shape of a user `declare function` (an unclassified
-    // builtin), read by the runtime's declared-function marshal.
-    if (
-      refResult &&
-      descriptor.intent.type === "builtin" &&
-      classifyHostImport(descriptor).classification === "unknown"
-    )
-      descriptor.refResult = true;
+    // (#7095) Result shape of a user `declare function` (the #6979
+    // `declared_function` intent), read by the runtime's declared-function marshal.
+    if (refResult && descriptor.intent.type === "declared_function") descriptor.refResult = true;
     const key = JSON.stringify(descriptor);
     if (seenExact.has(key)) continue;
     seenExact.add(key);

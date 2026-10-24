@@ -10,7 +10,7 @@ export type HostImportPolicyClass =
   | "value-adapter"
   | "instance-lifecycle"
   | "host-accelerator"
-  | "legacy-semantic"
+  | "regime-gap"
   | "unknown";
 
 export interface HostImportPolicy {
@@ -58,47 +58,6 @@ const VALUE_ADAPTER_BUILTINS = new Set([
 
 const INSTANCE_LIFECYCLE_PREFIXES = ["__register_"] as const;
 
-const LEGACY_SEMANTIC_BUILTIN_PREFIXES = [
-  "JSON_",
-  "Promise_",
-  "RegExp_",
-  "Map_",
-  "Set_",
-  "WeakMap_",
-  "WeakSet_",
-  "number_",
-  "bigint_",
-  "parse",
-  "decodeURI",
-  "encodeURI",
-  "escape",
-  "unescape",
-  "string_",
-  "__array_",
-  "__js_array_",
-  "__async_iterator",
-  "__bind_function",
-  "__call_",
-  "__concat_",
-  "__construct",
-  "__create_async_generator",
-  "__create_generator",
-  "__defineProperty_",
-  "__delete_property",
-  "__extern_",
-  "__for_in_",
-  "__gen_",
-  "__getOwnPropertyDescriptor",
-  "__getPrototypeOf",
-  "__host_set_struct_proto",
-  "__is_truthy",
-  "__iterator",
-  "__new_",
-  "__object_",
-  "__reflect_",
-  "__typeof",
-] as const;
-
 /**
  * (#7091) Is this extern class an ECMAScript builtin rather than a platform
  * capability? The IR's platform-extern lane (JS environment, native regime)
@@ -108,6 +67,12 @@ export function isEcmascriptExternClass(className: string): boolean {
   return ECMASCRIPT_EXTERN_CLASSES.has(className);
 }
 
+/**
+ * (#6979) ECMAScript builtins. The native semantic regime owns them, so a host
+ * extern-class import of one is a retired host-semantic import (compile error),
+ * while any other declared class stays an embedder capability. RegExp, Date and
+ * Intl reach the host only through their selected accelerator (#6978/#6986).
+ */
 const ECMASCRIPT_EXTERN_CLASSES = new Set([
   "Array",
   "ArrayBuffer",
@@ -147,6 +112,23 @@ const ECMASCRIPT_EXTERN_CLASSES = new Set([
   "BigUint64Array",
 ]);
 
+/**
+ * (#6979) Would a host extern-class import of `className` be a retired
+ * host-semantic import under these accelerators? ECMAScript builtins are owned
+ * by the native regime; RegExp/Date reach the host only through their selected
+ * accelerator. Codegen uses this to stop registering imports the publication
+ * gate would reject.
+ */
+export function isRetiredEcmaScriptExternClass(
+  className: string,
+  accelerators: readonly HostAcceleratorFamily[] | undefined,
+): boolean {
+  if (!ECMASCRIPT_EXTERN_CLASSES.has(className)) return false;
+  if (className === "RegExp") return accelerators?.includes("regexp") !== true;
+  if (className === "Date") return accelerators?.includes("date") !== true;
+  return true;
+}
+
 function classifyBuiltin(name: string): HostImportPolicy {
   if (VALUE_ADAPTER_BUILTINS.has(name)) {
     return policy("value-adapter", "js-value-bridge", 4399, true, "JS/Wasm value marshaling or exception transfer");
@@ -176,10 +158,44 @@ function classifyBuiltin(name: string): HostImportPolicy {
     // host-free build substitutes its stand-in at compile time.
     return policy("platform-capability", "node", 1490, false, "Node process capability");
   }
-  if (LEGACY_SEMANTIC_BUILTIN_PREFIXES.some((prefix) => name.startsWith(prefix))) {
-    return policy("legacy-semantic", "ecmascript-runtime", 4397, false, "implicit JavaScript semantic fallback");
+  const gap = regimeGapOfBuiltin(name);
+  if (gap) return gap;
+  return retired(`env builtin '${name}' is not an adapter, capability, lifecycle hook or accelerator`);
+}
+
+/**
+ * (#6979) Every import that is not a platform capability, value adapter,
+ * instance-lifecycle hook, selected host accelerator or named regime gap. The
+ * host-semantic implementation is retired, so publishing one is a compile
+ * error on every WasmGC profile.
+ */
+function retired(reason: string): HostImportPolicy {
+  return policy("unknown", "retired-host-semantics", 6979, false, reason);
+}
+
+/**
+ * (#6979, #5385) Named regime gaps: host imports that are still the ONLY
+ * implementation of a construct on the native regime. Exactly this family;
+ * `scripts/check-host-import-policy.ts` holds the explicit name ceiling so a
+ * second cannot slip in. Each is a #5385 regime slice to close.
+ * (`shared-array-buffer` closed with #7011's native provider and
+ * `temporal-strings` with #7012's in-module helpers.)
+ */
+export const REGIME_GAP_FAMILIES = {
+  "eager-generator-buffer":
+    "eager-buffer generator fallback for generator shapes the native generator lowering declines (#680)",
+} as const;
+export type RegimeGapFamily = keyof typeof REGIME_GAP_FAMILIES;
+
+function regimeGap(family: RegimeGapFamily): HostImportPolicy {
+  return policy("regime-gap", family, 5385, false, REGIME_GAP_FAMILIES[family]);
+}
+
+function regimeGapOfBuiltin(name: string): HostImportPolicy | undefined {
+  if (name.startsWith("__gen_") || name === "__create_generator" || name === "__create_async_generator") {
+    return regimeGap("eager-generator-buffer");
   }
-  return policy("unknown", "unclassified", 4401, false, `unclassified env builtin '${name}'`);
+  return undefined;
 }
 
 /**
@@ -246,8 +262,10 @@ function acceleratedPolicy(family: HostAcceleratorFamily): HostImportPolicy {
 
 /**
  * Classify an emitted `env` import by its typed intent. The exhaustive switch
- * makes a new intent a compile error until policy is chosen; name-based
- * `builtin` fallbacks may still return `unknown`, which is deliberately loud.
+ * makes a new intent a compile error until policy is chosen. Anything that is
+ * neither an adapter, a capability, a lifecycle hook, a selected accelerator
+ * nor a named regime gap classifies `unknown` (retired host semantics, #6979),
+ * which the publication gate rejects on every WasmGC profile.
  *
  * (#6978) `accelerators` is the profile's selected host-accelerator list: an
  * import of a selected family classifies as `host-accelerator`; unselected
@@ -285,7 +303,7 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
   switch (intent.type) {
     case "string_literal":
     case "string_method":
-      return policy("legacy-semantic", "strings", 4397, true, "host-backed ECMAScript string provider");
+      return retired("host string provider; strings are native unless the js-string accelerator is selected");
     case "math":
       return intent.method === "random"
         ? policy("platform-capability", "randomness", 4398, false, "entropy/randomness capability")
@@ -294,18 +312,24 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
       return policy("platform-capability", "console", 4398, false, "explicit host console capability");
     case "extern_class":
       return ECMASCRIPT_EXTERN_CLASSES.has(intent.className)
-        ? policy("legacy-semantic", `builtin:${intent.className}`, 4397, false, "host-backed ECMAScript builtin")
+        ? retired(`host ECMAScript builtin '${intent.className}'`)
         : policy("platform-capability", `extern:${intent.className}`, 4398, false, "declared external API capability");
     case "builtin":
       return classifyBuiltin(intent.name);
+    case "declared_function":
+      return policy(
+        "platform-capability",
+        `declared:${intent.name}`,
+        6979,
+        false,
+        "ambient function declared by the source and supplied by the embedder",
+      );
     case "callback_maker":
     case "getter_callback_maker":
       return policy("value-adapter", "callbacks", 4399, true, "JS/Wasm callback adapter");
     case "box":
     case "unbox":
       return policy("value-adapter", "dynamic-values", 4399, true, "JS/Wasm dynamic value conversion");
-    case "await":
-      return policy("legacy-semantic", "promise-await", 4397, true, "legacy host Promise/await driver");
     case "typeof_check":
     case "any_to_index":
     case "extern_get":
@@ -320,7 +344,7 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
     case "host_compare":
     case "same_value_zero":
     case "proxy_create":
-      return policy("legacy-semantic", "dynamic-language-operations", 4397, false, "implicit host language semantics");
+      return retired(`host language operation '${intent.type}'`);
     case "boundary_object":
       return policy(
         "value-adapter",
@@ -355,7 +379,7 @@ function classifyIntrinsicHostImport(descriptor: ImportDescriptor, environment?:
       );
     case "date_new":
     case "date_method":
-      return policy("legacy-semantic", "date", 4397, true, "host-backed Date semantics");
+      return retired("host Date semantics; Date is native unless the date accelerator is selected");
     case "date_now":
       return environment === "none"
         ? policy("platform-capability", "clock", 4577, false, "explicit standalone embedder clock capability")
@@ -400,7 +424,7 @@ function wasmImportKind(desc: WasmModule["imports"][number]["desc"]): HostImport
 
 function classifyNonEnvImport(module: string, name: string, linkedNamespaces: ReadonlySet<string>): HostImportPolicy {
   if (module === "wasm:js-string" || module === "string_constants" || module === "string_constants16") {
-    return policy("legacy-semantic", "strings", 4397, true, "host-backed string representation provider");
+    return retired("host string representation; strings are native unless the js-string accelerator is selected");
   }
   if (module === "js2wasm:runtime-eval" || module === "js2wasm:qjs") {
     return policy("host-accelerator", "dynamic-code", 4397, true, "replaceable linked Wasm provider");
@@ -423,7 +447,7 @@ function classifyNonEnvImport(module: string, name: string, linkedNamespaces: Re
       "explicitly declared link-time provider namespace",
     );
   }
-  return policy("unknown", "unclassified", 4401, false, `unclassified import namespace '${module}'`);
+  return retired(`import namespace '${module}' is not a declared provider`);
 }
 
 /** Build a deterministic, machine-readable policy inventory for every import. */
@@ -442,7 +466,7 @@ export function buildHostImportInventory(
     const classified = descriptor
       ? classifyHostImport(descriptor, environment, accelerators)
       : entry.module === "env"
-        ? policy("unknown", "unclassified", 4401, false, `env import '${entry.name}' has no typed intent`)
+        ? retired(`env import '${entry.name}' has no typed intent`)
         : nonEnvFamily !== undefined && accelerators.includes(nonEnvFamily)
           ? acceleratedPolicy(nonEnvFamily)
           : classifyNonEnvImport(entry.module, entry.name, linkedNamespaceSet);
@@ -465,7 +489,7 @@ export function summarizeHostImportInventory(
     "value-adapter": 0,
     "instance-lifecycle": 0,
     "host-accelerator": 0,
-    "legacy-semantic": 0,
+    "regime-gap": 0,
     unknown: 0,
   };
   const byFamily: Record<string, number> = Object.create(null);

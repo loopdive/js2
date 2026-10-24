@@ -11,7 +11,6 @@ import { isSyntacticallyBooleanExpr } from "../../checker/oracle.js";
 import { fnctorCtorParamTypesFlagEnabled, numericReturnsFlagEnabled } from "../../derivation-flags.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import { numericAdmissionEnabled } from "../analysis/mixed-assignment-carrier.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { isStandaloneClassProtoObjectExpression } from "../class-proto-object.js"; // (#6767) C.prototype is an $Object
 import { hasAsyncModifier, resolveWasmType } from "../index.js";
 import { newExpressionReconstructsAsObject } from "../fnctor-instance-object-slot.js"; // (#6958)
@@ -56,8 +55,7 @@ export function resolveGenericCallSiteTypes(
         // real promise). Mirrors the main async-return sites (e.g. :2930).
         const callDecl = sig.getDeclaration();
         const calleeIsAsync = callDecl ? hasAsyncModifier(callDecl) : false;
-        const effRetType =
-          isStandalonePromiseActive(ctx) && calleeIsAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
+        const effRetType = calleeIsAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
         const results: ValType[] = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
         if (!found) {
           found = { params, results };

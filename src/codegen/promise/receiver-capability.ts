@@ -30,7 +30,6 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { buildTargetTaggedTry } from "../../wasm/physical/exception-control.js";
 import { ts } from "../../ts-api.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
-import { isStandalonePromiseActive } from "../async-scheduler.js";
 import { getFuncRefWrapperRootTypeIdx } from "../closures/funcref-wrapper-types.js";
 import { allocLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
@@ -363,7 +362,7 @@ export function tryEmitNativePromiseReceiverCall(
 ): InnerResult | undefined {
   const direct = tryEmitNativePromiseWithResolvers(ctx, fctx, expr, propAccess);
   if (direct !== undefined) return direct;
-  if (!isStandalonePromiseActive(ctx) || expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
+  if (expr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
   if (propAccess.name.text === "try" && isAmbientPromise(ctx, propAccess.expression)) {
     return emitPromiseTry(ctx, fctx, undefined, expr.arguments[0], expr.arguments.slice(1));
   }

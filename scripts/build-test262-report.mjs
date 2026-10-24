@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { parseTest262SemanticProviders } from "./test262-lane.mjs";
 import {
   parseTest262CompilerPath,
   requireTest262CompilerPath,
@@ -1072,9 +1071,10 @@ async function main() {
       preparedExecutionReport: record.preparedExecutionReport,
       compilerPathFailureKind: record.compilerPathFailureKind,
     });
-    const rowProviders = parseTest262SemanticProviders(record.semantic_providers);
-    if (semanticProviders !== undefined && semanticProviders !== rowProviders) {
-      throw new Error("Cannot merge test262 rows from different semantic providers");
+    // (#6979) Rows from the removed host-assisted control lane cannot be merged.
+    const rowProviders = record.semantic_providers ?? "auto";
+    if (rowProviders !== "auto") {
+      throw new Error(`Cannot merge test262 rows from the removed semantic-provider lane ${rowProviders}`);
     }
     semanticProviders = rowProviders;
     if (typeof record.oracle_version === "number") {

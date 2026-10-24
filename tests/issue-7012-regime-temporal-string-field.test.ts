@@ -204,19 +204,6 @@ describe("#7012 Temporal string/field helpers are in-module on native-string bui
     });
   }
 
-  it("the explicit host-assisted lane keeps its runtime.ts helpers (legacy, deleted with that lane)", async () => {
-    const compiled = await compile(
-      `declare const Temporal: any;\nexport function f(): string { return new Temporal.PlainDate(2000, 5, 2).toString(); }`,
-      {
-        fileName: "issue-7012-host.ts",
-        semanticProviders: "host-assisted",
-      },
-    );
-    expect(compiled.success).toBe(true);
-    const imports = WebAssembly.Module.imports(new WebAssembly.Module(compiled.binary)).map((i) => i.name);
-    expect(imports).toContain("__temporal_plain_date_to_string");
-  });
-
   it("a compiled Temporal binding (the linked provider's prelude shape) takes no #661 helper at all", async () => {
     const compiled = await compile(
       `const Temporal: any = { PlainDate: { from(s: string) { return s; } } };\nexport function f(): number { return Temporal.PlainDate.from("2020-01-01").length; }`,

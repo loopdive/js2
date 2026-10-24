@@ -62,7 +62,6 @@ import {
 } from "./async-cps.js";
 import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
-  asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
   buildAsyncFrameInfo,
@@ -101,8 +100,6 @@ import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
 import { noJsHost } from "./js-errors.js";
 import {
-  addArrayIteratorImports,
-  addForInImports,
   addGeneratorImports,
   addIteratorImports,
   addStringImports,
@@ -131,7 +128,6 @@ import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import {
   ensureNativeDynamicBoundaryTag,
@@ -394,7 +390,7 @@ function recordExportListSignature(
   localName: string,
   exportedName: string,
 ): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (!jsValueBoundary(ctx)) return;
   if (ctx.exportSignatures.has(exportedName)) return;
   const decl = sourceFile.statements.find(
     (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
@@ -464,10 +460,10 @@ function recordExportSignature(
   if (!anyHit) return;
   ctx.exportSignatures.set(exportName, { params, result });
   if (ctx.nativeStrings && stringHit) ensureNativeStringBoundaryBridge(ctx);
-  if ((symbolHit || dynamicHit) && ctx.targetProfile.semanticProviders === "native-first") {
+  if (symbolHit || dynamicHit) {
     ensureNativeSymbolBoundaryBridge(ctx);
   }
-  if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
+  if (dynamicHit) {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
   if (promiseHit) {
@@ -3309,10 +3305,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             // pre-unwrap under the carrier so the declared result matches the
             // raw-T body (else externref-result vs f64-body = invalid Wasm).
             // Carrier-gated → off-carrier bytes identical.
-            const effRetType =
-              isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-                ? unwrapPromiseType(retType, ctx.checker)
-                : retType;
+            const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
             const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
             const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
             const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3379,10 +3372,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // function-expression export; pre-unwrap an async fn's Promise<T>
           // result under the carrier so the declared result matches the raw-T
           // body. Carrier-gated → off-carrier bytes identical.
-          const effRetType =
-            isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-              ? unwrapPromiseType(retType, ctx.checker)
-              : retType;
+          const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
           const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
           const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
           const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
