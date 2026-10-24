@@ -16310,7 +16310,7 @@
       "nextBoundary": "Separate TypeScript/safe-mode frontend validation and diagnostic capture from source-free prepared output-profile association before compiler-layer activation."
     },
     {
-      "path": "src/compiler/test262-prepared-entry.ts",
+      "path": "src/test262/test262-prepared-entry.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "compiler",
@@ -16318,7 +16318,7 @@
       "nextBoundary": "Separate strict Test262 request capture and frontend analysis from prepared-program orchestration and optional legacy API delegation before compiler-layer activation."
     },
     {
-      "path": "src/compiler/test262-prepared-runtime.ts",
+      "path": "src/test262/test262-prepared-runtime.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "compiler",

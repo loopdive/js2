@@ -4,11 +4,11 @@ import type { CompileError, CompileOptions, CompileResult } from "../index.js";
 import { analyzeMultiSource } from "../checker/index.js";
 import { normalizeMultiFileName } from "../checker/multi-file-paths.js";
 import { runPreparedIrPipelinePresentation, preparedFrontendRejectionObservation } from "../compiler.js";
-import type { PreparedIrPipelinePresentationResult } from "./ir-program-presentation.js";
+import type { PreparedIrPipelinePresentationResult } from "../compiler/ir-program-presentation.js";
 import type { JavaScriptAdapterManifestV1 } from "../adapter-manifest.js";
 import { emittedPhysicalSetupPlan } from "../ir/program-consumer.js";
 import { freezePreparedIrValue } from "../ir/program.js";
-import { failResult } from "./output.js";
+import { failResult } from "../compiler/output.js";
 import { resolveCompileTargetProfile } from "../target-profile.js";
 
 export interface RequiredPreparedRequest {

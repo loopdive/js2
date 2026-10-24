@@ -1,10 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/compiler/test262-prepared-entry.js";
+import { compile } from "../src/test262/test262-prepared-entry.js";
 import {
   instantiatePreparedArtifact,
   preparedRuntimeExecutionObservation,
-} from "../src/compiler/test262-prepared-runtime.js";
+} from "../src/test262/test262-prepared-runtime.js";
 
 const source = "export function calculate(value: number): number { return value * 3 + 2; }";
 

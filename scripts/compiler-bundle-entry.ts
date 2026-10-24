@@ -47,8 +47,8 @@ export {
   requiredPreparedFinalArtifactObservation,
   requiredPreparedFailure,
   requiredPreparedFrontendFailure,
-} from "../src/compiler/test262-prepared-entry.ts";
+} from "../src/test262/test262-prepared-entry.ts";
 export {
   instantiatePreparedArtifact,
   preparedRuntimeExecutionObservation,
-} from "../src/compiler/test262-prepared-runtime.ts";
+} from "../src/test262/test262-prepared-runtime.ts";

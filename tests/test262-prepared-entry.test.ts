@@ -11,7 +11,7 @@ import * as binaryEmitter from "../src/emit/binary.js";
 import {
   instantiatePreparedArtifact,
   preparedRuntimeExecutionObservation,
-} from "../src/compiler/test262-prepared-runtime.js";
+} from "../src/test262/test262-prepared-runtime.js";
 import {
   compile,
   compileMulti,
@@ -21,7 +21,7 @@ import {
   requiredPreparedFrontendFailure,
   requiredPreparedFinalArtifactObservation,
   type Test262CompileOptions,
-} from "../src/compiler/test262-prepared-entry.js";
+} from "../src/test262/test262-prepared-entry.js";
 
 const REQUEST = Object.freeze({ kind: "prepared-program-required" as const, version: 1 as const });
 const GRAPH = Object.freeze({
