@@ -70,6 +70,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
+import { isAmbientIntrinsicName, isMemberReadReceiver } from "./values/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
@@ -3095,7 +3096,7 @@ function dynamicUsesAreMoveOnly(
     if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
     // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
     if (ts.isIdentifier(e) && e.text === "undefined" && !dynNames.has("undefined")) return true;
-    if (ts.isIdentifier(e)) return dynNames.has(e.text);
+    if (ts.isIdentifier(e)) return dynNames.has(e.text) || isAmbientIntrinsicValue(e, dynNames, new Set());
     // (#7106 S3a) `new <dynamic param>(…)` constructs a dynamic value.
     if (dynamicConstructCallee(e) !== null) return true;
     // (#7106 propertyHelper) the stored descriptor alias yields a carrier.
@@ -3226,6 +3227,9 @@ function dynamicUsesAreMoveOnly(
     if (ts.isIdentifier(e)) {
       // (#7106 item 1) `undefined` as a value is only ever the dynamic carrier.
       if (e.text === "undefined" && !dynNames.has("undefined")) return expectDyn;
+      // (#7118) An ambient intrinsic is read off the realm as a dynamic value
+      // (`isDynShaped` already says so); it is never a moved binding.
+      if (expectDyn && !dynNames.has(e.text) && isAmbientIntrinsicValue(e, dynNames, new Set())) return true;
       return dynNames.has(e.text) === expectDyn;
     }
     // (#7106 S3a) `new <dynamic param>(args)` → `dyn.construct`: every
@@ -7867,6 +7871,30 @@ function exactNumericExponentiationOperand(
   return false;
 }
 
+/**
+ * (#7106) An ambient intrinsic (`TypeError`, `Object`) read as a
+ * VALUE: a named read off the realm's global object, on the lanes that carry
+ * legacy's `globalThis` wrapper. The identifier must resolve to its lib
+ * declaration, so a user binding of the same name keeps its own arm.
+ */
+function isAmbientIntrinsicValue(
+  expr: ts.Identifier,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return (
+    isAmbientIntrinsicName(expr.text) &&
+    !isMemberReadReceiver(expr) &&
+    !scope.has(expr.text) &&
+    !localClasses.has(expr.text) &&
+    currentModuleBindingResolver?.(expr) === undefined &&
+    currentModuleBindingResolver?.isLibOnlyBinding(expr) === true &&
+    currentDynamicRuntimeBuildable &&
+    currentDynMemberReadBuildable &&
+    currentSelectionOptions?.supportsBackendCapability?.("native-current-this") === true
+  );
+}
+
 function selectorSeesAmbientBinding(node: ts.Identifier): boolean {
   return (
     currentSelectionOptions?.isAmbientBinding?.(node) === true ||
@@ -10445,6 +10473,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     if (isFunctionObjectReceiver(expr, currentSelectionOptions?.functionObjectValues, functionObjectTypeEvidence))
       return true;
+    if (isAmbientIntrinsicValue(expr, scope, localClasses)) return true;
     return shapeNo("expr-ident-not-in-scope", expr);
   }
   // #1370 Phase A — `this` reference inside a method or constructor body.
