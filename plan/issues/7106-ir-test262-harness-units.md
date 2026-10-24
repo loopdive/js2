@@ -33,6 +33,10 @@ assignee: "ttraenkler/claude-c"
 # construct driver) and `analyzeFnctorEscapeGate` (refuse the fnctor struct);
 # `dyn-read.ts` gains the sloppy twin of `__dyn_member_set` beside its strict
 # sibling. No new import edge: the wrappers live in ir-dynamic-construct.ts.
+# 2026-10-22 (census arm 3, #6833, re-merged after #6829 landed): the arm's
+# own growth (from-ast.ts, select.ts::scanExprInner) is granted by the lists
+# below; this note puts the file in the PR's change-set so the grants apply
+# now that #6829 is on main (stranded-grants rule).
 flat-dir-budget-allow:
   - src/codegen/ir-string-carrier.ts # 2026-10-21 (#7106 S1c): the dyn.string_carrier wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-arguments-length.ts # 2026-10-21 (#7106 S1e): the dyn.arguments_length wrapper beside its two siblings
