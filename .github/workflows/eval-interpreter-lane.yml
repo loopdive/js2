@@ -42,11 +42,15 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=3072
         run: |
           pnpm run build:compiler-bundle
+          pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
           node scripts/build-runtime-eval-provider.mjs
 
       - name: Run native interpreter semantic guards
+        env:
+          VITEST_FORK_MAX_OLD_SPACE_SIZE: "3072"
         run: |
           pnpm exec vitest run \
+            --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism \
             tests/issue-2928-refusal-provider.test.ts \
             tests/issue-2929-cd-global-materialization.test.ts \
             tests/issue-2960.test.ts \
