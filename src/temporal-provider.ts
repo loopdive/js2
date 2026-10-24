@@ -42,7 +42,7 @@ import type { CompileOptions, CompileResult, LinkedModuleArtifact } from "./inde
 import { compileMulti, compileProject } from "./index.js";
 import { standaloneIntlShimSource } from "./temporal-intl-shim.js";
 import { getDefaultEnvironment } from "./env.js";
-import { resolveCompileTargetProfile, semanticProviderCacheKey } from "./target-profile.js";
+import { resolveCompileTargetProfile } from "./target-profile.js";
 
 /** npm package name the polyfill bundle is presented to the linker under. */
 export const TEMPORAL_PACKAGE_NAME = "@js-temporal/polyfill";
@@ -157,7 +157,7 @@ export function temporalProviderCacheKey(options: {
  * (#6748) The native-first measurement lane's provider gets the shim too. It
  * is compiled under the native semantic REGIME (`ctx.standalone`), which reads
  * the bare `Intl` identifier as null exactly like standalone does (the host
- * `Intl` arm in `expressions/identifiers.ts` is a host-assisted-lane arm), so
+ * `Intl` arm in `expressions/identifiers.ts` is the `intl` accelerator's), so
  * without it the provider's `__module_init` threw `TypeError: Cannot access
  * property on null or undefined` at `ct = Intl.DateTimeFormat` and every
  * regime Temporal row reported "wasm exception during module init". Provider
@@ -175,11 +175,9 @@ function providerSource(options: { polyfillSource: string; compileOptions?: Comp
 
 /** (#6748) Does this JavaScript-target provider lower with the native regime? */
 function nativeRegimeProvider(options: CompileOptions | undefined): boolean {
-  // (#6708) The regime is the default policy, so key on the resolved profile,
-  // not on an explicit `semanticProviders: "native-first"` spelling.
+  // (#6708, #6979) The regime is the only policy; key on the resolved profile.
   return resolveCompileTargetProfile({
     target: options?.target,
-    semanticProviders: options?.semanticProviders,
     nativeStrings: options?.nativeStrings,
     hostBridge: options?.hostBridge,
   }).nativeRegime;
@@ -191,7 +189,6 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
     fast: options?.fast === true,
     nativeStrings: options?.nativeStrings === true,
     utf8Storage: options?.utf8Storage === true,
-    semanticProviders: semanticProviderCacheKey(options ?? {}),
     hostBridge: options?.hostBridge ?? "auto",
     platform: options?.platform ?? "web",
     ...(options?.hostAccelerators?.length ? { hostAccelerators: [...options.hostAccelerators].sort() } : {}),

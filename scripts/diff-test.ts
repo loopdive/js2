@@ -210,12 +210,10 @@ export async function runJs2wasm(file: string): Promise<{
           fileName: file,
           optimize: true,
           deferTopLevelInit: true,
-          semanticProviders: "host-assisted",
         }
       : {
           fileName: file,
           deferTopLevelInit: true,
-          semanticProviders: "host-assisted",
         },
   );
   if (!r.success) {

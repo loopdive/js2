@@ -99,13 +99,7 @@ function collectPreparedAsyncRuntimeRequests(
     }
     const runtime = assertPreparedIrAsyncRuntimeCurrent(fn.unitId, fn.name, fn.asyncPlan, fn.asyncRuntime);
     if (runtime.kind === "standalone-native-wasmgc") {
-      if (
-        !ctx.standalone ||
-        ctx.wasi ||
-        !ctx.nativeStrings ||
-        ctx.targetProfile.environment !== "none" ||
-        ctx.targetProfile.semanticProviders !== "native-first"
-      ) {
+      if (!ctx.standalone || ctx.wasi || !ctx.nativeStrings || ctx.targetProfile.environment !== "none") {
         throw new Error(`IR async function ${fn.name} selected a native standalone runtime on the wrong target`);
       }
     } else if (

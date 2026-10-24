@@ -30,7 +30,7 @@ async function runWasm(src: string, target: "standalone" | "gc"): Promise<Run> {
     skipSemanticDiagnostics: true,
     deferTopLevelInit: true,
     hostBridge: "always",
-    ...(target === "standalone" ? { target: "standalone" as const } : { semanticProviders: "host-assisted" as const }),
+    ...(target === "standalone" ? { target: "standalone" as const } : {}),
   });
   if (!result.success) return { out: [], error: null, compileErrors: result.errors.map((e) => e.message) };
   const out: string[] = [];
@@ -115,10 +115,6 @@ describe("#6995 standalone async: declined shapes never swallow a rejection", ()
       await expectRefused(`async function a() { ${body.replace("Promise.reject(1)", PENDING)} }\n${THEN}`);
     });
   }
-
-  it("host-assisted gc control refuses the same top-level shape (unchanged)", async () => {
-    await expectRefused(`async function a() { ${NESTED_SHAPES["nested try, rethrow"]} }\n${THEN}`, "gc");
-  });
 
   it("the audit repro reports node's value, and the promise does not fulfil", async () => {
     const node = await expectSameAsNode(`async function a() { ${NESTED_SHAPES["nested try, rethrow"]} }\n${THEN}`);

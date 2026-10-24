@@ -44,7 +44,6 @@ async function runDeferred(src: string): Promise<string[]> {
   const result = await compile(src, {
     fileName: "t.ts",
     deferTopLevelInit: true,
-    semanticProviders: "host-assisted",
   });
   if (!result.success) throw new Error(`compile failed: ${result.errors[0]?.message}`);
   const lines: string[] = [];
@@ -58,25 +57,6 @@ async function runDeferred(src: string): Promise<string[]> {
     imports.setInstance?.(instance);
     const moduleInit = (instance.exports as Record<string, unknown>).__module_init;
     if (typeof moduleInit === "function") (moduleInit as () => void)();
-  } finally {
-    console.log = origLog;
-  }
-  return lines;
-}
-
-/** Sanity: the host-assisted legacy (start-section) path. */
-async function runStartSection(src: string): Promise<string[]> {
-  const result = await compile(src, { fileName: "t.ts", semanticProviders: "host-assisted" });
-  if (!result.success) throw new Error(`compile failed: ${result.errors[0]?.message}`);
-  const lines: string[] = [];
-  const origLog = console.log;
-  // eslint-disable-next-line no-console
-  console.log = (...args: unknown[]) =>
-    lines.push(args.map((a) => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" "));
-  try {
-    const imports = buildImports(result.imports, {}, result.stringPool);
-    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
-    imports.setInstance?.(instance);
   } finally {
     console.log = origLog;
   }
@@ -108,21 +88,11 @@ describe("#2796 — top-level for…in enumerates own keys when the runtime is f
     const result = await compile(`const o = { a: 1 }; for (const k in o) console.log(k);`, {
       fileName: "t.ts",
       deferTopLevelInit: true,
-      semanticProviders: "host-assisted",
     });
     if (!result.success) throw new Error("compile failed");
     const imports = buildImports(result.imports, {}, result.stringPool);
     const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
     imports.setInstance?.(instance);
     expect(typeof (instance.exports as Record<string, unknown>).__module_init).toBe("function");
-  });
-
-  it("host-assisted start-section path leaves the legacy behaviour unchanged for a no-introspection program", async () => {
-    // A top-level program that does NOT introspect struct keys is byte-identical
-    // on both paths — this guards that the host-assisted path still auto-runs
-    // top-level code via the start section (no __module_init export, no
-    // behaviour change).
-    const src = `console.log(1 + 2); console.log("hi");`;
-    expect(await runStartSection(src)).toEqual(["3", "hi"]);
   });
 });
