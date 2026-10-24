@@ -75,6 +75,8 @@ import {
   type NativeInvocationReservations,
 } from "./native-invocation.js";
 
+import { nativeRealmPopulationBinding, type NativeRealmPopulation } from "./native-realm-population.js";
+
 export interface NativeMixedObjectAccessDependencies {
   readonly realm: NativeObjectRealmDeclarations;
   readonly realmDependencies: NativeObjectRealmDependencies;
@@ -230,6 +232,7 @@ interface Owner {
   filled: boolean;
   invocation?: NativeInvocationReservations;
   getterFilled?: boolean;
+  population?: NativeRealmPopulation;
 }
 const owners = new WeakMap<NativeMixedObjectAccessReservations, Owner>();
 function current(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessReservations): Owner {
@@ -298,9 +301,12 @@ function operands(
   tx: PhysicalModuleReservations,
   pack: NativeMixedObjectAccessReservations,
   d: NativeMixedObjectAccessDependencies,
+  population?: NativeRealmPopulation,
 ): MixedObjectAccessOperands {
   const own = d.stringOwnDependencies,
     layout = d.realm.layouts;
+  if (population && nativeRealmPopulationBinding(tx, population, true) !== d.realm)
+    fail("different descriptor population realm");
   const [realm, objectPrototype, ...singletons] = tx.physicalIndices([
     layout.anchors.realm,
     d.realm.objectPrototype.singleton,
@@ -342,6 +348,7 @@ function operands(
     symbolTypeIdx: own.layoutDependencies.symbols.types.symbol.typeIndex,
     realm: realm!,
     objectPrototype: objectPrototype!,
+    ...(population ? { intrinsicPopulationState: tx.physicalIndex(d.realm.globals.state) } : {}),
     carriers,
     metadataTypes: [...new Set(d.realmDependencies.closures.metadata.map((row) => row.binding.type.typeIndex))],
     classify: pack.classify.handle,
@@ -466,7 +473,7 @@ export function fillNativeMixedObjectAccessStructure(
   const owner = current(tx, pack);
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate structural fill");
   completedDependencies(tx, owner.identities);
-  const d = operands(tx, pack, owner.identities);
+  const d = operands(tx, pack, owner.identities, owner.population);
   const definitions = structuralRoles.map((role) => builders[role](d));
   structuralRoles.forEach((role, i) => tx.fillFunction(pack[role], definitions[i]!));
   owner.filled = true;
@@ -480,7 +487,7 @@ export function requireCompletedNativeMixedObjectAccessStructure(
   const owner = owners.get(pack)!;
   if (!owner.filled) fail("missing canonical structural fill");
   completedDependencies(tx, owner.identities);
-  const d = operands(tx, pack, owner.identities);
+  const d = operands(tx, pack, owner.identities, owner.population);
   for (const role of structuralRoles) {
     tx.assertCompletedReservation(pack[role]);
     same(
@@ -491,6 +498,19 @@ export function requireCompletedNativeMixedObjectAccessStructure(
   }
   return pack;
 }
+/** Descriptor coverage is separate from callable algorithm coverage. */
+export function bindNativeMixedObjectPopulation(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  population: NativeRealmPopulation,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "reserving" || owner.population) fail("invalid phase or duplicate population join");
+  if (nativeRealmPopulationBinding(tx, population) !== owner.identities.realm)
+    fail("different descriptor population realm");
+  owner.population = population;
+}
+
 /** Join only the full public population's actual common Call, never a caller-supplied function token. */
 export function bindNativeMixedObjectInvocation(
   tx: PhysicalModuleReservations,

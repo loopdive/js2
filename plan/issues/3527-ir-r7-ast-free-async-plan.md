@@ -3333,3 +3333,17 @@ module to the compiler-boundary inventory. Eleven host binary hashes remain equa
 to baseline 7371eb505b365e49815f1ddc09afed6c52372540. Review found structurally equal
 empty captures weakened FIFO assertions; corrected tests now assert per-index
 identity and distinct labels. Follow-up read-only review accepts both corrections.
+
+
+Intrinsic absence validation (2026-10-24): the final full-realm executable run
+passes both normal/displaced variants (410/435 seconds), with exit 0 and no
+unhandled worker errors. It covers all 45 intrinsic identities, ordinary
+inheritance, present undefined, original receiver getters, nearer properties,
+initialization states and unsupported/foreign carriers. The earlier 48/48 mixed
+access/population/scalar-Get regressions and three corrected dependency/pollution
+controls passed; pollution controls were rerun after lint cleanup. Initial
+negative-test expectation/foreign-carrier assertions were corrected. The earlier
+full run had two passing assertions but a worker RPC timeout and exit 1; that run
+is not accepted as clean evidence. Source/CI-base gates and focused TS7 pass;
+11 host binaries retain identical hashes. Adversarial review found no remaining
+blocker after inherited operand access and negative-test poisoning were repaired.

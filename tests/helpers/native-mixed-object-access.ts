@@ -94,8 +94,8 @@ import {
 } from "../../src/ir/program-native-invocation.js";
 import type { IrLowerResolver } from "../../src/ir/backend/lower-contracts.js";
 
-export function mixedFoundation(displaced = false, sourceText?: string) {
-  const f = publicRealmFoundation(displaced, false, false, false, sourceText),
+export function mixedFoundation(displaced = false, sourceText?: string, extraLiterals: readonly string[] = []) {
+  const f = publicRealmFoundation(displaced, false, false, false, sourceText, extraLiterals),
     { tx } = f,
     c = publicRealmClosures(f);
   const flatten = reserveNativeStringFlattenResources(tx, "mixed:flatten", f.strings);
@@ -200,8 +200,8 @@ export function mixedFoundation(displaced = false, sourceText?: string) {
     stringCreate,
   };
 }
-export function mixedOwnerFixture(displaced = false, sourceText?: string) {
-  const r = mixedFoundation(displaced, sourceText),
+export function mixedOwnerFixture(displaced = false, sourceText?: string, extraLiterals: readonly string[] = []) {
+  const r = mixedFoundation(displaced, sourceText, extraLiterals),
     realm = publicRealmDeclarations(r.f, r.c);
   const dependencies = {
     realm: realm.declarations,

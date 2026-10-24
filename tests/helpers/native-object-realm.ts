@@ -65,6 +65,7 @@ export function publicRealmFoundation(
   noSource = false,
   shared = false,
   sourceText = STATE_SOURCE,
+  extraLiterals: readonly string[] = [],
 ) {
   const program = prepareGetterProgram(noSource ? NO_SOURCE_REALM : sourceText, decoded);
   const projection = program.runtime[0]!;
@@ -109,7 +110,7 @@ export function publicRealmFoundation(
   const strings = reserveNativeStringLiteralResources(f.tx, {
     key: "public-realm:strings",
     utf8Storage: displaced,
-    literals: literalPlan.literals,
+    literals: [...literalPlan.literals, ...extraLiterals.map((value) => ({ value, encoding: "ascii" as const }))],
   });
   const stringTypes = nativeStringLiteralReservationInventory(f.tx, strings).typePack;
   const substrateRequirements = { key: "public-realm:substrate" };

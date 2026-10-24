@@ -21,6 +21,8 @@ import {
 } from "../src/backend/wasmgc/resources/native-invocation.js";
 import {
   bindNativeMixedObjectInvocation,
+  bindNativeMixedObjectPopulation,
+  requireCompletedNativeMixedObjectAccessStructure,
   fillNativeMixedObjectAccessStructure,
   fillNativeMixedObjectGet,
   requireCompletedNativeMixedObjectAccess,
@@ -85,6 +87,7 @@ function fixture(displaced = false) {
     return function captured(value: number): number { return seed + value; };
   }
   export function makeEmpty(): () => number { return function empty(): number { return 7; }; }`,
+      ["then"],
     ),
     { tx, f, c } = r;
   const source = publicRealmSourceSlots(f, c);
@@ -116,6 +119,7 @@ function fixture(displaced = false) {
 function join(r: ReturnType<typeof fixture>) {
   bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls);
   bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation);
+  bindNativeMixedObjectPopulation(r.tx, r.access, r.population.pack);
 }
 function reserveNumericClassifier(r: ReturnType<typeof fixture>) {
   const classifierDependencies = {
@@ -225,12 +229,17 @@ describe("full public realm Call joins", { timeout: 240000 }, () => {
     expect(() => reserveNativeObjectRealmCalls(r.tx, "duplicate", r.dependencies)).toThrow(/already has a Call owner/);
     expect(r.f.module.functions.length).toBe(before);
     const other = fixture();
+    expect(() => bindNativeMixedObjectPopulation(r.tx, r.access, { ...r.population.pack })).toThrow(
+      /foreign or copied/,
+    );
+    expect(() => bindNativeMixedObjectPopulation(r.tx, r.access, other.population.pack)).toThrow(/foreign or copied/);
     expect(() => bindNativeInvocationObjectRealm(r.tx, r.invocation, other.calls)).toThrow(/foreign or copied/);
     expect(() => bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation)).toThrow(/missing full public/);
     join(r);
     expect(nativeInvocationObjectRealmBinding(r.tx, r.invocation).realm).toBe(r.realm.declarations);
     expect(() => bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls)).toThrow(/duplicate/);
     expect(() => bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation)).toThrow(/duplicate/);
+    expect(() => bindNativeMixedObjectPopulation(r.tx, r.access, r.population.pack)).toThrow(/duplicate/);
   });
   it("refuses core completion from a caller-filled public dispatcher", async () => {
     const r = fixture();
@@ -251,8 +260,17 @@ describe("full public realm Call joins", { timeout: 240000 }, () => {
     expect(() => fillNativeRealmPopulation(r.tx, r.population.pack)).toThrow(/duplicate/);
     expect(() => fillNativeObjectRealmCalls(r.tx, r.calls)).toThrow(/duplicate/);
     expect(() => fillNativeMixedObjectGet(r.tx, r.access)).toThrow(/duplicate/);
+    const values = r.dependencies.values;
     r.dependencies.values = { ...r.values };
     expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls)).toThrow(/changed dependency/);
+    r.dependencies.values = values;
+    // The physical ledger rejects changed completed code and poisons the transaction.
+    // Run this last; no later completion check may reuse that failed ledger.
+    r.realm.declarations.initialize.object.body = [{ op: "unreachable" }];
+    expect(() => requireCompletedNativeMixedObjectAccessStructure(r.tx, r.access)).toThrow(
+      /altered completed function/,
+    );
+    expect(r.tx.state).toBe("failed");
   });
 });
 
@@ -538,6 +556,7 @@ async function executable(displaced: boolean) {
   });
   const catalog = realm.realm.description.catalog.intrinsics;
   const literalNames = [
+    "then",
     ...new Set(
       catalog.flatMap((entry) =>
         entry.properties.flatMap((p) => [
@@ -583,6 +602,8 @@ async function executable(displaced: boolean) {
     findOwn: r.lookup.findOwn,
     accessor: own,
     get: r.access.get,
+    own: r.access.own,
+    has: r.access.has,
     call: binding.call,
     match: r.calls.match,
     newVector: f.substrate.arguments.newVector,
@@ -611,6 +632,51 @@ async function executable(displaced: boolean) {
     implemented,
   };
 }
+/** Exercise real descriptor population and Get; injected getters observe only Call transport. */
+function checkIntrinsicAbsence(api: Record<string, any>, intrinsics: unknown[], key: unknown) {
+  const receiver = { missingThen: true },
+    ordinary = api.object(api.objectPrototype.value);
+  for (const value of [...intrinsics, ordinary]) {
+    expect(api.own(value, key)[0]).toBe(0);
+    const result = api.get(value, key, receiver);
+    expect(result[0]).toBe(0);
+    expect(api.isUndefined(result[1])).toBe(1);
+    expect(api.has(value, key)).toBe(0);
+  }
+  for (const state of [0, 1, -1]) {
+    api.state.value = state;
+    for (const value of intrinsics) expect(api.own(value, key)[0]).toBe(2);
+    expect(api.get(ordinary, key, receiver)[0]).toBe(2);
+  }
+  api.state.value = 2;
+  const parent = api.objectPrototype.value;
+  // A real own entry wins even when absence cannot yet be certified.
+  api.property(parent, key, api.undefinedValue(), 7);
+  api.state.value = 1;
+  expect(api.get(ordinary, key, receiver)[0]).toBe(1);
+  api.state.value = 2;
+  const present = api.get(ordinary, key, receiver);
+  expect(present[0]).toBe(1);
+  expect(api.isUndefined(present[1])).toBe(1);
+  expect(api.has(ordinary, key)).toBe(1);
+  api.property(parent, key, api.native3.value, 8);
+  for (const value of [...intrinsics, ordinary]) {
+    expect(api.get(value, key, receiver)).toEqual([1, receiver]);
+    expect(api.argc.value).toBe(0);
+  }
+  const nearer = api.object(parent);
+  api.property(nearer, key, api.box(17), 7);
+  expect(api.unbox(api.get(nearer, key, receiver)[1])).toBe(17);
+  // Tombstone is the storage representation after deletion; this control does not implement Delete.
+  api.property(parent, key, null, 128);
+  for (const value of [...intrinsics, ordinary]) {
+    expect(api.has(value, key)).toBe(0);
+    expect(api.get(value, key, receiver)[0]).toBe(0);
+  }
+  expect(api.get(api.makeEmpty(), key, receiver)[0]).toBe(2);
+  expect(api.get(api.foreignClone(api.makeEmpty()), key, receiver)[0]).toBe(3);
+}
+
 for (const displaced of [false, true])
   it(`executes all full-catalog adapters and source Get through common Call (displaced=${displaced})`, async () => {
     const { api, count, catalog, literalNames, implemented } = await executable(displaced);
@@ -659,6 +725,11 @@ for (const displaced of [false, true])
     }
     expect(catalog).toHaveLength(45);
     expect(descriptors).toBe(133);
+    checkIntrinsicAbsence(
+      api,
+      catalog.map((entry) => intrinsic(entry.id)),
+      literalValue("then"),
+    );
     expect(api.inspect(intrinsic("%Function.prototype%"), api.hasInstance())[0]).toBe(0);
     expect(api.inspect(intrinsic("%ThrowTypeError%"), literalValue("name"))[0]).toBe(0);
     const receiver = { identity: "receiver" };

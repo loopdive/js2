@@ -18,6 +18,7 @@ import {
 } from "../src/backend/wasmgc/resources/native-mixed-object-access.js";
 import {
   buildMixedObjectClassify,
+  buildMixedObjectOwn,
   buildMixedObjectGet,
   buildMixedObjectLookup,
 } from "../src/runtime/wasmgc/values/mixed-object-access-bodies.js";
@@ -243,6 +244,42 @@ for (const displaced of [false, true])
       for (let i = 0; i < 300; i++) tail = api().ordinary(tail);
       expect(api().get(tail, key("own"), tail)).toEqual([1, 94]);
       expect(api().has(tail, key("absent"))).toBe(0);
+    });
+    it("ignores inherited population coordinates and getters without granting absence", () => {
+      const expected = buildMixedObjectOwn(runtime.operands);
+      const saved = Object.getOwnPropertyDescriptor(Object.prototype, "intrinsicPopulationState");
+      let reads = 0;
+      try {
+        for (const descriptor of [
+          { value: 123456 },
+          {
+            get() {
+              reads++;
+              throw Error("inherited getter must not run");
+            },
+          },
+        ]) {
+          Object.defineProperty(Object.prototype, "intrinsicPopulationState", { ...descriptor, configurable: true });
+          const actual = buildMixedObjectOwn(runtime.operands);
+          Reflect.deleteProperty(Object.prototype, "intrinsicPopulationState");
+          expect(actual).toEqual(expected);
+        }
+        expect(reads).toBe(0);
+        expect(() => buildMixedObjectOwn({ ...runtime.operands, intrinsicPopulationState: -1 })).toThrow(/coordinate/);
+        const ownGetter = { ...runtime.operands };
+        Object.defineProperty(ownGetter, "intrinsicPopulationState", {
+          enumerable: true,
+          get() {
+            reads++;
+            return 1;
+          },
+        });
+        expect(() => buildMixedObjectOwn(ownGetter)).toThrow(/accessor/);
+        expect(reads).toBe(0);
+      } finally {
+        if (saved) Object.defineProperty(Object.prototype, "intrinsicPopulationState", saved);
+        else Reflect.deleteProperty(Object.prototype, "intrinsicPopulationState");
+      }
     });
     it("rejects getter-bearing/hidden/sparse pure operands without invoking callbacks", () => {
       let calls = 0;

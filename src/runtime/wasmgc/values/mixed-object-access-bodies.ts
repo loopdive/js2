@@ -23,6 +23,8 @@ export interface MixedObjectAccessOperands {
   readonly symbolTypeIdx: number;
   readonly realm: number;
   readonly objectPrototype: number;
+  /** Authenticated complete descriptor initializer; runtime state 2 alone admits intrinsic absence. */
+  readonly intrinsicPopulationState?: number;
   readonly metadataTypes: readonly number[];
   /** String precedes ordinary storage; metadata families precede source families. */
   readonly carriers: readonly MixedObjectCarrier[];
@@ -86,7 +88,8 @@ function operands(input: MixedObjectAccessOperands): MixedObjectAccessOperands {
     "findOrdinary",
     "findString",
   ];
-  const d = data(input, [...keys, "carriers", "metadataTypes"]);
+  const d = data(input, [...keys, "carriers", "metadataTypes"], ["intrinsicPopulationState"]);
+  if (Object.hasOwn(d, "intrinsicPopulationState")) coordinate(d.intrinsicPopulationState);
   keys.forEach((key) => coordinate(d[key]));
   const metadataTypes = rows(d.metadataTypes);
   metadataTypes.forEach(coordinate);
@@ -229,7 +232,19 @@ export function buildMixedObjectClassify(input: MixedObjectAccessOperands): Mixe
   };
 }
 
-/** Actual own entries only. Incomplete intrinsic/source misses are unready, never absence. */
+function ownAbsence(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
+  if (c.kind === "source") return [n(2)];
+  if (c.kind !== "native" && c.kind !== "object-prototype") return [n(0)];
+  if (!Object.hasOwn(d, "intrinsicPopulationState")) return [n(2)];
+  return [
+    global(d.intrinsicPopulationState!),
+    n(2),
+    { op: "i32.eq" },
+    { op: "if", blockType: { kind: "val", type: i32 }, then: [n(0)], else: [n(2)] },
+  ];
+}
+
+/** Intrinsic misses require both canonical descriptor construction and runtime initialization. */
 export function buildMixedObjectOwn(input: MixedObjectAccessOperands): MixedObjectDefinition {
   const d = operands(input);
   return {
@@ -271,10 +286,7 @@ export function buildMixedObjectOwn(input: MixedObjectAccessOperands): MixedObje
           get(1),
           call(c.kind === "string" ? d.findString : d.findOrdinary),
           set(4),
-          ...when(
-            [get(4), { op: "ref.is_null" }],
-            missing(d, [n(["native", "source", "object-prototype"].includes(c.kind) ? 2 : 0)]),
-          ),
+          ...when([get(4), { op: "ref.is_null" }], missing(d, ownAbsence(d, c))),
           ...ret(n(1), get(4)),
         ]),
       ),

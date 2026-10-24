@@ -192,7 +192,7 @@ export function fillNativeRealmPopulation(tx: PhysicalModuleReservations, pack: 
   tx.fillFunction(pack.realm.initialize, buildRealmPopulationInitializer(operands(tx, pack)));
   owner.filled = true;
 }
-/** Structural population only: neither algorithm completion nor unknown-property absence is granted here. */
+/** Canonical descriptor construction; consumers must still check runtime initialization and actual misses. */
 export function requireCompletedNativeRealmPopulation(
   tx: PhysicalModuleReservations,
   pack: NativeRealmPopulation,
@@ -201,4 +201,15 @@ export function requireCompletedNativeRealmPopulation(
   if (!owner.filled) fail("missing canonical population fill");
   requireCanonicalNativeFunction(tx, pack.realm.initialize, buildRealmPopulationInitializer(operands(tx, pack)));
   return pack;
+}
+
+/** Issued descriptor population identity, independent of algorithm completion. */
+export function nativeRealmPopulationBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmPopulation,
+  completed = false,
+): NativeObjectRealmDeclarations {
+  current(tx, pack);
+  if (completed) requireCompletedNativeRealmPopulation(tx, pack);
+  return pack.realm;
 }
