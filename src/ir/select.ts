@@ -71,6 +71,7 @@ import {
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./builtin-method-names.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -710,6 +711,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
+      | "host-dynamic-method-call"
       | "native-own-property-descriptor",
   ) => boolean;
   /**
@@ -2978,6 +2980,20 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
  * result position and every argument bridge before the selector claims the
  * function.
  */
+/**
+ * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
+ * On the host lane `__extern_method_call` is the real JS call. Off it, the
+ * native object runtime dispatches open-`$Object` / instance / closure methods
+ * but answers `undefined` for a primitive or vec receiver (`list.join(", ")`
+ * measured), where legacy dispatches by brand. So a BUILT-IN prototype method
+ * name is refused there — except `charCodeAt`, the string runtime's exact fast
+ * path — while a user method name (`o.inc()`) keeps its open dispatch.
+ */
+function dynamicMethodCallIsExact(name: string): boolean {
+  if (name === "charCodeAt" || !BUILTIN_PROTOTYPE_METHOD_NAMES.has(name)) return true;
+  return currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
+}
+
 function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
   return (
     currentModuleBindingResolver?.retainedFunctionMethodPlan(call) ??
@@ -3289,6 +3305,7 @@ function dynamicUsesAreMoveOnly(
         if (!currentDynMemberReadBuildable || !expectDyn || (e.arguments.length > 1 && !narrowStringReplace)) {
           return false;
         }
+        if (!narrowStringReplace && !dynamicMethodCallIsExact(e.expression.name.text)) return false;
         if (!scanExpr(e.expression.expression, true)) return false;
         if (narrowStringReplace) {
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
