@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+/**
+ * (#7106) The IR's generic `instanceof` over two dynamic carriers
+ * (`dyn.instanceof`): one wrapper per module,
+ * `__ir_dyn_instanceof(externref value, externref target) -> i32`, whose body is
+ * EXACTLY the tail of legacy's `emitDynamicInstanceOf` on the host-free lanes:
+ *
+ *   1. `__instanceof_dynamic(value, target)`, the #2916 Slice B runtime
+ *      §13.10.2 + §7.3.20, answering the 0 / 1 / 2 tri-state;
+ *   2. `emitInstanceofThrowGuard`: 2 is the "Right-hand side of 'instanceof'
+ *      is not callable" TypeError, 0 / 1 is the boolean.
+ *
+ * ## Exact legacy parity, deliberately including its residuals
+ *
+ * The IR admits a site only where legacy itself reaches that tail
+ * ({@link irDynamicInstanceOfRoutesGeneric}): a dynamic-PARAMETER right
+ * operand whose name no named arm of `compileHostInstanceOf` can claim. So the
+ * IR answers what legacy answers, including the #2916 residuals. A runtime
+ * non-callable target answers `false` instead of throwing (the "no wrong
+ * throws" rule in `native-dynamic-instanceof.ts`). An Error-family target
+ * answers through the chain walk, which the native error prototypes do not
+ * fully link yet. Both diverge from the spec by design until the runtime
+ * changes, and both change for legacy and the IR together.
+ *
+ * Built in `preregisterDynamicSupport`, before any Phase-3 body.
+ */
+
+import { ts } from "../ts-api.js";
+import type { ValType } from "../ir/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { isBuiltinTypeName } from "./builtin-tags.js";
+import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { noJsHost } from "./js-errors.js";
+import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
+import { identifierIsWrittenTo, moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js";
+import { addFuncType } from "./registry/types.js";
+import { flushLateImportShifts } from "./shared.js";
+
+export const IR_DYN_INSTANCEOF_HELPER = "__ir_dyn_instanceof";
+
+/** Per file: every name a NON-parameter declaration binds (functions, classes, variables, imports, …). */
+const DECLARED_NAMES = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
+  const cached = DECLARED_NAMES.get(file);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
+        ts.isVariableDeclaration(node) ||
+        ts.isImportSpecifier(node) ||
+        ts.isImportClause(node) ||
+        ts.isNamespaceImport(node) ||
+        ts.isImportEqualsDeclaration(node) ||
+        ts.isEnumDeclaration(node) ||
+        ts.isModuleDeclaration(node)) &&
+      node.name !== undefined &&
+      ts.isIdentifier(node.name)
+    ) {
+      names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  DECLARED_NAMES.set(file, names);
+  return names;
+}
+
+/**
+ * Does legacy lower `site` (`<value> instanceof <parameter>`) through exactly
+ * the generic runtime tail this wrapper reproduces?
+ *
+ * Legacy dispatches the right operand on its NAME first
+ * (`resolveInstanceOfRHS`, the class / fnctor / builtin / alias arms of
+ * `compileHostInstanceOf`). Those registries are keyed by the names that class,
+ * function and variable declarations bind, and by builtin constructor names.
+ * The selector runs before they are filled, so this predicate checks the
+ * names themselves. A parameter whose name nothing else in the file declares,
+ * that is no builtin constructor name, is never written, and is typed
+ * `any`/`unknown` misses every named arm and the static non-callable throw.
+ * Legacy then reaches `emitDynamicInstanceOf`. Its primitive-LHS fold answers
+ * the same 0 the runtime gives a primitive value. A module that installs a
+ * callable `@@hasInstance` takes legacy's operator entry instead, so it is
+ * refused here.
+ */
+export function irDynamicInstanceOfRoutesGeneric(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
+  if (!noJsHost(ctx) || ctx.fast) return false;
+  if (site.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !ts.isIdentifier(site.right)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(site.right);
+  if (declaration === undefined || !ts.isParameter(declaration) || !ts.isIdentifier(declaration.name)) return false;
+  const name = site.right.text;
+  if (isBuiltinTypeName(name) || name === "Date") return false;
+  const file = site.getSourceFile();
+  if (declaredNonParameterNames(file).has(name)) return false;
+  if (identifierIsWrittenTo(file, name)) return false;
+  if (moduleInstallsCallableHasInstance(file)) return false;
+  const fact = ctx.oracle.typeFactOf(site.right).kind;
+  return fact === "any" || fact === "unknown";
+}
+
+/**
+ * Reserve (once per module) the wrapper `dyn.instanceof` calls. Returns the
+ * function index, or undefined off the host-free lanes or on the fast
+ * `$AnyValue` carrier (where a dynamic value is not an externref).
+ */
+export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx) || ctx.fast) return undefined;
+  const existing = ctx.funcMap.get(IR_DYN_INSTANCEOF_HELPER);
+  if (existing !== undefined) return existing;
+  const ordinary = ensureNativeDynamicInstanceOf(ctx);
+  if (ordinary === undefined) return undefined;
+
+  const externref: ValType = { kind: "externref" };
+  const i32: ValType = { kind: "i32" };
+  const helper: FunctionContext = {
+    name: IR_DYN_INSTANCEOF_HELPER,
+    params: [
+      { name: "value", type: externref },
+      { name: "target", type: externref },
+    ],
+    locals: [],
+    localMap: new Map(),
+    returnType: i32,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+  helper.body.push({ op: "local.get", index: 0 }, { op: "local.get", index: 1 }, { op: "call", funcIdx: ordinary });
+  emitInstanceofThrowGuard(ctx, helper);
+  // The guard's TypeError may register late imports that shift baked indices.
+  flushLateImportShifts(ctx, helper);
+
+  const typeIdx = addFuncType(ctx, [externref, externref], [i32]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(IR_DYN_INSTANCEOF_HELPER, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: IR_DYN_INSTANCEOF_HELPER,
+    typeIdx,
+    locals: helper.locals,
+    body: helper.body,
+    exported: false,
+  });
+  return funcIdx;
+}

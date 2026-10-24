@@ -1954,6 +1954,20 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitInstanceOfFunction(instr.target.name)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.instanceof": {
+        // #7106 — legacy's generic runtime operator over two carriers.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.instanceof (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        emitValue(instr.target, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitInstanceOf()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.publish_argc": {
         // #7106 S1i — the call site's argument count, legacy's `emitSetArgc`.
         const dyn = resolver.resolveDynamicLowering?.();
@@ -3927,6 +3941,8 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.current_this":
     case "dyn.publish_argc":
       return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
     case "dyn.instanceof_fn":
       return [instr.value];
     case "dyn.own_property":
