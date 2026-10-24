@@ -16,23 +16,11 @@ import { REGIME_GAP_FAMILIES } from "../src/host-import-policy.ts";
 
 /**
  * (#6979) The regime-gap ceiling: exactly these families, and within them only
- * these import names (or name prefixes ending in `*`). A third family, or a new
+ * these import names (or name prefixes ending in `*`). A second family, or a new
  * name in an existing one, fails this ratchet until it is reviewed.
  */
 const REGIME_GAP_CEILING: Record<string, readonly string[]> = {
   "eager-generator-buffer": ["__gen_*", "__create_generator", "__create_async_generator"],
-  "temporal-strings": [
-    "__temporal_plain_date_to_string",
-    "__temporal_plain_time_to_string",
-    "__temporal_duration_to_string",
-    "__temporal_plain_date_from_string_field",
-    "__temporal_duration_from_string_field",
-    "__temporal_plain_date_add_field",
-    "__temporal_plain_date_month_code",
-    "__temporal_plain_time_from_string_field",
-    "__temporal_plain_time_add_field",
-    "__temporal_duration_sign",
-  ],
 };
 {
   const declared = Object.keys(REGIME_GAP_FAMILIES).sort();
@@ -390,7 +378,6 @@ const regimeGapProbes = {
       const it = values(); await it.next(); return (await it.next(2)).value as number;
     }
   `,
-  "temporal-strings": `export function run(): string { return Temporal.PlainDate.from("2020-01-02").toString(); }`,
 } as const;
 const regimeGapImports: Record<string, string[]> = Object.create(null);
 for (const [family, source] of Object.entries(regimeGapProbes)) {
@@ -418,8 +405,10 @@ for (const [family, source] of Object.entries(regimeGapProbes)) {
 
 // #6979 S7-b — closed regime gaps stay closed: their probe must compile with no
 // regime-gap and no retired (`unknown`) import. `shared-array-buffer` closed
-// with #7011's native SharedArrayBuffer/Atomics provider.
+// with #7011's native SharedArrayBuffer/Atomics provider, `temporal-strings`
+// with #7012's in-module Temporal string/field helpers.
 const closedRegimeGapProbes = {
+  "temporal-strings": `export function run(): string { return Temporal.PlainDate.from("2020-01-02").toString(); }`,
   "shared-array-buffer": `export function run(): number {
     const buffer: any = new SharedArrayBuffer(16);
     return Atomics.load(new Int32Array(buffer), 0);

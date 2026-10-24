@@ -640,3 +640,116 @@ tests on bare codegen contexts or byte/ABI pins (`issue-2949-s5-0/1/2/3/5`,
 `issue-3521-prepared-free-function-routing`, `issue-3526-callable-boundary-callback`,
 `issue-3526-string-boundary-concat-many`, `issue-1183`, `native-strings-standalone`).
 Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
+
+### S7-b landing (2026-10-20)
+
+Re-landed by `opus-s7b-legacy-semantic` (claim `6979:s7b`). The old S7-b head
+`aac2b4040d` was merged with the re-landed S7-a head `9dae8246f6` (PR 6701, which
+contains `upstream/main` as of 2026-10-20) as `c296cb96b4`; this pass sits on
+top of that. Net against the S7-a head: 72 files in `src/` `scripts/` `tests/`,
++1,190 / −14,576 lines.
+
+**Deleted (against the S7-a head).**
+- `src/runtime.ts`: 20,232 → 11,539 lines (−8,942 / +249). `resolveImport`
+  7,859 → 1,940 lines, 15 → 7 top-level cases. Gone: the retired `builtin`
+  provider bodies (`number_*`, `__call_*`, `__array_*`/`__js_array_*`,
+  `Promise_*`, `__construct*`, `__extern_*`, `__defineProperty_*`, `parse*`/URI/
+  `escape`, `__to_object`/`__to_primitive`/`__box_symbol` …), the ECMAScript part
+  of `extern_class`, and in this pass the ten `__temporal_*` providers
+  (`_temporal*`, ~500 lines). `resolveDeclaredFunctionImport` keeps #7095's
+  `declaredHostFunction` marshalling.
+- `src/runtime/compatibility-semantic-adapter.ts`: 110 → 19 lines. The host
+  strings / `await` driver / `host_*` operators / `same_value_zero` /
+  `proxy_create` providers are gone. It **stays** because it is the provider of
+  the `date` accelerator's `date_new` / `date_method` intents (#6978);
+  `src/runtime.ts` still calls `resolveCompatibilitySemanticImport`.
+- Whole files: `src/codegen/array-method-host.ts`, `array-method-value.ts`,
+  `classes/externref-class-fields.ts`, `expressions/linked-free-global-call.ts`
+  (none was touched by main this week; their `compiler-boundaries.json` entries
+  go with them).
+- Large emitter cuts: `new-super.ts` −1,282 (the `!noJsHost` `__construct` /
+  `__construct_closure` arms, including #7014's `noSpreadArg` tweak to one of
+  them, which was dead code on WasmGC), `calls.ts` −739,
+  `declarations/import-collector.ts` −380, `dyn-ops.ts`, `call-identifier.ts`,
+  `array-methods.ts`, `array-like-hof-arms.ts`, `host-call-fallback.ts`.
+
+**`own-property-method-shadow.ts` survives (476 → 163 lines).** Old S7-b
+deleted the module. Since then #7021 made its closed-dispatcher half live on
+the regime: `noteOwnShadowDispatchCandidate` + `closedDispatchGuardsOwnSlot`
+make `__call_m_<name>_<n>` user-class arms ask the native object runtime's
+`__hasOwnProperty` / `__extern_method_call` for an own slot first (marked's
+`use()` hooks). That half and its scan (`fileMayInstallOwnCallableMember`) are
+kept, along with the `call-receiver-method.ts` / `closed-method-dispatch.ts`
+wiring. The JS-host half is deleted: the `__ownshadow_<C>_<m>_<n>` guard
+wrappers (`ownShadowGuardedMethodName`, `ownShadowFuncIdx`,
+`fillOwnShadowWrappers`), the guarded member read
+(`emitOwnShadowGuardedMethodRead`), and the `env.__hasOwnProperty` registration.
+Each returned early whenever `ctx.standalone || ctx.wasi`, which is every
+WasmGC build. The textual merge had silently dropped #7021's callers (main
+changed only the module itself, so the deleted call sites merged cleanly).
+They were restored by hand.
+
+**Regime gaps.** `shared-array-buffer` (closed by #7011) and `temporal-strings`
+(closed by #7012's in-module helpers; `check:host-import-policy` refused the
+family with "probe no longer needs the gap") are deleted from
+`REGIME_GAP_FAMILIES`, the classifier and the name ceiling. Their probes move
+to a "closed gaps stay closed" check: each must compile with no `regime-gap`
+and no `unknown` import. Left: `eager-generator-buffer` only (#680; probe
+imports `__create_async_generator`, `__gen_create_buffer`, `__gen_push_f64`,
+`__gen_push_ref`, `__gen_result_value_f64`).
+
+**`check:host-import-policy`**: 33 probes, 452 imports, 0 regime-gap, 0 unknown;
+accelerators regexp 4 / date 1 / intl 4. Migration metrics against the
+unchanged baseline ceilings (20,240 / 7,868 / 15 / 989): `runtimeTsLines`
+11,539, `resolveImportLines` 1,940, `resolveImportCases` 7, `ownedAdapterLines`
+898. The ceilings can drop to those numbers; this lane was told not to edit the
+baseline.
+
+**Merge fixes beyond conflict markers.**
+- `src/compiler/import-manifest.ts`: #7095 set `refResult` only on a `builtin`
+  intent that classifies `unknown`. S7-b gives user `declare function`s their
+  own `declared_function` intent, so the flag was never set and the declared
+  function's string result trapped (`__str_concat` null deref). It now keys on
+  `declared_function`.
+- `scripts/compiler-boundaries.json`: the `own-property-method-shadow.ts` entry
+  is back (inventory mode vs upstream `3902be94df`: valid).
+
+**Byte-neutrality** (equivalence suite with `compile()` hooked in both trees,
+S7-a head `9dae8246f6` vs this tree): 1,991 programs in common (gc 1,775,
+standalone 211, wasi 5); 1,959 identical. The other 32 (31 gc, 1 standalone)
+were recompiled in a fresh process per tree and still differ, by 0–1 byte.
+binaryen's normalised WAT is identical for all 32. The only difference is
+type-section order. The S7-a tree registers the function type of an
+import-collector pre-registration of a retired host import early — e.g. a
+`WeakRef_new` extern-class import, later dropped as unused. The S7-b tree never
+registers it (`isRetiredEcmaScriptExternClass`), so the same signature is
+interned later and type and vec indices shift. No instruction, import or
+export changes.
+
+**Equivalence gate** (`.tmp` copy, `--configLoader runner`): 20 failing, 2,008
+passing, 22 known failures; "No new equivalence regressions"; 2 baseline
+failures now pass (`delete-sentinel` string property, `reflect-api`
+`Reflect.construct`), the same as S7-a.
+
+**Tests.**
+- `issue-4401`: `SharedArrayBuffer_new` and `__temporal_*` re-pinned from
+  `regime-gap` to `unknown`/#6979.
+- `issue-7012`: the host-assisted runtime-helper row is deleted (lane and
+  providers gone).
+- `issue-5748`: the "compatibility operator dispatch" and "semantic intent
+  classification" describes are deleted (they covered only the deleted
+  `host_*`/`await`/`proxy_create` providers).
+- `issue-7095` / `issue-7098`: the two `semanticProviders: "host-assisted"` rows
+  are deleted. They already failed on the S7-a head with the S7 rejection.
+- `issue-1528`: the capability-ctor row is re-pinned. With `legacy-semantic`
+  gone, `Promise.allSettled.call(<plain function>, [thenable])` is a compile
+  error naming `env::Promise_allSettled`. That is regime gap #7101; on the S7-a
+  head it compiled and leaked the import into standalone binaries too. Flip the
+  row to a run when #7101 lands.
+
+Pre-existing reds, identical on the S7-a head (not this slice's):
+`issue-3518-host-async-imports` (2 rows: facade number walker, recursion
+counter), `issue-4577-standalone-calendar-retirement` (3 rows: 38-terminal
+census, TDZ guards / `$__cb_0`, artifact ceilings), and
+`issue-6474-linked-script-goal` (3 linked-run rows: the local runtime-eval
+provider is not an object).

@@ -175,15 +175,15 @@ function retired(reason: string): HostImportPolicy {
 
 /**
  * (#6979, #5385) Named regime gaps: host imports that are still the ONLY
- * implementation of a construct on the native regime. Exactly these two
- * families; `scripts/check-host-import-policy.ts` holds the explicit name
- * ceiling so a third cannot slip in. Each is a #5385 regime slice to close.
- * (`shared-array-buffer` closed with #7011's native provider.)
+ * implementation of a construct on the native regime. Exactly this family;
+ * `scripts/check-host-import-policy.ts` holds the explicit name ceiling so a
+ * second cannot slip in. Each is a #5385 regime slice to close.
+ * (`shared-array-buffer` closed with #7011's native provider and
+ * `temporal-strings` with #7012's in-module helpers.)
  */
 export const REGIME_GAP_FAMILIES = {
   "eager-generator-buffer":
     "eager-buffer generator fallback for generator shapes the native generator lowering declines (#680)",
-  "temporal-strings": "Temporal string parsing/formatting and duration field arithmetic have no native provider",
 } as const;
 export type RegimeGapFamily = keyof typeof REGIME_GAP_FAMILIES;
 
@@ -195,7 +195,7 @@ function regimeGapOfBuiltin(name: string): HostImportPolicy | undefined {
   if (name.startsWith("__gen_") || name === "__create_generator" || name === "__create_async_generator") {
     return regimeGap("eager-generator-buffer");
   }
-  return name.startsWith("__temporal_") ? regimeGap("temporal-strings") : undefined;
+  return undefined;
 }
 
 /**

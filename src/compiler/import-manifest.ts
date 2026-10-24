@@ -3,7 +3,6 @@ import { ts, forEachChild } from "../ts-api.js";
 import type { TypedAST } from "../checker/index.js";
 import type { CompileError, ImportDescriptor, ImportIntent } from "../index.js";
 import type { WasmModule } from "../ir/types.js";
-import { classifyHostImport } from "../host-import-policy.js";
 import { hasExportModifier } from "./validation.js";
 
 function classifyImport(name: string, mod: WasmModule): ImportIntent {
@@ -353,14 +352,9 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
       intent: classifyImport(imp.name, mod),
       paramCount,
     };
-    // (#7095) Result shape of a user `declare function` (an unclassified
-    // builtin), read by the runtime's declared-function marshal.
-    if (
-      refResult &&
-      descriptor.intent.type === "builtin" &&
-      classifyHostImport(descriptor).classification === "unknown"
-    )
-      descriptor.refResult = true;
+    // (#7095) Result shape of a user `declare function` (the #6979
+    // `declared_function` intent), read by the runtime's declared-function marshal.
+    if (refResult && descriptor.intent.type === "declared_function") descriptor.refResult = true;
     const key = JSON.stringify(descriptor);
     if (seenExact.has(key)) continue;
     seenExact.add(key);

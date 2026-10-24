@@ -178,25 +178,26 @@ describe("#1632b-2 closure-as-dynamic-constructor bridge", () => {
 
   // (#6979 S7-a) Re-pinned from the retired `host-assisted` profile, where the
   // capability-ctor gate routed the executor call through the host
-  // `__call_function` helper. The regime has no such helper: the row now locks
-  // that the program compiles without it. Running it still throws on the
-  // regime (identically on main's default profile before S7-a) — a regime gap
-  // filed against #5385, not a host path to keep.
-  it("compiles the capability-ctor executor call without the host __call_function helper", async () => {
-    // Bare `Promise.allSettled.call(Constructor, …)` is the test262 shape the
-    // syntactic gate keys on (V8's NewPromiseCapability runs the executor).
-    expect(
-      await importEmitted(
-        `function Constructor(executor: any) {
-           function resolve(v: any) {}
-           executor(resolve, function () {});
-         }
-         (Constructor as any).resolve = function (v: any) { return v; };
-         const p1: any = { then: function (f: any) { f("x"); } };
-         export function test(): number { Promise.allSettled.call(Constructor as any, [p1]); return 0; }`,
-        "__call_function",
-      ),
-    ).toBe(false);
+  // `__call_function` helper. (#6979 S7-b) On the regime this shape still has
+  // no native lowering: `Promise.allSettled.call(<plain function>, …)` reaches
+  // the host `Promise_allSettled` provider (it leaked into standalone binaries
+  // too). With `legacy-semantic` retired that is now a compile error naming
+  // the import — the regime gap #7101. Flip this row to a run when #7101 lands.
+  it("rejects the capability-ctor executor call until the #7101 regime gap closes", async () => {
+    const r = await compile(
+      `function Constructor(executor: any) {
+         function resolve(v: any) {}
+         executor(resolve, function () {});
+       }
+       (Constructor as any).resolve = function (v: any) { return v; };
+       const p1: any = { then: function (f: any) { f("x"); } };
+       export function test(): number { Promise.allSettled.call(Constructor as any, [p1]); return 0; }`,
+    );
+    expect(r.success).toBe(false);
+    const message = r.errors.map((e) => e.message).join("\n");
+    expect(message).toContain("#6979");
+    expect(message).toContain("Promise_allSettled");
+    expect(message).not.toContain("__call_function");
   });
 
   it("does NOT route an ordinary callable param (no capability-ctor flow) through __call_function (#1941 dual-mode)", async () => {

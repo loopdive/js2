@@ -76,12 +76,14 @@ describe("#4401 host import policy inventory", () => {
       classification: "regime-gap",
       family: "eager-generator-buffer",
     });
+    // (#6979 S7-b) Closed gaps: #7011 (native SharedArrayBuffer) and #7012
+    // (in-module Temporal helpers) retired their host imports.
     expect(
       gap("SharedArrayBuffer_new", { type: "extern_class", className: "SharedArrayBuffer", action: "new" }),
-    ).toMatchObject({ classification: "regime-gap", family: "shared-array-buffer" });
+    ).toMatchObject({ classification: "unknown", ownerIssue: 6979 });
     expect(
       gap("__temporal_plain_date_to_string", { type: "builtin", name: "__temporal_plain_date_to_string" }),
-    ).toMatchObject({ classification: "regime-gap", family: "temporal-strings" });
+    ).toMatchObject({ classification: "unknown", ownerIssue: 6979 });
     expect(gap("Map_new", { type: "extern_class", className: "Map", action: "new" })).toMatchObject({
       classification: "unknown",
       ownerIssue: 6979,
