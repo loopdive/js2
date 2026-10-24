@@ -68,6 +68,8 @@ import {
   buildArgumentVectorApplyAdapter,
 } from "../../../runtime/wasmgc/values/argument-vector-call-adapters.js";
 
+import { nativeObjectRealmInvocationBinding, type NativeObjectRealmCalls } from "./native-object-realm-calls.js";
+
 import { requireNativePromiseInvocation, type NativePromiseInvocation } from "./native-promise-invocation.js";
 
 export interface NativeInvocationDependencies {
@@ -109,6 +111,7 @@ interface Owner {
   argumentApply?: FunctionReservation;
   realmCallables?: NativeRealmSourceClosureCallables;
   builtins?: NativeBuiltinFunctionReservations;
+  publicRealm?: NativeObjectRealmCalls;
   filled: boolean;
 }
 const owners = new WeakMap<NativeInvocationReservations, Owner>();
@@ -323,18 +326,18 @@ function requireOwner(tx: PhysicalModuleReservations, pack: NativeInvocationRese
   authenticate(tx, pack.requirements, owner.dependencies);
   if (preparedIrDataMismatch(invocationLayout(tx, owner.dependencies), owner.layout)) fail("changed closure ancestry");
   requireNativeInvocationSubstrateReservations(tx, owner.substrate, substrateDependencies(owner.dependencies));
-  if (owner.builtins) builtinBinding(owner, pack, owner.builtins);
+  if (owner.builtins || owner.publicRealm) joinedBuiltin(owner, pack);
   return owner;
 }
 
-function builtinBinding(
-  owner: Owner,
-  pack: NativeInvocationReservations,
-  builtins: NativeBuiltinFunctionReservations,
-  completed = false,
-) {
-  const binding = nativeBuiltinFunctionInvocationBinding(owner.tx, builtins, completed),
-    d = owner.dependencies;
+function joinedBuiltin(owner: Owner, pack: NativeInvocationReservations, completed = false) {
+  const binding = owner.publicRealm
+    ? nativeObjectRealmInvocationBinding(owner.tx, owner.publicRealm, completed)
+    : owner.builtins
+      ? nativeBuiltinFunctionInvocationBinding(owner.tx, owner.builtins, completed)
+      : undefined;
+  if (!binding) return undefined;
+  const d = owner.dependencies;
   if (
     binding.closures !== d.source.closures ||
     binding.closurePlan !== d.source.closurePlan ||
@@ -344,7 +347,32 @@ function builtinBinding(
     binding.errors !== pack.errors
   )
     fail("builtin invocation uses different shared producers");
+  if (owner.publicRealm && (!("source" in binding) || binding.source !== d.source))
+    fail("public realm uses a different source population");
   return binding;
+}
+
+/** The full realm and source population join before freeze; their algorithms may call back through Call. */
+export function bindNativeInvocationObjectRealm(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  realm: NativeObjectRealmCalls,
+): void {
+  const owner = requireOwner(tx, pack);
+  if (tx.state !== "reserving" || owner.builtins || owner.publicRealm)
+    fail("invalid phase or duplicate builtin invocation join");
+  // Validate before mutation so a rejected join can be retried with the correct owner.
+  joinedBuiltin({ ...owner, publicRealm: realm }, pack);
+  reserveNativeInvocationArgumentApply(tx, pack);
+  owner.publicRealm = realm;
+}
+
+/** An issued full-realm association for consumers of generic Call; bootstrap joins cannot satisfy it. */
+export function nativeInvocationObjectRealmBinding(tx: PhysicalModuleReservations, pack: NativeInvocationReservations) {
+  const owner = requireOwner(tx, pack);
+  if (!owner.publicRealm || !owner.argumentApply) fail("missing full public realm invocation join");
+  const binding = nativeObjectRealmInvocationBinding(tx, owner.publicRealm);
+  return Object.freeze({ ...binding, call: owner.argumentApply, source: owner.dependencies.source });
 }
 
 /** Join the genuine emitted kernel once, before freeze; this grants no whole-realm completion. */
@@ -354,8 +382,9 @@ export function bindNativeInvocationBuiltins(
   builtins: NativeBuiltinFunctionReservations,
 ): void {
   const owner = requireOwner(tx, pack);
-  if (tx.state !== "reserving" || owner.builtins) fail("invalid phase or duplicate builtin invocation join");
-  builtinBinding(owner, pack, builtins);
+  if (tx.state !== "reserving" || owner.builtins || owner.publicRealm)
+    fail("invalid phase or duplicate builtin invocation join");
+  joinedBuiltin({ ...owner, builtins }, pack);
   reserveNativeInvocationArgumentApply(tx, pack);
   owner.builtins = builtins;
 }
@@ -446,7 +475,7 @@ function entries(
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  const booleans = owner.builtins ? builtinBinding(owner, pack, owner.builtins).booleans : undefined;
+  const booleans = joinedBuiltin(owner, pack)?.booleans;
   return callables.map((row) => {
     const info = row.signature.info;
     const booleanResult =
@@ -473,7 +502,7 @@ function entries(
       arguments: {
         unboxNumber: values.functions.unboxNumber.handle,
         isUndefined: pack.isUndefined.handle,
-        ...(owner.builtins
+        ...(owner.builtins || owner.publicRealm
           ? {
               isNumber: values.functions.isNumber.handle,
               defaultParameterStart: row.source.closureSubtype!.signature.defaultParamStart,
@@ -510,11 +539,15 @@ export function fillNativeInvocationResources(
     fail("invocation and Promise producer use different exception tags");
   requireNativeSourceClosureCallables(tx, callables, owner.dependencies.source);
   if (callables.requirements !== pack.requirements) fail("selected callable requirements differ");
-  const builtin = owner.builtins ? builtinBinding(owner, pack, owner.builtins, true) : undefined;
+  const builtin = joinedBuiltin(owner, pack, !!owner.builtins);
   if (builtin && builtin.exception !== exception) fail("invocation and builtin producer use different exception tags");
   const exceptionTag = tx.physicalIndex(exception);
+  if (owner.publicRealm && !realmCallables) fail("full public realm requires all source callables");
   if (realmCallables) {
-    requireNativeRealmSourceClosureCallables(tx, realmCallables, owner.dependencies.source, realmCallables.realm);
+    const expectedRealm = owner.publicRealm
+      ? nativeObjectRealmInvocationBinding(tx, owner.publicRealm).realm.realm
+      : realmCallables.realm;
+    requireNativeRealmSourceClosureCallables(tx, realmCallables, owner.dependencies.source, expectedRealm);
     if (!builtin || realmCallables.realm.source !== pack.requirements.source)
       fail("realm callables require the joined source/builtin population");
   }
@@ -629,7 +662,7 @@ export function requireCompletedNativeInvocation(
     );
   if (owner.dependencies.promise)
     requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source, true);
-  if (owner.builtins) builtinBinding(owner, pack, owner.builtins, true);
+  if (owner.builtins || owner.publicRealm) joinedBuiltin(owner, pack, true);
   requireCompletedNativeValues(
     tx,
     owner.dependencies.values,

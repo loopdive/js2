@@ -334,6 +334,7 @@
         "src/backend/wasmgc/program/native-realm.ts",
         "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
         "src/backend/wasmgc/resources/native-object-realm.ts",
+        "src/backend/wasmgc/resources/native-object-realm-calls.ts",
         "src/backend/wasmgc/resources/native-mixed-object-access.ts",
         "src/backend/wasmgc/resources/native-well-known-symbols.ts",
         "src/backend/wasmgc/resources/native-bigint-number.ts",
@@ -16219,6 +16220,11 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-object-realm.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-object-realm-calls.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

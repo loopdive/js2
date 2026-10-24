@@ -2991,3 +2991,54 @@ source invocation and the mixed-object-access suite before stopping at the
 formatter failures. Remaining hook files were not reached and are not claimed
 as checked by that run. The commit retry uses the repository's documented fast
 hook after repairing the observed failure; no failed result is suppressed.
+
+### Implementation plan: connect full-realm Call and mixed Get
+
+Join the existing common native invocation producer to the actual full public
+realm declarations, shared source closures, argument vector, primitive values,
+Boolean conversion and exception owner. Reserve and canonically fill the full
+catalog identity matcher, receiver/vector dispatcher and lifted adapters; reuse
+the bootstrap recipes with explicit typed/external singleton representation.
+Bind mixed Get to that issued invocation before freeze and fill its existing
+OrdinaryGet recipe using the exact shared value/argument resources. No arbitrary
+Call handle, bootstrap population substitution, or caller-filled body can grant
+whole-realm completion. Completion continues to require the unfinished full
+realm algorithms and population, so native Promise/public admission stays closed.
+
+Validate executable dispatch recipes with genuine source/native carriers and
+receiver/argument/error identity, plus full-realm binding/foreign-owner rejection,
+canonical Get fill and unchanged incomplete-realm refusal. This connects an
+actual dependency edge toward public execution; it does not complete Promise,
+Linear/WASI, conformance, or legacy retirement.
+
+The full-realm Call/Get connection is implemented with one Call owner per realm.
+Independent review found and fixed an invalid externref-singleton comparison,
+a selected-only source fallback on the public path, and competing lifted-slot
+ownership. Public invocation now requires the exact complete source callable
+association. Null or wrong-carrier external Function.prototype anchors fail the
+matcher before a cast. Completed bindings audit canonical adapters and actual
+Boolean/value/String/substrate producers before asking the still-incomplete
+full realm for authority.
+
+The canonical executable-body audit is shared with mixed object access; the
+existing value owner also supports an exact program/projection requirement.
+This avoids a second backend-to-IR authentication implementation and requires
+no additional cycle allowance. The first test run exposed fixture mistakes
+(an absent storage helper and an invalid post-failure ledger probe); a following
+run exposed the test timeout and the required-number argument refusal. The
+corrected source control uses a real zero-parameter getter; a required-number
+getter is an explicit rejection control. All 44 native control algorithms are
+transport observers only: none is claimed as a standard builtin implementation.
+Public native Promise and full realm admission remain unavailable.
+
+Validation of the full-realm Call/Get connection: the final new suite passes
+4/4, executing both normal and displaced coordinates. The regression run
+passes 82/84 (36 builtin, 11 productive invocation, 35 mixed access); two mixed
+completion-error ordering regressions were repaired and both pass in a focused
+rerun (2/2, 35 unrelated cases skipped). Preserve the original failing run as
+evidence rather than describing it as an all-green suite. Source and focused
+test TS7 pass; nine quality/inventory/preservation gates pass; eleven host
+binaries remain byte-identical to main 7371eb505. Strict legacy closure remains
+OPEN. The executable native catalog bodies in the new suite are transport
+controls, not full standard builtin algorithms. Public Promise admission,
+Linear/WASI, full Test262/performance and reviewed retirement remain unfinished.

@@ -59,8 +59,14 @@ import {
 } from "../../src/backend/wasmgc/resources/native-object-realm.js";
 
 export const NO_SOURCE_REALM = `export function run(): number { const value = Object.create(null); return 7; }`;
-export function publicRealmFoundation(displaced = false, decoded = false, noSource = false, shared = false) {
-  const program = prepareGetterProgram(noSource ? NO_SOURCE_REALM : STATE_SOURCE, decoded);
+export function publicRealmFoundation(
+  displaced = false,
+  decoded = false,
+  noSource = false,
+  shared = false,
+  sourceText = STATE_SOURCE,
+) {
+  const program = prepareGetterProgram(noSource ? NO_SOURCE_REALM : sourceText, decoded);
   const projection = program.runtime[0]!;
   const realm = deriveNativeRealmRequirements(program, projection);
   if (!realm || (noSource ? realm.description.sourceUnits.length !== 0 : realm.description.sourceUnits.length !== 2))

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import type { ValType } from "../../../wasm/model/instructions.js";
+import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import type { TypeDef, GlobalDef } from "../../../wasm/model/module-records.js";
 import type {
   PhysicalModuleReservations,
@@ -423,4 +423,15 @@ export function compareNativeResourceDeclarationShape(
     };
   }
   if (preparedIrDataMismatch(observed, expected) !== undefined) fail("resource descriptor/signature mismatch");
+}
+
+/** Authenticate an issued filled function and its exact canonical recipe without trusting counters. */
+export function requireCanonicalNativeFunction(
+  tx: PhysicalModuleReservations,
+  token: FunctionReservation,
+  definition: { readonly locals: readonly LocalDef[]; readonly body: readonly Instr[] },
+): void {
+  tx.assertCompletedReservation(token);
+  if (preparedIrDataMismatch({ locals: token.object.locals, body: token.object.body }, definition) !== undefined)
+    fail("noncanonical executable dependency " + token.key);
 }

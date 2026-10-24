@@ -94,8 +94,8 @@ import {
 } from "../../src/ir/program-native-invocation.js";
 import type { IrLowerResolver } from "../../src/ir/backend/lower-contracts.js";
 
-export function mixedFoundation(displaced = false) {
-  const f = publicRealmFoundation(displaced),
+export function mixedFoundation(displaced = false, sourceText?: string) {
+  const f = publicRealmFoundation(displaced, false, false, false, sourceText),
     { tx } = f,
     c = publicRealmClosures(f);
   const flatten = reserveNativeStringFlattenResources(tx, "mixed:flatten", f.strings);
@@ -199,8 +199,8 @@ export function mixedFoundation(displaced = false) {
     stringCreate,
   };
 }
-export function mixedOwnerFixture(displaced = false) {
-  const r = mixedFoundation(displaced),
+export function mixedOwnerFixture(displaced = false, sourceText?: string) {
+  const r = mixedFoundation(displaced, sourceText),
     realm = publicRealmDeclarations(r.f, r.c);
   const dependencies = {
     realm: realm.declarations,
@@ -455,7 +455,7 @@ export function mixedRuntime(displaced = false) {
     ...prototype,
     ...(foreign
       ? ([{ op: "struct.new", typeIdx: f.pack.types.identity.typeIndex }] as Instr[])
-      : [global(realm), { op: "ref.as_non_null" }]),
+      : ([global(realm), { op: "ref.as_non_null" }] as Instr[])),
     { op: "struct.new", typeIdx: f.pack.types.state.typeIndex },
   ];
   const native = (id: Instr[], foreign: Instr[], prototype: Instr[], functionHandle = lifted.handle): Instr[] => [

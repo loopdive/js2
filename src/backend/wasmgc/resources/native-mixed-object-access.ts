@@ -10,6 +10,7 @@ import type {
 } from "../../../runtime/wasmgc/values/native-resource-declaration-types.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
+  buildMixedObjectGet,
   buildMixedObjectClassify,
   buildMixedObjectOwn,
   buildMixedObjectLookup,
@@ -18,7 +19,6 @@ import {
   buildMixedObjectSetPrototype,
   type MixedObjectAccessOperands,
   type MixedObjectCarrier,
-  type MixedObjectDefinition,
 } from "../../../runtime/wasmgc/values/mixed-object-access-bodies.js";
 import {
   buildOrdinaryObjectHashDefinition,
@@ -62,11 +62,18 @@ import {
 import { nativePublicBuiltinFunctionRequestDependencies } from "./native-builtin-function-requests.js";
 import { requireCompletedNativeInvocationSubstrate } from "./native-invocation-substrate.js";
 import {
+  requireCanonicalNativeFunction,
   executeNativeResourceRecipe,
   freezeNativeResourceRecipe,
   requireNativeDeclaredReservation,
   preflightNativeResourceRecipe,
 } from "./native-resource-declarations.js";
+
+import {
+  nativeInvocationObjectRealmBinding,
+  requireCompletedNativeInvocation,
+  type NativeInvocationReservations,
+} from "./native-invocation.js";
 
 export interface NativeMixedObjectAccessDependencies {
   readonly realm: NativeObjectRealmDeclarations;
@@ -221,6 +228,8 @@ interface Owner {
   readonly plan: NativeResourceRecipe;
   readonly tokens: readonly FunctionReservation[];
   filled: boolean;
+  invocation?: NativeInvocationReservations;
+  getterFilled?: boolean;
 }
 const owners = new WeakMap<NativeMixedObjectAccessReservations, Owner>();
 function current(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessReservations): Owner {
@@ -351,18 +360,6 @@ const builders = {
   getPrototypeOf: buildMixedObjectGetPrototype,
   setPrototypeOf: buildMixedObjectSetPrototype,
 };
-function canonical(
-  tx: PhysicalModuleReservations,
-  token: FunctionReservation,
-  definition: MixedObjectDefinition,
-): void {
-  tx.assertCompletedReservation(token);
-  same(
-    { locals: token.object.locals, body: token.object.body },
-    definition,
-    "noncanonical executable dependency " + token.key,
-  );
-}
 /** Audit only the executable own/key/String subgraph; the old whole-chain lookup/has are never used. */
 function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObjectAccessDependencies): void {
   const own = d.stringOwnDependencies,
@@ -372,9 +369,14 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
   const decoder = flatten.utf8Decoder
     ? { kind: "present" as const, handle: flatten.utf8Decoder.handle }
     : { kind: "absent" as const };
-  canonical(tx, flatten.copyTree, buildStringCopyTreeDefinition(layout, flatten.worklist.typeIndex, decoder));
-  if (flatten.utf8Decoder) canonical(tx, flatten.utf8Decoder, buildStringUtf8ToFlatDefinition(layout));
-  canonical(
+  requireCanonicalNativeFunction(
+    tx,
+    flatten.copyTree,
+    buildStringCopyTreeDefinition(layout, flatten.worklist.typeIndex, decoder),
+  );
+  if (flatten.utf8Decoder)
+    requireCanonicalNativeFunction(tx, flatten.utf8Decoder, buildStringUtf8ToFlatDefinition(layout));
+  requireCanonicalNativeFunction(
     tx,
     flatten.flatten,
     buildStringFlattenDefinition(layout, {
@@ -387,7 +389,7 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
   if (empty.kind !== "global") fail("canonical empty literal is not a global");
   tx.assertCompletedReservation(flatten.emptyLiteral);
   same(flatten.emptyLiteral.object.init, empty.init, "noncanonical executable empty literal");
-  canonical(
+  requireCanonicalNativeFunction(
     tx,
     lookup.equality.equals,
     buildStringEqualityDefinition(layout, flatten.flatten.handle, lookup.equality.lazy),
@@ -402,13 +404,13 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
     strFlattenIdx: flatten.flatten.handle,
     strEqualsIdx: lookup.equality.equals.handle,
   };
-  canonical(
+  requireCanonicalNativeFunction(
     tx,
     own.lookup.hash,
     buildOrdinaryObjectHashDefinition({ ...keys, hashedStrTypeIdx: layout.hashedStrTypeIdx, nativeFirst: true }),
   );
-  canonical(tx, own.lookup.keyEquals, buildOrdinaryObjectKeyEqualsDefinition(keys));
-  canonical(
+  requireCanonicalNativeFunction(tx, own.lookup.keyEquals, buildOrdinaryObjectKeyEqualsDefinition(keys));
+  requireCanonicalNativeFunction(
     tx,
     own.lookup.findOwn,
     buildOrdinaryObjectFindDefinition({
@@ -427,8 +429,8 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
     nativeStrDataTypeIdx: layout.nativeStrDataTypeIdx,
     flattenIdx: flatten.flatten.handle,
   };
-  canonical(tx, d.stringOwn.arrayIndex, buildStringExoticIndexDefinition(strings));
-  canonical(
+  requireCanonicalNativeFunction(tx, d.stringOwn.arrayIndex, buildStringExoticIndexDefinition(strings));
+  requireCanonicalNativeFunction(
     tx,
     d.stringOwn.virtualOwn,
     buildStringVirtualOwnDescriptorDefinition({
@@ -439,7 +441,7 @@ function canonicalDependencies(tx: PhysicalModuleReservations, d: NativeMixedObj
       indexIdx: d.stringOwn.arrayIndex.handle,
     }),
   );
-  canonical(
+  requireCanonicalNativeFunction(
     tx,
     d.stringOwn.findOwn,
     buildStringExoticOwnDescriptorDefinition({
@@ -489,13 +491,65 @@ export function requireCompletedNativeMixedObjectAccessStructure(
   }
   return pack;
 }
+/** Join only the full public population's actual common Call, never a caller-supplied function token. */
+export function bindNativeMixedObjectInvocation(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  invocation: NativeInvocationReservations,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "reserving" || owner.invocation) fail("invalid phase or duplicate invocation join");
+  getterBinding(tx, owner, invocation);
+  owner.invocation = invocation;
+}
+function getterBinding(tx: PhysicalModuleReservations, owner: Owner, invocation: NativeInvocationReservations) {
+  const binding = nativeInvocationObjectRealmBinding(tx, invocation),
+    d = owner.identities;
+  if (
+    binding.realm !== d.realm ||
+    binding.source !== d.realmDependencies.source ||
+    binding.values !== d.values ||
+    binding.arguments !== d.realmDependencies.substrate.arguments ||
+    binding.exception !== d.realm.exception.tag
+  )
+    fail("different shared Get/Call population");
+  return binding;
+}
+function getterDefinition(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessReservations, owner: Owner) {
+  if (!owner.invocation) fail("missing full-realm invocation join");
+  const binding = getterBinding(tx, owner, owner.invocation);
+  return buildMixedObjectGet({
+    entryTypeIdx: owner.identities.stringOwnDependencies.layoutDependencies.objects.propEntry.typeIndex,
+    argumentVector: { kind: "externref" },
+    undefinedGlobal: tx.physicalIndex(owner.identities.values.globals.undefined),
+    lookup: pack.lookup.handle,
+    newVector: binding.arguments.newVector.handle,
+    call: binding.call.handle,
+  });
+}
+/** The runtime getter invokes the same Call used by source and native functions, preserving Receiver. */
+export function fillNativeMixedObjectGet(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "filling" || owner.getterFilled) fail("invalid phase or duplicate Get fill");
+  requireCompletedNativeMixedObjectAccessStructure(tx, pack);
+  tx.fillFunction(pack.get, getterDefinition(tx, pack, owner));
+  owner.getterFilled = true;
+}
 /** A filled-looking Get token or declaration counters cannot substitute for the genuine missing graph. */
 export function requireCompletedNativeMixedObjectAccess(
   tx: PhysicalModuleReservations,
   pack: NativeMixedObjectAccessReservations,
 ): never {
-  requireNativeMixedObjectAccessReservations(tx, pack);
-  fail("mixed Call, source lowering/allocation and complete intrinsic populations remain unavailable");
+  const owner = current(tx, pack);
+  if (!owner.getterFilled || !owner.invocation)
+    fail("mixed Call, source lowering/allocation and complete intrinsic populations remain unavailable");
+  requireCompletedNativeMixedObjectAccessStructure(tx, pack);
+  requireCanonicalNativeFunction(tx, pack.get, getterDefinition(tx, pack, owner));
+  requireCompletedNativeInvocation(tx, owner.invocation);
+  fail("complete intrinsic populations remain unavailable");
 }
 export function nativeMixedObjectAccessReservationInventory(
   tx: PhysicalModuleReservations,

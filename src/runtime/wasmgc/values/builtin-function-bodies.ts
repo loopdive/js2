@@ -18,6 +18,7 @@ export interface BuiltinFunctionEntryOperands {
   readonly metadataId: number;
   readonly liftedTypeIdx: number;
   readonly singleton: number;
+  readonly singletonExtern?: boolean;
   readonly lifted: FuncHandle;
   readonly algorithm: FuncHandle;
   readonly initialName: readonly Instr[];
@@ -52,6 +53,16 @@ export interface BuiltinFunctionBodyOperands {
   readonly errors: readonly (readonly Instr[])[];
   readonly entries: readonly BuiltinFunctionEntryOperands[];
 }
+/** Shared receiver/vector ABI, independent of bootstrap-only algorithms and storage. */
+export type BuiltinFunctionDispatchOperands = Pick<
+  BuiltinFunctionBodyOperands,
+  "rootTypeIdx" | "realm" | "initializer" | "match" | "typeError" | "exceptionTag" | "errors"
+> & {
+  readonly entries: readonly Pick<
+    BuiltinFunctionEntryOperands,
+    "typeIdx" | "metadataId" | "liftedTypeIdx" | "singleton" | "singletonExtern" | "algorithm"
+  >[];
+};
 export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
@@ -59,13 +70,16 @@ const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
 export function builtinUndefined(d: BuiltinFunctionBodyOperands): Instr[] {
   return [global(d.undefinedGlobal), { op: "extern.convert_any" }];
 }
-export function builtinFailure(d: BuiltinFunctionBodyOperands, ordinal = 0): Instr[] {
+export function builtinFailure(
+  d: Pick<BuiltinFunctionDispatchOperands, "errors" | "typeError" | "exceptionTag">,
+  ordinal = 0,
+): Instr[] {
   return [...structuredClone(d.errors[ordinal]!), call(d.typeError), { op: "throw", tagIdx: d.exceptionTag }];
 }
-export function builtinRoot(d: BuiltinFunctionBodyOperands, local = 0): Instr[] {
+export function builtinRoot(d: Pick<BuiltinFunctionDispatchOperands, "rootTypeIdx">, local = 0): Instr[] {
   return [get(local), { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: d.rootTypeIdx }];
 }
-export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionDispatchOperands): BuiltinFunctionDefinition {
   return {
     locals: [{ name: "candidate", type: { kind: "anyref" } }],
     body: [
@@ -76,6 +90,14 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
       ...d.entries.flatMap((entry, index): Instr[] => [
         get(1),
         { op: "ref.test", typeIdx: entry.typeIdx },
+        ...(entry.singletonExtern
+          ? [
+              global(entry.singleton),
+              { op: "any.convert_extern" } as Instr,
+              { op: "ref.test", typeIdx: entry.typeIdx } as Instr,
+              { op: "i32.and" } as Instr,
+            ]
+          : []),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -94,6 +116,9 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionBodyOperan
             get(1),
             { op: "ref.cast", typeIdx: entry.typeIdx },
             global(entry.singleton),
+            ...(entry.singletonExtern
+              ? [{ op: "any.convert_extern" } as Instr, { op: "ref.cast", typeIdx: entry.typeIdx } as Instr]
+              : []),
             { op: "ref.eq" },
             { op: "i32.and" },
             get(1),
@@ -207,8 +232,8 @@ export function buildBuiltinFunctionSingletonDefinition(
 }
 /** No source argc/this/extras or active-realm global is touched by this transport. */
 export function buildBuiltinFunctionLiftedDefinition(
-  d: BuiltinFunctionBodyOperands,
-  entry: BuiltinFunctionEntryOperands,
+  d: BuiltinFunctionDispatchOperands,
+  entry: BuiltinFunctionDispatchOperands["entries"][number],
   ordinal: number,
 ): BuiltinFunctionDefinition {
   return {
@@ -232,7 +257,7 @@ export function buildBuiltinFunctionAlgorithmDefinition(
 ): BuiltinFunctionDefinition {
   return { locals: [], body: behavior === "function-prototype" ? builtinUndefined(d) : builtinFailure(d, 2) };
 }
-export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
+export function buildBuiltinFunctionCallDefinition(d: BuiltinFunctionDispatchOperands): BuiltinFunctionDefinition {
   return {
     locals: [{ name: "ordinal", type: { kind: "i32" } }],
     body: [
