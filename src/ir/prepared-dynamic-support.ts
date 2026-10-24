@@ -202,8 +202,60 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             else planned.set(instr, [ref]);
             return;
           }
+          // (#7106 Stage 4) `message === undefined` / `thrown === null` over the
+          // externref carrier: the host tag.test arms `emitTagTest` emits —
+          // Undefined calls `__typeof_undefined`, Null is a bare `ref.is_null`
+          // (no callable). Other partitions stay unnamed (unmeasured).
+          if (
+            native &&
+            functionObjects &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "tag.test" &&
+            instr.tagId !== undefined
+          ) {
+            if (instr.tagId === JS_TAG_IDS.Null) {
+              planned.set(instr, []);
+              return;
+            }
+            if (instr.tagId !== JS_TAG_IDS.Undefined) {
+              nameable = false;
+              return;
+            }
+            const ref = exactPreparedDynamicHelperRef(
+              ctx,
+              callableImports,
+              "__typeof_undefined",
+              ctx.funcMap.get("__typeof_undefined"),
+              [{ kind: "externref" }],
+              [{ kind: "i32" }],
+            );
+            if (ref === undefined) nameable = false;
+            else planned.set(instr, [ref]);
+            return;
+          }
+          // (#7106 Stage 4) `var x;` / missing-member reads produce the
+          // carrier's undefined: on the native-string externref lane that is
+          // the extern-wrapped `$undefined` singleton (`emitUndefined`), a
+          // backend sequence that calls nothing.
+          if (
+            native &&
+            functionObjects &&
+            !ctx.fast &&
+            ctx.nativeStrings &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.undefined"
+          ) {
+            planned.set(instr, []);
+            return;
+          }
           if (native && functionObjects && (instr.kind === "dyn.member_get" || instr.kind === "dyn.member_set")) {
-            const name = instr.kind === "dyn.member_get" ? "__dyn_member_get" : "__dyn_member_set";
+            const name =
+              instr.kind === "dyn.member_get"
+                ? "__dyn_member_get"
+                : instr.sloppy === true
+                  ? "__dyn_member_set_sloppy"
+                  : "__dyn_member_set";
             const handle = ctx.funcMap.get(name);
             if (handle === undefined) {
               nameable = false;

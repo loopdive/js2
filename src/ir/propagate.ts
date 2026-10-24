@@ -667,6 +667,18 @@ function seedReturnType(
   const sig = checker.getSignatureFromDeclaration(fn);
   if (!sig) return UNKNOWN;
   const ty = sig.getReturnType();
+  // #7133: early literal returns infer `1 | 0` / `'a' | 'b'`, whose
+  // outer Union flag hides their common primitive ABI. Seed that kind
+  // before DYNAMIC absorbs the body evidence. Keep nullish, mixed and enum
+  // unions on the existing path, and do not change parameter seeding.
+  if (ty.isUnion()) {
+    if (ty.types.every((t) => (t.flags & ts.TypeFlags.NumberLiteral) !== 0 && !(t.flags & ts.TypeFlags.EnumLiteral))) {
+      return F64;
+    }
+    if (ty.types.every((t) => (t.flags & ts.TypeFlags.StringLiteral) !== 0 && !(t.flags & ts.TypeFlags.EnumLiteral))) {
+      return STRING;
+    }
+  }
   return tsTypeToLattice(ty, checker);
 }
 
