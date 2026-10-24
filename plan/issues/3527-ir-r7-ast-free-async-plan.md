@@ -2486,3 +2486,26 @@ gates misdecode spaces in this checkout path; exact source/script copies under a
 space-free temporary directory pass. Initial failure logs are retained locally.
 No baseline, test expectation, CI workflow or global architecture rule was
 weakened for these environment failures.
+
+## Native Promise composition repair — 2026-10-24
+
+Implementation plan: keep inherited metadata type identity in
+`src/backend/wasmgc/resources/native-promises.ts`, while preserving the entire
+declared capture suffix during physical reservation. Reuse the existing
+settle-closure value/body builders in a test kernel using the actual reserved
+type table. No new production helper or alternate Promise layout is needed.
+
+Acceptance: emitted Wasm validates with the reserved seven-field capture;
+resolve/reject share one guard, only the first callback runs even while the
+Promise remains pending, and separate pairs remain independent. Exercise both
+the settlement signature as the first closure root and an unrelated first
+signature. This type/kernel regression does not certify complete native
+Promise inventory composition or public source admission.
+
+Validation: the prior 47 resource tests passed before the repair, while the
+two added executable cases failed with `unresolved struct field index 6`.
+After preserving the suffix, all 49 resource tests pass, including both
+zero-import Wasm kernels. The staged-closure suite passes 20/20. Fresh-context adversarial review found no actionable
+quality or correctness defect. Source and focused test TypeScript checks pass.
+The legacy reachability check remains preservation-only: its strict graph is
+open, so this repair does not certify retirement.
