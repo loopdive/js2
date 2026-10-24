@@ -16,6 +16,8 @@ const policy = {
   numberBoundary: { box: "native", unbox: "native" },
 } as const;
 const sources = {
+  immediate: "export async function run(seed:number):Promise<number>{return seed;}",
+  constant: "export async function run():Promise<number>{return 42;}",
   two: "export async function run(seed:number):Promise<number>{const first=await seed; const second=await first; return second;}",
   live: "export async function run(seed:number, other:number):Promise<number>{const first=await seed; await other; return first;}",
 };
@@ -51,6 +53,35 @@ async function execute(name: string, replay: boolean) {
   return { exports: exports as Record<string, CallableFunction>, bytes };
 }
 describe("source-owned native async frame materialization (kernel integration)", () => {
+  it.each([false, true])("settles immediate source returns before draining, replay=%s", async (replay) => {
+    const { exports: e } = await execute("immediate", replay);
+    for (const value of [7.25, -0, NaN, Infinity, -Infinity, 2 ** 40]) {
+      const p = e.run!(value);
+      expect(e.state!(p)).toBe(1);
+      expect(e.number!(e.value!(p))).toBe(value);
+    }
+    const { exports: c } = await execute("constant", replay);
+    const p = c.run!();
+    expect(c.state!(p)).toBe(1);
+    expect(c.number!(c.value!(p))).toBe(42);
+  });
+  it("prepares an async call chain with a computed non-suspending callee", () => {
+    const program = requireProgram(
+      prepareWholeIrProgram({
+        ...sourceInput({
+          "./entry.ts":
+            "async function next(n:number):Promise<number>{return n+1;} export async function run(n:number):Promise<number>{return await next(n);}",
+        }),
+        policy,
+      }),
+    );
+    const functions = program.runtime[0]!.prepared.functions;
+    const callee = functions.find((f) => f.name === "next")!;
+    const caller = functions.find((f) => f.name === "run")!;
+    expect(callee.asyncPlan!.states.map((state) => state.terminator.kind)).toEqual(["resolve"]);
+    expect(callee.asyncPlan!.runtimeIntents).toContain("promise.number.bridge");
+    expect(caller.asyncPlan!.states.some((state) => state.terminator.kind === "suspend")).toBe(true);
+  });
   it.each([false, true])("executes two genuine awaits, replay=%s", async (replay) => {
     const { exports: e } = await execute("two", replay);
     const values = [7, 7.25, -0, NaN, Infinity, -Infinity, 2 ** 40, ...Array.from({ length: 12 }, (_, i) => i)];

@@ -2509,3 +2509,36 @@ zero-import Wasm kernels. The staged-closure suite passes 20/20. Fresh-context a
 quality or correctness defect. Source and focused test TypeScript checks pass.
 The legacy reachability check remains preservation-only: its strict graph is
 open, so this repair does not certify retirement.
+
+## Implementation Plan — 2026-10-24 — flat async owners without await
+
+The ordinary whole-program producer currently rejects a straight-line async
+owner such as `async function run(seed: number) { return seed; }` solely
+because its body contains no await. This also prevents preparing a caller
+that awaits such an owner. Extend `src/ir/async-linear-prepare.ts` through its
+existing single terminal resolve state; reuse slot aliasing, derived helper
+construction, canonical Promise ABI, and whole-program numeric bridge
+completion. Do not add a second no-await producer or bypass unsupported
+control-flow checks.
+
+Acceptance: verify zero-suspension scalar, void and reference plans, computed
+slot values and unsupported control; prepare a real async callee/caller pair;
+execute source-owned immediate numeric returns in the existing native frame
+kernel before and after codec replay, including negative zero and NaN. These
+kernels establish frame behavior only; complete public native runtime
+composition remains a separate required integration. Quality acceptance: no
+new production module, helper duplication, selector exception or runtime
+shortcut.
+
+Validation: 96/102 tests passed across eight suites. The six failing cases
+all belong to the older linear-suspension runtime suite; the unchanged
+predecessor e4f0d1bd45fcdac1547e66d011375b34c6098d02 reproduces the exact six
+test names and error texts (1/7 passes there). Source and changed-test TS7,
+full lint (7,315 files), formatting, size/coercion/oracle ratchets, compiler
+boundary inventory and import-cycle checks pass. Eleven existing host
+consumer binaries remain byte-identical against main 7371eb505b365e49815f1ddc09afed6c52372540.
+Fresh adversarial review found no actionable correctness or quality defect.
+Void/dynamic return execution, computed call-chain execution and complete
+public native runtime composition are not established by these tests. The
+legacy reachability gate remains preservation-only: strict closure is OPEN
+at the two existing nonliteral dynamic imports; deletion is not certified.
