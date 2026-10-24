@@ -76,6 +76,7 @@ import {
 } from "./native-invocation.js";
 
 import { nativeRealmPopulationBinding, type NativeRealmPopulation } from "./native-realm-population.js";
+import { nativePromiseObjectBinding, type NativePromiseObjects } from "./native-promise-objects.js";
 
 export interface NativeMixedObjectAccessDependencies {
   readonly realm: NativeObjectRealmDeclarations;
@@ -233,6 +234,7 @@ interface Owner {
   invocation?: NativeInvocationReservations;
   getterFilled?: boolean;
   population?: NativeRealmPopulation;
+  promises?: NativePromiseObjects;
 }
 const owners = new WeakMap<NativeMixedObjectAccessReservations, Owner>();
 function current(tx: PhysicalModuleReservations, pack: NativeMixedObjectAccessReservations): Owner {
@@ -302,19 +304,33 @@ function operands(
   pack: NativeMixedObjectAccessReservations,
   d: NativeMixedObjectAccessDependencies,
   population?: NativeRealmPopulation,
+  promises?: NativePromiseObjects,
 ): MixedObjectAccessOperands {
   const own = d.stringOwnDependencies,
     layout = d.realm.layouts;
-  if (population && nativeRealmPopulationBinding(tx, population, true) !== d.realm)
+  if (population && nativeRealmPopulationBinding(tx, population, true).realm !== d.realm)
     fail("different descriptor population realm");
   const [realm, objectPrototype, ...singletons] = tx.physicalIndices([
     layout.anchors.realm,
     d.realm.objectPrototype.singleton,
     ...d.realm.entries.map((entry) => entry.singleton),
   ]);
+  const promise = promises ? nativePromiseObjectBinding(tx, promises, true) : undefined;
+  if (promise && (promise.realm !== d.realm || promise.population !== population))
+    fail("different Promise object realm");
   const carriers: MixedObjectCarrier[] = [
     { kind: "string", typeIdx: own.layouts.types.String.typeIndex, stateField: 7 },
     { kind: "ordinary", typeIdx: layout.types.ordinary.typeIndex, stateField: 6 },
+    ...(promise
+      ? [
+          {
+            kind: "promise" as const,
+            typeIdx: promise.promise.typeIndex,
+            bagTypeIdx: promise.bag.typeIndex,
+            stateField: 6,
+          },
+        ]
+      : []),
     ...(["Boolean", "Number", "Symbol", "BigInt"] as const).map(
       (kind): MixedObjectCarrier => ({ kind: "wrapper", typeIdx: own.layouts.types[kind].typeIndex, stateField: 7 }),
     ),
@@ -474,7 +490,7 @@ export function fillNativeMixedObjectAccessStructure(
   const owner = current(tx, pack);
   if (tx.state !== "filling" || owner.filled) fail("invalid phase or duplicate structural fill");
   completedDependencies(tx, owner.identities);
-  const d = operands(tx, pack, owner.identities, owner.population);
+  const d = operands(tx, pack, owner.identities, owner.population, owner.promises);
   const definitions = structuralRoles.map((role) => builders[role](d));
   structuralRoles.forEach((role, i) => tx.fillFunction(pack[role], definitions[i]!));
   owner.filled = true;
@@ -488,7 +504,7 @@ export function requireCompletedNativeMixedObjectAccessStructure(
   const owner = owners.get(pack)!;
   if (!owner.filled) fail("missing canonical structural fill");
   completedDependencies(tx, owner.identities);
-  const d = operands(tx, pack, owner.identities, owner.population);
+  const d = operands(tx, pack, owner.identities, owner.population, owner.promises);
   for (const role of structuralRoles) {
     tx.assertCompletedReservation(pack[role]);
     same(
@@ -507,7 +523,7 @@ export function bindNativeMixedObjectPopulation(
 ): void {
   const owner = current(tx, pack);
   if (tx.state !== "reserving" || owner.population) fail("invalid phase or duplicate population join");
-  if (nativeRealmPopulationBinding(tx, population) !== owner.identities.realm)
+  if (nativeRealmPopulationBinding(tx, population).realm !== owner.identities.realm)
     fail("different descriptor population realm");
   owner.population = population;
 }
@@ -606,4 +622,19 @@ export function nativeMixedObjectGetBinding(
     get: pack.get,
     symbols: owner.identities.stringOwnDependencies.layoutDependencies.symbols,
   });
+}
+
+/** Promise own storage and prototype access share the actual allocator's population. */
+export function bindNativeMixedObjectPromises(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  promises: NativePromiseObjects,
+): void {
+  const owner = current(tx, pack);
+  if (tx.state !== "reserving" || owner.promises) fail("invalid phase or duplicate Promise join");
+  const binding = nativePromiseObjectBinding(tx, promises);
+  if (binding.realm !== owner.identities.realm || (owner.population && owner.population !== binding.population))
+    fail("different Promise object realm");
+  owner.population = binding.population;
+  owner.promises = promises;
 }

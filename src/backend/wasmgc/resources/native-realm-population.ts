@@ -219,8 +219,12 @@ export function nativeRealmPopulationBinding(
   tx: PhysicalModuleReservations,
   pack: NativeRealmPopulation,
   completed = false,
-): NativeObjectRealmDeclarations {
-  current(tx, pack);
+) {
+  const { owner, binding } = current(tx, pack);
   if (completed) requireCompletedNativeRealmPopulation(tx, pack);
-  return pack.realm;
+  return Object.freeze({
+    realm: pack.realm,
+    source: binding.source,
+    objects: owner.dependencies.descriptorDependencies.storageDependencies.lookupDependencies.layouts,
+  });
 }

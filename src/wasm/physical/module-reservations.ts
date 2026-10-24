@@ -1098,6 +1098,7 @@ export class PhysicalModuleReservations {
 
   #validateValue(value: ValType): void {
     if (value.kind === "ref" || value.kind === "ref_null") {
+      if (value.typeIdx === -23) return; // Standard EH abstract heap type exn, not a module type index.
       this.#type(value.typeIdx);
     }
   }

@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { builtinFunctionFixture } from "./native-builtin-functions.js";
 import type { Instr, ValType } from "../../src/wasm/model/instructions.js";
+import { reserveTaggedRethrowObserver } from "./native-tagged-rethrow-observer.js";
+import { buildStandardRethrowingTry } from "../../src/wasm/physical/exception-control.js";
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import {
   buildBuiltinFunctionArgument,
@@ -54,7 +56,7 @@ export function reserveBuiltinTransportControls(f: Fixture) {
     get: reserve("get", [ext, ext, ext], [i32, ext]),
     catch: reserve("catch", [ext, ext, ext], [ext]),
   };
-  return { globals, functions };
+  return { globals, functions, observeRethrow: reserveTaggedRethrowObserver(tx, "transport-control:catch-ref") };
 }
 export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<typeof reserveBuiltinTransportControls>) {
   const { tx } = f,
@@ -191,17 +193,7 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
     call("callVector"),
   ];
   tx.fillFunction(fn.call, { locals: [], body: callBody });
-  tx.fillFunction(fn.catch, {
-    locals: [],
-    body: [
-      {
-        op: "try",
-        blockType: { kind: "val", type: ext },
-        body: structuredClone(callBody),
-        catches: [{ tagIdx: d.exceptionTag, body: [globalSet("thrown"), { op: "rethrow", depth: 0 }] }],
-      },
-    ],
-  });
+  tx.fillFunction(fn.catch, controls.observeRethrow(callBody, d.exceptionTag, tx.physicalIndex(g.thrown), 3));
   tx.fillFunction(
     fn.get,
     buildBuiltinFunctionGet({
@@ -288,10 +280,8 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
       ...arm(5, [
         n(0),
         globalSet("mode"),
-        {
-          op: "try",
-          blockType: { kind: "empty" },
-          body: [
+        buildStandardRethrowingTry(
+          [
             { op: "call", funcIdx: entry.getter.handle },
             ...literal("value"),
             get(0),
@@ -299,9 +289,8 @@ export function fillBuiltinTransportControls(f: Fixture, controls: ReturnType<ty
             { op: "local.set", index: 4 },
             { op: "drop" },
           ],
-          catches: [],
-          catchAll: [n(5), globalSet("mode"), { op: "rethrow", depth: 0 }],
-        },
+          [n(5), globalSet("mode")],
+        ),
         n(5),
         globalSet("mode"),
         get(4),

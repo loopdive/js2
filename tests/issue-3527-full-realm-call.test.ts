@@ -1,21 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { afterEach, describe, expect, it } from "vitest";
-import { mixedOwnerFixture, reserveMixedOwner, fillMixedDependencies } from "./helpers/native-mixed-object-access.js";
-import { publicRealmSourceSlots } from "./helpers/native-object-realm.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  reserveNativeBooleanResources,
-  fillNativeBooleanResources,
-} from "../src/backend/wasmgc/resources/native-booleans.js";
+  fullRealmFixture as fixture,
+  joinFullRealm as join,
+  fillFullRealm as fill,
+} from "./helpers/native-full-realm-call.js";
+import { fillFullRealmSourceUnits as fillSourceUnits } from "./helpers/native-full-realm-call.js";
+
 import {
   reserveNativeObjectRealmCalls,
   fillNativeObjectRealmCalls,
   nativeObjectRealmInvocationBinding,
 } from "../src/backend/wasmgc/resources/native-object-realm-calls.js";
 import {
-  reserveNativeInvocationResources,
   bindNativeInvocationObjectRealm,
   nativeInvocationObjectRealmBinding,
-  fillNativeInvocationResources,
   requireCompletedNativeInvocation,
   nativeInvocationCallableBinding,
 } from "../src/backend/wasmgc/resources/native-invocation.js";
@@ -23,25 +22,14 @@ import {
   bindNativeMixedObjectInvocation,
   bindNativeMixedObjectPopulation,
   requireCompletedNativeMixedObjectAccessStructure,
-  fillNativeMixedObjectAccessStructure,
   fillNativeMixedObjectGet,
   requireCompletedNativeMixedObjectAccess,
 } from "../src/backend/wasmgc/resources/native-mixed-object-access.js";
-import { fillNativeObjectRealmDeclarations } from "../src/backend/wasmgc/resources/native-object-realm.js";
-import { planNativeInvocationRequirements } from "../src/ir/program/native-invocation-requirements.js";
-import {
-  bindNativeSourceClosureUnits,
-  nativeSourceClosureCallableBindings,
-  nativeRealmSourceClosureCallableBindings,
-  nativeSourceClosureResolver,
-  fillPreparedPrimaryUnit,
-} from "../src/ir/program-native-invocation.js";
+
 import { requireNativeStringLiteral } from "../src/backend/wasmgc/resources/native-string-literals.js";
 import { emitBinary } from "../src/emit/binary.js";
 import type { Instr } from "../src/wasm/model/instructions.js";
-import type { IrLowerResolver } from "../src/ir/backend/lower-contracts.js";
 
-import { reserveRealmPopulationFixture, fillRealmPopulationFixture } from "./helpers/native-realm-population.js";
 import {
   requireCompletedNativeRealmPopulation,
   reserveNativeRealmPopulation,
@@ -76,51 +64,15 @@ import {
   requireCompletedNativeRealmFunctionApply,
 } from "../src/backend/wasmgc/resources/native-realm-function-apply.js";
 import { setImmediate } from "node:timers/promises";
-afterEach(async () => {
+// Long synchronous reservation audits can outlive Vitest's worker RPC timer.
+// Let IPC responses drain before the next audit, including the first test.
+async function drainWorkerEvents() {
   await setImmediate();
-});
+  await setImmediate();
+}
+beforeEach(drainWorkerEvents);
+afterEach(drainWorkerEvents);
 
-function fixture(displaced = false) {
-  const r = mixedOwnerFixture(
-      displaced,
-      `export function makeCaptured(seed: number): (value: number) => number {
-    return function captured(value: number): number { return seed + value; };
-  }
-  export function makeEmpty(): () => number { return function empty(): number { return 7; }; }`,
-      ["then", "missingPromiseProperty"],
-    ),
-    { tx, f, c } = r;
-  const source = publicRealmSourceSlots(f, c);
-  const booleans = reserveNativeBooleanResources(tx, "test:booleans", r.values, r.valuePlan, r.valueDependencies);
-  const dependencies = {
-    realm: r.realm.declarations,
-    realmDependencies: r.realm.dependencies,
-    values: r.values,
-    valuePlan: r.valuePlan,
-    valueDependencies: r.valueDependencies,
-    booleans,
-  };
-  const calls = reserveNativeObjectRealmCalls(tx, "test:realm-calls", dependencies);
-  const requirements = planNativeInvocationRequirements(c.source!.requirements, { utf8Storage: displaced })!;
-  const invocation = reserveNativeInvocationResources(tx, requirements, {
-    source: c.source!.types,
-    values: r.values,
-    valuePlan: r.valuePlan,
-    valueDependencies: r.valueDependencies,
-    strings: f.strings,
-    vectors: f.vectors,
-    vectorPlan: f.vectorPlan,
-    substrate: f.substrate,
-  });
-  const access = reserveMixedOwner(r);
-  const population = reserveRealmPopulationFixture(r, booleans, calls);
-  return { ...r, source, booleans, dependencies, calls, invocation, access, population };
-}
-function join(r: ReturnType<typeof fixture>) {
-  bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls);
-  bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation);
-  bindNativeMixedObjectPopulation(r.tx, r.access, r.population.pack);
-}
 function reserveNumericClassifier(r: ReturnType<typeof fixture>) {
   const classifierDependencies = {
     values: r.values,
@@ -139,60 +91,6 @@ function reserveNumericClassifier(r: ReturnType<typeof fixture>) {
     classifierDependencies,
   );
 }
-async function fill(r: ReturnType<typeof fixture>, dispatch = true) {
-  const { tx, f, c } = r;
-  tx.freezeReservations();
-  bindNativeSourceClosureUnits(tx, c.source!, r.source.slots);
-  fillMixedDependencies(r);
-  await setImmediate();
-  fillNativeBooleanResources(tx, r.booleans);
-  fillNativeObjectRealmDeclarations(tx, r.realm.declarations);
-  if (dispatch) fillNativeObjectRealmCalls(tx, r.calls);
-  fillRealmPopulationFixture(r, r.population);
-  await setImmediate();
-  const selected = nativeSourceClosureCallableBindings(tx, c.source!, r.invocation.requirements);
-  expect(() => fillNativeInvocationResources(tx, r.invocation, selected, f.exception.tag)).toThrow(
-    /requires all source callables/,
-  );
-  const all = nativeRealmSourceClosureCallableBindings(tx, c.source!, f.realm);
-  fillNativeInvocationResources(tx, r.invocation, selected, f.exception.tag, all);
-  await setImmediate();
-  fillNativeMixedObjectAccessStructure(tx, r.access);
-  await setImmediate();
-  fillNativeMixedObjectGet(tx, r.access);
-}
-
-function fillSourceUnits(r: ReturnType<typeof fixture>) {
-  const { tx, f, c } = r;
-  const resolver: IrLowerResolver = {
-    ...nativeSourceClosureResolver(tx, c.source!),
-    resolveFunc(ref) {
-      const slot = ref.binding.kind === "unit" && r.source.slots.get(ref.binding.unitId);
-      if (slot) return slot.handle;
-      throw Error("unexpected callable");
-    },
-    resolveGlobal() {
-      throw Error("unexpected global");
-    },
-    resolveType() {
-      throw Error("unexpected type");
-    },
-    internFuncType(sig) {
-      return tx.internFunctionType(sig.params, sig.results);
-    },
-  };
-  for (const [id, slot] of r.source.slots)
-    fillPreparedPrimaryUnit(
-      tx,
-      f.projection.prepared.functions.find((row) => row.unitId === id)!,
-      slot,
-      r.source.signatures.get(id)!,
-      resolver,
-      "wasmgc",
-      c.source,
-    );
-}
-
 describe("full public realm Call joins", { timeout: 240000 }, () => {
   it("rejects invalid numeric joins and late key collisions without reserving anything", () => {
     const r = fixture();

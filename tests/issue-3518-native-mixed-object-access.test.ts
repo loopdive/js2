@@ -301,6 +301,31 @@ for (const displaced of [false, true])
       expect(buildMixedObjectOwn({ ...runtime.operands, ordinaryIntrinsicSingletons: coordinates })).toEqual(expected);
       expect(reads).toBe(0);
     });
+    it("requires an own Promise bag type without invoking inherited getters", () => {
+      let reads = 0;
+      const row = { kind: "promise" as const, typeIdx: 999, stateField: 6 };
+      const input = { ...runtime.operands, carriers: [...runtime.operands.carriers, row] };
+      const prior = Object.getOwnPropertyDescriptor(Object.prototype, "bagTypeIdx");
+      try {
+        for (const descriptor of [
+          { value: runtime.operands.objectTypeIdx, configurable: true },
+          {
+            get() {
+              reads++;
+              return runtime.operands.objectTypeIdx;
+            },
+            configurable: true,
+          },
+        ]) {
+          Object.defineProperty(Object.prototype, "bagTypeIdx", descriptor);
+          expect(() => buildMixedObjectClassify(input)).toThrow(/missing bag type/);
+        }
+        expect(reads).toBe(0);
+      } finally {
+        if (prior) Object.defineProperty(Object.prototype, "bagTypeIdx", prior);
+        else Reflect.deleteProperty(Object.prototype, "bagTypeIdx");
+      }
+    });
     it("rejects getter-bearing/hidden/sparse pure operands without invoking callbacks", () => {
       let calls = 0;
       const bad = { ...runtime.operands };

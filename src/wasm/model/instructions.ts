@@ -239,6 +239,7 @@ type InstrBase =
   | { op: "try"; blockType: BlockType; body: Instr[]; catches: CatchClause[]; catchAll?: Instr[] }
   | { op: "try_table"; blockType: BlockType; body: Instr[]; catches: TryTableCatch[] }
   | { op: "throw"; tagIdx: number }
+  | { op: "throw_ref" }
   | { op: "rethrow"; depth: number }
   | { op: "any.convert_extern" }
   | { op: "extern.convert_any" }

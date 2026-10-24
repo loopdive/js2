@@ -1112,10 +1112,12 @@ function encodeInstrArray(instrs: Instr[], enc: WasmEncoder): void {
 export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
   switch (instr.op) {
     case "unreachable":
-      enc.byte(OP.unreachable);
-      break;
     case "nop":
-      enc.byte(OP.nop);
+    case "throw_ref":
+    case "return":
+    case "drop":
+    case "select":
+      enc.byte(OP[instr.op]);
       break;
     case "block":
       enc.byte(OP.block);
@@ -1155,9 +1157,6 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.br_if);
       enc.u32(instr.depth);
       break;
-    case "return":
-      enc.byte(OP.return);
-      break;
     case "call": {
       const target = fIdx(instr.funcIdx);
       if (valCtx) vIdx("function", target, valCtx.numFuncs);
@@ -1180,12 +1179,6 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       enc.byte(OP.call_indirect);
       enc.u32(instr.typeIdx);
       enc.u32(instr.tableIdx);
-      break;
-    case "drop":
-      enc.byte(OP.drop);
-      break;
-    case "select":
-      enc.byte(OP.select);
       break;
     case "local.get":
       // (#4134) name the opcode: a local breach needs the SITE, not just the frame.

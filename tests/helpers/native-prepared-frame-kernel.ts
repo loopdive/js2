@@ -9,7 +9,12 @@ import {
   type FunctionReservation,
   type TypeReservation,
 } from "../../src/wasm/physical/module-reservations.js";
-import { createNativePromiseShape } from "../../src/runtime/wasmgc/promise/promise-layout.js";
+import {
+  createNativePromiseShape,
+  buildNativePromiseAllocation,
+} from "../../src/runtime/wasmgc/promise/promise-layout.js";
+import { emitPreparedIrAsyncFrame } from "../../src/backend/wasmgc/async/prepared-async-frame-adapter.js";
+import { assertPreparedIrAsyncRuntimeCurrent } from "../../src/ir/runtime/async-attachment.js";
 import { emitPreparedFrame } from "../../src/runtime/wasmgc/async/prepared-async-frame-engine.js";
 import type {
   PreparedFramePlan,
@@ -28,11 +33,7 @@ import {
   buildPromiseSettleLocals,
 } from "../../src/runtime/wasmgc/promise/settlement-bodies.js";
 
-import {
-  reservePreparedNativeAsyncFrame,
-  fillPreparedNativeAsyncFrame,
-  type NativeFrameDependencies,
-} from "../../src/backend/wasmgc/resources/prepared-native-async-frame.js";
+import { reservePreparedNativeAsyncFrame } from "../../src/backend/wasmgc/resources/prepared-native-async-frame.js";
 import {
   planPreparedNativeAsyncFrame,
   type PreparedNativeAsyncFrameInput,
@@ -127,6 +128,9 @@ export function nativePreparedFrameKernel(
     ["state", "value", "handled"].map((name, index) => [name, fn(name, [ext], [index === 1 ? ext : i32])]),
   ) as Record<"state" | "value" | "handled", FunctionReservation>;
   const pending = fn("pending", [], [ext]);
+  // A finite kernel control; full realm integration supplies NativePromiseObjects.create.
+  const create = fn("createPromise", [i32], [promiseRef]);
+  const bag = tx.reserveType("promiseBag", { kind: "struct", name: "kernelPromiseBag", fields: [] });
   const settleExports = {
     fulfill: fn("settleFulfill", [ext, ext], [ext]),
     reject: fn("settleReject", [ext, ext], [ext]),
@@ -154,6 +158,7 @@ export function nativePreparedFrameKernel(
     exceptionTag: handle(tag),
     runtime: {
       kind: "native",
+      create: handle(create),
       promise: struct(promise),
       reaction: struct(reaction),
       enqueue: handle(enqueue),
@@ -256,29 +261,6 @@ export function nativePreparedFrameKernel(
         unbox: fn("unbox", [ext], [{ kind: "f64" }]),
       }
     : undefined;
-  const dependencies: NativeFrameDependencies = {
-    promise,
-    reaction,
-    enqueue,
-    resolveValue: resolution.resolveValue,
-    reject,
-    tag,
-    markHandled: { kind: "not-required" },
-    bridges: new Map(
-      number
-        ? [
-            ["number.box", number.box],
-            ["number.unbox", number.unbox],
-          ]
-        : [],
-    ),
-    calls: new Map(),
-    assertAccepted() {
-      // Kernel scope only. Whole-program inventory/admission is deliberately not invoked.
-      if (!sourcePlan || sourcePlan.kind !== "planned" || sourcePlan.plan.calls.length)
-        throw Error("kernel requires a genuine call-free source plan");
-    },
-  };
   tx.freezeReservations();
   const queue: PreparedNativeMicrotaskReservations = {
     types: {
@@ -299,6 +281,14 @@ export function nativePreparedFrameKernel(
         : { op: "ref.null", typeIdx: (token.object.type as { typeIdx: number }).typeIdx },
     ]);
   function fillSupport() {
+    tx.fillFunction(create, {
+      locals: [],
+      body: buildNativePromiseAllocation(
+        promise.typeIndex,
+        [{ op: "struct.new", typeIdx: bag.typeIndex }, { op: "extern.convert_any" }],
+        [get(0)],
+      ),
+    });
     resolution.fill();
     if (number) {
       tx.fillFunction(number.box, {
@@ -376,19 +366,55 @@ export function nativePreparedFrameKernel(
     plan,
     resources,
     sourceFrame,
-    dependencies,
     publish() {
-      if (sourceFrame) fillPreparedNativeAsyncFrame(tx, sourceFrame, dependencies);
-      else {
+      if (sourceFrame && source && sourcePlan && number) {
+        const plan = sourcePlan.plan;
+        const box = handle(number.box),
+          unbox = handle(number.unbox);
+        const bridge = (role: string) => {
+          if (role === "number.box") return box;
+          if (role === "number.unbox") return unbox;
+          throw Error("unplanned kernel bridge: " + role);
+        };
+        const output = emitPreparedIrAsyncFrame(
+          source.fn,
+          assertPreparedIrAsyncRuntimeCurrent(
+            source.fn.unitId,
+            source.fn.name,
+            source.fn.asyncPlan,
+            source.fn.asyncRuntime,
+          ),
+          {
+            ...resources,
+            owner: plan.owner,
+            resultField: plan.resultField,
+            values: plan.values,
+            operations: [box, unbox],
+            callTargets: new Map(),
+            callSignatures: new Map(),
+            conversions: plan.conversions.map((row) => ({
+              ...row,
+              operation:
+                row.operation.kind === "native-helper"
+                  ? { kind: "helper" as const, target: bridge(row.operation.role) }
+                  : row.operation,
+            })),
+            undefinedSource:
+              plan.undefinedSource.kind === "native-helper"
+                ? { kind: "helper", target: bridge(plan.undefinedSource.role) }
+                : plan.undefinedSource,
+          },
+        );
+        for (const role of ["entry", "resume", "fulfillStep", "rejectStep"] as const)
+          tx.fillFunction(sourceFrame[role], output[role]);
+      } else {
         const out = emitPreparedFrame(plan, resources);
         for (const [name, token] of Object.entries({ entry, resume, fulfillStep, rejectStep }))
           tx.fillFunction(token, out[name as keyof typeof out]);
       }
       fillSupport();
-      if (!sourceFrame) {
-        tx.declareFunctionReference(fulfillStep);
-        tx.declareFunctionReference(rejectStep);
-      }
+      tx.declareFunctionReference(fulfillStep);
+      tx.declareFunctionReference(rejectStep);
       for (const [name, token] of Object.entries({ run: entry, drain, pending, ...inspectors, ...settleExports }))
         tx.defineExport("export:" + name, name, token);
       tx.seal();

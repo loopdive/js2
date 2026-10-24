@@ -23,6 +23,7 @@ import { assertNativePromiseShape } from "../../../runtime/wasmgc/promise/promis
 import { emitPreparedIrAsyncFrame } from "../async/prepared-async-frame-adapter.js";
 import { reservePreparedFrameLayout } from "./prepared-frame-layout.js";
 import { NativeFrameBindings } from "./native-frame-bindings.js";
+import { nativePromiseObjectBinding, type NativePromiseObjects } from "./native-promise-objects.js";
 import type { PreparedAsyncFrameReservations } from "./prepared-async-frame.js";
 
 const ext = { kind: "externref" } as const,
@@ -30,6 +31,7 @@ const ext = { kind: "externref" } as const,
 export interface NativeFrameDependencies {
   readonly promise: TypeReservation;
   readonly reaction: TypeReservation;
+  readonly objects: NativePromiseObjects;
   readonly enqueue: FunctionReservation;
   readonly resolveValue: FunctionReservation;
   readonly reject: FunctionReservation;
@@ -81,6 +83,7 @@ function bindDependencies(
   bindings: NativeFrameBindings,
   plan: PreparedNativeAsyncFramePlan,
   d: NativeFrameDependencies,
+  create: FunctionReservation,
 ) {
   if (!d.resolveValue) fail("missing PromiseResolve dependency");
   const reaction = bindings.struct(d.reaction);
@@ -115,6 +118,7 @@ function bindDependencies(
     runtime: {
       kind: "native" as const,
       promise: bindings.struct(d.promise),
+      create: bindings.function(create, [{ kind: "i32" }], [promiseRef]),
       reaction,
       enqueue: bindings.function(d.enqueue, [{ kind: "funcref" }, ext, ext], []),
       resolveValue: bindings.function(d.resolveValue, [promiseRef, ext], [ext]),
@@ -130,6 +134,7 @@ function bindDependencies(
 function retainAssociations(d: NativeFrameDependencies): () => void {
   const associations = [
     d.promise,
+    d.objects,
     d.reaction,
     d.enqueue,
     d.resolveValue,
@@ -143,6 +148,7 @@ function retainAssociations(d: NativeFrameDependencies): () => void {
   return () => {
     const currentAssociations = [
       d.promise,
+      d.objects,
       d.reaction,
       d.enqueue,
       d.resolveValue,
@@ -177,7 +183,13 @@ export function fillPreparedNativeAsyncFrame(
   d.assertAccepted();
   const assertAssociations = retainAssociations(d);
   const bindings = new NativeFrameBindings(tx);
-  const bound = bindDependencies(bindings, plan, d);
+  const allocation = () => {
+    const binding = nativePromiseObjectBinding(tx, d.objects, true);
+    if (binding.promise !== d.promise || binding.realm.exception.tag !== d.tag)
+      fail("different Promise allocation owner");
+    return binding.create;
+  };
+  const bound = bindDependencies(bindings, plan, d, allocation());
   const frame = bindings.struct(reserved.frame);
   const expectedFields = plan.frame.fields.map((field) => ({
     ...field,
@@ -186,6 +198,7 @@ export function fillPreparedNativeAsyncFrame(
   const assertCurrent = () => {
     d.assertAccepted();
     assertAssociations();
+    allocation();
     if (tx.state !== "filling" || fn.asyncRuntime !== runtime) fail("stale frame transaction");
     const current = planPreparedNativeAsyncFrame(input);
     if (current.kind !== "planned" || preparedIrDataMismatch(current.plan, plan) !== undefined)

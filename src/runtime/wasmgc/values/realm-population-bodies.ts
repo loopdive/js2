@@ -8,9 +8,10 @@ import {
 } from "./builtin-function-bodies.js";
 import { buildOrdinaryObjectCreateDefinition } from "./ordinary-object-storage-definitions.js";
 import { buildPrototypeSeedDataTail } from "./prototype-seeder-bodies.js";
-import { buildOrdinaryObjectCreateBody } from "./ordinary-object-storage-bodies.js";
+import { buildRealmOrdinaryObjectAllocation } from "./realm-object-layouts.js";
 import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-descriptor-common.js";
 import { CLOSURE_BAG_FIELD_IDX } from "./closure-layouts.js";
+import { buildStandardRethrowingTry } from "../../../wasm/physical/exception-control.js";
 
 export interface RealmPopulationEntry extends Pick<
   BuiltinFunctionEntryOperands,
@@ -102,20 +103,17 @@ function install(d: RealmPopulationOperands, property: NativeRealmProperty, entr
   ];
 }
 function allocateOrdinary(d: RealmPopulationOperands, entry: RealmPopulationObjectEntry): Instr[] {
-  const prefix = buildOrdinaryObjectCreateBody({
-    objectTypeIdx: d.objectType,
-    propMapTypeIdx: d.propMapType,
-    initialCapacity: 8,
-  });
   return [
-    ...prefix.slice(0, -2),
-    ...(entry.intrinsic.prototype === null
-      ? [{ op: "ref.null.extern" } as Instr]
-      : value(d, entry.intrinsic.prototype)),
-    global(d.realm),
-    { op: "ref.as_non_null" },
-    { op: "struct.new", typeIdx: d.objectStateType },
-    { op: "struct.new", typeIdx: entry.typeIdx },
+    ...buildRealmOrdinaryObjectAllocation(
+      { objectTypeIdx: d.objectType, propMapTypeIdx: d.propMapType, initialCapacity: 8 },
+      {
+        allocationTypeIdx: entry.typeIdx,
+        stateTypeIdx: d.objectStateType,
+        prototype:
+          entry.intrinsic.prototype === null ? [{ op: "ref.null.extern" }] : value(d, entry.intrinsic.prototype),
+        realm: [global(d.realm), { op: "ref.as_non_null" }],
+      },
+    ),
     { op: "global.set", index: entry.singleton },
   ];
 }
@@ -175,13 +173,10 @@ export function buildRealmPopulationInitializer(d: RealmPopulationOperands): Bui
       { op: "if", blockType: { kind: "empty" }, then: [...structuredClone(d.failure)] },
       n(1),
       { op: "global.set", index: d.state },
-      {
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [...populate(d), n(2), { op: "global.set", index: d.state }],
-        catches: [],
-        catchAll: [n(-1), { op: "global.set", index: d.state }, { op: "rethrow", depth: 0 }],
-      },
+      buildStandardRethrowingTry(
+        [...populate(d), n(2), { op: "global.set", index: d.state }],
+        [n(-1), { op: "global.set", index: d.state }],
+      ),
     ],
   };
 }

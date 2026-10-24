@@ -421,10 +421,12 @@ function encodeInstrWithReloc(
 ): void {
   switch (instr.op) {
     case "unreachable":
-      enc.byte(OP.unreachable);
-      break;
     case "nop":
-      enc.byte(OP.nop);
+    case "throw_ref":
+    case "return":
+    case "drop":
+    case "select":
+      enc.byte(OP[instr.op]);
       break;
     case "block":
       enc.byte(OP.block);
@@ -467,9 +469,6 @@ function encodeInstrWithReloc(
       enc.byte(OP.br_if);
       enc.u32(instr.depth);
       break;
-    case "return":
-      enc.byte(OP.return);
-      break;
     case "call": {
       enc.byte(OP.call);
       const symIdx = funcIdxToSymIdx.get(instr.funcIdx);
@@ -495,12 +494,6 @@ function encodeInstrWithReloc(
       enc.u32(instr.tableIdx);
       break;
     }
-    case "drop":
-      enc.byte(OP.drop);
-      break;
-    case "select":
-      enc.byte(OP.select);
-      break;
     case "local.get":
       enc.byte(OP.local_get);
       enc.u32(instr.index);

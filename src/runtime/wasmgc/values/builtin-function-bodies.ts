@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { buildStandardRethrowingTry } from "../../../wasm/physical/exception-control.js";
 import { buildArgumentVectorMethodAdapter } from "./argument-vector-call-adapters.js";
 import type { Instr, LocalDef, FuncHandle } from "../../../wasm/model/instructions.js";
 import {
@@ -225,17 +226,13 @@ export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands):
       { op: "if", blockType: { kind: "empty" }, then: [{ op: "return" }] },
       { op: "i32.const", value: 1 },
       { op: "global.set", index: d.state },
-      {
-        op: "try",
-        blockType: { kind: "empty" },
-        body: [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
-        catches: [],
-        catchAll: [
+      buildStandardRethrowingTry(
+        [...allocate, ...seed, { op: "i32.const", value: 2 }, { op: "global.set", index: d.state }],
+        [
           { op: "i32.const", value: -1 },
           { op: "global.set", index: d.state },
-          { op: "rethrow", depth: 0 },
         ],
-      },
+      ),
     ],
   };
 }

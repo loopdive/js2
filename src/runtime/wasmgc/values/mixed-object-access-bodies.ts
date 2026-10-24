@@ -5,9 +5,10 @@ import { ORDINARY_OBJECT_DESCRIPTOR_ENCODING as flags } from "./ordinary-object-
 /** Internal results, not a scalar JavaScript Get/Has ABI. */
 export const MIXED_ACCESS_STATUS = Object.freeze({ absent: 0, present: 1, unready: 2, unsupported: 3 });
 export interface MixedObjectCarrier {
-  readonly kind: "ordinary" | "wrapper" | "string" | "source" | "native" | "object-prototype";
+  readonly kind: "ordinary" | "wrapper" | "string" | "source" | "native" | "object-prototype" | "promise";
   readonly typeIdx: number;
   readonly stateField?: number;
+  readonly bagTypeIdx?: number;
   readonly native?: {
     readonly metadataId: number;
     readonly liftedTypeIdx: number;
@@ -104,20 +105,26 @@ function operands(input: MixedObjectAccessOperands): MixedObjectAccessOperands {
   const metadataTypes = rows(d.metadataTypes);
   metadataTypes.forEach(coordinate);
   const carriers = rows(d.carriers).map((row) => {
-    const c = data(row, ["kind", "typeIdx"], ["stateField", "native"]);
+    const c = data(row, ["kind", "typeIdx"], ["stateField", "native", "bagTypeIdx"]);
     coordinate(c.typeIdx);
-    if (!["ordinary", "wrapper", "string", "source", "native", "object-prototype"].includes(c.kind as string))
+    if (
+      !["ordinary", "wrapper", "string", "source", "native", "object-prototype", "promise"].includes(c.kind as string)
+    )
       throw Error("mixed object bodies: unknown family");
-    if (["ordinary", "wrapper", "string", "source"].includes(c.kind as string)) {
+    if (["ordinary", "wrapper", "string", "source", "promise"].includes(c.kind as string)) {
       coordinate(c.stateField);
       if (
         c.native !== undefined ||
-        (c.kind === "ordinary" && c.stateField !== 6) ||
+        (["ordinary", "promise"].includes(c.kind as string) && c.stateField !== 6) ||
         (["wrapper", "string"].includes(c.kind as string) && c.stateField !== 7) ||
         (c.kind === "source" && c.stateField < 3)
       )
         throw Error("mixed object bodies: invalid state tail");
     } else if (Object.hasOwn(c, "stateField")) throw Error("mixed object bodies: unexpected state tail");
+    if (c.kind === "promise") {
+      if (!Object.hasOwn(c, "bagTypeIdx")) throw Error("mixed object bodies: missing bag type");
+      coordinate(c.bagTypeIdx);
+    } else if (Object.hasOwn(c, "bagTypeIdx")) throw Error("mixed object bodies: unexpected bag type");
     if (c.kind === "native") {
       const entry = data(c.native, ["metadataId", "liftedTypeIdx", "singleton", "singletonExtern"]);
       [entry.metadataId, entry.liftedTypeIdx, entry.singleton].forEach(coordinate);
@@ -151,7 +158,14 @@ const field = (local: number, typeIdx: number, fieldIdx: number): Instr[] => [
   { op: "struct.get", typeIdx, fieldIdx },
 ];
 const state = (d: MixedObjectAccessOperands, c: MixedObjectCarrier, local = 0): Instr[] =>
-  field(local, c.typeIdx, c.stateField!);
+  c.kind === "promise"
+    ? [
+        ...field(local, c.typeIdx, 3),
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: c.bagTypeIdx! },
+        { op: "struct.get", typeIdx: c.bagTypeIdx!, fieldIdx: c.stateField! },
+      ]
+    : field(local, c.typeIdx, c.stateField!);
 const gap = (local: number): Instr[] => [
   get(local),
   n(-2),
@@ -173,7 +187,29 @@ function carrierArm(local: number, ordinal: number, body: Instr[]): Instr[] {
   return when([get(local), n(ordinal + 1), { op: "i32.eq" }], body);
 }
 function ownBag(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
-  return c.kind === "native" || c.kind === "source" ? field(0, c.typeIdx, 2) : [get(0)];
+  return c.kind === "promise"
+    ? field(0, c.typeIdx, 3)
+    : c.kind === "native" || c.kind === "source"
+      ? field(0, c.typeIdx, 2)
+      : [get(0)];
+}
+
+function promiseBagGuards(d: MixedObjectAccessOperands, c: MixedObjectCarrier): Instr[] {
+  return [
+    ...when([...field(0, c.typeIdx, 3), { op: "ref.is_null" }], ret(n(-2))),
+    ...when(
+      [
+        ...field(0, c.typeIdx, 3),
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: c.bagTypeIdx! },
+        { op: "i32.eqz" },
+      ],
+      ret(n(0)),
+    ),
+    ...(Object.hasOwn(d, "intrinsicPopulationState")
+      ? when([global(d.intrinsicPopulationState!), n(2), { op: "i32.ne" }], ret(n(-2)))
+      : ret(n(-2))),
+  ];
 }
 
 /** Exact carrier/realm checks precede every private field read. -2 is pending authority. */
@@ -215,7 +251,10 @@ export function buildMixedObjectClassify(input: MixedObjectAccessOperands): Mixe
         { op: "ref.eq" },
       ];
     }
-    const matched = when(checks, ret(n(c.kind === "source" ? -2 : d.carriers.indexOf(c) + 1)));
+    const matched = [
+      ...(c.kind === "promise" ? promiseBagGuards(d, c) : []),
+      ...when(checks, ret(n(c.kind === "source" ? -2 : d.carriers.indexOf(c) + 1))),
+    ];
     return when(
       [get(0), { op: "any.convert_extern" }, { op: "ref.test", typeIdx: c.typeIdx }],
       c.native?.singletonExtern

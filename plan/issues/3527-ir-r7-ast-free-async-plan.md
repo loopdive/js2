@@ -3445,3 +3445,80 @@ failed on an existing temporary symlink before executing tests; a fresh archive
 retry passed. Both superseded realm execution runs ended with their stale
 expectation failures plus worker RPC timeouts; only the current acceptance run
 can supply the missing execution evidence.
+
+Promise population publication (2026-10-24): commit ffc14bb84e is verified on
+PR 6889. Normal pre-commit and pre-push checks passed, including 18/18 numeric
+IR parity tests. The six-case acceptance run terminated with all six assertions
+passing (normal/displaced execution 525/515 seconds), but exit code 1 from one
+unhandled onTaskUpdate worker RPC timeout. It is not clean whole-run acceptance.
+Vitest's runner sends task updates without waiting for their RPC acknowledgement;
+the fixed timeout can expire while synchronous audits prevent IPC processing.
+The existing single afterEach immediate did not prevent this. Add two event-loop
+turns both before and after each case, then rerun all six cases on the published
+batched-validation source. Keep the prior failing run and do not ignore unhandled
+errors or count the repair as verified until its own process exits successfully.
+
+A real-source reservation probe adding an async function to the existing two
+source closures confirms that the Promise settlement owner and full realm use
+the exact same source owner, with the actual Promise carrier and existing
+Promise.prototype singleton and zero imports. This validates the next producer
+join; it does not implement Promise properties or public async execution.
+
+### Promise objects and prepared frame allocation checkpoint (2026-10-24)
+
+The issued `NativePromiseObjects` allocator joins the actual Promise carrier,
+shared source owner and populated realm. Promise bags and ordinary intrinsic
+population share the ordinary allocation recipe. Mixed access validates the
+bag's ordinary type and realm identity before own/property/prototype lookup;
+missing bags and incomplete population remain explicit gaps.
+
+Prepared frames require that completed issued owner and use its allocator for
+both the result (handled=0) and await adapter (handled=1). The filler retains and
+reauthenticates the owner and its Promise/tag association before publishing
+bodies. Parent acceptance still owns whole-program/source admission. Adversarial
+review caught raw allocator substitution and inherited bag-type getter attacks;
+both are rejected. Foreign-token controls use isolated transactions, while
+shared negative controls verify the primary transaction remains filling.
+
+The real-source fixture combines the actual realm, frames, queue and settlement
+with an explicitly finite resolver. It observes the internal await adapter's
+identity, storage, prototype and handled bit. This does not certify public
+Promise algorithms, the complete classifier or whole-program async admission.
+The remaining runtime allocation sites, public methods/capabilities/species,
+standalone WasmGC and actual Linear/WASI integration, codec/public matrices,
+Test262/performance, reviewed legacy retirement and merged delivery remain open.
+
+Combined execution exposed mixed legacy and standard Wasm exception handling.
+Realm population, native builtin initialization and native closure cleanup now
+use shared standard `catch_all_ref`/`throw_ref`, preserving the original exception
+and restoring state without assuming a tag. Binary/object/WAT emission and
+terminator consumers support the instruction. Physical validation and type-group
+planning recognize abstract exn references without treating them as concrete
+type dependencies. Invalid concrete indices remain rejected. Older test-only
+catch/rethrow observers now use standard `catch_ref` and preserve both the tag
+payload and original exception. No new size-budget allowance was added.
+
+Current measured evidence:
+
+- Native builtin execution, physical type layout and cleanup: **66/66**, exit 0.
+  Cleanup executes both encoders, with/without stack balancing, across foreign
+  Wasm tags with multiple payloads, JS objects, thrown undefined and nested cleanup.
+- Realm initialization failure/reentry: **2/2**, exit 0. Finite frame/binding/
+  resolution controls: **34/34**, exit 0. Prior mixed/frame regression: **79/79**.
+- Focused TS7 and all nine source/CI-base architecture gates pass. **11/11** host
+  binary hashes remain identical to 7371eb505b365e49815f1ddc09afed6c52372540.
+- The broad invocation/builtin/getter/closure/IC/stack run was **153/162**, exit 1.
+  Five mixed-EH builtin failures are repaired by the subsequent 66-case run.
+  The remaining getter expectation and three missing `env.__str_from_mem` import
+  failures reproduce on pristine ffc14bb84e07608d48837c3ca9b01052ea99d39c. That
+  broad run remains failed and is not described as complete acceptance.
+- Actual complete realm/Promise/frame execution is **still pending**. After the
+  EH repair, normal execution still threw an unformatted exception. Inspection
+  found that the getter fixture specified a null setter instead of canonical
+  native undefined; this input is corrected and the full rerun is running.
+  A separate diagnostic saves the generated Wasm for direct runtime inspection.
+  Earlier failures remain recorded and are not counted as passes.
+
+Read-only adversarial review found no remaining concrete EH/observer blocker;
+the full integration still requires successful execution. Standard EH reference:
+https://webassembly.github.io/exception-handling/core/binary/instructions.html

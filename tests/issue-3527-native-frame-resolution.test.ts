@@ -109,3 +109,17 @@ it("rejects missing resolution before frame publication", () => {
   ).toThrow("requires PromiseResolve");
   expect(h.resources.entry.target.body).toEqual(before);
 });
+
+it("rejects missing Promise allocation before frame publication", () => {
+  const h = nativePreparedFrameKernel();
+  const runtime = h.resources.runtime;
+  if (runtime.kind !== "native") throw Error("native fixture required");
+  const before = structuredClone(h.resources.entry.target.body);
+  expect(() =>
+    emitPreparedFrame(h.plan, {
+      ...h.resources,
+      runtime: { ...runtime, create: undefined } as never,
+    }),
+  ).toThrow("requires Promise object allocation");
+  expect(h.resources.entry.target.body).toEqual(before);
+});

@@ -13,6 +13,7 @@ import { buildClosureResultBody, type ClosureResultConversion } from "./closure-
 import { buildInstallableClosureReceiver } from "./closure-receiver-bodies.js";
 
 import { buildNativeClosureIdentityMatch, type NativeClosureIdentity } from "./closure-callable-body.js";
+import { buildStandardRethrowingTry } from "../../../wasm/physical/exception-control.js";
 
 export interface NativeClosureMethodEntry extends ClosureInvocationArityEntry, NativeClosureIdentity {
   /** Exact selected allocation carrier, including capture or builtin metadata identity. */
@@ -72,13 +73,7 @@ export function buildClosureInvocationBoundary(
     { op: "local.set", index: slots.previousArgc },
     { op: "global.get", index: state.extrasArgv },
     { op: "local.set", index: slots.previousExtras },
-    {
-      op: "try",
-      blockType: { kind: "empty" },
-      body: [...structuredClone([...body]), { op: "local.set", index: slots.result }],
-      catches: [],
-      catchAll: [...restore(), { op: "rethrow", depth: 0 }],
-    },
+    buildStandardRethrowingTry([...structuredClone([...body]), { op: "local.set", index: slots.result }], restore()),
     ...restore(),
     { op: "local.get", index: slots.result },
   ];

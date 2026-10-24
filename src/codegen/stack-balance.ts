@@ -248,6 +248,7 @@ function isTerminator(op: string): boolean {
     op === "return_call_ref" ||
     op === "br" ||
     op === "throw" ||
+    op === "throw_ref" ||
     op === "rethrow" ||
     op === "unreachable"
   );
@@ -444,15 +445,7 @@ function computeInstrDelta(instr: Instr, types: TypeDef[], funcSigs: FuncSigInfo
   }
 
   // Terminators -- make subsequent code unreachable
-  if (
-    op === "return" ||
-    op === "return_call" ||
-    op === "return_call_ref" ||
-    op === "br" ||
-    op === "throw" ||
-    op === "rethrow" ||
-    op === "unreachable"
-  ) {
+  if (isTerminator(op)) {
     return UNREACHABLE;
   }
 
@@ -2121,11 +2114,7 @@ function fixCallArgTypesInBody(
         op === "br" ||
         op === "br_if" ||
         op === "br_table" ||
-        op === "return" ||
-        op === "throw" ||
-        op === "unreachable" ||
-        op === "return_call" ||
-        op === "return_call_ref"
+        isTerminator(op)
       ) {
         break;
       }
@@ -2408,15 +2397,7 @@ function updateTypeStack(
   const op = instr.op;
 
   // Terminators: clear the stack (unreachable code follows)
-  if (
-    op === "return" ||
-    op === "return_call" ||
-    op === "return_call_ref" ||
-    op === "br" ||
-    op === "throw" ||
-    op === "rethrow" ||
-    op === "unreachable"
-  ) {
+  if (isTerminator(op)) {
     stack.length = 0;
     return;
   }

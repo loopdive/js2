@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ValType } from "../../../wasm/model/instructions.js";
+import type { Instr, TypeHandle, ValType } from "../../../wasm/model/instructions.js";
+
+import { PROMISE_STATE_PENDING } from "./settlement-bodies.js";
 
 /** Canonical native Promise carrier shared by declarations and frame construction. */
 export function createNativePromiseShape() {
@@ -32,4 +34,20 @@ export function assertNativePromiseShape(shape: {
     )
   )
     throw new Error("prepared frame has the wrong native Promise layout");
+}
+
+/** Canonical five-field allocation; the caller supplies its actual property owner and handled state. */
+export function buildNativePromiseAllocation(
+  promiseTypeIdx: TypeHandle,
+  bag: readonly Instr[],
+  handled: readonly Instr[],
+): Instr[] {
+  return [
+    { op: "i32.const", value: PROMISE_STATE_PENDING },
+    { op: "ref.null.extern" },
+    { op: "ref.null.extern" },
+    ...bag,
+    ...handled,
+    { op: "struct.new", typeIdx: promiseTypeIdx },
+  ];
 }

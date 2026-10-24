@@ -1,4 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { NativeFrameBindings } from "../src/backend/wasmgc/resources/native-frame-bindings.js";
+import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
+import { createEmptyModule } from "../src/ir/types.js";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { prepareWholeIrProgram } from "../src/ir/program-preparation.js";
 import { encodePreparedIrProgram, decodePreparedIrProgram } from "../src/ir/program-codec.js";
@@ -6,7 +9,6 @@ import { sourceInput, requireProgram } from "./helpers/typed-program-fixtures.js
 import { nativePreparedFrameKernel } from "./helpers/native-prepared-frame-kernel.js";
 import { emitBinary } from "../src/emit/binary.js";
 import type { PreparedNativeAsyncFrameInput } from "../src/ir/program/prepared-native-async-frame-plan.js";
-import { fillPreparedNativeAsyncFrame } from "../src/backend/wasmgc/resources/prepared-native-async-frame.js";
 
 const policy = {
   backend: "wasmgc",
@@ -52,7 +54,7 @@ async function execute(name: string, replay: boolean) {
   const { exports } = await WebAssembly.instantiate(compiled, {});
   return { exports: exports as Record<string, CallableFunction>, bytes };
 }
-describe("source-owned native async frame materialization (kernel integration)", () => {
+describe("prepared-source native async adapter execution (finite kernel)", () => {
   it.each([false, true])("settles immediate source returns before draining, replay=%s", async (replay) => {
     const { exports: e } = await execute("immediate", replay);
     for (const value of [7.25, -0, NaN, Infinity, -Infinity, 2 ** 40]) {
@@ -101,83 +103,23 @@ describe("source-owned native async frame materialization (kernel integration)",
   it("emits identical source bodies after codec replay", async () => {
     expect((await execute("live", true)).bytes).toEqual((await execute("live", false)).bytes);
   });
-  it("rejects a foreign ledger dependency before filling frame bodies", () => {
-    const a = nativePreparedFrameKernel(undefined, input()),
-      b = nativePreparedFrameKernel(undefined, input());
-    expect(() =>
-      fillPreparedNativeAsyncFrame(a.tx, a.sourceFrame!, { ...a.dependencies, enqueue: b.dependencies.enqueue }),
-    ).toThrow();
-    expect(a.sourceFrame!.entry.object.body).toEqual([]);
-    expect(a.sourceFrame!.resume.object.body).toEqual([]);
-  });
-  it.each(["missing", "foreign", "signature"] as const)(
-    "rejects a %s resolver before filling frame bodies",
-    (defect) => {
-      const h = nativePreparedFrameKernel(undefined, input());
-      const foreign = defect === "foreign" ? nativePreparedFrameKernel(undefined, input()) : undefined;
-      const dependency =
-        defect === "missing"
-          ? undefined
-          : defect === "foreign"
-            ? foreign!.dependencies.resolveValue
-            : h.dependencies.enqueue;
-      const before = structuredClone(h.sourceFrame!.entry.object.body);
-      expect(() =>
-        fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, { ...h.dependencies, resolveValue: dependency! }),
-      ).toThrow();
-      expect(h.sourceFrame!.entry.object.body).toEqual(before);
-    },
-  );
-  it("rejects a wrong bridge signature before filling frame bodies", () => {
-    const h = nativePreparedFrameKernel(undefined, input());
-    const bridges = new Map(h.dependencies.bridges);
-    bridges.set("number.box", bridges.get("number.unbox")!);
-    expect(() => fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, { ...h.dependencies, bridges })).toThrow(
-      "signature mismatch",
-    );
-    expect(h.sourceFrame!.entry.object.body).toEqual([]);
-  });
-  it("honors rejected parent acceptance before filling frame bodies", () => {
-    const h = nativePreparedFrameKernel(undefined, input());
-    expect(() =>
-      fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, {
-        ...h.dependencies,
-        assertAccepted() {
-          throw Error("inventory incomplete");
-        },
-      }),
-    ).toThrow("inventory incomplete");
-    expect(h.sourceFrame!.entry.object.body).toEqual([]);
-  });
-  it("rejects a same-ledger carrier with the wrong reaction layout", () => {
-    const h = nativePreparedFrameKernel(undefined, input());
-    expect(() =>
-      fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, { ...h.dependencies, reaction: h.dependencies.promise }),
-    ).toThrow("wrong native reaction layout");
-    expect(h.sourceFrame!.entry.object.body).toEqual([]);
-  });
-  it("rejects dependency substitution during acceptance revalidation", () => {
-    const h = nativePreparedFrameKernel(undefined, input());
-    const bridges = new Map(h.dependencies.bridges);
-    let calls = 0;
-    const dependencies = {
-      ...h.dependencies,
-      bridges,
-      assertAccepted() {
-        if (++calls === 2) bridges.set("number.box", bridges.get("number.unbox")!);
-      },
-    };
-    expect(() => fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, dependencies)).toThrow(
-      "changed dependency association",
-    );
-    expect(h.sourceFrame!.entry.object.body).toEqual([]);
-  });
-  it("rejects a changed frame layout before filling", () => {
+  it("rejects changed source-frame layout before adapter publication", () => {
     const h = nativePreparedFrameKernel(undefined, input());
     const frame = h.sourceFrame!.frame.object;
     if (frame.kind !== "struct") throw Error("expected frame struct");
     frame.fields[0]!.mutable = false;
-    expect(() => fillPreparedNativeAsyncFrame(h.tx, h.sourceFrame!, h.dependencies)).toThrow();
+    expect(() => h.publish()).toThrow();
     expect(h.sourceFrame!.entry.object.body).toEqual([]);
   });
+});
+
+// A foreign token poisons its ledger. Each destructive provenance probe gets its own transaction.
+it.each(["enqueue", "resolveValue"])("rejects foreign %s at the production binding boundary", (name) => {
+  const tx = new PhysicalModuleReservations(createEmptyModule());
+  const foreign = new PhysicalModuleReservations(createEmptyModule());
+  const token = foreign.reserveFunction(name, name, { params: [], results: [] });
+  tx.freezeReservations();
+  foreign.freezeReservations();
+  expect(() => new NativeFrameBindings(tx).function(token, [], [])).toThrow();
+  expect(tx.state).toBe("failed");
 });

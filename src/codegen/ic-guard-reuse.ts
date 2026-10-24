@@ -234,7 +234,9 @@ function inspectReuseGraph(root: Instr[]): ReuseGraphInfo {
 
 /** True when `op` ends the array's straight-line flow at THIS nesting level. */
 function endsFlow(op: string): boolean {
-  return op === "br" || op === "br_table" || op === "return" || op === "unreachable" || op === "throw";
+  return (
+    op === "br" || op === "br_table" || op === "return" || op === "unreachable" || op === "throw" || op === "throw_ref"
+  );
 }
 
 /**

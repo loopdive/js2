@@ -2,7 +2,7 @@
 
 import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";
-import { assertNativePromiseShape, createNativePromiseShape } from "../promise/promise-layout.js";
+import { assertNativePromiseShape } from "../promise/promise-layout.js";
 import { defaultSpillInstr } from "./frame-defaults.js";
 import { buildNativeAwaitClassification } from "./native-await.js";
 import type {
@@ -35,7 +35,13 @@ function resources(r: PreparedFrameResources) {
   if (rt.kind === "host") funcs.push(rt.fulfill, rt.create, rt.resolve, rt.react, rt.wrap, rt.caught);
   else {
     if (!rt.resolveValue) throw new Error("prepared native frame requires PromiseResolve");
-    funcs.push(rt.resolveValue, rt.enqueue, ...(rt.markHandled.kind === "function" ? [rt.markHandled.target] : []));
+    if (!rt.create) throw new Error("prepared native frame requires Promise object allocation");
+    funcs.push(
+      rt.create,
+      rt.resolveValue,
+      rt.enqueue,
+      ...(rt.markHandled.kind === "function" ? [rt.markHandled.target] : []),
+    );
   }
   const indices = new Map(funcs.map((fn) => [fn, functionIndex(fn)] as const));
   return {
@@ -269,12 +275,7 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
             alwaysAsync: true,
             thenableAdoption: {
               resolveValueFuncIdx: bound.functionIndex(rt.resolveValue),
-              newPendingPromise: [
-                ...createNativePromiseShape().fields.map((field) =>
-                  field.name === "$handled" ? constant(1) : defaultSpillInstr(field.type),
-                ),
-                { op: "struct.new", typeIdx: bound.promise },
-              ],
+              newPendingPromise: [constant(1), call(rt.create)],
             },
             awaitedLocal: awaited,
             promiseLocal: pending,
@@ -361,12 +362,7 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
   });
   const paramCount = plan.values.filter((v) => v.param !== undefined).length;
   const entryBody: Instr[] =
-    r.runtime.kind === "host"
-      ? [call(r.runtime.create)]
-      : [
-          ...createNativePromiseShape().fields.map((field) => defaultSpillInstr(field.type)),
-          { op: "struct.new", typeIdx: bound.promise },
-        ];
+    r.runtime.kind === "host" ? [call(r.runtime.create)] : [constant(0), call(r.runtime.create)];
   entryBody.push(set(paramCount));
   for (let i = 0; i < r.frame.target.fields.length; i++) {
     const param = plan.values.find((v) => v.param !== undefined && 5 + v.param === i);

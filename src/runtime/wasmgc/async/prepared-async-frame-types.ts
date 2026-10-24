@@ -94,6 +94,8 @@ export type PreparedFrameRuntime =
     })
   | (PreparedFrameCommonRuntime & {
       readonly kind: "native";
+      /** Owner-issued allocator: (handled: i32) -> the actual Promise carrier. */
+      readonly create: PreparedFrameFunction;
       /** Complete assimilating PromiseResolve, never the direct fulfillment helper. */
       readonly resolveValue: PreparedFrameFunction;
       readonly promise: PreparedFrameHandle<StructTypeDef>;
