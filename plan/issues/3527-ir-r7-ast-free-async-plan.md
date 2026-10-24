@@ -3268,6 +3268,26 @@ substitute for source property metadata or the public Promise coordinator.
 
 ### Implementation plan: common native Promise resolution
 
+2026-10-24 producer join: put the guarded one-read recipe in
+`runtime/wasmgc/promise/common-then-lookup-body.ts` and its issued owner in
+`backend/wasmgc/resources/native-promise-then-lookup.ts`. Reuse the existing
+`nativeRealmNumberCoercionBinding` scalar Get, primitive classifier and shared
+invocation instead of allocating a second Get adapter or duplicating type
+classification. The owner checks canonical producer completion and retains
+the exact invocation association. Extend the existing full-realm executable
+fixture to exercise inherited then, one getter call with the original receiver,
+captured identity, thrown identity, primitives and unsupported object families.
+Quality acceptance: one small lookup recipe, no new property implementation,
+no runtime import cycle, no claim of complete Promise algorithms from lookup.
+
+Producer-join checkpoint: the guarded lookup and existing common-resolution
+recipe tests pass **9/9**. Focused TS7 and all nine source/CI-base architecture
+gates pass. Read-only review found no production blocker; its opaque-reference
+identity finding is fixed with explicit Object.is assertions, and native
+Boolean cases are added. Full-realm execution is pending; the initial live run
+predates those tightened test assertions and is not final acceptance. The
+resource fill does not yet select this owner for full Promise resolution.
+
 Join the real mixed Get, primitive classifier and common IsCallable owners;
 read then once with the original receiver and retain the captured function for
 the existing ThenableJob. Keep primitive resolutions free of property access.
@@ -3512,13 +3532,14 @@ Current measured evidence:
   The remaining getter expectation and three missing `env.__str_from_mem` import
   failures reproduce on pristine ffc14bb84e07608d48837c3ca9b01052ea99d39c. That
   broad run remains failed and is not described as complete acceptance.
-- Actual complete realm/Promise/frame execution is **still pending**. After the
-  EH repair, normal execution still threw an unformatted exception. Inspection
-  found that the getter fixture specified a null setter instead of canonical
-  native undefined; this input is corrected and the full rerun is running.
-  A separate diagnostic saves the generated Wasm for direct runtime inspection.
-  Earlier failures remain recorded and are not counted as passes.
+- Actual realm/Promise/frame allocation execution: **3/3**, exit 0, including
+  normal and displaced type coordinates (1358.65 seconds). The complete source
+  rerun includes the production rejection controls and await-adapter observer.
+  The getter fixture now supplies canonical native undefined as its absent
+  setter; the former explicit null correctly threw. The generated-Wasm replay
+  was diagnostic only; acceptance comes from the complete source rerun in
+  `.tmp/promise-realm-final-setter.log`. Earlier failures remain recorded.
 
-Read-only adversarial review found no remaining concrete EH/observer blocker;
-the full integration still requires successful execution. Standard EH reference:
+Read-only adversarial review found no remaining concrete EH/observer blocker.
+Standard EH reference:
 https://webassembly.github.io/exception-handling/core/binary/instructions.html

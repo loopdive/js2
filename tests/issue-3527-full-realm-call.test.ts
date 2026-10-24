@@ -64,6 +64,16 @@ import {
   requireCompletedNativeRealmFunctionApply,
 } from "../src/backend/wasmgc/resources/native-realm-function-apply.js";
 import { setImmediate } from "node:timers/promises";
+import {
+  reserveNativePromiseThenLookup,
+  fillNativePromiseThenLookup,
+  nativePromiseThenLookupBinding,
+} from "../src/backend/wasmgc/resources/native-promise-then-lookup.js";
+import { checkCommonPromiseLookup } from "./helpers/native-common-promise-lookup.js";
+import {
+  reserveNativeBooleanBoxResources,
+  fillNativeBooleanBoxResources,
+} from "../src/backend/wasmgc/resources/native-booleans.js";
 // Long synchronous reservation audits can outlive Vitest's worker RPC timer.
 // Let IPC responses drain before the next audit, including the first test.
 async function drainWorkerEvents() {
@@ -189,7 +199,24 @@ async function executable(displaced: boolean) {
   expect(() => reserveNativeRealmFunctionCore(tx, r.invocation)).toThrow(/already has/);
   expect(() => requireCompletedNativeRealmFunctionCore(tx, { ...core })).toThrow(/foreign or copied/);
   const classifier = reserveNumericClassifier(r);
+  const booleanBox = reserveNativeBooleanBoxResources(
+    tx,
+    "lookup:boolean",
+    r.values,
+    r.valuePlan,
+    r.valueDependencies,
+    "allocating",
+  );
   const coercion = reserveNativeRealmNumberCoercion(tx, "number-coercion", r.invocation, r.access, classifier);
+  const beforeLookup = f.module.functions.length;
+  expect(() =>
+    reserveNativePromiseThenLookup(tx, "bad-lookup", r.invocation, {
+      ...coercion,
+    }),
+  ).toThrow(/foreign or copied/);
+  expect(f.module.functions).toHaveLength(beforeLookup);
+  const thenLookup = reserveNativePromiseThenLookup(tx, "promise-lookup", r.invocation, coercion);
+  expect(() => nativePromiseThenLookupBinding(tx, { ...thenLookup }, r.invocation)).toThrow(/foreign or copied/);
   expect(() => requireCompletedNativeRealmNumberCoercion(tx, { ...coercion })).toThrow(/foreign or copied/);
   expect(() => requireCompletedNativeRealmNumberCoercion(tx, coercion)).toThrow(/missing canonical/);
   const ryu = reserveNativeRyuResources(tx, "apply:ryu", f.strings);
@@ -265,7 +292,12 @@ async function executable(displaced: boolean) {
     ],
   });
   fillNativeNumberPrimitiveClassifierResources(tx, classifier);
+  fillNativeBooleanBoxResources(tx, booleanBox);
   fillNativeRealmNumberCoercion(tx, coercion);
+  expect(() => nativePromiseThenLookupBinding(tx, thenLookup, r.invocation, true)).toThrow(/missing canonical lookup/);
+  fillNativePromiseThenLookup(tx, thenLookup);
+  expect(nativePromiseThenLookupBinding(tx, thenLookup, r.invocation, true).lookup).toBe(thenLookup.lookup);
+  expect(() => fillNativePromiseThenLookup(tx, thenLookup)).toThrow(/duplicate/);
   requireCompletedNativeRealmNumberCoercion(tx, coercion);
   fillNativeRyuResources(tx, ryu);
   fillNativeDecimalFormat(tx, decimal);
@@ -485,7 +517,9 @@ async function executable(displaced: boolean) {
     argument,
     toNumber: coercion.toNumber,
     toLength: coercion.toLength,
+    lookupThen: thenLookup.lookup,
     boxBigInt: r.population.bigints.box,
+    boxBoolean: booleanBox.boxBoolean,
     boxSymbol: r.symbols.functions.box,
     foreignClone,
     isCallable: nativeInvocationCallableBinding(tx, r.invocation, true).isCallable,
@@ -601,6 +635,7 @@ for (const displaced of [false, true])
         : id === "%Promise.prototype%"
           ? api.promisePrototype.value
           : api["native" + catalog.filter((entry) => entry.callable).findIndex((entry) => entry.id === id)].value;
+    checkCommonPromiseLookup(api, literalValue("then"), literalValue("name"));
     let descriptors = 0;
     for (const entry of catalog) {
       const object = intrinsic(entry.id);
