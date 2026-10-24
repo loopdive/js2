@@ -165,6 +165,7 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { ts } from "../ts-api.js";
 import { OBJ_FLAG_CALLABLE } from "./builtin-callable-brand.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
+import { collectErrorInstanceOfTags, ERROR_FAMILY_CTOR_NAMES } from "./builtin-tags.js"; // (#7120)
 import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) closure → prototype identity edge
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -220,7 +221,8 @@ function reserveBuiltinCtorIdentityHelper(ctx: CodegenContext): number {
     typeIdx,
     locals: [],
     // 0/1 are definitive results; 3 means that this target is not the
-    // canonical Object constructor carrier known to this module.
+    // canonical Object constructor carrier known to this module (and, #7120,
+    // not an Error-family carrier whose `$tag` set proves membership).
     body: [{ op: "i32.const", value: UNKNOWN_RESULT }],
     exported: false,
   };
@@ -912,6 +914,185 @@ function objectValueResult(valueSlot: number, typeofObjectIdx: number, typeofFun
   ];
 }
 
+/** `$Error_struct.$tag`, the native error kind (#1473). */
+const ERROR_TAG_FIELD = 0;
+
+/**
+ * The `Object`-carrier arm of the builtin-constructor identity probe: when the
+ * target is the canonical `Object` constructor carrier, answer Type(value) is
+ * Object. Locals: 2 targetAny, 3 carrierAny.
+ */
+function objectCarrierIdentityArm(ctx: CodegenContext, typeofObjectIdx: number, typeofFunctionIdx: number): Instr[] {
+  const objectGlobalIdx = ctx.builtinObjectGlobals.get("Object");
+  if (objectGlobalIdx === undefined) return [];
+  const targetAny = 2;
+  const valueAny = 3;
+  return [
+    { op: "global.get", index: objectGlobalIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: targetAny },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "global.get", index: objectGlobalIdx },
+            { op: "any.convert_extern" },
+            { op: "local.tee", index: valueAny },
+            { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: targetAny },
+                { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                { op: "local.get", index: valueAny },
+                { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                { op: "ref.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [...objectValueResult(0, typeofObjectIdx, typeofFunctionIdx), { op: "return" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#7120) The Error-family arm of the same probe. When the target is the
+ * bare-value carrier of an Error-family constructor `N` (#2907), and the
+ * value is a native `$Error_struct` whose `$tag` is in
+ * `collectErrorInstanceOfTags(N)`, it answers 1. Every other case falls
+ * through to UNKNOWN, so the chain walk still decides.
+ *
+ * ## Why the chain walk alone answered wrong
+ *
+ * The native error prototypes do not chain. On the host-free lanes
+ * `Object.getPrototypeOf(TypeError.prototype) === Error.prototype` is false.
+ * A user subclass of a builtin error is a `$Error_struct` carrying the
+ * parent's `$tag`, with no `$Object` prototype link. So
+ * `new TypeError() instanceof E` answered `false` whenever `E` (the realm's
+ * `Error`) reached the operator as a VALUE. The name-based path (#1473),
+ * which reads the `$tag`, answered `true` for a literal `instanceof Error`.
+ *
+ * ## Why this can only correct
+ *
+ * Only a 1 is decisive, so the operator answers (tag set) OR (chain walk).
+ * A 1 is exactly a value and target pair the name-based path already answers
+ * `true`, so no answer moves away from legacy's static path.
+ * `Object.create(TypeError.prototype)`, which is not an `$Error_struct`, keeps
+ * its chain-walk answer. Locals: 2 targetAny, 4 errorAny, 5 carrierAny, 6 tag.
+ */
+function errorCarrierTagArm(ctx: CodegenContext): Instr[] {
+  const errorTypeIdx = ctx.errorStructTypeIdx;
+  if (errorTypeIdx < 0) return [];
+  const [targetAny, errorAny, carrierAny, tag] = [2, 4, 5, 6];
+  const carriers: Instr[] = [];
+  for (const name of ERROR_FAMILY_CTOR_NAMES) {
+    const carrier = ctx.builtinObjectGlobals.get(name);
+    if (carrier === undefined) continue;
+    const member: Instr[] = [{ op: "i32.const", value: 0 }];
+    for (const t of collectErrorInstanceOfTags(name)) {
+      member.push({ op: "local.get", index: tag }, { op: "i32.const", value: t }, { op: "i32.eq" }, { op: "i32.or" });
+    }
+    carriers.push(
+      { op: "global.get", index: carrier },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: carrierAny },
+      { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: targetAny },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "local.get", index: carrierAny },
+          { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+          { op: "ref.eq" },
+          ...member,
+          { op: "i32.and" },
+          { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+        ],
+      },
+    );
+  }
+  if (carriers.length === 0) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: targetAny },
+    { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: errorAny },
+        { op: "ref.test", typeIdx: errorTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: errorAny },
+            { op: "ref.cast", typeIdx: errorTypeIdx },
+            { op: "struct.get", typeIdx: errorTypeIdx, fieldIdx: ERROR_TAG_FIELD },
+            { op: "local.set", index: tag },
+            ...carriers,
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * Fill the builtin-constructor identity probe once every carrier exists: the
+ * `Object` arm (decisive 0/1) and, since #7120, the Error-family arm (a
+ * decisive 1). Leaves the reserved UNKNOWN body when neither can be proven.
+ */
+function fillBuiltinCtorIdentityHelper(ctx: CodegenContext, typeofObjectIdx: number, typeofFunctionIdx: number): void {
+  const fnIdx = ctx.funcMap.get(BUILTIN_CTOR_IDENTITY_HELPER);
+  const fn = fnIdx === undefined ? undefined : definedFuncAt(ctx, fnIdx);
+  if (!fn) return;
+  const objectArm = objectCarrierIdentityArm(ctx, typeofObjectIdx, typeofFunctionIdx);
+  const errorArm = errorCarrierTagArm(ctx);
+  if (objectArm.length === 0 && errorArm.length === 0) return;
+  fn.locals = [
+    { name: "targetAny", type: { kind: "anyref" } },
+    { name: "carrierAny", type: { kind: "anyref" } },
+    { name: "errorAny", type: { kind: "anyref" } },
+    { name: "errorCarrierAny", type: { kind: "anyref" } },
+    { name: "errorTag", type: I32 },
+  ];
+  fn.body = [
+    // A null target cannot be a builtin carrier. The caller normally checks
+    // this already, but keeping the probe total makes it safe to reuse.
+    { op: "local.get", index: 1 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "i32.const", value: UNKNOWN_RESULT }, { op: "return" }],
+    },
+    ...objectArm,
+    ...errorArm,
+    { op: "i32.const", value: UNKNOWN_RESULT },
+  ];
+}
+
 /**
  * Fill the two reserve/fill probes used by `__instanceof_dynamic`.
  *
@@ -928,71 +1109,9 @@ export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined) return;
 
-  const builtinFnIdx = ctx.funcMap.get(BUILTIN_CTOR_IDENTITY_HELPER);
   const objectProtoFnIdx = ctx.funcMap.get(OBJECT_PROTO_INSTANCE_HELPER);
 
-  const builtinGlobalIdx = ctx.builtinObjectGlobals.get("Object");
-  const builtinFn = builtinFnIdx === undefined ? undefined : definedFuncAt(ctx, builtinFnIdx);
-  if (builtinFn && builtinGlobalIdx !== undefined) {
-    const targetAny = 2;
-    const valueAny = 3;
-    builtinFn.locals = [
-      { name: "targetAny", type: { kind: "anyref" } },
-      { name: "valueAny", type: { kind: "anyref" } },
-    ];
-    builtinFn.body = [
-      // A null target cannot be the canonical Object carrier.  The caller
-      // normally checks this already, but keeping the probe total makes it
-      // safe to reuse independently.
-      { op: "local.get", index: 1 },
-      { op: "ref.is_null" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: UNKNOWN_RESULT }, { op: "return" }],
-      },
-      { op: "global.get", index: builtinGlobalIdx },
-      { op: "ref.is_null" },
-      { op: "i32.eqz" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "any.convert_extern" },
-          { op: "local.tee", index: targetAny },
-          { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "global.get", index: builtinGlobalIdx },
-              { op: "any.convert_extern" },
-              { op: "local.tee", index: valueAny },
-              { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: targetAny },
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                  { op: "local.get", index: valueAny },
-                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
-                  { op: "ref.eq" },
-                  {
-                    op: "if",
-                    blockType: { kind: "empty" },
-                    then: [...objectValueResult(0, typeofObjectIdx, typeofFunctionIdx), { op: "return" }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-      { op: "i32.const", value: UNKNOWN_RESULT },
-    ];
-  }
+  fillBuiltinCtorIdentityHelper(ctx, typeofObjectIdx, typeofFunctionIdx);
 
   const nativeProtoTypeIdx = ctx.nativeProtoTypeIdx;
   const objectProtoFn = objectProtoFnIdx === undefined ? undefined : definedFuncAt(ctx, objectProtoFnIdx);

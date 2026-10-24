@@ -622,6 +622,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * carrier, or an unproven receiver.
    */
   readonly isDynamicForInReceiver?: (receiver: ts.Expression) => boolean;
+  /** #7135: native dynamic keys can be boxed into the certified externref receiver ABI. */
+  readonly nativeDynamicInBuildable?: boolean;
   /**
    * #2952 slice 6c — true only when a for-in enumerated key can be bound as an
    * `IrType.string` head VALUE, i.e. the active string carrier is the host
@@ -672,6 +674,19 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly dynamicConstructCalleeIsPlain?: (callee: ts.Identifier) => boolean;
   /**
+   * (#7106 S3c) The strictness of `fn`'s code when the IR may read its own
+   * `this` through `dyn.current_this` — legacy's receiver ladder, on the
+   * host-free lanes, for the self-guarded constructor shape. Undefined → `this`
+   * stays legacy-only in `fn`. The lowering asks the same question.
+   */
+  readonly functionThisStrictness?: (fn: ts.FunctionDeclaration) => boolean | undefined;
+  /**
+   * (#7106 S3c) May the IR use `ident` as a self-guarded constructor VALUE —
+   * `new F(…)` through `dyn.construct`, `x instanceof F` through
+   * `dyn.instanceof_fn`? Absent → never.
+   */
+  readonly selfGuardedConstructorValue?: (ident: ts.Identifier) => boolean;
+  /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
    * An explicit false prevents an ambient Date snapshot from being claimed
@@ -693,6 +708,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-dynamic-construct"
       | "native-string-carrier-coercion"
       | "native-arguments-length"
+      | "native-current-this"
       | "native-own-property-test"
       | "native-own-property-descriptor"
       | "native-dynamic-value-call",
@@ -1648,6 +1664,9 @@ let currentDynMemberEqualitySubject: ts.FunctionDeclaration | null = null;
 let currentDynEqualityBoxableParamNames = new Set<string>();
 let currentMutableSlotNames = new Set<string>();
 let currentStableFunctionCallSubject: IrStableFunctionCallPlan | null = null;
+// (#7106 S3c) The top-level function whose own `this` the IR reads through
+// `dyn.current_this` (see `ambientThisIsLowerable`).
+let currentAmbientThisSubject: ts.FunctionDeclaration | null = null;
 let currentStableDynamicRootNames = new Set<string>();
 // Grounded parameter families from the propagation map. The checker sees an
 // unannotated allowJs parameter as `any`, but the IR ABI may already have
@@ -1821,6 +1840,38 @@ function collectDirectMutationNames(body: ts.Block): ReadonlySet<string> {
   return names;
 }
 
+/**
+ * (#7106 S3c) Does the subject being scanned see its own `this` as the dynamic
+ * carrier? A `.call`-only stable function (#3797), or a function whose `this`
+ * the IR reads through `dyn.current_this`. Nested closures never inherit it:
+ * their selection runs with a different `currentSelectionSubject`.
+ */
+function subjectHasAmbientThis(): boolean {
+  return (
+    currentStableFunctionCallSubject !== null ||
+    (currentAmbientThisSubject !== null && currentSelectionSubject === currentAmbientThisSubject)
+  );
+}
+
+/**
+ * (#7106 S3c) May the IR read `fn`'s own `this`? The lane must carry the
+ * receiver protocol, codegen must name `fn`'s strictness, and every `this` in
+ * the body must belong to `fn`'s own activation (an arrow would capture it).
+ */
+function ambientThisIsLowerable(fn: ts.FunctionDeclaration): boolean {
+  if (!fn.body || currentSelectionOptions?.supportsBackendCapability?.("native-current-this") !== true) return false;
+  if (currentSelectionOptions.functionThisStrictness?.(fn) === undefined) return false;
+  let own = true;
+  const visit = (node: ts.Node, nested: boolean): void => {
+    if (!own) return;
+    if (node.kind === ts.SyntaxKind.ThisKeyword && nested) own = false;
+    const enters = ts.isFunctionLike(node);
+    forEachChild(node, (child) => visit(child, nested || enters));
+  };
+  forEachChild(fn.body, (child) => visit(child, false));
+  return own;
+}
+
 function whyNotIrClaimable(
   fn: IrClaimableSubject,
   typeMap: TypeMap | undefined,
@@ -1834,6 +1885,7 @@ function whyNotIrClaimable(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   typedShapeRejectReason = null;
   currentArgumentsSubject = !isMethod && ts.isFunctionDeclaration(fn) ? fn : null;
+  currentAmbientThisSubject = !isMethod && ts.isFunctionDeclaration(fn) && ambientThisIsLowerable(fn) ? fn : null;
   currentClaimClassName =
     isMethod && fn.parent && (ts.isClassDeclaration(fn.parent) || ts.isClassExpression(fn.parent))
       ? ([...currentLocalClassDeclarations].find(([, declaration]) => declaration === fn.parent)?.[0] ??
@@ -1983,7 +2035,7 @@ function whyNotIrClaimable(
   // Method bodies and constructor bodies see `this` as an implicit local;
   // mark it so a `return this;` / `this.field` reference passes the
   // identifier-in-scope check at Phase-1 expression position.
-  if (isMethod || currentStableFunctionCallSubject !== null) scope.add("this");
+  if (isMethod || subjectHasAmbientThis()) scope.add("this");
   for (let i = 0; i < fn.parameters.length; i++) {
     const p = fn.parameters[i]!;
     // #1372 — binding-pattern params: `function f({ x, y }: Point): …` /
@@ -2144,7 +2196,7 @@ function whyNotIrClaimable(
   if (
     dynNames.size > 0 ||
     isDynamicReturn ||
-    currentStableFunctionCallSubject !== null ||
+    subjectHasAmbientThis() ||
     containsReceiverFirstDynamicMethodCall(body) ||
     bodyCallsDynamicParamCallee(body, typeMap)
   ) {
@@ -2572,8 +2624,12 @@ function resolveReturnType(
   // into a `() -> externref` claim that withdraws on `abi-signature-parity`
   // (every test262 harness helper, measured 2026-10-20). Mirror legacy here so
   // the claim carries legacy's ABI; a value-returning body keeps its lattice fact.
+  // A class method follows the same rule: legacy registers its slot from the
+  // checker's `void`, and methods never carry a lattice entry (`mapped` is
+  // undefined), so without this arm every value-less JS method was refused as
+  // `return-type-not-resolvable`.
   if (
-    ts.isFunctionDeclaration(fn) &&
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) &&
     fn.body &&
     (mapped === undefined || mapped.kind === "unknown" || mapped.kind === "dynamic") &&
     !irFunctionBodyReturnsValue(fn.body)
@@ -2830,7 +2886,7 @@ function subtreeTouchesDynamic(root: ts.Node, dynNames: ReadonlySet<string>): bo
   let found = false;
   const visit = (n: ts.Node): void => {
     if (found) return;
-    if (n.kind === ts.SyntaxKind.ThisKeyword && currentStableFunctionCallSubject !== null) {
+    if (n.kind === ts.SyntaxKind.ThisKeyword && subjectHasAmbientThis()) {
       found = true;
       return;
     }
@@ -3037,7 +3093,7 @@ function dynamicUsesAreMoveOnly(
 
   const isDynShaped = (e: ts.Expression): boolean => {
     e = unwrap(e);
-    if (e.kind === ts.SyntaxKind.ThisKeyword) return currentStableFunctionCallSubject !== null;
+    if (e.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
     // (#7106 item 1) the unshadowed global `undefined` is the carrier's undefined.
     if (ts.isIdentifier(e) && e.text === "undefined" && !dynNames.has("undefined")) return true;
     if (ts.isIdentifier(e)) return dynNames.has(e.text);
@@ -3166,7 +3222,7 @@ function dynamicUsesAreMoveOnly(
   const scanExprInner = (expr: ts.Expression, expectDyn: boolean): boolean => {
     const e = unwrap(expr);
     if (e.kind === ts.SyntaxKind.ThisKeyword) {
-      return currentStableFunctionCallSubject !== null && expectDyn;
+      return subjectHasAmbientThis() && expectDyn;
     }
     if (ts.isIdentifier(e)) {
       // (#7106 item 1) `undefined` as a value is only ever the dynamic carrier.
@@ -3347,6 +3403,16 @@ function dynamicUsesAreMoveOnly(
       ) {
         return scanExpr(e.left, true);
       }
+      // (#7106 S3c) `<dynamic> instanceof F` → `dyn.instanceof_fn`: a concrete i32.
+      if (
+        op === ts.SyntaxKind.InstanceOfKeyword &&
+        !expectDyn &&
+        leftIsDyn &&
+        ts.isIdentifier(e.right) &&
+        selfGuardedConstructorValueUse(e.right)
+      ) {
+        return scanExpr(e.left, true);
+      }
       // #3797 — statement-position stores used by Acorn's stable
       // `finishNodeAt.call(thisArg, node, type, pos, loc)` target. The
       // checker-backed stable-call plan is the authority for exposing ambient
@@ -3356,7 +3422,7 @@ function dynamicUsesAreMoveOnly(
       if (
         op === ts.SyntaxKind.EqualsToken &&
         !expectDyn &&
-        currentStableFunctionCallSubject !== null &&
+        subjectHasAmbientThis() &&
         ts.isExpressionStatement(e.parent) &&
         e.parent.expression === e &&
         (ts.isPropertyAccessExpression(e.left) || ts.isElementAccessExpression(e.left)) &&
@@ -4079,7 +4145,7 @@ function stableDynamicStoreReceiverHasAdmittedRoot(receiver: ts.Expression): boo
     candidate = unwrapPhase1Parens(candidate.expression);
   }
   return (
-    (candidate.kind === ts.SyntaxKind.ThisKeyword && currentStableFunctionCallSubject !== null) ||
+    (candidate.kind === ts.SyntaxKind.ThisKeyword && subjectHasAmbientThis()) ||
     (ts.isIdentifier(candidate) && currentStableDynamicRootNames.has(candidate.text))
   );
 }
@@ -5837,6 +5903,9 @@ function isPhase1BodyStatement(
   return shapeNo("body-unhandled-stmt", stmt);
 }
 
+/** (#7106 S3c) The implicit `return;` after a dynamic-return function's trailing statement. */
+const IMPLICIT_DYNAMIC_RETURN: ts.Statement = ts.factory.createReturnStatement();
+
 function isPhase1Tail(
   stmt: ts.Statement,
   scope: Set<string>,
@@ -5900,6 +5969,14 @@ function isPhase1Tail(
   // abrupt completion that terminates the function (no return needed).
   if (ts.isThrowStatement(stmt)) {
     return isPhase1ThrowStatement(stmt, scope, localClasses);
+  }
+  // (#7106 S3c) A dynamic-return function may fall out of a trailing
+  // expression statement into its implicit `return undefined` (Test262Error's
+  // `this.message = message || "";`). The statement is checked by the SAME
+  // arms as a mid-body statement, followed by the bare return the lowerer
+  // synthesizes.
+  if (currentFnIsDynamicReturn && !isVoidReturn && ts.isExpressionStatement(stmt)) {
+    return isPhase1StatementListInScope([stmt, IMPLICIT_DYNAMIC_RETURN], scope, localClasses, isGenerator, false);
   }
   // Slice 14 (#1228) — void function tail: an ExpressionStatement (call
   // or other side-effect expression) can stand in for the implicit
@@ -8134,17 +8211,14 @@ function selectorDynamicLaneIn(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
-  // The key must reach `__extern_has` AS an externref, and that coercion only
-  // exists while the lane's string carrier IS the host externref (a string key
-  // passes through; a numeric one boxes via the host `__box_number` of the same
-  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
-  // externref host-arg position accepts — measured 2026-08-29: without this
-  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
-  // which is a post-claim demote of the whole lane rather than of a documented
-  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
-  // the same one, not a for-in-specific one, and an absent certificate (bare
-  // selector callers) reads as unproven and rejects.
-  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  // Host strings pass through the externref ABI. The native certificate
+  // supplies canonical boxing, receiver validation and ToPropertyKey instead.
+  // Missing certificates remain unproven for bare selector callers.
+  if (
+    currentSelectionOptions?.forInHeadValueIsHostString !== true &&
+    currentSelectionOptions?.nativeDynamicInBuildable !== true
+  )
+    return false;
   if (inKeyIsCommaExpression(expr.left)) return false;
   if (ts.isPrivateIdentifier(expr.left)) return false;
   return probeShape(
@@ -10018,16 +10092,24 @@ function collectDirectNestedFunctionNames(body: ts.Block): Set<string> {
 }
 
 /**
- * The IR delete lowerer returns constant true and has no global binding
- * attributes. Keep direct module-init `delete this.name` on legacy until the IR
- * owns the GlobalEnvironmentRecord model (#2726).
+/**
+ * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
+ * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
+ * binding (`selfGuardedConstructorValue`: the declaration itself, never
+ * reassigned) and the function-object planner must resolve the occurrence,
+ * because the lowering reads both the value and the identity from that plan.
  */
-function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boolean {
-  return (
-    currentSubjectIsModuleInit &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.expression.kind === ts.SyntaxKind.ThisKeyword
-  );
+function selfGuardedConstructorValueUse(ident: ts.Identifier): boolean {
+  if (currentSelectionOptions?.supportsBackendCapability?.("native-current-this") !== true) return false;
+  if (currentSelectionOptions.selfGuardedConstructorValue?.(ident) !== true) return false;
+  return currentSelectionOptions.functionObjectValues?.resolveTopLevelFunctionValue(ident) !== undefined;
+}
+
+/** (#7106 S3c) The left operand of a `dyn.instanceof_fn`: a dynamic carrier the scan can prove. */
+function instanceOfLeftIsDynamicCarrier(left: ts.Expression): boolean {
+  const operand = unwrapPhase1Parens(left);
+  if (operand.kind === ts.SyntaxKind.ThisKeyword) return subjectHasAmbientThis();
+  return ts.isIdentifier(operand) && currentDynamicParamNames.has(operand.text);
 }
 
 /**
@@ -10040,7 +10122,9 @@ function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boole
  */
 function dynamicConstructCallee(expr: ts.Expression): ts.Identifier | null {
   if (!ts.isNewExpression(expr) || !ts.isIdentifier(expr.expression)) return null;
-  if (!currentDynamicParamNames.has(expr.expression.text)) return null;
+  // (#7106 S3c) …or a self-guarded constructor used as a value.
+  if (!currentDynamicParamNames.has(expr.expression.text) && !selfGuardedConstructorValueUse(expr.expression))
+    return null;
   if ((expr.typeArguments?.length ?? 0) !== 0) return null;
   const args = expr.arguments ?? [];
   if (args.length > IR_DYNAMIC_CONSTRUCT_MAX_ARITY || args.some((a) => ts.isSpreadElement(a))) return null;
@@ -10613,6 +10697,19 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       if (localClassHasKnownProjectionGap(expr.right.text)) {
         return capabilityNo("class-projection-unsupported", "expr-instanceof-class-shape", expr.right);
+      }
+      return isPhase1Expr(expr.left, scope, localClasses);
+    }
+    // (#7106 S3c) `<dynamic> instanceof F` for a self-guarded constructor F →
+    // `dyn.instanceof_fn`, legacy's per-function chain walk.
+    if (
+      binOp === ts.SyntaxKind.InstanceOfKeyword &&
+      ts.isIdentifier(expr.right) &&
+      !scope.has(expr.right.text) &&
+      selfGuardedConstructorValueUse(expr.right)
+    ) {
+      if (!instanceOfLeftIsDynamicCarrier(expr.left)) {
+        return shapeNo("expr-instanceof-fn-operand", expr.left);
       }
       return isPhase1Expr(expr.left, scope, localClasses);
     }
@@ -11529,19 +11626,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     return true;
   }
-  // Slice 11 (#1169n) — `delete <expr>` and `void <expr>`. Both are
-  // accepted at the selector level when their operand is a Phase-1
-  // expression. Lowering emits:
-  //   - `delete obj.prop`     → const `true` (most deletes succeed
-  //                              syntactically; runtime rejection is
-  //                              rare at the IR-claim shape).
-  //   - `void <expr>`         → lower expr for side effects, push
-  //                              `f64 NaN` (the undefined sentinel
-  //                              the IR uses in f64-typed contexts).
-  if (ts.isDeleteExpression(expr))
-    return isUnsupportedModuleGlobalObjectDelete(expr)
-      ? shapeNo("expr-delete-module-global-object", expr)
-      : isPhase1Expr(expr.expression, scope, localClasses);
+  // (#7106) `delete <expr>` stays on the direct path. The IR has no delete
+  // operation: Slice 11 (#1169n) lowered it to the operand's side effects plus
+  // a constant `true`, which removed nothing and never failed. A claimed
+  // `delete` was therefore wrong wherever that shows — the property survives
+  // the delete, and `delete arr.length` in strict code answers `true` instead
+  // of throwing a TypeError. Refuse every form until a real dynamic delete
+  // lands (propertyHelper's `isConfigurable` arm).
+  if (ts.isDeleteExpression(expr)) return shapeNo("expr-delete-no-ir-lowering", expr);
+  // Slice 11 (#1169n) — `void <expr>`: lower expr for side effects, push
+  // `f64 NaN` (the undefined sentinel the IR uses in f64-typed contexts).
   if (ts.isVoidExpression(expr)) {
     return isPhase1Expr(expr.expression, scope, localClasses);
   }
@@ -11942,6 +12036,37 @@ function isPhase1BinaryOp(op: ts.SyntaxKind): boolean {
  *
  * (The helpers below are exported for Slice 2's integration.)
  */
+/**
+ * (#7124) Opt-in unmasked module-init census. `shapeNo` is first-wins and the
+ * assessment stops at the first rejected statement, so a harness statement
+ * that every test shares hides each test's own blockers. With
+ * `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1` (on top of `JS2WASM_IR_SHAPE_DIAG=1`)
+ * the walk records every rejected top-level statement as `<reason>@<arm>` and
+ * keeps going; the first reason still decides the unit, so the claim outcome
+ * is unchanged. A rejected `var`/`let`/`const` still enters scope so later
+ * reads are not double-counted as `expr-ident-not-in-scope`.
+ */
+const MODULE_INIT_ALL_REJECTS_ON = SHAPE_DIAG_ON && process.env.JS2WASM_IR_MODULE_INIT_ALL_REJECTS === "1";
+
+interface ModuleInitReject {
+  readonly reason: IrFallbackReason;
+  readonly label: string;
+}
+
+function recordMaskedModuleInitReject(
+  rejects: ModuleInitReject[],
+  reason: IrFallbackReason,
+  stmt: ts.Statement,
+  scope: Set<string>,
+): void {
+  rejects.push({ reason, label: `${reason}@${takeShapeRejectDetail() ?? "unattributed-arm"}` });
+  typedShapeRejectReason = null;
+  if (!ts.isVariableStatement(stmt)) return;
+  for (const declaration of stmt.declarationList.declarations) {
+    if (ts.isIdentifier(declaration.name)) scope.add(declaration.name.text);
+  }
+}
+
 export function assessModuleInit(
   sourceFile: ts.SourceFile,
   claimedFuncs: ReadonlySet<string>,
@@ -12001,15 +12126,27 @@ export function assessModuleInit(
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
+  const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
     if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
+      if (maskedRejects) {
+        recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);
+        continue;
+      }
       const detail =
         reason === "body-shape-rejected" && SHAPE_DIAG_ON
           ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
           : undefined;
       return { stmtCount: population.length, reason, detail };
     }
+  }
+  if (maskedRejects?.length) {
+    return {
+      stmtCount: population.length,
+      reason: maskedRejects[0]!.reason,
+      detail: maskedRejects.map((entry) => entry.label).join(" | "),
+    };
   }
 
   // Gate 2 — call graph. The synthetic wrapper reuses `buildLocalCallGraph`
@@ -12108,6 +12245,13 @@ export function buildLocalCallGraph(
         // (`dyn.construct`), not a call edge; the selector's per-function
         // arms decide whether the parameter is dynamic-typed.
         if (ts.isIdentifier(node.expression) && enclosingFunctionParameterNames(node).has(node.expression.text)) {
+          if (node.arguments) {
+            for (const a of node.arguments) visit(a);
+          }
+          return;
+        }
+        // (#7106 S3c) …and so is `new F(…)` of a self-guarded constructor value.
+        if (ts.isIdentifier(node.expression) && selfGuardedConstructorValueUse(node.expression)) {
           if (node.arguments) {
             for (const a of node.arguments) visit(a);
           }

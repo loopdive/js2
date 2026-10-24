@@ -29,6 +29,7 @@ export type IrBackendTargetCapability =
   | "native-dynamic-construct"
   | "native-string-carrier-coercion"
   | "native-arguments-length"
+  | "native-current-this"
   | "native-own-property-test"
   | "native-own-property-descriptor"
   | "native-dynamic-value-call";
@@ -117,6 +118,9 @@ export function supportsIrBackendTargetCapability(
       );
     case "legacy-numeric-array-global":
       return profile.backend === "wasmgc" && profile.fast !== true;
+    case "native-current-this":
+    // (#7106 S3c) the `__current_this` receiver ladder and the per-function
+    // prototype chain walk on the host-free lanes.
     case "native-own-property-test":
     // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
     // alias reaches the object runtime's native `__getOwnPropertyDescriptor`.
