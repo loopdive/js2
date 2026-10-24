@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { snapshotNativePromiseConfiguration } from "../shared/contracts/compile-runtime-options.js";
 import { sameValTypes } from "../wasm/physical/function-types.js";
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import { ts } from "../ts-api.js";
@@ -230,6 +231,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
   const { preparation, output } = request;
   // Only plain option data is copied. Compiler-owned AST/checker/link identities stay intact.
   const backend = freezePreparedIrValue(request.backendOptions) as PreparedIrBackendOptions;
+  snapshotNativePromiseConfiguration(backend.nativePromise, backend);
   const options = freezePreparedIrValue(output.options) as PipelineOutputContext["options"];
   const policy = freezePreparedIrValue(preparation.policy) as IrWholeProgramPreparationInput["policy"];
   const input = { ...preparation, policy, sourceFiles: Object.freeze([...preparation.sourceFiles]) };

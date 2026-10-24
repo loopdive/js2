@@ -1455,9 +1455,9 @@ export function planPhysicalSetup(
   }
 
   // Preserve the existing first refusal while making missing inventory evidence
-  // part of ordinary acceptance. Runtime configuration is not yet forwarded.
+  // part of ordinary acceptance. Only explicit configuration closes its obligation.
   if (options.backend === "wasmgc" && options.target === "standalone") {
-    const inventory = planNativePromiseInventoryPreflight(program, options, projection, native, undefined);
+    const inventory = planNativePromiseInventoryPreflight(program, options, projection, native, options.nativePromise);
     if (inventory.kind === "unavailable")
       for (const row of inventory.obligations)
         gaps.add(`native Promise inventory ${row.code}: ${row.detail}`, row.unitId);

@@ -1,5 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import {
+  snapshotNativePromiseConfiguration,
+  type NativePromiseConfiguration,
+} from "../shared/contracts/compile-runtime-options.js";
 import type { IrBackendKind } from "./backend/legality.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { freezePreparedIrValue, invalidPreparedData, preparedIrReadonlyMap } from "./program/data.js";
@@ -39,6 +43,7 @@ export type {
 
 /** Resolved physical setup only; no source, policy callback or frontend option bag. */
 export interface PreparedIrBackendOptions {
+  readonly nativePromise?: NativePromiseConfiguration;
   readonly backend: RuntimeManifestPolicy["backend"];
   readonly target: RuntimeManifestPolicy["target"];
   readonly sharedExceptionTag: boolean;
@@ -549,4 +554,27 @@ export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgr
     },
   });
   return program;
+}
+
+/** Exact option data: optional physical policies are retained only when supplied. */
+export function canonicalPreparedIrBackendOptions(options: PreparedIrBackendOptions): PreparedIrBackendOptions {
+  const nativePromise = snapshotNativePromiseConfiguration(options.nativePromise, options);
+  const base = {
+    ...(nativePromise === undefined ? {} : { nativePromise }),
+    backend: options.backend,
+    target: options.target,
+    sharedExceptionTag: options.sharedExceptionTag,
+    utf8Storage: options.utf8Storage,
+    ...(options.backend === "wasmgc" && options.target === "standalone"
+      ? { stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true }
+      : {}),
+    sourceMap: options.sourceMap,
+    moduleName: options.moduleName,
+    ...(options.numberFormat === undefined
+      ? {}
+      : {
+          numberFormat: Object.freeze({ integerBeforeScratch: options.numberFormat.integerBeforeScratch }),
+        }),
+  };
+  return Object.freeze(options.linear === undefined ? base : { ...base, linear: Object.freeze({ ...options.linear }) });
 }

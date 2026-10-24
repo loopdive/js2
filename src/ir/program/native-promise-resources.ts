@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { NativePromiseConfiguration } from "../../shared/contracts/compile-runtime-options.js";
 import type { IrFunction } from "../core/nodes.js";
 import { forEachInstrDeep } from "../core/nodes.js";
 import { irCallableBindingKey } from "../core/callable-bindings.js";
@@ -35,10 +36,7 @@ export interface NativePromiseOwner {
   readonly unitId: IrUnitId;
   readonly calls: readonly { readonly region: string; readonly ordinal: number; readonly bindingKey: string }[];
 }
-export interface NativePromiseConfiguration {
-  readonly hooks: "disabled" | "dispatch";
-  readonly unhandledRejections: "disabled" | "track";
-}
+export type { NativePromiseConfiguration } from "../../shared/contracts/compile-runtime-options.js";
 export interface NativePromiseResourceInput {
   readonly anchor: string;
   readonly functions: readonly IrFunction[];

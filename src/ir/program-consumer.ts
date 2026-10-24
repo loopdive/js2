@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import {
+  snapshotNativePromiseConfiguration,
+  type NativePromiseConfiguration,
+} from "../shared/contracts/compile-runtime-options.js";
+import { canonicalPreparedIrBackendOptions } from "./program.js";
 import { directIrCallableReferences } from "./core/callable-operands.js";
 //
 // #3518 package C — the backend consumer of the production `PreparedIrProgram`
@@ -169,6 +174,7 @@ import { createEmptyModule, type Instr, type ValType, type WasmFunction } from "
 // ---------------------------------------------------------------------------
 
 interface AcceptanceRecord {
+  readonly nativePromise?: NativePromiseConfiguration;
   readonly physical: PhysicalSetupPlan;
   /** Exact issued dependencies; never deep-clone the native-value plan. */
   readonly nativeStrings?: NativeStringValueReservationInput;
@@ -223,27 +229,6 @@ function selectProjection(
   );
 }
 
-/** Exact option data: optional physical policies are retained only when supplied. */
-function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendOptions {
-  const base = {
-    backend: options.backend,
-    target: options.target,
-    sharedExceptionTag: options.sharedExceptionTag,
-    utf8Storage: options.utf8Storage,
-    ...(options.backend === "wasmgc" && options.target === "standalone"
-      ? { stringConcatEmptyIdentity: options.stringConcatEmptyIdentity ?? true }
-      : {}),
-    sourceMap: options.sourceMap,
-    moduleName: options.moduleName,
-    ...(options.numberFormat === undefined
-      ? {}
-      : {
-          numberFormat: Object.freeze({ integerBeforeScratch: options.numberFormat.integerBeforeScratch }),
-        }),
-  };
-  return Object.freeze(options.linear === undefined ? base : { ...base, linear: Object.freeze({ ...options.linear }) });
-}
-
 // ---------------------------------------------------------------------------
 // Acceptance
 // ---------------------------------------------------------------------------
@@ -295,6 +280,8 @@ export function acceptPreparedIrProgram(
   program: PreparedIrProgram,
   options: PreparedIrBackendOptions,
 ): PreparedIrBackendAcceptance {
+  options = freezePreparedIrValue(options) as PreparedIrBackendOptions;
+  const nativePromise = snapshotNativePromiseConfiguration(options.nativePromise, options);
   assertPreparedIrProgram(program);
   if (
     options.stringConcatEmptyIdentity !== undefined &&
@@ -388,13 +375,14 @@ export function acceptPreparedIrProgram(
   const accepted = Object.freeze({
     kind: "accepted",
     program,
-    options: canonicalOptions(options),
+    options: canonicalPreparedIrBackendOptions(options),
     runtime,
   }) as unknown as AcceptedPreparedIrProgram;
   acceptances.set(
     accepted,
     Object.freeze({
       physical: physical.plan,
+      ...(nativePromise === undefined ? {} : { nativePromise }),
       ...(nativeStrings ? { nativeStrings, nativeSnapshot: freezePreparedIrValue(nativeStrings.demands) } : {}),
       ...(nativeNumberFormat ? { nativeNumberFormat } : {}),
       ...(sourceClosures ? { sourceClosures } : {}),
@@ -512,6 +500,8 @@ function prepareNativeEmission(accepted: AcceptedPreparedIrProgram, plan: Physic
   const { program, runtime } = accepted;
   const record = acceptances.get(accepted);
   if (!record || record.physical !== plan) emissionFailed("physical plan does not belong to acceptance");
+  if (preparedIrDataMismatch(record.nativePromise, accepted.options.nativePromise) !== undefined)
+    emissionFailed("Promise configuration differs from acceptance");
   if (Boolean(record.nativeRealm) !== Boolean(plan.nativeRealm))
     emissionFailed("realm acceptance/physical plan mismatch");
   if (record.nativeRealm) {

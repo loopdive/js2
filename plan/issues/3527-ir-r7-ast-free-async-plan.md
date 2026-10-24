@@ -3941,3 +3941,74 @@ Construct composition. The common Promise execution timeout and missing Promise
 production coordinator remain open. Root owns the final host-byte rerun and
 merge checkpoint; subsequent work targets Promise reservation performance. This
 update changes only this issue file, with no production or test edits.
+
+### Explicit native Promise configuration forwarding — 2026-10-24
+
+Before editing: production physical planning passes `undefined` to Promise
+inventory preflight, and the public compiler/backend option contracts have no
+way to select the existing hooks/rejection policy. Add optional `nativePromise`
+configuration with exactly the existing `hooks: disabled | dispatch` and
+`unhandledRejections: disabled | track` fields. A lower runtime contract owns
+finite own-data validation and an independent frozen snapshot; the IR resource
+contract re-exports its existing type for compatibility. No missing binding
+implicitly selects disabled behavior.
+
+Forward this explicit selection through the compiler presentation snapshot,
+normal prepared driver, backend options and consumer canonical whitelist.
+Acceptance retains an independent private configuration snapshot, and physical
+planning/revalidation must consume the same selection. Preserve absence, all
+other inventory obligations, unsupported native async frames and existing
+host/linear behavior. This is configuration plumbing, not proof of completed
+Promise production composition. Keep live reservation/completion runtime trees
+frozen; work only in the separately assigned configuration worktree.
+
+Validate normal-driver and codec replay forwarding, caller/observer mutation
+isolation, exact own-data and enum rejection, and unchanged missing/remaining
+obligations. Run source/test TS7, explicit focused tests with one fork and the
+relevant layer/size gates; no baseline relaxation or legacy fallback.
+
+Initial focused validation: TS7 passed; five of six tests passed. The minimal
+async fixture was refused before inventory preflight, so it did not prove
+forwarding. Replace it with the existing real async inventory example; retain
+all actual preflight assertions. Review additionally requires rejecting supplied
+configuration outside standalone WasmGC, rather than silently retaining an
+inapplicable policy. Add this explicit target check centrally and entry-point
+accessor controls; absence continues to preserve host/linear behavior.
+
+The real async example reaches the intended preflight: the second focused run
+passes seven controls, then times out at the new test's default 35 seconds
+during seven real planning passes (80 seconds total), also starving Vitest's
+60-second update RPC. No semantic assertion failure was reported. Use an async
+initial runner-update flush and yield between passes, with an explicit bounded
+180-second budget for this new integration test; preserve its assertions.
+The simpler async return-42 diagnostic independently reports preparation's
+`native async family: full-family projection requires a certified delay owner`.
+This remains an open source-projection limitation, not successful admission.
+
+Gate-driven structure: move the finite configuration contract into shared
+foundation to avoid IR/runtime value dependency cycles. Extract the existing
+compile target option with the new Promise field into a shared compile-runtime
+option interface inherited by CompileOptions. Move the existing backend-option
+assembly into its own compiler subsystem helper, retaining its honest compiler
+migration-debt classification. No size/dependency allowances are added.
+
+Final configuration checkpoint: `.tmp/configuration-focused3.log` is terminal
+exit 0, **8/8** tests, 95.81 seconds total; actual normal-driver/codec Promise
+planning takes 73.607 seconds and reports no runner errors. Source/test TS7
+passes (`configuration-types3.log`). All nine gates exit 0 in
+`configuration-final-gates.json`; boundary inventory remains explicitly
+`inventory-valid-architecture-incomplete`. Biome and whitespace checks pass.
+The current candidate host control passes **11/11**, with all 11 emitted byte
+hashes identical to the already-measured pinned
+7371eb505b365e49815f1ddc09afed6c52372540 baseline. That baseline was reused, not
+rerun; provenance and comparison are in `.tmp/configuration-host-*.json`.
+
+Root's source audit locates the simple async rejection in
+`src/ir/program-native-async-source.ts:543`: `prepareNativeAsyncSourceFamilies`
+iterates only certified delay roots and rejects zero roots. General async
+root discovery/ownership is still required; this configuration patch neither
+removes nor weakens that guard. Explicit configuration closes only the missing
+runtime configuration obligation. Full Promise production composition and
+the independent long-running common-runtime qualification remain unresolved.
+Reviewed publication is a separate configuration branch/PR; the existing
+integration and live performance trees remain unchanged.

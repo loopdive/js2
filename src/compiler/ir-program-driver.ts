@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { snapshotNativePromiseConfiguration } from "../shared/contracts/compile-runtime-options.js";
 import { acceptPreparedIrProgram, emitAcceptedIrProgram } from "../ir/program-consumer.js";
 import { prepareWholeIrProgram, type IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
 import { freezePreparedIrValue, type PreparedIrBackendOptions } from "../ir/program.js";
@@ -15,6 +16,7 @@ export function runIrProgramDriver(
 ): IrProgramDriverResult {
   // Snapshot data-only target/output options before preparation can notify observers.
   const backendOptions = freezePreparedIrValue(options) as PreparedIrBackendOptions;
+  snapshotNativePromiseConfiguration(backendOptions.nativePromise, backendOptions);
   const policy = freezePreparedIrValue(input.policy) as IrWholeProgramPreparationInput["policy"];
   const runtimePolicies =
     input.runtimePolicies &&

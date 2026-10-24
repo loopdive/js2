@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { snapshotNativePromiseConfiguration } from "../shared/contracts/compile-runtime-options.js";
 import { irCallableBindingKey } from "./callable-bindings.js";
 import { irTypeEquals } from "./core/types.js";
 import type { IrValueId } from "./core/nodes.js";
@@ -108,6 +109,7 @@ export function planNativePromiseInventoryPreflight(
   nativeStrings: NativeStringValueReservationInput | undefined,
   configuration: NativePromiseConfiguration | undefined,
 ): NativePromiseInventoryPreflight {
+  configuration = snapshotNativePromiseConfiguration(configuration, options);
   if (
     !program ||
     !Array.isArray(program.runtime) ||
