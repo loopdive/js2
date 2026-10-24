@@ -564,3 +564,25 @@ export function nativeMixedObjectAccessReservationInventory(
     completionScope: pack.completionScope,
   });
 }
+
+/** Canonical Get/Call cycle edge; this does not attest complete builtin algorithms. */
+export function nativeMixedObjectGetBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeMixedObjectAccessReservations,
+  invocation: NativeInvocationReservations,
+  completed = false,
+) {
+  const owner = current(tx, pack);
+  if (owner.invocation !== invocation) fail("different Get/Call invocation owner");
+  const binding = getterBinding(tx, owner, invocation);
+  if (completed) {
+    if (!owner.getterFilled) fail("missing canonical Get fill");
+    requireCompletedNativeMixedObjectAccessStructure(tx, pack);
+    requireCanonicalNativeFunction(tx, pack.get, getterDefinition(tx, pack, owner));
+  }
+  return Object.freeze({
+    ...binding,
+    get: pack.get,
+    symbols: owner.identities.stringOwnDependencies.layoutDependencies.symbols,
+  });
+}

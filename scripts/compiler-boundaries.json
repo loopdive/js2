@@ -337,6 +337,7 @@
         "src/backend/wasmgc/resources/native-object-realm-calls.ts",
         "src/backend/wasmgc/resources/native-realm-population.ts",
         "src/backend/wasmgc/resources/native-realm-function-core.ts",
+        "src/backend/wasmgc/resources/native-realm-number-coercion.ts",
         "src/backend/wasmgc/resources/native-mixed-object-access.ts",
         "src/backend/wasmgc/resources/native-well-known-symbols.ts",
         "src/backend/wasmgc/resources/native-bigint-number.ts",
@@ -455,7 +456,9 @@
         "src/runtime/wasmgc/values/realm-object-layouts.ts",
         "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
-        "src/runtime/wasmgc/values/number-from-value-body.ts"
+        "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "src/runtime/wasmgc/values/to-length-body.ts",
+        "src/runtime/wasmgc/values/mixed-object-scalar-get-body.ts"
       ],
       "minModules": 99
     },
@@ -1841,7 +1844,9 @@
       "layer": "native-runtime",
       "entries": [
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
-        "src/runtime/wasmgc/values/number-from-value-body.ts"
+        "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "src/runtime/wasmgc/values/to-length-body.ts",
+        "src/runtime/wasmgc/values/mixed-object-scalar-get-body.ts"
       ],
       "minModules": 2
     },
@@ -16253,6 +16258,11 @@
       "layer": "backend-wasmgc"
     },
     {
+      "path": "src/backend/wasmgc/resources/native-realm-number-coercion.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
       "path": "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -16409,6 +16419,16 @@
     },
     {
       "path": "src/runtime/wasmgc/values/number-from-value-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/to-length-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/mixed-object-scalar-get-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },

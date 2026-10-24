@@ -7,6 +7,8 @@ import type { IrStringEncoding } from "../../../ir/core/string-types.js";
 import { NATIVE_BUILTIN_FUNCTION_LITERALS } from "../resources/native-builtin-function-requests.js";
 import { NATIVE_OBJECT_DESCRIPTOR_LITERALS } from "../resources/native-object-descriptors.js";
 
+import { NUMBER_CONVERSION_LITERALS } from "../../../runtime/wasmgc/values/number-from-value-body.js";
+
 export interface NativeRealmLiteralPlan {
   readonly requirements: NativeRealmRequirements;
   readonly utf8Storage: boolean;
@@ -36,6 +38,7 @@ export function planNativeRealmLiterals(
       "Value is not callable",
       ...NATIVE_BUILTIN_FUNCTION_LITERALS,
       ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
+      ...Object.values(NUMBER_CONVERSION_LITERALS),
       ...catalog.intrinsics.flatMap((row) => [
         ...(row.callable ? [row.callable.initialName] : []),
         ...row.properties.flatMap((property) => [

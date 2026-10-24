@@ -3133,3 +3133,51 @@ the isolated caller-filled dispatcher refusal and executable normal/displaced
 realm variants, including real Function core behavior and foreign realm closure
 rejection. Final invoker coverage passes 243/243. Focused TS7, all nine gates,
 format/diff checks and eleven host binary identity checks remain passing.
+
+### Implementation plan: array-like length coercion for Function.prototype.apply
+
+Reuse the Number-from-value recipe for the shared ordered number-hint
+ToPrimitive sequence. Add a distinct ToNumber binding that rejects BigInt
+instead of admitting Number's explicit BigInt conversion; do not supply a dummy
+BigInt conversion function. Add ToLength over that conversion with a single
+observable conversion, positive-zero normalization and the 2^53-1 cap. Join the
+existing primitive classifier, native string scanner, mixed Get and common Call
+through genuine backend owners before granting any array-like/apply completion.
+Reuse CreateListFromArrayLike for ordered length/index Gets and retain the
+external argument-vector edge. Acceptance requires receiver/order/abrupt tests,
+BigInt and Symbol rejection, fractional/infinite/large lengths, both string
+layouts, canonical dependency checks, unchanged Number behavior and no new host
+imports or duplicated ToPrimitive implementation. Full-realm/public Promise
+admission remains separate until all required algorithms are genuine.
+
+The native numeric owner now joins canonical primitive classification,
+Symbol.toPrimitive, mixed Get and common Call. ToNumber shares Number(value)'s
+ordered conversion recipe with an explicit mode that rejects BigInt; ToLength
+performs the conversion once and clamps in f64 without narrowing wide lengths.
+Unsupported mixed-Get families remain explicit traps and cannot be mistaken for
+missing properties. This is a prerequisite for apply, not apply completion.
+
+Adversarial review found two P2 defects: an inherited bigintToNumber field could
+change the conversion mode, and invalid dependencies or a late duplicate key
+could leave earlier reservations behind. Explicit recipe mode and complete
+dependency/key preflight fix both. Regression controls cover inherited values
+and getters, copied owners, late collisions and unchanged reservation counts.
+The ledger intentionally becomes failed after a duplicate key; the negative
+test now respects that contract rather than attempting reuse. Review found no
+further concrete blockers.
+
+Pure conversion and scalar-Get coverage passes 341/341. Focused TS7 and all nine
+quality/preservation gates pass; eleven host binaries remain byte-identical to
+main 7371eb505. The initial large integration attempt exceeded its 240-second
+construction limit and is retained as a failed run. Redundant dependency checks
+were removed and the measured integration allowance was raised to 480 seconds.
+The final executable results are recorded below. Full apply, remaining builtin
+algorithms, public Promise execution, Linear/WASI and legacy retirement remain
+open.
+
+Final integration passes 3/3 selected cases (3 unrelated cases skipped): the
+reservation negative and both import-free executable realm variants. Normal
+and displaced layouts pass numeric conversion, source valueOf/@@toPrimitive,
+original abrupt identity and recovery checks in 233 and 231 seconds respectively.
+The scalar-Get source-family gap remains an asserted unsupported trap; these
+results do not certify full Get, apply or public Promise completion.

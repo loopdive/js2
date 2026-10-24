@@ -50,6 +50,16 @@ import {
   fillNativeRealmFunctionCore,
   requireCompletedNativeRealmFunctionCore,
 } from "../src/backend/wasmgc/resources/native-realm-function-core.js";
+import {
+  declareNativeNumberPrimitiveClassifierResources,
+  reserveNativeNumberPrimitiveClassifierResources,
+  fillNativeNumberPrimitiveClassifierResources,
+} from "../src/backend/wasmgc/resources/native-number-primitive-classifier.js";
+import {
+  reserveNativeRealmNumberCoercion,
+  fillNativeRealmNumberCoercion,
+  requireCompletedNativeRealmNumberCoercion,
+} from "../src/backend/wasmgc/resources/native-realm-number-coercion.js";
 import { setImmediate } from "node:timers/promises";
 afterEach(async () => {
   await setImmediate();
@@ -93,6 +103,24 @@ function fixture(displaced = false) {
 function join(r: ReturnType<typeof fixture>) {
   bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls);
   bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation);
+}
+function reserveNumericClassifier(r: ReturnType<typeof fixture>) {
+  const classifierDependencies = {
+    values: r.values,
+    valuePlan: r.valuePlan,
+    valueDependencies: r.valueDependencies,
+    booleans: r.booleans,
+    bigints: r.population.bigints,
+    bigintPlan: r.population.bigintPlan,
+    strings: r.f.strings,
+    symbols: r.symbols,
+  };
+  return reserveNativeNumberPrimitiveClassifierResources(
+    r.tx,
+    "control:classifier",
+    declareNativeNumberPrimitiveClassifierResources("control:classifier"),
+    classifierDependencies,
+  );
 }
 async function fill(r: ReturnType<typeof fixture>, dispatch = true) {
   const { tx, f, c } = r;
@@ -149,6 +177,24 @@ function fillSourceUnits(r: ReturnType<typeof fixture>) {
 }
 
 describe("full public realm Call joins", { timeout: 240000 }, () => {
+  it("rejects invalid numeric joins and late key collisions without reserving anything", () => {
+    const r = fixture();
+    join(r);
+    const classifier = reserveNumericClassifier(r);
+    const counts = () => [r.f.module.functions.length, r.f.module.types.length, r.f.module.globals.length];
+    const initial = counts();
+    expect(() => reserveNativeRealmNumberCoercion(r.tx, "invalid", r.invocation, r.access, { ...classifier })).toThrow(
+      /foreign or copied/,
+    );
+    expect(counts()).toEqual(initial);
+    expect(() => nativeInvocationCallableBinding(r.tx, r.invocation)).toThrow(/missing issued/);
+    r.tx.reserveFunction("collision:length", "collision", { params: [], results: [] });
+    const collision = counts();
+    expect(() => reserveNativeRealmNumberCoercion(r.tx, "collision", r.invocation, r.access, classifier)).toThrow();
+    expect(counts()).toEqual(collision);
+    // Duplicate keys poison the transaction by design; no new resource was allocated.
+    expect(r.tx.state).toBe("failed");
+  });
   it("rejects copied, foreign and accessor dependencies before reservation", () => {
     const r = fixture(),
       before = r.f.module.functions.length;
@@ -211,6 +257,15 @@ async function executable(displaced: boolean) {
   const core = reserveNativeRealmFunctionCore(tx, r.invocation);
   expect(() => reserveNativeRealmFunctionCore(tx, r.invocation)).toThrow(/already has/);
   expect(() => requireCompletedNativeRealmFunctionCore(tx, { ...core })).toThrow(/foreign or copied/);
+  const classifier = reserveNumericClassifier(r);
+  const coercion = reserveNativeRealmNumberCoercion(tx, "number-coercion", r.invocation, r.access, classifier);
+  expect(() => requireCompletedNativeRealmNumberCoercion(tx, { ...coercion })).toThrow(/foreign or copied/);
+  expect(() => requireCompletedNativeRealmNumberCoercion(tx, coercion)).toThrow(/missing canonical/);
+  const object = tx.reserveFunction("control:object", "object", { params: [ext], results: [ext] });
+  const property = tx.reserveFunction("control:property", "property", {
+    params: [ext, ext, ext, { kind: "i32" }],
+    results: [],
+  });
   const initialize = realm.initialize;
   const foreignClone = tx.reserveFunction("control:foreign-clone", "foreign_clone", { params: [ext], results: [ext] });
   const own = tx.reserveFunction("control:accessor", "accessor", { params: [ext], results: [ext] });
@@ -257,6 +312,9 @@ async function executable(displaced: boolean) {
       { op: "unreachable" },
     ],
   });
+  fillNativeNumberPrimitiveClassifierResources(tx, classifier);
+  fillNativeRealmNumberCoercion(tx, coercion);
+  requireCompletedNativeRealmNumberCoercion(tx, coercion);
   fillNativeRealmFunctionCore(tx, core);
   expect(requireCompletedNativeRealmFunctionCore(tx, core)).toBe(core);
   expect(() => fillNativeRealmFunctionCore(tx, core)).toThrow(/duplicate/);
@@ -274,6 +332,51 @@ async function executable(displaced: boolean) {
   ];
   const realmGlobal = tx.physicalIndex(realm.globals.realm);
   tx.fillGlobal(argc, [n(-1)]);
+  tx.fillFunction(object, {
+    locals: [],
+    body: [
+      ...prefix,
+      get(0),
+      global(realmGlobal),
+      { op: "ref.as_non_null" },
+      { op: "struct.new", typeIdx: f.pack.types.state.typeIndex },
+      { op: "struct.new", typeIdx: f.pack.types.ordinary.typeIndex },
+      { op: "extern.convert_any" },
+    ],
+  });
+  const objectRef: Instr[] = [
+    get(0),
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: f.objects.object.typeIndex },
+  ];
+  tx.fillFunction(property, {
+    locals: [],
+    body: [
+      ...objectRef,
+      get(1),
+      get(2),
+      { op: "any.convert_extern" },
+      get(3),
+      n(0),
+      { op: "call", funcIdx: r.storage.insert.handle },
+      get(3),
+      n(8),
+      { op: "i32.and" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...objectRef,
+          get(1),
+          { op: "call", funcIdx: r.lookup.findOwn.handle },
+          { op: "ref.as_non_null" },
+          get(2),
+          { op: "any.convert_extern" },
+          { op: "struct.set", typeIdx: f.objects.propEntry.typeIndex, fieldIdx: 4 },
+        ],
+      },
+    ],
+  });
   // Each native control reports the actual argument-vector length and returns its original receiver.
   // One control instead throws that exact receiver; unimplemented standard semantics gain no authority.
   realm.entries.forEach((entry, index) => {
@@ -378,6 +481,12 @@ async function executable(displaced: boolean) {
   expect(requireCompletedNativeRealmPopulation(tx, r.population.pack)).toBe(r.population.pack);
   const exports = {
     ...literals,
+    object,
+    property,
+    toNumber: coercion.toNumber,
+    toLength: coercion.toLength,
+    boxBigInt: r.population.bigints.box,
+    boxSymbol: r.symbols.functions.box,
     foreignClone,
     isCallable: nativeInvocationCallableBinding(tx, r.invocation, true).isCallable,
     isUndefined: r.invocation.isUndefined,
@@ -505,6 +614,38 @@ for (const displaced of [false, true])
     expect(api.argc.value).toBe(0);
     const closure = api.makeCaptured(100),
       empty = api.makeEmpty();
+    for (const value of [NaN, -0, 0, -1, 0.5, 3.75, 4294967297.75, 9007199254740992, Infinity, -Infinity]) {
+      expect(Object.is(api.toNumber(api.box(value)), value)).toBe(true);
+      expect(
+        Object.is(api.toLength(api.box(value)), value > 0 ? Math.min(Math.trunc(value), 9007199254740991) : 0),
+      ).toBe(true);
+    }
+    expect(api.toLength(api.undefinedValue())).toBe(0);
+    expect(api.toLength(null)).toBe(0);
+    for (const value of [api.boxBigInt(1n), api.hasInstance()]) {
+      expect(() => api.toNumber(value)).toThrow(WebAssembly.Exception);
+      expect(() => api.toLength(value)).toThrow(WebAssembly.Exception);
+    }
+    expect(Number.isNaN(api.toNumber(literalValue("name")))).toBe(true);
+    const numeric = api.object(null);
+    api.property(numeric, literalValue("valueOf"), empty, 0);
+    expect(api.toNumber(numeric)).toBe(7);
+    expect(api.toLength(numeric)).toBe(7);
+    const exotic = api.object(numeric);
+    api.property(exotic, api.boxSymbol(3), empty, 0);
+    expect(api.toNumber(exotic)).toBe(7);
+    const throwing = api.object(null);
+    api.property(throwing, api.boxSymbol(3), api.native2.value, 8);
+    try {
+      api.toLength(throwing);
+      throw Error("missing coercion throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WebAssembly.Exception);
+      expect((error as WebAssembly.Exception).getArg(api.exception, 0)).toBe(throwing);
+    }
+    expect(api.toLength(numeric)).toBe(7);
+    // Unsupported source-property families stay explicit gaps, not missing properties/NaN.
+    expect(() => api.toNumber(empty)).toThrow(WebAssembly.RuntimeError);
     const callMethod = intrinsic("%Function.prototype.call%");
     const argsOf = (...values: unknown[]) => {
       const vector = api.newVector();
@@ -560,4 +701,4 @@ for (const displaced of [false, true])
       expect(api.state.value).toBe(state);
       expect(identities.every((value, i) => api.same(value, api["native" + i].value) === 1)).toBe(true);
     }
-  }, 240000);
+  }, 480000);

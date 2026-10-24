@@ -81,7 +81,7 @@ export function reserveRealmPopulationFixture(
   );
   const dependencies = { calls, descriptors, descriptorDependencies, symbols, symbolPlan, symbolDependencies };
   const pack = reserveNativeRealmPopulation(tx, dependencies);
-  return { pack, dependencies, bigints, sameValue, descriptors, symbols };
+  return { pack, dependencies, bigints, bigintPlan, sameValue, descriptors, symbols };
 }
 export function fillRealmPopulationFixture(
   r: Pick<ReturnType<typeof mixedOwnerFixture>, "tx" | "f">,
