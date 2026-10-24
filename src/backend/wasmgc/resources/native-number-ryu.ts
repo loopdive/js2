@@ -23,6 +23,7 @@ import { createStringDataType } from "../../../runtime/wasmgc/values/string-layo
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
 import {
   nativeStringLiteralReservationInventory,
+  requireCompletedNativeStringLiterals,
   nativeStringTypeKeys,
   type NativeStringLiteralReservations,
 } from "./native-string-literals.js";
@@ -204,12 +205,28 @@ export function fillNativeRyuResources(tx: PhysicalModuleReservations, pack: Nat
   );
   owner.filled = true;
 }
+/** Authenticate a borrowed producer; canonical private fill is sufficient for a local cycle edge. */
+export function nativeRyuBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeRyuReservations,
+  strings: NativeStringLiteralReservations,
+  completed = false,
+): FunctionReservation {
+  const owner = requireOwner(tx, pack);
+  if (owner.strings !== strings) fail("substituted string dependency");
+  if (completed) {
+    if (!owner.filled) fail("missing canonical Ryu fill");
+    requireCompletedNativeStringLiterals(tx, strings);
+    for (const token of [pack.mulShift, pack.inverse, pack.powers, pack.digits, pack.toBuffer])
+      tx.assertCompletedReservation(token);
+  }
+  return pack.toBuffer;
+}
 export function requireCompletedNativeRyu(
   tx: PhysicalModuleReservations,
   pack: NativeRyuReservations,
   strings: NativeStringLiteralReservations,
 ): void {
-  const owner = requireOwner(tx, pack);
-  if (owner.strings !== strings || !owner.filled || tx.state !== "sealed")
-    fail("incomplete or substituted resource pack");
+  if (tx.state !== "sealed") fail("incomplete or substituted resource pack");
+  nativeRyuBinding(tx, pack, strings, true);
 }

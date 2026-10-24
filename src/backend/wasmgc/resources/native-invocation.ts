@@ -415,9 +415,10 @@ export function nativeInvocationCallableBinding(
       binding.realm.realm,
       true,
     );
-    for (const token of [owner.callable, binding.call, pack.undefinedValue]) tx.assertCompletedReservation(token);
+    for (const token of [owner.callable, binding.call, pack.undefinedValue, pack.isUndefined])
+      tx.assertCompletedReservation(token);
   }
-  return { ...binding, isCallable: owner.callable, undefinedValue: pack.undefinedValue };
+  return { ...binding, isCallable: owner.callable, undefinedValue: pack.undefinedValue, isUndefined: pack.isUndefined };
 }
 
 /** Join the genuine emitted kernel once, before freeze; this grants no whole-realm completion. */

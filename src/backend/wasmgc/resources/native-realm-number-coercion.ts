@@ -192,6 +192,23 @@ export function fillNativeRealmNumberCoercion(tx: PhysicalModuleReservations, pa
   for (const row of definitions(tx, pack, owner, binding)) tx.fillFunction(row.token, row.definition);
   owner.filled = true;
 }
+/** Exact Get/ToLength producers shared by array-like conversion and numeric coercion. */
+export function nativeRealmNumberCoercionBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeRealmNumberCoercion,
+  invocation: NativeInvocationReservations,
+  completed = false,
+) {
+  const owner = current(tx, pack);
+  if (owner.invocation !== invocation) fail("different invocation owner");
+  const binding = bindings(tx, owner, completed);
+  if (completed) {
+    if (!owner.filled) fail("missing canonical numeric fill");
+    for (const row of definitions(tx, pack, owner, binding))
+      requireCanonicalNativeFunction(tx, row.token, row.definition);
+  }
+  return { ...binding, get: owner.scalarGet, classifier: owner.classifier, toLength: pack.toLength };
+}
 /** Narrow cycle completion only: the shared realm may still contain unfinished algorithms. */
 export function requireCompletedNativeRealmNumberCoercion(
   tx: PhysicalModuleReservations,
@@ -199,6 +216,5 @@ export function requireCompletedNativeRealmNumberCoercion(
 ): void {
   const owner = current(tx, pack);
   if (!owner.filled) fail("missing canonical numeric fill");
-  for (const row of definitions(tx, pack, owner, bindings(tx, owner, true)))
-    requireCanonicalNativeFunction(tx, row.token, row.definition);
+  nativeRealmNumberCoercionBinding(tx, pack, owner.invocation, true);
 }

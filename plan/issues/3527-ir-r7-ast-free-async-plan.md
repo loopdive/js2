@@ -3181,3 +3181,67 @@ and displaced layouts pass numeric conversion, source valueOf/@@toPrimitive,
 original abrupt identity and recovery checks in 233 and 231 seconds respectively.
 The scalar-Get source-family gap remains an asserted unsupported trap; these
 results do not certify full Get, apply or public Promise completion.
+
+### Implementation plan: native Function.prototype.apply execution
+
+Join the existing CreateListFromArrayLike and apply bodies to the native numeric
+owner, genuine common Call and shared strings. Reuse the existing Ryu decimal
+algorithm through an explicit all-Ryu ToString entry, including explicit signed
+zero normalization; preserve the existing radix fast-path recipe byte-for-byte.
+A small decimal resource owner borrows an authenticated Ryu pack rather than
+allocating duplicate tables when the full formatter already owns one. Extend
+the Ryu owner's private-fill completion proof to validate filled resources and
+strings before seal, retaining the sealed public completion contract. Expose
+the numeric owner's authenticated scalar Get rather than copying status logic.
+
+Reserve and fill only apply's actual slot and dependencies. Preserve callable
+validation before any length/index access, exactly one length conversion, ordered
+index Gets, prototype lookup, original exceptions, recovery and receiver/argument
+identity. Unsupported object families must remain explicit Get gaps; this cannot
+confer whole-realm or public Promise completion. Test real import-free modules in
+both layouts, numeric edge cases through 2^53-1, source/native invocation and
+negative owner/canonical-fill controls. Measure the all-Ryu per-index allocation
+tradeoff; full performance acceptance remains part of migration completion.
+No duplicate formatter or new cycle allowances; independent adversarial review
+must cover the final ownership boundaries and shared-recipe changes.
+
+
+### Native apply composition validation
+
+The genuine apply slot now uses the original mixed scalar Get, numeric ToLength,
+common Call and shared ArgumentVector. The decimal owner borrows a privately
+filled Ryu population and authenticates its exact strings, functions and tables
+before seal; the sealed public Ryu contract remains intact. The retained radix
+formatter's instruction construction still reconstructs the immutable donor.
+Independent adversarial review found no remaining production blocker and
+accepted the updated inverse proof. Boundary inventory adds only two owners
+(ten lines), without cycle allowances.
+
+Decimal execution passes 6/6 tests, including 535 numeric values in each of two
+string layouts. The first formatter/invoker regression run passed 275/278; three
+old source-structure inverse assumptions failed after extracting the shared
+builder. Their repaired complete suite passes 13/13 with the original donor and
+mutation controls retained. The other 265 cases passed in the initial run.
+Four full-realm ownership/refusal tests pass (two executable cases selected in
+a separate run). Focused TS7, all nine quality/preservation gates and eleven
+byte-identical host binaries against main 7371eb505 pass.
+
+The all-Ryu mode allocates a 256-code-unit scratch buffer for small indices too.
+A local Node 25.9.0 standalone-WasmGC measurement used 10,000 warmup conversions
+and seven batches of 100,000 index conversions: median 45.3 ns for UTF-16 and
+50.2 ns for UTF-8. This measures the formatter alone, not full apply, a radix
+speed comparison or migration performance acceptance. The initial scratch
+measurement failed on CLI IPC permissions, then on its missing return; both
+failed attempts are retained separately from the successful measurement.
+
+There are now four genuine Function algorithms in the full-realm integration;
+the other 40 bodies are explicit transport controls. Unsupported source-object
+Get still traps. Complete runtime algorithms, public Promise execution,
+Linear/WASI, full conformance/performance and legacy retirement remain open.
+
+Final import-free integration passes 2/2 executable variants (four negatives
+selected separately), in 311 and 326 seconds for normal/displaced layouts.
+The combined split execution covers all six cases: callable-first ordering,
+length/index getters, prototype lookup and holes, source/native receivers and
+arguments, original abrupt identity, recovery, lengths above 2^32 and Infinity
+with early exceptions, and explicit unsupported source-object Get traps.

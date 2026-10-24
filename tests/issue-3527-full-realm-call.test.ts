@@ -60,6 +60,19 @@ import {
   fillNativeRealmNumberCoercion,
   requireCompletedNativeRealmNumberCoercion,
 } from "../src/backend/wasmgc/resources/native-realm-number-coercion.js";
+import {
+  reserveNativeRyuResources,
+  fillNativeRyuResources,
+} from "../src/backend/wasmgc/resources/native-number-ryu.js";
+import {
+  reserveNativeDecimalFormat,
+  fillNativeDecimalFormat,
+} from "../src/backend/wasmgc/resources/native-decimal-format.js";
+import {
+  reserveNativeRealmFunctionApply,
+  fillNativeRealmFunctionApply,
+  requireCompletedNativeRealmFunctionApply,
+} from "../src/backend/wasmgc/resources/native-realm-function-apply.js";
 import { setImmediate } from "node:timers/promises";
 afterEach(async () => {
   await setImmediate();
@@ -248,7 +261,7 @@ const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
 const n = (value: number): Instr => ({ op: "i32.const", value });
 
-/** The three core algorithms are real; remaining controls observe Call's receiver/argv without claiming builtin semantics. */
+/** The core and apply algorithms are real; remaining controls observe Call's receiver/argv without claiming builtin semantics. */
 async function executable(displaced: boolean) {
   const r = fixture(displaced),
     { tx, f, c } = r,
@@ -261,6 +274,23 @@ async function executable(displaced: boolean) {
   const coercion = reserveNativeRealmNumberCoercion(tx, "number-coercion", r.invocation, r.access, classifier);
   expect(() => requireCompletedNativeRealmNumberCoercion(tx, { ...coercion })).toThrow(/foreign or copied/);
   expect(() => requireCompletedNativeRealmNumberCoercion(tx, coercion)).toThrow(/missing canonical/);
+  const ryu = reserveNativeRyuResources(tx, "apply:ryu", f.strings);
+  const decimal = reserveNativeDecimalFormat(tx, "apply:decimal", f.strings, ryu);
+  const beforeApply = f.module.functions.length;
+  expect(() => reserveNativeRealmFunctionApply(tx, "bad-apply", r.invocation, { ...coercion }, decimal)).toThrow(
+    /foreign or copied/,
+  );
+  expect(() => reserveNativeRealmFunctionApply(tx, "bad-apply", r.invocation, coercion, { ...decimal })).toThrow(
+    /foreign or copied/,
+  );
+  expect(f.module.functions).toHaveLength(beforeApply);
+  const apply = reserveNativeRealmFunctionApply(tx, "apply", r.invocation, coercion, decimal);
+  expect(() => reserveNativeRealmFunctionApply(tx, "duplicate-apply", r.invocation, coercion, decimal)).toThrow(
+    /already has/,
+  );
+  expect(() => requireCompletedNativeRealmFunctionApply(tx, { ...apply })).toThrow(/foreign or copied/);
+  expect(() => requireCompletedNativeRealmFunctionApply(tx, apply)).toThrow(/missing canonical/);
+  const implemented: readonly string[] = [...core.implemented, ...apply.implemented];
   const object = tx.reserveFunction("control:object", "object", { params: [ext], results: [ext] });
   const property = tx.reserveFunction("control:property", "property", {
     params: [ext, ext, ext, { kind: "i32" }],
@@ -275,6 +305,10 @@ async function executable(displaced: boolean) {
   });
   const bag = tx.reserveFunction("control:bag", "bag", { params: [ext], results: [ext] });
   const argc = tx.reserveGlobal("control:argc", "argc", { kind: "i32" }, true);
+  const getterMode = tx.reserveGlobal("control:getter-mode", "getter_mode", { kind: "i32" }, true);
+  const trace = tx.reserveGlobal("control:trace", "trace", { kind: "i32" }, true);
+  const lastArgs = tx.reserveGlobal("control:last-args", "last_args", ext, true);
+  const argument = tx.reserveFunction("control:argument", "argument", { params: [{ kind: "i32" }], results: [ext] });
   await fill(r);
   fillSourceUnits(r);
   tx.fillFunction(foreignClone, {
@@ -315,6 +349,11 @@ async function executable(displaced: boolean) {
   fillNativeNumberPrimitiveClassifierResources(tx, classifier);
   fillNativeRealmNumberCoercion(tx, coercion);
   requireCompletedNativeRealmNumberCoercion(tx, coercion);
+  fillNativeRyuResources(tx, ryu);
+  fillNativeDecimalFormat(tx, decimal);
+  fillNativeRealmFunctionApply(tx, apply);
+  expect(requireCompletedNativeRealmFunctionApply(tx, apply)).toBe(apply);
+  expect(() => fillNativeRealmFunctionApply(tx, apply)).toThrow(/duplicate/);
   fillNativeRealmFunctionCore(tx, core);
   expect(requireCompletedNativeRealmFunctionCore(tx, core)).toBe(core);
   expect(() => fillNativeRealmFunctionCore(tx, core)).toThrow(/duplicate/);
@@ -332,6 +371,20 @@ async function executable(displaced: boolean) {
   ];
   const realmGlobal = tx.physicalIndex(realm.globals.realm);
   tx.fillGlobal(argc, [n(-1)]);
+  tx.fillGlobal(getterMode, [n(0)]);
+  tx.fillGlobal(trace, [n(0)]);
+  tx.fillGlobal(lastArgs, [{ op: "ref.null.extern" }]);
+  tx.fillFunction(argument, {
+    locals: [],
+    body: [
+      global(tx.physicalIndex(lastArgs)),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: f.substrate.arguments.carrier.typeIndex },
+      { op: "struct.get", typeIdx: f.substrate.arguments.carrier.typeIndex, fieldIdx: 1 },
+      get(0),
+      { op: "array.get", typeIdx: f.substrate.arguments.layout.objVecArrTypeIdx },
+    ],
+  });
   tx.fillFunction(object, {
     locals: [],
     body: [
@@ -380,13 +433,36 @@ async function executable(displaced: boolean) {
   // Each native control reports the actual argument-vector length and returns its original receiver.
   // One control instead throws that exact receiver; unimplemented standard semantics gain no authority.
   realm.entries.forEach((entry, index) => {
-    if ((core.implemented as readonly string[]).includes(entry.request.intrinsic.id)) return;
+    if (implemented.includes(entry.request.intrinsic.id)) return;
     tx.fillFunction(entry.algorithm, {
       locals: [],
       body: [
         get(1),
         { op: "struct.get", typeIdx: f.substrate.arguments.carrier.typeIndex, fieldIdx: 0 },
         { op: "global.set", index: tx.physicalIndex(argc) },
+        get(1),
+        { op: "extern.convert_any" },
+        { op: "global.set", index: tx.physicalIndex(lastArgs) },
+        global(tx.physicalIndex(getterMode)),
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            global(tx.physicalIndex(trace)),
+            n(10),
+            { op: "i32.mul" },
+            n(index),
+            { op: "i32.add" },
+            { op: "global.set", index: tx.physicalIndex(trace) },
+            ...([4, 5, 6].includes(index)
+              ? ([
+                  { op: "f64.const", value: index === 4 ? 2 : index + 36 },
+                  { op: "call", funcIdx: r.values.functions.boxNumber.handle },
+                  { op: "return" },
+                ] as Instr[])
+              : []),
+          ],
+        },
         get(0),
         ...(index === 2 ? [{ op: "throw", tagIdx: tx.physicalIndex(f.exception.tag) } as Instr] : []),
       ],
@@ -483,6 +559,10 @@ async function executable(displaced: boolean) {
     ...literals,
     object,
     property,
+    format: decimal.toString,
+    getterMode,
+    trace,
+    argument,
     toNumber: coercion.toNumber,
     toLength: coercion.toLength,
     boxBigInt: r.population.bigints.box,
@@ -528,7 +608,7 @@ async function executable(displaced: boolean) {
     count: realm.entries.length,
     catalog,
     literalNames,
-    implemented: core.implemented as readonly string[],
+    implemented,
   };
 }
 for (const displaced of [false, true])
@@ -653,6 +733,71 @@ for (const displaced of [false, true])
       return vector;
     };
     const methodCall = (target: unknown, ...values: unknown[]) => api.call(callMethod, target, argsOf(...values));
+    const applyMethod = intrinsic("%Function.prototype.apply%");
+    const methodApply = (target: unknown, ...values: unknown[]) => api.call(applyMethod, target, argsOf(...values));
+    for (const argArray of [null, api.undefinedValue()]) {
+      expect(methodApply(api.native3.value, receiver, argArray)).toBe(receiver);
+      expect(api.argc.value).toBe(0);
+    }
+    expect(api.isUndefined(methodApply(api.native3.value))).toBe(1);
+    const parentList = api.object(null),
+      list = api.object(parentList);
+    api.property(list, literalValue("length"), api.box(3.75), 0);
+    api.property(list, api.format(0), api.box(12), 0);
+    api.property(parentList, api.format(1), receiver, 0);
+    expect(methodApply(api.native3.value, receiver, list)).toBe(receiver);
+    expect(api.argc.value).toBe(3);
+    expect(api.unbox(api.argument(0))).toBe(12);
+    expect(api.argument(1)).toBe(receiver);
+    expect(api.isUndefined(api.argument(2))).toBe(1);
+    expect(api.unbox(methodApply(closure, receiver, list))).toBe(112);
+    for (const invalid of [api.box(1), literalValue("name"), api.hasInstance()])
+      expect(() => methodApply(api.native3.value, receiver, invalid)).toThrow(WebAssembly.Exception);
+    const observed = api.object(null);
+    api.property(observed, literalValue("length"), api.native4.value, 8);
+    api.property(observed, api.format(0), api.native5.value, 8);
+    api.property(observed, api.format(1), api.native6.value, 8);
+    api.getterMode.value = 1;
+    api.trace.value = 0;
+    expect(methodApply(api.native3.value, receiver, observed)).toBe(receiver);
+    expect(api.trace.value).toBe(4563);
+    expect(api.unbox(api.argument(0))).toBe(41);
+    expect(api.unbox(api.argument(1))).toBe(42);
+    api.trace.value = 0;
+    expect(api.unbox(methodApply(closure, receiver, observed))).toBe(141);
+    expect(api.trace.value).toBe(456);
+    api.trace.value = 0;
+    expect(() => methodApply(null, receiver, observed)).toThrow(WebAssembly.Exception);
+    expect(api.trace.value).toBe(0);
+    for (const length of [4294967297, Infinity]) {
+      const early = api.object(null);
+      api.property(early, literalValue("length"), api.box(length), 0);
+      api.property(early, api.format(0), api.native2.value, 8);
+      api.trace.value = 0;
+      try {
+        methodApply(api.native3.value, receiver, early);
+        throw Error("missing early index throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(WebAssembly.Exception);
+        expect((error as WebAssembly.Exception).getArg(api.exception, 0)).toBe(early);
+      }
+      expect(api.trace.value).toBe(2);
+    }
+    api.getterMode.value = 0;
+    const convertedLength = api.object(null);
+    api.property(convertedLength, literalValue("length"), numeric, 0);
+    expect(methodApply(api.native3.value, receiver, convertedLength)).toBe(receiver);
+    expect(api.argc.value).toBe(7);
+    expect(() => methodApply(api.native3.value, receiver, empty)).toThrow(WebAssembly.RuntimeError);
+    try {
+      methodApply(api.native2.value, receiver, null);
+      throw Error("missing target throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WebAssembly.Exception);
+      expect((error as WebAssembly.Exception).getArg(api.exception, 0)).toBe(receiver);
+    }
+    expect(methodApply(api.native3.value, receiver, list)).toBe(receiver);
+
     expect(api.isUndefined(api.call(intrinsic("%Function.prototype%"), receiver, args))).toBe(1);
     expect(() => api.call(intrinsic("%ThrowTypeError%"), receiver, args)).toThrow(WebAssembly.Exception);
     expect(api.isCallable(closure)).toBe(1);

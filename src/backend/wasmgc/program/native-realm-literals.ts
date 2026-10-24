@@ -9,6 +9,8 @@ import { NATIVE_OBJECT_DESCRIPTOR_LITERALS } from "../resources/native-object-de
 
 import { NUMBER_CONVERSION_LITERALS } from "../../../runtime/wasmgc/values/number-from-value-body.js";
 
+import { ARRAY_LIKE_OBJECT_ERROR } from "../../../runtime/wasmgc/values/create-list-from-array-like-body.js";
+
 export interface NativeRealmLiteralPlan {
   readonly requirements: NativeRealmRequirements;
   readonly utf8Storage: boolean;
@@ -36,6 +38,7 @@ export function planNativeRealmLiterals(
     ...new Set([
       "TypeError",
       "Value is not callable",
+      ARRAY_LIKE_OBJECT_ERROR,
       ...NATIVE_BUILTIN_FUNCTION_LITERALS,
       ...NATIVE_OBJECT_DESCRIPTOR_LITERALS,
       ...Object.values(NUMBER_CONVERSION_LITERALS),
