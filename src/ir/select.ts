@@ -629,6 +629,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * carrier, or an unproven receiver.
    */
   readonly isDynamicForInReceiver?: (receiver: ts.Expression) => boolean;
+  /** #7135: native dynamic keys can be boxed into the certified externref receiver ABI. */
+  readonly nativeDynamicInBuildable?: boolean;
   /**
    * #2952 slice 6c — true only when a for-in enumerated key can be bound as an
    * `IrType.string` head VALUE, i.e. the active string carrier is the host
@@ -1430,6 +1432,23 @@ export function assessIrImplicitConstructorSubject(
  */
 let earlyReturnLoopDepth = 0;
 let earlyReturnBarrierDepth = 0;
+// (#7106 Stage 4) Selection is inside a planned function-member closure body.
+let currentInPlannedMemberClosure = false;
+
+/**
+ * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers,
+ * and the IR's dynamic method call (`__ir_dyn_method_call_N` →
+ * `__extern_method_call`) has no brand arms for primitives or vecs on the
+ * host-free lanes: it answers `undefined` where legacy dispatches by brand
+ * (`list.join(", ")`, `n.toString()`, `sym.toString()` — measured). Such a call
+ * stays legacy; a string-literal receiver keeps its native string method.
+ */
+function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
+  if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
+  let receiver: ts.Expression = expr.expression.expression;
+  while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
+  return !ts.isStringLiteralLike(receiver);
+}
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
 // #7104 — true when the return position resolved `dynamic`: bare `return;`,
@@ -2611,8 +2630,12 @@ function resolveReturnType(
   // into a `() -> externref` claim that withdraws on `abi-signature-parity`
   // (every test262 harness helper, measured 2026-10-20). Mirror legacy here so
   // the claim carries legacy's ABI; a value-returning body keeps its lattice fact.
+  // A class method follows the same rule: legacy registers its slot from the
+  // checker's `void`, and methods never carry a lattice entry (`mapped` is
+  // undefined), so without this arm every value-less JS method was refused as
+  // `return-type-not-resolvable`.
   if (
-    ts.isFunctionDeclaration(fn) &&
+    (ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn)) &&
     fn.body &&
     (mapped === undefined || mapped.kind === "unknown" || mapped.kind === "dynamic") &&
     !irFunctionBodyReturnsValue(fn.body)
@@ -3674,7 +3697,13 @@ function dynamicUsesAreMoveOnly(
   };
   const scanStmtInner = (s: ts.Statement): boolean => {
     if (ts.isVariableStatement(s)) {
+      const lexical = (s.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
       for (const d of s.declarationList.declarations) {
+        // (#7106 Stage 4) `var x;` holds the dynamic carrier's undefined.
+        if (ts.isIdentifier(d.name) && !d.initializer && uninitializedVarIsDynamicUndefined(d, lexical)) {
+          dynNames.add(d.name.text);
+          continue;
+        }
         if (!ts.isIdentifier(d.name) || !d.initializer) {
           if (subtreeTouchesDynamic(d, dynNames)) return false;
           continue;
@@ -6240,6 +6269,30 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
   return true;
 }
 
+/**
+ * (#7106 Stage 4) `var x;` — an untyped function-local `var` with no
+ * initializer is the dynamic carrier's `undefined` until assigned (legacy
+ * types the `any` binding `externref` and starts it undefined). Only where the
+ * function-local var proof already holds (the caller checked the list), the
+ * dynamic runtime is buildable, and the declaration is not inside a loop: a
+ * re-executed `var x;` keeps its value, while the IR initializes at the
+ * declaration point.
+ */
+let currentMemberClosureHasDynamicParams = false;
+
+function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
+  if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
+  // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
+  // scan runs and tracks the binding) or a planned member closure with one.
+  if (currentDynamicParamNames.size === 0 && !currentMemberClosureHasDynamicParams) return false;
+  if (!ts.isIdentifier(d.name) || d.type || ts.getJSDocType(d)) return false;
+  for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
+    if (ts.isFunctionLike(cur)) return true;
+    if (ts.isIterationStatement(cur, false)) return false;
+  }
+  return false;
+}
+
 function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localClasses: ReadonlySet<string>): boolean {
   const flags = stmt.declarationList.flags;
   const isLexical = !!(flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -6284,8 +6337,35 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
       continue;
     }
     if (!ts.isIdentifier(d.name)) return shapeNo("vardecl-nonident-name", d.name);
-    if (scope.has(d.name.text)) return shapeNo("vardecl-shadow", d.name);
-    if (!d.initializer) return shapeNo("vardecl-noinit", d);
+    // (#7106) A repeated script `var` resolves to the binding's FIRST
+    // declaration: it is a write to that slot (or, without an initializer, a
+    // no-op), never a new binding.
+    const redeclaredModuleVar =
+      currentSubjectIsModuleInit &&
+      !isLexical &&
+      scope.has(d.name.text) &&
+      ts.isSourceFile(stmt.parent) &&
+      currentModuleBindingResolver?.(d.name)?.declaration !== undefined &&
+      currentModuleBindingResolver(d.name)!.declaration !== d;
+    if (redeclaredModuleVar && !d.initializer) continue;
+    if (scope.has(d.name.text) && !redeclaredModuleVar) return shapeNo("vardecl-shadow", d.name);
+    if (!d.initializer) {
+      // (#7106) A bare script `var x;` is a no-op at its position: the module-init
+      // prologue already seeded the slot (`emitModuleVarUndefinedSeeds`).
+      // (#7111) An untyped function-local `var x;` is the dynamic carrier's
+      // `undefined`; that predicate refuses module-init, so the arms are disjoint.
+      const scriptVar = currentSubjectIsModuleInit && !isLexical && ts.isSourceFile(stmt.parent);
+      if (
+        scriptVar
+          ? currentModuleBindingResolver?.(d.name) === undefined
+          : !uninitializedVarIsDynamicUndefined(d, isLexical)
+      ) {
+        return shapeNo("vardecl-noinit", d);
+      }
+      clearProjectionBinding(d.name.text);
+      scope.add(d.name.text);
+      continue;
+    }
     clearProjectionBinding(d.name.text);
     const initializerScope = new Set(scope);
     initializerScope.add(d.name.text);
@@ -6624,7 +6704,16 @@ function isPhase1ClosureLiteral(
     enterProjectionBindingScope,
     recordCallableProjection,
     isExpressionBuildable: isPhase1Expr,
-    isStatementListBuildable: isPhase1StatementList,
+    // (#7106 Stage 4) A planned void-result member closure admits bare
+    // `return;` exactly like a void top-level function.
+    isStatementListBuildable: (statements, inner, classes) =>
+      isPhase1StatementList(
+        statements,
+        inner,
+        classes,
+        false,
+        plan !== undefined && plan.signature.returnType === null,
+      ),
     restoreProjectionBindings,
     withClosureState: withFunctionMemberClosureState,
   });
@@ -6665,8 +6754,26 @@ function withFunctionMemberClosureState<T>(
   currentSelectionSubject = null;
   currentSubjectIsModuleInit = false;
   currentSubjectFunctionName = null;
-  currentSubjectReturnsBoolean = true;
+  // (#7106 Stage 4) The closure is its own function: an enclosing subject's
+  // return context (module-init's barrier, an outer loop) does not apply to
+  // its body; a `return` there exits the closure.
+  const outerEarlyReturn = [earlyReturnLoopDepth, earlyReturnBarrierDepth] as const;
+  earlyReturnLoopDepth = 0;
+  earlyReturnBarrierDepth = 0;
+  // (#7106 Stage 4) The closure's own function-local `var` proof — the
+  // subject's (module-init's) proof never covers the closure body.
+  const outerSafeVarLists = currentIrSafeVarDeclarationLists;
+  const outerClosureDynamic = currentMemberClosureHasDynamicParams;
+  currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
+  currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
+    plan.expression,
+    new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
+  );
+  const outerInPlannedClosure = currentInPlannedMemberClosure;
+  currentInPlannedMemberClosure = true;
+  currentSubjectReturnsBoolean = plan.signature.returnType !== null;
   currentFnIsGenerator = currentFnIsVoidReturn = currentFnIsDynamicReturn = currentFnIsAsync = false;
+  currentFnIsVoidReturn = plan.signature.returnType === null;
   currentDynMemberEqualitySubject = null;
   currentDynEqualityBoxableParamNames = new Set();
   currentNumericParamNames = new Set();
@@ -6703,6 +6810,10 @@ function withFunctionMemberClosureState<T>(
       currentNestedFunctionNames,
       currentLexicalValueBindingNames,
     ] = outer;
+    [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
+    currentIrSafeVarDeclarationLists = outerSafeVarLists;
+    currentMemberClosureHasDynamicParams = outerClosureDynamic;
+    currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
 }
@@ -8053,17 +8164,14 @@ function selectorDynamicLaneIn(
   localClasses: ReadonlySet<string>,
 ): boolean {
   if (currentSelectionOptions?.isDynamicForInReceiver?.(expr.right) !== true) return false;
-  // The key must reach `__extern_has` AS an externref, and that coercion only
-  // exists while the lane's string carrier IS the host externref (a string key
-  // passes through; a numeric one boxes via the host `__box_number` of the same
-  // lane). A native-strings lane carries strings as `(ref $AnyString)`, which no
-  // externref host-arg position accepts — measured 2026-08-29: without this
-  // gate EVERY standalone `in` claimed and then demoted on the key coercion,
-  // which is a post-claim demote of the whole lane rather than of a documented
-  // subset. This reuses the #2952 host-string CARRIER certificate; the fact is
-  // the same one, not a for-in-specific one, and an absent certificate (bare
-  // selector callers) reads as unproven and rejects.
-  if (currentSelectionOptions?.forInHeadValueIsHostString !== true) return false;
+  // Host strings pass through the externref ABI. The native certificate
+  // supplies canonical boxing, receiver validation and ToPropertyKey instead.
+  // Missing certificates remain unproven for bare selector callers.
+  if (
+    currentSelectionOptions?.forInHeadValueIsHostString !== true &&
+    currentSelectionOptions?.nativeDynamicInBuildable !== true
+  )
+    return false;
   if (inKeyIsCommaExpression(expr.left)) return false;
   if (ts.isPrivateIdentifier(expr.left)) return false;
   return probeShape(
@@ -9937,18 +10045,6 @@ function collectDirectNestedFunctionNames(body: ts.Block): Set<string> {
 }
 
 /**
- * The IR delete lowerer returns constant true and has no global binding
- * attributes. Keep direct module-init `delete this.name` on legacy until the IR
- * owns the GlobalEnvironmentRecord model (#2726).
- */
-function isUnsupportedModuleGlobalObjectDelete(expr: ts.DeleteExpression): boolean {
-  return (
-    currentSubjectIsModuleInit &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.expression.kind === ts.SyntaxKind.ThisKeyword
-  );
-}
-
 /**
  * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
  * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
@@ -10782,6 +10878,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     const functionObjectCall = functionObjectCallIsPhase1(expr, scope, localClasses);
     if (functionObjectCall !== undefined) return functionObjectCall;
+    if (plannedClosureDynamicMethodCall(expr)) return shapeNo("closure-member-dynamic-method", expr);
     // Slice 4 (#1169d): accept method calls — `<recv>.<methodName>(...)`.
     // The receiver must itself be a Phase-1 expression; the lowerer
     // enforces that the receiver is a class instance whose shape carries
@@ -11471,19 +11568,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     }
     return true;
   }
-  // Slice 11 (#1169n) — `delete <expr>` and `void <expr>`. Both are
-  // accepted at the selector level when their operand is a Phase-1
-  // expression. Lowering emits:
-  //   - `delete obj.prop`     → const `true` (most deletes succeed
-  //                              syntactically; runtime rejection is
-  //                              rare at the IR-claim shape).
-  //   - `void <expr>`         → lower expr for side effects, push
-  //                              `f64 NaN` (the undefined sentinel
-  //                              the IR uses in f64-typed contexts).
-  if (ts.isDeleteExpression(expr))
-    return isUnsupportedModuleGlobalObjectDelete(expr)
-      ? shapeNo("expr-delete-module-global-object", expr)
-      : isPhase1Expr(expr.expression, scope, localClasses);
+  // (#7106) `delete <expr>` stays on the direct path. The IR has no delete
+  // operation: Slice 11 (#1169n) lowered it to the operand's side effects plus
+  // a constant `true`, which removed nothing and never failed. A claimed
+  // `delete` was therefore wrong wherever that shows — the property survives
+  // the delete, and `delete arr.length` in strict code answers `true` instead
+  // of throwing a TypeError. Refuse every form until a real dynamic delete
+  // lands (propertyHelper's `isConfigurable` arm).
+  if (ts.isDeleteExpression(expr)) return shapeNo("expr-delete-no-ir-lowering", expr);
+  // Slice 11 (#1169n) — `void <expr>`: lower expr for side effects, push
+  // `f64 NaN` (the undefined sentinel the IR uses in f64-typed contexts).
   if (ts.isVoidExpression(expr)) {
     return isPhase1Expr(expr.expression, scope, localClasses);
   }
@@ -11884,6 +11978,37 @@ function isPhase1BinaryOp(op: ts.SyntaxKind): boolean {
  *
  * (The helpers below are exported for Slice 2's integration.)
  */
+/**
+ * (#7124) Opt-in unmasked module-init census. `shapeNo` is first-wins and the
+ * assessment stops at the first rejected statement, so a harness statement
+ * that every test shares hides each test's own blockers. With
+ * `JS2WASM_IR_MODULE_INIT_ALL_REJECTS=1` (on top of `JS2WASM_IR_SHAPE_DIAG=1`)
+ * the walk records every rejected top-level statement as `<reason>@<arm>` and
+ * keeps going; the first reason still decides the unit, so the claim outcome
+ * is unchanged. A rejected `var`/`let`/`const` still enters scope so later
+ * reads are not double-counted as `expr-ident-not-in-scope`.
+ */
+const MODULE_INIT_ALL_REJECTS_ON = SHAPE_DIAG_ON && process.env.JS2WASM_IR_MODULE_INIT_ALL_REJECTS === "1";
+
+interface ModuleInitReject {
+  readonly reason: IrFallbackReason;
+  readonly label: string;
+}
+
+function recordMaskedModuleInitReject(
+  rejects: ModuleInitReject[],
+  reason: IrFallbackReason,
+  stmt: ts.Statement,
+  scope: Set<string>,
+): void {
+  rejects.push({ reason, label: `${reason}@${takeShapeRejectDetail() ?? "unattributed-arm"}` });
+  typedShapeRejectReason = null;
+  if (!ts.isVariableStatement(stmt)) return;
+  for (const declaration of stmt.declarationList.declarations) {
+    if (ts.isIdentifier(declaration.name)) scope.add(declaration.name.text);
+  }
+}
+
 export function assessModuleInit(
   sourceFile: ts.SourceFile,
   claimedFuncs: ReadonlySet<string>,
@@ -11917,6 +12042,11 @@ export function assessModuleInit(
   // genuinely contains an update-retyped module binding. The exact binding
   // resolver rejects same-named locals and ordinary narrow module globals, so
   // unrelated modules retain the existing conservative `var` demotion.
+  // (#7106) A SCRIPT opens it unconditionally: every test262 body is a script
+  // whose top-level `var`s live in the same `__mod_<name>` slots, and the
+  // resolver (with codegen's `admitScriptVar` predicate) still refuses each
+  // declaration it cannot place as `vardecl-module-storage-unrepresentable`.
+  const scriptVarGate = currentModuleBindingResolver !== null && !ts.isExternalModule(sourceFile);
   let hasDynamicModuleUpdate = false;
   const findDynamicModuleUpdate = (node: ts.Node): void => {
     if (hasDynamicModuleUpdate) return;
@@ -11932,22 +12062,33 @@ export function assessModuleInit(
     forEachChild(node, findDynamicModuleUpdate);
   };
   findDynamicModuleUpdate(sourceFile);
-  currentIrSafeVarDeclarationLists = hasDynamicModuleUpdate
-    ? collectIrSafeModuleVarDeclarationLists(population)
-    : new Set();
+  currentIrSafeVarDeclarationLists =
+    scriptVarGate || hasDynamicModuleUpdate ? collectIrSafeModuleVarDeclarationLists(population) : new Set();
   currentModuleMapGetAliases = new Set<ts.VariableDeclaration>();
   currentModuleScalarAliasFamilies = new Map<ts.VariableDeclaration, "f64" | "boolean">();
   const scope = new Set<string>();
   currentDynamicParamNames = new Set<string>(); // (#7106 S3a) no parameters at module init
+  const maskedRejects: ModuleInitReject[] | undefined = MODULE_INIT_ALL_REJECTS_ON ? [] : undefined;
   for (const stmt of population) {
     if (!isPhase1BodyStatement(stmt, scope, localClasses)) {
       const reason = typedShapeRejectReason ?? "body-shape-rejected";
+      if (maskedRejects) {
+        recordMaskedModuleInitReject(maskedRejects, reason, stmt, scope);
+        continue;
+      }
       const detail =
         reason === "body-shape-rejected" && SHAPE_DIAG_ON
           ? (takeShapeRejectDetail() ?? "unattributed-arm:helper-internal")
           : undefined;
       return { stmtCount: population.length, reason, detail };
     }
+  }
+  if (maskedRejects?.length) {
+    return {
+      stmtCount: population.length,
+      reason: maskedRejects[0]!.reason,
+      detail: maskedRejects.map((entry) => entry.label).join(" | "),
+    };
   }
 
   // Gate 2 — call graph. The synthetic wrapper reuses `buildLocalCallGraph`
