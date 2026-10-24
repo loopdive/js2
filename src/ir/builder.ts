@@ -632,6 +632,192 @@ export class IrFunctionBuilder {
    * `IrDynamicLowering.emitToBoolean` → `coercion-engine.emitToBoolean`
    * (`__any_unbox_bool` gc / `__is_truthy` host) — one ToBoolean engine (D4).
    */
+  /**
+   * Emit `dyn.undefined` — the JS `undefined` value on the boxed-any carrier
+   * (#7104). Result is `dynamic` refined to the Undefined partition; lowering
+   * routes to the lane's canonical `undefined` representation via
+   * `IrDynamicLowering.emitUndefined`.
+   */
+  emitDynUndefined(tag?: TagId): IrValueId {
+    const resultType = irDynamic(tag);
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.undefined", result, resultType });
+    return result;
+  }
+
+  /**
+   * Emit `dyn.typeof{value}` — JS `typeof` over every partition of the
+   * boxed-any carrier (#7104); result is `string`. Routes to the lane's
+   * runtime `__typeof` via `IrDynamicLowering.emitTypeof`.
+   */
+  emitDynTypeof(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynTypeof operand ${value} is not dynamic — static typeof folds inline (#7104) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.typeof", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Emit `dyn.to_string{value}` — JS `ToString` over every partition of the
+   * boxed-any carrier (#7106 S1); result is `string`. Routes to the lane's
+   * runtime `__extern_toString` via `IrDynamicLowering.emitToString`.
+   */
+  emitDynToString(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynToString operand ${value} is not dynamic — static ToString folds inline (#7106) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.to_string", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Emit `dyn.json_stringify{value}` — one-argument `JSON.stringify` over the
+   * boxed-any carrier (#7106 S1b); result is `string`. Routes to the native
+   * codec root via `IrDynamicLowering.emitJsonStringify`.
+   */
+  emitDynJsonStringify(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynJsonStringify operand ${value} is not dynamic (#7106 S1b) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.json_stringify", value, result, resultType });
+    return result;
+  }
+
+  /**
+   * Emit `dyn.object_tag{value}` — `Object.prototype.toString.call(value)` over
+   * the boxed-any carrier (#7106 S1c); result is `string`.
+   */
+  emitDynObjectTag(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynObjectTag operand ${value} is not dynamic (#7106 S1c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.object_tag", value, result, resultType });
+    return result;
+  }
+
+  /** #7106 S1g — Object.prototype.hasOwnProperty / propertyIsEnumerable over the carrier; result bool. */
+  emitDynOwnProperty(receiver: IrValueId, key: IrValueId, test: "hasOwnProperty" | "propertyIsEnumerable"): IrValueId {
+    for (const [label, operand] of [
+      ["receiver", receiver],
+      ["key", key],
+    ] as const) {
+      if (this.typeOf(operand).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynOwnProperty ${label} ${operand} is not dynamic (#7106 S1g) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType: IrType = irVal({ kind: "i32", boolean: true });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.own_property", receiver, key, test, result, resultType });
+    return result;
+  }
+
+  /** #7106 S1i — publish a direct call site's actual argument count to the callee's prologue. */
+  emitDynPublishArgc(count: number): void {
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error(
+        `IrFunctionBuilder: emitDynPublishArgc count must be a non-negative integer, got ${count} (#7106 S1i) (func ${this.id.name})`,
+      );
+    }
+    this.pushInstr({ kind: "dyn.publish_argc", count, result: null, resultType: null });
+  }
+
+  /** #7106 S1e — the invocation's `arguments.length` (actual argument count); result f64. */
+  emitDynArgumentsLength(formals: number): IrValueId {
+    if (!Number.isInteger(formals) || formals < 0) {
+      throw new Error(
+        `IrFunctionBuilder: emitDynArgumentsLength formals must be a non-negative integer, got ${formals} (#7106 S1e) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = irVal({ kind: "f64" });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.arguments_length", formals, result, resultType });
+    return result;
+  }
+
+  /** #7106 S3c — the ordinary function invocation's `this` binding; result dynamic. */
+  emitDynCurrentThis(strict: boolean): IrValueId {
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.current_this", strict, result, resultType });
+    return result;
+  }
+
+  /** #7106 S3c — `value instanceof F` for a known top-level function constructor; result i32. */
+  emitDynInstanceOfFunction(value: IrValueId, target: IrFuncRef): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynInstanceOfFunction operand ${value} is not dynamic (#7106 S3c) (func ${this.id.name})`,
+      );
+    }
+    if (target.binding.kind !== "unit") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynInstanceOfFunction target ${target.name} is not a source unit (#7106 S3c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = irVal({ kind: "i32" });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.instanceof_fn", value, target, result, resultType });
+    return result;
+  }
+
+  /** #7106 S1c — checked native-string carrier recovery from a dynamic value; result string. */
+  emitDynStringCarrier(value: IrValueId): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynStringCarrier operand ${value} is not dynamic (#7106 S1c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = { kind: "string" };
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.string_carrier", value, result, resultType });
+    return result;
+  }
+
+  /** #7106 S3a — `new callee(...args)` over dynamic carriers; result dynamic. */
+  emitDynConstruct(callee: IrValueId, args: readonly IrValueId[]): IrValueId {
+    for (const [label, v] of [["callee", callee] as const, ...args.map((a, i) => [`arg${i}`, a] as const)]) {
+      if (this.typeOf(v).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynConstruct ${label} operand ${v} is not dynamic (#7106 S3a) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.construct", callee, args: [...args], result, resultType });
+    return result;
+  }
+
   emitDynTruthy(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
       throw new Error(
@@ -751,7 +937,7 @@ export class IrFunctionBuilder {
    * {@link emitDynMemberGet}. Receiver, key, and value must already use the
    * canonical dynamic carrier; conversion is explicit at the AST producer.
    */
-  emitDynMemberSet(recv: IrValueId, key: IrValueId, value: IrValueId): void {
+  emitDynMemberSet(recv: IrValueId, key: IrValueId, value: IrValueId, sloppy = false): void {
     for (const [label, v] of [
       ["recv", recv],
       ["key", key],
@@ -763,7 +949,15 @@ export class IrFunctionBuilder {
         );
       }
     }
-    this.pushInstr({ kind: "dyn.member_set", recv, key, value, result: null, resultType: null });
+    this.pushInstr({
+      kind: "dyn.member_set",
+      recv,
+      key,
+      value,
+      ...(sloppy ? { sloppy: true as const } : {}),
+      result: null,
+      resultType: null,
+    });
   }
 
   // --- object ops (#1169b) ------------------------------------------------

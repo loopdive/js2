@@ -1,14 +1,21 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
-import type { IrImportedCallLoweringPlan, IrImportedOptionalParamPlan } from "../ir/ast-lowering-plans.js";
+import type {
+  IrImportedCallLoweringPlan,
+  IrImportedOptionalParamPlan,
+  IrTopLevelFunctionValueLoweringPlan,
+} from "../ir/ast-lowering-plans.js";
+import { planIrNestedClassFieldCalls } from "../ir/class-field-call-planning.js";
+import type { MultiPreparedFunctionValueSupportReceipt } from "./multi-prepared-scalar-leaf.js";
 import { collectIrClassInstanceInitializers } from "../ir/class-instance-initializers.js";
-import { irArgcGlobalRef, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import { irImportFuncRef, irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
+import { irArgcGlobalRef, irSupportGlobalRef, irTypeBindingKey } from "../ir/abi-bindings.js";
+import { irImportFuncRef, irSupportFuncRef, irUnitFuncRef, sameIrCallableBinding } from "../ir/callable-bindings.js";
 import type { IrAmbientClassCallResolver } from "../ir/host-extern.js";
 import type { IrIdentityImportedFunctionResolver, IrImportedFunctionResolver } from "../ir/imported-functions.js";
-import type { IrUnitId } from "../ir/identity.js";
+import type { IrBindingId, IrSourceId, IrUnitId, IrNestedClassFieldCallAdmission } from "../ir/identity.js";
 import type { IrType } from "../ir/nodes.js";
+import type { IrModuleInitEvaluationEntry, IrModuleInitPlanningEvidence } from "../ir/module-init-plan.js";
 import { classifyIrFailure, IrInvariantError, IrUnsupportedError, type IrPreparationFailure } from "../ir/outcomes.js";
 import type { LatticeType } from "../ir/propagate.js";
 import {
@@ -28,6 +35,135 @@ import {
   type IrPreparedTimerShimResolver,
 } from "./ir-timer-shim-planning.js";
 import { readEnv } from "../env.js";
+import { ensureFuncClosureSingletonAccessor } from "./closures/funcref-as-closure.js";
+import { definedFuncAt, funcSignatureOf } from "./func-space.js";
+import { sourceFunctionDeclarationForHandle } from "./program-abi-source-callable-planning.js";
+import { localGlobalIdx } from "./registry/imports.js";
+import { planProgramAbiFunctionValue } from "./program-abi-planning.js";
+import { makeIrFunctionMemberClosures } from "./function-member-closure-planning.js";
+import { computeClosureWrapperSig } from "./closures.js";
+import { resolveIrDynamicCarrierType } from "./any-helpers.js";
+import { irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+
+/** Apply the same live-binding exclusions as the canonical direct value reader. */
+export function makeIrFunctionObjectValueResolver(
+  ctx: CodegenContext,
+  resolver: IrIdentityImportedFunctionResolver,
+): IrIdentityImportedFunctionResolver {
+  return {
+    resolveImportedFunctionTarget: (node) => resolver.resolveImportedFunctionTarget(node),
+    isImportBinding: (node) => resolver.isImportBinding(node),
+    resolveTopLevelFunctionValueTarget(node) {
+      if (ctx.runtimeEvalGlobalFunctionBindings === true) return undefined;
+      const target = resolver.resolveTopLevelFunctionValueTarget(node);
+      return target && !ctx.reassignedFunctionDeclarations?.has(target.declaration) ? target : undefined;
+    },
+  };
+}
+
+/** Revalidate a certified receiver against the current exact source/allocator tuple. */
+export function hasPreparedFunctionObjectReference(
+  ctx: CodegenContext,
+  identifier: ts.Identifier,
+  plan: IrTopLevelFunctionValueLoweringPlan | undefined,
+  identity: irOverlayIdentity.IrOverlayIdentityPlan,
+  ownerUnitId: IrUnitId,
+  sourceOwnerUnitId: (node: ts.Node) => IrUnitId,
+): boolean {
+  if (
+    !plan?.objectReceiver ||
+    !plan.accessor ||
+    plan.ownerUnitId !== ownerUnitId ||
+    ctx.runtimeEvalGlobalFunctionBindings === true ||
+    plan.target.binding.kind !== "unit" ||
+    plan.accessor.binding.kind !== "support" ||
+    plan.trampoline.binding.kind !== "support" ||
+    plan.cacheGlobal.binding.kind !== "support" ||
+    sourceOwnerUnitId(identifier) !== ownerUnitId
+  )
+    return false;
+  const access = identifier.parent;
+  const use = access.parent;
+  if (
+    !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
+    access.expression !== identifier ||
+    access.questionDotToken !== undefined ||
+    !(
+      (ts.isCallExpression(use) && use.expression === access && !use.questionDotToken) ||
+      (ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+    )
+  )
+    return false;
+  const unitId = plan.target.binding.unitId;
+  const declaration = identity.identityContext.declarationByUnitId.get(unitId);
+  const resolved = ctx.oracle.valueDeclarationOf(identifier);
+  if (
+    !declaration ||
+    !ts.isFunctionDeclaration(declaration) ||
+    !resolved ||
+    declaration.getSourceFile() !== identifier.getSourceFile() ||
+    (declaration !== resolved &&
+      (declaration.pos !== resolved.pos ||
+        declaration.end !== resolved.end ||
+        declaration.getSourceFile().fileName !== resolved.getSourceFile().fileName)) ||
+    ctx.reassignedFunctionDeclarations?.has(declaration)
+  )
+    return false;
+  const handle = ctx.programAbiSourceCallables?.handleForUnit(unitId);
+  const target = ctx.programAbiSourceCallables?.functionForUnit(unitId);
+  if (
+    handle === undefined ||
+    !target ||
+    definedFuncAt(ctx, handle) !== target ||
+    sourceFunctionDeclarationForHandle(ctx, handle) !== declaration
+  )
+    return false;
+  const key = ctx.funcClosureSingletonKeyByFuncIdx.get(handle);
+  const cacheIndex = key === undefined ? undefined : ctx.funcClosureGlobals.get(key);
+  const trampolineIndex = key === undefined ? undefined : ctx.funcMap.get(`__fn_tramp_${key}_cached`);
+  const accessorIndex = key === undefined ? undefined : ctx.funcMap.get(`__fn_value_${key}`);
+  if (cacheIndex === undefined || trampolineIndex === undefined || accessorIndex === undefined) return false;
+  const cache = ctx.mod.globals[localGlobalIdx(ctx, cacheIndex)];
+  const trampoline = definedFuncAt(ctx, trampolineIndex);
+  const accessor = definedFuncAt(ctx, accessorIndex);
+  const signature = funcSignatureOf(ctx, accessorIndex);
+  const session = ctx.programAbiSession;
+  const expectedCache = irSupportGlobalRef(unitId, "function-value-cache", cache?.name ?? "unavailable");
+  if (expectedCache.binding.kind !== "support") return false;
+  if (
+    !session ||
+    !cache ||
+    !trampoline ||
+    !accessor ||
+    cache.type.kind !== "externref" ||
+    !cache.mutable ||
+    !signature ||
+    signature.params.length !== 0 ||
+    signature.results.length !== 1 ||
+    signature.results[0]?.kind !== "externref" ||
+    !sameIrCallableBinding(
+      plan.accessor.binding,
+      irSupportFuncRef(unitId, "function-value-accessor", accessor.name).binding,
+    ) ||
+    !sameIrCallableBinding(
+      plan.trampoline.binding,
+      irSupportFuncRef(unitId, "function-value-trampoline", trampoline.name).binding,
+    ) ||
+    plan.cacheGlobal.binding.bindingId !== expectedCache.binding.bindingId ||
+    accessor.name !== plan.accessor.name ||
+    trampoline.name !== plan.trampoline.name ||
+    cache.name !== plan.cacheGlobal.name
+  )
+    return false;
+  return (
+    session.hasPlan(plan.accessor.binding.bindingId) &&
+    session.hasLocator(plan.accessor.binding.bindingId, accessor) &&
+    session.hasPlan(plan.trampoline.binding.bindingId) &&
+    session.hasLocator(plan.trampoline.binding.bindingId, trampoline) &&
+    session.hasPlan(plan.cacheGlobal.binding.bindingId) &&
+    session.hasLocator(plan.cacheGlobal.binding.bindingId, cache)
+  );
+}
 
 export interface IrImportedCallPlanningState {
   readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
@@ -490,6 +626,11 @@ function planSourceUnitImportedCalls(
                 const trampolineName = `__fn_tramp_${functionArgument.target.targetName}_cached`;
                 const cacheGlobalName = `__fn_closure_${functionArgument.target.targetName}`;
                 topLevelFunctionValues.set(functionArgument.argument, {
+                  accessor: irSupportFuncRef(
+                    valueIdentity.target.binding.unitId,
+                    "function-value-accessor",
+                    `__fn_value_${functionArgument.target.targetName}`,
+                  ),
                   ...valueIdentity,
                   ownerName,
                   signature: functionArgument.signature,
@@ -644,8 +785,10 @@ function appendAmbientClassCalls(
 }
 
 export interface PlanIrImportedCallsOptions extends IrImportedCallPlanningState {
+  readonly sourceOwnerUnitId: (node: ts.Node) => IrUnitId;
   readonly ctx: CodegenContext;
   readonly identityImportedFunctions?: IrIdentityImportedFunctionResolver;
+  readonly functionObjectValues?: IrIdentityImportedFunctionResolver;
   readonly legacyImportedFunctions?: IrImportedFunctionResolver;
   readonly resolvePreparedTimerShim?: IrPreparedTimerShimResolver;
   readonly resolveAmbientClassCall?: IrAmbientClassCallResolver;
@@ -658,6 +801,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
   const {
     ctx,
     identityImportedFunctions,
+    functionObjectValues,
     legacyImportedFunctions,
     resolvePreparedTimerShim,
     resolveAmbientClassCall,
@@ -684,6 +828,119 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
             import("../ir/ast-lowering-plans.js").IrTopLevelFunctionValueLoweringPlan
           >(),
         };
+  if (functionObjectValues && ctx.runtimeEvalGlobalFunctionBindings !== true) {
+    const identity = options.identityPlan;
+    const source = identity.identityContext.sourceFileBySourceId;
+    const addOwner = (ownerName: string, ownerUnitId: IrUnitId, root: ts.Node): void => {
+      const visit = (node: ts.Node): void => {
+        if (ts.isIdentifier(node)) {
+          const access = node.parent;
+          const use = access?.parent;
+          const isReceiver =
+            (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
+            access.expression === node &&
+            access.questionDotToken === undefined &&
+            ((ts.isCallExpression(use) && use.expression === access) ||
+              (ts.isBinaryExpression(use) &&
+                use.left === access &&
+                use.operatorToken.kind === ts.SyntaxKind.EqualsToken));
+          // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
+          // callee (`dyn.construct`) or the `x instanceof F` operand
+          // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
+          const isSelfGuardedValue =
+            ((ts.isNewExpression(access) && access.expression === node) ||
+              (ts.isBinaryExpression(access) &&
+                access.right === node &&
+                access.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) &&
+            irSelfGuardedConstructorValue(ctx, node);
+          const target =
+            (isReceiver || isSelfGuardedValue) && options.sourceOwnerUnitId(node) === ownerUnitId
+              ? functionObjectValues.resolveTopLevelFunctionValueTarget(node)
+              : undefined;
+          if (target?.legacyProjection === "unambiguous") {
+            const claim = identity.functionClaims.find((candidate) => candidate.unitId === target.targetUnitId);
+            const returnNode = effectiveIrReturnTypeNode(target.declaration);
+            // Missing flow evidence is not a dynamic signature. Leave this
+            // occurrence to the existing compatibility route without minting
+            // canonical support for an unsupported exact receiver plan.
+            if (
+              target.declaration.parameters.some(
+                (parameter, index) =>
+                  effectiveIrParamTypeNode(parameter) === undefined && claim?.typeEntry.params[index] === undefined,
+              ) ||
+              (returnNode === undefined && claim?.typeEntry.returnType === undefined)
+            )
+              return;
+            const params = target.declaration.parameters.map((parameter, index) =>
+              resolvePositionType(
+                effectiveIrParamTypeNode(parameter),
+                claim?.typeEntry.params[index],
+                classShapeSidecar,
+              ),
+            );
+            const signature = {
+              params,
+              returnType:
+                returnNode?.kind === ts.SyntaxKind.VoidKeyword
+                  ? null
+                  : resolvePositionType(returnNode, claim?.typeEntry.returnType, classShapeSidecar),
+            };
+            const funcIdx = ctx.programAbiSourceCallables?.handleForUnit(target.targetUnitId);
+            const prepared =
+              funcIdx === undefined ? null : ensureFuncClosureSingletonAccessor(ctx, target.targetName, funcIdx);
+            const accessor = prepared ? definedFuncAt(ctx, prepared.accessorFuncIdx) : undefined;
+            const trampoline = prepared ? definedFuncAt(ctx, prepared.singleton.trampolineFuncIdx) : undefined;
+            const cache = prepared
+              ? ctx.mod.globals[localGlobalIdx(ctx, prepared.singleton.cacheGlobalIdx)]
+              : undefined;
+            if (!prepared || !accessor || !trampoline || !cache) {
+              throw new IrUnsupportedError(
+                "imported-call-planning-unsupported",
+                "resolve",
+                "canonical function-object support unavailable",
+              );
+            }
+            const plan = {
+              ownerName,
+              ownerUnitId,
+              objectReceiver: true,
+              target: irUnitFuncRef({ unitId: target.targetUnitId, name: target.targetName }),
+              signature,
+              accessor: irSupportFuncRef(target.targetUnitId, "function-value-accessor", accessor.name),
+              trampoline: irSupportFuncRef(target.targetUnitId, "function-value-trampoline", trampoline.name),
+              cacheGlobal: irSupportGlobalRef(target.targetUnitId, "function-value-cache", cache.name),
+              cacheGlobalName: cache.name,
+            };
+            if (!planProgramAbiFunctionValue(ctx, plan, trampoline, cache, accessor)) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "resolve",
+                "function-object support lost its exact ABI",
+              );
+            }
+            plans.topLevelFunctionValues.set(node, plan);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(root);
+    };
+    for (const [ownerName, declaration] of identity.declarationByLegacyName) {
+      if (safeSelection.funcs.has(ownerName) && declaration.body) {
+        addOwner(ownerName, irOverlayIdentity.requireIrOverlayUnitId(identity, ownerName), declaration.body);
+      }
+    }
+    const init = identity.identitySelection.moduleInit;
+    if (init && safeSelection.moduleInit?.reason === null) {
+      for (const file of source.values()) {
+        if (identity.identityContext.moduleInitUnitIdBySourceFile.get(file) !== init.unitId) continue;
+        for (const statement of file.statements) {
+          if (!ts.isFunctionDeclaration(statement) && !ts.isClassDeclaration(statement))
+            addOwner(init.legacyMatchName, init.unitId, statement);
+        }
+      }
+    }
+  }
   if (resolveAmbientClassCall) {
     appendAmbientClassCalls(
       options,
@@ -696,4 +953,342 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
     );
   }
   return plans;
+}
+
+/** One current source resolver bundle, with the existing dormant class proof. */
+export function planIrFunctionValueResolverState(
+  ctx: CodegenContext,
+  identityContext: irOverlayIdentity.IrOverlayIdentityPlan["identityContext"],
+  options: {
+    readonly importedFunctions?: IrIdentityImportedFunctionResolver;
+    readonly resolver?: IrIdentityImportedFunctionResolver;
+  },
+  resolveIdentity: () => IrIdentityImportedFunctionResolver,
+  valueType: (type: ValType) => IrType,
+) {
+  const identityImportedFunctions = options.importedFunctions;
+  const legacyImportedFunctions = irOverlayIdentity.projectIrOverlayImportedResolver(identityImportedFunctions);
+  // (#3522 F2/F4) ONE exact resolver per source, constructed before identity
+  // selection and reused by direct-call projection and the field-call proof.
+  const identityResolver = resolveIdentity();
+  const functionObjectValues =
+    ctx.targetProfile.semanticProviders === "native-first" &&
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalGlobalFunctionBindings !== true
+      ? makeIrFunctionObjectValueResolver(ctx, identityResolver)
+      : undefined;
+  const functionMemberClosures = functionObjectValues
+    ? makeIrFunctionMemberClosures(ctx, identityContext, functionObjectValues, {
+        computeSignature: (expression) => computeClosureWrapperSig(ctx, expression),
+        dynamicCarrierIsExternref: () => resolveIrDynamicCarrierType(ctx).kind === "externref",
+        valueType,
+        typeBindingKey: irTypeBindingKey,
+      })
+    : undefined;
+  // (#3522 F4) Validate the complete dormant F3 proof and derive the single
+  // immutable admitted-class marker BEFORE local class-expression resolution
+  // and identity selection. Every downstream consumer carries this object; none
+  // recomputes it.
+  const nestedClassFieldCallProofs = planIrNestedClassFieldCalls({ identityContext, resolver: identityResolver });
+  const nestedClassFieldCallAdmission: IrNestedClassFieldCallAdmission =
+    irOverlayIdentity.computeIrNestedClassFieldCallAdmission({
+      identityContext,
+      resolver: identityResolver,
+      proofs: nestedClassFieldCallProofs,
+    });
+  return {
+    identityImportedFunctions,
+    legacyImportedFunctions,
+    identityResolver,
+    functionObjectValues,
+    functionMemberClosures,
+    // Preserve the old projection's exact evaluation point at the selector call.
+    functionValueSelectionOptions: () =>
+      functionObjectValues
+        ? {
+            functionObjectValues: irOverlayIdentity.projectIrOverlayImportedResolver(functionObjectValues),
+            ...(functionMemberClosures ? { functionMemberClosures } : {}),
+          }
+        : {},
+    nestedClassFieldCallProofs,
+    nestedClassFieldCallAdmission,
+  };
+}
+
+/**
+ * Allocate and freeze direct function-value singleton support before a target
+ * body can seal through Prepared IR. A direct caller may still materialize the
+ * value later, but it must reuse these exact allocator objects rather than
+ * adding ABI drafts to an already sealed target component.
+ */
+export function prepareTopLevelFunctionValueTargetSupport(
+  ctx: CodegenContext,
+  plan: {
+    readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+    readonly functionClaimsByUnitId: ReadonlyMap<IrUnitId, { readonly legacyName: string }>;
+  },
+  selectedLegacyNames: ReadonlySet<string>,
+  collectValueTargetUnitIds: () => ReadonlySet<IrUnitId>,
+): ReadonlyMap<IrUnitId, MultiPreparedFunctionValueSupportReceipt> {
+  const receipts = new Map<IrUnitId, MultiPreparedFunctionValueSupportReceipt>();
+  const selectedUnitIds = new Set(
+    [...selectedLegacyNames].map((legacyName) =>
+      irOverlayIdentity.requireIrOverlayFunctionUnitId(plan.identityPlan, legacyName),
+    ),
+  );
+  const valueTargetUnitIds = collectValueTargetUnitIds();
+  for (const unitId of valueTargetUnitIds) {
+    if (!selectedUnitIds.has(unitId)) continue;
+    const claim = plan.functionClaimsByUnitId.get(unitId);
+    const funcIdx = claim ? ctx.programAbiSourceCallables?.handleForUnit(unitId) : undefined;
+    const target = claim ? irUnitFuncRef({ unitId, name: claim.legacyName }) : undefined;
+    if (claim === undefined || funcIdx === undefined || target === undefined) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} has no exact allocated source callable`,
+      );
+    }
+    const access = ensureFuncClosureSingletonAccessor(ctx, claim.legacyName, funcIdx);
+    const singleton = access?.singleton;
+    const accessor = access ? definedFuncAt(ctx, access.accessorFuncIdx) : undefined;
+    const trampoline = singleton ? definedFuncAt(ctx, singleton.trampolineFuncIdx) : undefined;
+    const cache = singleton ? ctx.mod.globals[localGlobalIdx(ctx, singleton.cacheGlobalIdx)] : undefined;
+    if (!singleton || !trampoline || !cache || !accessor) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} could not allocate its exact singleton support`,
+      );
+    }
+    const functionValuePlan = {
+      target,
+      accessor: irSupportFuncRef(unitId, "function-value-accessor", accessor.name),
+      trampoline: irSupportFuncRef(unitId, "function-value-trampoline", trampoline.name),
+      cacheGlobal: irSupportGlobalRef(unitId, "function-value-cache", cache.name),
+    };
+    if (!planProgramAbiFunctionValue(ctx, functionValuePlan, trampoline, cache, accessor)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} could not freeze its singleton Program ABI`,
+      );
+    }
+    if (
+      functionValuePlan.trampoline.binding.kind !== "support" ||
+      functionValuePlan.cacheGlobal.binding.kind !== "support"
+    ) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared function-value target ${unitId} lost its exact support binding identities`,
+      );
+    }
+    receipts.set(
+      unitId,
+      Object.freeze({
+        targetFunction: ctx.programAbiSourceCallables!.functionForUnit(unitId)!,
+        targetHandle: funcIdx,
+        trampolineFunction: trampoline,
+        trampolineHandle: singleton.trampolineFuncIdx,
+        trampolineRef: functionValuePlan.trampoline,
+        trampolineBindingId: functionValuePlan.trampoline.binding.bindingId,
+        cacheGlobal: cache,
+        cacheGlobalHandle: singleton.cacheGlobalIdx,
+        cacheGlobalRef: functionValuePlan.cacheGlobal,
+        cacheGlobalBindingId: functionValuePlan.cacheGlobal.binding.bindingId,
+      }),
+    );
+  }
+  return receipts;
+}
+
+export function preparedModuleInitEvaluationMatchesStatement(
+  sourceId: IrSourceId,
+  sourceFile: ts.SourceFile,
+  statement: ts.Statement,
+  evaluation: IrModuleInitEvaluationEntry,
+  sourceOrdinal: number,
+  kind: Extract<IrModuleInitEvaluationEntry["kind"], "variable-initializer" | "statement">,
+  bindingIds: readonly IrBindingId[],
+): boolean {
+  const statementOrdinal = sourceFile.statements.indexOf(statement);
+  const start = statement.getStart(sourceFile);
+  return (
+    statement.getSourceFile() === sourceFile &&
+    statementOrdinal >= 0 &&
+    evaluation.key === `${sourceId}:eval:${sourceOrdinal}` &&
+    evaluation.kind === kind &&
+    evaluation.sourceOrdinal === sourceOrdinal &&
+    evaluation.statementOrdinal === statementOrdinal &&
+    evaluation.nestedOrdinal === 0 &&
+    evaluation.start === start &&
+    evaluation.end === statement.end &&
+    evaluation.classId === null &&
+    evaluation.legacyKey === `statement:${start}:${statement.end}` &&
+    evaluation.bindingIds.length === bindingIds.length &&
+    evaluation.bindingIds.every((bindingId, index) => bindingId === bindingIds[index])
+  );
+}
+
+interface PreparedMemberInitEvidence {
+  readonly unitId: IrUnitId;
+  readonly globalBindingIds: ReadonlySet<IrBindingId>;
+  readonly invocationKind: "wasm-start" | "deferred-export";
+}
+
+/** Admit only a closed population of current, canonical function-object RHS writes. */
+export function preparedMemberInit(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  plan: {
+    readonly identityPlan: irOverlayIdentity.IrOverlayIdentityPlan;
+    readonly topLevelFunctionValues: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan>;
+    readonly functionMemberClosures?: ReturnType<typeof makeIrFunctionMemberClosures>;
+  },
+  selection: Pick<IrSelection, "funcs" | "moduleInit">,
+  planning: IrModuleInitPlanningEvidence | undefined,
+  sourceOwnerUnitId: (node: ts.Node) => IrUnitId,
+): PreparedMemberInitEvidence | undefined {
+  const identity = plan.identityPlan.identityContext;
+  if (
+    ctx.fast ||
+    !ctx.nativeStrings ||
+    !ctx.standalone ||
+    ctx.wasi ||
+    ctx.strictNoHostImports ||
+    ctx.targetProfile.semanticProviders !== "native-first" ||
+    ctx.runtimeEvalGlobalFunctionBindings === true ||
+    identity.sourceFileBySourceId.size !== 1 ||
+    ctx.programAbiSession?.inventory !== identity.inventory ||
+    ctx.programAbiSourceCallables?.identityContext !== identity ||
+    !plan.functionMemberClosures ||
+    !planning ||
+    selection.moduleInit?.reason !== null ||
+    selection.moduleInit.stmtCount === 0
+  ) {
+    return undefined;
+  }
+  const sourceId = identity.sourceIdBySourceFile.get(sourceFile);
+  const unitId = identity.moduleInitUnitIdBySourceFile.get(sourceFile);
+  const terminal = unitId === undefined ? undefined : identity.terminalByUnitId.get(unitId);
+  const population = identity.moduleInitPopulationBySourceFile.get(sourceFile);
+  const invocationKind = planning.plan.invocation.kind;
+  if (
+    sourceId === undefined ||
+    unitId === undefined ||
+    !terminal ||
+    !population ||
+    identity.sourceFileBySourceId.get(sourceId) !== sourceFile ||
+    identity.moduleInitUnitIdBySourceId.get(sourceId) !== unitId ||
+    identity.unitByUnitId.get(unitId) !== terminal ||
+    terminal.kind !== "module-init" ||
+    terminal.sourceId !== sourceId ||
+    terminal.terminalOwnerId !== unitId ||
+    planning.plan.sourceId !== sourceId ||
+    planning.plan.unitId !== unitId ||
+    !planning.plan.executable ||
+    planning.plan.gaps.length !== 0 ||
+    planning.plan.bindings.length !== 0 ||
+    planning.plan.liveSeeds.length !== 0 ||
+    !planning.parity.aligned ||
+    !planning.plan.invocation.exactlyOnce ||
+    planning.plan.invocation.target !== "standalone" ||
+    (invocationKind !== "wasm-start" && invocationKind !== "deferred-export") ||
+    (ctx.deferTopLevelInit ? invocationKind !== "deferred-export" : invocationKind !== "wasm-start") ||
+    population.length === 0 ||
+    selection.moduleInit.stmtCount !== population.length ||
+    planning.plan.evaluations.length !== population.length ||
+    planning.parity.plannedEntryCount !== population.length ||
+    planning.parity.legacyEntryCount !== population.length
+  ) {
+    return undefined;
+  }
+  // No class static work, import/re-export/default work, variable storage, or
+  // unknown top-level operation can borrow this function-member certificate.
+  const currentPopulation: ts.ExpressionStatement[] = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isExpressionStatement(statement)) currentPopulation.push(statement);
+    else if (
+      !(ts.isFunctionDeclaration(statement) && statement.name && statement.body) &&
+      !ts.isEmptyStatement(statement) &&
+      !ts.isInterfaceDeclaration(statement) &&
+      !ts.isTypeAliasDeclaration(statement)
+    ) {
+      return undefined;
+    }
+  }
+  if (
+    currentPopulation.length !== population.length ||
+    currentPopulation.some((statement, ordinal) => statement !== population[ordinal])
+  ) {
+    return undefined;
+  }
+  for (let ordinal = 0; ordinal < population.length; ordinal++) {
+    const statement = currentPopulation[ordinal];
+    const evaluation = planning.plan.evaluations[ordinal];
+    if (
+      !statement ||
+      !evaluation ||
+      statement.parent !== sourceFile ||
+      !preparedModuleInitEvaluationMatchesStatement(
+        sourceId,
+        sourceFile,
+        statement,
+        evaluation,
+        ordinal,
+        "statement",
+        [],
+      )
+    ) {
+      return undefined;
+    }
+    const assignment = statement.expression;
+    if (
+      !ts.isBinaryExpression(assignment) ||
+      assignment.parent !== statement ||
+      assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+      !ts.isPropertyAccessExpression(assignment.left) ||
+      assignment.left.parent !== assignment ||
+      assignment.left.questionDotToken ||
+      !ts.isIdentifier(assignment.left.expression) ||
+      !ts.isIdentifier(assignment.left.name) ||
+      !ts.isFunctionExpression(assignment.right) ||
+      assignment.right.parent !== assignment
+    ) {
+      return undefined;
+    }
+    const receiver = assignment.left.expression;
+    const value = plan.topLevelFunctionValues.get(receiver);
+    if (
+      !hasPreparedFunctionObjectReference(ctx, receiver, value, plan.identityPlan, unitId, sourceOwnerUnitId) ||
+      value?.target.binding.kind !== "unit"
+    ) {
+      return undefined;
+    }
+    const targetUnitId = value.target.binding.unitId;
+    const claim = plan.identityPlan.functionClaims.find((entry) => entry.unitId === targetUnitId);
+    if (!claim || !selection.funcs.has(claim.legacyName) || !plan.identityPlan.safeFunctionUnitIds.has(targetUnitId)) {
+      return undefined;
+    }
+    const rhs = plan.functionMemberClosures.resolve(assignment.right);
+    const sourceUnit = rhs ? identity.unitByUnitId.get(rhs.sourceUnitId) : undefined;
+    if (
+      !rhs ||
+      rhs.expression !== assignment.right ||
+      rhs.ownerUnitId !== unitId ||
+      !sourceUnit ||
+      sourceUnit.terminal ||
+      sourceUnit.kind !== "function-expression" ||
+      sourceUnit.sourceId !== sourceId ||
+      sourceUnit.terminalOwnerId !== unitId ||
+      sourceUnit.lexicalOwnerId !== unitId ||
+      identity.declarationByUnitId.get(rhs.sourceUnitId) !== assignment.right ||
+      !rhs.isCurrent()
+    ) {
+      return undefined;
+    }
+  }
+  // No module lexical binding is certified or minted by this initializer.
+  return { unitId, globalBindingIds: new Set<IrBindingId>(), invocationKind };
 }

@@ -31,6 +31,7 @@ import {
 import type { PreparedComponentModuleCallableAliasDescriptor } from "./prepared-component-publication.js";
 import type { FuncHandle, Import, ValType } from "./types.js";
 import { readEnv } from "../env.js";
+import type { PreparedDynamicBoxObserver } from "./prepared-dynamic-support.js";
 
 interface CompilerTimerShimEntry extends PreparedComponentArtifactEntry {
   readonly fn: IrFunction;
@@ -43,7 +44,16 @@ interface PreparedCompilerTimerShimDynamicShape {
   readonly dynamicCarrierRef: IrTypeRef;
 }
 
-type PreparedTimerDynamicHelperName = "__box_number" | "__unbox_number" | "__to_primitive" | "__to_number";
+type PreparedTimerDynamicHelperName =
+  | "__box_number"
+  | "__unbox_number"
+  | "__to_primitive"
+  | "__to_number"
+  | "__box_boolean"
+  | "__is_truthy"
+  | "__typeof"
+  | "__typeof_undefined"
+  | "__extern_strict_eq";
 
 export interface CompilerTimerShimLateSealTransaction {
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
@@ -57,10 +67,6 @@ export interface CompilerTimerShimLoweringBoundary<Entry extends { readonly term
   prepare(entry: Entry): boolean;
 }
 
-// (#5297) The IR layer must not grow a NEW `src/ir/ -> src/codegen/` edge
-// (`scripts/check-ir-layering.mjs`, #3113 S1). This file already holds that
-// edge for the dynamic-support vocabulary, so `prepared-dynamic-support.ts`
-// consumes both symbols THROUGH it rather than opening a second edge.
 export { resolveIrDynamicCarrierType };
 export type { CodegenContext };
 
@@ -94,6 +100,18 @@ export function isDynamicInstruction(instr: IrInstr): boolean {
   if (instr.kind === "unbox" || instr.kind === "tag.test") return instr.tagId !== undefined;
   return (
     instr.kind === "dyn.truthy" ||
+    instr.kind === "dyn.undefined" ||
+    instr.kind === "dyn.typeof" ||
+    instr.kind === "dyn.to_string" ||
+    instr.kind === "dyn.json_stringify" ||
+    instr.kind === "dyn.object_tag" ||
+    instr.kind === "dyn.construct" ||
+    instr.kind === "dyn.string_carrier" ||
+    instr.kind === "dyn.arguments_length" ||
+    instr.kind === "dyn.current_this" ||
+    instr.kind === "dyn.instanceof_fn" ||
+    instr.kind === "dyn.publish_argc" ||
+    instr.kind === "dyn.own_property" ||
     instr.kind === "dyn.to_number" ||
     instr.kind === "dyn.eq" ||
     instr.kind === "dyn.member_get" ||
@@ -231,6 +249,46 @@ function prepareCompilerTimerShimDynamicShapes(
   return shapes;
 }
 
+/** Exact provider evidence for the existing standalone externref ToNumber lowering. */
+export function prepareStandaloneDynamicToNumberSupport(
+  ctx: CodegenContext,
+  callableImports: ReadonlyMap<string, Import>,
+): readonly IrFuncRef[] | undefined {
+  if (!ctx.standalone) return undefined;
+  const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
+  const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
+  if (!selected) return undefined;
+  const toPrimitive = exactPreparedDynamicHelperRef(
+    ctx,
+    callableImports,
+    "__to_primitive",
+    selected.toPrimitive,
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const unboxNumber = exactPreparedDynamicHelperRef(
+    ctx,
+    callableImports,
+    "__unbox_number",
+    selected.unboxNumber,
+    [{ kind: "externref" }],
+    [{ kind: "f64" }],
+  );
+  const fusedToNumber =
+    selected.fusedToNumber === undefined
+      ? undefined
+      : exactPreparedDynamicHelperRef(
+          ctx,
+          callableImports,
+          "__to_number",
+          selected.fusedToNumber,
+          [{ kind: "externref" }],
+          [{ kind: "f64" }],
+        );
+  if (!toPrimitive || !unboxNumber || (selected.fusedToNumber !== undefined && !fusedToNumber)) return undefined;
+  return fusedToNumber ? [fusedToNumber, toPrimitive, unboxNumber] : [toPrimitive, unboxNumber];
+}
+
 function prepareCompilerTimerShimDynamicInstructionSupport(
   ctx: CodegenContext,
   shapes: ReadonlyMap<IrUnitId, PreparedCompilerTimerShimDynamicShape>,
@@ -240,38 +298,8 @@ function prepareCompilerTimerShimDynamicInstructionSupport(
   for (const shape of shapes.values()) {
     let conversionCallables: readonly IrFuncRef[] | undefined;
     if (ctx.standalone) {
-      const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
-      const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
-      if (!selected) continue;
-      const toPrimitive = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__to_primitive",
-        selected.toPrimitive,
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "externref" }],
-      );
-      const unboxNumber = exactPreparedDynamicHelperRef(
-        ctx,
-        callableImports,
-        "__unbox_number",
-        selected.unboxNumber,
-        [{ kind: "externref" }],
-        [{ kind: "f64" }],
-      );
-      const fusedToNumber =
-        selected.fusedToNumber === undefined
-          ? undefined
-          : exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              "__to_number",
-              selected.fusedToNumber,
-              [{ kind: "externref" }],
-              [{ kind: "f64" }],
-            );
-      if (!toPrimitive || !unboxNumber || (selected.fusedToNumber !== undefined && !fusedToNumber)) continue;
-      conversionCallables = fusedToNumber ? [fusedToNumber, toPrimitive, unboxNumber] : [toPrimitive, unboxNumber];
+      conversionCallables = prepareStandaloneDynamicToNumberSupport(ctx, callableImports);
+      if (!conversionCallables) continue;
     } else {
       const unboxNumber = exactPreparedDynamicHelperRef(
         ctx,
@@ -306,6 +334,7 @@ function prepareCompilerTimerShimDynamicInstructionSupport(
 
 export function prepareCompilerTimerShimLateSealTransaction<Entry extends CompilerTimerShimEntry>(input: {
   readonly ctx: CodegenContext;
+  readonly observeDynamicBoxHelpers?: PreparedDynamicBoxObserver;
   readonly entries: readonly Entry[];
   readonly inventory: IrUnitInventory;
   readonly atomicTerminalPopulation?: boolean;

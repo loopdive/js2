@@ -23,6 +23,7 @@
  */
 import { forEachChild, ts } from "../../ts-api.js";
 import { collectPatternBindingNames, collectReferencedIdentifiers } from "./ast-scope.js";
+import { isLexicalBindingWrite } from "../../shared/binding-writes.js";
 
 /**
  * Detect integer loop counter pattern: for (let i = INT; i < EXPR; i++)
@@ -571,20 +572,12 @@ export function findForInOfHeadNames(stmt: ts.IterationStatement): Set<string> {
 export function findNamesWrittenInLoop(stmt: ts.Node): Set<string> {
   const written = new Set<string>();
   function visit(node: ts.Node): void {
-    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
-      collectAssignmentTargetNames(node.left, written);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      collectAssignmentTargetNames(node.operand, written);
+    // (#6992) The shared write contract: assignment / update / destructuring
+    // targets and for-in/for-of heads.
+    if (ts.isIdentifier(node) && isLexicalBindingWrite(node)) {
+      written.add(node.text);
     } else if (ts.isVariableDeclaration(node)) {
       for (const n of collectPatternBindingNames(node.name)) written.add(n);
-    } else if (
-      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
-      !ts.isVariableDeclarationList(node.initializer)
-    ) {
-      collectAssignmentTargetNames(node.initializer, written);
     }
     forEachChild(node, visit);
   }

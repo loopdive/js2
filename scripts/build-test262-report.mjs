@@ -97,6 +97,12 @@ function createCounts() {
     // v4 oracle every standalone `pass` is host-free, so this equals `pass`.
     // The gc/js-host lane still computes it as informational metadata.
     host_free_pass: 0,
+    // Passes whose compile emitted every terminal unit from the IR — zero
+    // direct (legacy) bodies. The honest "IR path" number on the hybrid route.
+    ir_only_pass: 0,
+    // Rows that carried an IR route census at all (older rows have none), so
+    // the percentage has a true denominator.
+    ir_measured: 0,
   };
 }
 
@@ -113,6 +119,11 @@ function buildSummary(counter, target) {
     host_free_pass: hostFreePass,
     // Raw host-satisfied passes have no standalone meaning and are omitted.
     ...(target === "standalone" ? {} : { leaky_pass: (counter.pass ?? 0) - hostFreePass }),
+    ir_only_pass: counter.ir_only_pass ?? 0,
+    ir_measured: counter.ir_measured ?? 0,
+    // Separate percentage: fallback-free passes over ALL tests, not over
+    // measured rows, so it reads against the same denominator as `pass`.
+    ir_only_pass_pct: counter.total > 0 ? Math.round(((counter.ir_only_pass ?? 0) / counter.total) * 1000) / 10 : 0,
     stale: 0,
   };
 }
@@ -1000,6 +1011,8 @@ async function main() {
   const officialStatuses = createCounts();
   const strictCounts = createCounts();
   const categories = new Map();
+  // Fallback reason code → { tests, units, passing_tests } across every row.
+  const irFallbackCodes = new Map();
   const errorCategories = new Map();
   const skipReasons = new Map();
   // #1853 — hard-error stability bucket (malformed_wasm / missing_test_export),
@@ -1118,10 +1131,28 @@ async function main() {
     // correction ("N previously-counted passes are vacuous") without inflating
     // the genuine-fail bucket's interpretation.
     const isVacuous = record.vacuous === true;
+    // Fallback-free pass: the compile's IR ledger shows zero legacy bodies.
+    const irMeasured = typeof record.ir_units === "number";
+    const irOnlyPass = status === "pass" && irMeasured && record.ir_legacy_units === 0;
+    const bumpIr = (counter) => {
+      if (irMeasured) counter.ir_measured = (counter.ir_measured ?? 0) + 1;
+      if (irOnlyPass) counter.ir_only_pass = (counter.ir_only_pass ?? 0) + 1;
+    };
+    if (Array.isArray(record.ir_fallback_codes)) {
+      for (const entry of record.ir_fallback_codes) {
+        if (!entry || typeof entry.code !== "string") continue;
+        const bucket = irFallbackCodes.get(entry.code) ?? { code: entry.code, tests: 0, units: 0, passing_tests: 0 };
+        bucket.tests++;
+        bucket.units += Number(entry.count) || 0;
+        if (status === "pass") bucket.passing_tests++;
+        irFallbackCodes.set(entry.code, bucket);
+      }
+    }
 
     statuses.total++;
     statuses[status] = (statuses[status] ?? 0) + 1;
     if (hostFreePass) statuses.host_free_pass = (statuses.host_free_pass ?? 0) + 1;
+    bumpIr(statuses);
     if (isVacuous) statuses.vacuous = (statuses.vacuous ?? 0) + 1;
 
     if (!scopeCounts.has(scope)) scopeCounts.set(scope, createCounts());
@@ -1129,15 +1160,18 @@ async function main() {
     scopeCounter.total++;
     scopeCounter[status] = (scopeCounter[status] ?? 0) + 1;
     if (hostFreePass) scopeCounter.host_free_pass = (scopeCounter.host_free_pass ?? 0) + 1;
+    bumpIr(scopeCounter);
 
     if (scopeOfficial) {
       officialStatuses.total++;
       officialStatuses[status] = (officialStatuses[status] ?? 0) + 1;
       if (hostFreePass) officialStatuses.host_free_pass = (officialStatuses.host_free_pass ?? 0) + 1;
+      bumpIr(officialStatuses);
       if (strict !== "no") {
         strictCounts.total++;
         strictCounts[status] = (strictCounts[status] ?? 0) + 1;
         if (hostFreePass) strictCounts.host_free_pass = (strictCounts.host_free_pass ?? 0) + 1;
+        bumpIr(strictCounts);
       }
     }
 
@@ -1146,6 +1180,7 @@ async function main() {
     categoryCounter.total++;
     categoryCounter[status] = (categoryCounter[status] ?? 0) + 1;
     if (hostFreePass) categoryCounter.host_free_pass = (categoryCounter.host_free_pass ?? 0) + 1;
+    bumpIr(categoryCounter);
 
     if (record.error_category) {
       errorCategories.set(record.error_category, (errorCategories.get(record.error_category) ?? 0) + 1);
@@ -1209,6 +1244,9 @@ async function main() {
     official_summary: officialSummaryBuilt,
     full_summary: fullSummaryBuilt,
     strict_summary: buildSummary(strictCounts, target),
+    // The IR-path backlog, ranked: every fallback reason with the number of
+    // tests (and terminal units) that still take a legacy body for it.
+    ir_fallback_codes: [...irFallbackCodes.values()].sort((a, b) => b.tests - a.tests || a.code.localeCompare(b.code)),
     scope_summaries: Object.fromEntries(
       [...scopeCounts.entries()]
         .sort(([a], [b]) => a.localeCompare(b))

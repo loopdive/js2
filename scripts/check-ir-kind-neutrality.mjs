@@ -786,6 +786,73 @@ const VERDICTS = {
     why: "ECMAScript [[Set]] by dynamic key, with spec evaluation order.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "delegates the actual" }],
   },
+  // (#7104) The two kinds the void-return mirror added.
+  "dyn.undefined": {
+    verdict: "js",
+    why: "The ECMAScript `undefined` value materialised in the boxed-any carrier (§6.1.1) — a JS value, not a neutral null.",
+    evidence: [
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "SAME `undefined` representation legacy uses on each lane" },
+    ],
+  },
+  "dyn.typeof": {
+    verdict: "js",
+    why: "ECMAScript `typeof` over every partition of a boxed-any carrier (§13.5.3), one typeof engine shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `typeof` (§13.5.3) over EVERY partition" }],
+  },
+  "dyn.to_string": {
+    verdict: "js",
+    why: "ECMAScript ToString over every partition of a boxed-any carrier (§7.1.17), one ToString engine shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "JS `ToString` (§7.1.17) over EVERY partition" }],
+  },
+  "dyn.object_tag": {
+    verdict: "js",
+    why: "ECMAScript Object.prototype.toString (§20.1.3.6) `[object Tag]` classification of a boxed-any carrier, through the standalone runtime classifier shared with legacy.",
+    evidence: [
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "the `[object Tag]` classifier) over a boxed-any carrier" },
+    ],
+  },
+  "dyn.string_carrier": {
+    verdict: "js",
+    why: "ECMAScript String value recovery from a boxed-any carrier (a primitive string or a String wrapper's [[StringData]], §10.4.3), through the coercion ladder shared with legacy; not ToString.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the checked recovery of the native string" }],
+  },
+  "dyn.own_property": {
+    verdict: "js",
+    why: "ECMAScript Object.prototype.hasOwnProperty (§20.1.3.2, [[GetOwnProperty]] ≠ undefined) / propertyIsEnumerable (§20.1.3.4) over a boxed-any receiver and key, through the providers legacy uses for the propertyHelper uncurried aliases.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "applied to a boxed-any receiver and key" }],
+  },
+  "dyn.arguments_length": {
+    verdict: "js",
+    why: 'ECMAScript arguments.length — the actual argument count of the invocation (§10.4.4.6 CreateUnmappedArgumentsObject sets "length" to the number of arguments passed), read through the call-site count protocol shared with legacy.',
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the number of arguments actually" }],
+  },
+  "dyn.current_this": {
+    verdict: "js",
+    why: "ECMAScript OrdinaryCallBindThis (§10.2.1.2) for an ordinary function: the installed receiver, else the global object (sloppy) or undefined (strict), read through the receiver protocol shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the `this` binding of an ordinary top-level" }],
+  },
+  "dyn.instanceof_fn": {
+    verdict: "js",
+    why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) against a known function constructor's prototype object, shared with legacy's per-function prototype.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "OrdinaryHasInstance (§7.3.20) walks" }],
+  },
+  "dyn.publish_argc": {
+    verdict: "js",
+    why: 'The caller half of the ECMAScript arguments count: a direct call site publishes the number of arguments it actually passes (§10.4.4.6 sets "length" to that count), through the call-site count protocol shared with legacy.',
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "publishes the number of arguments actually passed" }],
+  },
+  "dyn.construct": {
+    verdict: "js",
+    why: "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",
+    evidence: [
+      { file: path.join(DIALECT_DIR, "js.ts"), quote: "where the constructor is a runtime VALUE on the boxed-any" },
+    ],
+  },
+  "dyn.json_stringify": {
+    verdict: "js",
+    why: "ECMAScript JSON.stringify (§25.5.2) over a boxed-any carrier, through the native codec root shared with legacy.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "`JSON.stringify(value)` (§25.5.2, one argument" }],
+  },
   "iter.new": {
     verdict: "js",
     why: "GetIterator — the @@iterator protocol (§7.4.2).",

@@ -71,6 +71,7 @@ export function preparedInstructionSupport(
         ? (functionTypeRefs?.length ?? 0) > 0
         : (typeRefs?.length ?? 0) > 0 ||
           callableRefs.length > 0 ||
+          sidecars.dynamicInstructionSupport?.get(ownerUnitId)?.instructionCallables.has(instr) === true ||
           (objectType?.kind === "object" && (sidecars.closureSupport?.typeRefs.get(objectType)?.length ?? 0) > 0),
   };
 }

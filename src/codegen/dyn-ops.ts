@@ -13,7 +13,8 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { i32ArrayLiteralInstrs } from "./native-regex.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
+import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
+import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { RE_FLAG_G } from "./regex/bytecode.js";
@@ -27,6 +28,9 @@ export const IR_DYN_GT_FN = "__ir_dyn_gt";
 export const IR_DYN_GE_FN = "__ir_dyn_ge";
 export const IR_DYN_METHOD_CALL_0_FN = "__ir_dyn_method_call_0";
 export const IR_DYN_METHOD_CALL_1_FN = "__ir_dyn_method_call_1";
+export const IR_DYN_CALL_BOX_FN = "__ir_dyn_call_box";
+export const IR_DYN_CALL_VALUE_FN = "__ir_dyn_call_value";
+export const IR_DYN_CALL_ARGUMENT_FN = "__ir_dyn_call_argument";
 export const IR_DYN_STRING_REPLACE_FN = "__ir_dyn_string_replace";
 
 export type IrDynamicRuntimeNeed =
@@ -37,7 +41,8 @@ export type IrDynamicRuntimeNeed =
   | "ge"
   | "method-call-0"
   | "method-call-1"
-  | "string-replace";
+  | "string-replace"
+  | "member-call";
 
 type RelNeed = "lt" | "le" | "gt" | "ge";
 
@@ -560,6 +565,57 @@ function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void
   );
 }
 
+/** Carrier projection only. The IR body retains Get/argument/IsCallable/Call order. */
+function ensureDynamicMemberCallSupport(ctx: CodegenContext, carrier: ValType): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first") throw new Error("native member-call support unavailable");
+  ensureObjectRuntime(ctx);
+  reserveApplyClosure(ctx);
+  const ext: ValType = { kind: "externref" };
+  ensureLateImport(ctx, "__is_callable", [ext], [{ kind: "i32" }]);
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  flushLateImportShifts(ctx, null);
+  const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+  const fromExtern = !ctx.fast && (ctx.standalone || ctx.wasi) ? honest : undefined;
+  const raw = ctx.fast || ctx.standalone || ctx.wasi ? ensureDynamicCallBoundaryExtern(ctx) : undefined;
+  const arg = ctx.fast ? ensureAnyToExternHelper(ctx) : undefined;
+  if (
+    (!ctx.fast && (ctx.standalone || ctx.wasi) && fromExtern === undefined) ||
+    ((ctx.fast || ctx.standalone || ctx.wasi) && raw === undefined) ||
+    (ctx.fast && arg === undefined)
+  ) {
+    throw new Error("native member-call carrier projection unavailable");
+  }
+  addHelper(
+    ctx,
+    IR_DYN_CALL_VALUE_FN,
+    [carrier],
+    [ext],
+    [
+      { op: "local.get", index: 0 },
+      ...(fromExtern === undefined ? [] : [{ op: "call", funcIdx: fromExtern } satisfies Instr]),
+      ...(raw === undefined ? [] : [{ op: "call", funcIdx: raw } satisfies Instr]),
+    ],
+  );
+  if (ctx.fast && honest === undefined) throw new Error("honest function carrier classifier unavailable");
+  addHelper(
+    ctx,
+    IR_DYN_CALL_BOX_FN,
+    [ext],
+    [carrier],
+    [
+      { op: "local.get", index: 0 },
+      ...(ctx.fast && honest !== undefined ? [{ op: "call", funcIdx: honest } satisfies Instr] : []),
+    ],
+  );
+  addHelper(
+    ctx,
+    IR_DYN_CALL_ARGUMENT_FN,
+    [carrier],
+    [ext],
+    [{ op: "local.get", index: 0 }, ...(arg === undefined ? [] : [{ op: "call", funcIdx: arg } satisfies Instr])],
+  );
+}
+
 export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<IrDynamicRuntimeNeed>): void {
   if (needs.size === 0) return;
   if (ctx.fast) ensureAnyHelpers(ctx);
@@ -572,4 +628,47 @@ export function ensureIrDynamicRuntime(ctx: CodegenContext, needs: ReadonlySet<I
   if (needs.has("method-call-0")) ensureDynamicMethodCall(ctx, carrier, 0);
   if (needs.has("method-call-1")) ensureDynamicMethodCall(ctx, carrier, 1);
   if (needs.has("string-replace")) ensureDynamicStringReplace(ctx, carrier);
+  if (needs.has("member-call")) ensureDynamicMemberCallSupport(ctx, carrier);
+}
+
+/** Exact symbolic demand of the dynamic runtime this module owns. */
+export function irDynamicRuntimeNeedForSymbol(symbol: string): IrDynamicRuntimeNeed | undefined {
+  switch (symbol) {
+    case IR_DYN_ADD_FN:
+      return "add";
+    case IR_DYN_LT_FN:
+      return "lt";
+    case IR_DYN_LE_FN:
+      return "le";
+    case IR_DYN_GT_FN:
+      return "gt";
+    case IR_DYN_GE_FN:
+      return "ge";
+    case IR_DYN_CALL_BOX_FN:
+    case IR_DYN_CALL_VALUE_FN:
+    case IR_DYN_CALL_ARGUMENT_FN:
+      return "member-call";
+    case IR_DYN_METHOD_CALL_0_FN:
+      return "method-call-0";
+    case IR_DYN_METHOD_CALL_1_FN:
+      return "method-call-1";
+    case IR_DYN_STRING_REPLACE_FN:
+      return "string-replace";
+  }
+  return undefined;
+}
+
+/** Observe only the actual function-object call helpers, after reservation. */
+export function observeIrFunctionObjectCallProviders(observe: (symbol: string) => void): void {
+  for (const symbol of [
+    IR_DYN_CALL_BOX_FN,
+    IR_DYN_CALL_VALUE_FN,
+    IR_DYN_CALL_ARGUMENT_FN,
+    "__objvec_new",
+    "__objvec_push",
+    "__apply_closure",
+    "__is_callable",
+    "__new_TypeError",
+  ])
+    observe(symbol);
 }

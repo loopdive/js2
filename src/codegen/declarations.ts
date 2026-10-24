@@ -47,9 +47,7 @@ import {
   isAssignmentOperator,
   isSynchronousTopLevelAwaitRecovery,
 } from "./module-init-collection.js";
-import { emitUndefinedExtern, ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
-import { emitScriptGlobalFunctionBindings } from "./global-function-bindings.js"; // (#4394) §9.1.1.4.18
-import { emitScriptGlobalVarBindings } from "./global-var-bindings.js"; // (#4491 T4) §9.1.1.4.17
+import { ensureAnyHelpers, ensureWrapperTypes } from "./any-helpers.js";
 import { isHoistedTopLevelVarName } from "./top-level-hoisted-var-names.js"; // (#4491 T3) pre-declaration writes
 import { isAssignmentOverTopLevelFunctionName } from "./top-level-assigned-function-names.js"; // (#4491 T12)
 import { moduleVarDirectPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
@@ -77,12 +75,7 @@ import { classHasComputedKeyAssignment } from "./class-member-keys.js"; // (#677
 import { standaloneCommaHeritage } from "./classes/class-heritage-comma.js"; // (#6772 S6)
 import { heritagePrototypeGetTarget } from "./classes/class-heritage-runtime-get.js"; // (#6772 S11)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
-import {
-  collectBindingPatternNames,
-  collectReferencedIdentifiers,
-  emitCachedFuncClosureAccess,
-  functionBodyReferencesThis,
-} from "./closures.js";
+import { collectBindingPatternNames, collectReferencedIdentifiers, functionBodyReferencesThis } from "./closures.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { widenMixedUndefinedReturn } from "./mixed-return-widening.js"; // (#4641) `T | undefined` return slots
 import { concatCallYieldsDynamicCarrier } from "./array-concat-carrier.js"; // (#4655) concat result-slot carrier
@@ -105,7 +98,7 @@ import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.j
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { emitThrowJsError, noJsHost } from "./js-errors.js";
+import { noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -210,7 +203,7 @@ import {
   planModuleInitChunks,
   reserveModuleInitChunkHelperName,
 } from "./module-init-chunks.js";
-import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
+import { emitModuleInitPrologue } from "./declarations/module-init-prologue.js"; // (#7106) GDI prologue
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import { mintUntypedRegExpReceiverMembers } from "./regexp-untyped-receiver.js";
 import {
@@ -221,10 +214,8 @@ import {
   registerModuleTdzGlobal,
   scriptVarRedeclaresAmbientGlobal, // (#6651 V10b)
 } from "./module-global-registration.js";
-import { annexBModuleGlobalSeedsFromTopLevel } from "./annexb-global-live-binding.js";
 import { variableSlotHoldsReconstructedFnctorInstance } from "./fnctor-instance-object-slot.js";
 import { callTargetIsRedeclaredFunction } from "./duplicate-function-declaration.js"; // (#4653)
-import { emitRuntimeEvalAotCallableAdapter } from "./runtime-eval-callable.js";
 import { numericReturnsFlagEnabled } from "../derivation-flags.js";
 import * as proxy from "./analysis/proxy-binding-escape.js";
 import { bindingMayReceiveHostCallable } from "./analysis/mixed-assignment-carrier.js";
@@ -6208,92 +6199,9 @@ export function compileDeclarations(
     ctx.currentFunc = initFctx;
     mintUntypedRegExpReceiverMembers(ctx, initFctx, sourceFile); // (#6651 B10) untyped-RegExp proto reads
 
-    // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
-    // top-level lexical declaration whose name is a RESTRICTED GLOBAL
-    // (`undefined`, `NaN`, `Infinity`: own, non-configurable properties of the
-    // global object) is a SyntaxError. The Script goal decides this at
-    // instantiation, i.e. before ANY statement of the script runs, so the throw
-    // is the very first instruction of `__module_init`. The runner accepts a
-    // runtime throw for `negative: { phase: runtime }`; this deliberately is
-    // NOT a compile diagnostic.
-    if (ctx.restrictedGlobalLexicalName !== undefined) {
-      emitThrowJsError(
-        ctx,
-        initFctx,
-        "SyntaxError",
-        `Identifier '${ctx.restrictedGlobalLexicalName}' has already been declared`,
-      );
-      initFctx.body.push({ op: "unreachable" });
-    }
-
-    // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
-    // module-scope `var` reads as `undefined` before its declaration. Must stay
-    // AHEAD of the function-binding seeds below — rationale, scope and the
-    // measured before/after in `declarations/module-var-undefined-seed.ts`.
-    emitModuleVarUndefinedSeeds(ctx, sourceFile, initFctx);
-
-    // (#2931) Seed each reassigned-function live-binding global with the
-    // function's closure BEFORE any user init statement runs, so a read of the
-    // name before its reassignment still yields the function. Emitted via
-    // `emitCachedFuncClosureAccess` (NOT the identifier read-path, which would
-    // recurse into the live-binding `global.get` arm). Dedupe by global index so
-    // an import alias sharing the same global is seeded once.
-    // (#4394) §9.1.1.4.18 — a SCRIPT's top-level function declarations are own
-    // properties of the global object. Seeded here, ahead of every user
-    // statement, which is what declaration hoisting requires.
-    emitScriptGlobalFunctionBindings(ctx, initFctx);
-    // (#4491 T4) §9.1.1.4.17 — and the `var` twin of the same instantiation
-    // step, AFTER the functions so a name declared both ways keeps the function
-    // binding GDI actually initialises. See global-var-bindings.ts.
-    emitScriptGlobalVarBindings(ctx, initFctx, sourceFile);
-
-    if (ctx.liveFuncBindingGlobals && ctx.liveFuncBindingGlobals.size > 0) {
-      const seededGlobals = new Set<number>();
-      for (const liveName of ctx.liveFuncBindingGlobals) {
-        // (#4182) A module-scope Annex B block-fn binding starts as `undefined`
-        // (B.3.3.2.b CreateGlobalFunctionBinding(F, undefined)) unless a real
-        // top-level `function f` also exists — GDI initializes only that one.
-        // Without this split, pass 2 of the #2965 two-pass init compile would
-        // seed the block function's closure (its funcMap entry exists by then),
-        // making the pre-evaluation read wrongly observe the function. Under
-        // the `undefinedSingleton` regime the binding must read as `undefined`,
-        // not `null`, so seed the `$undefined` singleton rather than leaving
-        // the `ref.null.extern` global init.
-        if (!annexBModuleGlobalSeedsFromTopLevel(ctx, liveName)) {
-          // Standalone/WASI only: the host lane's `undefined` IS the null
-          // extern (a host boundary crossing reads it back as undefined),
-          // while the tag-1 singleton would surface to host helpers as an
-          // opaque object (`typeof` → "object", `=== undefined` → false).
-          const annexBGlobalIdx = ctx.moduleGlobals.get(liveName);
-          if (
-            (ctx.standalone || ctx.wasi) &&
-            annexBGlobalIdx !== undefined &&
-            !seededGlobals.has(annexBGlobalIdx) &&
-            emitUndefinedExtern(ctx, initFctx)
-          ) {
-            initFctx.body.push({ op: "global.set", index: annexBGlobalIdx });
-            seededGlobals.add(annexBGlobalIdx);
-          }
-          continue;
-        }
-        const liveGlobalIdx = ctx.moduleGlobals.get(liveName);
-        const liveFuncIdx = ctx.funcMap.get(liveName);
-        if (liveGlobalIdx === undefined || liveFuncIdx === undefined) continue;
-        if (seededGlobals.has(liveGlobalIdx)) continue;
-        const closureType = emitCachedFuncClosureAccess(ctx, initFctx, liveName, liveFuncIdx);
-        if (closureType === null) {
-          // Could not build the closure — leave the global null-initialised.
-          continue;
-        }
-        // Closure struct (internal ref) → externref for the externref global.
-        initFctx.body.push({ op: "extern.convert_any" });
-        if (ctx.runtimeEvalGlobalFunctionBindings) {
-          emitRuntimeEvalAotCallableAdapter(ctx, initFctx);
-        }
-        initFctx.body.push({ op: "global.set", index: liveGlobalIdx });
-        seededGlobals.add(liveGlobalIdx);
-      }
-    }
+    // (#7106) GlobalDeclarationInstantiation prologue — shared with the
+    // IR-claimed initializer, which runs it as a private helper.
+    emitModuleInitPrologue(ctx, sourceFile, initFctx);
 
     // The async graph frame enters this helper once for declaration
     // instantiation and then again through its state-machine segments for

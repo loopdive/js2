@@ -216,6 +216,99 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     ]);
   });
 
+  it("joins a cached function-value accessor to its exact prepared source owner", () => {
+    const f = fixture();
+    const accessor = irSupportFuncRef(f.second.id, "function-value-accessor", "cachedSecond");
+    if (accessor.binding.kind !== "support") throw new Error("expected support accessor");
+    const accessorEntry: PreparedComponentAbiEntry = {
+      id: accessor.binding.bindingId,
+      structuralReferenceKey: irCallableBindingKey(accessor.binding),
+      slotPolicy: "required",
+      intent: {
+        kind: "callable",
+        origin: "support",
+        unitId: f.second.id,
+        signature: { params: [], results: ['{"kind":"externref"}'] },
+      },
+    };
+    const call: IrInstr = {
+      kind: "call",
+      result: asValueId(0),
+      resultType: irVal({ kind: "externref" }),
+      target: accessor,
+      args: [],
+    };
+    const input = {
+      module: { functions: [irFunction(f.first, [call]), irFunction(f.second)] },
+      terminalUnitIds: new Set([f.first.id, f.second.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), sourceCallableEntry(f.second.id), accessorEntry]),
+    };
+    const complete = derivePreparedComponentDependencies(input);
+    expect(complete.components).toHaveLength(1);
+    expect(complete.components[0]!.status).toBe("complete");
+    expect(new Set(complete.components[0]!.terminalUnitIds)).toEqual(new Set([f.first.id, f.second.id]));
+    expect(complete.components[0]!.unitDependencies).toContainEqual(
+      expect.objectContaining({
+        ownerUnitId: f.first.id,
+        referencedUnitId: f.second.id,
+        programAbiBindingId: irUnitCallableBindingId(f.second.id),
+      }),
+    );
+
+    const unprepared = derivePreparedComponentDependencies({ ...input, terminalUnitIds: new Set([f.first.id]) });
+    expect(unprepared.components[0]!.status).toBe("blocked");
+    expect(unprepared.components[0]!.failures).toContainEqual(
+      expect.objectContaining({
+        code: "foreign-source-unit",
+        referencedUnitId: f.second.id,
+      }),
+    );
+    const missingBody = derivePreparedComponentDependencies({
+      ...input,
+      module: { functions: [irFunction(f.first, [call])] },
+    });
+    expect(missingBody.components[0]!.status).toBe("blocked");
+    expect(missingBody.components[0]!.failures).toContainEqual(
+      expect.objectContaining({
+        code: "missing-function-body",
+        referencedUnitId: f.second.id,
+      }),
+    );
+  });
+
+  it("does not grant a different terminal support role the cached-accessor dependency", () => {
+    const f = fixture();
+    const support = irSupportFuncRef(f.second.id, "different-role", "cachedSecond");
+    if (support.binding.kind !== "support") throw new Error("expected support callable");
+    const entry: PreparedComponentAbiEntry = {
+      id: support.binding.bindingId,
+      structuralReferenceKey: irCallableBindingKey(support.binding),
+      slotPolicy: "required",
+      intent: {
+        kind: "callable",
+        origin: "support",
+        unitId: f.second.id,
+        signature: { params: [], results: ['{"kind":"externref"}'] },
+      },
+    };
+    const report = derivePreparedComponentDependencies({
+      module: {
+        functions: [
+          irFunction(f.first, [
+            { kind: "call", result: asValueId(0), resultType: irVal({ kind: "externref" }), target: support, args: [] },
+          ]),
+          irFunction(f.second),
+        ],
+      },
+      terminalUnitIds: new Set([f.first.id, f.second.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), sourceCallableEntry(f.second.id), entry]),
+    });
+    expect(report.components).toHaveLength(2);
+    expect(report.components.every((component) => component.unitDependencies.length === 0)).toBe(true);
+  });
+
   it("keeps a caller-certified atomic population together after its final IR edge disappears", () => {
     const f = fixture();
     const input = {

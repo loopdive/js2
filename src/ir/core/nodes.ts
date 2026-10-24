@@ -27,6 +27,18 @@ import type {
   IrInstrDynMemberSet,
   IrInstrDynToNumber,
   IrInstrDynTruthy,
+  IrInstrDynUndefined,
+  IrInstrDynTypeof,
+  IrInstrDynToString,
+  IrInstrDynJsonStringify,
+  IrInstrDynObjectTag,
+  IrInstrDynConstruct,
+  IrInstrDynStringCarrier,
+  IrInstrDynArgumentsLength,
+  IrInstrDynCurrentThis,
+  IrInstrDynInstanceOfFunction,
+  IrInstrDynPublishArgc,
+  IrInstrDynOwnProperty,
   IrInstrExternCall,
   IrInstrExternNew,
   IrInstrExternProp,
@@ -1642,6 +1654,18 @@ export type {
   IrInstrAsyncReturn,
   IrInstrAsyncThrow,
   IrInstrDynTruthy,
+  IrInstrDynUndefined,
+  IrInstrDynTypeof,
+  IrInstrDynToString,
+  IrInstrDynJsonStringify,
+  IrInstrDynObjectTag,
+  IrInstrDynConstruct,
+  IrInstrDynStringCarrier,
+  IrInstrDynArgumentsLength,
+  IrInstrDynCurrentThis,
+  IrInstrDynInstanceOfFunction,
+  IrInstrDynPublishArgc,
+  IrInstrDynOwnProperty,
   IrInstrDynToNumber,
   IrInstrDynEq,
   IrInstrDynMemberGet,
@@ -1683,6 +1707,18 @@ export type IrInstr =
   | IrInstrUnbox
   | IrInstrTagTest
   | IrInstrDynTruthy
+  | IrInstrDynUndefined
+  | IrInstrDynTypeof
+  | IrInstrDynToString
+  | IrInstrDynJsonStringify
+  | IrInstrDynObjectTag
+  | IrInstrDynConstruct
+  | IrInstrDynStringCarrier
+  | IrInstrDynArgumentsLength
+  | IrInstrDynCurrentThis
+  | IrInstrDynInstanceOfFunction
+  | IrInstrDynPublishArgc
+  | IrInstrDynOwnProperty
   | IrInstrDynToNumber
   | IrInstrDynEq
   | IrInstrDynMemberGet
@@ -2042,6 +2078,18 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.undefined":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.construct":
+    case "dyn.string_carrier":
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.instanceof_fn":
+    case "dyn.publish_argc":
+    case "dyn.own_property":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2211,6 +2259,18 @@ export function mapNestedBuffers(
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.undefined":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.construct":
+    case "dyn.string_carrier":
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.instanceof_fn":
+    case "dyn.publish_argc":
+    case "dyn.own_property":
     case "dyn.to_number":
     case "dyn.eq":
     case "dyn.member_get":
@@ -2314,12 +2374,29 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.condition, instr.whenTrue, instr.whenFalse];
     case "if":
       return [instr.cond, instr.thenValue, instr.elseValue];
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.publish_argc":
+      return [];
+    case "dyn.instanceof_fn":
+      return [instr.value];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
     case "dyn.eq":
     case "string.concat":
     case "string.eq":
