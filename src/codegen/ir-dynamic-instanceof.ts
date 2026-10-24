@@ -28,7 +28,7 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
-import { isAmbientIntrinsicName } from "../ir/values/ambient-intrinsics.js";
+import { isAmbientIntrinsicName } from "../shared/ambient-intrinsics.js";
 import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
 import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";

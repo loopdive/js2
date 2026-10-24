@@ -70,7 +70,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isAmbientIntrinsicName, isMemberReadReceiver } from "./values/ambient-intrinsics.js";
+import { isAmbientIntrinsicName, isMemberReadReceiver } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";

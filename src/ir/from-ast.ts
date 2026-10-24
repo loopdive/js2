@@ -301,7 +301,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { isAmbientIntrinsicName } from "./values/ambient-intrinsics.js";
+import { isAmbientIntrinsicName } from "../shared/ambient-intrinsics.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;

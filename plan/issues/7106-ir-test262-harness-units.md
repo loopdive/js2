@@ -43,6 +43,7 @@ flat-dir-budget-allow:
 import-cycles-allow:
   - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
   - largestSccSize: 727 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way
+# 2026-10-24 (dyn.instanceof Error intrinsic, #6858 quality fix): ambient-intrinsics.ts moved from src/ir/values/ to src/shared/ — it imports only `typescript`, and codegen/ir-dynamic-instanceof.ts now reads it too; keeping it under src/ir/ would have grown the codegen->ir two-way edge count (300 → 301).
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
 # dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
 # dynamic-delete statement arm.
