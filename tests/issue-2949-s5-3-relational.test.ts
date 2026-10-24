@@ -42,7 +42,8 @@ import "../src/codegen/expressions.js";
 import { addUnionImports, createCodegenContext } from "../src/codegen/index.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../src/codegen/func-space.js";
 import { addFuncType } from "../src/codegen/registry/types.js";
-import type { CodegenContext } from "../src/codegen/context/types.js";
+import type { CodegenContext, FunctionContext } from "../src/codegen/context/types.js";
+import { emitToNumber as legacyEmitToNumber } from "../src/codegen/coercion-engine.js";
 // #3954 phase 1 — `IrType`'s dynamic leaf carries an opaque TagId, so a
 // refinement is named through the JS tag domain, not the enum.
 import { emitBinary } from "../src/emit/binary.js";
@@ -276,13 +277,19 @@ describe("#2949 S5.3 — IrDynamicLowering.emitToNumber routes to the canonical 
     expect(dyn!.emitToNumber()).toEqual([{ op: "call", funcIdx: idx }]);
   });
 
-  it("host: emitToNumber calls __unbox_number (Number(v)) — the canonical host ToNumber", () => {
-    const ctx = makeHostCtx();
-    const dyn = makeDynamicLowering(ctx);
+  // (#6979 S7-a) Re-pinned: the externref carrier no longer calls the host
+  // `Number(v)` import; it lowers through the SAME canonical legacy ToNumber
+  // ladder (`emitToNumber` in coercion-engine.ts) every other externref
+  // ToNumber uses.
+  it("externref carrier: emitToNumber is the canonical legacy externref ToNumber", () => {
+    // Two identical fresh contexts, so the lazy helper registration the first
+    // emission performs cannot make the second one look different.
+    const dyn = makeDynamicLowering(makeHostCtx());
     expect(dyn).not.toBeNull();
-    const idx = ctx.funcMap.get("__unbox_number");
-    expect(idx).toBeDefined();
-    expect(dyn!.emitToNumber()).toEqual([{ op: "call", funcIdx: idx }]);
+    const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
+    legacyEmitToNumber(makeHostCtx(), shim, { kind: "externref" });
+    expect(shim.body.length).toBeGreaterThan(0);
+    expect(dyn!.emitToNumber()).toEqual(shim.body);
   });
 });
 
@@ -292,44 +299,4 @@ describe("#2949 S5.3 — IrDynamicLowering.emitToNumber routes to the canonical 
 // pulls in runtime helper bodies that only validate after the full production
 // finalize pipeline.
 
-describe("#2949 S5.3 — host runtime: numeric-abstract relational over the externref carrier", () => {
-  it("dyn(JS value) <rel> numeric: number/bool/null(→0)/undefined(→NaN→false)/string(Number())", async () => {
-    const fns = [
-      hostRelDynConc("ltH", "<"),
-      hostRelDynConc("gtH", ">"),
-      hostRelDynConc("geH", ">="),
-      hostRelDynDyn("ltHDD", "<"),
-    ];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeHostCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx, hostEnvFor(ctx));
-
-    // number
-    expect(ex.ltH(3, 5)).toBe(1);
-    expect(ex.ltH(5, 3)).toBe(0);
-    expect(ex.gtH(5, 3)).toBe(1);
-    expect(ex.geH(5, 5)).toBe(1);
-    // boolean → 0/1
-    expect(ex.gtH(true, 0.5)).toBe(1); // Number(true)=1 > 0.5
-    expect(ex.gtH(false, 0.5)).toBe(0); // Number(false)=0 > 0.5
-    // null → 0 (ToNumber(null)=0)
-    expect(ex.ltH(null, 5)).toBe(1); // 0 < 5
-    expect(ex.gtH(null, 5)).toBe(0); // 0 > 5 → false
-    // undefined → NaN → every relational false
-    expect(ex.ltH(undefined, 5)).toBe(0);
-    expect(ex.gtH(undefined, 5)).toBe(0);
-    expect(ex.geH(undefined, 5)).toBe(0);
-    // string ToNumbers via Number() (spec-correct against a numeric operand —
-    // ARC does NOT take the both-strings lexicographic branch here)
-    expect(ex.ltH("3", 5)).toBe(1); // Number("3")=3 < 5
-    expect(ex.gtH("7", 5)).toBe(1); // Number("7")=7 > 5
-    expect(ex.ltH("abc", 5)).toBe(0); // Number("abc")=NaN → false
-
-    // dyn < dyn, both JS values
-    expect(ex.ltHDD(3, 5)).toBe(1);
-    expect(ex.ltHDD(5, 3)).toBe(0);
-    expect(ex.ltHDD(undefined, 5)).toBe(0); // NaN → false
-    expect(ex.ltHDD(null, 5)).toBe(1); // 0 < 5
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.

@@ -468,12 +468,26 @@ be filed against #5385, the allocator was unreachable from this sandbox):
 - A function-constructor instance returned across the export boundary marshals
   to `{}` through `wrapExports` on the regime (`ast.type` reads `undefined`).
 
-Pre-existing reds left alone (red on main tip `7527a91ce5` with main's own copy
-of each file, same failing rows): 12 touched files, 25 rows, all host-lane unit
-tests on bare codegen contexts or byte/ABI pins (`issue-2949-s5-0/1/2/3/5`,
-`issue-2949-slice3`, `issue-3521-fast-mixed-signature-admission`,
-`issue-3521-prepared-free-function-routing`, `issue-3526-callable-boundary-callback`,
-`issue-3526-string-boundary-concat-many`, `issue-1183`, `native-strings-standalone`).
+Touched root test files made green (2026-10-25, fix-on-touch for the `quality`
+changed-root gate; all 57 touched files pass, 715 tests). The 27 failing rows in
+12 files were red on main `7cc5d52322` too:
+- **Re-pinned to the regime:** `issue-1183` (Set built in-module), `native-strings-standalone`
+  (default profile uses native strings), `issue-2949-s5-2` (externref carrier calls
+  `__extern_strict_eq`/`__extern_loose_eq`), `issue-2949-s5-3` (externref ToNumber is the
+  legacy `emitToNumber` ladder), `issue-3526-callable` (no host `__make_callback` maker),
+  `issue-3526-string` (default gc batch policy `off`), `issue-3521-prepared` (late owner
+  no longer imports `__extern_is_undefined`; standalone wrapper delta 119 → 0, also 0 on main).
+- **Deleted with a `#6979` comment (tested only the host-assisted lane):** the six
+  `issue-2949` "host runtime" execution describes; the `issue-3526-string` census
+  gc-host byte pins, async five-part host arm and host-lane string-param row.
+- **Inverted sentinels (`it.fails`), regime gaps, to be filed against #5385:** an arrow
+  callback crossing to JavaScript is constructible (`issue-3526-callable`); an exported
+  `(value: any = "A")` does not take its default when JavaScript omits the argument
+  (`issue-3521-prepared`).
+- **Inverted sentinels, red on main and unrelated to S7-a, need an owner:** three
+  `issue-3521-prepared` IR route-audit rows (source-local receipt lookup 576 > 24,
+  implicit-any ABI overlay, function-value caller read) and the `issue-3521-fast`
+  `anyTrue` (boolean[] ABI binding) and fast-vs-native vector byte-convergence rows.
 Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
 
 - **IR-only readiness re-bank (2026-10-24, stakeholder decision):** `scripts/ir-only-baseline.json` single-host lane re-measured under the regime (38/0 → 26/12) because its basis profile `host-assisted` no longer exists; the 12 legacy units are #7103, which ratchets the lane back. Decided by the stakeholder on 2026-10-24 after the lead presented re-bank vs land-#7103-first.

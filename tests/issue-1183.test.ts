@@ -248,9 +248,14 @@ describe("#1183 — vec / iter-host arms still work alongside string arm", () =>
     expect(result).toBe(15);
   });
 
-  it("Set iteration still routes through forof.iter (host iterator protocol)", async () => {
+  // (#6979 S7-a) Re-pinned from the retired host-iterator lane: on the native
+  // regime a `Set` is a module-native collection, so it is built in-module
+  // rather than handed in from JavaScript; the subject (for-of over a Set
+  // beside the string arm) is unchanged.
+  it("Set iteration still works alongside the string arm (native Set)", async () => {
     const source = `
-      export function fn(s: Set<number>): number {
+      export function fn(): number {
+        const s = new Set<number>([1, 2, 3]);
         let count = 0;
         for (const x of s) {
           count = count + 1;
@@ -265,7 +270,7 @@ describe("#1183 — vec / iter-host arms still work alongside string arm", () =>
       env: built.env,
       string_constants: built.string_constants,
     });
-    const result = (instance.exports.fn as (a: unknown) => unknown)(new Set([1, 2, 3]));
+    const result = (instance.exports.fn as () => unknown)();
     expect(result).toBe(3);
   });
 });
