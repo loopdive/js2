@@ -15,6 +15,13 @@ area: ir
 goal: ir-full-coverage
 parent: 7106
 assignee: "ttraenkler/lead-c-remote"
+# 2026-10-24: one line feeds `builtinProtoCompanionSeeded` from
+# `ctx.protoMemberDirty` into the selection options in `planIrOverlay`; main's
+# post-merge baseline refresh left no headroom for it.
+func-budget-allow:
+  - src/codegen/index.ts::planIrOverlay
+loc-budget-allow:
+  - src/codegen/index.ts
 ---
 
 ## Problem
