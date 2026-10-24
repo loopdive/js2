@@ -787,12 +787,29 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
       walk(instr.else);
       return out;
     }
+    case "dyn.undefined":
+      return [];
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return [instr.value];
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.publish_argc":
+      return [];
+    case "dyn.instanceof_fn":
+      return [instr.value];
+    case "dyn.own_property":
+      return [instr.receiver, instr.key];
+    case "dyn.construct":
+      return [instr.callee, ...instr.args];
     case "dyn.eq":
       return [instr.lhs, instr.rhs];
     case "dyn.member_get":

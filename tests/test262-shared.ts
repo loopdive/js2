@@ -345,6 +345,11 @@ type RecordMetadata = {
   compilerPathFailureKind?: string;
   imports?: string[];
   hostImportLeakClass?: string;
+  // Fallback-free pass metric (worker `summarizeIrRoute`).
+  irUnits?: number;
+  irLegacyUnits?: number;
+  irDualUnits?: number;
+  irFallbackCodes?: readonly { code: string; count: number }[];
   reachedTest?: boolean;
   // (#2939/#2940) True when the `fail` is a vacuity correction (harness-wrapper
   // callback never executed). Surfaced in the JSONL so the report tallies the
@@ -418,6 +423,14 @@ function baseWorkerMetadata(result: TestResult, reachedTestFallback = false): Re
     ...(combinedWorkerMetadata.get(result) ?? test262CompilerResultMetadata(result)),
     ...(result.imports && result.imports.length > 0 ? { imports: result.imports } : {}),
     ...(result.hostImportLeakClass ? { hostImportLeakClass: result.hostImportLeakClass } : {}),
+    ...(typeof (result as { irUnits?: number }).irUnits === "number"
+      ? {
+          irUnits: (result as { irUnits?: number }).irUnits,
+          irLegacyUnits: (result as { irLegacyUnits?: number }).irLegacyUnits,
+          irDualUnits: (result as { irDualUnits?: number }).irDualUnits,
+          irFallbackCodes: (result as { irFallbackCodes?: RecordMetadata["irFallbackCodes"] }).irFallbackCodes,
+        }
+      : {}),
     ...((result as { vacuous?: boolean }).vacuous ? { vacuous: true } : {}),
     ...((result as { linkedFallback?: boolean }).linkedFallback ? { linkedFallback: true } : {}),
     ...((result as { linkedFallbackReason?: string }).linkedFallbackReason
@@ -485,6 +498,13 @@ function recordResult(
     error_signature: normalizeErrorSignature(status, errorCategory, error),
     imports: metadata?.imports && metadata.imports.length > 0 ? metadata.imports : undefined,
     host_import_leak_class: metadata?.hostImportLeakClass,
+    // Fallback-free pass metric: terminal IR units and how many of them fell
+    // back to a direct (legacy) body, with the fallback codes. Absent when the
+    // compiler bundle recorded no outcome ledger.
+    ir_units: metadata?.irUnits,
+    ir_legacy_units: metadata?.irLegacyUnits,
+    ir_dual_units: metadata?.irDualUnits,
+    ir_fallback_codes: metadata?.irFallbackCodes,
     reached_test: metadata?.reachedTest ?? false,
     // (#2939/#2940) vacuity correction marker (only on `fail` rows it applies to).
     vacuous: metadata?.vacuous || undefined,

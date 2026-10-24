@@ -14,6 +14,18 @@ export const DIALECT_NAMES = Object.freeze(
     "IrInstrDynMemberSet",
     "IrInstrDynToNumber",
     "IrInstrDynTruthy",
+    "IrInstrDynUndefined",
+    "IrInstrDynTypeof",
+    "IrInstrDynToString",
+    "IrInstrDynJsonStringify",
+    "IrInstrDynObjectTag",
+    "IrInstrDynConstruct",
+    "IrInstrDynStringCarrier",
+    "IrInstrDynArgumentsLength",
+    "IrInstrDynCurrentThis",
+    "IrInstrDynInstanceOfFunction",
+    "IrInstrDynPublishArgc",
+    "IrInstrDynOwnProperty",
     "IrInstrExternCall",
     "IrInstrExternNew",
     "IrInstrExternProp",
@@ -101,12 +113,17 @@ export function checkCanonicalIrDialect(sourceRoot) {
     )
     .map((statement) => statement.name.text)
     .sort();
-  if (!sameNames(declared)) fail(canonical, null, "requires exactly the 27 reviewed dialect interfaces");
+  if (!sameNames(declared))
+    fail(canonical, null, `requires exactly the ${DIALECT_NAMES.length} reviewed dialect interfaces`);
   if (!sameNames(typeExports(files.get(host), canonical)))
     fail(host, null, "does not explicitly type-re-export every canonical dialect declaration exactly once");
   const legacySource = files.get(legacy);
   if (legacySource?.statements.length !== 1 || !sameNames(typeExports(legacySource, canonical)))
-    fail(legacy, null, "must be the exact 27-name type-only compatibility forwarder, with no implementation");
+    fail(
+      legacy,
+      null,
+      `must be the exact ${DIALECT_NAMES.length}-name type-only compatibility forwarder, with no implementation`,
+    );
 
   const dialectDirectories = [path.dirname(canonical), path.dirname(legacy)];
   for (const [file, sf] of files) {

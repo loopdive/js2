@@ -72,6 +72,7 @@ export interface ProgramAbiSupportCallableAliasPlan extends ProgramAbiSupportCal
 }
 
 export interface ProgramAbiFunctionValuePlan {
+  readonly accessor?: IrFuncRef;
   readonly trampoline: IrFuncRef;
   readonly cacheGlobal: IrGlobalRef;
   readonly target: IrFuncRef;
@@ -401,6 +402,7 @@ export function planProgramAbiFunctionValue(
   plan: ProgramAbiFunctionValuePlan,
   func: WasmFunction,
   global: GlobalDef,
+  accessor?: WasmFunction,
 ): boolean {
   const signature = ctx.mod.types[func.typeIdx];
   if (
@@ -412,6 +414,17 @@ export function planProgramAbiFunctionValue(
   ) {
     return false;
   }
+  const accessorSignature = accessor ? ctx.mod.types[accessor.typeIdx] : undefined;
+  if (
+    plan.accessor &&
+    (!accessor ||
+      accessor.name !== plan.accessor.name ||
+      accessorSignature?.kind !== "func" ||
+      accessorSignature.params.length !== 0 ||
+      accessorSignature.results.length !== 1 ||
+      accessorSignature.results[0]?.kind !== "externref")
+  )
+    return false;
   planProgramAbiSupportCallable(ctx, {
     ref: plan.trampoline,
     anchor: { kind: "unit", unitId: plan.target.binding.unitId },
@@ -420,6 +433,16 @@ export function planProgramAbiFunctionValue(
     signature,
     func,
   });
+  if (plan.accessor && accessor && accessorSignature?.kind === "func") {
+    planProgramAbiSupportCallable(ctx, {
+      ref: plan.accessor,
+      anchor: { kind: "unit", unitId: plan.target.binding.unitId },
+      role: "function-value-accessor",
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.functionValueAccessor,
+      signature: accessorSignature,
+      func: accessor,
+    });
+  }
   planProgramAbiGlobal(ctx, {
     ref: plan.cacheGlobal,
     anchor: { kind: "unit", unitId: plan.target.binding.unitId },

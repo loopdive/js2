@@ -121,6 +121,12 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "unbox":
     case "tag.test":
     case "dyn.truthy": // #2949 S5.1 — ToBoolean read on the carrier: pure (no heap/control effect)
+    case "dyn.undefined": // #7104 — the carrier's undefined constant: pure
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier": // #7106 S1c — carrier recovery, no user code
     case "coerce.to_externref":
     case "string.concat":
     case "string.eq":
@@ -172,6 +178,18 @@ export function effectsOf(instr: IrInstr, cache: Map<IrInstr, IrEffects> = new M
     case "extern.call":
     case "class.new":
     case "fnctor.new":
+    // #7106 S3a — runs an arbitrary user constructor body.
+    case "dyn.construct":
+    // #7106 S1e — reads and clears the __argc/__extras_argv protocol globals.
+    case "dyn.arguments_length":
+    // #7106 S3c — reads the receiver protocol global; runs no user code.
+    case "dyn.current_this":
+    // #7106 S3c — reads F.prototype (lazily materialised) and walks the chain.
+    case "dyn.instanceof_fn":
+    // #7106 S1i — writes the __argc protocol global the callee prologue reads.
+    case "dyn.publish_argc":
+    // #7106 S1g — a Proxy receiver may run user traps, like member reads.
+    case "dyn.own_property":
     case "extern.new":
     case "extern.prop":
     case "extern.propSet":
@@ -480,6 +498,7 @@ export function isSideEffecting(i: IrInstr): boolean {
     i.kind === "class.set" ||
     i.kind === "class.new" ||
     i.kind === "fnctor.new" ||
+    i.kind === "dyn.construct" || // #7106 S3a — the constructor body runs for its effects
     // #3000-E: super(...) runs the parent `_init` (writes parent fields on self);
     // super.method() invokes the parent method body — both arbitrary effects, and
     // super_init is void-result so DCE MUST keep it (and its operands) live via

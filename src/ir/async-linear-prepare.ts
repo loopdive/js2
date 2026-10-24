@@ -122,12 +122,30 @@ function rewriteInstruction(instr: IrInstr, resolve: (value: IrValueId) => IrVal
         whenTrue: resolve(instr.whenTrue),
         whenFalse: resolve(instr.whenFalse),
       };
+    case "dyn.undefined":
+      return instr;
+    case "dyn.arguments_length":
+    case "dyn.current_this":
+      return instr; // no operands (#7106 S1e/S3c)
+    case "dyn.instanceof_fn":
+      return { ...instr, value: resolve(instr.value) };
+    case "dyn.publish_argc":
+      return instr; // no operands (#7106 S1e/S1i)
+    case "dyn.own_property":
+      return { ...instr, receiver: resolve(instr.receiver), key: resolve(instr.key) };
     case "box":
     case "unbox":
     case "tag.test":
     case "dyn.truthy":
+    case "dyn.typeof":
+    case "dyn.to_string":
+    case "dyn.json_stringify":
+    case "dyn.object_tag":
+    case "dyn.string_carrier":
     case "dyn.to_number":
       return { ...instr, value: resolve(instr.value) };
+    case "dyn.construct":
+      return { ...instr, callee: resolve(instr.callee), args: mapIds(instr.args, resolve) };
     case "dyn.eq":
     case "string.concat":
     case "string.eq":

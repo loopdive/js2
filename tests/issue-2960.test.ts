@@ -26,7 +26,9 @@ function importNames(bin: Uint8Array): string[] {
 }
 
 async function hostResult(src: string): Promise<number> {
-  const r = await compile(src, { fileName: "t.ts" });
+  // (#6708 S7) The meta-circular host shim is the host-assisted profile; the
+  // native-first default routes dynamic code to the standalone provider.
+  const r = await compile(src, { fileName: "t.ts", semanticProviders: "host-assisted" });
   expect(r.success, JSON.stringify(r.errors)).toBe(true);
   // (#6779) The meta-circular shim runs under the hostEval policy; the library
   // default (`deny`, which `r.importObject` uses) refuses dynamic code.
@@ -65,7 +67,7 @@ describe("#2960 — host-mode dynamic new Function routes to the meta-circular s
   it("emits an __extern_new_function import for the dynamic host path (no silent null stub)", async () => {
     const r = await compile(
       `export function test(): any { let op = "+"; op = op + ""; return new Function("a","b","return a"+op+"b"); }`,
-      { fileName: "t.ts" },
+      { fileName: "t.ts", semanticProviders: "host-assisted" },
     );
     expect(r.success).toBe(true);
     expect(importNames(r.binary).some((n) => n.includes("__extern_new_function"))).toBe(true);
@@ -132,7 +134,7 @@ describe("#4013 — runtime-eval boundary classification", () => {
     const r = await compile(
       `const intrinsic: any = eval;
        export function add(a: number, b: number): number { return a + b; }`,
-      { experimentalIR: true, trackIrOutcomes: true },
+      { experimentalIR: true, trackIrOutcomes: true, semanticProviders: "host-assisted" },
     );
     expect(r.success, JSON.stringify(r.errors)).toBe(true);
     expect(r.irCompiledFuncs ?? []).toContain("add");

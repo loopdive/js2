@@ -172,7 +172,7 @@ describe("#1197 i32 element specialization for number[]", () => {
         for (let i = 0; i < 1031; i = i + 1) {
           arr.push((i * 37) % 1031);
         }
-        return arr.indexOf(444);
+        return arr.indexOf(444, 0); // (#7108) explicit fromIndex keeps the legacy emitter whose batched branch ladder this pins
       }`;
       const compileWithBatching = async (enabled: boolean) => {
         const previous = process.env.JS2WASM_ARRAY_INDEXOF_BATCHED_BRANCHES;
