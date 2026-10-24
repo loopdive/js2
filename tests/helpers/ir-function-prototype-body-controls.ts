@@ -49,7 +49,11 @@ export function functionPrototypeBodyRuntime(displaced: boolean) {
     ? [tx.reserveFunctionImport("offset:noop", "offset", "noop", signature([], []))]
     : [];
   if (displaced) {
-    tx.reserveType("offset:struct", { kind: "struct", name: "$Offset", fields: [{ name: "x", type: f64 }] });
+    tx.reserveType("offset:struct", {
+      kind: "struct",
+      name: "$Offset",
+      fields: [{ name: "x", type: f64, mutable: false }],
+    });
     tx.reserveType("offset:array", { kind: "array", name: "$OffsetArray", element: i32, mutable: true });
   }
   const params: Record<ObserverName, ValType[]> = {
@@ -284,7 +288,7 @@ export function functionPrototypeBodyRuntime(displaced: boolean) {
     });
     const instance = new WebAssembly.Instance(wasm, {
       observer,
-      offset: { noop() {}, tag: new WebAssembly.Tag({ parameters: [] }) },
+      offset: { noop() {}, tag: new WebAssembly.Tag({ parameters: [] }) as unknown as WebAssembly.ImportValue },
     });
     const exports = instance.exports as unknown as {
       "new"(): unknown;

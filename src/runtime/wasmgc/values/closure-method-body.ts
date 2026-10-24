@@ -12,7 +12,9 @@ import { buildClosureMethodArgument, type ClosureArgumentConversion } from "./cl
 import { buildClosureResultBody, type ClosureResultConversion } from "./closure-result-bodies.js";
 import { buildInstallableClosureReceiver } from "./closure-receiver-bodies.js";
 
-export interface NativeClosureMethodEntry extends ClosureInvocationArityEntry {
+import { buildNativeClosureIdentityMatch, type NativeClosureIdentity } from "./closure-callable-body.js";
+
+export interface NativeClosureMethodEntry extends ClosureInvocationArityEntry, NativeClosureIdentity {
   /** Exact selected allocation carrier, including capture or builtin metadata identity. */
   readonly allocationTypeIdx: number;
   readonly params: readonly ValType[];
@@ -114,11 +116,7 @@ export function buildNativeClosureMethodMatch(
   argumentLocals: readonly number[],
 ): Instr[] {
   return [
-    { op: "local.get", index: anyLocal },
-    { op: "ref.test", typeIdx: entry.allocationTypeIdx },
-    { op: "local.get", index: funcLocal },
-    { op: "ref.test", typeIdx: entry.funcTypeIdx },
-    { op: "i32.and" },
+    ...buildNativeClosureIdentityMatch(entry, anyLocal, funcLocal),
     ...entry.params.flatMap((type, index): Instr[] => [
       ...scalarArgumentMatch(entry, type, index, argumentLocals[index]!),
       ...(type.kind !== "ref"

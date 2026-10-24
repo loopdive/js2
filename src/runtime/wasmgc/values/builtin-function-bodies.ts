@@ -67,7 +67,7 @@ export type BuiltinFunctionDefinition = { locals: LocalDef[]; body: Instr[] };
 const get = (index: number): Instr => ({ op: "local.get", index });
 const global = (index: number): Instr => ({ op: "global.get", index });
 const call = (funcIdx: FuncHandle): Instr => ({ op: "call", funcIdx });
-export function builtinUndefined(d: BuiltinFunctionBodyOperands): Instr[] {
+export function builtinUndefined(d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal">): Instr[] {
   return [global(d.undefinedGlobal), { op: "extern.convert_any" }];
 }
 export function builtinFailure(
@@ -270,7 +270,7 @@ export function buildBuiltinFunctionLiftedDefinition(
   };
 }
 export function buildBuiltinFunctionAlgorithmDefinition(
-  d: BuiltinFunctionBodyOperands,
+  d: Pick<BuiltinFunctionBodyOperands, "undefinedGlobal" | "errors" | "typeError" | "exceptionTag">,
   behavior: BuiltinFunctionEntryOperands["behavior"],
 ): BuiltinFunctionDefinition {
   return { locals: [], body: behavior === "function-prototype" ? builtinUndefined(d) : builtinFailure(d, 2) };

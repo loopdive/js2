@@ -336,6 +336,7 @@
         "src/backend/wasmgc/resources/native-object-realm.ts",
         "src/backend/wasmgc/resources/native-object-realm-calls.ts",
         "src/backend/wasmgc/resources/native-realm-population.ts",
+        "src/backend/wasmgc/resources/native-realm-function-core.ts",
         "src/backend/wasmgc/resources/native-mixed-object-access.ts",
         "src/backend/wasmgc/resources/native-well-known-symbols.ts",
         "src/backend/wasmgc/resources/native-bigint-number.ts",
@@ -445,6 +446,7 @@
         "src/runtime/wasmgc/values/builtin-function-layouts.ts",
         "src/runtime/wasmgc/values/builtin-function-bodies.ts",
         "src/runtime/wasmgc/values/realm-population-bodies.ts",
+        "src/runtime/wasmgc/values/closure-callable-body.ts",
         "src/runtime/wasmgc/values/argument-vector-call-adapters.ts",
         "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
         "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
@@ -8496,7 +8498,7 @@
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "IR dyn.string_carrier support (#7106 S1c): the wrapper over legacy's externref→$AnyString coercion ladder; moves with the coercion-engine split."
+      "nextBoundary": "IR dyn.string_carrier support (#7106 S1c): the wrapper over legacy's externref\u2192$AnyString coercion ladder; moves with the coercion-engine split."
     },
     {
       "path": "src/codegen/ir-dynamic-construct.ts",
@@ -16166,6 +16168,11 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/closure-callable-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/argument-vector-call-adapters.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -16237,6 +16244,11 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-realm-population.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-function-core.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },

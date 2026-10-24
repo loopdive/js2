@@ -12,19 +12,22 @@ import {
  * GenericCall preserves unchanged this, every argument, abrupt identity and reentry.
  * UndefinedValue is the genuine language undefined, never externref null.
  */
-export interface FunctionPrototypeInvokerBindings {
+export interface FunctionPrototypeCallBindings {
   readonly vector: ArgumentVectorLayout;
   readonly newVector: FuncHandle;
   readonly push: FuncHandle;
   readonly isCallable: FuncHandle;
-  readonly isUndefined: FuncHandle;
-  readonly isNull: FuncHandle;
   readonly undefinedValue: FuncHandle;
-  readonly createListFromArrayLike: FuncHandle;
   readonly genericCall: FuncHandle;
+  readonly genericCallVector?: "external" | "typed";
   readonly typeError: FuncHandle;
   readonly exceptionTag: number;
   readonly errorMessage: readonly Instr[];
+}
+export interface FunctionPrototypeInvokerBindings extends FunctionPrototypeCallBindings {
+  readonly isUndefined: FuncHandle;
+  readonly isNull: FuncHandle;
+  readonly createListFromArrayLike: FuncHandle;
 }
 export type FunctionPrototypeInvoker = "call" | "apply";
 
@@ -32,18 +35,23 @@ export type FunctionPrototypeInvoker = "call" | "apply";
  * Target callability precedes all argument-list observations. The final Call is a tail edge.
  */
 export function buildFunctionPrototypeInvokerDefinition(
-  method: FunctionPrototypeInvoker,
+  method: "call",
+  input: FunctionPrototypeCallBindings,
+): { locals: LocalDef[]; body: Instr[] };
+export function buildFunctionPrototypeInvokerDefinition(
+  method: "apply",
   input: FunctionPrototypeInvokerBindings,
+): { locals: LocalDef[]; body: Instr[] };
+export function buildFunctionPrototypeInvokerDefinition(
+  method: FunctionPrototypeInvoker,
+  input: FunctionPrototypeCallBindings | FunctionPrototypeInvokerBindings,
 ): { locals: LocalDef[]; body: Instr[] } {
   if (method !== "call" && method !== "apply") throw new Error("Function invoker body: unknown method");
   const roles = [
     "newVector",
     "push",
     "isCallable",
-    "isUndefined",
-    "isNull",
     "undefinedValue",
-    "createListFromArrayLike",
     "genericCall",
     "typeError",
     "exceptionTag",
@@ -53,6 +61,11 @@ export function buildFunctionPrototypeInvokerDefinition(
   ) as Record<(typeof roles)[number], number>;
   const vector = captureInvokerVector(invokerBodyOwnData(input, "vector"));
   const errorMessage = cloneInvokerOperand(invokerBodyOwnData(input, "errorMessage"), "errorMessage");
+  const mode = Object.getOwnPropertyDescriptor(input, "genericCallVector");
+  if (mode && (!Object.hasOwn(mode, "value") || !["external", "typed"].includes(mode.value)))
+    throw new Error("Function invoker body: invalid genericCallVector");
+  if (!mode && "genericCallVector" in input) throw new Error("Function invoker body: inherited genericCallVector");
+  const externalCall = mode?.value === "external";
   const castVector: Instr[] = [{ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: vector.objVecTypeIdx }];
   const readArgument = (index: number): Instr[] => [
     { op: "local.get", index: 1 },
@@ -122,7 +135,7 @@ export function buildFunctionPrototypeInvokerDefinition(
       { op: "local.get", index: 0 },
       { op: "local.get", index: 2 },
       { op: "local.get", index: 3 },
-      ...castVector,
+      ...(externalCall ? [] : castVector),
       { op: "return_call", funcIdx: d.genericCall },
     );
     return {
@@ -135,13 +148,19 @@ export function buildFunctionPrototypeInvokerDefinition(
       body,
     };
   }
+  const apply = Object.fromEntries(
+    (["isUndefined", "isNull", "createListFromArrayLike"] as const).map((key) => [
+      key,
+      invokerBodyCoordinate(invokerBodyOwnData(input, key), key),
+    ]),
+  );
   body.push(
     ...readArgument(1),
     { op: "local.set", index: 3 },
     { op: "local.get", index: 3 },
-    { op: "call", funcIdx: d.isUndefined },
+    { op: "call", funcIdx: apply.isUndefined! },
     { op: "local.get", index: 3 },
-    { op: "call", funcIdx: d.isNull },
+    { op: "call", funcIdx: apply.isNull! },
     { op: "i32.or" },
     {
       op: "if",
@@ -149,7 +168,7 @@ export function buildFunctionPrototypeInvokerDefinition(
       then: [{ op: "call", funcIdx: d.newVector }, ...castVector],
       else: [
         { op: "local.get", index: 3 },
-        { op: "call", funcIdx: d.createListFromArrayLike },
+        { op: "call", funcIdx: apply.createListFromArrayLike! },
       ],
     },
     { op: "local.set", index: 4 },
@@ -157,6 +176,7 @@ export function buildFunctionPrototypeInvokerDefinition(
     { op: "local.get", index: 2 },
     { op: "local.get", index: 4 },
     { op: "ref.as_non_null" },
+    ...(externalCall ? [{ op: "extern.convert_any" } as Instr] : []),
     { op: "return_call", funcIdx: d.genericCall },
   );
   return {

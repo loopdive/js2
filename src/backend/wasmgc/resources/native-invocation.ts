@@ -13,7 +13,11 @@ import type { NativeObjectAccessRequirements } from "../../../ir/program/native-
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
-import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "./native-source-closures.js";
+import {
+  nativeSourceClosureRealmState,
+  requireNativeSourceClosureTypes,
+  type NativeSourceClosureTypes,
+} from "./native-source-closures.js";
 import {
   requireNativeSourceClosureCallables,
   type NativeSourceClosureCallables,
@@ -50,6 +54,7 @@ import {
   type ClosureInvocationState,
   type NativeClosureMethodEntry,
 } from "../../../runtime/wasmgc/values/closure-method-body.js";
+import { buildNativeClosureCallableDefinition } from "../../../runtime/wasmgc/values/closure-callable-body.js";
 import { buildNativeClosureVectorApplyDefinition } from "../../../runtime/wasmgc/values/closure-vector-apply-body.js";
 import type { ClosureInvocationLayout } from "../../../runtime/wasmgc/values/closure-invocation-types.js";
 import {
@@ -68,7 +73,11 @@ import {
   buildArgumentVectorApplyAdapter,
 } from "../../../runtime/wasmgc/values/argument-vector-call-adapters.js";
 
-import { nativeObjectRealmInvocationBinding, type NativeObjectRealmCalls } from "./native-object-realm-calls.js";
+import {
+  requireCompletedNativeObjectRealmDispatch,
+  nativeObjectRealmInvocationBinding,
+  type NativeObjectRealmCalls,
+} from "./native-object-realm-calls.js";
 
 import { requireNativePromiseInvocation, type NativePromiseInvocation } from "./native-promise-invocation.js";
 
@@ -109,6 +118,7 @@ interface Owner {
   readonly functions: readonly FunctionReservation[];
   callables?: NativeSourceClosureCallables;
   argumentApply?: FunctionReservation;
+  callable?: FunctionReservation;
   realmCallables?: NativeRealmSourceClosureCallables;
   builtins?: NativeBuiltinFunctionReservations;
   publicRealm?: NativeObjectRealmCalls;
@@ -375,6 +385,41 @@ export function nativeInvocationObjectRealmBinding(tx: PhysicalModuleReservation
   return Object.freeze({ ...binding, call: owner.argumentApply, source: owner.dependencies.source });
 }
 
+/** Reserve callability from the same complete source association used by public Call. */
+export function reserveNativeInvocationCallable(tx: PhysicalModuleReservations, pack: NativeInvocationReservations) {
+  const owner = requireOwner(tx, pack);
+  nativeInvocationObjectRealmBinding(tx, pack);
+  if (tx.state !== "reserving") fail("callability requires reservation phase");
+  owner.callable ??= tx.reserveFunction(pack.requirements.key + ":is-callable", "__native_is_callable", {
+    params: [{ kind: "externref" }],
+    results: [{ kind: "i32" }],
+  });
+  return owner.callable;
+}
+/** Local cycle edge only: this does not certify the complete public realm. */
+export function nativeInvocationCallableBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  completed = false,
+) {
+  const owner = requireOwner(tx, pack),
+    binding = nativeInvocationObjectRealmBinding(tx, pack);
+  if (!owner.callable) fail("missing issued callable predicate");
+  if (completed) {
+    if (!owner.filled || !owner.realmCallables) fail("missing complete source dispatch fill");
+    requireCompletedNativeObjectRealmDispatch(tx, owner.publicRealm!);
+    requireNativeRealmSourceClosureCallables(
+      tx,
+      owner.realmCallables,
+      owner.dependencies.source,
+      binding.realm.realm,
+      true,
+    );
+    for (const token of [owner.callable, binding.call, pack.undefinedValue]) tx.assertCompletedReservation(token);
+  }
+  return { ...binding, isCallable: owner.callable, undefinedValue: pack.undefinedValue };
+}
+
 /** Join the genuine emitted kernel once, before freeze; this grants no whole-realm completion. */
 export function bindNativeInvocationBuiltins(
   tx: PhysicalModuleReservations,
@@ -422,7 +467,11 @@ export function nativeInvocationFunctions(
   pack: NativeInvocationReservations,
 ): readonly FunctionReservation[] {
   const owner = requireOwner(tx, pack);
-  return Object.freeze([...owner.functions, ...(owner.argumentApply ? [owner.argumentApply] : [])]);
+  return Object.freeze([
+    ...owner.functions,
+    ...(owner.argumentApply ? [owner.argumentApply] : []),
+    ...(owner.callable ? [owner.callable] : []),
+  ]);
 }
 
 /** A runtime consumer requests this entry before freeze; source-only calls do not allocate it. */
@@ -475,7 +524,11 @@ function entries(
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  const booleans = joinedBuiltin(owner, pack)?.booleans;
+  const joined = joinedBuiltin(owner, pack),
+    booleans = joined?.booleans;
+  const realmState = owner.publicRealm && nativeSourceClosureRealmState(owner.tx, owner.dependencies.source);
+  const realm = owner.publicRealm && nativeObjectRealmInvocationBinding(owner.tx, owner.publicRealm).realm;
+  const realmGlobal = realm && owner.tx.physicalIndex(realm.globals.realm);
   return callables.map((row) => {
     const info = row.signature.info;
     const booleanResult =
@@ -495,6 +548,18 @@ function entries(
       fail("selected callable lacks its actual native argument/result conversion");
     return {
       allocationTypeIdx: row.shape.type.typeIndex,
+      ...(realmState && realmGlobal !== undefined
+        ? {
+            realm: {
+              stateField:
+                3 +
+                owner.dependencies.source.requirements.shapes.find((shape) => shape.id === row.shape.id)!.captures
+                  .length,
+              stateType: realmState.types.state.typeIndex,
+              global: realmGlobal,
+            },
+          }
+        : {}),
       selfTypeIdx: row.signature.liftedSelfTypeIndex,
       funcTypeIdx: row.slot.object.typeIdx,
       closureArity: info.paramTypes.length,
@@ -638,6 +703,14 @@ export function fillNativeInvocationResources(
               },
             }
           : {}),
+      }),
+    );
+  if (owner.callable)
+    tx.fillFunction(
+      owner.callable,
+      buildNativeClosureCallableDefinition(owner.dependencies.source.closures.root.typeIndex, rows, {
+        match: builtin!.match.handle,
+        carriers: builtin!.carriers.map((type) => type.typeIndex),
       }),
     );
   owner.realmCallables = realmCallables;

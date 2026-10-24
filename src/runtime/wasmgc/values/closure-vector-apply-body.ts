@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import { buildBuiltinCarrierRejection } from "./closure-callable-body.js";
 import type { Instr, LocalDef } from "../../../wasm/model/instructions.js";
 import type { ClosureInvocationLayout } from "./closure-invocation-types.js";
 import { buildClosureFuncrefExtraction, buildClosureMethodCallBody } from "./closure-invocation-bodies.js";
@@ -182,12 +183,7 @@ export function buildNativeClosureVectorApplyDefinition(
                 { op: "return" },
               ],
             },
-            ...input.receiverVector.carriers.flatMap((typeIdx): Instr[] => [
-              { op: "local.get", index: 0 },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx },
-              { op: "if", blockType: { kind: "empty" }, then: buildClosureInvocationFailure(failure) },
-            ]),
+            ...buildBuiltinCarrierRejection(input.receiverVector.carriers, 0, buildClosureInvocationFailure(failure)),
           ] satisfies Instr[])
         : []),
       ...buildClosureInvocationBoundary(state, slots, [

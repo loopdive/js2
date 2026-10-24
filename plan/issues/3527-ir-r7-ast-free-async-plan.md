@@ -3084,3 +3084,52 @@ population owner, shared allocation and subtype wrapper found no remaining
 blockers. Strict legacy closure remains OPEN. Standard algorithm execution,
 public Promise composition, real Linear/WASI, full Test262/performance and
 reviewed legacy retirement are still required for the migration.
+
+### Implementation plan: genuine core Function algorithms
+
+Replace the Function.prototype, ThrowTypeError and Function.prototype.call
+transport controls with production algorithms bound to the existing full realm
+and common invocation owners. Reuse the tested Function.prototype invoker
+recipe and the bootstrap undefined/TypeError recipe; separate call's required
+ports from apply's extra array-like conversion ports rather than supplying dummy
+dependencies. Authenticate source/native callability and shared argument/value/
+exception resources through the genuine invocation owner. Keep exact receiver,
+omitted undefined, arbitrary argument count, source captures and abrupt identity.
+The core algorithm owner may certify only its fixed implemented entries, never
+whole-realm or Promise completion. Exercise the actual population and common
+Call in both storage/coordinate variants with negative ownership controls.
+Reuse canonical builders and existing identity checks without copied dispatch
+or new cycle allowances; obtain independent adversarial review before delivery.
+
+The core Function owner now fills those three genuine algorithms against the
+existing full-realm singleton slots. Function.prototype.call uses the tested
+invoker recipe with an explicit external argument-vector edge into common Call.
+The shared identity recipe rejects foreign runtime-instance source closures in
+both IsCallable and Call while retaining the previous non-realm instructions.
+The predicate does not inspect user arguments or change invocation state.
+
+Independent review identified a completion hole: a caller-filled public realm
+dispatcher could otherwise satisfy the new core owner's cyclic dependency.
+Factor the existing canonical dispatcher/private-fill check into a narrow proof
+and require it before core completion. The isolated negative test genuinely
+fills source units before supplying a fake public dispatcher. Review confirms
+the fix without granting whole-realm authority. Call/apply mode validation and
+same-shape foreign realm tests cover the corresponding runtime boundaries.
+
+The first integration run passed 246/246 across the full-realm suite (4 cases)
+and existing invoker suite (242 cases). Subsequent negative tests extend these
+suites; their final results are recorded separately below. Expanded focused TS7
+exposed two existing test-helper typing defects (missing immutable field marker
+and the DOM library's missing Tag import union); both are corrected. The invoker
+suite then passed 243/243, and focused TS7 passes. All nine quality gates pass
+against main 2976e9d58e, eleven host binaries remain byte-identical to main
+7371eb505, and lint reports no errors (existing test any-type warnings remain).
+Three actual catalog algorithms now run; the other 41 native bodies remain
+explicit transport controls. Public Promise admission, complete builtin
+semantics, Linear/WASI, full conformance/performance and retirement stay open.
+
+Final integration recheck passes 3/3 selected cases (2 unrelated cases skipped):
+the isolated caller-filled dispatcher refusal and executable normal/displaced
+realm variants, including real Function core behavior and foreign realm closure
+rejection. Final invoker coverage passes 243/243. Focused TS7, all nine gates,
+format/diff checks and eleven host binary identity checks remain passing.

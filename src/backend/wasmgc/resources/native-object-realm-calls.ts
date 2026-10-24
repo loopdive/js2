@@ -170,11 +170,7 @@ export function nativeObjectRealmInvocationBinding(
     d = owner.dependencies;
   const request = nativePublicBuiltinFunctionRequestDependencies(tx, d.realm.requests);
   if (completed) {
-    if (!owner.filled) fail("missing canonical dispatcher fill");
-    for (const row of definitions(tx, pack, d)) requireCanonicalNativeFunction(tx, row.token, row.definition);
-    requireCompletedNativeBooleans(tx, d.booleans, d.values, d.valuePlan, d.valueDependencies);
-    requireCompletedNativeStringLiterals(tx, request.strings);
-    requireCompletedNativeInvocationSubstrate(tx, d.realmDependencies.substrate);
+    requireCompletedNativeObjectRealmDispatch(tx, pack);
     requireCompletedNativeObjectRealm(tx, d.realm);
   }
   return Object.freeze({
@@ -192,4 +188,21 @@ export function nativeObjectRealmInvocationBinding(
     call: pack.call,
     carriers: Object.freeze(d.realm.entries.map((entry) => entry.type)),
   });
+}
+
+/** Canonical Call/match/adapters only; break algorithm cycles without accepting caller-filled slots. */
+export function requireCompletedNativeObjectRealmDispatch(
+  tx: PhysicalModuleReservations,
+  pack: NativeObjectRealmCalls,
+): void {
+  const owner = current(tx, pack),
+    d = owner.dependencies;
+  if (!owner.filled) fail("missing canonical dispatcher fill");
+  for (const row of definitions(tx, pack, d)) requireCanonicalNativeFunction(tx, row.token, row.definition);
+  requireCompletedNativeBooleans(tx, d.booleans, d.values, d.valuePlan, d.valueDependencies);
+  requireCompletedNativeStringLiterals(
+    tx,
+    nativePublicBuiltinFunctionRequestDependencies(tx, d.realm.requests).strings,
+  );
+  requireCompletedNativeInvocationSubstrate(tx, d.realmDependencies.substrate);
 }

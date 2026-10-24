@@ -17,6 +17,7 @@ import {
   nativeInvocationObjectRealmBinding,
   fillNativeInvocationResources,
   requireCompletedNativeInvocation,
+  nativeInvocationCallableBinding,
 } from "../src/backend/wasmgc/resources/native-invocation.js";
 import {
   bindNativeMixedObjectInvocation,
@@ -44,6 +45,11 @@ import {
   reserveNativeRealmPopulation,
   fillNativeRealmPopulation,
 } from "../src/backend/wasmgc/resources/native-realm-population.js";
+import {
+  reserveNativeRealmFunctionCore,
+  fillNativeRealmFunctionCore,
+  requireCompletedNativeRealmFunctionCore,
+} from "../src/backend/wasmgc/resources/native-realm-function-core.js";
 import { setImmediate } from "node:timers/promises";
 afterEach(async () => {
   await setImmediate();
@@ -88,7 +94,7 @@ function join(r: ReturnType<typeof fixture>) {
   bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls);
   bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation);
 }
-async function fill(r: ReturnType<typeof fixture>) {
+async function fill(r: ReturnType<typeof fixture>, dispatch = true) {
   const { tx, f, c } = r;
   tx.freezeReservations();
   bindNativeSourceClosureUnits(tx, c.source!, r.source.slots);
@@ -96,7 +102,7 @@ async function fill(r: ReturnType<typeof fixture>) {
   await setImmediate();
   fillNativeBooleanResources(tx, r.booleans);
   fillNativeObjectRealmDeclarations(tx, r.realm.declarations);
-  fillNativeObjectRealmCalls(tx, r.calls);
+  if (dispatch) fillNativeObjectRealmCalls(tx, r.calls);
   fillRealmPopulationFixture(r, r.population);
   await setImmediate();
   const selected = nativeSourceClosureCallableBindings(tx, c.source!, r.invocation.requirements);
@@ -111,64 +117,8 @@ async function fill(r: ReturnType<typeof fixture>) {
   fillNativeMixedObjectGet(tx, r.access);
 }
 
-describe("full public realm Call joins", { timeout: 240000 }, () => {
-  it("rejects copied, foreign and accessor dependencies before reservation", () => {
-    const r = fixture(),
-      before = r.f.module.functions.length;
-    expect(() => nativeObjectRealmInvocationBinding(r.tx, { ...r.calls })).toThrow(/foreign or copied/);
-    expect(() => reserveNativeRealmPopulation(r.tx, r.population.dependencies)).toThrow(/already has a population/);
-    expect(() => requireCompletedNativeRealmPopulation(r.tx, { ...r.population.pack })).toThrow(/foreign or copied/);
-    const copy = { ...r.dependencies };
-    Object.defineProperty(copy, "values", {
-      get() {
-        throw Error("must not read getter");
-      },
-      enumerable: true,
-    });
-    expect(() => reserveNativeObjectRealmCalls(r.tx, "bad", copy)).toThrow(/own data/);
-    expect(() => reserveNativeObjectRealmCalls(r.tx, "duplicate", r.dependencies)).toThrow(/already has a Call owner/);
-    expect(r.f.module.functions.length).toBe(before);
-    const other = fixture();
-    expect(() => bindNativeInvocationObjectRealm(r.tx, r.invocation, other.calls)).toThrow(/foreign or copied/);
-    expect(() => bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation)).toThrow(/missing full public/);
-    join(r);
-    expect(nativeInvocationObjectRealmBinding(r.tx, r.invocation).realm).toBe(r.realm.declarations);
-    expect(() => bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls)).toThrow(/duplicate/);
-    expect(() => bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation)).toThrow(/duplicate/);
-  });
-  it("detects dependency replacement and never grants complete realm authority from filled dispatch", async () => {
-    const r = fixture();
-    join(r);
-    await fill(r);
-    expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls, true)).toThrow(/full Object\/Function algorithms/);
-    expect(() => fillNativeRealmPopulation(r.tx, r.population.pack)).toThrow(/duplicate/);
-    expect(() => fillNativeObjectRealmCalls(r.tx, r.calls)).toThrow(/duplicate/);
-    expect(() => fillNativeMixedObjectGet(r.tx, r.access)).toThrow(/duplicate/);
-    r.dependencies.values = { ...r.values };
-    expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls)).toThrow(/changed dependency/);
-  });
-});
-
-const ext = { kind: "externref" } as const;
-const get = (index: number): Instr => ({ op: "local.get", index });
-const global = (index: number): Instr => ({ op: "global.get", index });
-const n = (value: number): Instr => ({ op: "i32.const", value });
-
-/** Component control algorithms observe Call's receiver/argv. They are deliberately NOT builtin implementations. */
-async function executable(displaced: boolean) {
-  const r = fixture(displaced),
-    { tx, f, c } = r,
-    realm = r.realm.declarations;
-  join(r);
-  const initialize = realm.initialize;
-  const own = tx.reserveFunction("control:accessor", "accessor", { params: [ext], results: [ext] });
-  const inspect = tx.reserveFunction("control:inspect", "inspect", {
-    params: [ext, ext],
-    results: [{ kind: "i32" }, { kind: "i32" }, ext, ext, ext],
-  });
-  const bag = tx.reserveFunction("control:bag", "bag", { params: [ext], results: [ext] });
-  const argc = tx.reserveGlobal("control:argc", "argc", { kind: "i32" }, true);
-  await fill(r);
+function fillSourceUnits(r: ReturnType<typeof fixture>) {
+  const { tx, f, c } = r;
   const resolver: IrLowerResolver = {
     ...nativeSourceClosureResolver(tx, c.source!),
     resolveFunc(ref) {
@@ -196,6 +146,120 @@ async function executable(displaced: boolean) {
       "wasmgc",
       c.source,
     );
+}
+
+describe("full public realm Call joins", { timeout: 240000 }, () => {
+  it("rejects copied, foreign and accessor dependencies before reservation", () => {
+    const r = fixture(),
+      before = r.f.module.functions.length;
+    expect(() => nativeObjectRealmInvocationBinding(r.tx, { ...r.calls })).toThrow(/foreign or copied/);
+    expect(() => reserveNativeRealmPopulation(r.tx, r.population.dependencies)).toThrow(/already has a population/);
+    expect(() => requireCompletedNativeRealmPopulation(r.tx, { ...r.population.pack })).toThrow(/foreign or copied/);
+    const copy = { ...r.dependencies };
+    Object.defineProperty(copy, "values", {
+      get() {
+        throw Error("must not read getter");
+      },
+      enumerable: true,
+    });
+    expect(() => reserveNativeObjectRealmCalls(r.tx, "bad", copy)).toThrow(/own data/);
+    expect(() => reserveNativeObjectRealmCalls(r.tx, "duplicate", r.dependencies)).toThrow(/already has a Call owner/);
+    expect(r.f.module.functions.length).toBe(before);
+    const other = fixture();
+    expect(() => bindNativeInvocationObjectRealm(r.tx, r.invocation, other.calls)).toThrow(/foreign or copied/);
+    expect(() => bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation)).toThrow(/missing full public/);
+    join(r);
+    expect(nativeInvocationObjectRealmBinding(r.tx, r.invocation).realm).toBe(r.realm.declarations);
+    expect(() => bindNativeInvocationObjectRealm(r.tx, r.invocation, r.calls)).toThrow(/duplicate/);
+    expect(() => bindNativeMixedObjectInvocation(r.tx, r.access, r.invocation)).toThrow(/duplicate/);
+  });
+  it("refuses core completion from a caller-filled public dispatcher", async () => {
+    const r = fixture();
+    join(r);
+    const core = reserveNativeRealmFunctionCore(r.tx, r.invocation);
+    await fill(r, false);
+    fillSourceUnits(r);
+    for (const slot of [r.calls.match, r.calls.call, ...r.realm.declarations.entries.map((entry) => entry.lifted)])
+      r.tx.fillFunction(slot, { locals: [], body: [{ op: "unreachable" }] });
+    expect(() => fillNativeRealmFunctionCore(r.tx, core)).toThrow(/missing canonical dispatcher fill/);
+    expect(() => requireCompletedNativeRealmFunctionCore(r.tx, core)).toThrow(/missing canonical core fill/);
+  });
+  it("detects dependency replacement and never grants complete realm authority from filled dispatch", async () => {
+    const r = fixture();
+    join(r);
+    await fill(r);
+    expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls, true)).toThrow(/full Object\/Function algorithms/);
+    expect(() => fillNativeRealmPopulation(r.tx, r.population.pack)).toThrow(/duplicate/);
+    expect(() => fillNativeObjectRealmCalls(r.tx, r.calls)).toThrow(/duplicate/);
+    expect(() => fillNativeMixedObjectGet(r.tx, r.access)).toThrow(/duplicate/);
+    r.dependencies.values = { ...r.values };
+    expect(() => nativeObjectRealmInvocationBinding(r.tx, r.calls)).toThrow(/changed dependency/);
+  });
+});
+
+const ext = { kind: "externref" } as const;
+const get = (index: number): Instr => ({ op: "local.get", index });
+const global = (index: number): Instr => ({ op: "global.get", index });
+const n = (value: number): Instr => ({ op: "i32.const", value });
+
+/** The three core algorithms are real; remaining controls observe Call's receiver/argv without claiming builtin semantics. */
+async function executable(displaced: boolean) {
+  const r = fixture(displaced),
+    { tx, f, c } = r,
+    realm = r.realm.declarations;
+  join(r);
+  const core = reserveNativeRealmFunctionCore(tx, r.invocation);
+  expect(() => reserveNativeRealmFunctionCore(tx, r.invocation)).toThrow(/already has/);
+  expect(() => requireCompletedNativeRealmFunctionCore(tx, { ...core })).toThrow(/foreign or copied/);
+  const initialize = realm.initialize;
+  const foreignClone = tx.reserveFunction("control:foreign-clone", "foreign_clone", { params: [ext], results: [ext] });
+  const own = tx.reserveFunction("control:accessor", "accessor", { params: [ext], results: [ext] });
+  const inspect = tx.reserveFunction("control:inspect", "inspect", {
+    params: [ext, ext],
+    results: [{ kind: "i32" }, { kind: "i32" }, ext, ext, ext],
+  });
+  const bag = tx.reserveFunction("control:bag", "bag", { params: [ext], results: [ext] });
+  const argc = tx.reserveGlobal("control:argc", "argc", { kind: "i32" }, true);
+  await fill(r);
+  fillSourceUnits(r);
+  tx.fillFunction(foreignClone, {
+    locals: [],
+    body: [
+      ...c.source!.types.shapes.flatMap((shape): Instr[] => {
+        if (shape.type.object.kind !== "struct") throw Error("expected source struct");
+        const typeIdx = shape.type.typeIndex;
+        return [
+          get(0),
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...shape.type.object.fields
+                .slice(0, -1)
+                .flatMap((_, fieldIdx): Instr[] => [
+                  get(0),
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx },
+                  { op: "struct.get", typeIdx, fieldIdx },
+                ]),
+              { op: "ref.null.extern" },
+              { op: "struct.new", typeIdx: realm.layouts.types.identity.typeIndex },
+              { op: "struct.new", typeIdx: realm.layouts.types.state.typeIndex },
+              { op: "struct.new", typeIdx },
+              { op: "extern.convert_any" },
+              { op: "return" },
+            ],
+          },
+        ];
+      }),
+      { op: "unreachable" },
+    ],
+  });
+  fillNativeRealmFunctionCore(tx, core);
+  expect(requireCompletedNativeRealmFunctionCore(tx, core)).toBe(core);
+  expect(() => fillNativeRealmFunctionCore(tx, core)).toThrow(/duplicate/);
   const literal = requireNativeStringLiteral(tx, f.strings, "name");
   if (literal.kind !== "global") throw Error("small fixture key not global");
   const key = [global(tx.physicalIndex(literal.global))];
@@ -213,6 +277,7 @@ async function executable(displaced: boolean) {
   // Each native control reports the actual argument-vector length and returns its original receiver.
   // One control instead throws that exact receiver; unimplemented standard semantics gain no authority.
   realm.entries.forEach((entry, index) => {
+    if ((core.implemented as readonly string[]).includes(entry.request.intrinsic.id)) return;
     tx.fillFunction(entry.algorithm, {
       locals: [],
       body: [
@@ -313,6 +378,10 @@ async function executable(displaced: boolean) {
   expect(requireCompletedNativeRealmPopulation(tx, r.population.pack)).toBe(r.population.pack);
   const exports = {
     ...literals,
+    foreignClone,
+    isCallable: nativeInvocationCallableBinding(tx, r.invocation, true).isCallable,
+    isUndefined: r.invocation.isUndefined,
+    undefinedValue: r.invocation.undefinedValue,
     inspect,
     bag,
     getPrototypeOf: r.access.getPrototypeOf,
@@ -350,11 +419,12 @@ async function executable(displaced: boolean) {
     count: realm.entries.length,
     catalog,
     literalNames,
+    implemented: core.implemented as readonly string[],
   };
 }
 for (const displaced of [false, true])
   it(`executes all full-catalog adapters and source Get through common Call (displaced=${displaced})`, async () => {
-    const { api, count, catalog, literalNames } = await executable(displaced);
+    const { api, count, catalog, literalNames, implemented } = await executable(displaced);
     api.populate();
     expect(count).toBe(44);
     expect(api.state.value).toBe(2);
@@ -409,6 +479,8 @@ for (const displaced of [false, true])
     for (let i = 0; i < count; ++i) {
       const native = api["native" + i].value;
       expect(api.match(native)).toBe(i + 1);
+      expect(api.isCallable(native)).toBe(1);
+      if (implemented.includes(catalog.filter((entry) => entry.callable)[i]!.id)) continue;
       if (i === 2) {
         try {
           api.call(native, receiver, args);
@@ -424,14 +496,53 @@ for (const displaced of [false, true])
     for (const invalid of [null, receiver]) {
       api.native0.value = invalid;
       expect(api.match(saved)).toBe(0);
+      expect(api.isCallable(saved)).toBe(0);
       expect(() => api.call(saved, receiver, args)).toThrow(WebAssembly.Exception);
     }
     api.native0.value = saved;
-    const object = api.accessor(api.native0.value);
+    const object = api.accessor(api.native3.value);
     expect(api.get(object, api.key.value, receiver)).toEqual([1, receiver]);
     expect(api.argc.value).toBe(0);
     const closure = api.makeCaptured(100),
       empty = api.makeEmpty();
+    const callMethod = intrinsic("%Function.prototype.call%");
+    const argsOf = (...values: unknown[]) => {
+      const vector = api.newVector();
+      for (const value of values) api.push(vector, value);
+      return vector;
+    };
+    const methodCall = (target: unknown, ...values: unknown[]) => api.call(callMethod, target, argsOf(...values));
+    expect(api.isUndefined(api.call(intrinsic("%Function.prototype%"), receiver, args))).toBe(1);
+    expect(() => api.call(intrinsic("%ThrowTypeError%"), receiver, args)).toThrow(WebAssembly.Exception);
+    expect(api.isCallable(closure)).toBe(1);
+    expect(api.isCallable(empty)).toBe(1);
+    for (const original of [closure, empty]) {
+      const foreign = api.foreignClone(original);
+      expect(api.isCallable(foreign)).toBe(0);
+      expect(() => api.call(foreign, receiver, argsOf(api.box(12)))).toThrow(WebAssembly.Exception);
+      expect(() => methodCall(foreign, receiver, api.box(12))).toThrow(WebAssembly.Exception);
+    }
+    for (const bad of [null, receiver, api.box(12), api.undefinedValue()]) {
+      expect(api.isCallable(bad)).toBe(0);
+      expect(() => methodCall(bad)).toThrow(WebAssembly.Exception);
+    }
+    expect(methodCall(api.native3.value, receiver, api.box(1), api.box(2))).toBe(receiver);
+    expect(api.argc.value).toBe(2);
+    expect(api.isUndefined(methodCall(api.native3.value))).toBe(1);
+    expect(api.argc.value).toBe(0);
+    expect(methodCall(api.native3.value, null)).toBe(null);
+    expect(api.unbox(methodCall(closure, receiver, api.box(12)))).toBe(112);
+    expect(api.unbox(methodCall(empty))).toBe(7);
+    expect(methodCall(callMethod, api.native3.value, receiver, api.box(4))).toBe(receiver);
+    expect(api.argc.value).toBe(1);
+    try {
+      methodCall(api.native2.value, receiver);
+      throw Error("missing abrupt completion");
+    } catch (error) {
+      expect(error).toBeInstanceOf(WebAssembly.Exception);
+      expect((error as WebAssembly.Exception).getArg(api.exception, 0)).toBe(receiver);
+    }
+    expect(methodCall(api.native3.value, receiver)).toBe(receiver);
     const one = api.newVector();
     api.push(one, api.box(12));
     expect(api.unbox(api.call(closure, receiver, one))).toBe(112);
