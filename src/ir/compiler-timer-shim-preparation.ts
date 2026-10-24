@@ -110,6 +110,7 @@ export function isDynamicInstruction(instr: IrInstr): boolean {
     instr.kind === "dyn.arguments_length" ||
     instr.kind === "dyn.current_this" ||
     instr.kind === "dyn.instanceof_fn" ||
+    instr.kind === "dyn.instanceof" ||
     instr.kind === "dyn.publish_argc" ||
     instr.kind === "dyn.own_property" ||
     instr.kind === "dyn.to_number" ||

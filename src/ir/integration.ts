@@ -88,6 +88,14 @@ import {
   TYPED_ARRAY_NAMES,
   scriptVarSlotIsDynamicHome,
   scriptVarSlotIsSoleHome,
+  ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+  ensureIrDynamicInstanceOfHelper, // (#7106) generic dynamic instanceof wrapper
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfRoutesGeneric,
   scriptVarSlotIsStringHome,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
@@ -7003,6 +7011,12 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
+    // (#7106) the selector's `dynamicInstanceOfRoutesGeneric`, asked again per site.
+    dynamicInstanceOfRoutesGeneric: (site: ts.BinaryExpression) => irDynamicInstanceOfRoutesGeneric(ctx, site),
+    // (#7106 propertyHelper) the wrapper a dynamic delete at this site calls.
+    dynamicDeleteSymbol(site: ts.DeleteExpression) {
+      return ctx.fast ? undefined : irDynamicDeleteHelperName(irDeleteSiteIsStrict(site));
+    },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (
         fnctorParameterPreselection?.nativeStringReplaceCall === call &&
@@ -8953,6 +8967,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.arguments_length") return true;
   if (instr.kind === "dyn.current_this") return true;
   if (instr.kind === "dyn.instanceof_fn") return true;
+  if (instr.kind === "dyn.instanceof") return true;
   if (instr.kind === "dyn.publish_argc") return true;
   if (instr.kind === "dyn.own_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
@@ -9173,10 +9188,14 @@ function preregisterDynamicSupport(
   // (#7106 S3c) `dyn.current_this` / `dyn.instanceof_fn` call receiver wrappers.
   const currentThisStrictness = new Set<boolean>();
   const instanceOfFunctions = new Set<string>();
+  // (#7106) `dyn.instanceof` calls the generic runtime operator wrapper.
+  let usesDynInstanceOf = false;
   // (#7106 S1i) `dyn.publish_argc` calls the caller-side argc wrapper.
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
+  // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
+  const dynDeleteStrictness = new Set<boolean>();
   // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
   let usesOwnPropertyDescriptor = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
@@ -9195,6 +9214,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
           if (i.kind === "dyn.current_this") currentThisStrictness.add(i.strict);
           if (i.kind === "dyn.instanceof_fn") instanceOfFunctions.add(i.target.name);
+          if (i.kind === "dyn.instanceof") usesDynInstanceOf = true;
           if (i.kind === "dyn.publish_argc") usesDynPublishArgc = true;
           if (i.kind === "dyn.own_property") ownPropertyTests.add(i.test);
           if (usesDynEq(i)) usesEq = true;
@@ -9264,6 +9284,10 @@ function preregisterDynamicSupport(
                 usesOwnPropertyDescriptor = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
+              case IR_DYN_DELETE_STRICT_HELPER:
+              case IR_DYN_DELETE_SLOPPY_HELPER:
+                dynDeleteStrictness.add(symbol === IR_DYN_DELETE_STRICT_HELPER);
+                break;
               case IR_NATIVE_MAP_NEW_FN:
               case IR_NATIVE_MAP_GET_NUM_FN:
               case IR_NATIVE_MAP_SET_NUM_FN:
@@ -9361,6 +9385,24 @@ function preregisterDynamicSupport(
         throw new Error(`ir/integration: dyn.instanceof_fn has no chain-walk wrapper for ${functionName} (#7106 S3c)`);
       }
       observeNativeRuntimeProvider(ctx, irInstanceOfFunctionHelperName(functionName));
+    }
+    flushLateImportShifts(ctx, null);
+  }
+  if (usesDynInstanceOf && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106) legacy's generic runtime instanceof and its throw guard, wrapped.
+    if (ensureIrDynamicInstanceOfHelper(ctx) === undefined) {
+      throw new Error("ir/integration: dyn.instanceof has no runtime operator on this lane (#7106)");
+    }
+    observeNativeRuntimeProvider(ctx, IR_DYN_INSTANCEOF_HELPER);
+    flushLateImportShifts(ctx, null);
+  }
+  if (dynDeleteStrictness.size > 0 && !ctx.fast) {
+    // (#7106 propertyHelper) legacy's generic externref delete arm, wrapped.
+    for (const strict of [...dynDeleteStrictness].sort()) {
+      if (ensureIrDynamicDeleteHelper(ctx, strict) === undefined) {
+        throw new Error("ir/integration: dynamic delete has no __delete_property provider on this lane (#7106)");
+      }
+      observeNativeRuntimeProvider(ctx, irDynamicDeleteHelperName(strict));
     }
     flushLateImportShifts(ctx, null);
   }
@@ -9677,6 +9719,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       emitInstanceOfFunction(): readonly Instr[] {
         throw new Error("ir/integration: dyn.instanceof_fn is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
       },
+      emitInstanceOf(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.instanceof is not lowerable on the fast $AnyValue carrier (#7106)");
+      },
       emitPublishArgc(): readonly Instr[] {
         throw new Error("ir/integration: dyn.publish_argc is not lowerable on the fast $AnyValue carrier (#7106 S1i)");
       },
@@ -9867,6 +9912,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.instanceof_fn needs the host-free chain walk (#7106 S3c)");
       }
       return [callImport(irInstanceOfFunctionHelperName(functionName))];
+    },
+    emitInstanceOf(): readonly Instr[] {
+      // (#7106) value + target carriers on the stack → legacy's generic operator.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.instanceof needs the host-free runtime operator (#7106)");
+      }
+      return [callImport(IR_DYN_INSTANCEOF_HELPER)];
     },
     emitPublishArgc(count: number): readonly Instr[] {
       // (#7106 S1i) legacy's `emitSetArgc` for an under-arity direct call, wrapped once.
