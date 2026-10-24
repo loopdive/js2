@@ -27,11 +27,13 @@
  */
 
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { ValType } from "../ir/types.js";
+import { isAmbientIntrinsicName } from "../ir/values/ambient-intrinsics.js";
 import type { CodegenContext } from "./context/types.js";
-import { isBuiltinTypeName } from "./builtin-tags.js";
+import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
-import { publishReceiverHelper, receiverHelperContext } from "./ir-dynamic-construct.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { noJsHost } from "./js-errors.js";
 import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
 import { identifierIsWrittenTo, moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js";
@@ -94,14 +96,28 @@ function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
  */
 export function irDynamicInstanceOfAtLegacyParity(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
   if (!noJsHost(ctx) || ctx.fast) return false;
+  // Both arms reproduce the native-first providers' operator; a host-free lane
+  // under another provider regime keeps legacy.
+  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (site.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !ts.isIdentifier(site.right)) return false;
   const file = site.getSourceFile();
   if (moduleInstallsCallableHasInstance(file)) return false;
-  return parameterTargetRoutesGeneric(ctx, site.right, file) || errorIntrinsicTargetTakesTagPath(ctx, site, file);
+  const operands: InstanceOfOperands = { left: site.left, right: site.right };
+  return parameterTargetRoutesGeneric(ctx, operands, file) || errorIntrinsicTargetTakesTagPath(ctx, operands, file);
+}
+
+/** An `instanceof` site whose right operand is an identifier. */
+interface InstanceOfOperands {
+  readonly left: ts.Expression;
+  readonly right: ts.Identifier;
 }
 
 /** The parameter half of {@link irDynamicInstanceOfAtLegacyParity}. */
-function parameterTargetRoutesGeneric(ctx: CodegenContext, right: ts.Identifier, file: ts.SourceFile): boolean {
+function parameterTargetRoutesGeneric(
+  ctx: CodegenContext,
+  { right }: InstanceOfOperands,
+  file: ts.SourceFile,
+): boolean {
   const declaration = ctx.oracle.valueDeclarationOf(right);
   if (declaration === undefined || !ts.isParameter(declaration) || !ts.isIdentifier(declaration.name)) return false;
   const name = right.text;
@@ -111,20 +127,21 @@ function parameterTargetRoutesGeneric(ctx: CodegenContext, right: ts.Identifier,
   return isDynamicTypeFact(ctx.oracle.typeFactOf(right).kind);
 }
 
-function isDynamicTypeFact(kind: string): boolean {
+function isDynamicTypeFact(kind: TypeFact["kind"]): boolean {
   return kind === "any" || kind === "unknown";
 }
 
-/** (#7106) The Error-family builtins the IR may use as an `instanceof` target. */
-const IR_INSTANCEOF_ERROR_INTRINSICS: ReadonlySet<string> = new Set([
-  "Error",
-  "TypeError",
-  "RangeError",
-  "ReferenceError",
-  "SyntaxError",
-  "EvalError",
-  "URIError",
-]);
+/**
+ * (#7106) The Error-family constructors the IR may read off the realm as an
+ * `instanceof` target: legacy's native `$Error_struct` family
+ * (`ERROR_FAMILY_CTOR_NAMES`) restricted to the ambient intrinsics #7118 admits
+ * as values. AggregateError and SuppressedError are in the family but not in
+ * that value set, so `instanceof AggregateError` stays legacy (probed: no
+ * post-claim error).
+ */
+function isIrInstanceOfErrorIntrinsic(name: string): boolean {
+  return (ERROR_FAMILY_CTOR_NAMES as readonly string[]).includes(name) && isAmbientIntrinsicName(name);
+}
 
 /**
  * (#7106) `<any> instanceof TypeError` with the realm's own Error-family
@@ -135,7 +152,6 @@ const IR_INSTANCEOF_ERROR_INTRINSICS: ReadonlySet<string> = new Set([
  * where legacy takes that path:
  * - the name binds the lib declaration only, nothing in the file declares or
  *   writes it;
- * - the lane is native-first;
  * - the left operand is typed `any`/`unknown`, so none of
  *   `tryStaticInstanceOf`'s compile-time folds apply.
  * Whether the two paths agree row by row is measured, not assumed, in
@@ -143,16 +159,14 @@ const IR_INSTANCEOF_ERROR_INTRINSICS: ReadonlySet<string> = new Set([
  */
 function errorIntrinsicTargetTakesTagPath(
   ctx: CodegenContext,
-  site: ts.BinaryExpression,
+  { left, right }: InstanceOfOperands,
   file: ts.SourceFile,
 ): boolean {
-  const right = site.right as ts.Identifier;
   const name = right.text;
-  if (!IR_INSTANCEOF_ERROR_INTRINSICS.has(name)) return false;
-  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
+  if (!isIrInstanceOfErrorIntrinsic(name)) return false;
   if (ctx.oracle.valueDeclarationOf(right)?.getSourceFile().isDeclarationFile !== true) return false;
   if (declaredNonParameterNames(file).has(name) || identifierIsWrittenTo(file, name)) return false;
-  return isDynamicTypeFact(ctx.oracle.typeFactOf(site.left).kind);
+  return isDynamicTypeFact(ctx.oracle.typeFactOf(left).kind);
 }
 
 /**
@@ -169,7 +183,7 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
 
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
-  const helper = receiverHelperContext(
+  const helper = helperFunctionContext(
     IR_DYN_INSTANCEOF_HELPER,
     [
       { name: "value", type: externref },
@@ -181,5 +195,5 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
   emitInstanceofThrowGuard(ctx, helper);
   // The guard's TypeError may register late imports that shift baked indices.
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [i32]);
+  return publishHelperFunction(ctx, helper);
 }

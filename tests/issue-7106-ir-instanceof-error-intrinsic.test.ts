@@ -155,4 +155,29 @@ describe("#7106 — instanceof an Error-family builtin through dyn.instanceof", 
       expect((instance.exports.probe as () => number)()).toBe(3);
     });
   }
+
+  // The four refusal exits of `errorIntrinsicTargetTakesTagPath`: each shape
+  // stays on legacy with no post-claim error (the selector never claims it).
+  const REFUSED: Record<string, string> = {
+    "a typed left operand": `export function probe(v: number) { return v instanceof TypeError; }`,
+    "a script binding that shadows the constructor": `var TypeError: any = function () {};
+      export function probe(v: any) { return v instanceof TypeError; }`,
+    "a parameter named like the constructor": `export function probe(v: any, TypeError: any) { return v instanceof TypeError; }`,
+    "an Error-family name outside the ambient value set": `export function probe(v: any) { return v instanceof AggregateError; }`,
+  };
+  for (const [name, source] of Object.entries(REFUSED)) {
+    it(`keeps ${name} on legacy`, async () => {
+      const result = await compile(source, {
+        target: "standalone",
+        experimentalIR: true,
+        skipSemanticDiagnostics: true,
+        allowJs: true,
+        fileName: "issue-7106-instanceof-error-intrinsic-refused.ts",
+        trackIrOutcomes: true,
+      } as never);
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(irBodies(result)).not.toContain("probe");
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+    });
+  }
 });
