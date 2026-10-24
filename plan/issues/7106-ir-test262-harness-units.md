@@ -70,6 +70,9 @@ func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewExpression
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
+# 2026-10-24 (census arm 4, #6831): restated so this PR carries its own grant
+# after the predecessors landed — boxConcreteToDynamic's irBool arm adds 2
+# lines to src/ir/from-ast.ts.
 loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
