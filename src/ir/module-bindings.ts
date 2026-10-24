@@ -996,6 +996,24 @@ function directTopLevelDeclaration(
   return script && allDirectVars ? declaration : undefined;
 }
 
+/**
+ * (#4204/#4206) Does a heterogeneously assigned binding still refuse? Yes —
+ * except (#7132) a SCRIPT `var` whose legacy slot codegen reports as externref
+ * (`scriptVarSlotIsDynamicHome`): legacy has already chosen externref, which
+ * off fast mode is exactly the IR's dynamic carrier, so the binding resolves
+ * as `dynamic` on that slot.
+ */
+function heterogeneousRetypeRefuses(
+  checker: ts.TypeChecker,
+  declaration: ts.VariableDeclaration,
+  options: IrModuleBindingResolverOptions,
+): boolean {
+  return (
+    !isScriptDynamicHome(declaration, options) &&
+    heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)
+  );
+}
+
 /** (#7125) A string-typed script `var` in codegen's native-string sole-home
  * slot: exactly the `string` arm's storage, so the binding resolves as one. */
 function isScriptStringHome(
@@ -2210,7 +2228,7 @@ export function makeIrLegacyModuleBindingResolver(
     // to externref. IR cannot yet own the corresponding general dynamic
     // assignment/read boundaries, so reject before claim instead of resolving
     // the same slot as f64/i32 and tripping the Program ABI invariant later.
-    if (heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)) {
+    if (heterogeneousRetypeRefuses(checker, declaration, options)) {
       return { kind: "unsupported", declaration, arm: "heterogeneous-assignment-retype" };
     }
 

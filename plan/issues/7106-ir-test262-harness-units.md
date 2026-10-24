@@ -963,6 +963,49 @@ Arms touching the most tests anywhere in the body: `new Test262Error` 19,
 `vardecl-var-kind` 12, `Number` 8, `TypeError` 7, `new Boolean/Number/String` 5
 each.
 
+### Row 2 after the method-call wrapper (2026-10-22, D, measured on #6851)
+
+With #6851 (`__ir_dyn_mcall_<m>_<n>`, [#7119](7119-ir-dynamic-method-call-brand-dispatch-wrapper.md)),
+`message = message.toString();` lowers in the IR. That leaves `compareArray.format`'s body
+(row 2, `return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]";`) as the
+only blocker on the unstubbed default-include `<module-init>`.
+
+Measured on standalone (default harness, `assert.sameValue(1, 1)` body; `.tmp/probe-row2.mts`):
+
+| row 2 replaced by | `<module-init>` verdict |
+| --- | --- |
+| unchanged | `array-method-unsupported` |
+| `String(Array.prototype.map.call(arrayLike, String))` (no `.join`) | `expr-ident-not-in-scope «Array»` |
+| `var A = Array; …` | `expr-ident-not-in-scope «Array»` |
+| `var S = String; … S(arrayLike)` | `expr-ident-not-in-scope «String»` |
+| everything stubbed (`String(arrayLike)`) | IR, agrees with node (pinned by `tests/issue-7106-harness-member-rows.test.ts`) |
+
+**The three layers, in walk order:**
+
+1. **`.join(", ")` is routed to the typed-vec arm.** The checker types the
+   `map.call(…)` result as an array, so the selector sends `.join` to
+   `isPhase1ArraySearchOrJoin` (#7108). That arm serves number/string vecs only
+   and refuses an unknown element family. The IR value of that receiver is
+   DYNAMIC (it comes out of a dynamic method call), so the dynamic-method arm,
+   now the wrapper `join_1`, is the exact route. The fix is a selector
+   precedence: a receiver the IR lowers as dynamic (a dynamic call's result)
+   takes the dynamic-method arm before the checker-typed array arms.
+2. **`Array` and `String` as values.** This is #7118 (`dyn.global_object`, PR
+   #6846, held).
+3. **`Array.prototype.map.call(arrayLike, String)` itself.** After 2, this is a
+   dynamic member chain plus `__ir_dyn_mcall_call_2`, which reads `call` and
+   then runs legacy's reflective `.call`. Not yet measured: whether that `.call`
+   invokes a native intrinsic function value (`%Array.prototype.map%`) with a
+   host-free `String` function value as the callback.
+
+**Plan.** This is not an exact arm without #7118, so nothing was built here.
+Once #7118 lands:
+- measure layer 3 on its own, comparing against node (`[1, 2]`, a typed array,
+  `{ length: 2, 0: "a", 1: "b" }`, an `arguments` object);
+- if layer 3 is exact, land layer 1 as one selector slice with those tests;
+- if not, the residue is legacy's reflective `.call` on an intrinsic value.
+  Report that rather than porting `array-prototype-borrow.ts`.
+
 ### Method notes
 
 - **The "next" arm is approximate.** The census tool skips the whole failing

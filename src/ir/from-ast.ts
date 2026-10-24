@@ -68,6 +68,7 @@ import {
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
+import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
@@ -854,6 +855,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
+   * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
+   * wrapper (host-free, non-fast lanes).
+   */
+  dynamicMethodCallWrapper?(method: string, arity: number): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -3219,6 +3226,14 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
    * `earlyReturnBarrierDepth` so accepted shapes always lower.
    */
   readonly noEarlyReturn?: boolean;
+  /**
+   * (#7106 Stage 4) A planned function-member closure binds its catch
+   * parameter as the dynamic carrier (the thrown payload is an arbitrary JS
+   * value; on the non-fast lanes the externref slot IS that carrier), so
+   * `typeof thrown`, `thrown === null` and `thrown.constructor` use the
+   * dynamic operations.
+   */
+  readonly dynamicCatchBindings?: boolean;
   /**
    * (#3142 Slice 2) Module-scope binding storage map — present only when
    * lowering the `<module-init>` unit. `lowerVarDecl` consults it: a
@@ -7795,6 +7810,16 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding.
+  const bindingLogicalType =
+    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
+  if (bindingLogicalType?.kind === "dynamic") {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
+    }
+    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx));
+  }
 
   // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
   // `__propertyIsEnumerable(obj, name)`: both operands as carriers, then the
@@ -9722,15 +9747,31 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       return result;
     }
-    if (expr.arguments.length > 1 || expr.arguments.some(ts.isSpreadElement)) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
       throw new IrUnsupportedError(
         "method-call-unsupported",
         "build",
-        `ir/from-ast: dynamic method .${methodName}(...) supports at most one non-spread argument (${cx.funcName})`,
+        `ir/from-ast: dynamic method .${methodName}(...) has a spread argument (${cx.funcName})`,
       );
     }
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String));
-    const dynamicArgs: IrValueId[] = [recv, key];
+    const arity = expr.arguments.length;
+    // (#7106 Stage 4) Off the host lanes a built-in method name (and any wider
+    // call) takes the call's [[Get]] plus legacy's brand dispatch, wrapped per
+    // (method, arity). The selector admits a built-in on the generic call only
+    // where `host-dynamic-method-call` holds.
+    const wrapped =
+      irDynamicMethodCallNeedsWrapper(methodName, arity) &&
+      cx.resolver?.dynamicMethodCallWrapper?.(methodName, arity) === true;
+    if (!wrapped && arity > 1) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: dynamic method .${methodName}/${arity} has no brand-dispatch wrapper on this lane (${cx.funcName})`,
+      );
+    }
+    const dynamicArgs: IrValueId[] = wrapped
+      ? [recv]
+      : [recv, cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String))];
     for (const argument of expr.arguments) {
       const value = lowerExpr(argument, cx, irDynamic());
       const valueType = cx.builder.typeOf(value);
@@ -9744,7 +9785,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       dynamicArgs.push(dynamicValue);
     }
-    const target = expr.arguments.length === 0 ? IR_DYN_METHOD_CALL_0_FN : IR_DYN_METHOD_CALL_1_FN;
+    const target = wrapped
+      ? irDynamicMethodCallHelperName(methodName, arity)
+      : arity === 0
+        ? IR_DYN_METHOD_CALL_0_FN
+        : IR_DYN_METHOD_CALL_1_FN;
     const result = cx.builder.emitCall(irRuntimeFuncRef(target), dynamicArgs, irDynamic());
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -10555,7 +10600,10 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
 
-  if (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) {
+  if (
+    (ts.isIdentifier(lhs.expression) && cx.topLevelFunctionValues?.get(lhs.expression)?.objectReceiver === true) ||
+    functionObjects.isPreparedFunctionObjectChainedWrite(lhs.expression, cx.topLevelFunctionValues)
+  ) {
     functionObjects.lowerFunctionObjectPropertyWrite(recv, fieldName, expr.right, functionObjectLoweringHost(cx));
     return;
   }
@@ -14077,6 +14125,78 @@ function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "ob
   return tag;
 }
 
+/**
+ * (#7106 Stage 4) The selector's `dynamicConditionalValueArms` shape: an arm
+ * bound to a dynamic carrier and a primitive-literal arm. Each arm runs only in
+ * its own branch (short-circuit), the literal is boxed into the carrier there,
+ * and the join is bare dynamic. `null` = not this shape.
+ */
+function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId | null {
+  const bindingIsDynamic = (arm: ts.Expression): boolean => {
+    let e = arm;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    if (!ts.isIdentifier(e)) return false;
+    const binding = cx.scope.get(e.text);
+    const logical =
+      binding?.kind === "slot"
+        ? (binding.asType ?? binding.type)
+        : binding?.kind === "local"
+          ? binding.type
+          : undefined;
+    return logical?.kind === "dynamic";
+  };
+  const isLiteral = (arm: ts.Expression): boolean => {
+    let e = arm;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    return (
+      ts.isStringLiteral(e) ||
+      ts.isNoSubstitutionTemplateLiteral(e) ||
+      ts.isNumericLiteral(e) ||
+      e.kind === ts.SyntaxKind.TrueKeyword ||
+      e.kind === ts.SyntaxKind.FalseKeyword
+    );
+  };
+  const trueDynamic = bindingIsDynamic(expr.whenTrue);
+  const falseDynamic = bindingIsDynamic(expr.whenFalse);
+  if (!trueDynamic && !falseDynamic) return null;
+  if ((!trueDynamic && !isLiteral(expr.whenTrue)) || (!falseDynamic && !isLiteral(expr.whenFalse))) return null;
+  const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
+  const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
+  if (cond === null) {
+    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
+  }
+  const lowerArm = (arm: ts.Expression, armCx: LowerCtx): IrValueId => {
+    const value = lowerExpr(arm, armCx, irDynamic());
+    const type = cx.builder.typeOf(value);
+    if (type.kind === "dynamic") return value;
+    const boxed = boxConcreteToDynamic(value, type, arm, armCx);
+    if (boxed === null) {
+      demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: conditional arm has no carrier in ${cx.funcName}`);
+    }
+    return boxed;
+  };
+  const branchScope = new Map(cx.scope);
+  const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+  let whenTrue!: IrValueId;
+  const thenBody = cx.builder.collectBodyInstrs(() => {
+    whenTrue = lowerArm(expr.whenTrue, thenCx);
+  });
+  const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
+  let whenFalse!: IrValueId;
+  const elseBody = cx.builder.collectBodyInstrs(() => {
+    whenFalse = lowerArm(expr.whenFalse, elseCx);
+  });
+  joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
+  return cx.builder.emitIfElse({
+    cond,
+    then: thenBody,
+    thenValue: whenTrue,
+    else: elseBody,
+    elseValue: whenFalse,
+    resultType: irDynamic(),
+  });
+}
+
 function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerConditional(expr, cx, hint));
@@ -14086,6 +14206,8 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
   if (folded !== undefined) {
     return lowerExpr(folded ? expr.whenTrue : expr.whenFalse, cx, hint ?? irVal({ kind: "f64" }));
   }
+  const dynamicJoin = tryLowerDynamicConditionalValue(expr, cx);
+  if (dynamicJoin !== null) return dynamicJoin;
   const mixedProof = requireMixedPrimitiveConditionalProof(expr, "mixed conditional", cx);
   if (mixedProof !== null) {
     try {
@@ -14895,6 +15017,11 @@ function peelParensExpr(e: ts.Expression): ts.Expression {
 
 function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   const candidate = peelParensExpr(expr);
+  // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
+  if (candidate.kind === ts.SyntaxKind.ThisKeyword) {
+    const binding = cx.scope.get("this");
+    return binding?.kind === "local" && binding.type.kind === "dynamic";
+  }
   if (ts.isIdentifier(candidate)) {
     const binding = cx.scope.get(candidate.text);
     if (!binding) return false;
@@ -14907,6 +15034,9 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   }
   if (ts.isCallExpression(candidate)) {
     if (ts.isIdentifier(candidate.expression)) {
+      // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
+      // returns whatever the called value returns: the carrier.
+      if (cx.scope.has(candidate.expression.text)) return expressionProducesDynamic(candidate.expression, cx);
       return cx.calleeTypes?.get(candidate.expression.text)?.returnType?.kind === "dynamic";
     }
     return (
@@ -16149,7 +16279,9 @@ function boxConcreteToDynamic(v: IrValueId, t: IrType, operand: ts.Expression, c
   // Proven boolean i32 → tag-4 box; without the refinement the i32 would box
   // as a NUMBER and recursive boolean helpers would lose their value family at
   // the dynamic return boundary.
-  if (tv.kind === "i32" && expressionIsDefinitelyBoolean(operand)) {
+  // (#7106 census arm 4) The `irBool` brand is the same proof (#4503): a
+  // lattice-`bool` parameter slot carries it.
+  if (tv.kind === "i32" && (irTypeIsBoolean(t) || expressionIsDefinitelyBoolean(operand))) {
     return cx.builder.emitBox(v, irDynamic(JS_TAG_IDS.Boolean));
   }
   // Numeric literal or an f64-typed value → number box (f64 hosts only the
@@ -17037,6 +17169,16 @@ function liftClosureBody(
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
     }
+    // (#7106 Stage 4) OrdinaryCallBindThis binds `this` once, at entry: the
+    // receiver the caller installed, else legacy's unbound answer.
+    const thisStrict = functionMemberClosure.thisStrict;
+    if (thisStrict !== undefined) {
+      const bindThis = (): void => {
+        scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(thisStrict), type: irDynamic() });
+      };
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
+      else bindThis();
+    }
     // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
     // `sameValue`) reads through mutable storage, seeded from its entry value
     // — the same slot model a top-level function's reassigned parameter uses.
@@ -17097,6 +17239,7 @@ function liftClosureBody(
     consumedCountedStringAppends: [],
     identityContext: cx.identityContext,
     classShapes: cx.classShapes,
+    ...(functionMemberClosure ? { dynamicCatchBindings: true } : {}),
     resolver: cx.resolver,
     lifted: cx.lifted,
     liftedUnitProvenance: cx.liftedUnitProvenance,
@@ -17271,6 +17414,9 @@ function analyseCaptures(
       });
       continue;
     }
+    // (#7130) A module-scope binding is a global, not an environment slot:
+    // the lifted body reaches the same `__mod_` storage itself.
+    if (binding.kind === "moduleGlobal") continue;
     if (binding.kind !== "local") {
       // Slice 3 doesn't yet capture closure / nested-fn bindings — that
       // would require either lifting the inner closure to a top-level
@@ -17432,6 +17578,9 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
         kind: "slot",
         slotIndex: payloadSlot,
         type: irVal({ kind: "externref" }),
+        ...(cx.dynamicCatchBindings === true && cx.resolver?.dynamicCarrierIsExternref?.() === true
+          ? { asType: irDynamic() }
+          : {}),
       });
     } else if (stmt.catchClause.variableDeclaration) {
       // Destructuring catch — selector should have rejected this.
