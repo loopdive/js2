@@ -134,27 +134,45 @@ export function buildBuiltinFunctionMatchDefinition(d: BuiltinFunctionDispatchOp
     ],
   };
 }
+/** Shared physical allocation; callers own population order and prototype authority. */
+export function buildBuiltinFunctionAllocation(
+  entry: Pick<
+    BuiltinFunctionEntryOperands,
+    "lifted" | "userFormalCount" | "metadataId" | "initialName" | "typeIdx" | "singleton" | "singletonExtern"
+  >,
+  d: { readonly createNull: FuncHandle; readonly realm: number; readonly prototype: readonly Instr[] },
+): Instr[] {
+  return [
+    { op: "ref.func", funcIdx: entry.lifted },
+    { op: "i32.const", value: entry.userFormalCount },
+    call(d.createNull),
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: entry.metadataId },
+    ...structuredClone(d.prototype),
+    global(d.realm),
+    { op: "ref.as_non_null" },
+    ...structuredClone(entry.initialName),
+    { op: "struct.new", typeIdx: entry.typeIdx },
+    ...(entry.singletonExtern ? [{ op: "extern.convert_any" } as Instr] : []),
+    { op: "global.set", index: entry.singleton },
+  ];
+}
 export function buildBuiltinFunctionInitializer(d: BuiltinFunctionBodyOperands): BuiltinFunctionDefinition {
   const allocate: Instr[] = [
     { op: "struct.new", typeIdx: d.realmTypeIdx },
     { op: "global.set", index: d.realm },
     call(d.createNull),
     { op: "global.set", index: d.objectPrototype },
-    ...d.entries.flatMap((entry): Instr[] => [
-      { op: "ref.func", funcIdx: entry.lifted },
-      { op: "i32.const", value: entry.userFormalCount },
-      call(d.createNull),
-      { op: "i32.const", value: 0 },
-      { op: "i32.const", value: entry.metadataId },
-      ...(entry.behavior === "function-prototype"
-        ? [global(d.objectPrototype)]
-        : [global(d.entries[0]!.singleton), { op: "extern.convert_any" } as Instr]),
-      global(d.realm),
-      { op: "ref.as_non_null" },
-      ...structuredClone(entry.initialName),
-      { op: "struct.new", typeIdx: entry.typeIdx },
-      { op: "global.set", index: entry.singleton },
-    ]),
+    ...d.entries.flatMap((entry) =>
+      buildBuiltinFunctionAllocation(entry, {
+        createNull: d.createNull,
+        realm: d.realm,
+        prototype:
+          entry.behavior === "function-prototype"
+            ? [global(d.objectPrototype)]
+            : [global(d.entries[0]!.singleton), { op: "extern.convert_any" }],
+      }),
+    ),
   ];
   const seed: Instr[] = d.entries.flatMap((entry) => {
     const bag = (): Instr[] => [

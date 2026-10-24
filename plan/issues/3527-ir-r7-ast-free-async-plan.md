@@ -3042,3 +3042,45 @@ binaries remain byte-identical to main 7371eb505. Strict legacy closure remains
 OPEN. The executable native catalog bodies in the new suite are transport
 controls, not full standard builtin algorithms. Public Promise admission,
 Linear/WASI, full Test262/performance and reviewed retirement remain unfinished.
+
+### Implementation plan: real full-catalog runtime population
+
+Replace the full-realm Call test's fabricated singleton population with a
+production initializer bound once to the genuine realm declarations. Reuse the
+existing builtin allocation recipe and ordinary object/descriptor owners.
+Allocate Object.prototype's real subtype and all callable identities before
+installing the catalog's descriptors, including canonical Symbol.hasInstance,
+restricted accessors and exact flags. Authenticate shared values, storage,
+closures, exceptions and Symbol owners. Initialization state must reject
+reentrance, retain failure and publish ready only after installation; this is
+population readiness, not complete algorithm or Promise admission. Exercise
+actual catalog contents, stable identities, failure/reentrance and source Call
+through this initializer. Keep unfinished builtin algorithms and whole-realm
+completion closed; do not claim full IR migration from component coverage.
+
+The real population initializer now installs 45 intrinsic identities and 133
+catalog descriptors through genuine shared allocation, descriptor and canonical
+Symbol producers. It preserves Object.prototype's dedicated subtype, prototype
+links, exact flags, restricted accessors and identity across repeat calls. The
+population authority certifies only identities/descriptors; the 44 algorithm
+bodies in the executable integration suite remain explicit transport controls.
+Whole-realm and public Promise completion remain refused.
+
+Validation: the complete population integration suite passes 4/4. After moving
+the subtype allocation extension into the existing definition wrapper to retain
+the historical body receipt unchanged, both executable variants pass again
+(2/2, two unrelated cases skipped). Two additional import-free Wasm tests pass
+2/2 for real initialization failure and recursive entry, preserving the original
+exception and permanent failure state. The builtin regression passes 36/36.
+The storage suite passes 37/51: all 14 failure signatures reproduce identically
+on pristine base b8fe4ea444, and remain recorded as historical source/adapter
+receipt failures rather than a green suite. Initial fixture dependency identity
+and missing module-classification failures were repaired before these checks.
+
+Final focused TS7, lint/format and all nine quality/inventory/preservation gates
+pass; the CI budget baseline is main 2976e9d58e. Eleven existing host binaries
+remain byte-identical to main 7371eb505. Independent adversarial review of the
+population owner, shared allocation and subtype wrapper found no remaining
+blockers. Strict legacy closure remains OPEN. Standard algorithm execution,
+public Promise composition, real Linear/WASI, full Test262/performance and
+reviewed legacy retirement are still required for the migration.

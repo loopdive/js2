@@ -188,6 +188,7 @@ export function mixedFoundation(displaced = false, sourceText?: string) {
     lookupDependencies,
     lookup,
     storage,
+    storageDependencies,
     layouts,
     own,
     ownDependencies,
