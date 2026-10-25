@@ -1,10 +1,11 @@
 ---
 id: 7149
 title: "Native-first: JSON.stringify of a class instance with only private fields returns null instead of {}"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
+completed: 2026-10-25
 priority: medium
 horizon: s
 feasibility: medium
@@ -14,7 +15,13 @@ area: codegen
 language_feature: builtins
 goal: correctness
 parent: 6979
-related: [6899, 2787, 6708]
+related: [6899, 2787, 6708, 7155]
+# 2026-10-25: +9 lines in `object-runtime.ts` — the closed-struct shape walk
+# now also reports shapes with no enumerable own field, and the finalize-time
+# classifier admits them. Both live next to the walk they extend; moving the
+# 12k-line file's enumeration finalizer out is out of scope for this bugfix.
+loc-budget-allow:
+  - src/codegen/object-runtime.ts
 ---
 
 # #7149 — Native-first: JSON.stringify of a class instance with only private fields returns null instead of {}
@@ -47,3 +54,40 @@ native-first and standalone; the equivalence suite is byte-identical on every
 program that does not reach the changed path (state the byte delta for those
 that do, in the PR body); a test under `tests/issue-7149-*.test.ts` pins the
 case on standalone and gc.
+
+## Resolution (2026-10-25)
+
+probe/test reference: `tests/issue-7149-json-stringify-private-fields-only-instance.test.ts`
+(11 programs × gc native-first + standalone, each compared with V8 output; 16 of
+the 22 cases fail on the merge-base).
+
+Cause confirmed, one level below the diagnosis: the codec already treats a
+class instance as an object when the finalize-time classifier
+`__object_assign_closed_struct_source` admits its struct type. The classifier
+was built from the closed-struct enumeration entries, and
+`collectClosedStructEnumerationEntries` dropped every shape with no enumerable
+own field (`class C { #x = 1 }`, an empty class, a methods-only class). Such an
+instance matched no codec arm and serialised as `null`; its `toJSON` was never
+looked up either.
+
+Fix (`src/codegen/object-runtime.ts`): the entry walk also reports those shapes,
+and the classifier admits the ones that are allocated. The enumeration arms are
+unchanged, so `Object.keys` / `for…in` emit the same code, and the codec's
+closed-struct arm then finds no keys and answers `{}`. Private slots are still
+filtered by `isInternalStructFieldName`, so they are never serialised.
+
+`scripts/diff-test.ts` with the host-assisted pin removed: row
+`private-fields/01-fields.js` `mismatch → match`; corpus 111 → 112 matches, no
+other row changes.
+
+Left out on purpose:
+
+- `for (k in instance)` lists private names and prototype methods
+  (`class C { #x = 1; y = 2; m() {} }` → `#x, y, m`; V8: `y`) on gc
+  native-first and standalone, also on the merge-base. The static for-in unroll
+  (`src/codegen/statements/for-in-static-unroll.ts`) enumerates the checker's
+  property list. Separate path, not JSON.
+- Standalone `console.log(n)` with a number argument prints an empty string
+  once JSON helpers are linked (`console.log(1); console.log(JSON.stringify({}))`
+  → empty first line), also on the merge-base. The test logs `String(n)`.
+- #7155 (object spread of an array) is filed separately, not fixed here.
