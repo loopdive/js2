@@ -98,10 +98,24 @@ joins a dynamic parameter with a string literal.
   select (`expr-conditional-dynamic-nullish-join`); the generic tail typed
   the arms `dynamic` vs `dynamic<tag:1>` and withdrew (pre-existing on the
   base for closures with an early return).
-- Still open, pre-existing on the base: a plain dynamic parameter read into
-  a typed slot inside a planned closure (`var s = "a"; s = m;`) withdraws
-  after the claim (`property-write-unsupported`); the closure runs no
-  move-only scan. Not widened by this slice.
+- **A bare dynamic assigned to a concrete slot** inside a planned closure is
+  refused at select (`expr-dynamic-into-concrete-slot`, reported as
+  `body-shape-rejected`): the closure's dynamic parameter (`var s = "a";
+  s = m;`) or a dynamic-shaped local it minted (`var r = m ? m : 1; s = r;`)
+  written to a local with a type annotation or a non-dynamic initializer. On
+  the base both shapes withdrew after the claim
+  (`property-write-unsupported`, `assignment to "s" (string) got dynamic`)
+  and gc native-first failed to compile; the second was new with this slice's
+  conditional shape, so its sink rule (`dynamicAssignmentSink`) now covers the
+  conditional and the local reads alike. The same rule admits the conditional
+  into a dynamic-shaped local (`var r; r = m ? m : 1;`, `var r = m; r = m ?
+  m : 1;`), which the first cut over-refused. Still open, out of scope: a
+  dynamic value reaching a typed slot through any other expression (`var r =
+  m + 1; s = r;`) withdraws after the claim — identical on base and head
+  for a closure with a return (measured, `x25r`), and newly reachable in a
+  throw-only body, where the base minted no plan at all (`x25`). The closure
+  runs no move-only scan; closing it means a selector-side dynamic typing of
+  the initializer, not another position list.
 
 ## Acceptance
 

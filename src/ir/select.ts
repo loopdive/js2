@@ -6444,10 +6444,16 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
  * takes a bare dynamic as-is (`dynamicConditionalValuePosition`); anywhere else
  * (a typed slot `var n = 5; n = m ? m : 1;`, a call argument, a return) the walk
  * falls through to the #5092 mixed-primitive route, which refuses it at select
- * (`operand-coercion-unsupported`) exactly as before this shape existed. That
- * is the same rule the top-level move-only scan applies to a dynamic value in a
- * concrete position (`scanExpr(rhs, false)`); a planned closure does not run
- * that scan, so the shape carries the sink proof itself.
+ * (`operand-coercion-unsupported`) exactly as before this shape existed. The
+ * position list is this shape's own, not the top-level move-only scan's: that
+ * scan never treats a dynamic/literal conditional as dynamic-shaped (both arms
+ * must be dynamic), so it refuses this join in every position — and where it
+ * does let a bare dynamic flow, it also accepts an argument to a callee's
+ * dynamic parameter and a dynamic `return`, which this list omits by design
+ * (the closure plan fixes neither a callee's signature nor a dynamic return).
+ * A planned closure does not run that scan, so the shape carries its own sink
+ * proof; a dynamic-shaped local the shape mints (`var r = m ? m : 1`) carries
+ * it onward through `dynamicValueIntoConcreteSlot`.
  *
  * A top-level subject is never this shape: `currentClosureDynamicParamNames`
  * is empty outside a planned closure, and the move-only scan's conditional
@@ -6486,24 +6492,17 @@ function isPrimitiveLiteralArm(arm: ts.Expression): boolean {
 /**
  * Does the position of `expr` take a bare dynamic value as-is? A `throw`, an
  * expression statement, an untyped declaration initializer (the local becomes
- * dynamic, as `var r = m` does), a reassignment of the closure's dynamic
- * parameter (its mutable slot is dynamic), or an arm of an outer conditional
- * whose sibling arm is itself a dynamic value (the outer joins on the carrier).
+ * dynamic, as `var r = m` does), an assignment to a dynamic slot
+ * (`dynamicAssignmentSink`), or an arm of an outer conditional whose sibling
+ * arm is itself a dynamic value (the outer joins on the carrier).
  */
 function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolean {
-  let node: ts.Node = expr;
-  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const node = outermostParenthesized(expr);
   const parent = node.parent;
   if (ts.isThrowStatement(parent) || ts.isExpressionStatement(parent)) return true;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === node && untypedIdentifierDeclaration(parent);
-  if (ts.isBinaryExpression(parent)) {
-    return (
-      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      parent.right === node &&
-      ts.isIdentifier(parent.left) &&
-      currentClosureDynamicParamNames.has(parent.left.text)
-    );
-  }
+  const target = plainAssignmentTarget(parent, node);
+  if (target !== undefined) return dynamicAssignmentSink(target);
   if (ts.isConditionalExpression(parent) && parent.condition !== node) {
     const sibling = parent.whenTrue === node ? parent.whenFalse : parent.whenTrue;
     return dynamicConditionalValueArm(sibling) || dynamicConditionalValueArms(parent);
@@ -6511,9 +6510,81 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
   return false;
 }
 
-/** An identifier declaration with neither a type annotation nor a JSDoc type. */
+/**
+ * (#7113) `x = <value>` with `<value>` a bare dynamic — the closure's dynamic
+ * parameter or a dynamic-shaped local (`var r = m ? m : 1; s = r;`) — and `x`
+ * not a dynamic slot: from-ast withdraws such a write after the claim
+ * (`assignment to "s" (string) got dynamic`), and gc native-first then fails
+ * to compile, so the identifier walk refuses it first. The slot rule is the
+ * one `dynamicConditionalValuePosition` applies to the conditional itself.
+ */
+function dynamicValueIntoConcreteSlot(expr: ts.Identifier): boolean {
+  if (!currentInPlannedMemberClosure || !dynamicShapedValue(expr)) return false;
+  const node = outermostParenthesized(expr);
+  const target = plainAssignmentTarget(node.parent, node);
+  return target !== undefined && !dynamicAssignmentSink(target);
+}
+
+/**
+ * Does assignment target `left` take a bare dynamic value? The closure's
+ * dynamic parameter (its mutable slot is dynamic) or a dynamic-shaped local.
+ */
+function dynamicAssignmentSink(left: ts.Expression): boolean {
+  if (!ts.isIdentifier(left)) return false;
+  if (currentClosureDynamicParamNames.has(left.text)) return true;
+  const declaration = currentModuleBindingResolver?.localVariableDeclaration(left);
+  return declaration !== undefined && dynamicShapedLocal(declaration, new Set());
+}
+
+/**
+ * A bare dynamic value: the conditional shape's dynamic arm (the closure's
+ * dynamic parameter, or a nested conditional of the shape), or a read of a
+ * dynamic-shaped local. `seen` breaks `var a = b; var b = a;` cycles.
+ */
+function dynamicShapedValue(expr: ts.Expression, seen = new Set<ts.VariableDeclaration>()): boolean {
+  if (dynamicConditionalValueArm(expr)) return true;
+  const e = unwrapPhase1Parens(expr);
+  if (!ts.isIdentifier(e)) return false;
+  const declaration = currentModuleBindingResolver?.localVariableDeclaration(e);
+  return declaration !== undefined && dynamicShapedLocal(declaration, seen);
+}
+
+/**
+ * A local whose slot is the dynamic carrier: untyped, with no initializer
+ * (`var x;`, `uninitializedVarIsDynamicUndefined`) or a dynamic-shaped one.
+ */
+function dynamicShapedLocal(d: ts.VariableDeclaration, seen: Set<ts.VariableDeclaration>): boolean {
+  if (seen.has(d) || !untypedIdentifierDeclaration(d)) return false;
+  seen.add(d);
+  if (d.initializer === undefined) {
+    const isLexical =
+      ts.isVariableDeclarationList(d.parent) && !!(d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
+    return uninitializedVarIsDynamicUndefined(d, isLexical);
+  }
+  return dynamicShapedValue(d.initializer, seen);
+}
+
+/** `left` of `left = value` when `parent` is that plain assignment and `value` its right-hand side. */
+function plainAssignmentTarget(parent: ts.Node, value: ts.Node): ts.Expression | undefined {
+  if (!ts.isBinaryExpression(parent) || parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+  return parent.right === value ? parent.left : undefined;
+}
+
+function outermostParenthesized(expr: ts.Expression): ts.Expression {
+  let node: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  return node;
+}
+
+/**
+ * An identifier declaration with no type annotation. A JSDoc `@type` on the
+ * statement is deliberately not read: `ts.getJSDocType` on the declaration
+ * returns nothing for a `@type {number}` comment on `var r = …` (measured), and
+ * from-ast types the slot from its initializer the same way (`c6` claims and
+ * matches node), so a guard here would be a second, dead spelling.
+ */
 function untypedIdentifierDeclaration(d: ts.VariableDeclaration): boolean {
-  return ts.isIdentifier(d.name) && !d.type && !ts.getJSDocType(d);
+  return ts.isIdentifier(d.name) && !d.type;
 }
 
 /**
@@ -10759,6 +10830,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
+    if (dynamicValueIntoConcreteSlot(expr)) return shapeNo("expr-dynamic-into-concrete-slot", expr);
     // (#7106 item 1) the global `undefined` (unshadowed) as a VALUE — a call
     // argument, a member-store value, a logical operand: the dynamic carrier's
     // undefined (`dyn.undefined`, #7104), where the capability holds. Equality

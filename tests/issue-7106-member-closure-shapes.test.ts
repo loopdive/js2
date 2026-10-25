@@ -113,6 +113,13 @@ export function run() {
       3,
     ],
     [
+      "dynamic-arm conditional laundered through an untyped local into a typed slot",
+      `function (m) { var r = m ? m : 1; var s = "a"; s = r; throw s; }`,
+      `try { subject.f(0); } catch (e) { if (e === 1) n += 1; } try { subject.f("x"); } catch (e) { if (e === "x") n += 2; }`,
+      "body-shape-rejected",
+      3,
+    ],
+    [
       "dynamic parameter joined with undefined",
       `function (m, k) { if (k === 9) return; var r = m ? m : undefined; throw r; }`,
       `try { subject.f(0); } catch (e) { if (e === undefined) n += 1; }`,
