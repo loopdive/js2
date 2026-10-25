@@ -192,8 +192,14 @@ function receiverHasPlainClosedStructLength(ctx: CodegenContext, recvWasmType: V
   // native arm — that class must NOT keep the bail. String-ref lengths
   // (`length: "2"`) coerce via StringToNumber (never abrupt) and count as plain.
   if (lengthField.type.kind !== "ref" && lengthField.type.kind !== "ref_null") return true;
-  const lenTypeIdx = (lengthField.type as { typeIdx: number }).typeIdx;
-  return lenTypeIdx >= 0 && (lenTypeIdx === ctx.anyStrTypeIdx || lenTypeIdx === ctx.nativeStrTypeIdx);
+  return isStringCarrier(ctx, lengthField.type);
+}
+
+/** Is `type` a reference to one of this module's string carriers (`$AnyString` / the native string)? */
+export function isStringCarrier(ctx: CodegenContext, type: ValType): boolean {
+  if (type.kind !== "ref" && type.kind !== "ref_null") return false;
+  const typeIdx = (type as { typeIdx: number }).typeIdx;
+  return typeIdx >= 0 && (typeIdx === ctx.anyStrTypeIdx || typeIdx === ctx.nativeStrTypeIdx);
 }
 
 /**

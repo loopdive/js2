@@ -87,6 +87,33 @@ const CHECKS = [
   'anyBig([0, 1], big) === "false"',
 ];
 
+/**
+ * Borrows legacy types past the IR's carrier when the value reaches a typed
+ * slot: `any[]` (a vec ref) for the array-producing methods, `void` (no result
+ * slot) for `forEach`. In return position each one used to claim, build, and
+ * demote at finalize (`abi-signature-parity`) with an orphaned wrapper left in
+ * the module; the selector now refuses them there. Each row is `[method,
+ * extra arguments]`, called on a receiver `a` with callback `S` in scope.
+ */
+const TYPED_SLOT_REFUSED: readonly (readonly [string, string])[] = [
+  ["slice", ""],
+  ["splice", ", 0, 1"],
+  ["reverse", ""],
+  ["sort", ""],
+  ["fill", ", 1"],
+  ["flat", ""],
+  ["with", ", 0, 1"],
+  ["copyWithin", ", 0, 1"],
+  ["map", ", S"],
+  ["filter", ", S"],
+  ["concat", ", 1"],
+  ["flatMap", ", S"],
+  ["toReversed", ""],
+  ["toSorted", ""],
+  ["toSpliced", ", 0, 1"],
+  ["forEach", ", S"],
+];
+
 describe("#7106 — Array.prototype.<m>.call on the ambient Array lowers through the borrow wrapper", () => {
   it("answers like node, from IR bodies that call the wrappers (standalone)", async () => {
     const source = program(SUBJECTS, CHECKS);
@@ -103,6 +130,40 @@ describe("#7106 — Array.prototype.<m>.call on the ambient Array lowers through
     }
     const got = await run(result);
     expect(wrong(CHECKS, got, expected), `got ${got}, expected ${expected}`).toEqual([]);
+  });
+
+  it("refuses, before any claim, a borrow legacy types past the carrier in a typed slot", async () => {
+    const subjects = TYPED_SLOT_REFUSED.map(
+      ([method, extra]) => `function ret_${method}(a, S) { return Array.prototype.${method}.call(a${extra}); }`,
+    ).join("\n");
+    const checks = TYPED_SLOT_REFUSED.map(([method]) => `ret_${method}(arr, big) !== undefined`);
+    const source = program(subjects, checks);
+    // `compileStandalone` asserts the post-claim ledger is EMPTY: none of these
+    // may claim and then demote.
+    const result = await compileStandalone(source);
+    for (const [method] of TYPED_SLOT_REFUSED) {
+      const row = outcome(result, `ret_${method}`);
+      expect(row?.irBodyEmitted, `${method}: ${JSON.stringify(row)}`).toBe(false);
+    }
+    // A refused borrow publishes no wrapper — not even an unreferenced one.
+    expect(result.wat ?? "").not.toContain("__ir_arr_borrow_");
+    expect(await run(result)).toBe(node(source));
+  });
+
+  it("admits the same methods where the value stays the carrier: a member receiver", async () => {
+    const source = program(
+      `function first(a) { return Array.prototype.slice.call(a)[0]; }
+       function last(a) { return Array.prototype.toReversed.call(a)[0]; }`,
+      ["first(like) === 'a'", "first(arr) === 1", "last(arr) === 3", "last(like) === true"],
+    );
+    const expected = node(source);
+    expect(expected).toBe(2 ** 4 - 1);
+    const result = await compileStandalone(source);
+    for (const name of ["first", "last"]) {
+      expect(outcome(result, name)?.irBodyEmitted, name).toBe(true);
+    }
+    expect(result.wat ?? "").toContain("__ir_arr_borrow_slice_0");
+    expect(await run(result)).toBe(expected);
   });
 
   it("never borrows through a shadowed `Array`, and still answers like node", async () => {

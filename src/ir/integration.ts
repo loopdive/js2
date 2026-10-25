@@ -106,7 +106,7 @@ import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-
 import {
   ensureIrArrayPrototypeBorrowHelper,
   irArrayPrototypeBorrowAdmitted,
-  irArrayPrototypeBorrowMethodAdmitted,
+  irArrayPrototypeBorrowWrapperLane,
 } from "../codegen/array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   ensureIrArgumentsLengthHelper,
@@ -2574,7 +2574,8 @@ export function compileIrPathFunctions(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
-      arrayPrototypeBorrowMethod: irArrayPrototypeBorrowMethodAdmitted, // (#7106 compareArray.format)
+      // (#7106 compareArray.format)
+      arrayPrototypeBorrow: (call, method, reaches) => irArrayPrototypeBorrowAdmitted(ctx, call, method, reaches),
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -7018,8 +7019,8 @@ function makeFromAstResolver(
     dynamicMethodCallWrapper(method: string, arity: number) {
       return irWrapperAdmitted(irDynamicMethodCallWrapperLane(ctx), method, arity);
     },
-    arrayPrototypeBorrowWrapper(method: string, arity: number) {
-      return irArrayPrototypeBorrowAdmitted(ctx, method, arity);
+    arrayPrototypeBorrowWrapper(method: string) {
+      return irArrayPrototypeBorrowWrapperLane(ctx, method);
     },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (

@@ -868,10 +868,10 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   dynamicMethodCallWrapper?(method: string, arity: number): boolean;
   /**
    * (#7106 compareArray.format) True when this lane lowers
-   * `Array.prototype.<method>.call(recv, …arity args)` through the
+   * `Array.prototype.<method>.call(recv, …)` through the
    * `__ir_arr_borrow_<m>_<n>` wrapper built from legacy's borrow compiler.
    */
-  arrayPrototypeBorrowWrapper?(method: string, arity: number): boolean;
+  arrayPrototypeBorrowWrapper?(method: string): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -9579,7 +9579,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     arrayBorrow !== undefined &&
     cx.scope.get("Array") === undefined &&
     cx.resolver?.isAmbientBinding?.(arrayBorrow.root) !== false &&
-    cx.resolver?.arrayPrototypeBorrowWrapper?.(arrayBorrow.method, arrayBorrow.args.length) === true
+    cx.resolver?.arrayPrototypeBorrowWrapper?.(arrayBorrow.method) === true
   ) {
     return lowerArrayPrototypeBorrowCall(arrayBorrow, cx);
   }

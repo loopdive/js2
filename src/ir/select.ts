@@ -695,12 +695,15 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly selfGuardedConstructorValue?: (ident: ts.Identifier) => boolean;
   /**
-   * (#7106 compareArray.format) Does codegen build the
-   * `__ir_arr_borrow_<m>_<n>` wrapper for `Array.prototype.<method>.call(recv,
-   * …arity args)` from legacy's borrow compiler? The method question only —
-   * the lane is the `dynamic-method-call-wrapper` capability. Absent → never.
+   * (#7106 compareArray.format) May the IR claim `call`, an
+   * `Array.prototype.<method>.call(recv, …)` borrow, for the
+   * `__ir_arr_borrow_<m>_<n>` wrapper codegen builds from legacy's borrow
+   * compiler? Codegen answers whether legacy builds `method` host-free and,
+   * when `resultReachesTypedSlot`, whether legacy's typing of the borrow is one
+   * the IR's dynamic carrier reaches. The lane is the
+   * `dynamic-method-call-wrapper` capability. Absent → never.
    */
-  readonly arrayPrototypeBorrowMethod?: (method: string, arity: number) => boolean;
+  readonly arrayPrototypeBorrow?: (call: ts.CallExpression, method: string, resultReachesTypedSlot: boolean) => boolean;
   /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
@@ -8146,8 +8149,30 @@ function ambientArrayPrototypeBorrowCall(expr: ts.CallExpression): ArrayPrototyp
   const borrow = matchArrayPrototypeBorrowCall(expr);
   if (borrow === undefined || !selectorSeesAmbientBinding(borrow.root)) return null;
   if (currentSelectionOptions?.supportsBackendCapability?.("dynamic-method-call-wrapper") !== true) return null;
-  if (currentSelectionOptions.arrayPrototypeBorrowMethod?.(borrow.method, borrow.args.length) !== true) return null;
+  if (
+    currentSelectionOptions.arrayPrototypeBorrow?.(expr, borrow.method, borrowResultReachesTypedSlot(expr)) !== true
+  ) {
+    return null;
+  }
   return borrow;
+}
+
+/**
+ * Does the borrow's value reach a typed slot — a return, an argument, an
+ * initializer, an operand? The IR answers the dynamic carrier whatever the
+ * checker types the borrow (`isDynShaped`), so only a member receiver
+ * (`….join(", ")`, `…[0]`, lowered as dynamic-receiver operations) and a
+ * discarded statement value never meet legacy's typing of a slot.
+ */
+function borrowResultReachesTypedSlot(call: ts.CallExpression): boolean {
+  let node: ts.Node = call;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const parent = node.parent;
+  if (ts.isExpressionStatement(parent)) return false;
+  return !(
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    parent.expression === node
+  );
 }
 
 /**

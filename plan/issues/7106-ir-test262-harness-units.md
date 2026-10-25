@@ -44,7 +44,6 @@ flat-dir-budget-allow:
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
-  - codegen->ir: 301 # 2026-10-24 (#7106 compareArray.format review): array/ir-array-prototype-borrow.ts composes its admission with the IR's nameable-pair contract (`irWrapperAdmitted`), moved out of integration.ts next to the lane predicate it reads
   - ir->codegen: 81 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper; 2026-10-24 (stacked on #7119): …and the method-call wrapper module (object-model/ir-dynamic-method-call.ts, #7119's own +1 restated here because the stack carries both)
   - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it, and codegen/helpers/template-wrapper.ts (the template mechanics lifted out of ir-dynamic-construct.ts) joins it; 2026-10-24 (stacked on #7119): codegen/object-model/ir-dynamic-method-call.ts joins it (#7119's own +1 restated here because the stack carries both)
 # 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
@@ -1493,7 +1492,7 @@ is never materialized.
 | --- | --- | --- |
 | shape + naming contract (`matchArrayPrototypeBorrowCall`, `__ir_arr_borrow_<m>_<n>`) | `src/ir/array-prototype-borrow-call.ts` | the per-(method, arity) symbol helpers now shared with the #7119 wrapper (`irWrapperSymbol` / `parseIrWrapperSymbol`, lifted out of `dynamic-method-call-names.ts`) |
 | wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | the helper context and its publication stay `receiverHelperContext` / `publishReceiverHelper` in `ir-dynamic-construct.ts` (#6858/#6847 import them there); the template mechanics `parseDetachedTemplate` / `compileTemplateExpressionAs` are one module, `codegen/helpers/template-wrapper.ts`, which the #7119 wrapper (`object-model/ir-dynamic-method-call.ts`) imports too (its inline parse removed) |
-| admission | `arrayPrototypeBorrowCompilesHostFree` in `array-prototype-borrow.ts` (legacy's `ARRAY_METHODS` minus its standalone refusals), composed with the IR's nameable pair through one shared `irWrapperAdmitted` (the #7119 resolver uses the same fold): `irArrayPrototypeBorrowMethodAdmitted` answers the selector option (method only — the lane is the `dynamic-method-call-wrapper` capability), `irArrayPrototypeBorrowAdmitted` the from-ast resolver (lane + method); finalize's `ensureIrArrayPrototypeBorrowHelper` re-reads the lane and builds — a method the lane excludes is legacy's loud refusal, never a template error, so the builder keeps no error-truncating branch | no second method list |
+| admission | `irArrayPrototypeBorrowAdmitted(ctx, call, method, resultReachesTypedSlot)` answers the selector option `arrayPrototypeBorrow` (the lane is the `dynamic-method-call-wrapper` capability; the nameable pair is the IR's own shape match in `matchArrayPrototypeBorrowCall`, so codegen does not re-check it): legacy's `arrayPrototypeBorrowCompilesHostFree` (its `ARRAY_METHODS` minus its standalone refusals) and, where the selector says the value reaches a typed slot (anything but a member receiver or a discarded statement value), legacy's own typing of the borrow — `resolveWasmType` of the call's checker type through the shared `carrierOf` (`struct-carrier-inhabits.ts`), plus the oracle's `void` fact — must be one the IR's dynamic carrier reaches (externref, f64, i32, the lane's string carrier). The from-ast resolver re-reads only the lane (`irArrayPrototypeBorrowWrapperLane`); finalize's `ensureIrArrayPrototypeBorrowHelper` re-reads it again and builds — a method the lane excludes is legacy's loud refusal, never a template error, so the builder keeps no error-truncating branch | no second method list, no second typing: the ABI question is asked of the same `resolveWasmType` legacy's signature derivation uses |
 | selector | `ambientArrayPrototypeBorrowCall` beside `ambientObjectToStringTagCall`; the same three sites (move-only scan, Phase-1, external-call walk) plus `isDynShaped` (the result is the carrier) and one Phase-1 arm so a method call ON the result is a dynamic-receiver call, whatever the checker types the borrow | the #7119 wrapper carries `.join` on the result |
 | from-ast | `lowerArrayPrototypeBorrowCall`, intercepted before receiver lowering like the `Object.prototype.toString.call` arm; argument boxing shared with the dynamic method call through the new `lowerDynamicOperands` (one loop, was two) | — |
 
@@ -1524,4 +1523,26 @@ of the borrow (`any[]`), so from-ast's `+` demotes it (`string/number`) — a
 safe demote, measured, not a miscompile; the harness unit only calls `.join`.
 (3) The real `compareArray.format` also needs `String` as a value (#7118,
 #6846) — this branch carries the arm and its test; the harness measurement is
-on the integrated stack.
+on the integrated stack. (4) **A borrow whose value reaches a typed slot while
+legacy types it past the carrier** (review round 2). Legacy types the enclosing
+function's ABI from the checker's type of the borrow; the IR returns the
+carrier. In return position that is `any[]` → `ref_null __vec_externref` for
+slice / splice / reverse / sort / fill / flat / with / copyWithin / map /
+filter / concat / flatMap / toReversed / toSorted / toSpliced, and `void` → no
+result slot for forEach: each claimed, built, and demoted at finalize
+(`abi-signature-parity`, 16 of the admitted methods, measured standalone), with
+the unit's `__ir_arr_borrow_<m>_<n>` wrapper left in the module unreferenced
+(the #6768 reachability sweep stubs it to one `unreachable` on standalone;
+physical removal is deliberately not done, see that pass). The selector now
+refuses these before any claim (`tests/issue-7106-ir-array-prototype-borrow.test.ts`
+asserts the post-claim ledger stays empty and no `__ir_arr_borrow_` symbol is
+published); as a member receiver (`….join(", ")`, `…[0]`) or a discarded
+statement value the same methods stay admitted — the harness's own
+`Array.prototype.map.call(arrayLike, String).join(", ")` shape. Methods whose
+result legacy types as `any` (pop / shift / at / find / findLast / reduce /
+reduceRight), `string` (join), `boolean` / `number`, or a host iterator
+(keys / entries / values → externref) stay admitted in every position. Still
+open, pre-existing and not the borrow's: a function whose *parameter* legacy
+infers from such a call site (`g(Array.prototype.slice.call(a))` types `g`'s
+`x` as `any[]`) demotes `g` through the same parity guard (#3536 class), as it
+does for any `any[]`-typed argument.

@@ -14,7 +14,7 @@
 import { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { compileExpression, VOID_RESULT } from "../shared.js";
+import { compileExpression } from "../shared.js";
 import { coerceType } from "../type-coercion.js";
 import { emitUndefined } from "../expressions/late-imports.js";
 
@@ -43,6 +43,6 @@ export function compileTemplateExpressionAs(
   type: ValType,
 ): void {
   const result = compileExpression(ctx, helper, expression, type);
-  if (result === null || (result as unknown) === VOID_RESULT) emitUndefined(ctx, helper);
+  if (result === null) emitUndefined(ctx, helper);
   else if (result.kind !== type.kind) coerceType(ctx, helper, result, type);
 }

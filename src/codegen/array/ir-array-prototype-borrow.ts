@@ -19,14 +19,15 @@
  * template-wrapper mechanics are shared with the dynamic method-call wrapper
  * (`helpers/template-wrapper.ts`, `ir-dynamic-construct.ts`).
  */
+import type { ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
-import { irWrapperAdmitted } from "../../ir/dynamic-method-call-names.js";
 import type { CodegenContext } from "../context/types.js";
 import { flushLateImportShifts } from "../shared.js";
 import { publishReceiverHelper, receiverHelperContext } from "../ir-dynamic-construct.js";
 import { irDynamicMethodCallWrapperLane } from "../object-model/ir-dynamic-method-call.js";
 import { compileTemplateExpressionAs, parseDetachedTemplate } from "../helpers/template-wrapper.js";
-import { arrayPrototypeBorrowCompilesHostFree } from "../array-prototype-borrow.js";
+import { carrierOf } from "../struct-carrier-inhabits.js";
+import { arrayPrototypeBorrowCompilesHostFree, isStringCarrier } from "../array-prototype-borrow.js";
 
 const BORROW_RECEIVER = "__ir_apb_recv";
 const borrowArgumentName = (index: number): string => `__ir_apb_arg${index}`;
@@ -41,17 +42,45 @@ export function irArrayPrototypeBorrowWrapperLane(ctx: CodegenContext, method: s
 }
 
 /**
- * The selector option's method question alone — legacy's borrow compiler
- * builds `method` host-free and the IR can name the (method, arity) pair; the
- * lane is the selector's `dynamic-method-call-wrapper` capability.
+ * The selector option: may the IR claim this `Array.prototype.<method>.call`?
+ * Legacy's borrow compiler must build `method` host-free (the lane is the
+ * selector's `dynamic-method-call-wrapper` capability, the nameable pair the
+ * IR's own shape match), and where the borrow's value reaches a typed slot
+ * (`resultReachesTypedSlot` — a return, an argument, an initializer), legacy's
+ * typing of that slot must be one the IR's carrier reaches
+ * ({@link borrowResultReachesCarrier}). A member receiver (`….join(", ")`) or a
+ * discarded statement value stays the carrier, whatever the checker types the
+ * borrow, so the typing question is not asked there.
  */
-export function irArrayPrototypeBorrowMethodAdmitted(method: string, arity: number): boolean {
-  return irWrapperAdmitted(arrayPrototypeBorrowCompilesHostFree(method), method, arity);
+export function irArrayPrototypeBorrowAdmitted(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+  method: string,
+  resultReachesTypedSlot: boolean,
+): boolean {
+  if (!arrayPrototypeBorrowCompilesHostFree(method)) return false;
+  return !resultReachesTypedSlot || borrowResultReachesCarrier(ctx, call);
 }
 
-/** The from-ast resolver's admission: {@link irArrayPrototypeBorrowWrapperLane} on a nameable pair. */
-export function irArrayPrototypeBorrowAdmitted(ctx: CodegenContext, method: string, arity: number): boolean {
-  return irWrapperAdmitted(irArrayPrototypeBorrowWrapperLane(ctx, method), method, arity);
+/**
+ * Legacy types a slot holding the borrow from the checker's type of the call
+ * (`resolveWasmType` — `any[]` for `slice`/`map`/…, `void` for `forEach`,
+ * `any` for `pop`, `string` for `join`) and the enclosing function's ABI with
+ * it; the IR answers the dynamic carrier and coerces it into the slot. The two
+ * ABIs agree only where legacy's carrier for that type is one the dynamic
+ * carrier reaches: the carrier itself (`any`, `unknown`, a host-typed iterator
+ * from `keys`/`entries`/`values`), a scalar the IR unboxes, or the lane's
+ * string. A vec or struct ref, or no slot at all (`void`), types the function
+ * past the IR's signature — finalize's `abi-signature-parity` demote — so the
+ * selector refuses the borrow in such a position instead of claiming it.
+ */
+function borrowResultReachesCarrier(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const fact = ctx.oracle.typeFactOf(call);
+  if (fact.kind === "void" || fact.kind === "undefined") return false;
+  const carrier = carrierOf(ctx, call);
+  return (
+    carrier.kind === "externref" || carrier.kind === "f64" || carrier.kind === "i32" || isStringCarrier(ctx, carrier)
+  );
 }
 
 /**
