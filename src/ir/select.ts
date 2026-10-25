@@ -6501,8 +6501,8 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
   const parent = node.parent;
   if (ts.isThrowStatement(parent) || ts.isExpressionStatement(parent)) return true;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === node && untypedIdentifierDeclaration(parent);
-  const target = assignmentTarget(parent, node, /* compound */ false);
-  if (target !== undefined) return dynamicAssignmentSink(target);
+  const write = assignmentWrite(parent, node, /* compound */ false);
+  if (write !== undefined) return dynamicAssignmentSink(write.target);
   if (ts.isConditionalExpression(parent) && parent.condition !== node) {
     const sibling = parent.whenTrue === node ? parent.whenFalse : parent.whenTrue;
     return dynamicConditionalValueArm(sibling) || dynamicConditionalValueArms(parent);
@@ -6521,14 +6521,21 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
  * `dynamicConditionalValuePosition` applies to the conditional itself; the
  * compound forms are the ones the assignment arms admit
  * (`isPhase1CompoundAssignOperator`) — every other compound operator is
- * refused by those arms. The conditional's own position stays plain `=`:
- * a dynamic `+=` into a dynamic slot is not a lowering this shape has proved.
+ * refused by those arms. Of those, only `+=` may take a dynamic RHS: into a
+ * dynamic slot it lowers through the dynamic add (`var s; s += r`, `m += r`,
+ * measured = node); `-=`, `*=`, `/=` with a dynamic RHS lower on no slot
+ * (from-ast: "compound assign to non-f64 slot" / "RHS must be f64"), so they
+ * are refused whatever the sink. The conditional itself is never admitted
+ * directly as a compound RHS (`s += (m ? m : 1)` stays refused by the #5092
+ * route); only the laundered local reaches here.
  */
 function dynamicValueIntoConcreteSlot(expr: ts.Identifier): boolean {
   if (!currentInPlannedMemberClosure || !dynamicShapedValue(expr)) return false;
   const node = outermostParenthesized(expr);
-  const target = assignmentTarget(node.parent, node, /* compound */ true);
-  return target !== undefined && !dynamicAssignmentSink(target);
+  const write = assignmentWrite(node.parent, node, /* compound */ true);
+  if (write === undefined) return false;
+  if (write.op !== ts.SyntaxKind.EqualsToken && write.op !== ts.SyntaxKind.PlusEqualsToken) return true;
+  return !dynamicAssignmentSink(write.target);
 }
 
 /**
@@ -6571,14 +6578,20 @@ function dynamicShapedLocal(d: ts.VariableDeclaration, seen: Set<ts.VariableDecl
 }
 
 /**
- * `left` of `left = value` (with `compound`, also `left op= value` for the
- * admitted compound operators) when `parent` is that assignment and `value`
- * its right-hand side.
+ * The target and operator of `left = value` (with `compound`, also
+ * `left op= value` for the admitted compound operators) when `parent` is that
+ * assignment and `value` its right-hand side.
  */
-function assignmentTarget(parent: ts.Node, value: ts.Node, compound: boolean): ts.Expression | undefined {
+function assignmentWrite(
+  parent: ts.Node,
+  value: ts.Node,
+  compound: boolean,
+): { readonly target: ts.Expression; readonly op: ts.SyntaxKind } | undefined {
   if (!ts.isBinaryExpression(parent) || parent.right !== value) return undefined;
   const op = parent.operatorToken.kind;
-  if (op === ts.SyntaxKind.EqualsToken || (compound && isPhase1CompoundAssignOperator(op))) return parent.left;
+  if (op === ts.SyntaxKind.EqualsToken || (compound && isPhase1CompoundAssignOperator(op))) {
+    return { target: parent.left, op };
+  }
   return undefined;
 }
 

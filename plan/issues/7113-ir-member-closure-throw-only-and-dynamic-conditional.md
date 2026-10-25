@@ -110,8 +110,12 @@ joins a dynamic parameter with a string literal.
   conditional and the local reads alike. The same rule admits the conditional
   into a dynamic-shaped local (`var r; r = m ? m : 1;`, `var r = m; r = m ?
   m : 1;`), which the first cut over-refused. The rule covers the plain `=`
-  and the admitted compound writes (`s += r`, which otherwise claimed and
-  withdrew `string-evidence-unsupported`). Still open, out of scope: a
+  and the admitted compound writes: `+=` of a dynamic RHS is admitted into a
+  dynamic slot (`m += r`, `var s; s += r` — the dynamic add) and refused into
+  a concrete one (`s += r`, which otherwise claimed and withdrew
+  `string-evidence-unsupported`); `-=`, `*=`, `/=` with a dynamic RHS are
+  refused whatever the slot (from-ast lowers them on no slot — `m -= r`
+  withdrew `compound-assign-unsupported`). Still open, out of scope: a
   dynamic value reaching a typed slot through any other expression (`var r =
   m + 1; s = r;`), a chained write (`s = r = m`), or `String(r)` /
   `String(m)` as a throw value (claims, then `late-preparation-unsupported`)

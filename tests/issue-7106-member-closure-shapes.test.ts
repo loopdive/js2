@@ -110,6 +110,27 @@ export function run() {
     expect(await initializeAndRun(result)).toBe(1111);
   }, 35_000);
 
+  // `+=` is the one compound write that lowers with a dynamic RHS (the dynamic
+  // add); it is admitted into a dynamic slot, refused into a concrete one.
+  it("admits `+=` of a dynamic-shaped local into a dynamic slot", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m) { var r = m ? m : 1; m += r; throw m; };
+subject.b = function (m) { var r = m ? m : 1; var s; s += r; throw s; };
+export function run() {
+  var n = 0;
+  try { subject.a(3); } catch (e) { if (e === 6) n += 1; }
+  try { subject.a(0); } catch (e) { if (e === 1) n += 10; }
+  try { subject.a("a"); } catch (e) { if (e === "aa") n += 100; }
+  try { subject.b("z"); } catch (e) { if (e === "undefinedz") n += 1000; }
+  return n;
+}`;
+    const result = await compile(source, OPTIONS);
+    requirePreparedInit(result);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+    expect(node(source)).toBe(1111);
+    expect(await initializeAndRun(result)).toBe(1111);
+  }, 35_000);
+
   // Each row is a planned member closure whose body the producer would
   // withdraw after the claim; the selector refuses it first. `node` is the
   // oracle for the legacy body that then runs.
@@ -155,6 +176,20 @@ export function run() {
       `try { subject.f(0); } catch (e) { if (e === "a1") n += 1; } try { subject.f("x"); } catch (e) { if (e === "ax") n += 2; }`,
       "body-shape-rejected",
       3,
+    ],
+    [
+      "numeric compound `-=` of a dynamic-shaped local into the dynamic parameter",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; m -= r; throw m; }`,
+      `try { subject.f(5, 0); } catch (e) { if (e === 0) n += 1; } try { subject.f(0, 0); } catch (e) { if (e === -1) n += 2; }`,
+      "body-shape-rejected",
+      3,
+    ],
+    [
+      "numeric compound `-=` of a dynamic-shaped local into an uninitialized local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s; s -= r; throw s; }`,
+      `try { subject.f(5, 0); } catch (e) { if (e !== e) n += 1; }`,
+      "body-shape-rejected",
+      1,
     ],
     [
       "dynamic parameter joined with undefined",
