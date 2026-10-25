@@ -163,7 +163,6 @@ export function prepareDynamicInstructionSupportForUnits(input: {
           if (
             native &&
             functionObjects &&
-            ctx.standalone &&
             !ctx.fast &&
             carrierValType.kind === "externref" &&
             instr.kind === "dyn.to_number"

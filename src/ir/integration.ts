@@ -9287,7 +9287,7 @@ function preregisterDynamicSupport(
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__extern_is_undefined");
   }
-  if (usesDynStringCarrier && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (usesDynStringCarrier && !ctx.fast) {
     if (ensureIrStringCarrierHelper(ctx) === undefined) {
       throw new Error(
         "ir/integration: dyn.string_carrier has no native-string carrier wrapper on this lane (#7106 S1c)",
@@ -9296,14 +9296,14 @@ function preregisterDynamicSupport(
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_STRING_CARRIER_HELPER);
   }
-  if (usesDynArgumentsLength && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (usesDynArgumentsLength && !ctx.fast) {
     if (ensureIrArgumentsLengthHelper(ctx) === undefined) {
       throw new Error("ir/integration: dyn.arguments_length has no argc-protocol wrapper on this lane (#7106 S1e)");
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
   }
-  if ((currentThisStrictness.size > 0 || instanceOfFunctions.size > 0) && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if ((currentThisStrictness.size > 0 || instanceOfFunctions.size > 0) && !ctx.fast) {
     // (#7106 S3c) legacy's receiver ladder and per-function chain walk, wrapped.
     for (const strict of [...currentThisStrictness].sort()) {
       if (ensureIrCurrentThisHelper(ctx, strict) === undefined) {
@@ -9319,14 +9319,14 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (usesDynPublishArgc && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (usesDynPublishArgc && !ctx.fast) {
     if (ensureIrPublishArgcHelper(ctx) === undefined) {
       throw new Error("ir/integration: dyn.publish_argc has no argc-protocol wrapper on this lane (#7106 S1i)");
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_PUBLISH_ARGC_HELPER);
   }
-  if (ownPropertyTests.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (ownPropertyTests.size > 0 && !ctx.fast) {
     // (#7106 S1g) exactly legacy's registration for the uncurried aliases
     // (`call-object-builtins.ts`): `(externref, externref) -> i32 bool`.
     for (const test of ownPropertyTests) {
@@ -9339,7 +9339,7 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (usesOwnPropertyDescriptor && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (usesOwnPropertyDescriptor && !ctx.fast) {
     // (#7106 propertyHelper) exactly legacy's registration for the stored
     // alias (`call-object-builtins.ts`): `(externref, externref) -> externref`.
     ensureLateImport(
@@ -9350,7 +9350,7 @@ function preregisterDynamicSupport(
     );
     flushLateImportShifts(ctx, null);
   }
-  if (dynConstructArities.size > 0 && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (dynConstructArities.size > 0 && !ctx.fast) {
     // (#7106 S3a) One wrapper per arity, built from legacy's own construct
     // arming so the driver/guard reservations are shared with legacy sites.
     for (const arity of [...dynConstructArities].sort((a, b) => a - b)) {
@@ -9361,7 +9361,7 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
   }
-  if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+  if (usesDynObjectTag && !ctx.fast) {
     ensureObjectProtoToStringRuntimeHelper(ctx);
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, "__object_proto_to_string_runtime");
@@ -9777,61 +9777,40 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
     emitStringCarrier(): readonly Instr[] {
       // (#7106 S1c) externref on the stack → `(ref null $AnyString)` through
       // legacy's own coercion ladder, wrapped once per module.
-      if ((!ctx.standalone && !ctx.wasi) || !ctx.nativeStrings) {
+      if (!ctx.nativeStrings) {
         throw new Error("ir/integration: dyn.string_carrier needs the native-string host-free lane (#7106 S1c)");
       }
       return [callImport(IR_STRING_CARRIER_HELPER)];
     },
     emitArgumentsLength(formals: number): readonly Instr[] {
       // (#7106 S1e) the count half of legacy's arguments prologue, wrapped once.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.arguments_length needs the host-free argc protocol (#7106 S1e)");
-      }
       return [{ op: "i32.const", value: formals } as Instr, callImport(IR_ARGUMENTS_LENGTH_HELPER)];
     },
     emitCurrentThis(strict: boolean): readonly Instr[] {
       // (#7106 S3c) legacy's `__current_this` ladder, wrapped once per strictness.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.current_this needs the host-free receiver protocol (#7106 S3c)");
-      }
       return [callImport(strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER)];
     },
     emitInstanceOfFunction(functionName: string): readonly Instr[] {
       // (#7106 S3c) carrier on the stack → legacy's per-function chain walk.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.instanceof_fn needs the host-free chain walk (#7106 S3c)");
-      }
       return [callImport(irInstanceOfFunctionHelperName(functionName))];
     },
     emitPublishArgc(count: number): readonly Instr[] {
       // (#7106 S1i) legacy's `emitSetArgc` for an under-arity direct call, wrapped once.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.publish_argc needs the host-free argc protocol (#7106 S1i)");
-      }
       return [{ op: "i32.const", value: count } as Instr, callImport(IR_PUBLISH_ARGC_HELPER)];
     },
     emitOwnPropertyTest(test: "hasOwnProperty" | "propertyIsEnumerable"): readonly Instr[] {
       // (#7106 S1g) receiver + key already on the stack as externref.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.own_property needs the host-free own-property providers (#7106 S1g)");
-      }
       return [callImport(test === "hasOwnProperty" ? "__hasOwnProperty" : "__propertyIsEnumerable")];
     },
     emitConstruct(arity: number): readonly Instr[] {
       // (#7106 S3a) callee + args already on the stack as externref; the
       // wrapper is legacy's `tryCompileNativeConstructFromValue` tail.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.construct needs the host-free construct driver (#7106 S3a)");
-      }
       return [callImport(irDynamicConstructHelperName(arity))];
     },
     emitObjectToStringTag(scratch: () => number): readonly Instr[] {
       // (#7106 S1c) Exactly legacy's standalone `.call` arm: an unused null
       // self slot beneath the value, then the runtime classifier; its externref
       // result is re-tagged into the native string carrier like `emitTypeof`.
-      if (!ctx.standalone && !ctx.wasi) {
-        throw new Error("ir/integration: dyn.object_tag needs the standalone runtime classifier (#7106 S1c)");
-      }
       const s = scratch();
       return [
         { op: "local.set", index: s } as Instr,

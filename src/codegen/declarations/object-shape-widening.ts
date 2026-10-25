@@ -1693,7 +1693,7 @@ function pinNameMatchedGrowableLiteralTypes(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
-  if (!ctx.standalone || ctx.growableObjectLiteralVars.size === 0) return;
+  if (ctx.growableObjectLiteralVars.size === 0) return;
   const visit = (node: ts.Node): void => {
     if (
       ts.isVariableDeclaration(node) &&

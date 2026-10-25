@@ -9990,8 +9990,7 @@ export function nativeProtoBrandForInterface(ctx: CodegenContext, ifaceName: str
   if (ifaceName === "String") return ensureStringNativeProtoGlue(ctx); // (#2875)
   if (ifaceName === "DataView") return ensureDataViewNativeProtoGlue(ctx); // (#3173)
   if (ifaceName === "ArrayBuffer") return ensureArrayBufferNativeProtoGlue(ctx); // (#1595)
-  if (ifaceName === "SharedArrayBuffer" && (ctx.standalone || ctx.wasi))
-    return ensureSharedArrayBufferNativeProtoGlue(ctx); // (#7011)
+  if (ifaceName === "SharedArrayBuffer") return ensureSharedArrayBufferNativeProtoGlue(ctx); // (#7011)
   if (ifaceName === "Date") return ensureDateNativeProtoGlue(ctx); // (#3219)
   return undefined;
 }

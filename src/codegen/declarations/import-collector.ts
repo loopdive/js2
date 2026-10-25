@@ -760,10 +760,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (name === "escape" || name === "unescape") {
       state.escapeNeeded.add(name);
     }
-    // (#7079) The HTML Base64 pair joins the same native family on the
-    // host-free targets only (base64-native.ts); the JS-host lane keeps its
-    // `env.atob`/`env.btoa` import from the ambient declaration, byte-identical.
-    if ((name === "atob" || name === "btoa") && (ctx.standalone || ctx.wasi)) {
+    // (#7079) The HTML Base64 pair joins the same native family (base64-native.ts).
+    if (name === "atob" || name === "btoa") {
       state.escapeNeeded.add(name);
     }
     if (name === "Number") {

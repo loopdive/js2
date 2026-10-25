@@ -138,7 +138,7 @@ function slowChainInstrs(ctx: CodegenContext, toPrimIdx: FuncHandle, unboxIdx: F
 
 /** Does `symbolThrowArm` emit anything (and so need its scratch local)? */
 function needsSymbolThrowArm(ctx: CodegenContext): boolean {
-  return ctx.standalone === true && ctx.symbolTypeIdx >= 0;
+  return ctx.symbolTypeIdx >= 0;
 }
 
 /**

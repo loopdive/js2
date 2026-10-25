@@ -152,7 +152,6 @@ function receiverHasCompiledSymbolMethod(
   receiverType: ts.Type,
   methodName: string,
 ): boolean {
-  if (!ctx.standalone) return false;
   let className = receiverType.getSymbol()?.name;
   if (className && !ctx.classSet.has(className)) className = ctx.classExprNameMap.get(className) ?? className;
   const owners: (string | undefined)[] = [ctx.classSet.has(className ?? "") ? className : undefined];
@@ -918,7 +917,7 @@ export function compileTailDispatch(
         if (iterIdx !== undefined) {
           fctx.body.push({ op: "call", funcIdx: iterIdx });
           // (#6980) A generator's @@iterator is `return this`.
-          if (ctx.standalone && methodName === "@@iterator") {
+          if (methodName === "@@iterator") {
             const scratch = allocLocal(fctx, `__gen_self_iter_${fctx.locals.length}`, { kind: "externref" });
             fctx.body.push(...generatorSelfIteratorInstrs(ctx, scratch));
           }

@@ -254,7 +254,6 @@ export function prepareStandaloneDynamicToNumberSupport(
   ctx: CodegenContext,
   callableImports: ReadonlyMap<string, Import>,
 ): readonly IrFuncRef[] | undefined {
-  if (!ctx.standalone) return undefined;
   const shim = { body: [], savedBodies: [] } as unknown as FunctionContext;
   const selected = prepareStandaloneExternrefToNumberProviders(ctx, shim);
   if (!selected) return undefined;

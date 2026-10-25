@@ -24,7 +24,6 @@ import { ensureSabHelper } from "./shared-array-buffer.js";
 const ACCESSORS = ["byteLength", "maxByteLength", "growable"] as const;
 
 export function fillSharedArrayBufferMopArms(ctx: CodegenContext): void {
-  if (!ctx.standalone) return;
   const sabIdx = ctx.structMap.get("__sab");
   if (sabIdx === undefined) return;
   const fnOf = (name: string) => {

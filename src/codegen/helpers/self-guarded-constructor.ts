@@ -54,7 +54,7 @@ export function isSelfGuardedConstructor(decl: ts.Node): decl is ts.FunctionDecl
  */
 export function selfGuardedConstructorsLeaveFnctor(ctx: CodegenContext): boolean {
   const plan = ctx.runtimeEvalBoundaryPlan;
-  if (!ctx.standalone || plan === undefined) return false;
+  if (plan === undefined) return false;
   return ctx.runtimeEvalProviderAbsent === true || !plan.sharedRealmMayContainCanonicalValues;
 }
 

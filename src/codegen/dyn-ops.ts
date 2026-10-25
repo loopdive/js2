@@ -509,14 +509,10 @@ function ensureDynamicMemberCallSupport(ctx: CodegenContext, carrier: ValType): 
   emitWasiErrorConstructor(ctx, "TypeError", 1);
   flushLateImportShifts(ctx, null);
   const honest = ensureAnyFromExternHelper(ctx, { forceHonest: true });
-  const fromExtern = !ctx.fast && (ctx.standalone || ctx.wasi) ? honest : undefined;
-  const raw = ctx.fast || ctx.standalone || ctx.wasi ? ensureDynamicCallBoundaryExtern(ctx) : undefined;
+  const fromExtern = !ctx.fast ? honest : undefined;
+  const raw = ensureDynamicCallBoundaryExtern(ctx);
   const arg = ctx.fast ? ensureAnyToExternHelper(ctx) : undefined;
-  if (
-    (!ctx.fast && (ctx.standalone || ctx.wasi) && fromExtern === undefined) ||
-    ((ctx.fast || ctx.standalone || ctx.wasi) && raw === undefined) ||
-    (ctx.fast && arg === undefined)
-  ) {
+  if ((!ctx.fast && fromExtern === undefined) || raw === undefined || (ctx.fast && arg === undefined)) {
     throw new Error("native member-call carrier projection unavailable");
   }
   addHelper(

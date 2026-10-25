@@ -1033,7 +1033,7 @@ export function ensureDynMemberSetSloppy(ctx: CodegenContext): boolean {
   const peelIdx = ctx.funcMap.get("__carrier_recv_to_extern");
   const sloppySetIdx = ctx.funcMap.get("__extern_set");
   if (peelIdx === undefined || sloppySetIdx === undefined) return false;
-  const toPropertyKeyIdx = ctx.standalone || ctx.wasi ? ctx.funcMap.get("__to_property_key") : undefined;
+  const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
   const externref: ValType = { kind: "externref" };
   const typeIdx = addFuncType(ctx, [externref, externref, externref], [], "__dyn_member_set_sloppy");
   const funcIdx = mintDefinedFunc(ctx);

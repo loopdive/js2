@@ -111,7 +111,7 @@ export function anyValueResultBridge(
  * box would turn `undefined` into NaN.
  */
 export function boxedScalarResultBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
-  if (!(ctx.standalone || ctx.wasi) || (to.kind !== "externref" && to.kind !== "ref_extern")) return null;
+  if (to.kind !== "externref" && to.kind !== "ref_extern") return null;
   const boxNumber = ctx.funcMap.get("__box_number");
   if (from.kind === "f64" && from.undefSentinel !== true && boxNumber !== undefined) {
     return [{ op: "call", funcIdx: boxNumber }];
@@ -157,7 +157,7 @@ export function liveResultBridgeable(ctx: CodegenContext, from: ValType, to: Val
  * the dispatch ladders also use it to admit a candidate before building arms.
  */
 export function anyValueBoxTag(ctx: CodegenContext, from: ValType, to: ValType): number | null {
-  if (!(ctx.standalone || ctx.wasi) || ctx.anyValueTypeIdx < 0) return null;
+  if (ctx.anyValueTypeIdx < 0) return null;
   if ((to.kind !== "ref_null" && to.kind !== "ref") || to.typeIdx !== ctx.anyValueTypeIdx) return null;
   if (from.kind === "f64") return from.undefSentinel === true ? null : 3; // a NaN box would lose undefined
   if (from.kind === "i32") return (from as { boolean?: true }).boolean === true ? 4 : 2;

@@ -32,7 +32,6 @@ export function restDispatchInfo(
   fullName: string,
   paramTypes: readonly ValType[],
 ): RestParamInfo | null {
-  if (!ctx.standalone && !ctx.wasi) return null;
   const rest = ctx.funcRestParams.get(fullName);
   if (!rest || rest.restIndex !== paramTypes.length - 1) return null;
   const slot = paramTypes[rest.restIndex];

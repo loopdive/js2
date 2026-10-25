@@ -502,8 +502,7 @@ function calleeIsDriveLowered(ctx: CodegenContext, expr: ts.CallExpression): boo
   // the for-await-over-async-gen files whose consumer drives natively but whose
   // call site still pulled in the host Promise machinery. Plain awaits / Promise
   // statics stay on the legacy path pending the #2980 carrier widen.
-  if (ctx.standalone === true) return asyncGenConsumerNeedsDrive(ctx, decl, plan);
-  return false;
+  return asyncGenConsumerNeedsDrive(ctx, decl, plan);
 }
 
 /**

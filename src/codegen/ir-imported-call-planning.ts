@@ -972,9 +972,7 @@ export function planIrFunctionValueResolverState(
   // selection and reused by direct-call projection and the field-call proof.
   const identityResolver = resolveIdentity();
   const functionObjectValues =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalGlobalFunctionBindings !== true
+    ctx.targetProfile.semanticProviders === "native-first" && ctx.runtimeEvalGlobalFunctionBindings !== true
       ? makeIrFunctionObjectValueResolver(ctx, identityResolver)
       : undefined;
   const functionMemberClosures = functionObjectValues
@@ -1154,7 +1152,6 @@ export function preparedMemberInit(
   if (
     ctx.fast ||
     !ctx.nativeStrings ||
-    !ctx.standalone ||
     ctx.wasi ||
     ctx.strictNoHostImports ||
     ctx.targetProfile.semanticProviders !== "native-first" ||

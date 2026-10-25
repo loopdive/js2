@@ -1494,8 +1494,7 @@ function resolvePositionType(
           STANDALONE_DOM_EXTERN_POSITION_CLASSES.has(className);
         if (
           isExternalDeclaredClass(refType, ctx.checker) &&
-          (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports) ||
-            exactStandaloneDomPosition ||
+          (exactStandaloneDomPosition ||
             // (#7091) the platform-extern lane (JS environment, native regime)
             (irPlatformExternClassPredicate(ctx)?.(className) === true && irTypeHasPlatformDeclaration(refType)))
         ) {
@@ -3240,7 +3239,7 @@ function planIrOverlay(
       },
       // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
-      nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
+      nativeDynamicInBuildable: !ctx.fast && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -5391,11 +5390,7 @@ export function generateModule(
   const standaloneCalendar = planSingleSourceStandaloneCalendar(ctx, ast.checker, ast.sourceFile, inventoryOptions);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan([ast.sourceFile], ctx.oracle);
   // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalProviderAbsent !== true &&
-    ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired
-  ) {
+  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   const sourceFileInternal = ast.sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node };
@@ -5458,7 +5453,7 @@ export function generateModule(
   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
     ast.checker,
     [ast.sourceFile],
-    ctx.standalone,
+    true,
     "single",
     selfGuardedConstructorsLeaveFnctor(ctx),
   );
@@ -10605,7 +10600,6 @@ function multiIrHostImportedFunctions(
   multiAst: MultiTypedAST,
   resolver: irOverlayIdentity.IrIdentityImportedFunctionResolver,
 ): (sourceFile: ts.SourceFile) => irOverlayIdentity.IrIdentityImportedFunctionResolver | undefined {
-  if (!(ctx.standalone || ctx.wasi || ctx.strictNoHostImports)) return () => resolver;
   const namesPlatformGlobal = makeIrPlatformGlobalUseProbe(ctx, multiAst.checker, isJsEnvironmentPlatformGlobalName);
   return (sourceFile) => (namesPlatformGlobal?.(sourceFile) ? resolver : undefined);
 }
@@ -10749,11 +10743,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   const standaloneCalendar = planMultiCalendar(ctx, multiAst.checker, multiAst.sourceFiles, multiAst.entryFile);
   ctx.runtimeEvalBoundaryPlan = buildIrRuntimeEvalBoundaryPlan(multiAst.sourceFiles, ctx.oracle);
   // (#6956) No runtime-eval provider linked: eval refuses in-module, so no callable boundary.
-  if (
-    (ctx.standalone || ctx.wasi) &&
-    ctx.runtimeEvalProviderAbsent !== true &&
-    ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired
-  ) {
+  if (ctx.runtimeEvalProviderAbsent !== true && ctx.runtimeEvalBoundaryPlan.callableBoundaryRequired) {
     ctx.runtimeEvalCallableBoundaryEnabled = true;
   }
   // Multi-file compilation is linked through import/export module records.
@@ -10812,7 +10802,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
     multiAst.checker,
     multiAst.sourceFiles,
-    ctx.standalone,
+    true,
     "multi",
     selfGuardedConstructorsLeaveFnctor(ctx),
   );

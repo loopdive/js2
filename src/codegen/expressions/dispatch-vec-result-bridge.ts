@@ -65,7 +65,7 @@ export function reserveScalarResultBoxers(
   candidates: readonly { readonly returnType: ValType | null }[],
   expectedReturn: ValType | null,
 ): void {
-  if (!(ctx.standalone || ctx.wasi) || expectedReturn === null) return;
+  if (expectedReturn === null) return;
   if (expectedReturn.kind !== "externref" && expectedReturn.kind !== "ref_extern") return;
   if (!candidates.some(({ returnType }) => returnType?.kind === "f64" || returnType?.kind === "i32")) return;
   addUnionImports(ctx);

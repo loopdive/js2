@@ -430,7 +430,7 @@ function refElemHofCallbackIsClosure(ctx: CodegenContext, fctx: FunctionContext,
   // element-kind hazard this gate guards against cannot arise. Declining it
   // fell through to a generic fallback that answered `null` —
   // `["a", "", "b"].filter(Boolean)` evaluated to `[]`.
-  if (ctx.standalone && probed.kind === "externref") return true;
+  if (probed.kind === "externref") return true;
   return (
     (probed.kind === "ref" || probed.kind === "ref_null") &&
     ctx.closureInfoByTypeIdx.has((probed as { typeIdx: number }).typeIdx)

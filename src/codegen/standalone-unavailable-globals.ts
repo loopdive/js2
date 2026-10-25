@@ -280,7 +280,7 @@ export function tryEmitStandalonePerformanceNow(
  * returns true when the caller must skip the stub's registration.
  */
 export function skipStandalonePackageStub(ctx: CodegenContext, sourceFile: ts.SourceFile, id: ts.Identifier): boolean {
-  if (!ctx.standalone || !sourceFile.isDeclarationFile || !ts.isExternalModule(sourceFile)) return false;
+  if (!sourceFile.isDeclarationFile || !ts.isExternalModule(sourceFile)) return false;
   if (!/(^|[\\/])node_modules[\\/]/.test(sourceFile.fileName) || ctx.linkedPackageBindings.has(id.text)) return false;
   const message =
     `standalone (#6843): "${id.text}" is declared only by the package declaration file ${sourceFile.fileName}; ` +
