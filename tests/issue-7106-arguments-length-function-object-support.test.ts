@@ -63,6 +63,42 @@ describe("#7106 function-object target arguments.length support", () => {
   });
 });
 
+// The argc sidecar also admits plain targets. The existing caller protocol
+// owns argument publication; only the count target's prepared route is asserted.
+it.each(["standalone", "wasi"] as const)(
+  "executes plain %s under-, exact- and over-arity calls on a prepared target",
+  async (target) => {
+    const result = await compile(
+      `
+function count(a: number, b: number): number { return arguments.length; }
+export function under(): number { return count(1); }
+export function exact(): number { return count(1, 2); }
+export function over(): number { return count(1, 2, 3, 4); }
+`,
+      { ...OPTIONS, target, fast: false, fileName: `issue-7106-plain-argc-${target}.ts` },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.errors).toEqual([]);
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    requirePrepared(result, "count");
+    const module = new WebAssembly.Module(result.binary);
+    expect(WebAssembly.Module.imports(module)).toEqual([]);
+    const instance = new WebAssembly.Instance(module, {});
+    const exports = instance.exports as {
+      under: () => number;
+      exact: () => number;
+      over: () => number;
+    };
+    // Revisit each arity after another call, so stale argc/extras cannot pass.
+    expect(exports.over()).toBe(4);
+    expect(exports.under()).toBe(1);
+    expect(exports.exact()).toBe(2);
+    expect(exports.under()).toBe(1);
+    expect(exports.over()).toBe(4);
+    expect(exports.exact()).toBe(2);
+  },
+);
+
 // Observe the normal pipeline, then replay only direct sidecar preparation
 // with deliberately unavailable providers. The compiler always receives its
 // original support map with its exact provider map restored.
