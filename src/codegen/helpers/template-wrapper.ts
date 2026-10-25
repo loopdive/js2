@@ -4,9 +4,9 @@
  * (#7106) The detached template every template-built IR wrapper parses: its
  * own source file, so legacy's checker queries on it answer "unknown" — the
  * facts of an `any` site — and its emitters take their dynamic arms. The
- * helper `FunctionContext` and its publication are `ir-dynamic-construct.ts`'s
- * (`receiverHelperContext` / `publishReceiverHelper`), shared with the receiver
- * wrappers there.
+ * helper `FunctionContext` and its publication are `ir-helper-function.ts`'s
+ * (`helperFunctionContext` / `publishHelperFunction`), shared with every IR
+ * wrapper.
  */
 import { ts } from "../../ts-api.js";
 

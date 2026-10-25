@@ -11,8 +11,8 @@
  * its externref parameter — the dynamic carrier of these lanes, legacy's
  * `any`. The intrinsic's contract (full ToNumeric with observable effects) is
  * therefore legacy's by construction. The helper context and publication are
- * `ir-dynamic-construct.ts`'s (its receiver wrappers); the detached parse is
- * `template-wrapper.ts`'s.
+ * `ir-helper-function.ts`'s (shared with every IR wrapper); the detached parse
+ * is `template-wrapper.ts`'s.
  */
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
@@ -20,7 +20,7 @@ import { IR_NUMBER_FROM_VALUE_NATIVE_FN } from "../../ir/runtime/number-conversi
 import { compileExpression, flushLateImportShifts } from "../shared.js";
 import { coerceType } from "../type-coercion.js";
 import { noJsHost } from "../js-errors.js";
-import { publishReceiverHelper, receiverHelperContext } from "../ir-dynamic-construct.js";
+import { helperFunctionContext, publishHelperFunction } from "./ir-helper-function.js";
 import { parseDetachedTemplate } from "./template-wrapper.js";
 
 const VALUE_PARAM = "__ir_nfv_value";
@@ -42,7 +42,7 @@ export function ensureIrNumberFromValueHelper(ctx: CodegenContext): number | und
 
   const externref: ValType = { kind: "externref" };
   const f64: ValType = { kind: "f64" };
-  const helper = receiverHelperContext(IR_NUMBER_FROM_VALUE_NATIVE_FN, [{ name: VALUE_PARAM, type: externref }], f64);
+  const helper = helperFunctionContext(IR_NUMBER_FROM_VALUE_NATIVE_FN, [{ name: VALUE_PARAM, type: externref }], f64);
   const [conversion] = parseDetachedTemplate(
     "__ir_number_from_value.js",
     `function __ir_nfv(${VALUE_PARAM}) {\n  Number(${VALUE_PARAM});\n}`,
@@ -56,5 +56,5 @@ export function ensureIrNumberFromValueHelper(ctx: CodegenContext): number | und
   }
   if (result.kind !== "f64") coerceType(ctx, helper, result, f64);
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [f64]);
+  return publishHelperFunction(ctx, helper);
 }

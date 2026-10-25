@@ -266,6 +266,17 @@ export interface IrInstrDynCurrentThis extends IrInstrBase {
 }
 
 /**
+ * `dyn.global_object` — the realm's global object (§9.3.1 [[GlobalObject]];
+ * the value of `globalThis`, §19.1.1) (#7106). The SAME object legacy's
+ * `emitNativeGlobalThisObject` yields, so an IR read of an ambient global
+ * (`TypeError`, `Object`) through it sees the realm's own bindings. Result
+ * `dynamic`. No operands.
+ */
+export interface IrInstrDynGlobalObject extends IrInstrBase {
+  readonly kind: "dyn.global_object";
+}
+
+/**
  * `dyn.instanceof_fn{value, target}` — `value instanceof F` (§13.10.2) where F
  * is a known top-level function constructor of this module (#7106 S3c):
  * OrdinaryHasInstance (§7.3.20) walks `value`'s prototype chain for
@@ -277,6 +288,21 @@ export interface IrInstrDynInstanceOfFunction extends IrInstrBase {
   readonly value: IrValueId;
   /** The constructor function's exact unit identity. */
   readonly target: IrFuncRef;
+}
+
+/**
+ * `dyn.instanceof{value, target}` — the generic `value instanceof target`
+ * (§13.10.2 InstanceofOperator, §7.3.20 OrdinaryHasInstance) over two dynamic
+ * carriers whose right operand is a runtime value (#7106). It is the SAME
+ * runtime operator legacy's generic `instanceof` uses, so the answer for a given
+ * pair of values is legacy's, and a target the runtime classifies as not
+ * callable throws the TypeError legacy throws. Both operands `dynamic`; result
+ * `i32` (boolean).
+ */
+export interface IrInstrDynInstanceOf extends IrInstrBase {
+  readonly kind: "dyn.instanceof";
+  readonly value: IrValueId;
+  readonly target: IrValueId;
 }
 
 /**
