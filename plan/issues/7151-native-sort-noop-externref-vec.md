@@ -1,10 +1,11 @@
 ---
 id: 7151
 title: "Native-first: comparator-less Array.prototype.sort() is a no-op on module-level externref-element arrays"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
+completed: 2026-10-25
 priority: high
 horizon: s
 feasibility: medium
@@ -15,6 +16,13 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7146, 2502, 3579]
+# 2026-10-25: +3 lines in `compileArrayDefaultToStringSort` — the #2379
+# externref bail now first asks the shared no-host SortCompare builder
+# (`prepareExternVecDefaultSortCompare`, in src/codegen/array/array-sort-value.ts)
+# and hands it to the merge sort; the lowering itself lives in the subsystem
+# module, only the call + import land in the god-file.
+loc-budget-allow:
+  - src/codegen/array-methods.ts
 ---
 
 # #7151 — comparator-less `sort()` is a no-op on module-level externref vecs
@@ -65,3 +73,45 @@ externref global, so `keys.sort().join(",")` prints `"z,y"` (node `"y,z"`).
    `tests/issue-7146-array-join-vec-type.test.ts`'s rows to use **unordered**
    keys once this lands (they use ordered keys by design today so they cannot
    mask it).
+
+## Resolution (2026-10-25)
+
+Cause confirmed: the module-level array is a `$__vec_externref`, and in
+native-string mode `compileArrayDefaultToStringSort` bailed on an externref
+element (#2379: its string branch `ref.cast`s to `$AnyString`, invalid for a
+boxed-any element), so the caller emitted the #2502 no-op. On the no-host lanes
+(standalone / WASI, which gc native-first is) that bail now first asks
+`prepareExternVecDefaultSortCompare` (`src/codegen/array/array-sort-value.ts`)
+for a SortCompare over externref elements — undefined (and a `$Hole`) last,
+otherwise the runtime ToString of each element compared with `__str_compare` —
+and feeds it to the same `emitStableMergeSort` the typed vecs use. Its
+undefined-last frame is shared with the `Array.prototype.sort` value body's
+`sortCompareGreater` (refactored onto the same helper, bytes unchanged).
+Host-assisted gc is untouched (`native` is false there).
+
+Left out (all also wrong on the merge-base):
+
+- Native-first with `JS2WASM_NATIVE_REGIME_JS=0` (host-connected, not
+  `ctx.standalone`) keeps the #2379 bail, so its sort is still a no-op; the fix
+  there would need the host ToString arm, which is JS-host work. Defect.
+- `const g = []; g.push("y"); g.length = 3;` fills the grown slots with JS
+  `null` instead of holes on the native lanes (`g[1]` reads `"null"`, `1 in g`
+  is `true`), so `g.sort()` orders them as values and the following `join`
+  traps. Defect (length growth on an externref vec, not the sort).
+- A typed string vec holding `undefined` (`["c", undefined, "a"].sort()`)
+  traps with a null dereference on the native lanes: the string-element branch
+  `ref.as_non_null`s each element. Defect.
+- `a.sort() === a` (and `a.reverse() === a`) is `false` on gc native-first and
+  standalone for a module-level externref vec. Defect (result identity, not
+  ordering).
+- The host-assisted lane orders `undefined` by its string `"undefined"` rather
+  than last (`[undefined, "zz"].sort()` gives `undefined|zz`; V8 `zz|undefined`).
+  Untouched: host lane. Defect.
+- A `$Hole` and `undefined` compare equal here, so `[<hole>, undefined]` keeps
+  the hole first (V8 puts `undefined` before the trailing holes). Not a defect
+  worth an id on its own; it is part of the length-growth note above.
+- `Array.prototype.sort.call({ length: 3, 0: "c", 1: undefined, 2: "a" })`
+  leaves the array-like unsorted on standalone (`cundefineda`; V8
+  `acundefined`). Different path (generic receiver), byte-identical. Defect.
+
+probe/test reference: tests/issue-7151-native-sort-externref-vec.test.ts

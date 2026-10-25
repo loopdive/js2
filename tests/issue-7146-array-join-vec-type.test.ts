@@ -42,7 +42,7 @@ const PROGRAMS: [string, string, string][] = [
     `keys.filter((x) => x !== "b").join(",")`,
   ].map((e): [string, string, string] => [
     `chain ${e}`,
-    `const keys = [];\nfor (const k in { a: 1, b: 2, c: 3 }) keys.push(k);\nconsole.log(${e});\n`,
+    `const keys = [];\nfor (const k in { c: 1, a: 2, b: 3 }) keys.push(k);\nconsole.log(${e});\n`,
     "keys",
   ]),
 ];

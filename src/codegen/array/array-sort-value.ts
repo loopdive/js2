@@ -30,9 +30,11 @@ import { allocLocal } from "../context/locals.js";
 import { canonicalUndefinedExternInstrs, undefinedSingletonActive } from "../any-helpers.js";
 import { emitArrayProtoHofReceiverGuard, emitVariadicArgsUnpack } from "../array-reduce-proto-value.js";
 import { prepareArrayLikeToString } from "../array-like-native.js";
+import { holeTestInstrs } from "../array-holes.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
+import { TO_STRING } from "../helpers/reserved-helper-funcs.js";
 import { getOrRegisterArrayType } from "../registry/types.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "../shared.js";
 
@@ -434,8 +436,29 @@ function sortCompareGreater(ctx: CodegenContext, fctx: FunctionContext, p: SortC
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
   ];
+  return undefinedLastGreater(isUndef, x, y, [
+    ...isUndef([get(cmpFn)]),
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [...toStr(y), ...toStr(x), call(strCompare), i32(0), { op: "i32.gt_s" }],
+      else: [...toNumber, set(v), get(v), f64(0), { op: "f64.gt" }],
+    },
+  ]);
+}
+
+/**
+ * The undefined-last frame of `SortCompare(y, x) > 0` (§23.1.3.30.2 steps 1–4)
+ * as an i32: y undefined → y sorts after x (1 > 0); x undefined → -1; both → 0;
+ * neither → `bothDefined`.
+ */
+function undefinedLastGreater(
+  isUndef: (value: Instr[]) => Instr[],
+  x: number,
+  y: number,
+  bothDefined: Instr[],
+): Instr[] {
   return [
-    // y undefined → y sorts after x (1 > 0); x undefined → -1; both → 0.
     ...isUndef([get(y)]),
     {
       op: "if",
@@ -443,21 +466,71 @@ function sortCompareGreater(ctx: CodegenContext, fctx: FunctionContext, p: SortC
       then: [...isUndef([get(x)]), { op: "i32.eqz" }],
       else: [
         ...isUndef([get(x)]),
-        {
-          op: "if",
-          blockType: { kind: "val", type: I32 },
-          then: [i32(0)],
-          else: [
-            ...isUndef([get(cmpFn)]),
-            {
-              op: "if",
-              blockType: { kind: "val", type: I32 },
-              then: [...toStr(y), ...toStr(x), call(strCompare), i32(0), { op: "i32.gt_s" }],
-              else: [...toNumber, set(v), get(v), f64(0), { op: "f64.gt" }],
-            },
-          ],
-        },
+        { op: "if", blockType: { kind: "val", type: I32 }, then: [i32(0)], else: bothDefined },
       ],
     },
   ];
+}
+
+/**
+ * (#7151) The comparator-less `SortCompare(left, right) > 0` for an
+ * externref-element vec (`$__vec_externref`, e.g. a module-level `const keys =
+ * []` filled by `push` / `for…in`) on the no-host lanes: undefined sorts last,
+ * every other element compares by its runtime ToString form (`TO_STRING`) in
+ * code-unit order (`__str_compare`). The `$Hole` sentinel of a holey vec counts
+ * as undefined, so holes end up behind the defined elements.
+ *
+ * Registers its helpers now (call it BEFORE any funcIdx is read into a JS
+ * variable) and returns a builder over two instruction sequences that each
+ * push one element; `undefined` off the no-host lanes or when a helper is
+ * missing — the caller keeps its no-op.
+ */
+export function prepareExternVecDefaultSortCompare(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+): ((pushLeft: Instr[], pushRight: Instr[]) => Instr[]) | undefined {
+  if ((!ctx.standalone && !ctx.wasi) || ctx.anyStrTypeIdx < 0) return undefined;
+  ensureObjectRuntime(ctx);
+  ensureNativeStringHelpers(ctx);
+  ensureLateImport(ctx, TO_STRING, [EXT], [EXT]);
+  if (undefinedSingletonActive(ctx)) ensureLateImport(ctx, "__extern_is_undefined", [EXT], [I32]);
+  const holeTest = ctx.usesArrayHoles ? holeTestInstrs(ctx) : [];
+  flushLateImportShifts(ctx, fctx);
+  const singleton = undefinedSingletonActive(ctx);
+  const names = [TO_STRING, ...(singleton ? ["__extern_is_undefined"] : [])];
+  if (names.some((n) => ctx.funcMap.get(n) === undefined) || !ctx.nativeStrHelpers.has("__str_compare")) {
+    return undefined;
+  }
+  const left = allocLocal(fctx, `__esort_l_${fctx.locals.length}`, EXT);
+  const right = allocLocal(fctx, `__esort_r_${fctx.locals.length}`, EXT);
+  return (pushLeft, pushRight) => {
+    // Indices are re-read by NAME at emit time: later late imports may have
+    // shifted defined-function indices since the ensures above.
+    const isUndefIdx = ctx.funcMap.get("__extern_is_undefined");
+    const isUndef = (value: Instr[]): Instr[] => {
+      const undef: Instr[] = singleton ? [...value, call(isUndefIdx!)] : [...value, { op: "ref.is_null" }];
+      if (holeTest.length === 0) return undef;
+      return [...value, ...holeTest, { op: "if", blockType: { kind: "val", type: I32 }, then: [i32(1)], else: undef }];
+    };
+    const toStr = (value: number): Instr[] => [
+      get(value),
+      call(ctx.funcMap.get(TO_STRING)!),
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    ];
+    // SortCompare(left, right) > 0 ⇔ left sorts after right: `y` = left, `x` = right.
+    return [
+      ...pushLeft,
+      set(left),
+      ...pushRight,
+      set(right),
+      ...undefinedLastGreater(isUndef, right, left, [
+        ...toStr(left),
+        ...toStr(right),
+        call(ctx.nativeStrHelpers.get("__str_compare")!),
+        i32(0),
+        { op: "i32.gt_s" },
+      ]),
+    ];
+  };
 }
