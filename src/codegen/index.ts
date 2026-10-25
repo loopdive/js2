@@ -6,6 +6,7 @@ import {
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import { irDynamicInstanceOfRoutesGeneric } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -3252,6 +3253,10 @@ function planIrOverlay(
       },
       // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      // (#7106 propertyHelper) …and on a native-strings lane the same externref
+      // IS the non-fast dynamic carrier of the key string, so the head can be
+      // read as a dynamic value instead.
+      forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
       nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
@@ -3268,6 +3273,7 @@ function planIrOverlay(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      dynamicInstanceOfRoutesGeneric: (site) => irDynamicInstanceOfRoutesGeneric(ctx, site), // (#7106)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
@@ -15470,6 +15476,20 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
+export {
+  ensureIrDynamicDeleteHelper,
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+} from "./ir-dynamic-delete.js";
+// (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
+export {
+  ensureIrDynamicInstanceOfHelper,
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfRoutesGeneric,
+} from "./ir-dynamic-instanceof.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,
