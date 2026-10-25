@@ -63,6 +63,12 @@ the coercion was lost. WAT diff: inline-off emits `call __map_get;
 extern.convert_any; call 0`, inline-on emitted `block (result anyref) …; call 0`.
 Fix: the console lowering now coerces `anyref`/`eqref` results with
 `coerceType(…, externref)` (= `extern.convert_any`) itself.
+Review note (2026-10-25, APPROVE WITH NITS): concrete `ref`/`ref_null` results
+inlined as a block into `console.log` are already valid on base and head —
+the `extern.convert_any` there comes from the call-site lowering, not the
+late repair. Separate mechanism, follow-up: `String(m.get(k))` and a template
+literal with an `anyref` operand are invalid on base and head even with
+inlining off (native-string ToString never coerces an `anyref` operand).
 
 Bytes (base origin/main 8eeccbeb88 vs head): 1,700 compile units
 (playground examples + `export function` sources in `tests/equivalence`) × gc
