@@ -14175,15 +14175,16 @@ function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "ob
 }
 
 /**
- * (#7106 Stage 4) The selector's `dynamicConditionalValueArms` shape: an arm
- * bound to a dynamic carrier and a primitive-literal arm. Each arm runs only in
- * its own branch (short-circuit), the literal is boxed into the carrier there,
- * and the join is bare dynamic. `null` = not this shape.
+ * (#7106 Stage 4, #7113) The selector's `dynamicConditionalValueArms` shape:
+ * exactly one arm is a primitive literal, the other is bound to the dynamic
+ * carrier (or is a nested conditional of this shape). The literal arm is boxed
+ * into the carrier inside its own branch and the join is bare dynamic. `null`
+ * = not this shape (the generic tail below joins two same-typed arms).
  */
 function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId | null {
-  const bindingIsDynamic = (arm: ts.Expression): boolean => {
-    let e = arm;
-    while (ts.isParenthesizedExpression(e)) e = e.expression;
+  const dynamicArm = (arm: ts.Expression): boolean => {
+    const e = peelParensExpr(arm);
+    if (ts.isConditionalExpression(e)) return isDynamicConditionalValueShape(e);
     if (!ts.isIdentifier(e)) return false;
     const binding = cx.scope.get(e.text);
     const logical =
@@ -14195,8 +14196,7 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
     return logical?.kind === "dynamic";
   };
   const isLiteral = (arm: ts.Expression): boolean => {
-    let e = arm;
-    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    const e = peelParensExpr(arm);
     return (
       ts.isStringLiteral(e) ||
       ts.isNoSubstitutionTemplateLiteral(e) ||
@@ -14205,36 +14205,64 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
       e.kind === ts.SyntaxKind.FalseKeyword
     );
   };
-  const trueDynamic = bindingIsDynamic(expr.whenTrue);
-  const falseDynamic = bindingIsDynamic(expr.whenFalse);
-  if (!trueDynamic && !falseDynamic) return null;
-  if ((!trueDynamic && !isLiteral(expr.whenTrue)) || (!falseDynamic && !isLiteral(expr.whenFalse))) return null;
+  const isDynamicConditionalValueShape = (e: ts.ConditionalExpression): boolean => {
+    const trueDynamic = dynamicArm(e.whenTrue);
+    const falseDynamic = dynamicArm(e.whenFalse);
+    return trueDynamic !== falseDynamic && isLiteral(trueDynamic ? e.whenFalse : e.whenTrue);
+  };
+  if (!isDynamicConditionalValueShape(expr)) return null;
+  return lowerConditionalBranches(
+    expr,
+    cx,
+    (arm, armCx) => {
+      const value = lowerExpr(arm, armCx, irDynamic());
+      const type = cx.builder.typeOf(value);
+      if (type.kind === "dynamic") return value;
+      const boxed = boxConcreteToDynamic(value, type, arm, armCx);
+      if (boxed === null) {
+        demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: conditional arm has no carrier in ${cx.funcName}`);
+      }
+      return boxed;
+    },
+    () => irDynamic(),
+  );
+}
+
+/**
+ * The condition and the two short-circuit arm bodies every conditional
+ * lowering shares: #1820 — only the selected arm may run, so each arm is
+ * lowered into its own body buffer (and its own scope copy) and the two are
+ * combined with `IrInstrIf`. `lowerArm` produces an arm's value and receives
+ * the true arm's type when it lowers the false arm; `resultType` picks the
+ * join's carrier from the two arm types (and may demote on a mismatch).
+ */
+function lowerConditionalBranches(
+  expr: ts.ConditionalExpression,
+  cx: LowerCtx,
+  lowerArm: (arm: ts.Expression, armCx: LowerCtx, trueType: IrType | undefined) => IrValueId,
+  resultType: (trueType: IrType, falseType: IrType) => IrType,
+): IrValueId {
   const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
+  // (#4512) §7.1.2 ToBoolean — dynamic lowers via `dyn.truthy`, object/string/ref
+  // via the shared coercion, a raw host externref returns null → demote. The
+  // coercion is emitted before the `if` so the condition evaluates once.
   const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
   if (cond === null) {
     demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
   }
-  const lowerArm = (arm: ts.Expression, armCx: LowerCtx): IrValueId => {
-    const value = lowerExpr(arm, armCx, irDynamic());
-    const type = cx.builder.typeOf(value);
-    if (type.kind === "dynamic") return value;
-    const boxed = boxConcreteToDynamic(value, type, arm, armCx);
-    if (boxed === null) {
-      demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: conditional arm has no carrier in ${cx.funcName}`);
-    }
-    return boxed;
-  };
   const branchScope = new Map(cx.scope);
   const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
   let whenTrue!: IrValueId;
   const thenBody = cx.builder.collectBodyInstrs(() => {
-    whenTrue = lowerArm(expr.whenTrue, thenCx);
+    whenTrue = lowerArm(expr.whenTrue, thenCx, undefined);
   });
+  const ttype = cx.builder.typeOf(whenTrue);
   const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
   let whenFalse!: IrValueId;
   const elseBody = cx.builder.collectBodyInstrs(() => {
-    whenFalse = lowerArm(expr.whenFalse, elseCx);
+    whenFalse = lowerArm(expr.whenFalse, elseCx, ttype);
   });
+  const joined = resultType(ttype, cx.builder.typeOf(whenFalse));
   joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
   return cx.builder.emitIfElse({
     cond,
@@ -14242,7 +14270,7 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
     thenValue: whenTrue,
     else: elseBody,
     elseValue: whenFalse,
-    resultType: irDynamic(),
+    resultType: joined,
   });
 }
 
@@ -14327,65 +14355,31 @@ function lowerConditional(expr: ts.ConditionalExpression, cx: LowerCtx, hint?: I
     }
   }
 
-  const rawCond = lowerExpr(expr.condition, cx, irVal({ kind: "i32" }));
-  // (#4512) §7.1.2 ToBoolean — dynamic lowers via `dyn.truthy`, object/string/ref
-  // via the shared coercion, a raw host externref returns null → demote. The
-  // coercion is emitted before the `if` so the condition evaluates once.
-  const cond = lowerToBooleanForCondition(rawCond, expr.condition, cx);
-  if (cond === null) {
-    demoteToLegacy("operand-coercion-unsupported", `ir/from-ast: ternary condition must be bool in ${cx.funcName}`);
-  }
-
-  // #1820 — short-circuit semantics: only the selected arm may run. A prior
-  // implementation lowered both arms eagerly and combined them with Wasm
-  // `select`, which evaluates BOTH operands. That is fine for pure arms but
-  // wrong when an arm has side effects or recurses (e.g.
-  // `n <= 1 ? 1 : n * fact(n - 1)` recursed at the base case → non-termination).
-  // Lower each arm into its own body buffer and combine with `IrInstrIf`, so
-  // the lowerer emits a structured `if`/`else` that runs exactly one arm.
-  const branchScope = new Map(cx.scope);
-  const thenCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
-  let whenTrue!: IrValueId;
-  const thenBody = cx.builder.collectBodyInstrs(() => {
-    whenTrue = lowerExpr(expr.whenTrue, thenCx, irVal({ kind: "f64" }));
-  });
-  const ttype = cx.builder.typeOf(whenTrue);
-
-  // Hint the false arm with the true arm's type so both land on the same
-  // carrier (matches the `lowerNullish` convention).
-  const elseCx: LowerCtx = { ...cx, scope: new Map(branchScope) };
-  let whenFalse!: IrValueId;
-  const elseBody = cx.builder.collectBodyInstrs(() => {
-    whenFalse = lowerExpr(expr.whenFalse, elseCx, ttype);
-  });
-  const ftype = cx.builder.typeOf(whenFalse);
-
-  const tVal = asVal(ttype);
-  const fVal = asVal(ftype);
-  if (!tVal || !fVal || tVal.kind !== fVal.kind) {
-    // (#3144) Non-scalar arms with the SAME IrType (string/class/extern/
-    // object/…) are lowerable: the `if` lowering derives the result carrier
-    // from the instr's IrType via `lowerIrTypeToValType`, so e.g.
-    // `cond ? "true" : "false"` types as string on either string backend.
-    // Only genuinely mismatched arm types still demote.
-    if (!irTypeEquals(ttype, ftype)) {
-      demoteToLegacy(
-        "operand-coercion-unsupported",
-        `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
-      );
-    }
-  }
-
-  joinScopeStringEncodingFacts(cx.scope, [thenCx.scope, elseCx.scope]);
-
-  return cx.builder.emitIfElse({
-    cond,
-    then: thenBody,
-    thenValue: whenTrue,
-    else: elseBody,
-    elseValue: whenFalse,
-    resultType: ttype,
-  });
+  // Hint the true arm f64 and the false arm with the true arm's type so both
+  // land on the same carrier (matches the `lowerNullish` convention).
+  return lowerConditionalBranches(
+    expr,
+    cx,
+    (arm, armCx, trueType) => lowerExpr(arm, armCx, trueType ?? irVal({ kind: "f64" })),
+    (ttype, ftype) => {
+      const tVal = asVal(ttype);
+      const fVal = asVal(ftype);
+      if (!tVal || !fVal || tVal.kind !== fVal.kind) {
+        // (#3144) Non-scalar arms with the SAME IrType (string/class/extern/
+        // object/…) are lowerable: the `if` lowering derives the result carrier
+        // from the instr's IrType via `lowerIrTypeToValType`, so e.g.
+        // `cond ? "true" : "false"` types as string on either string backend.
+        // Only genuinely mismatched arm types still demote.
+        if (!irTypeEquals(ttype, ftype)) {
+          demoteToLegacy(
+            "operand-coercion-unsupported",
+            `ir/from-ast: ternary branches have different types (${describeIrType(ttype)} vs ${describeIrType(ftype)}) in ${cx.funcName}`,
+          );
+        }
+      }
+      return ttype;
+    },
+  );
 }
 
 /**

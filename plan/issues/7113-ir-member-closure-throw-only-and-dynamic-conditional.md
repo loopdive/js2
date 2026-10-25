@@ -4,7 +4,7 @@ title: "IR: throw-only member closures (void plan) and dynamic-arm conditional v
 status: in-review
 sprint: current
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-25
 priority: high
 horizon: s
 feasibility: hard
@@ -54,24 +54,64 @@ joins a dynamic parameter with a string literal.
 ## Fix
 
 - **Selector** (`dynamicConditionalValueArms`): accepts a conditional value
-  when one arm is a dynamic parameter (of the subject or of a planned member
-  closure) and the other is either a primitive literal or a second such
-  parameter. The check runs before the #5092 route.
-- **from-ast** (`tryLowerDynamicConditionalValue`):
+  inside a planned member closure when exactly one arm is a primitive literal
+  and the other is one of the closure's dynamic parameters (or a nested
+  conditional of the same shape). Two dynamic arms are not this shape: the
+  generic conditional walk already admits them and the generic lowering joins
+  them. The check runs before the #5092 route.
+- **Sink** (`dynamicConditionalValuePosition`): the join is a bare dynamic, so
+  the shape is admitted only where the closure takes a bare dynamic as-is — a
+  `throw`, an expression statement, an untyped declaration initializer, a
+  reassignment of a dynamic parameter, or an arm of an outer conditional whose
+  sibling arm is itself dynamic. Anywhere else (`var n = 5; n = m ? m : 1;`,
+  a call argument, a return) the walk falls through to the #5092 route and is
+  refused at select with `operand-coercion-unsupported`, as before this shape
+  existed. This is the rule the top-level move-only scan applies to a dynamic
+  value in a concrete position; a planned closure does not run that scan, so
+  the shape carries the proof itself.
+- **from-ast** (`tryLowerDynamicConditionalValue`, over the shared
+  `lowerConditionalBranches`):
   - each arm is lowered in its own branch, so evaluation short-circuits;
-  - a literal arm is boxed into the carrier inside its branch;
+  - the literal arm is boxed into the carrier inside its branch;
   - the join is bare dynamic.
 
-  A top-level function that uses this shape stays protected by the move-only
-  scan, which refuses it (measured), so only planned member closures reach
-  the lowering today.
+  A top-level subject never takes the selector shape (its dynamic parameters
+  are not in the closure set, and the move-only scan refuses a dynamic/concrete
+  join there). The lowering also sees a top-level two-dynamic-arm conditional
+  the generic route admitted; it lowers it as the generic tail did (bytes
+  identical, measured).
+
+### Review round (2026-10-25)
+
+- **Throw of a concrete scalar in a planned closure is refused at select**
+  (`isPhase1ThrowStatement`, `throw-closure-concrete-scalar`). The void plan
+  is pre-existing and already reached throw-only bodies with an early
+  `return` (`function (m) { if (m) return; throw 42; }` withdrew after the
+  claim on the base too); routing `unresolvable` returns into it widened the
+  class to every throw-only body, so the gap is closed for planned closures
+  here. `lowerThrowStatement` refuses an f64/i32 value unless its
+  number-boundary projection is configured, and no lane that mints a plan
+  configures it (measured: standalone, wasi, gc native-first). The same
+  withdrawal for a **top-level** `throw 42` is pre-existing on every lane and
+  stays out of this slice: its refusal would move host-assisted gc bytes.
+- **A dynamic parameter joined with `undefined` / `null`** is refused at
+  select (`expr-conditional-dynamic-nullish-join`); the generic tail typed
+  the arms `dynamic` vs `dynamic<tag:1>` and withdrew (pre-existing on the
+  base for closures with an early return).
+- Still open, pre-existing on the base: a plain dynamic parameter read into
+  a typed slot inside a planned closure (`var s = "a"; s = m;`) withdraws
+  after the claim (`property-write-unsupported`); the closure runs no
+  move-only scan. Not widened by this slice.
 
 ## Acceptance
 
 - `tests/issue-7106-member-closure-shapes.test.ts`: a throw-only member
   closure, and a closure assigning `message = message === undefined ? '' : message`
   together with `value ? value : 7`, are both prepared `<module-init>` IR
-  bodies. Results match node.
+  bodies. Results match node. Refusal rows (`throw 42`, `throw 1` after a
+  conditional throw, the typed-slot sink, `m ? m : undefined`) are refused at
+  select with no post-claim withdrawal on standalone and gc native-first; the
+  host-assisted gc lane mints no plan (bytes identical to the base, measured).
 - Census on the Test262Error-stripped probe: the next `<module-init>` blocker
   is `var format = compareArray.format;`. That is a function-object member
   READ (`expr-ident-not-in-scope «compareArray»`), followed by `format(…)` on

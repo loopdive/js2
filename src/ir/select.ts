@@ -4782,6 +4782,19 @@ function isPhase1ThrowStatement(
   if (expressionTouchesScalarModuleBinding(stmt.expression) && obviousModuleValueFamily(stmt.expression) !== "string") {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
   }
+  // (#7113) `lowerThrowStatement` refuses an f64/i32 value unless its
+  // number-boundary projection is configured, and no lane that mints a member
+  // closure plan configures it (measured: `throw 42` in a planned closure
+  // withdraws on standalone, wasi and gc native-first alike). The void plan
+  // now reaches throw-only bodies, so refuse the concrete number/boolean value
+  // here instead of claiming it. A top-level subject keeps its pre-existing
+  // post-claim withdrawal: its refusal would move host-assisted gc bytes.
+  if (currentInPlannedMemberClosure) {
+    const family = obviousSelectorValueFamily(stmt.expression, scope);
+    if (family === "number" || family === "boolean" || expressionIsProvenNumber(stmt.expression)) {
+      return shapeNo("throw-closure-concrete-scalar", stmt.expression);
+    }
+  }
   return isPhase1Expr(stmt.expression, scope, localClasses);
 }
 
@@ -6420,32 +6433,87 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
 }
 
 /**
- * (#7106 Stage 4) A conditional VALUE whose one arm is a dynamic parameter
- * (of the subject or of a planned member closure) and whose other arm is a
- * primitive literal (or a second such parameter): each arm is lowered in its
- * own branch, the literal boxed into the carrier, and the join is dynamic —
- * assert.compareArray's `message === undefined ? '' : message`.
+ * (#7106 Stage 4, #7113) A conditional VALUE joining one of the planned member
+ * closure's dynamic parameters with a primitive literal — assert.compareArray's
+ * `message === undefined ? '' : message`. Exactly one arm is the literal; the
+ * other is the parameter (or a nested conditional of this same shape). Two
+ * dynamic arms are not this shape: the generic conditional walk already admits
+ * them, and from-ast's generic tail joins two dynamic arms as it stands.
+ *
+ * The join is a BARE dynamic, so the shape is admitted only where the closure
+ * takes a bare dynamic as-is (`dynamicConditionalValuePosition`); anywhere else
+ * (a typed slot `var n = 5; n = m ? m : 1;`, a call argument, a return) the walk
+ * falls through to the #5092 mixed-primitive route, which refuses it at select
+ * (`operand-coercion-unsupported`) exactly as before this shape existed. That
+ * is the same rule the top-level move-only scan applies to a dynamic value in a
+ * concrete position (`scanExpr(rhs, false)`); a planned closure does not run
+ * that scan, so the shape carries the sink proof itself.
+ *
+ * A top-level subject is never this shape: `currentClosureDynamicParamNames`
+ * is empty outside a planned closure, and the move-only scan's conditional
+ * case refuses a dynamic/concrete join there anyway.
  */
 function dynamicConditionalValueArms(expr: ts.ConditionalExpression): boolean {
-  if (!currentDynamicRuntimeBuildable) return false;
-  const dynamicArm = (arm: ts.Expression): boolean => {
-    const e = unwrapPhase1Parens(arm);
-    return ts.isIdentifier(e) && (currentDynamicParamNames.has(e.text) || currentClosureDynamicParamNames.has(e.text));
-  };
-  const literalArm = (arm: ts.Expression): boolean => {
-    const e = unwrapPhase1Parens(arm);
+  if (!currentDynamicRuntimeBuildable || !dynamicConditionalValueShape(expr)) return false;
+  return dynamicConditionalValuePosition(expr);
+}
+
+function dynamicConditionalValueShape(expr: ts.ConditionalExpression): boolean {
+  const trueDynamic = dynamicConditionalValueArm(expr.whenTrue);
+  const falseDynamic = dynamicConditionalValueArm(expr.whenFalse);
+  if (trueDynamic === falseDynamic) return false;
+  return isPrimitiveLiteralArm(trueDynamic ? expr.whenFalse : expr.whenTrue);
+}
+
+/** The dynamic arm: the closure's dynamic parameter, or a nested conditional of the shape. */
+function dynamicConditionalValueArm(arm: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(arm);
+  if (ts.isIdentifier(e)) return currentClosureDynamicParamNames.has(e.text);
+  return ts.isConditionalExpression(e) && dynamicConditionalValueShape(e);
+}
+
+function isPrimitiveLiteralArm(arm: ts.Expression): boolean {
+  const e = unwrapPhase1Parens(arm);
+  return (
+    ts.isStringLiteral(e) ||
+    ts.isNoSubstitutionTemplateLiteral(e) ||
+    ts.isNumericLiteral(e) ||
+    e.kind === ts.SyntaxKind.TrueKeyword ||
+    e.kind === ts.SyntaxKind.FalseKeyword
+  );
+}
+
+/**
+ * Does the position of `expr` take a bare dynamic value as-is? A `throw`, an
+ * expression statement, an untyped declaration initializer (the local becomes
+ * dynamic, as `var r = m` does), a reassignment of the closure's dynamic
+ * parameter (its mutable slot is dynamic), or an arm of an outer conditional
+ * whose sibling arm is itself a dynamic value (the outer joins on the carrier).
+ */
+function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolean {
+  let node: ts.Node = expr;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const parent = node.parent;
+  if (ts.isThrowStatement(parent) || ts.isExpressionStatement(parent)) return true;
+  if (ts.isVariableDeclaration(parent)) return parent.initializer === node && untypedIdentifierDeclaration(parent);
+  if (ts.isBinaryExpression(parent)) {
     return (
-      ts.isStringLiteral(e) ||
-      ts.isNoSubstitutionTemplateLiteral(e) ||
-      ts.isNumericLiteral(e) ||
-      e.kind === ts.SyntaxKind.TrueKeyword ||
-      e.kind === ts.SyntaxKind.FalseKeyword
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === node &&
+      ts.isIdentifier(parent.left) &&
+      currentClosureDynamicParamNames.has(parent.left.text)
     );
-  };
-  const trueDynamic = dynamicArm(expr.whenTrue);
-  const falseDynamic = dynamicArm(expr.whenFalse);
-  if (!trueDynamic && !falseDynamic) return false;
-  return (trueDynamic || literalArm(expr.whenTrue)) && (falseDynamic || literalArm(expr.whenFalse));
+  }
+  if (ts.isConditionalExpression(parent) && parent.condition !== node) {
+    const sibling = parent.whenTrue === node ? parent.whenFalse : parent.whenTrue;
+    return dynamicConditionalValueArm(sibling) || dynamicConditionalValueArms(parent);
+  }
+  return false;
+}
+
+/** An identifier declaration with neither a type annotation nor a JSDoc type. */
+function untypedIdentifierDeclaration(d: ts.VariableDeclaration): boolean {
+  return ts.isIdentifier(d.name) && !d.type && !ts.getJSDocType(d);
 }
 
 /**
@@ -6462,7 +6530,7 @@ function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
   // scan runs and tracks the binding) or a planned member closure with one.
   if (currentDynamicParamNames.size === 0 && currentClosureDynamicParamNames.size === 0) return false;
-  if (!ts.isIdentifier(d.name) || d.type || ts.getJSDocType(d)) return false;
+  if (!untypedIdentifierDeclaration(d)) return false;
   for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
     if (ts.isFunctionLike(cur)) return true;
     if (ts.isIterationStatement(cur, false)) return false;
@@ -7765,6 +7833,19 @@ function isPhase1ConditionExpr(
     return shapeNo("condition-module-extern-call", expr);
   }
   return isPhase1Expr(expr, scope, localClasses);
+}
+
+/** The condition and both arms of a conditional, each by its own Phase-1 walk. */
+function isPhase1ConditionalParts(
+  expr: ts.ConditionalExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  return (
+    isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
+    isPhase1Expr(expr.whenTrue, scope, localClasses) &&
+    isPhase1Expr(expr.whenFalse, scope, localClasses)
+  );
 }
 
 /** Numeric proof used by coercion-sensitive builtin slices (`~`, toFixed). */
@@ -10972,13 +11053,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (folded !== undefined) return isPhase1Expr(folded ? expr.whenTrue : expr.whenFalse, scope, localClasses);
     // (#7106 Stage 4) `message === undefined ? '' : message` — a dynamic
     // parameter arm and a literal arm join on the dynamic carrier.
-    if (dynamicConditionalValueArms(expr)) {
-      return (
-        isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
-        isPhase1Expr(expr.whenTrue, scope, localClasses) &&
-        isPhase1Expr(expr.whenFalse, scope, localClasses)
-      );
-    }
+    if (dynamicConditionalValueArms(expr)) return isPhase1ConditionalParts(expr, scope, localClasses);
     const classifyPrimitive = currentSelectionOptions?.classifyPrimitiveExpression;
     const classifyDeclared = currentSelectionOptions?.classifyDeclaredPrimitiveExpression;
     const truePrimitive = classifyPrimitive?.(expr.whenTrue);
@@ -11022,13 +11097,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // below — otherwise a mixed-arm conditional over, say, a local-class
       // logical operand reported `operand-coercion-unsupported` and the
       // precise bucket was lost.
-      if (
-        !isPhase1ConditionExpr(expr.condition, scope, localClasses) ||
-        !isPhase1Expr(expr.whenTrue, scope, localClasses) ||
-        !isPhase1Expr(expr.whenFalse, scope, localClasses)
-      ) {
-        return false;
-      }
+      if (!isPhase1ConditionalParts(expr, scope, localClasses)) return false;
       if (!exactMixedPrimitiveConditionalContextReady(expr)) {
         return capabilityNo("operand-coercion-unsupported", "expr-mixed-conditional-context", expr);
       }
@@ -11051,11 +11120,19 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
         return shapeNo("expr-module-value-conditional-mismatch", expr);
       }
     }
-    return (
-      isPhase1ConditionExpr(expr.condition, scope, localClasses) &&
-      isPhase1Expr(expr.whenTrue, scope, localClasses) &&
-      isPhase1Expr(expr.whenFalse, scope, localClasses)
-    );
+    // (#7113) A planned closure's dynamic parameter joined with `undefined` /
+    // `null`: the generic tail types the arms `dynamic` vs `dynamic<tag:1>`
+    // (or refuses the bare `null`) and withdraws after the claim.
+    if (dynamicConditionalValueArm(expr.whenTrue) !== dynamicConditionalValueArm(expr.whenFalse)) {
+      const other = unwrapPhase1Parens(dynamicConditionalValueArm(expr.whenTrue) ? expr.whenFalse : expr.whenTrue);
+      if (
+        other.kind === ts.SyntaxKind.NullKeyword ||
+        (ts.isIdentifier(other) && other.text === "undefined" && !scope.has("undefined"))
+      ) {
+        return shapeNo("expr-conditional-dynamic-nullish-join", expr);
+      }
+    }
+    return isPhase1ConditionalParts(expr, scope, localClasses);
   }
   if (ts.isCallExpression(expr)) {
     // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
