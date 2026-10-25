@@ -99,6 +99,7 @@ import {
   isNativeGeneratorCandidate,
   registerNativeGenerator,
 } from "./generators-native.js"; // (#2571) native method-generator lowering
+import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import {
   cacheStringLiterals,
   extractConstantDefault,
@@ -3543,6 +3544,8 @@ function compileClassBodiesInner(
       ) {
         emitAsyncGenerator(ctx, fctx, member);
         fctx.body.push({ op: "return" });
+      } else if (isGeneratorMethod && member.body && refuseEagerGeneratorBuffer(ctx, fctx, member)) {
+        // (#7010) No host-free lowering for this generator method — refused.
       } else if (isGeneratorMethod && member.body) {
         // Generator method: eagerly evaluate body, collect yields into a buffer,
         // then wrap with __create_generator to return a Generator-like object.

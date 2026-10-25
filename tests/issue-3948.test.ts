@@ -239,16 +239,20 @@ describe("#3948/#3949 object-literal method parameter defaults (non-generator)",
 // ---------------------------------------------------------------------------
 
 describe("#3948 documented residuals", () => {
-  it("keeps `?`-optional generator methods on the host path (value-rep gap)", async () => {
+  it("refuses `?`-optional generator methods (value-rep gap; no host buffer, #7010)", async () => {
     // With the argc registration in place the admission gate COULD accept this,
     // but `a?: number` lowers to a bare f64 with no `undefined` inhabitant, so
     // the missing-arg branch has nothing to bind and the body reads 0, not 42.
     // Admitting it would trade a leak for a wrong value. Measured, not inherited.
-    const names = await standaloneImportNames(
+    // (#7010) The non-native shape is a compile error, not a host-import leak.
+    const r = await compile(
       `const o = { *m(a?: number) { yield a === undefined ? 42 : a; } };
        export function test(): number { return o.m().next().value as number; }`,
+      { fileName: "t.ts", target: "standalone" },
     );
-    expect(names).toMatch(HOST_GEN_IMPORTS);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/#7010/);
+    expect((r.imports ?? []).map((i) => i.name).join(",")).not.toMatch(HOST_GEN_IMPORTS);
   });
 
   it("leaves object literals without defaults byte-identical in shape (no imports)", async () => {
