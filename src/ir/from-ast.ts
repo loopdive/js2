@@ -301,7 +301,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
-import { isAmbientIntrinsicName } from "../shared/ambient-intrinsics.js";
+import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -5206,8 +5206,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
       }
     }
     // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
-    // global object (selector-admitted on the host-free lanes only).
-    if (!p && isAmbientIntrinsicName(expr.text) && cx.resolver?.isLibOnlyBinding?.(expr) === true) {
+    // global object; the selector's predicate, a refused use demotes below.
+    if (!p && isAmbientIntrinsicValueUse(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true)) {
       const realm = cx.builder.emitDynGlobalObject();
       const key = cx.builder.emitBox(cx.builder.emitStringConst(expr.text), irDynamic(JS_TAG_IDS.String));
       return cx.builder.emitDynMemberGet(realm, key);
