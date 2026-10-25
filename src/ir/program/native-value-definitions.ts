@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import type { IrInstr, IrValueId } from "../core/nodes.js";
-import type { IrUnitId } from "../identity.js";
+import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type {
   NativeStringValueBuffer,
   NativeStringValueDemands,

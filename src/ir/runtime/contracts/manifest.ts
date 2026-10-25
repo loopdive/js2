@@ -436,6 +436,10 @@ export const NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type NumberRemainderRuntimeProviderId = (typeof NUMBER_REMAINDER_RUNTIME_PROVIDER_IDS)[number];
 
+/** (#7106) The one `Number(v)` conversion provider: host-free, built from legacy's emitter. */
+export const NUMBER_CONVERSION_RUNTIME_PROVIDER_IDS = Object.freeze(["native.js.number.from-value"] as const);
+export type NumberConversionRuntimeProviderId = (typeof NUMBER_CONVERSION_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -456,6 +460,7 @@ export type RuntimeProviderId =
   | NativeAsyncCallableRuntimeProviderId
   | OrdinaryObjectRuntimeProviderId
   | NumberRemainderRuntimeProviderId
+  | NumberConversionRuntimeProviderId
   | VectorCallableRuntimeProviderId
   | AsyncRuntimeProviderId;
 

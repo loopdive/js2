@@ -330,6 +330,7 @@ export function projectIrIntegrationLoweringPlans(
     readonly fnctorParameterPreselection?: IrIntegrationLoweringPlans["fnctorParameterPreselection"];
     readonly fnctorNativeStringBoundaries?: IrIntegrationLoweringPlans["fnctorNativeStringBoundaries"];
     readonly fnctorParameterPreselectionIsCurrent?: IrIntegrationLoweringPlans["fnctorParameterPreselectionIsCurrent"];
+    readonly preparedNumberCall?: IrIntegrationLoweringPlans["preparedNumberCall"];
   } & Pick<
     IrIntegrationLoweringPlans,
     | "importedCalls"
@@ -467,6 +468,7 @@ export function projectIrIntegrationLoweringPlans(
       ? { fnctorParameterPreselectionIsCurrent: plan.fnctorParameterPreselectionIsCurrent }
       : {}),
     ...(plan.classShapesById ? { classShapesById: plan.classShapesById } : {}),
+    ...(plan.preparedNumberCall ? { preparedNumberCall: plan.preparedNumberCall } : {}),
     ownerProjection,
     ownerUnitIdByLegacyName,
     directCalls,

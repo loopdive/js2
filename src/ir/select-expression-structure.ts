@@ -65,22 +65,6 @@ export function effectiveIrReturnTypeNode(
   return fn.type ?? ts.getJSDocReturnType(fn);
 }
 
-export interface FunctionObjectTypeEvidence {
-  readonly parameterType: (parameter: ts.ParameterDeclaration) => ts.TypeNode | undefined;
-  readonly returnType: (declaration: ts.FunctionDeclaration) => ts.TypeNode | undefined;
-}
-
-/** Preclaim evidence cannot depend on a target acquiring a later IR claim. */
-export function functionObjectHasTypeEvidence(
-  declaration: ts.FunctionDeclaration,
-  evidence: FunctionObjectTypeEvidence,
-): boolean {
-  return (
-    declaration.parameters.every((parameter) => evidence.parameterType(parameter) !== undefined) &&
-    evidence.returnType(declaration) !== undefined
-  );
-}
-
 function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
@@ -95,28 +79,98 @@ function resolveFunctionObjectReceiver(
   const use = access.parent;
   if (
     !(ts.isCallExpression(use) && use.expression === access) &&
-    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) &&
+    !isFunctionObjectChainedWrite(access)
   )
     return;
   return resolver?.resolveTopLevelFunctionValue(node);
 }
 
-/** Without evidence this is only the existing stable receiver-identity test. */
+/**
+ * (#7106 census arm 3) `F.p.x = v` — the function object's `F.p` member READ is
+ * the receiver of a member WRITE (`Test262Error.prototype.toString = …`). `F`
+ * is still only a dynamic receiver: `F.p` is a dynamic member get on the boxed
+ * function object, and the write a dynamic member set on its result.
+ */
+export function isFunctionObjectChainedWrite(
+  access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): boolean {
+  const store = access.parent;
+  return (
+    ts.isPropertyAccessExpression(access) &&
+    ts.isPropertyAccessExpression(store) &&
+    ts.isIdentifier(store.name) &&
+    store.expression === access &&
+    store.questionDotToken === undefined &&
+    ts.isBinaryExpression(store.parent) &&
+    store.parent.left === store &&
+    store.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  );
+}
+
+/**
+ * A stable top-level function used ONLY as the receiver of a member call or
+ * member write. (#7108-successor arm, #7106 census arm 4) No signature
+ * evidence is required: such a use lowers to the canonical function object
+ * boxed into the dynamic carrier (`objectReceiver` plan), and the planner
+ * mints that plan with an opaque signature when the target is unannotated —
+ * the signature only types the accessor's externref result before the box.
+ */
 export function isFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
-  evidence?: FunctionObjectTypeEvidence,
 ): boolean {
-  const target = resolveFunctionObjectReceiver(node, resolver);
+  return resolveFunctionObjectReceiver(node, resolver) !== undefined;
+}
+
+/**
+ * (#7106 census arm 3) `F.x = G` / `F[k] = G`: a stable top-level function `G`
+ * stored on a function-object receiver `F`. The value is boxed into the dynamic
+ * carrier and written through the receiver's dynamic member write — like a
+ * receiver-only use it never reads `G`'s signature, so it needs no evidence.
+ */
+export function isFunctionObjectStoredValue(
+  node: ts.Identifier,
+  resolver: IrImportedFunctionResolver | undefined,
+): boolean {
+  const root = functionObjectStoreRoot(node);
   return (
-    target !== undefined && (evidence === undefined || functionObjectHasTypeEvidence(target.declaration, evidence))
+    root !== undefined &&
+    resolveFunctionObjectReceiver(root, resolver) !== undefined &&
+    resolver?.resolveTopLevelFunctionValue(node) !== undefined
   );
+}
+
+/**
+ * The receiver identifier `F` when `node` is the stored value of `F.x = node`,
+ * `F[k] = node` or the chained `F.p.x = node` (see
+ * {@link isFunctionObjectChainedWrite}); otherwise `undefined`. Syntax only —
+ * the selector and the planner each apply their own resolver to `F` and `node`.
+ */
+export function functionObjectStoreRoot(node: ts.Identifier): ts.Identifier | undefined {
+  const assignment = node.parent;
+  if (
+    !ts.isBinaryExpression(assignment) ||
+    assignment.right !== node ||
+    assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  )
+    return undefined;
+  const store = assignment.left;
+  if (!(ts.isPropertyAccessExpression(store) || ts.isElementAccessExpression(store)) || store.questionDotToken)
+    return undefined;
+  if (ts.isIdentifier(store.expression)) return store.expression;
+  const chained = store.expression;
+  return ts.isPropertyAccessExpression(chained) &&
+    ts.isIdentifier(chained.expression) &&
+    chained.questionDotToken === undefined &&
+    isFunctionObjectChainedWrite(chained)
+    ? chained.expression
+    : undefined;
 }
 
 export function functionObjectMemberCallIsBuildable(
   expr: ts.CallExpression,
   resolver: IrImportedFunctionResolver | undefined,
-  evidence: FunctionObjectTypeEvidence,
   isExpressionBuildable: (expression: ts.Expression) => boolean,
 ): boolean | undefined {
   const functionAccess = expr.expression;
@@ -126,7 +180,6 @@ export function functionObjectMemberCallIsBuildable(
       ? resolveFunctionObjectReceiver(functionAccess.expression, resolver)
       : undefined;
   if (target && (ts.isPropertyAccessExpression(functionAccess) || ts.isElementAccessExpression(functionAccess))) {
-    if (!functionObjectHasTypeEvidence(target.declaration, evidence)) return false;
     if (functionAccess.questionDotToken || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement))
       return false;
     if (ts.isElementAccessExpression(functionAccess) && !isExpressionBuildable(functionAccess.argumentExpression))
@@ -252,4 +305,49 @@ export function superMethodCallIsBuildable(
     return true;
   }
   return undefined;
+}
+
+/**
+ * (#7129) The primitive kind of the ONE literal every value `return` of
+ * `body` yields (`return 42`, `return -1`, `return 'A'`, the same literal on
+ * several paths), else `null`. The checker widens a single return literal to
+ * `number` / `string` for an unannotated signature, so the kind equals the
+ * legacy-registered slot. Two distinct literals (`return 1` and `return 2`)
+ * infer the union `1 | 2`, which legacy's class descriptor does not register,
+ * so they answer `null` here. A bare `return;` or any other expression (a
+ * call, an identifier, a template with substitutions) answers `null`. Boolean
+ * literals are deliberately excluded: the class-method slot legacy registers
+ * for an inferred `boolean` does not match the IR's bool signature (typeIdx
+ * parity mismatch, measured 2026-10-22), so such a method stays legacy.
+ * Returns inside nested functions and classes belong to those, not to `body`.
+ */
+export function uniformLiteralReturnKind(body: ts.Block): "f64" | "string" | null {
+  let kind: "f64" | "string" | null = null;
+  let value: number | string | undefined;
+  let ok = true;
+  const literal = (expr: ts.Expression): { kind: "f64" | "string"; value: number | string } | null => {
+    while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+    if (ts.isPrefixUnaryExpression(expr)) {
+      if (!ts.isNumericLiteral(expr.operand)) return null;
+      if (expr.operator === ts.SyntaxKind.MinusToken) return { kind: "f64", value: -Number(expr.operand.text) };
+      return expr.operator === ts.SyntaxKind.PlusToken ? { kind: "f64", value: Number(expr.operand.text) } : null;
+    }
+    if (ts.isNumericLiteral(expr)) return { kind: "f64", value: Number(expr.text) };
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr))
+      return { kind: "string", value: expr.text };
+    return null;
+  };
+  const visit = (node: ts.Node): void => {
+    if (!ok) return;
+    if (ts.isReturnStatement(node)) {
+      const next = node.expression ? literal(node.expression) : null;
+      if (next === null || (kind !== null && (kind !== next.kind || value !== next.value))) ok = false;
+      else ({ kind, value } = next);
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return ok ? kind : null;
 }

@@ -31,7 +31,9 @@ export type IrBackendTargetCapability =
   | "native-arguments-length"
   | "native-current-this"
   | "native-own-property-test"
-  | "native-own-property-descriptor";
+  | "host-dynamic-method-call"
+  | "native-own-property-descriptor"
+  | "native-number-conversion";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -126,6 +128,21 @@ export function supportsIrBackendTargetCapability(
     case "native-own-property-descriptor":
       // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
       // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "host-dynamic-method-call":
+      // (#7117) `recv.m(…)` on a dynamic receiver through the generic
+      // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
+      // the real JS call; the native object runtime dispatches open-`$Object`
+      // methods only and answers `undefined` for primitive / vec / Map / …
+      // receivers, where legacy dispatches by brand.
+      return profile.backend === "wasmgc" && profile.allowHostImports;
+    case "native-number-conversion":
+      // (#7106 module-init lever B) `Number(v)` through the host-free
+      // `js.number.from-value` provider (legacy's emitter over a template).
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&
