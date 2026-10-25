@@ -7834,6 +7834,16 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
   }
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding.
+  const bindingLogicalType =
+    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
+  if (bindingLogicalType?.kind === "dynamic") {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
+    }
+    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx));
+  }
 
   // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /
   // `__propertyIsEnumerable(obj, name)`: both operands as carriers, then the

@@ -6443,6 +6443,41 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
   return true;
 }
 
+// (#7106 Stage 4) The planned member closure's dynamic parameter names
+// (empty outside a planned member closure, or when its plan has none).
+let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+
+/**
+ * (#7106 Stage 4) `func()` — a bare call through one of the planned member
+ * closure's dynamic parameters (assert.throws' `func()`), lowered through the
+ * native IsCallable + `__apply_closure` runtime with an undefined receiver.
+ * The shared runtime does not restore `__current_this` when the callee throws
+ * inside a try (legacy does), which is observable only by a caller that reads
+ * its own `this` afterwards — a planned member closure never does (its plan
+ * refuses `this`).
+ *
+ * The arm's lane is the plan's lane, with no capability check of its own:
+ * `currentClosureDynamicParamNames` is non-empty only inside a closure that
+ * `planMemberClosure` (function-member-closure-planning.ts) minted, and that
+ * plan already requires non-fast, native-first, standalone|wasi and the
+ * externref dynamic carrier. A top-level subject is never admitted because
+ * this set is empty outside a planned closure — and independently, its
+ * Phase-1 shape check already refuses `func()` at `expr-local-call-target`
+ * (`call-resolution-unsupported`) before the move-only scan runs.
+ *
+ * The match is by identifier text, so a catch binding that shadows the
+ * parameter (`catch (func) { func(); }`) also takes the arm; that is sound,
+ * because the catch binding is itself the dynamic carrier on these lanes
+ * (`catchIsCarrier`). `var`/`let` shadows are refused at select; nested
+ * functions are refused by the plan.
+ */
+function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
+  if (!currentClosureDynamicParamNames.has(callee.text)) return false;
+  return currentDynamicRuntimeBuildable;
+}
+
 /**
  * (#7106 Stage 4) `var x;` — an untyped function-local `var` with no
  * initializer is the dynamic carrier's `undefined` until assigned (legacy
@@ -6452,13 +6487,11 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
  * re-executed `var x;` keeps its value, while the IR initializes at the
  * declaration point.
  */
-let currentMemberClosureHasDynamicParams = false;
-
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
   // scan runs and tracks the binding) or a planned member closure with one.
-  if (currentDynamicParamNames.size === 0 && !currentMemberClosureHasDynamicParams) return false;
+  if (currentDynamicParamNames.size === 0 && currentClosureDynamicParamNames.size === 0) return false;
   if (!ts.isIdentifier(d.name) || d.type || ts.getJSDocType(d)) return false;
   for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
     if (ts.isFunctionLike(cur)) return true;
@@ -6937,8 +6970,13 @@ function withFunctionMemberClosureState<T>(
   // (#7106 Stage 4) The closure's own function-local `var` proof — the
   // subject's (module-init's) proof never covers the closure body.
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
-  const outerClosureDynamic = currentMemberClosureHasDynamicParams;
-  currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
+  const outerClosureDynamicNames = currentClosureDynamicParamNames;
+  currentClosureDynamicParamNames = new Set(
+    [...plan.dynamicParameterIndices].flatMap((index) => {
+      const { name } = plan.expression.parameters[index]!;
+      return ts.isIdentifier(name) ? [name.text] : [];
+    }),
+  );
   currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
     plan.expression,
     new Set(plan.expression.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : []))),
@@ -6986,7 +7024,7 @@ function withFunctionMemberClosureState<T>(
     ] = outer;
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
-    currentMemberClosureHasDynamicParams = outerClosureDynamic;
+    currentClosureDynamicParamNames = outerClosureDynamicNames;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;
   }
@@ -11594,6 +11632,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const calleeName = expr.expression.text;
     const actualArity = staticCallArgumentCount(expr.arguments);
     let localCallableArity: CallableArityRange | undefined;
+    if (scope.has(calleeName) && dynamicValueCallTarget(expr)) {
+      return expr.arguments.every((argument) => isPhase1Expr(argument, scope, localClasses));
+    }
     if (scope.has(calleeName)) {
       localCallableArity = knownCallableArity(expr.expression, scope);
       if (localCallableArity === undefined) {
