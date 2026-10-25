@@ -47,6 +47,8 @@ loc-budget-allow:
   - src/codegen/ir-prepared-free-functions.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
+import-cycles-allow:
+  - backend->ir: 118 # 2026-10-24 (#3527): native frame materializer adds planner, plan comparison and attachment authentication; SCC counts do not grow.
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
   - src/codegen/async-ir-planning.ts
@@ -2266,6 +2268,136 @@ quality or correctness defect. Source and focused test TypeScript checks pass.
 The legacy reachability check remains preservation-only: its strict graph is
 open, so this repair does not certify retirement.
 
+## Native prepared-frame carrier repair — 2026-10-24
+
+A no-import module using the real queue and Promise settlement builders exposed
+invalid Wasm in the native prepared-frame engine: entry supplied four constructor
+operands for the canonical five-field Promise, and resume read a non-defaultable
+Promise scratch local outside the branch that initialized it.
+
+Implementation: share the existing carrier schema between native declarations,
+frame preflight and construction. Reject missing, mistyped or immutable fields
+before publishing frame bodies. Initialize the scratch reference before dispatch;
+classification replaces it before installing any pending reaction. Reuse the
+existing default-value, queue, settlement and reservation builders. No new host
+imports or size-budget allowances.
+
+Validation on isolated main ff27bb4de9c8162535dc663043facc1b7d3c3b12 plus this
+repair: 77/77 tests across native frame execution (9), existing prepared-frame
+runtime (21), and native Promise reservations (47). The six execution cases use
+zero-import Wasm: plain-value identity, queue growth with twelve independent
+frames, fulfilled/rejected native inputs, and pending fulfillment/rejection.
+Three negative cases reject malformed carrier layouts before entry publication.
+The previous engine fails Wasm validation (five constructor operands required,
+four supplied); all twelve emitted host fixtures are byte-identical between base
+and candidate. Source/focused-test typechecks and targeted lint pass.
+
+This repairs the runtime kernel. Whole-program standalone frame admission,
+thenable assimilation, true Linear/WASI integration and the original R7 retirement
+requirements remain open; these kernel tests do not claim source-level coverage.
+
+## Native frame planning design — 2026-10-24
+
+Move scalar/layout checks, state-operation validation and supplementary ABI
+machinery into shared planning modules. Keep the existing host entry point and
+its exact imports/callback publication. Add a native entry point using the same
+state validator, with symbolic native Promise storage and explicit native bridge
+requirements derived from canonical selected providers. Native helpers are
+requirements, not fabricated callable ABI entries or physical function indices.
+
+Acceptance: original and decoded source-produced native async plans produce
+identical layouts, call demands and conversion requirements without host imports
+or callback exports; missing or mismatched providers/owners/signatures reject.
+Existing host plans and emitted binaries must remain identical. No new resource
+admission exception, guessed bindings, duplicate state parser or budget grant.
+This producer is a prerequisite for checked resource materialization; the complete
+native Promise composition and source-execution obligations remain required.
+
+Native planning validation: 12/12 source-plan tests cover two awaits, live spills,
+bare returns, original/decoded equality, exact selected provider ownership and
+rejection of foreign target/runtime/callback requests. Together with existing
+host planning, frame runtime, whole-program async consumer and dynamic async
+regressions, 76/76 tests pass. A separate base/candidate checkout comparison
+observes 28 identical host planning outcomes and 11 byte-identical host binaries.
+Source/focused-test TS7, lint, formatting, layering and size checks pass.
+
+The native plan is descriptive and has no imports, callback exports or physical
+function indices. It requests native number box/unbox and canonical undefined
+bridges from authenticated provider selection, with symbolic native Promise
+result storage. The next required join is resource materialization plus complete
+carrier/dispatch/construction inventory; this change does not enable whole-program
+native async admission or claim source execution, Linear/WASI completion or
+retirement. The full original acceptance scope remains unchanged.
+
+### Native frame materialization implementation plan (2026-10-24)
+
+Bind the native frame recipe in backend/wasmgc/resources to actual same-ledger
+Promise, reaction, queue, settlement and value bridge reservations. Reuse a shared
+layout/machinery allocator with the host resource path; preserve host publication.
+Native filling must validate the retained source/runtime, physical ownership and
+complete parent acceptance before detached body construction and publication.
+No public whole-program admission is enabled by a resource recipe alone.
+
+Correctness: execute genuine original and decoded source-owned async functions
+with two awaits and live spill values, using shared native number, settlement and
+queue builders without host imports or substitute helper bodies. Reject foreign
+ledger dependencies, wrong bridge signatures and changed layouts before filling.
+Quality: share allocation logic, keep native adaptation separate from scheduling
+semantics, and retain complete-program inventory/retirement obligations.
+
+Materialization validation: 96/96 tests across seven native/host async suites;
+after final association-check extraction, 20/20 native execution/runtime tests
+pass. Genuine original and decoded source functions execute two awaits and a
+live spill through native frame materialization, preserving -0, NaN, infinities,
+fractional values and queue growth. The source-frame integration emits no host
+imports; original/decoded live-spill binaries are identical. Eleven host binaries
+are byte-identical to the parent commit. Source and focused-test TS7, lint,
+layering and size checks pass.
+
+This is kernel integration using the real shared queue, settlement and number
+builders, not public whole-program admission. Complete native resource inventory,
+thenable/return-resolution composition, broader source coverage, true Linear/WASI,
+full conformance/performance and reviewed retirement remain open. The reservation
+adapter requires the parent's complete acceptance callback; tests explicitly use
+a narrower kernel assertion and do not issue whole-program authority.
+
+### Native frame PromiseResolve integration plan (2026-10-24)
+
+Prepared native frames currently fulfill terminal values directly and omit the
+native await classifier's thenable-adoption binding. Wire the existing native
+Promise resolver through the frame contract and ledger-checked materializer as
+a required dependency. Native return resolves through this function; non-Promise
+await operands use a fresh handled pending Promise and the same resolver. Keep
+host code generation byte-identical, and retain pre/post-emission dependency
+identity/signature checks. Do not add an optional silent plain-value fallback.
+
+Reuse existing resolution, thenable lookup/job, resolving-pair, settlement,
+argument-vector and microtask builders in a bounded executable test kernel.
+Exercise native Promise adoption, thenable job ordering, rejection and nested
+adoption, plus missing/foreign/wrong-signature resolver rejection before frame
+publication. The test kernel is not whole-program source admission. Real public
+inventory composition, Linear/WASI and retirement remain required separately.
+
+Resolution validation: 87/87 tests across seven native/host async suites, followed
+by 22/22 resolver tests after adding two queue-interleaving cases. The observer
+runs in the real native queue: a thenable-return result is fulfilled before the
+observer, while an await result remains pending until its later continuation.
+Coverage includes nested thenables, throwing getters (exactly one read), abrupt
+then methods, first-call-wins before pending adoption, rejection identity,
+indirect self-resolution TypeError, and missing/foreign/wrong-signature resolver
+rejection before publication. All emitted kernel modules have zero imports.
+Eleven host binaries are byte-identical between parent e9dd538daf94dcb6997f46f113210a9d069ffef5
+and the candidate using the existing whole-program host async test harness.
+Source/focused-test TS7, targeted lint and formatting pass. Fresh-context
+adversarial review found no actionable defects; its ordering coverage limitation
+was closed by the two observer cases and re-reviewed without findings.
+
+This binds the production resolver at the prepared-frame seam and tests it using
+real resolution/job/vector/settlement builders with a finite explicit carrier
+inventory. It does not establish full public native inventory composition,
+source admission, successful captured-accessor then dispatch, own-Promise then
+shadowing, Linear/WASI support or legacy retirement. Those original obligations
+remain open.
 ### Async representation scope repair plan (2026-10-24)
 
 The full native async example currently crashes during ordinary consumer planning
@@ -2327,3 +2459,53 @@ test files pass TypeScript 7. The reviewer also verified 1,985 archived
 source/fixture/helper blobs against the base with zero mismatches and accepted
 the inventory test correction. No new production allowances or acceptance
 exceptions were introduced.
+
+
+### Integrated native async delivery and boundary inventory (2026-10-24)
+
+Combine the carrier repair, shared planner, source-owned materializer, required
+PromiseResolve binding and semantic/execution scope repair on one unpublished
+integration branch. Existing PR heads and holds remain unchanged. CI on the
+scope-only PR exposed two unclassified new modules; the combined branch exposed
+nine more from the preceding frame changes. Classify all eleven exact modules
+in their existing active layers after inspecting their imports. Do not change
+allowed edges, weaken cleanliness rules, lower floors or claim architectural
+completion. Run the boundary inventory against current main, combined runtime
+regressions and a fresh base/candidate host binary comparison before publishing
+this complete integration diff ready for review.
+
+The first classified inventory then exposed a real forbidden type-only edge:
+native-value-definitions imported IrUnitId through the legacy mixed identity
+facade. Point that import directly at the canonical shared identity contract.
+No exemption or allowed-edge change is introduced.
+
+The import-cycle ratchet separately measures directory-edge counts, not just
+actual strongly connected components. The native materializer adds three
+backend-to-IR dependencies: its planner, canonical data comparison and runtime
+attachment authentication. All three are permitted by the layer policy and
+needed to retain rejection before publication. Largest SCC and SCC count do not
+grow. Record the exact 115-to-118 directory-edge allowance on this owning issue;
+leave the global baseline and architecture edge rules unchanged.
+
+Integrated verification: 219 distinct tests across 14 suites pass (103 across
+8 frame/scope suites, 38 across 3 plan/inventory/scope suites, 92 across 4 object
+planning suites; the 14 scope tests occur in both first groups). Source TS7 and
+all six changed test files typecheck; full repository lint/format checks pass.
+All eleven host fixture binaries remain byte-identical to upstream main
+7371eb505b365e49815f1ddc09afed6c52372540 after overlaying the complete production
+diff. The boundary inventory validates all 1,991 modules and explicitly reports
+architecture incomplete. Fresh read-only review found no remaining integration
+or policy-classification defect; the issue-scoped directory-edge grant is
+recognized by the actual gate. LOC/function, dialect/kind, host-import, layering,
+fallback, stack, boxing and rollback checks pass. Tests and gates do not establish
+whole-program retirement: the reachability command exits successfully only under
+the preservation contract (12/12 core-node observations, 10/10 full/cut core types,
+6/6 full/cut witnesses); two unknown dynamic import targets leave the strict graph
+OPEN and deletion NOT CERTIFIED.
+
+Local gate execution notes: the initial tsx CLI invocations were denied IPC
+socket creation; the same scripts pass through node --import tsx. Two unchanged
+gates misdecode spaces in this checkout path; exact source/script copies under a
+space-free temporary directory pass. Initial failure logs are retained locally.
+No baseline, test expectation, CI workflow or global architecture rule was
+weakened for these environment failures.
