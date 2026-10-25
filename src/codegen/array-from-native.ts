@@ -500,7 +500,6 @@ function buildArrayLikeBranch(
  * missing so the caller keeps its existing routing.
  */
 export function ensureNativeArrayFrom(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const existing = ctx.funcMap.get("__array_from_native");
   if (existing !== undefined) return existing;
   const d = prepareFromDeps(ctx);
@@ -736,7 +735,6 @@ export function ensureNativeArrayFrom(ctx: CodegenContext): number | undefined {
  * is the `$ObjVec` holding the call's arguments.
  */
 export function ensureNativeArrayOf(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   const existing = ctx.funcMap.get("__array_of_native");
   if (existing !== undefined) return existing;
   const d = prepareFromDeps(ctx);

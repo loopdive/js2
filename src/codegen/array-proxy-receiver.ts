@@ -77,7 +77,7 @@ export function compileProxyReceiverArrayProtoCall(
   receiverArg: ts.Expression,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone || !PROXY_RECEIVER_GENERIC_METHODS.has(methodName)) return undefined;
+  if (!PROXY_RECEIVER_GENERIC_METHODS.has(methodName)) return undefined;
   if (args.some((arg) => ts.isSpreadElement(arg))) return undefined;
   if (!tracesToProxyValue(ctx, receiverArg)) return undefined;
   return emitGenericHelperCall(ctx, fctx, methodName, receiverArg, args);
@@ -96,7 +96,7 @@ export function compileArrayLikeCopyWithinCall(
   receiverArg: ts.Expression,
   args: readonly ts.Expression[],
 ): ValType | undefined {
-  if (!ctx.standalone || args.some((arg) => ts.isSpreadElement(arg))) return undefined;
+  if (args.some((arg) => ts.isSpreadElement(arg))) return undefined;
   return emitGenericHelperCall(ctx, fctx, "copyWithin", receiverArg, args);
 }
 

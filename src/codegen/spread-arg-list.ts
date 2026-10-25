@@ -140,16 +140,6 @@ type Slot =
   /** An opaque (host / iterable) spread: `lenLocal` elements read by index. */
   | { kind: "extern"; srcLocal: number; lenLocal: number };
 
-/**
- * True for a TUPLE struct value (`_0`, `_1`, …) — how an inline array literal
- * lowers in a value context. Such a source needs the static-arity expansion
- * arm; the vec readers cannot see its elements at all.
- */
-export function isTupleStructType(ctx: CodegenContext, type: ValType | undefined): boolean {
-  if (!type || (type.kind !== "ref" && type.kind !== "ref_null")) return false;
-  return tupleFieldTypes(ctx, type.typeIdx) !== null;
-}
-
 /** Field types of a tuple struct (`_0`, `_1`, …), or null when not a tuple. */
 function tupleFieldTypes(ctx: CodegenContext, typeIdx: number): ValType[] | null {
   const def = ctx.mod.types[typeIdx];

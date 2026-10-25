@@ -55,7 +55,6 @@ const f64 = (value: number): Instr => ({ op: "f64.const", value });
 
 /** Reserve (or fetch) the helper. `undefined` outside standalone or without the substrate. */
 export function ensureNativeArrayCopyWithin(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get(HELPER);
   if (existing !== undefined) return existing;
   const deps = resolveSliceDeps(ctx);

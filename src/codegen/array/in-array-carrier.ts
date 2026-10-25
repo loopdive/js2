@@ -166,10 +166,9 @@ function emitConstantIndexIn(
   deps: ArrayCarrierInDependencies,
 ): InnerResult {
   const dense = arrayCarriersStaticallyDense(ctx);
-  const native = ctx.standalone || ctx.wasi;
   // Register the helper BEFORE either operand is emitted when it is certainly
   // needed, so no instruction already in the body has to be index-shifted.
-  if (!dense) ensurePresenceHelper(ctx, fctx, native, deps);
+  if (!dense) ensurePresenceHelper(ctx, fctx, true, deps);
   // §13.10.1 steps 1-2: the key is evaluated for its side effects (a comma
   // key); its value is the compile-time constant `index`.
   if (deps.compileExpression(ctx, fctx, expr.left)) fctx.body.push({ op: "drop" });
@@ -194,13 +193,13 @@ function emitConstantIndexIn(
     }
     return booleanResult();
   }
-  const helper = ensurePresenceHelper(ctx, fctx, native, deps);
+  const helper = ensurePresenceHelper(ctx, fctx, true, deps);
   emitRawReceiverExternref(ctx, fctx, recv, deps);
   fctx.body.push({ op: "f64.const", value: index });
   // The host `__extern_has` takes the key as a JS value; the native
   // `__extern_has_idx` takes the raw f64 (`index` is integral, so its
   // truncating bounds test is exact).
-  if (!native) deps.coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+
   fctx.body.push({ op: "call", funcIdx: helper });
   return booleanResult();
 }

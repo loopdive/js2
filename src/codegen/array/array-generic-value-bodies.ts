@@ -56,7 +56,6 @@ export function emitArrayGenericValueMemberBody(
   fctx: FunctionContext,
   member: string,
 ): ValType | undefined {
-  if (!ctx.standalone && !ctx.wasi) return undefined;
   if (member === "toString") return emitArrayToStringBody(ctx, fctx);
   return emitArrayLikePopShiftBody(ctx, fctx, member);
 }

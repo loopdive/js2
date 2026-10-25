@@ -21,8 +21,7 @@
  * (measured: identity for `reduceRight` lost 9 `15.4.4.22-*` accessor rows).
  *
  * Mirrors the identity short-circuit of `buildVecFromExternMaterializer`
- * (type-coercion.ts). Native regime only (`ctx.standalone`); the host lane's
- * output is unchanged.
+ * (type-coercion.ts).
  */
 import type { Instr } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
@@ -40,7 +39,7 @@ export function vecReceiverIdentityArm(
   loopTag: string,
   fresh: Instr[],
 ): Instr[] {
-  if (!ctx.standalone || loopTag !== "flt") return fresh;
+  if (loopTag !== "flt") return fresh;
   return [
     { op: "local.get", index: externLocal },
     { op: "any.convert_extern" },

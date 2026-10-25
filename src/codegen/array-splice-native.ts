@@ -87,7 +87,6 @@ function stepK(delta: number): Instr[] {
  * unavailable, in which case the dispatcher keeps its previous behaviour.
  */
 export function ensureNativeArraySplice(ctx: CodegenContext): number | undefined {
-  if (!ctx.standalone) return undefined;
   const existing = ctx.funcMap.get("__arrprod_splice");
   if (existing !== undefined) return existing;
   const deps = resolveSliceDeps(ctx);
@@ -282,7 +281,7 @@ export function ensureNativeArraySplice(ctx: CodegenContext): number | undefined
  * item reaches the body, which is `__arrprod_splice(this, argsVec)`.
  */
 export function isArraySpliceVariadicMember(ctx: CodegenContext, member: string): boolean {
-  return member === "splice" && ctx.standalone;
+  return member === "splice";
 }
 
 /** Body of that closure; `undefined` (nothing emitted) when the helper is unavailable. */

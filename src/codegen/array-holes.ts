@@ -98,7 +98,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     }
     // (#6771 S3) `Array(n)` / `new Array(n)` stores the `$Hole` marker
     // standalone (`holeFilledArrayNewInstrs`), so its reads must be armed too.
-    if (!ctx.usesArrayHoles && ctx.standalone && isArrayLengthConstructor(node)) ctx.usesArrayHoles = true;
+    if (!ctx.usesArrayHoles && isArrayLengthConstructor(node)) ctx.usesArrayHoles = true;
     // (#6482 r4) A plain `x.length = n` arms the marker too, for the same
     // reason `isDescriptorDefineReference` does: §10.4.2.1 ArraySetLength makes
     // a shrink DELETE the dropped elements, so the store now writes the f64
@@ -170,7 +170,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     }
     // (#6774 S13) A tagged template's object and `raw` are FROZEN carriers, so a
     // strict write to either must observe the refused [[Set]].
-    if (ctx.standalone && ts.isTaggedTemplateExpression(node)) ctx.inheritedSetDescriptorDirty = true;
+    if (ts.isTaggedTemplateExpression(node)) ctx.inheritedSetDescriptorDirty = true;
     if (!ctx.inheritedSetDescriptorDirty) {
       // (#4602) Statically-named triggers poison only their own keys; a
       // trigger whose key cannot be named sets the module-wide flag, which

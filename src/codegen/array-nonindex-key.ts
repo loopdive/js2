@@ -505,7 +505,7 @@ export function emitDynamicVecElementGet(
   fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push({ op: "extern.convert_any" });
   const keyFact = ctx.oracle.typeFactOf(key);
-  if (numberAtRuntime && ctx.standalone && (keyFact.kind === "any" || keyFact.kind === "unknown")) {
+  if (numberAtRuntime && (keyFact.kind === "any" || keyFact.kind === "unknown")) {
     const branched = emitNumberOrKeyVecGet(ctx, fctx, key, compile);
     if (branched !== undefined) return branched;
   }
@@ -642,31 +642,22 @@ function isNamedNumericOrBooleanSpelling(s: string): boolean {
 }
 
 /**
- * Resolve the helper that reaches the array's NAMED-property store.
- *
- * Standalone/wasi: the #3537 expando bag accessors (`__vec_prop_get` /
- * `__vec_prop_set`) directly. `__extern_get`/`__extern_set` cannot be used
- * here — their `$__vec_base` prologue treats any key whose `__unbox_number` is
- * not NaN as a vec ELEMENT and returns terminally, and standalone's
- * `__unbox_number` parses native strings, so a numeric-looking key never
- * reaches the bag through them (see the exported-name note in vec-props.ts).
- *
- * Host/gc: `__extern_*` is the host import and JS already implements
- * §10.4.2.2 exactly — `arr[4294967295] = v` creates a named property and
- * leaves `length` alone — so the plain dynamic call is both correct and the
- * only thing available (the bag is standalone-only).
+ * Resolve the helper that reaches the array's NAMED-property store: the #3537
+ * expando bag accessors (`__vec_prop_get` / `__vec_prop_set`) directly.
+ * `__extern_get`/`__extern_set` cannot be used here — their `$__vec_base`
+ * prologue treats any key whose `__unbox_number` is not NaN as a vec ELEMENT
+ * and returns terminally, and the native `__unbox_number` parses native
+ * strings, so a numeric-looking key never reaches the bag through them (see the
+ * exported-name note in vec-props.ts).
  */
 function resolveNamedPropHelper(ctx: CodegenContext, fctx: FunctionContext, kind: "get" | "set"): number | undefined {
-  // Ask for the dynamic accessor FIRST in both lanes. In host mode that IS the
-  // answer; in standalone it is what arms the object runtime, and the #3537 bag
-  // helpers are reserved as part of that arming — so the `funcMap` lookup below
-  // is empty until this call has happened.
-  const dynamicIdx =
-    kind === "get"
-      ? ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF])
-      : ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
+  // Ask for the dynamic accessor FIRST: it is what arms the object runtime, and
+  // the #3537 bag helpers are reserved as part of that arming — so the
+  // `funcMap` lookup below is empty until this call has happened.
+  if (kind === "get") ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  else ensureLateImport(ctx, "__extern_set", [EXTERNREF, EXTERNREF, EXTERNREF], []);
   flushLateImportShifts(ctx, fctx);
-  if (!ctx.standalone && !ctx.wasi) return dynamicIdx;
+
   // Standalone: the bag accessor, or nothing. Falling back to `__extern_*` here
   // would be worse than not firing at all — its vec prologue would swallow the
   // key as an element and silently drop the write.
@@ -720,15 +711,7 @@ export function emitDynamicStringVecElementGet(
   fctx: FunctionContext,
   key: ts.Expression,
 ): ValType | null {
-  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
-  const funcIdx = resolveNamedPropHelper(ctx, fctx, "get");
-  if (funcIdx === undefined) return null;
-  fctx.body.push({ op: "extern.convert_any" });
-  const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
-  if (!keyType) return null;
-  if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
-  fctx.body.push({ op: "call", funcIdx });
-  return EXTERNREF;
+  return null;
 }
 
 /**
@@ -781,31 +764,7 @@ export function emitDynamicStringVecElementSet(
   value: ts.Expression,
   compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
-  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
-  const funcIdx = resolveNamedPropHelper(ctx, fctx, "set");
-  if (funcIdx === undefined) return null;
-
-  const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
-  fctx.body.push({ op: "local.set", index: recvLocal });
-  const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
-  if (!keyType) return null;
-  if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
-  const keyLocal = allocLocal(fctx, `__dynkey_key_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "local.set", index: keyLocal });
-
-  const valResult = compile(value, EXTERNREF);
-  if (!valResult) return null;
-  if (valResult.kind !== "externref") coerceType(ctx, fctx, valResult, EXTERNREF);
-  const valLocal = allocLocal(fctx, `__dynkey_val_${fctx.locals.length}`, EXTERNREF);
-  fctx.body.push({ op: "local.set", index: valLocal });
-
-  fctx.body.push({ op: "local.get", index: recvLocal });
-  fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "local.get", index: keyLocal });
-  fctx.body.push({ op: "local.get", index: valLocal });
-  fctx.body.push({ op: "call", funcIdx });
-  fctx.body.push({ op: "local.get", index: valLocal });
-  return EXTERNREF;
+  return null;
 }
 
 /** Route the named-key and dynamic-string write cases owned by this module. */

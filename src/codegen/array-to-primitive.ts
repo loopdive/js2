@@ -126,7 +126,6 @@ function buildArrayToStringOverrideArm(
   methodLocal: number,
   resultLocal: number,
 ): Instr[] | undefined {
-  if (!ctx.standalone) return undefined;
   if (!ctx.protoNamedDirty) return undefined;
   if (!ctx.protoNamedWrittenMembers.has("toString")) return undefined;
   // MEASURED REGRESSION, not a defensive guard (2026-08-24). "A companion hit
