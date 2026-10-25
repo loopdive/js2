@@ -6038,7 +6038,7 @@ function compileArrayJoinNative(
       else: protoHoleArm ?? repr.literal(""),
     },
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr, emptyElem && vecTmp); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });

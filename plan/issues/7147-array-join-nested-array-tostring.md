@@ -1,10 +1,11 @@
 ---
 id: 7147
 title: "Native-first: Array.prototype.join stringifies a nested array element as [object Object]"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
+completed: 2026-10-25
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +16,11 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [6899, 2787, 6708]
+# 2026-10-25: the native Array.prototype.toString driver stringifies each element
+# with the runtime ToString (`__extern_toString`) instead of the ToPrimitive-less
+# `$__any_to_string` — a delegation to the one ToString, not a new matrix.
+coercion-sites-allow:
+  - src/codegen/array-to-primitive.ts
 ---
 
 # #7147 — Native-first: Array.prototype.join stringifies a nested array element as [object Object]
@@ -47,3 +53,32 @@ native-first and standalone; the equivalence suite is byte-identical on every
 program that does not reach the changed path (state the byte delta for those
 that do, in the PR body); a test under `tests/issue-7147-*.test.ts` pins the
 case on standalone and gc.
+
+## Resolution (2026-10-25)
+
+Root cause: the native `Array.prototype.toString` driver
+(`__array_to_primitive_string`, `src/codegen/array-to-primitive.ts`) — which
+`__extern_toString` → `__to_primitive` reaches for a vec — stringified each
+element with `$__any_to_string`, which runs no ToPrimitive, so an array one
+level down rendered as "[object Object]". The inline native join's
+externref/GC-ref element arm reaches that driver for its elements, hence
+`[1,[2,[3]]].join()` → `1,2,[object Object]`. A template/`+` operand whose vec
+elements are boxed (`` `${[1,[2]]}` ``) declined the vec fast path and fell to
+`$__any_to_string` directly.
+
+Fix: the driver's element step is `__extern_toString` (recursive through
+`__to_primitive`'s vec arm); the concat/template vec operand with boxed elements
+takes the same `__extern_toString`; and a join cycle stack
+(`src/codegen/array-join-cycle.ts`, V8's contract: an array already being
+joined renders as "") guards both the driver and the inline native join over
+boxed/GC-ref elements, popping on a thrown element `toString`.
+`JSON.stringify` has its own serializer and is not routed through it.
+
+Probe/test reference: `tests/equivalence/issue-7147-nested-array-join.test.ts`
+(gc native-first and standalone vs native JS).
+
+Left out: a literal-initialised `any[]` that later receives an array drops its
+earlier elements (`const a: any[] = [1]; a.push([2]); a.join()` → `,2` on every
+lane including host-assisted) — a separate pre-existing gap; the tests build
+cyclic arrays with `push`. The host-assisted lane's cycle results are not
+touched (JS-host lane sunset).

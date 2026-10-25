@@ -38,6 +38,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { guardedJoinFold } from "./array-join-cycle.js"; // (#7147)
 
 /**
  * A string representation strategy: the minimal per-representation seam the
@@ -181,6 +182,7 @@ export function emitStringJoinFold(
   repr: StringRepr,
   locals: JoinFoldLocals,
   elemToStr: Instr[],
+  cycleVec?: number,
 ): void {
   const { iTmp, lenTmp, resultTmp, sepTmp } = locals;
 
@@ -210,11 +212,19 @@ export function emitStringJoinFold(
     { op: "br", depth: 0 },
   ];
 
-  fctx.body.push({
+  const fold: Instr = {
     op: "block",
     blockType: { kind: "empty" },
     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
-  });
+  };
+  // (#7147) `cycleVec`: the local holding the receiver vec of a join whose boxed
+  // elements may be arrays — fold it on the join cycle stack, so an array already
+  // being joined renders as "" (the result local stays at its initial "").
+  if (cycleVec === undefined) fctx.body.push(fold);
+  else
+    fctx.body.push(
+      ...guardedJoinFold(ctx, [{ op: "local.get", index: cycleVec }, { op: "extern.convert_any" }], [fold]),
+    );
 }
 
 /**
