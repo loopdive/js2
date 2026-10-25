@@ -3235,14 +3235,6 @@ interface LowerCtx extends FrontendSourceScope, functionObjects.FunctionValueLow
    */
   readonly noEarlyReturn?: boolean;
   /**
-   * (#7106 Stage 4) A planned function-member closure binds its catch
-   * parameter as the dynamic carrier (the thrown payload is an arbitrary JS
-   * value; on the non-fast lanes the externref slot IS that carrier), so
-   * `typeof thrown`, `thrown === null` and `thrown.constructor` use the
-   * dynamic operations.
-   */
-  readonly dynamicCatchBindings?: boolean;
-  /**
    * (#3142 Slice 2) Module-scope binding storage map — present only when
    * lowering the `<module-init>` unit. `lowerVarDecl` consults it: a
    * declared name with an entry binds as a `moduleGlobal` ScopeBinding
@@ -17224,7 +17216,6 @@ function liftClosureBody(
     consumedCountedStringAppends: [],
     identityContext: cx.identityContext,
     classShapes: cx.classShapes,
-    ...(functionMemberClosure ? { dynamicCatchBindings: true } : {}),
     resolver: cx.resolver,
     lifted: cx.lifted,
     liftedUnitProvenance: cx.liftedUnitProvenance,
@@ -17565,17 +17556,11 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       // host-free only; gc keeps its pre-existing claim-then-demote on these shapes.
       const catchIsCarrier =
         cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver?.jsHostExterns?.() === false;
-      // (#7106 Stage 4) A planned function-member closure binds its catch
-      // parameter as the carrier on every lane whose carrier is an externref
-      // (`dynamicCatchBindings`, set by `liftClosureBody`): the closure's own
-      // shape is new, so gc byte-identity for pre-existing programs holds.
-      const memberClosureCatchIsCarrier =
-        cx.dynamicCatchBindings === true && cx.resolver?.dynamicCarrierIsExternref?.() === true;
       catchScope.set(varName, {
         kind: "slot",
         slotIndex: payloadSlot,
         type: irVal({ kind: "externref" }),
-        ...(catchIsCarrier || memberClosureCatchIsCarrier ? { asType: irDynamic() } : {}),
+        ...(catchIsCarrier ? { asType: irDynamic() } : {}),
       });
     } else if (stmt.catchClause.variableDeclaration) {
       // Destructuring catch — selector should have rejected this.

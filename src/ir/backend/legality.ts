@@ -125,16 +125,11 @@ export function supportsIrBackendTargetCapability(
     // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor`
     // alias reaches the object runtime's native `__getOwnPropertyDescriptor`.
     case "native-own-property-descriptor":
+    // (#7106 Stage 4) a bare call through a dynamic value: the native
+    // IsCallable + `__apply_closure` member-call runtime (host-free lanes).
+    case "native-dynamic-value-call":
       // (#7106 S1g) legacy's uncurried-alias arm is active on the host-free
       // lanes (`uncurriedBuiltinAliasArmActive`); the IR mirrors that lane.
-      return (
-        profile.backend === "wasmgc" &&
-        profile.fast !== true &&
-        (profile.target === "standalone" || profile.target === "wasi")
-      );
-    case "native-dynamic-value-call":
-      // (#7106 Stage 4) a bare call through a dynamic value: the native
-      // IsCallable + `__apply_closure` member-call runtime (host-free lanes).
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&

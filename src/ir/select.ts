@@ -6348,6 +6348,28 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
   return true;
 }
 
+// (#7106 Stage 4) The planned member closure's dynamic parameter names
+// (empty outside a planned member closure, or when its plan has none).
+let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
+
+/**
+ * (#7106 Stage 4) `func()` — a bare call through one of the planned member
+ * closure's dynamic parameters (assert.throws' `func()`), lowered through the
+ * native IsCallable + `__apply_closure` runtime with an undefined receiver.
+ * The shared runtime does not restore `__current_this` when the callee throws
+ * inside a try (legacy does), which is observable only by a caller that reads
+ * its own `this` afterwards — a planned member closure never does (its plan
+ * refuses `this`). A top-level subject is not admitted here: its move-only
+ * scan (`dynamicUsesAreMoveOnly`) refuses a called dynamic parameter first.
+ */
+function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
+  if (!currentClosureDynamicParamNames.has(callee.text)) return false;
+  if (!currentDynamicRuntimeBuildable) return false;
+  return currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-value-call") === true;
+}
+
 /**
  * (#7106 Stage 4) `var x;` — an untyped function-local `var` with no
  * initializer is the dynamic carrier's `undefined` until assigned (legacy
@@ -6357,53 +6379,11 @@ function switchAllPathsTerminate(stmt: ts.SwitchStatement): boolean {
  * re-executed `var x;` keeps its value, while the IR initializes at the
  * declaration point.
  */
-let currentMemberClosureHasDynamicParams = false;
-// (#7106 Stage 4) The planned member closure's dynamic parameter names.
-let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
-
-/**
- * (#7106 Stage 4) `func()` — a bare call through one of the current function's
- * dynamic parameters (assert.throws' `func()`), lowered through the native
- * IsCallable + `__apply_closure` runtime with an undefined receiver. The
- * calling body must not read `this`: legacy additionally restores
- * `__current_this` when the callee throws inside a try, which the shared
- * runtime does not, so a caller that could observe its receiver afterwards
- * stays legacy. A planned member closure never reads `this` (its plan refuses
- * it); a top-level function is checked here.
- */
-function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
-  const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || expr.questionDotToken || expr.arguments.some(ts.isSpreadElement)) return false;
-  const closureParam = currentClosureDynamicParamNames.has(callee.text);
-  if (!closureParam && !currentDynamicParamNames.has(callee.text)) return false;
-  if (!currentDynamicRuntimeBuildable) return false;
-  if (currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-value-call") !== true) return false;
-  if (closureParam) return true;
-  const subject = currentSelectionSubject;
-  return subject !== null && subject.body !== undefined && !bodyReadsOwnThis(subject.body);
-}
-
-function bodyReadsOwnThis(body: ts.Node): boolean {
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (node.kind === ts.SyntaxKind.ThisKeyword) {
-      found = true;
-      return;
-    }
-    if (node !== body && (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isClassLike(node)))
-      return;
-    forEachChild(node, visit);
-  };
-  visit(body);
-  return found;
-}
-
 function uninitializedVarIsDynamicUndefined(d: ts.VariableDeclaration, isLexical: boolean): boolean {
   if (isLexical || currentSubjectIsModuleInit || !currentDynamicRuntimeBuildable) return false;
   // Only in a dynamic-carrier function (a dynamic parameter, so the move-only
   // scan runs and tracks the binding) or a planned member closure with one.
-  if (currentDynamicParamNames.size === 0 && !currentMemberClosureHasDynamicParams) return false;
+  if (currentDynamicParamNames.size === 0 && currentClosureDynamicParamNames.size === 0) return false;
   if (!ts.isIdentifier(d.name) || d.type || ts.getJSDocType(d)) return false;
   for (let cur: ts.Node | undefined = d.parent; cur; cur = cur.parent) {
     if (ts.isFunctionLike(cur)) return true;
@@ -6882,13 +6862,11 @@ function withFunctionMemberClosureState<T>(
   // (#7106 Stage 4) The closure's own function-local `var` proof — the
   // subject's (module-init's) proof never covers the closure body.
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
-  const outerClosureDynamic = currentMemberClosureHasDynamicParams;
-  currentMemberClosureHasDynamicParams = plan.dynamicParameterIndices.size > 0;
   const outerClosureDynamicNames = currentClosureDynamicParamNames;
   currentClosureDynamicParamNames = new Set(
     [...plan.dynamicParameterIndices].flatMap((index) => {
-      const name = plan.expression.parameters[index]?.name;
-      return name && ts.isIdentifier(name) ? [name.text] : [];
+      const { name } = plan.expression.parameters[index]!;
+      return ts.isIdentifier(name) ? [name.text] : [];
     }),
   );
   currentIrSafeVarDeclarationLists = collectIrSafeVarDeclarationLists(
@@ -6938,7 +6916,6 @@ function withFunctionMemberClosureState<T>(
     ] = outer;
     [earlyReturnLoopDepth, earlyReturnBarrierDepth] = outerEarlyReturn;
     currentIrSafeVarDeclarationLists = outerSafeVarLists;
-    currentMemberClosureHasDynamicParams = outerClosureDynamic;
     currentClosureDynamicParamNames = outerClosureDynamicNames;
     currentInPlannedMemberClosure = outerInPlannedClosure;
     currentMutableSlotNames = mutableSlots;

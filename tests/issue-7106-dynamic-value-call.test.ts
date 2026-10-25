@@ -2,9 +2,9 @@
 //
 // #7106 Stage 4 (M3) — a bare call through a dynamic value (assert.throws'
 // `func()`) lowers through the native IsCallable + `__apply_closure` runtime
-// with an undefined receiver, and a planned member closure's catch parameter
-// is the dynamic carrier (`typeof thrown`, `thrown === null`,
-// `thrown.constructor`). The assert.throws-shaped initializer (Test262Error
+// with an undefined receiver; the closure's catch parameter is the dynamic
+// carrier on the host-free lanes (main's `catchIsCarrier`), so `typeof thrown`,
+// `thrown === null` and `thrown.constructor` lower too. The assert.throws-shaped initializer (Test262Error
 // replaced by a plain throw — Stage 3c owns that constructor) is a prepared IR
 // body; every result is checked against node.
 
@@ -123,21 +123,26 @@ describe("#7106 Stage 4 — calls through a dynamic value", () => {
     expect(await initializeAndRun(result)).toBe(1101001);
   }, 35_000);
 
-  it("keeps a top-level caller that reads `this` on legacy", async () => {
-    const source = `
-      /** @param {object} func */
-      function self(func) { func(); return this === undefined ? 1 : 0; }
-      export function t() { return self(function () {}); }
-    `;
-    const result = await compile(source, {
-      experimentalIR: true,
-      skipSemanticDiagnostics: true,
-      allowJs: true,
-      target: "standalone",
-      trackIrOutcomes: true,
-      fileName: "issue-7106-dyncall-this.js",
-    });
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(row(result, "self").irBodyEmitted).toBe(false);
-  }, 35_000);
+  // The arm is reachable only through a planned member closure, and the plan
+  // exists only on the native-first, non-fast lanes (`native-dynamic-value-call`).
+  // The same shape claims on standalone and stays legacy — refused at select,
+  // before any claim — on host-assisted gc and on the fast lane.
+  it("admits the call only where the capability holds (no claim-then-demote elsewhere)", async () => {
+    const standalone = await compile(DYNAMIC_CALL, OPTIONS);
+    expect(row(standalone, "<module-init>")).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
+    for (const lane of [
+      { target: "gc", semanticProviders: "host-assisted" },
+      { target: "standalone", fast: true },
+    ] as const) {
+      const result = await compile(DYNAMIC_CALL, { ...OPTIONS, ...lane });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(row(result, "<module-init>"), JSON.stringify(lane)).toMatchObject({
+        irBodyEmitted: false,
+        legacyBodyEmitted: true,
+        stage: "select",
+        code: "body-shape-rejected",
+      });
+      expect(result.irPostClaimErrors ?? [], JSON.stringify(lane)).toEqual([]);
+    }
+  }, 60_000);
 });
