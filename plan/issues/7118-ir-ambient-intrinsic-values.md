@@ -24,6 +24,10 @@ assignee: "ttraenkler/lead-c"
 # `dyn.global_object` is one more dialect kind threaded through node,
 # verifier, builder, lowering, pre-registration and the selector/from-ast arms.
 func-budget-allow:
+  # 2026-10-25 (#7118 refresh on main): merging main (#6848 dyn.instanceof arm) carries
+  # lowerExprUnchecked over 300 (302, +2) in this change-set; the growth is #6848's, granted
+  # under #7106, restated here because the gate reads only files this PR modifies.
+  - src/ir/from-ast.ts::lowerExprUnchecked
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeDynamicLowering
