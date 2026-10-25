@@ -24,6 +24,11 @@ loc-budget-allow:
 func-budget-allow:
   - src/ir/from-ast.ts::lowerCall
   - src/ir/select.ts::isPhase1Expr
+  # 2026-10-25 (#7112, CI base = origin/main after #6846): the closure dynamic-param
+  # scan arms add 2 lines each to dynamicUsesAreMoveOnly (847) and scanExprInner (482);
+  # measured against origin/main with LOC_GATE_BASE, absent from the merge-parent run.
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
 ---
 
 # IR: `func()` through a dynamic value
