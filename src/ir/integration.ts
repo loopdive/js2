@@ -95,7 +95,7 @@ import {
   irDynamicDeleteHelperName,
   ensureIrDynamicInstanceOfHelper, // (#7106) generic dynamic instanceof wrapper
   IR_DYN_INSTANCEOF_HELPER,
-  irDynamicInstanceOfRoutesGeneric,
+  irDynamicInstanceOfAtLegacyParity,
   scriptVarSlotIsStringHome,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
@@ -113,10 +113,12 @@ import {
 } from "../codegen/ir-arguments-length.js";
 import {
   ensureIrCurrentThisHelper,
+  ensureIrGlobalObjectHelper,
   ensureIrDynamicConstructHelper,
   ensureIrInstanceOfFunctionHelper,
   IR_CURRENT_THIS_SLOPPY_HELPER,
   IR_CURRENT_THIS_STRICT_HELPER,
+  IR_GLOBAL_OBJECT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
   irFunctionThisStrictness,
@@ -7011,8 +7013,8 @@ function makeFromAstResolver(
     dynamicCarrierIsExternref() {
       return !ctx.fast;
     },
-    // (#7106) the selector's `dynamicInstanceOfRoutesGeneric`, asked again per site.
-    dynamicInstanceOfRoutesGeneric: (site: ts.BinaryExpression) => irDynamicInstanceOfRoutesGeneric(ctx, site),
+    // (#7106) the selector's `dynamicInstanceOfAtLegacyParity`, asked again per site.
+    dynamicInstanceOfAtLegacyParity: (site: ts.BinaryExpression) => irDynamicInstanceOfAtLegacyParity(ctx, site),
     // (#7106 propertyHelper) the wrapper a dynamic delete at this site calls.
     dynamicDeleteSymbol(site: ts.DeleteExpression) {
       return ctx.fast ? undefined : irDynamicDeleteHelperName(irDeleteSiteIsStrict(site));
@@ -7345,6 +7347,9 @@ function makeFromAstResolver(
     },
     isAmbientBinding(node: ts.Identifier): boolean {
       return moduleBindingResolver?.isAmbientBinding(node) === true;
+    },
+    isLibOnlyBinding(node: ts.Identifier): boolean {
+      return moduleBindingResolver?.isLibOnlyBinding(node) === true;
     },
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
@@ -8966,6 +8971,7 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.string_carrier") return true;
   if (instr.kind === "dyn.arguments_length") return true;
   if (instr.kind === "dyn.current_this") return true;
+  if (instr.kind === "dyn.global_object") return true;
   if (instr.kind === "dyn.instanceof_fn") return true;
   if (instr.kind === "dyn.instanceof") return true;
   if (instr.kind === "dyn.publish_argc") return true;
@@ -9187,6 +9193,7 @@ function preregisterDynamicSupport(
   let usesDynArgumentsLength = false;
   // (#7106 S3c) `dyn.current_this` / `dyn.instanceof_fn` call receiver wrappers.
   const currentThisStrictness = new Set<boolean>();
+  let usesDynGlobalObject = false;
   const instanceOfFunctions = new Set<string>();
   // (#7106) `dyn.instanceof` calls the generic runtime operator wrapper.
   let usesDynInstanceOf = false;
@@ -9213,6 +9220,7 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
           if (i.kind === "dyn.current_this") currentThisStrictness.add(i.strict);
+          if (i.kind === "dyn.global_object") usesDynGlobalObject = true;
           if (i.kind === "dyn.instanceof_fn") instanceOfFunctions.add(i.target.name);
           if (i.kind === "dyn.instanceof") usesDynInstanceOf = true;
           if (i.kind === "dyn.publish_argc") usesDynPublishArgc = true;
@@ -9371,6 +9379,13 @@ function preregisterDynamicSupport(
     }
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
+  }
+  if (usesDynGlobalObject && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    if (ensureIrGlobalObjectHelper(ctx) === undefined) {
+      throw new Error("ir/integration: dyn.global_object has no realm wrapper on this lane (#7106)");
+    }
+    observeNativeRuntimeProvider(ctx, IR_GLOBAL_OBJECT_HELPER);
+    flushLateImportShifts(ctx, null);
   }
   if ((currentThisStrictness.size > 0 || instanceOfFunctions.size > 0) && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     // (#7106 S3c) legacy's receiver ladder and per-function chain walk, wrapped.
@@ -9716,6 +9731,9 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       emitCurrentThis(): readonly Instr[] {
         throw new Error("ir/integration: dyn.current_this is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
       },
+      emitGlobalObject(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.global_object is not lowerable on the fast $AnyValue carrier (#7106)");
+      },
       emitInstanceOfFunction(): readonly Instr[] {
         throw new Error("ir/integration: dyn.instanceof_fn is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
       },
@@ -9905,6 +9923,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.current_this needs the host-free receiver protocol (#7106 S3c)");
       }
       return [callImport(strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER)];
+    },
+    emitGlobalObject(): readonly Instr[] {
+      // (#7106) legacy's realm `globalThis` read, wrapped once.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.global_object needs the host-free realm (#7106)");
+      }
+      return [callImport(IR_GLOBAL_OBJECT_HELPER)];
     },
     emitInstanceOfFunction(functionName: string): readonly Instr[] {
       // (#7106 S3c) carrier on the stack → legacy's per-function chain walk.

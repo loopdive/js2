@@ -51,6 +51,7 @@ export type {
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
   IrInstrDynCurrentThis,
+  IrInstrDynGlobalObject,
   IrInstrDynInstanceOfFunction,
   IrInstrDynInstanceOf,
   IrInstrDynPublishArgc,

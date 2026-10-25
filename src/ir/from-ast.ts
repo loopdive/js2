@@ -301,6 +301,7 @@ import {
   irVecNewSizedSymbol,
 } from "./vector-runtime.js";
 import { readEnv } from "../env.js";
+import { isAmbientIntrinsicName } from "../shared/ambient-intrinsics.js";
 
 interface ResolvedIrVecType {
   readonly lowering: IrVecLowering;
@@ -832,6 +833,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isDirectModuleBinding?(node: ts.Identifier): boolean;
   /** True when the identifier resolves to an ambient declaration-file symbol. */
   isAmbientBinding?(node: ts.Identifier): boolean;
+  /** (#7118) Every declaration of the identifier's symbol is a lib one. */
+  isLibOnlyBinding?(node: ts.Identifier): boolean;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
@@ -864,7 +867,7 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * (#7106) Does legacy route this `<value> instanceof <parameter>` through its
    * generic runtime operator? The same question the selector asked.
    */
-  dynamicInstanceOfRoutesGeneric?(site: ts.BinaryExpression): boolean;
+  dynamicInstanceOfAtLegacyParity?(site: ts.BinaryExpression): boolean;
 }
 
 export type IrSourceMapNodeProjection =
@@ -5201,6 +5204,13 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
         }
         return r;
       }
+    }
+    // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
+    // global object (selector-admitted on the host-free lanes only).
+    if (!p && isAmbientIntrinsicName(expr.text) && cx.resolver?.isLibOnlyBinding?.(expr) === true) {
+      const realm = cx.builder.emitDynGlobalObject();
+      const key = cx.builder.emitBox(cx.builder.emitStringConst(expr.text), irDynamic(JS_TAG_IDS.String));
+      return cx.builder.emitDynMemberGet(realm, key);
     }
     if (!p)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
@@ -14874,7 +14884,7 @@ function lowerInstanceOf(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   const className = expr.right.text;
   // (#7106) `<dynamic> instanceof <dynamic parameter>`: both carriers, then
   // legacy's generic runtime operator (`dyn.instanceof`).
-  if (cx.resolver?.dynamicInstanceOfRoutesGeneric?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
+  if (cx.resolver?.dynamicInstanceOfAtLegacyParity?.(expr) === true) return lowerDynamicInstanceOf(expr, cx);
   if (cx.scope.get(className) !== undefined) {
     // A local binding shadows the class name — the selector rejects this
     // shape, so reaching here is only possible via drift; demote cleanly.
@@ -17527,10 +17537,20 @@ function lowerTryStatement(stmt: ts.TryStatement, cx: LowerCtx): void {
       payloadSlot = cx.builder.declareSlot(`__catch_${varName}`, { kind: "externref" });
       // Bind the catch variable as a slot read so identifier reads
       // inside the handler emit `local.get` against the slot.
+      // (#7106) On the host-free lanes the thrown payload already IS the dynamic
+      // carrier (an externref), and the selector's move-only scan treats the
+      // binding as dynamic. Read it as one, as the for-in head is read, so
+      // `"…" + e` and `e instanceof TypeError` take the dynamic operations the
+      // selector admitted. The gc lane's carrier is an externref too, but gc
+      // output stays byte-identical when shared code changes, so the re-tag is
+      // host-free only; gc keeps its pre-existing claim-then-demote on these shapes.
+      const catchIsCarrier =
+        cx.resolver?.dynamicCarrierIsExternref?.() === true && cx.resolver?.jsHostExterns?.() === false;
       catchScope.set(varName, {
         kind: "slot",
         slotIndex: payloadSlot,
         type: irVal({ kind: "externref" }),
+        ...(catchIsCarrier ? { asType: irDynamic() } : {}),
       });
     } else if (stmt.catchClause.variableDeclaration) {
       // Destructuring catch — selector should have rejected this.
