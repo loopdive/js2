@@ -770,23 +770,43 @@ the result was right by accident). The same `switch` over a dynamic PARAM was
 refused before the claim. Cause: the switch gate's
 `switchDiscHasIrStringCarrier` follows the disc to its declaration and
 certifies any binding without an initializer — a `var k` for-in head has none.
-Fix: when that declaration is a for-in head, the predicate asks
-`dynamicCarrierForInHead(stmt)` — the arm's own classification, the one place
-that decides the head is dynamic on this lane — and answers `false`, so the
-shape is refused pre-claim as `switch-disc-not-string-carrier` (the
-`body-shape-rejected` family, like the dynamic-param case). No second name or
-shape test; the producer is unchanged.
-- Before/after on the repro (`{a:1,b:2,c:3}`, node 12): standalone and wasi
-  claimed then demoted; now refused before the claim, `irPostClaimErrors`
-  empty, legacy answers 12. gc native-first with a JSDoc-typed helper behaved
-  the same both ways.
+Fix (round 2 of review #6843, 2026-10-25): the arm's head classification is
+split into its two questions — `dynamicCarrierForInHeadIdentifier(stmt)`, the
+lane + head-shape test (`forInHeadValueIsDynamicCarrier`, not host-string,
+single `var` identifier head), and the body-reads-head (`.used`) test —
+with `dynamicCarrierForInHead` composed from both, so the producer and the
+for-in arm behave exactly as before. The switch gate walks up from the disc
+identifier to the nearest enclosing for-in (same function) whose head
+identifier resolves to the disc's declaration and asks only the lane + shape
+test, answering `false`, so the shape is refused pre-claim as
+`switch-disc-not-string-carrier` (the `body-shape-rejected` family, like the
+dynamic-param case). No second name or shape test; the producer is unchanged.
+- Round-2 finding: the round-1 gate followed the disc to its symbol's FIRST
+  declaration (`localVariableDeclaration`) and asked that for-in's
+  `dynamicCarrierForInHead`, whose `.used` answer is about THAT loop's body.
+  All `var k` heads in a function share one symbol, so with two sequential
+  loops where only the second switches on `k`, the first loop answered "not
+  read", the gate certified `k`, and from-ast demoted the claimed body
+  ("string-tested switch disc lowered to dynamic, not string") on standalone,
+  wasi and gc native-first — identical to main, i.e. an incomplete fix, not a
+  regression. The enclosing-loop walk asks "is this disc a dynamic-carrier
+  head on this lane" independent of which loop reads it.
+- Before/after on the repros (`{a:1,b:2,c:3}`): the single-loop switch (node
+  12) and the two-loop shape (node 15) were claimed then demoted on standalone
+  and wasi; now both are refused before the claim, `irPostClaimErrors` empty,
+  legacy answers 12 / 15. gc native-first with a JSDoc-typed helper behaves
+  the same way.
 - Host-assisted gc bytes (`semanticProviders: "host-assisted"`) are identical
-  between `origin/main` and the fix for the switch repro, a plain for-in and a
-  no-shape loop (`8c1e9e9c…`, `9b85e4dd…`, `ebb1550f…`).
-- Tests: the switch repro, a captured head (`forin-head-value-captured`) and a
-  written head (`forin-head-value-written`) each assert the refusal arm, empty
-  `irPostClaimErrors` and the node result, on standalone and gc; wasi pins the
-  switch refusal. The three switch cases fail without the fix.
+  between `origin/main` and the fix for the two-loop repro, the switch repro, a
+  plain for-in and a no-shape loop (`88fe65ed…`, `8c1e9e9c…`, `9b85e4dd…`,
+  `114efdc5…`; main tree = `git archive origin/main`, same node_modules).
+- Tests: the switch repro, both two-loop orders (`twoLoopsFirstUnread`,
+  `twoLoopsSecondUnread`, expected 15), a captured head
+  (`forin-head-value-captured`) and a written head
+  (`forin-head-value-written`) each assert the refusal arm, empty
+  `irPostClaimErrors` and the node result, on standalone and gc; wasi pins
+  all three switch refusals and validates. The switch rows fail without the
+  fix (`twoLoopsFirstUnread` also fails with only the round-1 fix).
 
 ## propertyHelper.js, arm 3 — statement-position dynamic delete (2026-10-22, measured)
 

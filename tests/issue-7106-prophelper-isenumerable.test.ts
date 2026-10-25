@@ -86,10 +86,15 @@ const HEAD_SHAPES = `
 // `string`, the switch gate's carrier predicate followed `k` to a declaration
 // with no initializer and certified it, and from-ast then demoted the CLAIMED
 // body ("string-tested switch disc lowered to dynamic, not string") on
-// standalone and wasi. The gate now asks `dynamicCarrierForInHead`, so the
-// refusal lands in the same `body-shape-rejected` arm family as a `switch`
-// over a dynamic param. `captureKey` and `writeKey` were already refused;
-// their arms are pinned here so the read-admission stays this narrow.
+// standalone and wasi. The gate now asks the arm's lane + head-shape
+// predicate of the ENCLOSING for-in, so the refusal lands in the same
+// `body-shape-rejected` arm family as a `switch` over a dynamic param.
+// `twoLoopsFirstUnread` / `twoLoopsSecondUnread` are the round-2 finding: all
+// `var k` heads in one function share a symbol, so a gate that followed `k` to
+// its FIRST declaration asked the wrong loop whether its body reads `k` and
+// still certified the second loop's `switch (k)`. `captureKey` and `writeKey`
+// were already refused; their arms are pinned here so the read-admission
+// stays this narrow.
 const REFUSED_HEAD_READS: ReadonlyArray<{
   readonly name: string;
   readonly arm: string;
@@ -108,6 +113,36 @@ const REFUSED_HEAD_READS: ReadonlyArray<{
         return n;
       }
       export function probe(): number { var o: any = { a: 1, b: 2, c: 3 }; return switchKey(o); }
+    `,
+  },
+  {
+    name: "twoLoopsFirstUnread",
+    arm: "switch-disc-not-string-carrier",
+    expected: 15,
+    source: `
+      /** @param {object} o */
+      function twoLoopsFirstUnread(o) {
+        var n = 0;
+        for (var k in o) { n = n + 1; }
+        for (var k in o) { switch (k) { case "b": n = n + 10; break; default: n = n + 1; } }
+        return n;
+      }
+      export function probe(): number { var o: any = { a: 1, b: 2, c: 3 }; return twoLoopsFirstUnread(o); }
+    `,
+  },
+  {
+    name: "twoLoopsSecondUnread",
+    arm: "switch-disc-not-string-carrier",
+    expected: 15,
+    source: `
+      /** @param {object} o */
+      function twoLoopsSecondUnread(o) {
+        var n = 0;
+        for (var k in o) { switch (k) { case "b": n = n + 10; break; default: n = n + 1; } }
+        for (var k in o) { n = n + 1; }
+        return n;
+      }
+      export function probe(): number { var o: any = { a: 1, b: 2, c: 3 }; return twoLoopsSecondUnread(o); }
     `,
   },
   {
@@ -236,12 +271,14 @@ describe("#7106 propertyHelper — for-in head as a dynamic carrier", () => {
     }
   }
 
-  it("wasi: the switch over a for-in head is refused before the claim, not demoted at build", async () => {
-    const result = await compileProbe(REFUSED_HEAD_READS[0]!.source, "wasi");
-    expect(irBodies(result)).not.toContain("switchKey");
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-  });
+  for (const shape of REFUSED_HEAD_READS.filter((s) => s.arm === "switch-disc-not-string-carrier")) {
+    it(`wasi: ${shape.name} is refused before the claim, not demoted at build`, async () => {
+      const result = await compileProbe(shape.source, "wasi");
+      expect(irBodies(result)).not.toContain(shape.name);
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+    });
+  }
 
   it("wasi: isEnumerable ships an IR body and validates", async () => {
     const result = await compileProbe(IS_ENUMERABLE, "wasi");

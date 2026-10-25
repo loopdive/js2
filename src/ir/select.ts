@@ -5121,12 +5121,22 @@ function switchDiscHasIrStringCarrier(expr: ts.Expression, seen = new Set<ts.Var
   if (!declaration || seen.has(declaration)) return true;
   // (#7106 propertyHelper arm 2) A `for (var k in <dyn>)` head has no
   // initializer, yet on the native non-fast lane it lowers as the dynamic
-  // carrier, not `IrType.string`. Ask the arm's own head classification
-  // (`dynamicCarrierForInHead`) — the one place that decides the head is
-  // dynamic — so a `switch (k)` is refused before the claim instead of
-  // demoting at build (measured 2026-10-25, standalone and wasi).
-  const forIn = declaration.parent.parent;
-  if (ts.isForInStatement(forIn) && dynamicCarrierForInHead(forIn) !== undefined) return false;
+  // carrier, not `IrType.string`. Ask the arm's own lane + head-shape
+  // classification (`dynamicCarrierForInHeadIdentifier`, the one place that
+  // decides a head is dynamic) of the nearest ENCLOSING for-in that binds
+  // the disc's symbol, so a `switch (k)` is refused before the claim instead
+  // of demoting at build. The enclosing loop, not the symbol's first
+  // declaration: every `var k` head in a function shares one symbol, and
+  // the first loop's body-reads answer says nothing about this read
+  // (measured 2026-10-25 round 2: two sequential loops, only the second
+  // switching on `k`, still claimed then demoted).
+  for (let node: ts.Node = candidate.parent; node !== undefined && !isFunctionLike(node); node = node.parent) {
+    if (!ts.isForInStatement(node)) continue;
+    const head = dynamicCarrierForInHeadIdentifier(node);
+    if (head !== undefined && currentModuleBindingResolver?.localVariableDeclaration(head) === declaration) {
+      return false;
+    }
+  }
   if (!declaration.initializer) return true;
   seen.add(declaration);
   return switchDiscHasIrStringCarrier(declaration.initializer, seen);
@@ -5551,17 +5561,29 @@ function classifyForInHeadUse(
 }
 
 /**
- * (#7106 propertyHelper) The head name of a `for (var k in <dyn>)` whose body
- * READS `k`, on a lane where that head is a dynamic carrier
- * (`forInHeadValueIsDynamicCarrier`); undefined otherwise.
+ * (#7106 propertyHelper) Lane + head shape: the head identifier of a
+ * `for (var k in <dyn>)` on a lane where that head is a dynamic carrier
+ * (`forInHeadValueIsDynamicCarrier`, not host-string); undefined otherwise.
+ * Whether any body READS the head is a separate question — see
+ * `dynamicCarrierForInHead`; the switch gate asks only this one.
  */
-function dynamicCarrierForInHead(stmt: ts.ForInStatement): string | undefined {
+function dynamicCarrierForInHeadIdentifier(stmt: ts.ForInStatement): ts.Identifier | undefined {
   if (currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true) return undefined;
   if (currentSelectionOptions?.forInHeadValueIsHostString === true) return undefined;
   const init = stmt.initializer;
   if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) return undefined;
   const name = init.declarations[0]!.name;
-  if (!ts.isIdentifier(name)) return undefined;
+  return ts.isIdentifier(name) ? name : undefined;
+}
+
+/**
+ * (#7106 propertyHelper) The head name of a `for (var k in <dyn>)` whose body
+ * READS `k`, on a lane where that head is a dynamic carrier
+ * (`dynamicCarrierForInHeadIdentifier`); undefined otherwise.
+ */
+function dynamicCarrierForInHead(stmt: ts.ForInStatement): string | undefined {
+  const name = dynamicCarrierForInHeadIdentifier(stmt);
+  if (name === undefined) return undefined;
   return classifyForInHeadUse(stmt.statement, name.text).used ? name.text : undefined;
 }
 
