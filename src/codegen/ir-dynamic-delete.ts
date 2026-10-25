@@ -24,7 +24,7 @@ import type { CodegenContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { emitExternrefDestructureGuard } from "./destructuring-params.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
-import { publishReceiverHelper, receiverHelperContext } from "./ir-dynamic-construct.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 
@@ -54,7 +54,7 @@ export function ensureIrDynamicDeleteHelper(ctx: CodegenContext, strict: boolean
 
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
-  const helper = receiverHelperContext(
+  const helper = helperFunctionContext(
     name,
     [
       { name: "receiver", type: externref },
@@ -88,5 +88,5 @@ export function ensureIrDynamicDeleteHelper(ctx: CodegenContext, strict: boolean
   }
   // Late imports the guard or the throw registered mid-body shift every baked index.
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [i32]);
+  return publishHelperFunction(ctx, helper);
 }

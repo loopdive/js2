@@ -386,6 +386,12 @@ export interface IrDynamicLowering {
    */
   emitCurrentThis(strict: boolean): readonly Instr[];
   /**
+   * (#7106) Nothing on the stack → the realm's global object as the carrier
+   * (legacy's `globalThis` read), wrapped once per module
+   * (`__ir_global_object`). Same `native-current-this` lanes.
+   */
+  emitGlobalObject(): readonly Instr[];
+  /**
    * (#7106 S3c) Carrier on the stack → i32 `value instanceof F` for the
    * top-level function constructor legacy names `functionName`: the chain walk
    * against legacy's per-function prototype object, wrapped once per function
