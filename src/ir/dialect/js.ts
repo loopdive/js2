@@ -53,6 +53,7 @@ export type {
   IrInstrDynCurrentThis,
   IrInstrDynGlobalObject,
   IrInstrDynInstanceOfFunction,
+  IrInstrDynInstanceOf,
   IrInstrDynPublishArgc,
   IrInstrDynOwnProperty,
   IrInstrDynToNumber,
