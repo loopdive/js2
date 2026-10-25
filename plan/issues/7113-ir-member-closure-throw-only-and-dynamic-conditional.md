@@ -226,6 +226,95 @@ Y/Z/AA rows refused with empty PCE, every AB row claimed again (= node), zero
 lost base claims on standalone / wasi / gc, host-assisted gc and fast bytes
 identical on every row. Report the new head and a one-line PR-body addition.
 
+## Implementation Plan — round 10 (Fable, 2026-10-25; implement on Opus)
+
+Round-9 review of `c8a50936a5` (`review-6834-r9`) closed Y/Z/AA/AB/AC and
+found AD–AH. Nine rounds have each closed one refusal and exposed the next in
+the same class: the dynamic-conditional admission lets a closure that **mints a
+dynamic-shaped local** (`D` = `var r = m ? m : 1`) reach from-ast, and every
+construct in that body that from-ast cannot lower for a dynamic or
+reference-typed value becomes a claim-then-demote. The base refused every such
+closure wholesale at the conditional, so refusing more `D`-closures can never
+lose a base claim. Enumerating refusals does not converge; this round inverts
+the rule.
+
+### 1. Positive admission for `D`-closures (replaces the refusal half of the
+null / write / `??` rules; closes AD, AE, AF)
+
+Add `plannedClosureValueFamilyAdmissible(body, scope)` in `src/ir/select.ts`,
+evaluated once when `dynamicConditionalValuePosition` would mint the local
+(before the move-only scan). It walks the closure body and admits only when
+**every** value that flows into a slot or an operator has a selector family in
+the lowerable set:
+
+- declarations (`var`/`let`/`const`) and `=` / `+=` writes into a closure
+  local: RHS family ∈ {`number`, `boolean`, `string`, `undefined`, the dynamic
+  value itself or its aliases, an array literal whose elements are all
+  `number`} — `obviousSelectorValueFamily`, with one identifier hop through
+  `closureLocalDeclaration` to the declaration's own admitted family (an alias
+  of an admitted local is admitted; an alias of anything else is not);
+- a `"reference"` family anywhere (object / function / arrow / class literal,
+  array literal with a non-number element) → refuse (AD, AE rows 1–2);
+- numeric prefix unary (`- + ~`) and arithmetic whose operand family is not
+  `number`/`boolean`/dynamic → refuse (AE row 3);
+- `??` anywhere in the closure → refuse (AF; `lowerNullish`
+  from-ast.ts ≈15686–15697 lowers only an extern/externref/ref_null left, and
+  no planned-closure value lowers to one — cite it);
+- call results, member/element reads, `typeof`, comparisons, `!`, `.length`,
+  `throw`, `return`, `if`/`while`/`for`, `catch` bindings, discarded
+  expressions: admitted exactly as the r9 head admits them today (they are
+  measured claims in probes 7–19; do not widen or narrow them here).
+
+One reason code, `expr-closure-value-family-unproved`, one JSDoc listing the
+admitted families with the from-ast sites that lower each. Then **delete** the
+refusal spellings this subsumes: the `"reference"` and loose-operand tests in
+`nullCompareFoldFails` keep only the nullish-other-operand and loose-on-dynamic
+limits (strict equality against an admitted family is folded by
+`tryFoldNullCompare`); the `??` arm in `isPhase1Expr`'s binary case goes
+(subsumed); `closureWriteUnlowerable` keeps the operator half. No two spellings
+of one limit may remain — grep the reason codes.
+
+Must keep claimed (measured on the base or kept since r4, see
+`probe*-r9-head.txt` claimed rows): the 27 `+=` admissions of probe9, the
+`k`/`q`/`b`/`c`/`m.length`/`k + 1`/`!r`/array-local equality folds of probe15,
+`catch (e) { e === null }`, `throw (1, null)`, `subject() == null`, every
+no-`D` closure (the rule applies only to `D`-closures).
+
+### 2. AG — value-position `void`
+
+`closureNullValuePosition`: climb a `VoidExpression` unconditionally and
+`return true` at it — from-ast's value `void` (≈5321–5324) discards its operand
+in every position, so the `null` is never the failing node. Keep the
+conditional-arm climb discarded-only (measured right: `throw k ? null : m`
+withdraws on the base). `throw void null` then re-admits and withdraws like the
+base's `throw void 0` (PCE on both trees): extend the scalar-throw refusal
+(`isPhase1ThrowStatement`, `throw-closure-concrete-scalar`) to a
+`VoidExpression` operand — an f64 NaN throw value is "throw val not in slice 9"
+whatever sits under the `void`. Rows: positive `if (void null) throw "n"`,
+`if (void null === null)`; refusal `throw void 0`, `throw void null`.
+
+### 3. AH — JSDoc
+
+Say that a value `void` discards its operand (≈5321–5324) and that the throw of
+the resulting NaN is the throw-value rule's; drop the "only while discarded"
+sentence for `void`.
+
+### 4. Residual to record (not fixed here)
+
+`void 0 == null` / `void 0 != null` were base **miscompiles** (`ran=0`, node
+1): `tryFoldNullCompare` constant-folds the f64 NaN sentinel as non-nullish.
+The positive rule refuses them (legacy = node). Record the two repros under
+"Residual" as a from-ast fold bug for the lead to file.
+
+### Validation
+
+As round 9, plus: probes 7–19 head vs base (`refresh-6832` @ `1f01ea20`) —
+**zero PCE rows beside `D` on any lane** (that is the acceptance for the
+inversion), zero lost base claims, host-assisted gc and fast bytes identical;
+list every r9-head claim the new rule drops, each with its base status (base
+refused = acceptable; base claimed = blocking, fix the allow-list). Gates as
+round 9 incl. `LOC_GATE_BASE=origin/main` on a throwaway main merge.
+
 ## Acceptance
 
 - `tests/issue-7106-member-closure-shapes.test.ts`: a throw-only member
