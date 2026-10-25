@@ -584,8 +584,7 @@ function receiverTypeCouldBeNullish(t: ts.Type): boolean {
  * (`emitStringTrimMemberBody`) already did ROC+ToString, but the `.call()` fast
  * path bypasses it.
  *
- * Standalone / WASI only (the caller is `ctx.standalone`-gated). Leaves exactly
- * one `ref $AnyString` on the stack.
+ * Leaves exactly one `ref $AnyString` on the stack.
  */
 export function emitBorrowedStringReceiverToString(
   ctx: CodegenContext,
@@ -1224,9 +1223,7 @@ export function compileTaggedTemplateExpression(
   });
 
   // (#6774 S13) §13.2.8.4 GetTemplateObject freezes the template and its `raw`.
-  const freezeIdx = ctx.standalone
-    ? ensureLateImport(ctx, "__object_freeze", [{ kind: "externref" }], [{ kind: "externref" }])
-    : undefined;
+  const freezeIdx = ensureLateImport(ctx, "__object_freeze", [{ kind: "externref" }], [{ kind: "externref" }]);
   flushLateImportShifts(ctx, fctx);
 
   // Store the strings vec in a local so we can push it as an argument later
@@ -3948,7 +3945,7 @@ export function compileNativeStringMethodCall(
   // #1539 Phase 2b — `String.prototype.match(/re/)` for non-global
   // backend-created static RegExp materializes the same native capture vec as
   // `.exec`. Global/all-match semantics stay refused below.
-  if (ctx.standalone && method === "match") {
+  if (method === "match") {
     const matchResult = tryCompileStandaloneStringMatch(ctx, fctx, expr, propAccess, receiverOverride);
     if (matchResult !== undefined) return matchResult;
   }
@@ -3957,7 +3954,7 @@ export function compileNativeStringMethodCall(
   // routes to the native engine, returning an iterable vec of capture-arrays
   // (for-of / spread consume it via the #2169 native-vec path). Non-global,
   // string-arg, and dynamic-flags forms fall through to the refusal below.
-  if (ctx.standalone && method === "matchAll") {
+  if (method === "matchAll") {
     const matchAllResult = tryCompileStandaloneStringMatchAll(ctx, fctx, expr, propAccess, receiverOverride);
     if (matchAllResult !== undefined) return matchAllResult;
   }
@@ -3966,7 +3963,7 @@ export function compileNativeStringMethodCall(
   // static RegExp routes to the pure-WasmGC matcher (returns the match index or
   // -1) instead of the host regex engine. The string-coercion form (string
   // argument) is not a RegExp value and falls through to the refusal below.
-  if (ctx.standalone && method === "search") {
+  if (method === "search") {
     const searchResult = tryCompileStandaloneStringSearch(ctx, fctx, expr, propAccess, receiverOverride);
     if (searchResult !== undefined) return searchResult;
   }
@@ -3975,7 +3972,7 @@ export function compileNativeStringMethodCall(
   // against a backend-created static RegExp with a literal replacement routes
   // to the pure-WasmGC matcher (returns the rebuilt NativeString). `$`-pattern /
   // function replacers and the string-coercion form fall through to the refusal.
-  if ((ctx.standalone || ctx.wasi) && (method === "replace" || method === "replaceAll")) {
+  if (method === "replace" || method === "replaceAll") {
     const replaceResult = tryCompileStandaloneStringReplace(ctx, fctx, expr, propAccess, receiverOverride);
     if (replaceResult !== undefined) return replaceResult;
   }
@@ -3988,33 +3985,28 @@ export function compileNativeStringMethodCall(
     if (splitResult !== undefined) return splitResult;
   }
 
-  if (ctx.standalone) {
-    // (#2161) `matchAll` is no longer blanket-refused: the global `/re/g` slice
-    // routes through tryCompileStandaloneStringMatchAll above. Only the
-    // non-global / string-arg / dynamic-flags forms reach this refusal.
-    const alwaysRegExp = method === "match" || method === "matchAll" || method === "search";
-    const symbolProtocolArgForm =
-      (method === "replace" || method === "replaceAll" || method === "split") &&
-      expr.arguments.length > 0 &&
-      !firstArgIsStringLike;
-    // (#6662/#6665) An unclassifiable replace/replaceAll/match/search/split search value dispatches at runtime.
-    const dynamic =
-      (alwaysRegExp || symbolProtocolArgForm) &&
-      tryCompileStandaloneDynamicStringRegExpCall(ctx, fctx, expr, method, emitReceiver);
-    if (dynamic) return dynamic;
-    if (alwaysRegExp || symbolProtocolArgForm) {
-      reportError(
-        ctx,
-        expr,
-        `Codegen error: String.prototype.${method}(...) with a RegExp or symbol-protocol search value is not supported in ` +
-          "--target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or " +
-          "recompile without --target standalone.",
-      );
-      // Commit the diagnostic through compileExpression's #1919 transaction:
-      // a null result is treated as a speculative miss and rolls errors back.
-      fctx.body.push({ op: "f64.const", value: 0 });
-      return { kind: "f64" };
-    }
+  const alwaysRegExp = method === "match" || method === "matchAll" || method === "search";
+  const symbolProtocolArgForm =
+    (method === "replace" || method === "replaceAll" || method === "split") &&
+    expr.arguments.length > 0 &&
+    !firstArgIsStringLike;
+  // (#6662/#6665) An unclassifiable replace/replaceAll/match/search/split search value dispatches at runtime.
+  const dynamic =
+    (alwaysRegExp || symbolProtocolArgForm) &&
+    tryCompileStandaloneDynamicStringRegExpCall(ctx, fctx, expr, method, emitReceiver);
+  if (dynamic) return dynamic;
+  if (alwaysRegExp || symbolProtocolArgForm) {
+    reportError(
+      ctx,
+      expr,
+      `Codegen error: String.prototype.${method}(...) with a RegExp or symbol-protocol search value is not supported in ` +
+        "--target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or " +
+        "recompile without --target standalone.",
+    );
+    // Commit the diagnostic through compileExpression's #1919 transaction:
+    // a null result is treated as a speculative miss and rolls errors back.
+    fctx.body.push({ op: "f64.const", value: 0 });
+    return { kind: "f64" };
   }
 
   // Other methods: marshal native->extern, call host, marshal extern->native
@@ -4148,7 +4140,6 @@ export function compileGuardedNativeStringMethodCall(
   let widenSearchResult = false;
   if (
     VEC_SEARCH &&
-    (ctx.standalone || ctx.wasi) &&
     (resultType.kind === "i32" || resultType.kind === "f64") &&
     // (#5194 r3-2) A ZERO-argument `indexOf()` / `includes()` must still answer
     // -1 / false. Without the dyn-view helper there is nothing for the
@@ -4243,8 +4234,7 @@ export function compileGuardedNativeStringMethodCall(
   // arm (array-slice-native.ts). Measured: acorn standalone-dynamic unchanged.
   if (
     elseInstrs === undefined &&
-    (ctx.userMethodNames?.has(method) === true || (ctx.standalone && STRING_ARRAY_SHARED_METHODS.has(method))) &&
-    (ctx.standalone || ctx.wasi) &&
+    (ctx.userMethodNames?.has(method) === true || STRING_ARRAY_SHARED_METHODS.has(method)) &&
     !expr.arguments.some((a) => ts.isSpreadElement(a))
   ) {
     const arity = expr.arguments.length;

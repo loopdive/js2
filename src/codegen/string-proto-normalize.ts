@@ -141,7 +141,7 @@ export function emitStringNormalizeMemberBody(
 ): ValType | null {
   // Host/native-first output retains its existing bridge. This body owns only
   // no-JS-host standalone/WASI semantics.
-  if (!(ctx.standalone || ctx.wasi) || !ctx.nativeStrings) return null;
+  if (!ctx.nativeStrings) return null;
 
   // Complete every import-capable prerequisite before taking helper handles.
   ensureNativeStringHelpers(ctx);

@@ -197,10 +197,7 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
  *      yield `name` alone per §20.5.3.4 steps 4–6.
  *   3. else `name + ": " + msg`.
  *
- * Standalone/WASI only: in JS-host mode the `__new_<Kind>` imports resolve to
- * the real JS constructors, so thrown errors are host objects and never
- * `$Error_struct`s — the helper would be dead weight. Registering the error
- * struct type here (idempotent) makes the arm order-independent: a module
+ * Registering the error struct type here (idempotent) makes the arm order-independent: a module
  * whose first string coercion happens BEFORE its first error construction
  * still gets the arm.
  *
@@ -214,7 +211,6 @@ export function ensureNativeStringHelpers(ctx: CodegenContext): void {
 function ensureErrorToStringHelper(ctx: CodegenContext): number | undefined {
   const cached = ctx.nativeStrHelpers.get("__error_to_string");
   if (cached !== undefined) return cached;
-  if (!(ctx.standalone || ctx.wasi)) return undefined; // noJsHost only (see doc above)
   ensureNativeStringHelpers(ctx);
   const strConcatIdx = ctx.nativeStrHelpers.get("__str_concat");
   if (strConcatIdx === undefined) return undefined;
@@ -1742,7 +1738,6 @@ export function emitTestRuntimeStringHelpers(ctx: CodegenContext): void {
  * helper emission or import registration.
  */
 export function emitExceptionRenderExports(ctx: CodegenContext): void {
-  if (!(ctx.standalone || ctx.wasi)) return;
   if (!ctx.nativeStrings) return;
   if (ctx.exnTagIdx < 0) return;
   if (ctx.funcMap.has("__exn_render_prepare")) return;
