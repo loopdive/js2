@@ -140,6 +140,92 @@ joins a dynamic parameter with a string literal.
   runs no move-only scan; closing it means a selector-side dynamic typing of
   the initializer, not another position list.
 
+## Implementation Plan — round 9 (Fable, 2026-10-25; implement on Opus)
+
+Round-8 fresh-context review of head `ced5832946` (verdict on PR #6834,
+`review-6834-r8`) left four blockers, all the same class — the selector admits
+a `null` or `??` shape in a planned member closure that from-ast then refuses
+(claim-then-demote), or refuses a shape the base lowered (lost claim). One
+commit on top of `ced5832946` in `src/ir/select.ts` + tests + this file. Every
+limit below is read from from-ast; cite the line in the JSDoc, do not
+paraphrase.
+
+### Y — object-shaped operand of `=== null`
+
+`nullCompareFoldFails(other, op, scope)` (select.ts ≈6604–6611) does not
+mirror `tryFoldNullCompare`'s object/class bail (from-ast.ts ≈16186–16193).
+Resolve `other` through `unwrapPhase1Parens` and `closureLocalDeclaration` to
+its initializer; return `true` when `obviousSelectorValueFamily` of the
+operand **or of that initializer** is `"reference"` **unless** the initializer
+is an array literal (`ts.isArrayLiteralExpression`) — a `vec` IS folded
+(`eqArrR`, `vecLitEqR`, `vecElEqR` claim and match node on the base; keep).
+Refusal row: `var o = { a: 1 }; if (o === null) throw "n"; throw r;`.
+
+### Z — loose `== null` with a non-identifier dynamic operand
+
+select.ts ≈6607 `if (!strict && dynamicShapedValue(other)) return true;` only
+sees identifiers / params / catch / conditional arms; `m.x == null`,
+`m[0] == null`, `m() == null`, `m.g() == null`, `(1, r) == null` pass and
+withdraw. Spell the loose branch **positively**: a loose operator is admitted
+only when the other operand is provably numeric or boolean —
+`obviousSelectorValueFamily ∈ {number, boolean}` or
+`declaredExpressionHasExactFamily(other, number | boolean, scope)`; the array
+family may stay admitted (`var a = [1]; a == null`, `a.length == null` fold on
+the base). Everything else → `return true`. Must keep claimed (measured on the
+base): `k == null`, `var q = 5; q == null`, `5 == null`, `true == null`,
+`-r == null`, `!r == null`, `(r > 1) == null`, `subject() == null`.
+Refusal row: `if (m.x == null) throw "n"; throw r;`.
+
+### AA — `??` with the minted dynamic local on the left
+
+`var t = r ?? 1; throw t` claims and withdraws
+`'??' on non-reference lhs (dynamic)`. In `isPhase1Expr`'s binary arm, under
+`currentInPlannedMemberClosure`, refuse a `QuestionQuestionToken` whose left
+operand (through parens) is `dynamicShapedValue(...)`, with its own reason
+code (`expr-closure-nullish-coalesce-dynamic`), JSDoc citing from-ast's `??`
+limit. Refusal row: `var t = r ?? 1; throw t;`.
+
+### AB — discarded `null` (20 lost base claims)
+
+`closureNullValuePosition` climbs parens and a comma's RIGHT operand to a
+`throw`, then tests equality; a `null` in a **discarded** position reaches
+neither and is refused, while from-ast's `lowerDiscardedExpression`
+(≈2546–2620) lowers it under an externref hint (`:2619`). Extend the climb:
+while the parent is a `ParenthesizedExpression`, a `VoidExpression`, a comma
+(`node` on EITHER side) or a `ConditionalExpression` of which `node` is an
+arm, climb; then admit when the parent is a `ThrowStatement` **or** an
+`ExpressionStatement`. Do **not** admit a `for` initializer / incrementor
+(`lowerForUpdateExpr`, ≈12449, lowers with its own hints; those rows were PCE
+on the base — keep refusing). The comma-left admission subsumes
+`throw (null, m)`; `(null, m) === null` is admitted by the same walk.
+Positive rows: `null;`, `(1, null); throw m;`, `throw (null, m);`,
+`void null;`, `k ? null : 1;` — each prepared `<module-init>`, empty PCE,
+result = node.
+
+### AC — JSDoc (nit, same commit)
+
+Remove "comma-left" from the withdrawing positions; replace "a class-typed
+operand has no selector family" with the truth (object/array/function
+literals are `"reference"`; only the identifier→declaration hop was missing);
+add the `boxed` (≈16163) and `ref_null` (≈16208) bails as unreachable-today;
+opening sentence names three admitted positions: throw operand, discarded
+value, folded equality operand.
+
+### Validation (bare, exit codes in the report)
+
+`pnpm run -s typecheck`; vitest one file at a time on
+`tests/issue-7106-member-closure-shapes.test.ts`,
+`tests/issue-7106-dynamic-value-call.test.ts`,
+`tests/issue-7106-dynamic-evidence*.test.ts`; `node scripts/check-loc-budget.mjs`
+and `node scripts/check-func-budget.mjs`, each also with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`; coercion-sites, oracle-ratchet,
+dead-exports, import-cycles, ir-layering. Probes: re-run
+`probe7/9/10/11/12/13/14/15/16/17-6834-*.mts` (scratchpad) head vs base
+`/home/user/js2/.claude/worktrees/refresh-6832` @ `1f01ea20` with `cmp-r6.sh`:
+Y/Z/AA rows refused with empty PCE, every AB row claimed again (= node), zero
+lost base claims on standalone / wasi / gc, host-assisted gc and fast bytes
+identical on every row. Report the new head and a one-line PR-body addition.
+
 ## Acceptance
 
 - `tests/issue-7106-member-closure-shapes.test.ts`: a throw-only member
