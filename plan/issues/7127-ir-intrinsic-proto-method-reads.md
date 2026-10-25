@@ -4,7 +4,7 @@ title: "IR: admit `<Builtin>.prototype.<method>` value reads off ambient intrins
 status: done
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-25
 completed: 2026-10-22
 priority: medium
 horizon: s
@@ -20,8 +20,20 @@ assignee: "ttraenkler/lead-c-remote"
 # post-merge baseline refresh left no headroom for it.
 func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
+  # 2026-10-25: same stranded-grant repair as the loc entries below — the one
+  # line #7127 adds to the resolver (+1, 528) was granted in 7118's file.
+  - src/ir/integration.ts::makeFromAstResolver
+# 2026-10-25: the merge group of PR #6862 fails the LOC gate on select.ts
+# (+8), from-ast.ts (+6) and integration.ts (+1) — those grants lived in
+# 7118-ir-ambient-intrinsic-values.md, which main now carries identically
+# since #6846 merged, so the gate no longer sees them (stranded grant).
+# Restated here, in a file this PR still modifies. Same growth, same reason:
+# the #7127 proto-method-read admission in the selector and lowering.
 loc-budget-allow:
   - src/codegen/index.ts
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  - src/ir/integration.ts
 ---
 
 ## Problem
