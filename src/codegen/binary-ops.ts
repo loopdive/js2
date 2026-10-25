@@ -46,7 +46,6 @@ import {
   buildThrowJsErrorInstrs,
   emitPrivateBrandPredicate,
   emitThrowTypeError,
-  noJsHost,
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { ensureExternIsUndefinedImport, ensureLateImport } from "./expressions/late-imports.js";
@@ -2620,7 +2619,15 @@ export function emitAnyRelational(
 
   // Compile both operands to externref temps (keep runtime strings boxed).
   // (#6982) A class instance with `[Symbol.toPrimitive]` stays raw until step 1.
-  const operands = compileRelationalOperands(ctx, fctx, expr, op, numericShortcut && noJsHost(ctx));
+  // Provider regime, not host axis: the strict-gc profile is native-first with
+  // `ctx.standalone`/`ctx.wasi` false and keeps the shortcut (#6979 S7-a review).
+  const operands = compileRelationalOperands(
+    ctx,
+    fctx,
+    expr,
+    op,
+    numericShortcut && ctx.targetProfile.semanticProviders === "native-first",
+  );
   if (operands === null) return { kind: "i32" };
   const { l, r } = operands;
   const lTmp = l.tmp;

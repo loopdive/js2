@@ -334,7 +334,12 @@ function emitAddOperand(
     // expressions must finish before either operand's ToPrimitive runs.
     return saveDeferredAddOperand(fctx, opType, deferred);
   }
-  if (noJsHost(ctx) && structHasOnlyUserToString(ctx, structName)) {
+  // The native-first provider regime, not the host axis: `{target:"gc",
+  // strictNoHostImports:true, nativeStrings:true}` is native-first while
+  // `ctx.standalone`/`ctx.wasi` are both false, and it keeps this string-hint
+  // conversion (#6979 S7-a review). Not constant by type: the linear target
+  // resolves "backend-defined", though it never enters this backend.
+  if (ctx.targetProfile.semanticProviders === "native-first" && structHasOnlyUserToString(ctx, structName)) {
     const opType = compileExpression(ctx, fctx, inner);
     if (!opType) return null;
     return saveDeferredAddOperand(fctx, opType, deferred, undefined, true);
