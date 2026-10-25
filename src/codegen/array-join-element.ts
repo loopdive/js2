@@ -34,6 +34,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { ts } from "../ts-api.js";
 
 /**
  * Is `typeIdx` `$AnyString` or one of its subtypes (`$NativeString`, a rope)?
@@ -95,4 +96,63 @@ export function buildJoinBoxedElementToString(
       else: [{ op: "local.get", index: emptyElem.elemLocal }, ...toStrPath],
     },
   ];
+}
+
+/**
+ * The expression `compileArrayMethodCall` reads (local/global slot, else a
+ * transactional probe-compile) to replace the checker's vec type with the
+ * receiver's lowered storage type. Normally the receiver itself.
+ *
+ * A native-string join over a closure-producing array expression must
+ * compile that receiver exactly once. The ordinary actual-type probe
+ * recompiles `map`/`filter`/… and closure registration is not transactional;
+ * probing and then emitting the receiver can therefore leave the committed
+ * call wired to a stale/null closure. The resolved TS result type already
+ * describes the array produced by these methods, including `map`'s result
+ * element type, so it is used directly (`undefined`: no probe at all).
+ *
+ * (#7146) Except a `sort`/`filter` chain: `x.sort(...)` returns `x` itself and
+ * `x.filter(...)` a fresh vec of `x`'s own element storage, so the storage vec
+ * is `x`'s — and the checker's type need not be (an evolving `const keys = []`
+ * filled by `for…in` is stored as `$__vec_externref` while the checker says
+ * `string[]`). Peel those layers and probe what remains, unless it is itself
+ * closure-producing (`map` changes the element type: keep the skip).
+ */
+export function nativeJoinProbeExpr(
+  nativeStrings: boolean | undefined,
+  methodName: string,
+  receiver: ts.Expression,
+): ts.Expression | undefined {
+  const isJoin = methodName === "join" || methodName === "toString" || methodName === "toLocaleString";
+  if (!nativeStrings || !isJoin) return receiver;
+  let e = receiver;
+  while (closureArrayMethodOf(e) === "sort" || closureArrayMethodOf(e) === "filter") {
+    e = ((e as ts.CallExpression).expression as ts.PropertyAccessExpression).expression;
+  }
+  return closureArrayMethodOf(e) === undefined ? e : undefined;
+}
+
+/**
+ * (#2007/#1448, #2074/#2075) Array methods that allocate a callback closure.
+ * Closure registration is not idempotent, so a receiver calling one of these
+ * must not be probe-compiled, and the standalone vec-concat join fast-path
+ * must not late-register `number_toString` after one was emitted.
+ */
+export const CLOSURE_ARRAY_METHODS: ReadonlySet<string> = new Set([
+  "map",
+  "filter",
+  "flatMap",
+  "forEach",
+  "reduce",
+  "reduceRight",
+  "find",
+  "findIndex",
+  "sort",
+]);
+
+/** The closure-allocating method `expr` calls (`a.map(...)` → "map"), if any. */
+function closureArrayMethodOf(expr: ts.Expression): string | undefined {
+  if (!ts.isCallExpression(expr) || !ts.isPropertyAccessExpression(expr.expression)) return undefined;
+  const m = expr.expression.name.text;
+  return CLOSURE_ARRAY_METHODS.has(m) ? m : undefined;
 }
