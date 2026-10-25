@@ -82,6 +82,7 @@ export function planPhysicalTypeSection(
     const refs: number[] = [];
     const value = (v: ValType): void => {
       if (v.kind === "ref" || v.kind === "ref_null") {
+        if (v.typeIdx === -23) return; // Abstract exn heap type has no module dependency.
         checkIndex(v.typeIdx);
         refs.push(v.typeIdx);
       }

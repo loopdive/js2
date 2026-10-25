@@ -2,6 +2,7 @@
 
 import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.js";
 import { buildStandardTryTable } from "../../../wasm/physical/exception-control.js";
+import { assertNativePromiseShape } from "../promise/promise-layout.js";
 import { defaultSpillInstr } from "./frame-defaults.js";
 import { buildNativeAwaitClassification } from "./native-await.js";
 import type {
@@ -30,9 +31,18 @@ function resources(r: PreparedFrameResources) {
   const frame = physicalIndex(r.frame.target, r.allocator.type(r.frame));
   const tag = physicalIndex(r.exceptionTag.target, r.allocator.tag(r.exceptionTag));
   const rt = r.runtime;
-  const funcs = [r.entry, r.resume, r.fulfillStep, r.rejectStep, rt.fulfill, rt.reject, ...r.operations];
-  if (rt.kind === "host") funcs.push(rt.create, rt.resolve, rt.react, rt.wrap, rt.caught);
-  else funcs.push(rt.enqueue, ...(rt.markHandled.kind === "function" ? [rt.markHandled.target] : []));
+  const funcs = [r.entry, r.resume, r.fulfillStep, r.rejectStep, rt.reject, ...r.operations];
+  if (rt.kind === "host") funcs.push(rt.fulfill, rt.create, rt.resolve, rt.react, rt.wrap, rt.caught);
+  else {
+    if (!rt.resolveValue) throw new Error("prepared native frame requires PromiseResolve");
+    if (!rt.create) throw new Error("prepared native frame requires Promise object allocation");
+    funcs.push(
+      rt.create,
+      rt.resolveValue,
+      rt.enqueue,
+      ...(rt.markHandled.kind === "function" ? [rt.markHandled.target] : []),
+    );
+  }
   const indices = new Map(funcs.map((fn) => [fn, functionIndex(fn)] as const));
   return {
     frame,
@@ -62,6 +72,7 @@ export function preflightPreparedFrame(plan: PreparedFramePlan, r: PreparedFrame
   const ids = new Set(plan.values.map((v) => v.id));
   if (ids.size !== plan.values.length) throw new Error("prepared frame has duplicate values");
   const { promise } = resources(r);
+  if (r.runtime.kind === "native") assertNativePromiseShape(r.runtime.promise.target);
   const carrier = r.frame.target.fields[r.resultField]?.type;
   if (
     r.runtime.kind === "host" ? carrier?.kind !== "externref" : carrier?.kind !== "ref" || carrier.typeIdx !== promise
@@ -228,7 +239,11 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
     if (term.kind === "resolve") {
       body.push(get(result));
       term.value(operation(body));
-      body.push(call(r.runtime.fulfill), { op: "drop" }, { op: "return" });
+      body.push(
+        call(r.runtime.kind === "native" ? r.runtime.resolveValue : r.runtime.fulfill),
+        { op: "drop" },
+        { op: "return" },
+      );
     } else if (term.kind === "goto") body.push(...stateTo(term.target), { op: "br", depth: 1 });
     else if (term.kind === "branch") {
       term.condition(operation(body));
@@ -258,6 +273,10 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
         body.push(
           ...buildNativeAwaitClassification({
             alwaysAsync: true,
+            thenableAdoption: {
+              resolveValueFuncIdx: bound.functionIndex(rt.resolveValue),
+              newPendingPromise: [constant(1), call(rt.create)],
+            },
             awaitedLocal: awaited,
             promiseLocal: pending,
             frameLocal: 0,
@@ -314,6 +333,10 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
     get(0),
     field(r.resultField),
     set(result),
+    // Wasm definite assignment cannot infer that suspended=1 implies a classified
+    // native Promise. Seed the scratch reference before entering dispatch; await
+    // classification replaces it before any pending reaction is installed.
+    ...(r.runtime.kind === "native" ? [get(result), set(pending)] : []),
     buildStandardTryTable(empty, dispatch, [
       { kind: "catch", tagIdx: bound.tag, payloadType: ext, body: [set(reason), ...reject] },
       ...(r.runtime.kind === "host"
@@ -339,15 +362,7 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
   });
   const paramCount = plan.values.filter((v) => v.param !== undefined).length;
   const entryBody: Instr[] =
-    r.runtime.kind === "host"
-      ? [call(r.runtime.create)]
-      : [
-          constant(0),
-          { op: "ref.null.extern" },
-          { op: "ref.null.extern" },
-          { op: "ref.null.extern" },
-          { op: "struct.new", typeIdx: bound.promise },
-        ];
+    r.runtime.kind === "host" ? [call(r.runtime.create)] : [constant(0), call(r.runtime.create)];
   entryBody.push(set(paramCount));
   for (let i = 0; i < r.frame.target.fields.length; i++) {
     const param = plan.values.find((v) => v.param !== undefined && 5 + v.param === i);

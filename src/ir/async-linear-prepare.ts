@@ -507,7 +507,7 @@ export function prepareLinearSuspendingIrFunction(fn: IrFunction): PreparedLinea
     currentState.body.push(helper.call);
   }
 
-  if (awaitCount === 0 || states.length !== awaitCount + 1) return null;
+  if (states.length !== awaitCount + 1) return null;
   const returned = terminator.values[0];
   const resolvedReturn = returned === undefined ? undefined : resolve(returned);
   if (fn.resultTypes.length === 1 && resolvedReturn === undefined) return null;

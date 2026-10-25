@@ -21,7 +21,7 @@ function walkChildren(instr: Instr, visit: (children: Instr[]) => void): void {
 
 /** One handler in source/legacy selection order. */
 export interface StandardEhHandler {
-  kind: "catch" | "catch_all";
+  kind: "catch" | "catch_all" | "catch_all_ref";
   tagIdx?: number;
   /** Values delivered to the handler block by the catch branch. */
   payloadType?: ValType;
@@ -144,6 +144,18 @@ export function buildStandardTryTable(blockType: BlockType, body: Instr[], handl
   }
 
   return { op: "block", blockType, body: nested };
+}
+
+/** Run cleanup and propagate the original exception, including foreign tags, using standard EH. */
+export function buildStandardRethrowingTry(body: Instr[], cleanup: Instr[]): Instr {
+  return buildStandardTryTable({ kind: "empty" }, body, [
+    {
+      kind: "catch_all_ref",
+      // Abstract heap type exn (0x69), carried by the handler block without a local.
+      payloadType: { kind: "ref", typeIdx: -23 },
+      body: [...cleanup, { op: "throw_ref" }],
+    },
+  ]);
 }
 
 /** Preserve legacy host output while selecting standardized EH for no-JS-host targets. */

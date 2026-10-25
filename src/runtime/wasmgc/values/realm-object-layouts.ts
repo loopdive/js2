@@ -3,6 +3,7 @@ import type { Instr, LocalDef, ValType } from "../../../wasm/model/instructions.
 import type { StructTypeDef } from "../../../wasm/model/module-records.js";
 import type { NativeDeclaredType } from "./native-resource-declaration-types.js";
 import { createOpenObjectDeclaration } from "./object-layouts.js";
+import { buildOrdinaryObjectCreateBody, type OrdinaryObjectCreateResources } from "./ordinary-object-storage-bodies.js";
 import {
   createPrimitiveWrapperDeclaration,
   type PrimitiveWrapperKind,
@@ -106,4 +107,23 @@ export function buildRealmSourceStateInitializer(binding: {
       { op: "struct.new", typeIdx: binding.stateType },
     ],
   };
+}
+
+/** Shared ordinary storage with an explicit realm/prototype state tail. Leaves a GC reference. */
+export function buildRealmOrdinaryObjectAllocation(
+  storage: OrdinaryObjectCreateResources,
+  state: {
+    readonly allocationTypeIdx: number;
+    readonly stateTypeIdx: number;
+    readonly prototype: readonly Instr[];
+    readonly realm: readonly Instr[];
+  },
+): Instr[] {
+  return [
+    ...buildOrdinaryObjectCreateBody(storage).slice(0, -2),
+    ...state.prototype,
+    ...state.realm,
+    { op: "struct.new", typeIdx: state.stateTypeIdx },
+    { op: "struct.new", typeIdx: state.allocationTypeIdx },
+  ];
 }

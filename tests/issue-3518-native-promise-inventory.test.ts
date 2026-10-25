@@ -125,8 +125,8 @@ describe("bounded source inventory, unchanged full async family", () => {
   });
   it("freezes owned support locators and preserves current borrowed associations", () => {
     const { census } = actual();
-    expect(census.supportBuffers).toHaveLength(31);
-    expect(census.supportOccurrences).toHaveLength(157);
+    expect(census.supportBuffers).toHaveLength(43);
+    expect(census.supportOccurrences).toHaveLength(222);
     for (const buffer of census.supportBuffers) {
       expect(Object.isFrozen(buffer.root)).toBe(true);
       expect(Object.isFrozen(buffer.path)).toBe(true);
@@ -195,8 +195,9 @@ describe("bounded source inventory, unchanged full async family", () => {
         expect(census.allocations).toBe(program.allocations);
         expect(census.abiEntries).toBe(program.abi.entries);
         expect(census.supportFunctions).toHaveLength(1);
-        expect(census.supportBuffers).toHaveLength(31);
-        expect(census.supportOccurrences).toHaveLength(157);
+        expect(census.supportFunctions[0]!.name).toBe("__sh_num_toString_radix");
+        expect(census.supportBuffers).toHaveLength(43);
+        expect(census.supportOccurrences).toHaveLength(222);
         expect(census.demands.buffers).toHaveLength(80);
         expect(census.demands.occurrences).toHaveLength(216);
         expect(census.paths.some((row) => row.root.kind === "abi")).toBe(true);
@@ -210,9 +211,18 @@ describe("bounded source inventory, unchanged full async family", () => {
           collectNativePromiseSourceCensus(program, projection, options),
           input,
         );
-        expect(observation.declarations).toHaveLength(24);
-        expect(observation.reservationSteps).toHaveLength(27);
-        expect(observation.carriers).toHaveLength(6);
+        expect(observation.declarations).toHaveLength(37);
+        expect(observation.declarations.filter((row) => row.role[0] === "values").map((row) => row.role[1])).toEqual([
+          "any",
+          "undefined",
+          "number",
+          "boolean",
+          "box-number",
+          "unbox-number",
+          "typeof-number",
+        ]);
+        expect(observation.reservationSteps).toHaveLength(43);
+        expect(observation.carriers).toHaveLength(10);
         expect(observation.input).toBe(input);
         expect(observation.declarations).toBe(input.plan.declarations);
         expect(observation.reservationSteps).toBe(input.plan.reservationSteps);
@@ -328,7 +338,7 @@ describe("bounded source inventory, unchanged full async family", () => {
           ...input,
           plan: { ...input.plan, declarations },
         }),
-      ).toThrow(/recipe/);
+      ).toThrow(/demand\/plan mismatch/);
     });
   it("rejects substituted buffers, occurrences, options and foreign producer observations", () => {
     const { program, projection, input } = actual();
@@ -353,7 +363,7 @@ describe("bounded source inventory, unchanged full async family", () => {
         collectNativePromiseSourceCensus(program, projection, { ...options, utf8Storage: true }),
         input,
       ),
-    ).toThrow(/recipe/);
+    ).toThrow(/changed native string declaration recipe/);
     const observation = observeNativeStringValueProducer(
       collectNativePromiseSourceCensus(program, projection, options),
       input,

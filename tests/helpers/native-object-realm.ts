@@ -59,12 +59,22 @@ import {
 } from "../../src/backend/wasmgc/resources/native-object-realm.js";
 
 export const NO_SOURCE_REALM = `export function run(): number { const value = Object.create(null); return 7; }`;
-export function publicRealmFoundation(displaced = false, decoded = false, noSource = false, shared = false) {
-  const program = prepareGetterProgram(noSource ? NO_SOURCE_REALM : STATE_SOURCE, decoded);
+export function publicRealmFoundation(
+  displaced = false,
+  decoded = false,
+  noSource = false,
+  shared = false,
+  sourceText = STATE_SOURCE,
+  extraLiterals: readonly string[] = [],
+  expectedSourceUnits = noSource ? 0 : 2,
+) {
+  const program = prepareGetterProgram(noSource ? NO_SOURCE_REALM : sourceText, decoded);
   const projection = program.runtime[0]!;
   const realm = deriveNativeRealmRequirements(program, projection);
-  if (!realm || (noSource ? realm.description.sourceUnits.length !== 0 : realm.description.sourceUnits.length !== 2))
-    throw Error("missing genuine realm/source control population");
+  if (!realm || realm.description.sourceUnits.length !== expectedSourceUnits)
+    throw Error(
+      `missing genuine realm/source control population: ${realm?.description.sourceUnits.length ?? "no realm"} units`,
+    );
   const module = createEmptyModule(),
     tx = new PhysicalModuleReservations(module);
   const exceptionSelection = { required: true as const, shared };
@@ -103,7 +113,7 @@ export function publicRealmFoundation(displaced = false, decoded = false, noSour
   const strings = reserveNativeStringLiteralResources(f.tx, {
     key: "public-realm:strings",
     utf8Storage: displaced,
-    literals: literalPlan.literals,
+    literals: [...literalPlan.literals, ...extraLiterals.map((value) => ({ value, encoding: "ascii" as const }))],
   });
   const stringTypes = nativeStringLiteralReservationInventory(f.tx, strings).typePack;
   const substrateRequirements = { key: "public-realm:substrate" };
@@ -184,6 +194,7 @@ export function publicRealmClosures(f: ReturnType<typeof publicRealmFoundation>,
 export function publicRealmSourceSlots(
   f: ReturnType<typeof publicRealmFoundation>,
   c: ReturnType<typeof publicRealmClosures>,
+  extraFactories: readonly { name: string; signature: PhysicalFunctionSignature }[] = [],
 ) {
   if (!c.source) throw Error("source control requires real lifted units");
   const slots = new Map<IrUnitId, FunctionReservation>(),
@@ -199,9 +210,13 @@ export function publicRealmSourceSlots(
     slots.set(unit.unitId, f.tx.reserveFunction(irUnitCallableBindingId(unit.unitId), fn.name, signature));
     signatures.set(unit.unitId, signature);
   }
-  const factories = ["makeCaptured", "makeEmpty"].map((name) => {
-    const fn = f.projection.prepared.functions.find((row) => row.name === name)!;
-    const signature = { params: name === "makeCaptured" ? [f64] : [], results: [ext] };
+  const factories = [
+    { name: "makeCaptured", signature: { params: [f64], results: [ext] } },
+    { name: "makeEmpty", signature: { params: [], results: [ext] } },
+    ...extraFactories,
+  ].map(({ name, signature }) => {
+    const fn = f.projection.prepared.functions.find((row) => row.name === name);
+    if (!fn) throw Error("missing source factory: " + name);
     const slot = f.tx.reserveFunction(irUnitCallableBindingId(fn.unitId), fn.name, signature);
     slots.set(fn.unitId, slot);
     signatures.set(fn.unitId, signature);

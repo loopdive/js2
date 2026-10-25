@@ -19,6 +19,7 @@ import { fillNativeStringValueResources } from "../../src/backend/wasmgc/program
 import { requireNativeStringLiteral } from "../../src/backend/wasmgc/resources/native-string-literals.js";
 import {
   reserveNativeInvocationResources,
+  bindNativeInvocationBuiltins,
   fillNativeInvocationResources,
   requireCompletedNativeInvocation,
 } from "../../src/backend/wasmgc/resources/native-invocation.js";
@@ -26,6 +27,7 @@ import {
   beginNativeSourceClosureEmission,
   bindNativeSourceClosureUnits,
   nativeSourceClosureCallableBindings,
+  nativeRealmSourceClosureCallableBindings,
   nativeSourceClosureResolver,
   fillPreparedPrimaryUnit,
   requireCompletedNativeSourceClosures,
@@ -182,6 +184,7 @@ export function realmSource(f: ReturnType<typeof realmFoundation>) {
 export function realmFixture(program: PreparedIrProgram, utf8Storage = false, displaced = false) {
   const f = realmSource(realmFoundation(program, utf8Storage, displaced));
   const kernel = reserveNativeRealmKernel(f.tx, f.realm, f.source?.types);
+  if (f.invocation) bindNativeInvocationBuiltins(f.tx, f.invocation, kernel);
   return { ...f, kernel };
 }
 export type RealmFixture = ReturnType<typeof realmFixture>;
@@ -201,6 +204,7 @@ export function fillRealmFixture(f: RealmFixture) {
       f.invocation,
       nativeSourceClosureCallableBindings(tx, f.source, f.input.invocationRequirements!),
       f.kernel.exception,
+      nativeRealmSourceClosureCallableBindings(tx, f.source, f.requirements),
     );
   const resolver: IrLowerResolver = {
     ...(f.source ? nativeSourceClosureResolver(tx, f.source) : {}),

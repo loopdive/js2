@@ -66,6 +66,10 @@ export function buildClosureI64Argument(
 
 export interface ClosureArgumentConversion {
   readonly unboxNumber?: FuncHandle;
+  readonly unboxBoolean?: FuncHandle;
+  readonly isBoolean?: FuncHandle;
+  readonly isNumber?: FuncHandle;
+  readonly defaultParameterStart?: number;
   readonly isUndefined?: FuncHandle;
   readonly toBigInt?: FuncHandle;
   readonly unwrapForWasm?: FuncHandle;
@@ -84,6 +88,8 @@ export function buildClosureMethodArgument(
   if (paramType) {
     if (paramType.kind === "f64" && bindings.unboxNumber !== undefined)
       return buildClosureF64Argument(argLocalIdx, bindings.unboxNumber, bindings.isUndefined);
+    if (paramType.kind === "i32" && paramType.boolean === true && bindings.unboxBoolean !== undefined)
+      return [...ops, { op: "call", funcIdx: bindings.unboxBoolean }];
     if (paramType.kind === "i32" && bindings.unboxNumber !== undefined)
       ops.push({ op: "call", funcIdx: bindings.unboxNumber }, { op: "i32.trunc_sat_f64_s" });
     else if (paramType.kind === "i64")

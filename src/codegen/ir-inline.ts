@@ -554,7 +554,7 @@ function effectiveSize(body: Instr[]): number {
 function isColdRegion(body: Instr[]): boolean {
   if (body.length === 0) return false;
   const last = body[body.length - 1];
-  return last.op === "unreachable" || last.op === "throw";
+  return last.op === "unreachable" || last.op === "throw" || last.op === "throw_ref";
 }
 
 function forEachInstr(body: Instr[], visit: (i: Instr) => void): void {
@@ -1523,7 +1523,7 @@ function computeCalleeFacts(body: Instr[], results: ValType[]): CalleeFacts {
       else if (op === "loop") loops = true;
       if (scanUnsafe && unsafe === null) {
         if (op === "return_call" || op === "return_call_ref") unsafe = "unsafe:return-call";
-        else if (op === "try" || op === "try_table" || op === "rethrow") unsafe = "unsafe:try";
+        else if (op === "try" || op === "try_table" || op === "rethrow" || op === "throw_ref") unsafe = "unsafe:try";
       }
       for (const child of childBodies(i)) walk(child, cold || isColdRegion(child));
     }

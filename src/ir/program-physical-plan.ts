@@ -13,6 +13,7 @@
 // Native string declarations are borrowed from the canonical backend recipe;
 // no resource allocation, codegen context or frontend code enters this plan.
 
+import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationInput,
   nativeInvocationSetup,
@@ -24,7 +25,7 @@ import {
   nativeNumberBinding,
 } from "../backend/wasmgc/program/native-primitive-boundary-abi.js";
 import { planHostNumberBoundary, type HostNumberBoundarySetup } from "./program/host-number-boundary-setup.js";
-import { planHostAsyncDynamicUnits, preparedHostAsyncDynamicCarrier } from "./program/host-async-dynamic.js";
+import { planPreparedDynamicUnits, preparedOpaqueDynamicCarrier } from "./program/host-async-dynamic.js";
 import { irGlobalBindingKey, irTypeBindingKey, irSupportGlobalRef, irSourceTypeRef } from "./abi-bindings.js";
 import {
   irCallableBindingKey,
@@ -70,7 +71,7 @@ import { collectNativeStringValueDemands } from "./program/native-string-value-d
 import { numberFormatRadixSupportDeclarations } from "./program/formatter-support.js";
 import { NATIVE_ASYNC_CALLABLE_DECLARATIONS } from "./runtime/native-async-callables.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
-import { forEachInstrDeep, type IrFunction, type IrType, type IrInstrIntrinsic } from "./nodes.js";
+import type { IrFunction, IrType, IrInstrIntrinsic } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import {
   freezePreparedIrValue,
@@ -994,7 +995,7 @@ function physicalSignatureConverter(
       }
       const value =
         scalar(type) ??
-        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedHostAsyncDynamicCarrier(type) : undefined);
+        (unitId !== undefined && dynamicUnits.includes(unitId) ? preparedOpaqueDynamicCarrier(type) : undefined);
       if (
         type.kind === "support-ref" &&
         native?.formatterScratch &&
@@ -1067,6 +1068,7 @@ function appendAsyncPhysicalResources(
   exports: PhysicalExport[],
 ): void {
   for (const frame of asyncFrames?.frames ?? []) {
+    if (frame.kind !== "host") continue;
     appendPhysicalImports(frame.imports, importedFunctions);
     exports.push(
       ...frame.callbacks.map((row) => ({
@@ -1285,7 +1287,7 @@ export function planPhysicalSetup(
   const asyncFrames = asyncOutcome.kind === "planned" ? asyncOutcome.setup : undefined;
   if (asyncOutcome.kind !== "planned") gaps.add(asyncOutcome.detail, asyncOutcome.unitId);
   const nativeIds = new Set(nativeBindings.map((row) => row.entry.id));
-  const dynamic = planHostAsyncDynamicUnits(program, projection, asyncFrames);
+  const dynamic = planPreparedDynamicUnits(program, projection, asyncFrames, sourceClosures, native?.valueRequirements);
   for (const gap of dynamic.gaps) gaps.add(gap.detail, gap.unitId);
   const convert = physicalSignatureConverter(program, vectors, gaps, nativeStrings, dynamic.units, sourceClosures);
 
@@ -1403,52 +1405,44 @@ export function planPhysicalSetup(
       formatter && fn === formatter.support.functions[0]
         ? formatter.requirements.calls.find((row) => row.view === "projection")!.ownerUnitId
         : fn.unitId;
-    for (const buffer of [
-      ...fn.blocks.map((block) => block.instrs),
-      ...(fn.asyncPlan?.states.map((s) => s.body) ?? []),
-    ]) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call" || instruction.kind === "closure.new") {
-            const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
-            if (!reserved.has(irCallableBindingKey(ref.binding))) {
-              gaps.add(
-                `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
-            if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
-              gaps.add(
-                `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "intrinsic") {
-            const provider = instruction.provider;
-            if (!provider)
-              gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
-            else if (
-              missingIntrinsicMaterialization(
-                instruction,
-                provider,
-                reserved,
-                projection,
-                nativeStrings,
-                hostNumberBoundary,
-              )
-            ) {
-              gaps.add(
-                `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
-                diagnosticUnit,
-              );
-            }
-          } else if (instruction.kind === "throw" || instruction.kind === "try") {
-            exceptionRequired = true;
-          }
-        });
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind === "call" || instruction.kind === "closure.new") {
+        const ref = instruction.kind === "call" ? instruction.target : instruction.liftedFunc;
+        if (!reserved.has(irCallableBindingKey(ref.binding))) {
+          gaps.add(
+            `body ${fn.name} references ${ref.binding.kind} callable ${ref.name} that the plan cannot reserve`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "global.get" || instruction.kind === "global.set") {
+        if (!reservedGlobals.has(irGlobalBindingKey(instruction.target.binding))) {
+          gaps.add(
+            `body ${fn.name} references global ${instruction.target.name} that the plan cannot reserve`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "intrinsic") {
+        const provider = instruction.provider;
+        if (!provider) gaps.add(`body ${fn.name} intrinsic ${instruction.id} has no physical provider`, diagnosticUnit);
+        else if (
+          missingIntrinsicMaterialization(
+            instruction,
+            provider,
+            reserved,
+            projection,
+            nativeStrings,
+            hostNumberBoundary,
+          )
+        ) {
+          gaps.add(
+            `body ${fn.name} intrinsic ${instruction.id} needs ${provider.kind} provider materialization`,
+            diagnosticUnit,
+          );
+        }
+      } else if (instruction.kind === "throw" || instruction.kind === "try") {
+        exceptionRequired = true;
       }
-    }
+    });
   }
 
   const startup = planPhysicalStartup(program, bodies, exportNames, gaps);
@@ -1497,6 +1491,7 @@ export function planPhysicalSetup(
       ? {
           sourceClosures: {
             key: sourceClosures.key,
+            ...(sourceClosures.promiseClosures ? { promiseClosures: sourceClosures.promiseClosures } : {}),
             signatures: sourceClosures.signatures,
             shapes: sourceClosures.shapes,
             units: sourceClosures.units,

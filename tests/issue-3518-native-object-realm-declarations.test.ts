@@ -64,11 +64,11 @@ describe("authentic full-catalog request issuer", () => {
   it("retains every catalog entry and all unavailable roles without casting them to bootstrap behaviors", () => {
     const f = publicRealmFoundation();
     expect(f.realm.description.catalog).toEqual(NATIVE_REALM_CATALOG);
-    expect(f.realm.description.catalog.intrinsics).toHaveLength(45);
-    expect(f.requests.intrinsics).toHaveLength(44);
-    expect(f.requests.requests).toHaveLength(88);
+    expect(f.realm.description.catalog.intrinsics).toHaveLength(59);
+    expect(f.requests.intrinsics).toHaveLength(57);
+    expect(f.requests.requests).toHaveLength(114);
     expect(f.requests.intrinsics.filter((row) => row.intrinsic.callable.implementation === "unavailable")).toHaveLength(
-      42,
+      55,
     );
     expect(requireNativeBuiltinFunctionRequestIssuer(f.tx, f.requests)).toBe(f.requests);
     expect(() => requireNativeBuiltinFunctionRequests(f.tx, asAny(f.requests))).toThrow(
@@ -196,17 +196,19 @@ for (const displaced of [false, true])
       expect(WebAssembly.Module.imports(r.wasm)).toEqual([]);
       expect(r.callables.entries).toHaveLength(2);
       expect(r.callables.completionScope).toBe("source-call-association");
-      expect(r.c.closures.metadata).toHaveLength(44);
+      expect(r.c.closures.metadata).toHaveLength(57);
       expect(
         r.c.closurePlan.requirements.requests.slice(0, r.c.source!.requirements.signatures.length).map((row) => row.id),
       ).toEqual(r.c.source!.requirements.signatures.map((row) => row.id));
-      expect(r.c.closurePlan.requirements.requests.slice(-88)).toEqual(r.f.requests.requests);
-      expect(
-        planNativeInvocationRequirements(r.c.source!.requirements, {
-          utf8Storage: displaced,
-          objectAccess: r.f.realm.access,
-        }),
-      ).toBeUndefined();
+      expect(r.c.closurePlan.requirements.requests.slice(-r.f.requests.requests.length)).toEqual(r.f.requests.requests);
+      const invocation = planNativeInvocationRequirements(r.c.source!.requirements, {
+        utf8Storage: displaced,
+        objectAccess: r.f.realm.access,
+      });
+      expect(invocation?.source).toBe(r.c.source!.requirements);
+      expect(invocation?.completionScope).toBe("selected-source-invocation");
+      expect(invocation?.uses).toEqual([]);
+      expect(invocation?.getterUses).toEqual([]);
       expect(nativeSourceClosureRealmState(r.f.tx, r.c.source!.types)).toBe(r.f.pack);
       const a = r.instance(),
         b = r.instance();
@@ -351,20 +353,24 @@ describe("pending full catalog population", () => {
       const f = publicRealmFoundation(displaced),
         c = publicRealmDeclarations(f),
         p = c.declarations;
-      expect(p.entries).toHaveLength(44);
+      expect(p.entries).toHaveLength(57);
       expect(p.entries.map((row) => row.request.intrinsic.id)).toEqual(
         f.requests.intrinsics.map((row) => row.intrinsic.id),
       );
+      expect(p.ordinaryIntrinsics).toHaveLength(1);
+      expect(p.ordinaryIntrinsics[0]!.intrinsic.id).toBe("%Promise.prototype%");
+      expect(p.ordinaryIntrinsics[0]!.type).toBe(f.pack.types.ordinary);
       expect(p.objectPrototype.type).toBe(f.pack.types.objectPrototype);
       expect(p.globals.realm).toBe(f.pack.anchors.realm);
       expect(p.entries.find((row) => row.request.intrinsic.id === "%Function.prototype%")!.singleton).toBe(
         f.pack.anchors.functionPrototype,
       );
-      expect(new Set(p.entries.map((row) => row.metadata.metadata.id)).size).toBe(44);
-      expect(new Set(p.entries.map((row) => row.singleton)).size).toBe(44);
+      expect(new Set(p.entries.map((row) => row.metadata.metadata.id)).size).toBe(57);
+      expect(new Set(p.entries.map((row) => row.singleton)).size).toBe(57);
       expect(p.entries.filter((row) => row.construct).map((row) => row.request.intrinsic.id)).toEqual([
         "%Object%",
         "%Function%",
+        "%Promise%",
       ]);
       const table = indexPhysicalTypes(f.module.types);
       for (const row of p.entries) {
@@ -395,9 +401,9 @@ describe("pending full catalog population", () => {
           });
       }
       const inventory = nativeObjectRealmDeclarationInventory(f.tx, p);
-      expect(inventory.types).toHaveLength(44);
-      expect(inventory.functions).toHaveLength(91);
-      expect(inventory.globals).toHaveLength(46);
+      expect(inventory.types).toHaveLength(57);
+      expect(inventory.functions).toHaveLength(118);
+      expect(inventory.globals).toHaveLength(60);
       expect(inventory.globals).not.toContain(f.pack.anchors.realm);
       expect(inventory.globals).not.toContain(f.pack.anchors.functionPrototype);
       expect(requireNativeObjectRealmDeclarations(f.tx, p, c.dependencies)).toBe(p);
@@ -409,7 +415,7 @@ describe("pending full catalog population", () => {
       expect(f.realm.source).toBeUndefined();
       expect(f.realm.access.uses.length).toBeGreaterThan(0);
       expect(c.source).toBeUndefined();
-      expect(c.closures.metadata).toHaveLength(44);
+      expect(c.closures.metadata).toHaveLength(57);
       expect(c.closurePlan.requirements.requests).toEqual(f.requests.requests);
       expect(c.declarations.completionScope).toBe("public-realm-declarations-only");
     });
@@ -428,7 +434,7 @@ describe("pending full catalog population", () => {
       { op: "ref.null", typeIdx: f.pack.types.objectPrototype.typeIndex },
     ]);
     expect(() => requireCompletedNativeObjectRealm(f.tx, p)).toThrow(
-      "full Object/Function algorithms and runtime population remain incomplete",
+      "full Object/Function/Promise algorithms and runtime population remain incomplete",
     );
     expect(() => fillNativeObjectRealmDeclarations(f.tx, p)).toThrow("duplicate declaration fill");
   });
@@ -501,7 +507,7 @@ describe("pending full catalog population", () => {
       "foreign expected dependencies",
     );
     expect(population(f)).toEqual(before);
-    expect(publicRealmDeclarations(f, c).declarations.entries).toHaveLength(44);
+    expect(publicRealmDeclarations(f, c).declarations.entries).toHaveLength(57);
   });
   it("does not promote caller-filled algorithm slots to a completed public realm", () => {
     const f = publicRealmFoundation(),
@@ -512,9 +518,9 @@ describe("pending full catalog population", () => {
     fillNativeObjectRealmDeclarations(f.tx, c.declarations);
     // Fault injection only: these bodies are never emitted, executed or installed as standard methods.
     for (const slot of inventory.functions) f.tx.fillFunction(slot, { locals: [], body: [{ op: "unreachable" }] });
-    expect(inventory.functions).toHaveLength(91);
+    expect(inventory.functions).toHaveLength(118);
     expect(() => requireCompletedNativeObjectRealm(f.tx, c.declarations)).toThrow(
-      "full Object/Function algorithms and runtime population remain incomplete",
+      "full Object/Function/Promise algorithms and runtime population remain incomplete",
     );
   });
   it("rejects hidden/accessor dependency roles and canonical-global external fill/mutation", () => {

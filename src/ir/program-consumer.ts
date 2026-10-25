@@ -26,6 +26,7 @@
 // Physical allocation is owned by the Wasm module reservation ledger. This
 // consumer imports no source frontend, checker or legacy CodegenContext.
 
+import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationRequirements,
   assertNativeInvocationRequirementsCurrent,
@@ -50,7 +51,10 @@ import {
   fillNativeInvocationResources,
   requireCompletedNativeInvocation,
 } from "../backend/wasmgc/resources/native-invocation.js";
-import { nativeSourceClosureCallableBindings } from "./program-native-invocation.js";
+import {
+  nativeSourceClosureCallableBindings,
+  nativeRealmSourceClosureCallableBindings,
+} from "./program-native-invocation.js";
 import {
   reservePreparedAsyncFrame,
   fillPreparedAsyncFrame,
@@ -141,7 +145,7 @@ import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { irCallableBindingKey } from "./callable-bindings.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "./lower.js";
-import { forEachInstrDeep, type IrFuncRef, type IrFunction, type IrGlobalRef } from "./nodes.js";
+import type { IrFuncRef, IrFunction, IrGlobalRef } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap, type ProgramAbiFinalIndex } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
@@ -208,10 +212,6 @@ function locate(program: PreparedIrProgram, unitId: IrUnitId, failure: IrPrepara
   if (!owner) programInvariant("invalid-prepared-data", `cannot locate ${unitId}: ${failure.detail}`);
   const { cause: _cause, ...diagnostic } = failure;
   return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
-}
-
-function instructionBuffers(fn: IrFunction) {
-  return [...fn.blocks.map((block) => block.instrs), ...(fn.asyncPlan?.states.map((state) => state.body) ?? [])];
 }
 
 function selectProjection(
@@ -343,14 +343,10 @@ export function acceptPreparedIrProgram(
         missing = `${what} unit body ${ref.binding.unitId}, which the ${options.backend}:${options.target} projection does not carry`;
       }
     };
-    for (const buffer of instructionBuffers(fn)) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call") check(instruction.target, "calls");
-          else if (instruction.kind === "closure.new") check(instruction.liftedFunc, "captures");
-        });
-      }
-    }
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind === "call") check(instruction.target, "calls");
+      else if (instruction.kind === "closure.new") check(instruction.liftedFunc, "captures");
+    });
     if (missing !== undefined) {
       return locate(program, fn.unitId, {
         kind: "invariant",
@@ -1367,8 +1363,8 @@ function materializePhysicalProgram(
       : undefined;
   if (Boolean(invocationPack) !== Boolean(plan.nativeInvocation))
     emissionFailed("native invocation prerequisites were not reserved");
+  if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types, exceptionTag, invocationPack);
   const invocationFunctions = invocationPack ? nativeInvocationFunctions(reservations, invocationPack) : [];
-  if (realm) reserveNativeRealmKernel(reservations, realm, sourceClosures?.types);
   const realmFunctions = realm ? nativeRealmReservationInventory(reservations, realm).functions : [];
   for (const token of [...invocationFunctions, ...realmFunctions]) {
     if (nativeFunctions.has(token.object)) emissionFailed("invocation function has competing native owners");
@@ -1379,6 +1375,7 @@ function materializePhysicalProgram(
   const supportFunctions = indexSupportFunctions([...nativeRows, ...formatterRows]);
   for (const token of [...invocationFunctions, ...realmFunctions]) supportFunctions.set(token.object, token);
   for (const frame of plan.asyncFrames?.frames ?? []) {
+    if (frame.kind !== "host") emissionFailed("native async frame requires the complete native Promise resource group");
     const entry = slots.get(frame.owner);
     if (!entry || !exceptionTag) emissionFailed("async frame has no reserved entry or exception tag");
     const pack = reservePreparedAsyncFrame(reservations, frame, entry);
@@ -1437,6 +1434,7 @@ function materializePhysicalProgram(
       invocationPack,
       nativeSourceClosureCallableBindings(reservations, sourceClosures, record.nativeInvocation),
       exceptionTag,
+      realm ? nativeRealmSourceClosureCallableBindings(reservations, sourceClosures, realm.requirements) : undefined,
     );
   }
 

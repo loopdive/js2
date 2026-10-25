@@ -110,6 +110,7 @@ export const INLINE_DISALLOWED_OPS = new Set([
   "try",
   "try_table",
   "throw",
+  "throw_ref",
   "rethrow",
   "unreachable",
   "call",

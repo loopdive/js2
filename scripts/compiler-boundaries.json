@@ -256,7 +256,8 @@
         "src/ir/program/runtime-manifest.ts",
         "src/ir/program/runtime-validation.ts",
         "src/ir/program/validation.ts",
-        "src/ir/program/allocation-body-validation.ts"
+        "src/ir/program/allocation-body-validation.ts",
+        "src/ir/program/native-invocation-parameter.ts"
       ],
       "minModules": 49
     },
@@ -275,9 +276,10 @@
         "src/runtime/contracts/collection-kind.ts",
         "src/runtime/contracts/js-value-tags.ts",
         "src/runtime/contracts/native-realm-catalog.ts",
-        "src/runtime/contracts/well-known-symbols.ts"
+        "src/runtime/contracts/well-known-symbols.ts",
+        "src/runtime/contracts/native-promise-literals.ts"
       ],
-      "minModules": 10
+      "minModules": 11
     },
     {
       "id": "backend-wasmgc",
@@ -313,6 +315,9 @@
         "src/backend/wasmgc/resources/native-ref-cells.ts",
         "src/backend/wasmgc/program/native-invocation-abi.ts",
         "src/backend/wasmgc/resources/native-invocation.ts",
+        "src/backend/wasmgc/resources/native-promise-invocation.ts",
+        "src/backend/wasmgc/resources/native-promise-objects.ts",
+        "src/backend/wasmgc/resources/native-promise-then-lookup.ts",
         "src/backend/wasmgc/resources/native-source-closure-callables.ts",
         "src/backend/wasmgc/resources/native-object-access-declarations.ts",
         "src/backend/wasmgc/resources/native-object-access.ts",
@@ -333,13 +338,20 @@
         "src/backend/wasmgc/program/native-realm.ts",
         "src/backend/wasmgc/resources/native-realm-object-layouts.ts",
         "src/backend/wasmgc/resources/native-object-realm.ts",
+        "src/backend/wasmgc/resources/native-object-realm-calls.ts",
+        "src/backend/wasmgc/resources/native-realm-population.ts",
+        "src/backend/wasmgc/resources/native-realm-function-core.ts",
+        "src/backend/wasmgc/resources/native-realm-number-coercion.ts",
         "src/backend/wasmgc/resources/native-mixed-object-access.ts",
         "src/backend/wasmgc/resources/native-well-known-symbols.ts",
         "src/backend/wasmgc/resources/native-bigint-number.ts",
         "src/backend/wasmgc/resources/native-number-primitive-classifier.ts",
         "src/backend/wasmgc/lowering/dynamic-scratch.ts",
         "src/backend/wasmgc/lowering/wasm-int32-coercion.ts",
-        "src/backend/wasmgc/lowering/wasm-math-minmax.ts"
+        "src/backend/wasmgc/lowering/wasm-math-minmax.ts",
+        "src/backend/wasmgc/resources/native-promise-kernel.ts",
+        "src/backend/wasmgc/resources/native-promise-resolution.ts",
+        "src/backend/wasmgc/resources/native-common-promise-runtime.ts"
       ],
       "minModules": 55
     },
@@ -441,6 +453,9 @@
         "src/runtime/wasmgc/values/object-constructor-body.ts",
         "src/runtime/wasmgc/values/builtin-function-layouts.ts",
         "src/runtime/wasmgc/values/builtin-function-bodies.ts",
+        "src/runtime/wasmgc/values/realm-population-bodies.ts",
+        "src/runtime/wasmgc/values/closure-callable-body.ts",
+        "src/runtime/wasmgc/values/argument-vector-call-adapters.ts",
         "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
         "src/runtime/wasmgc/values/builtin-function-prototype-bodies.ts",
         "src/runtime/wasmgc/values/create-list-from-array-like-body.ts",
@@ -448,7 +463,9 @@
         "src/runtime/wasmgc/values/realm-object-layouts.ts",
         "src/runtime/wasmgc/values/mixed-object-access-bodies.ts",
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
-        "src/runtime/wasmgc/values/number-from-value-body.ts"
+        "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "src/runtime/wasmgc/values/to-length-body.ts",
+        "src/runtime/wasmgc/values/mixed-object-scalar-get-body.ts"
       ],
       "minModules": 99
     },
@@ -1834,7 +1851,9 @@
       "layer": "native-runtime",
       "entries": [
         "src/runtime/wasmgc/values/bigint-to-number-body.ts",
-        "src/runtime/wasmgc/values/number-from-value-body.ts"
+        "src/runtime/wasmgc/values/number-from-value-body.ts",
+        "src/runtime/wasmgc/values/to-length-body.ts",
+        "src/runtime/wasmgc/values/mixed-object-scalar-get-body.ts"
       ],
       "minModules": 2
     },
@@ -2237,6 +2256,16 @@
     },
     {
       "path": "src/runtime/wasmgc/promise/reaction-order-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/common-then-lookup-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/reaction-registration-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -8515,7 +8544,7 @@
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
-      "nextBoundary": "IR dyn.string_carrier support (#7106 S1c): the wrapper over legacy's externref→$AnyString coercion ladder; moves with the coercion-engine split."
+      "nextBoundary": "IR dyn.string_carrier support (#7106 S1c): the wrapper over legacy's externref\u2192$AnyString coercion ladder; moves with the coercion-engine split."
     },
     {
       "path": "src/codegen/ir-dynamic-construct.ts",
@@ -14256,6 +14285,14 @@
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
     },
     {
+      "path": "src/ir/source-callable-signatures.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "3527-session-b",
+      "nextBoundary": "Checker-owned source signatures extracted from program-source still depend on the existing ts-api wrapper. Frontend activation remains unfulfilled until that wrapper boundary is migrated."
+    },
+    {
       "path": "src/frontend/builtins/contracts.ts",
       "state": "clean",
       "layer": "frontend-ts"
@@ -14696,6 +14733,21 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-invocation.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-invocation.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-then-lookup.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-objects.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
@@ -16180,6 +16232,21 @@
       "layer": "native-runtime"
     },
     {
+      "path": "src/runtime/wasmgc/values/realm-population-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/closure-callable-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/argument-vector-call-adapters.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/builtin-function-property-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
@@ -16236,6 +16303,36 @@
     },
     {
       "path": "src/backend/wasmgc/resources/native-object-realm.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-object-realm-calls.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-population.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-function-core.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-number-coercion.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-decimal-format.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-realm-function-apply.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
@@ -16396,6 +16493,16 @@
     },
     {
       "path": "src/runtime/wasmgc/values/number-from-value-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/to-length-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/mixed-object-scalar-get-body.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
@@ -16590,6 +16697,91 @@
       "destination": "frontend-ts",
       "owner": "7106-stage2-function-objects",
       "nextBoundary": "Source closure shape/body selection through required canonical selector operations; isolate frontend AST admission from core IR."
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-frame-bindings.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-frame-layout.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-native-async-frame.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program/native-value-definitions.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-declarations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-layout.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-operations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-native-async-frame-plan.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/runtime/prepared-instructions.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/promise-layout.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/contracts/native-promise-literals.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-kernel.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-promise-resolution.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-common-promise-runtime.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/thenable-job-call-body.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/ir/program/native-invocation-parameter.ts",
+      "state": "clean",
+      "layer": "ir-program"
     }
   ]
 }

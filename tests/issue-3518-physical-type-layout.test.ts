@@ -65,6 +65,17 @@ describe("physical type indexing and group identity", () => {
     });
   });
 
+  it("keeps exception references abstract without accepting invalid concrete type indices", () => {
+    const tx = new PhysicalModuleReservations(createEmptyModule());
+    tx.internFunctionType([{ kind: "ref_null", typeIdx: -23 }], [{ kind: "externref" }, { kind: "ref", typeIdx: -23 }]);
+    tx.freezeReservations();
+    expect(
+      plan([{ kind: "func", name: "handler", params: [], results: [{ kind: "ref", typeIdx: -23 }] }]).groups,
+    ).toEqual([{ start: 0, end: 0, recursive: false }]);
+    expect(() => plan([ref(-99)])).toThrow("type index out of range");
+    expect(() => plan([ref(1)])).toThrow("type index out of range");
+  });
+
   it("keeps ordinary closure disjoint from multiple explicit groups", () => {
     expect(
       plan([{ kind: "rec", types: [struct()] }, ref(2), struct(), { kind: "rec", types: [ref(0), ref(3)] }]).groups.map(

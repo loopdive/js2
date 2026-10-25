@@ -13,10 +13,17 @@ import type { NativeObjectAccessRequirements } from "../../../ir/program/native-
 import type { NativeValueResourcePlan } from "../../../ir/program/native-value-resources.js";
 import type { NativeVectorResourcePlan } from "../../../ir/program/native-vector-resources.js";
 import { preparedIrDataMismatch } from "../../../ir/program/data.js";
-import { requireNativeSourceClosureTypes, type NativeSourceClosureTypes } from "./native-source-closures.js";
+import {
+  nativeSourceClosureRealmState,
+  requireNativeSourceClosureTypes,
+  type NativeSourceClosureTypes,
+} from "./native-source-closures.js";
 import {
   requireNativeSourceClosureCallables,
   type NativeSourceClosureCallables,
+  type NativeSourceClosureCallable,
+  requireNativeRealmSourceClosureCallables,
+  type NativeRealmSourceClosureCallables,
 } from "./native-source-closure-callables.js";
 import {
   requireNativeValueReservations,
@@ -47,6 +54,7 @@ import {
   type ClosureInvocationState,
   type NativeClosureMethodEntry,
 } from "../../../runtime/wasmgc/values/closure-method-body.js";
+import { buildNativeClosureCallableDefinition } from "../../../runtime/wasmgc/values/closure-callable-body.js";
 import { buildNativeClosureVectorApplyDefinition } from "../../../runtime/wasmgc/values/closure-vector-apply-body.js";
 import type { ClosureInvocationLayout } from "../../../runtime/wasmgc/values/closure-invocation-types.js";
 import {
@@ -55,6 +63,23 @@ import {
   type NativeBooleanBoxReservations,
 } from "./native-booleans.js";
 import { objectResultIsBoolean } from "../../../ir/program/native-object-result-values.js";
+
+import {
+  nativeBuiltinFunctionInvocationBinding,
+  type NativeBuiltinFunctionReservations,
+} from "./native-builtin-functions.js";
+import {
+  buildArgumentVectorMethodAdapter,
+  buildArgumentVectorApplyAdapter,
+} from "../../../runtime/wasmgc/values/argument-vector-call-adapters.js";
+
+import {
+  requireCompletedNativeObjectRealmDispatch,
+  nativeObjectRealmInvocationBinding,
+  type NativeObjectRealmCalls,
+} from "./native-object-realm-calls.js";
+
+import { requireNativePromiseInvocation, type NativePromiseInvocation } from "./native-promise-invocation.js";
 
 export interface NativeInvocationDependencies {
   readonly source: NativeSourceClosureTypes;
@@ -66,6 +91,7 @@ export interface NativeInvocationDependencies {
   readonly vectorPlan: NativeVectorResourcePlan;
   readonly booleanBoxes?: NativeBooleanBoxReservations;
   readonly substrate?: NativeInvocationSubstrateReservations;
+  readonly promise?: NativePromiseInvocation;
 }
 export interface NativeInvocationReservations {
   readonly requirements: NativeInvocationRequirements;
@@ -81,6 +107,7 @@ export interface NativeInvocationReservations {
   readonly methods: readonly { readonly arity: number; readonly function: FunctionReservation }[];
   readonly applyVector?: FunctionReservation;
 }
+
 interface Owner {
   readonly tx: PhysicalModuleReservations;
   readonly dependencies: NativeInvocationDependencies;
@@ -90,6 +117,11 @@ interface Owner {
   readonly borrowedSubstrate: ReturnType<typeof substrateSelection>;
   readonly functions: readonly FunctionReservation[];
   callables?: NativeSourceClosureCallables;
+  argumentApply?: FunctionReservation;
+  callable?: FunctionReservation;
+  realmCallables?: NativeRealmSourceClosureCallables;
+  builtins?: NativeBuiltinFunctionReservations;
+  publicRealm?: NativeObjectRealmCalls;
   filled: boolean;
 }
 const owners = new WeakMap<NativeInvocationReservations, Owner>();
@@ -114,6 +146,9 @@ function authenticate(
   requirements: NativeInvocationRequirements,
   dependencies: NativeInvocationDependencies,
 ): void {
+  if (Boolean(requirements.source.promiseClosures) !== Boolean(dependencies.promise))
+    fail("selected native Promise callables require their exact producer association");
+  if (dependencies.promise) requireNativePromiseInvocation(tx, dependencies.promise, dependencies.source);
   const selected = substrateSelection(dependencies);
   if (selected.value !== undefined)
     requireNativeInvocationSubstrateReservations(tx, selected.value, substrateDependencies(dependencies));
@@ -150,9 +185,17 @@ function authenticate(
 }
 
 /** Flattened coordinates come only from actual ledger tokens, never outer rec-group positions. */
-function invocationLayout(source: NativeSourceClosureTypes): ClosureInvocationLayout {
+function invocationLayout(
+  tx: PhysicalModuleReservations,
+  dependencies: NativeInvocationDependencies,
+): ClosureInvocationLayout {
+  const source = dependencies.source;
+  const settlement = dependencies.promise
+    ? requireNativePromiseInvocation(tx, dependencies.promise, source)
+    : undefined;
   const tokens = [
     source.closures.root,
+    ...(settlement ? [settlement.capture] : []),
     ...source.closures.signatures.map((row) => row.binding.type),
     ...source.shapes.map((row) => row.type),
     ...source.closures.registrations.flatMap((row) => (row.kind === "type" || row.kind === "root" ? [row.type] : [])),
@@ -189,7 +232,7 @@ export function reserveNativeInvocationResources(
 ): NativeInvocationReservations {
   if (tx.state !== "reserving") fail("reservation requires the owning ledger's reserving phase");
   authenticate(tx, requirements, dependencies);
-  const layout = invocationLayout(dependencies.source);
+  const layout = invocationLayout(tx, dependencies);
   const key = (role: string) => `${requirements.key}:${role}`;
   const borrowedSubstrate = substrateSelection(dependencies);
   const substrateRequirements = Object.freeze({ key: requirements.key });
@@ -203,6 +246,7 @@ export function reserveNativeInvocationResources(
     ...["this", "argc", "extras", "undefined", "is-undefined"].map(key),
     ...requirements.methodArities.map((arity) => key(`method:${arity}`)),
     ...(requirements.applyVector ? [key("apply-vector")] : []),
+    ...(dependencies.promise ? [key("apply-arguments")] : []),
   ]);
   const substrate =
     borrowedSubstrate.value ??
@@ -277,6 +321,7 @@ export function reserveNativeInvocationResources(
       ...(applyVector ? [applyVector] : []),
     ]),
   });
+  if (dependencies.promise) reserveNativeInvocationArgumentApply(tx, pack);
   return pack;
 }
 
@@ -289,10 +334,105 @@ function requireOwner(tx: PhysicalModuleReservations, pack: NativeInvocationRese
   for (const key of Object.keys(owner.dependenciesSnapshot) as (keyof NativeInvocationDependencies)[])
     if (owner.dependencies[key] !== owner.dependenciesSnapshot[key]) fail("substituted dependency identity");
   authenticate(tx, pack.requirements, owner.dependencies);
-  if (preparedIrDataMismatch(invocationLayout(owner.dependencies.source), owner.layout))
-    fail("changed closure ancestry");
+  if (preparedIrDataMismatch(invocationLayout(tx, owner.dependencies), owner.layout)) fail("changed closure ancestry");
   requireNativeInvocationSubstrateReservations(tx, owner.substrate, substrateDependencies(owner.dependencies));
+  if (owner.builtins || owner.publicRealm) joinedBuiltin(owner, pack);
   return owner;
+}
+
+function joinedBuiltin(owner: Owner, pack: NativeInvocationReservations, completed = false) {
+  const binding = owner.publicRealm
+    ? nativeObjectRealmInvocationBinding(owner.tx, owner.publicRealm, completed)
+    : owner.builtins
+      ? nativeBuiltinFunctionInvocationBinding(owner.tx, owner.builtins, completed)
+      : undefined;
+  if (!binding) return undefined;
+  const d = owner.dependencies;
+  if (
+    binding.closures !== d.source.closures ||
+    binding.closurePlan !== d.source.closurePlan ||
+    binding.arguments !== pack.arguments ||
+    binding.values !== d.values ||
+    binding.strings !== d.strings ||
+    binding.errors !== pack.errors
+  )
+    fail("builtin invocation uses different shared producers");
+  if (owner.publicRealm && (!("source" in binding) || binding.source !== d.source))
+    fail("public realm uses a different source population");
+  return binding;
+}
+
+/** The full realm and source population join before freeze; their algorithms may call back through Call. */
+export function bindNativeInvocationObjectRealm(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  realm: NativeObjectRealmCalls,
+): void {
+  const owner = requireOwner(tx, pack);
+  if (tx.state !== "reserving" || owner.builtins || owner.publicRealm)
+    fail("invalid phase or duplicate builtin invocation join");
+  // Validate before mutation so a rejected join can be retried with the correct owner.
+  joinedBuiltin({ ...owner, publicRealm: realm }, pack);
+  reserveNativeInvocationArgumentApply(tx, pack);
+  owner.publicRealm = realm;
+}
+
+/** An issued full-realm association for consumers of generic Call; bootstrap joins cannot satisfy it. */
+export function nativeInvocationObjectRealmBinding(tx: PhysicalModuleReservations, pack: NativeInvocationReservations) {
+  const owner = requireOwner(tx, pack);
+  if (!owner.publicRealm || !owner.argumentApply) fail("missing full public realm invocation join");
+  const binding = nativeObjectRealmInvocationBinding(tx, owner.publicRealm);
+  return Object.freeze({ ...binding, call: owner.argumentApply, source: owner.dependencies.source });
+}
+
+/** Reserve callability from the same complete source association used by public Call. */
+export function reserveNativeInvocationCallable(tx: PhysicalModuleReservations, pack: NativeInvocationReservations) {
+  const owner = requireOwner(tx, pack);
+  nativeInvocationObjectRealmBinding(tx, pack);
+  if (tx.state !== "reserving") fail("callability requires reservation phase");
+  owner.callable ??= tx.reserveFunction(pack.requirements.key + ":is-callable", "__native_is_callable", {
+    params: [{ kind: "externref" }],
+    results: [{ kind: "i32" }],
+  });
+  return owner.callable;
+}
+/** Local cycle edge only: this does not certify the complete public realm. */
+export function nativeInvocationCallableBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  completed = false,
+) {
+  const owner = requireOwner(tx, pack),
+    binding = nativeInvocationObjectRealmBinding(tx, pack);
+  if (!owner.callable) fail("missing issued callable predicate");
+  if (completed) {
+    if (!owner.filled || !owner.realmCallables) fail("missing complete source dispatch fill");
+    requireCompletedNativeObjectRealmDispatch(tx, owner.publicRealm!);
+    requireNativeRealmSourceClosureCallables(
+      tx,
+      owner.realmCallables,
+      owner.dependencies.source,
+      binding.realm.realm,
+      true,
+    );
+    for (const token of [owner.callable, binding.call, pack.undefinedValue, pack.isUndefined])
+      tx.assertCompletedReservation(token);
+  }
+  return { ...binding, isCallable: owner.callable, undefinedValue: pack.undefinedValue, isUndefined: pack.isUndefined };
+}
+
+/** Join the genuine emitted kernel once, before freeze; this grants no whole-realm completion. */
+export function bindNativeInvocationBuiltins(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+  builtins: NativeBuiltinFunctionReservations,
+): void {
+  const owner = requireOwner(tx, pack);
+  if (tx.state !== "reserving" || owner.builtins || owner.publicRealm)
+    fail("invalid phase or duplicate builtin invocation join");
+  joinedBuiltin({ ...owner, builtins }, pack);
+  reserveNativeInvocationArgumentApply(tx, pack);
+  owner.builtins = builtins;
 }
 
 /** Read-only cycle join. Reservation authentication never certifies callable body completion. */
@@ -327,16 +467,70 @@ export function nativeInvocationFunctions(
   tx: PhysicalModuleReservations,
   pack: NativeInvocationReservations,
 ): readonly FunctionReservation[] {
-  return requireOwner(tx, pack).functions;
+  const owner = requireOwner(tx, pack);
+  return Object.freeze([
+    ...owner.functions,
+    ...(owner.argumentApply ? [owner.argumentApply] : []),
+    ...(owner.callable ? [owner.callable] : []),
+  ]);
+}
+
+/** A runtime consumer requests this entry before freeze; source-only calls do not allocate it. */
+export function reserveNativeInvocationArgumentApply(
+  tx: PhysicalModuleReservations,
+  pack: NativeInvocationReservations,
+): FunctionReservation {
+  const owner = requireOwner(tx, pack);
+  if (tx.state !== "reserving") fail("argument apply requires reservation phase");
+  owner.argumentApply ??= tx.reserveFunction(`${pack.requirements.key}:apply-arguments`, "__apply_closure_arguments", {
+    params: [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    results: [{ kind: "externref" }],
+  });
+  return owner.argumentApply;
+}
+
+function voidResult(owner: Owner): NativeClosureMethodEntry["result"] {
+  return {
+    kind: "void",
+    undefinedValue: [
+      { op: "global.get", index: owner.tx.physicalIndex(owner.dependencies.values.globals.undefined) },
+      { op: "extern.convert_any" },
+    ],
+  };
+}
+function settlementEntries(owner: Owner, pack: NativeInvocationReservations): NativeClosureMethodEntry[] {
+  const { promise, source, values } = owner.dependencies;
+  if (!promise) return [];
+  const binding = requireNativePromiseInvocation(owner.tx, promise, source);
+  const signature = binding.metadata.signature;
+  return [
+    {
+      allocationTypeIdx: binding.capture.typeIndex,
+      selfTypeIdx: signature.liftedSelfTypeIndex,
+      funcTypeIdx: signature.liftedFuncTypeIndex,
+      closureArity: signature.info.paramTypes.length,
+      params: signature.info.paramTypes,
+      arguments: {
+        unboxNumber: values.functions.unboxNumber.handle,
+        isUndefined: pack.isUndefined.handle,
+      },
+      result: voidResult(owner),
+    },
+  ];
 }
 
 function entries(
   owner: Owner,
-  callables: NativeSourceClosureCallables,
+  callables: readonly NativeSourceClosureCallable[],
   pack: NativeInvocationReservations,
 ): NativeClosureMethodEntry[] {
   const { values } = owner.dependencies;
-  return callables.entries.map((row) => {
+  const joined = joinedBuiltin(owner, pack),
+    booleans = joined?.booleans;
+  const realmState = owner.publicRealm && nativeSourceClosureRealmState(owner.tx, owner.dependencies.source);
+  const realm = owner.publicRealm && nativeObjectRealmInvocationBinding(owner.tx, owner.publicRealm).realm;
+  const realmGlobal = realm && owner.tx.physicalIndex(realm.globals.realm);
+  return callables.map((row) => {
     const info = row.signature.info;
     const booleanResult =
       objectResultIsBoolean(row.source.closureSubtype?.signature.returnType) &&
@@ -344,17 +538,44 @@ function entries(
       info.returnType.boolean === true &&
       owner.dependencies.booleanBoxes !== undefined;
     if (
-      info.paramTypes.some((type) => type.kind !== "externref" && type.kind !== "f64") ||
+      info.paramTypes.some(
+        (type) =>
+          type.kind !== "externref" &&
+          type.kind !== "f64" &&
+          !(type.kind === "i32" && type.boolean === true && booleans),
+      ) ||
       (info.returnType && info.returnType.kind !== "externref" && info.returnType.kind !== "f64" && !booleanResult)
     )
       fail("selected callable lacks its actual native argument/result conversion");
     return {
       allocationTypeIdx: row.shape.type.typeIndex,
+      ...(realmState && realmGlobal !== undefined
+        ? {
+            realm: {
+              stateField:
+                3 +
+                owner.dependencies.source.requirements.shapes.find((shape) => shape.id === row.shape.id)!.captures
+                  .length,
+              stateType: realmState.types.state.typeIndex,
+              global: realmGlobal,
+            },
+          }
+        : {}),
       selfTypeIdx: row.signature.liftedSelfTypeIndex,
       funcTypeIdx: row.slot.object.typeIdx,
       closureArity: info.paramTypes.length,
       params: info.paramTypes,
-      arguments: { unboxNumber: values.functions.unboxNumber.handle, isUndefined: pack.isUndefined.handle },
+      arguments: {
+        unboxNumber: values.functions.unboxNumber.handle,
+        isUndefined: pack.isUndefined.handle,
+        ...(owner.builtins || owner.publicRealm
+          ? {
+              isNumber: values.functions.isNumber.handle,
+              defaultParameterStart: row.source.closureSubtype!.signature.defaultParamStart,
+            }
+          : {}),
+        ...(booleans ? { isBoolean: booleans.isBoolean.handle, unboxBoolean: booleans.unboxBoolean.handle } : {}),
+      },
       result: info.returnType
         ? {
             kind: "value",
@@ -362,13 +583,7 @@ function entries(
             boxNumber: values.functions.boxNumber.handle,
             ...(booleanResult ? { boxBoolean: owner.dependencies.booleanBoxes!.boxBoolean.handle } : {}),
           }
-        : {
-            kind: "void",
-            undefinedValue: [
-              { op: "global.get", index: owner.tx.physicalIndex(values.globals.undefined) },
-              { op: "extern.convert_any" },
-            ],
-          },
+        : voidResult(owner),
     };
   });
 }
@@ -379,13 +594,35 @@ export function fillNativeInvocationResources(
   pack: NativeInvocationReservations,
   callables: NativeSourceClosureCallables,
   exception: TagReservation | TagImportReservation,
+  realmCallables?: NativeRealmSourceClosureCallables,
 ): void {
   const owner = requireOwner(tx, pack);
   if (owner.filled) fail("duplicate fill");
+  if (
+    owner.dependencies.promise &&
+    requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source).exceptionTag !== exception
+  )
+    fail("invocation and Promise producer use different exception tags");
   requireNativeSourceClosureCallables(tx, callables, owner.dependencies.source);
   if (callables.requirements !== pack.requirements) fail("selected callable requirements differ");
+  const builtin = joinedBuiltin(owner, pack, !!owner.builtins);
+  if (builtin && builtin.exception !== exception) fail("invocation and builtin producer use different exception tags");
   const exceptionTag = tx.physicalIndex(exception);
-  const rows = entries(owner, callables, pack);
+  if (pack.requirements.uses.some((use) => use.parameterIndex !== undefined) && !owner.publicRealm)
+    fail("runtime-supplied source parameters require the full realm dispatch owner");
+  if (owner.publicRealm && !realmCallables) fail("full public realm requires all source callables");
+  if (realmCallables) {
+    const expectedRealm = owner.publicRealm
+      ? nativeObjectRealmInvocationBinding(tx, owner.publicRealm).realm.realm
+      : realmCallables.realm;
+    requireNativeRealmSourceClosureCallables(tx, realmCallables, owner.dependencies.source, expectedRealm);
+    if (!builtin || realmCallables.realm.source !== pack.requirements.source)
+      fail("realm callables require the joined source/builtin population");
+  }
+  const rows = [
+    ...settlementEntries(owner, pack),
+    ...entries(owner, realmCallables?.entries ?? callables.entries, pack),
+  ];
   const { values, strings } = owner.dependencies;
   requireCompletedNativeValues(tx, values, owner.dependencies.valuePlan, owner.dependencies.valueDependencies);
   if (owner.dependencies.booleanBoxes)
@@ -429,18 +666,57 @@ export function fillNativeInvocationResources(
     locals: [],
     body: buildClosureUndefinedTest(0, values.types.anyValue.typeIndex),
   });
+  const adapter = owner.argumentApply
+    ? {
+        newVector: pack.arguments.newVector.handle,
+        push: pack.arguments.push.handle,
+        call: owner.argumentApply.handle,
+      }
+    : undefined;
   for (const row of pack.methods)
-    tx.fillFunction(row.function, buildNativeClosureMethodDefinition(row.arity, owner.layout, rows, state, failure));
+    tx.fillFunction(
+      row.function,
+      builtin
+        ? buildArgumentVectorMethodAdapter(row.arity, adapter!, "receiver-first")
+        : buildNativeClosureMethodDefinition(row.arity, owner.layout, rows, state, failure),
+    );
   if (pack.applyVector) {
     const input = owner.dependencies.vectors.layouts.find((row) => row.element === "externref")!;
+    const layout = { vectorTypeIdx: input.carrier.typeIndex, arrayTypeIdx: input.array.typeIndex };
     tx.fillFunction(
       pack.applyVector,
-      buildNativeClosureVectorApplyDefinition(owner.layout, rows, state, failure, {
-        vectorTypeIdx: input.carrier.typeIndex,
-        arrayTypeIdx: input.array.typeIndex,
-      }),
+      builtin
+        ? buildArgumentVectorApplyAdapter(adapter!, layout)
+        : buildNativeClosureVectorApplyDefinition(owner.layout, rows, state, failure, layout),
     );
   }
+  if (owner.argumentApply)
+    tx.fillFunction(
+      owner.argumentApply,
+      buildNativeClosureVectorApplyDefinition(owner.layout, rows, state, failure, {
+        vectorTypeIdx: pack.arguments.carrier.typeIndex,
+        arrayTypeIdx: pack.arguments.array.typeIndex,
+        external: true,
+        ...(builtin
+          ? {
+              receiverVector: {
+                match: builtin.match.handle,
+                call: builtin.call.handle,
+                carriers: builtin.carriers.map((type) => type.typeIndex),
+              },
+            }
+          : {}),
+      }),
+    );
+  if (owner.callable)
+    tx.fillFunction(
+      owner.callable,
+      buildNativeClosureCallableDefinition(owner.dependencies.source.closures.root.typeIndex, rows, {
+        match: builtin!.match.handle,
+        carriers: builtin!.carriers.map((type) => type.typeIndex),
+      }),
+    );
+  owner.realmCallables = realmCallables;
   owner.callables = callables;
   owner.filled = true;
 }
@@ -452,6 +728,17 @@ export function requireCompletedNativeInvocation(
   const owner = requireOwner(tx, pack);
   if (!owner.filled || !owner.callables) fail("incomplete selected source-invocation population");
   requireNativeSourceClosureCallables(tx, owner.callables, owner.dependencies.source, true);
+  if (owner.realmCallables)
+    requireNativeRealmSourceClosureCallables(
+      tx,
+      owner.realmCallables,
+      owner.dependencies.source,
+      owner.realmCallables.realm,
+      true,
+    );
+  if (owner.dependencies.promise)
+    requireNativePromiseInvocation(tx, owner.dependencies.promise, owner.dependencies.source, true);
+  if (owner.builtins || owner.publicRealm) joinedBuiltin(owner, pack, true);
   requireCompletedNativeValues(
     tx,
     owner.dependencies.values,
@@ -459,6 +746,6 @@ export function requireCompletedNativeInvocation(
     owner.dependencies.valueDependencies,
   );
   requireCompletedNativeInvocationSubstrate(tx, owner.substrate, substrateDependencies(owner.dependencies));
-  for (const token of owner.functions) tx.assertCompletedReservation(token);
+  for (const token of nativeInvocationFunctions(tx, pack)) tx.assertCompletedReservation(token);
   for (const token of Object.values(pack.globals)) tx.assertCompletedReservation(token);
 }

@@ -468,3 +468,16 @@ export function nativeNumberPrimitiveClassifierReservationInventory(
   const owner = owners.get(pack)!;
   return Object.freeze({ plan: owner.plan, functions: owner.functions });
 }
+
+/** Issued shared primitive producers, authenticated before a numeric consumer joins. */
+export function nativeNumberPrimitiveClassifierBinding(
+  tx: PhysicalModuleReservations,
+  pack: NativeNumberPrimitiveClassifierReservations,
+  completed = false,
+): NativeNumberPrimitiveClassifierDependencies {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) fail("foreign or copied owner");
+  if (completed) requireCompletedNativeNumberPrimitiveClassifier(tx, pack, owner.sourcePlan, owner.sourceDependencies);
+  else requireNativeNumberPrimitiveClassifierReservations(tx, pack, owner.sourcePlan, owner.sourceDependencies);
+  return owner.dependencies;
+}

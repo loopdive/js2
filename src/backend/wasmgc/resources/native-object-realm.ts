@@ -43,6 +43,8 @@ import {
 } from "./native-source-closures.js";
 import type { NativeVectorTypeReservations } from "./native-vectors.js";
 
+import type { NativeRealmIntrinsic } from "../../../runtime/contracts/native-realm-catalog.js";
+
 const ext = { kind: "externref" } as const,
   i32 = { kind: "i32" } as const;
 function fail(detail: string): never {
@@ -155,6 +157,11 @@ export interface NativeObjectRealmDeclarations {
   readonly layouts: NativeRealmObjectLayoutReservations;
   readonly exception: NativeObjectRealmException;
   readonly objectPrototype: { readonly type: TypeReservation; readonly singleton: GlobalReservation };
+  readonly ordinaryIntrinsics: readonly {
+    readonly intrinsic: NativeRealmIntrinsic;
+    readonly type: TypeReservation;
+    readonly singleton: GlobalReservation;
+  }[];
   readonly entries: readonly NativeObjectRealmEntry[];
   readonly initialize: FunctionReservation;
   readonly globals: {
@@ -272,6 +279,9 @@ function resourceKeys(d: NativeObjectRealmDependencies): readonly string[] {
   const key = d.requests.key;
   return [
     key + ":object-prototype",
+    ...d.requests.realm.description.catalog.intrinsics
+      .filter((row) => !row.callable && row.id !== "%Object.prototype%")
+      .map((row) => key + ":" + row.id + ":singleton"),
     key + ":state",
     key + ":whole-realm-ready",
     key + ":initialize",
@@ -306,6 +316,22 @@ export function reserveNativeObjectRealmDeclarations(
       true,
     ),
   });
+  const ordinaryIntrinsics = Object.freeze(
+    realm.description.catalog.intrinsics
+      .filter((row) => !row.callable && row.id !== "%Object.prototype%")
+      .map((intrinsic) =>
+        Object.freeze({
+          intrinsic,
+          type: d.layouts.types.ordinary,
+          singleton: tx.reserveGlobal(
+            key + ":" + intrinsic.id + ":singleton",
+            intrinsic.id,
+            { kind: "ref_null", typeIdx: d.layouts.types.ordinary.typeIndex },
+            true,
+          ),
+        }),
+      ),
+  );
   const state = tx.reserveGlobal(key + ":state", "__realm_initialization_state", i32, true);
   const wholeRealmReady = tx.reserveGlobal(key + ":whole-realm-ready", "__whole_realm_ready", i32, false);
   const initialize = tx.reserveFunction(key + ":initialize", "__initialize_object_function_realm", {
@@ -364,6 +390,7 @@ export function reserveNativeObjectRealmDeclarations(
     layouts: d.layouts,
     exception: d.exception,
     objectPrototype,
+    ordinaryIntrinsics,
     entries,
     initialize,
     globals: Object.freeze({ ...d.layouts.anchors, state, wholeRealmReady }),
@@ -376,6 +403,7 @@ export function reserveNativeObjectRealmDeclarations(
     keys,
     globals: Object.freeze([
       objectPrototype.singleton,
+      ...ordinaryIntrinsics.map((row) => row.singleton),
       state,
       wholeRealmReady,
       ...entries.filter((row) => row.singleton !== d.layouts.anchors.functionPrototype).map((row) => row.singleton),
@@ -394,7 +422,7 @@ function current(tx: PhysicalModuleReservations, pack: NativeObjectRealmDeclarat
   const d = dependencies(tx, pack.realm, owner.original);
   for (const role of [...roles, "source"] as const)
     if (d[role] !== owner.dependencies[role]) fail("changed public dependency identity");
-  if (tx.state === "reserving") pack.entries.forEach((row) => tx.assertTypeReservation(row.type));
+  if (tx.state === "reserving") tx.assertTypeReservations(pack.entries.map((row) => row.type));
   else
     tx.physicalIndices([
       pack.objectPrototype.type,
@@ -459,7 +487,7 @@ export function requireCompletedNativeObjectRealm(
   pack: NativeObjectRealmDeclarations,
 ): never {
   requireCompletedNativeObjectRealmDeclarations(tx, pack);
-  return fail("full Object/Function algorithms and runtime population remain incomplete");
+  return fail("full Object/Function/Promise algorithms and runtime population remain incomplete");
 }
 export function nativeObjectRealmDeclarationInventory(
   tx: PhysicalModuleReservations,

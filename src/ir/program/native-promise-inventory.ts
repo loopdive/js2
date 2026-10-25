@@ -11,6 +11,7 @@ import {
   type NativeStringValueBuffer,
   type NativeStringValueOccurrence,
 } from "./native-string-value-demands.js";
+import { nativePromiseResourcesRequired } from "./native-promise-resources.js";
 import { irRuntimeSupportFunctions } from "./runtime-support.js";
 
 function invalid(detail: string): never {
@@ -171,15 +172,10 @@ export function collectNativePromiseSourceCensus(
     record(Object.freeze({ kind: "abi", index, bindingId: entry.plan.id }), entry, []),
   );
   record(Object.freeze({ kind: "allocations" }), program.allocations, []);
-  const required =
-    demands.owners.some((owner) => owner.projectedFunction.asyncPlan !== undefined) ||
-    projection.prepared.manifest.providers.some(
-      (provider) =>
-        provider.feature.startsWith("promise.") ||
-        provider.feature.startsWith("scheduler.") ||
-        provider.feature === "async.native.delay" ||
-        provider.feature === "async.native.all",
-    );
+  const required = nativePromiseResourcesRequired(
+    projection.prepared.functions,
+    projection.prepared.manifest.providers,
+  );
   // A re-export-only entry has no terminal of its own. No-demand collection
   // needs no diagnostic anchor; required demand uses an actual source terminal.
   const entry = program.inventory.sources.find((row) => row.kind === "entry");

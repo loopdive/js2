@@ -7,9 +7,15 @@ import type { IrUnitId } from "../../shared/contracts/ir-identity.js";
 import type { ValType } from "../../wasm/model/instructions.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 import type { AsyncFrameSetup } from "./async-frame-setup.js";
+import {
+  assertNativeSourceClosureRequirementsCurrent,
+  type NativeSourceClosureRequirements,
+} from "./native-source-closure-requirements.js";
+import { assertNativeValueResourcePlanFor } from "./native-value-resources.js";
+import type { NativeValueResourcePlan } from "./native-value-resources.js";
 
-/** The host async identity boundary preserves unrefined dynamic values as JS values. */
-export function preparedHostAsyncDynamicCarrier(type: IrType): ValType | undefined {
+/** Unrefined values travel unchanged; the owning unit planner must admit this representation. */
+export function preparedOpaqueDynamicCarrier(type: IrType): ValType | undefined {
   return type.kind === "dynamic" && type.tag === undefined ? { kind: "externref" } : undefined;
 }
 
@@ -40,14 +46,25 @@ function dynamicFunctionFacts(fn: IrFunction) {
   return { types: types.filter((type) => type.kind === "dynamic"), instructions, dynamicValues };
 }
 
-/** Scoped to an authenticated frame and the exact derived state bodies it calls. */
-export function planHostAsyncDynamicUnits(
+/** Admit unchanged values only for an authenticated frame or native source/value population. */
+export function planPreparedDynamicUnits(
   program: PreparedIrProgram,
   projection: PreparedIrProgramRuntimeProjection,
   setup: AsyncFrameSetup | undefined,
+  source?: NativeSourceClosureRequirements,
+  values?: NativeValueResourcePlan,
 ): { readonly units: readonly IrUnitId[]; readonly gaps: readonly { unitId: IrUnitId; detail: string }[] } {
   const candidates = new Set<IrUnitId>();
+  const nativeCandidates = new Set<IrUnitId>();
+  if (source && values) {
+    assertNativeSourceClosureRequirementsCurrent(source);
+    assertNativeValueResourcePlanFor(values, program, projection, "native-string");
+    if (source.demands.program !== program || source.demands.projection !== projection)
+      throw new Error("native dynamic source/value owners differ");
+    for (const unit of source.units) nativeCandidates.add(unit.unitId);
+  }
   for (const frame of setup?.frames ?? []) {
+    if (frame.kind !== "host") continue;
     candidates.add(frame.owner);
     const calls = new Set(frame.calls.map((call) => call.bindingId));
     for (const derived of program.derivedUnits)
@@ -65,11 +82,13 @@ export function planHostAsyncDynamicUnits(
     const facts = dynamicFunctionFacts(fn);
     if (!facts.types.length) continue;
     const reject = (detail: string) => gaps.push({ unitId: fn.unitId, detail });
-    if (projection.backend !== "wasmgc" || projection.target !== "host" || !candidates.has(fn.unitId)) {
-      reject(`body ${fn.name} has no accepted host async dynamic carrier`);
+    const host = projection.target === "host" && candidates.has(fn.unitId);
+    const standalone = projection.target === "standalone" && nativeCandidates.has(fn.unitId);
+    if (projection.backend !== "wasmgc" || (!host && !standalone)) {
+      reject(`body ${fn.name} has no accepted dynamic value carrier`);
       continue;
     }
-    if (facts.types.some((type) => !preparedHostAsyncDynamicCarrier(type))) {
+    if (facts.types.some((type) => !preparedOpaqueDynamicCarrier(type))) {
       reject(`body ${fn.name} requires a refined dynamic carrier contract`);
       continue;
     }

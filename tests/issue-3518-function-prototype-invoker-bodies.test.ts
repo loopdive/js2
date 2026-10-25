@@ -550,10 +550,8 @@ describe("pure invoker builder configuration and fresh data", () => {
           "newVector",
           "push",
           "isCallable",
-          "isUndefined",
-          "isNull",
           "undefinedValue",
-          "createListFromArrayLike",
+          ...(builder.name === "apply" ? ["isUndefined", "isNull", "createListFromArrayLike"] : []),
           "genericCall",
           "typeError",
           "exceptionTag",
@@ -623,6 +621,24 @@ describe("pure invoker builder configuration and fresh data", () => {
       expect(() => builder.build({ ...builder.bindings, errorMessage: [] })).toThrow("missing operand errorMessage");
     });
   }
+  it("rejects malformed, inherited and accessor-backed generic Call vector modes", () => {
+    for (const genericCallVector of [undefined, null, false, "unknown"])
+      expect(() =>
+        buildFunctionPrototypeInvokerDefinition("call", {
+          ...runtime.invokerBindings,
+          genericCallVector,
+        } as unknown as typeof runtime.invokerBindings),
+      ).toThrow(/genericCallVector/);
+    const accessor = { ...runtime.invokerBindings };
+    Object.defineProperty(accessor, "genericCallVector", {
+      get() {
+        throw Error("must not execute");
+      },
+    });
+    expect(() => buildFunctionPrototypeInvokerDefinition("call", accessor)).toThrow(/invalid genericCallVector/);
+    const inherited = Object.assign(Object.create({ genericCallVector: "external" }), runtime.invokerBindings);
+    expect(() => buildFunctionPrototypeInvokerDefinition("call", inherited)).toThrow(/inherited genericCallVector/);
+  });
   it("refuses unknown modes/methods and requires property-key predicate without observing it in all mode", () => {
     expect(() => buildCreateListFromArrayLikeDefinition(runtime.listBindings, "bad" as any)).toThrow("unknown mode");
     expect(() => buildFunctionPrototypeInvokerDefinition("bad" as any, runtime.invokerBindings)).toThrow(

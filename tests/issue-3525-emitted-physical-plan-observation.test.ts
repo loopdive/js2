@@ -90,7 +90,7 @@ function expectInvalid(value: unknown): void {
 async function instantiate(emitted: EmittedPreparedIrProgram) {
   const imports = buildImports(buildImportManifest(emitted.module));
   const { instance } = await WebAssembly.instantiate(
-    emitBinary(emitted.module),
+    Uint8Array.from(emitBinary(emitted.module)).buffer,
     imports as unknown as WebAssembly.Imports,
   );
   imports.setInstance?.(instance);
@@ -230,7 +230,7 @@ describe("#3525 authentic completed-emission physical plan observation", () => {
     expect(emitted.module.functions.length).toBeGreaterThan(14);
     expect(plan.asyncFrames?.frames.length).toBeGreaterThan(0);
     expect(plan.asyncFrames?.entries.length).toBeGreaterThan(0);
-    const callbacks = plan.asyncFrames!.frames.flatMap((frame) => frame.callbacks);
+    const callbacks = plan.asyncFrames!.frames.flatMap((frame) => (frame.kind === "host" ? frame.callbacks : []));
     expect(callbacks.length).toBeGreaterThan(0);
     for (const callback of callbacks) {
       const entries = plan.asyncFrames!.entries.filter((entry) => entry.id === callback.entry.id);
