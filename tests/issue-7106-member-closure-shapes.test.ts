@@ -112,23 +112,28 @@ export function run() {
 
   // `+=` is the one compound write that lowers with a dynamic RHS (the dynamic
   // add); it is admitted into a dynamic slot, refused into a concrete one.
-  it("admits `+=` of a dynamic-shaped local into a dynamic slot", async () => {
+  it("admits `+=` into a dynamic slot (dynamic, literal and undefined right-hand sides)", async () => {
     const source = `/** @returns {number} */ function subject() { return 0; }
 subject.a = function (m) { var r = m ? m : 1; m += r; throw m; };
 subject.b = function (m) { var r = m ? m : 1; var s; s += r; throw s; };
+subject.c = function (m) { var r = m ? m : 1; r += 1; throw r; };
+subject.d = function (m) { var r = m ? m : 1; r += undefined; throw r; };
 export function run() {
   var n = 0;
   try { subject.a(3); } catch (e) { if (e === 6) n += 1; }
   try { subject.a(0); } catch (e) { if (e === 1) n += 10; }
   try { subject.a("a"); } catch (e) { if (e === "aa") n += 100; }
   try { subject.b("z"); } catch (e) { if (e === "undefinedz") n += 1000; }
+  try { subject.c(2); } catch (e) { if (e === 3) n += 10000; }
+  try { subject.c("a"); } catch (e) { if (e === "a1") n += 100000; }
+  try { subject.d(1); } catch (e) { if (e !== e) n += 1000000; }
   return n;
 }`;
     const result = await compile(source, OPTIONS);
     requirePreparedInit(result);
     expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
-    expect(node(source)).toBe(1111);
-    expect(await initializeAndRun(result)).toBe(1111);
+    expect(node(source)).toBe(1111111);
+    expect(await initializeAndRun(result)).toBe(1111111);
   }, 35_000);
 
   // Each row is a planned member closure whose body the producer would
@@ -188,6 +193,27 @@ export function run() {
       "numeric compound `-=` of a dynamic-shaped local into an uninitialized local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s; s -= r; throw s; }`,
       `try { subject.f(5, 0); } catch (e) { if (e !== e) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "numeric compound `-=` of a literal into the minted dynamic local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; r -= 1; throw r; }`,
+      `try { subject.f(5, 0); } catch (e) { if (e === 4) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "numeric compound `-=` of a literal into the dynamic parameter beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; m -= 1; throw r; }`,
+      `try { subject.f(5, 0); } catch (e) { if (e === 5) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`+=` of a bare null into the minted dynamic local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; r += null; throw r; }`,
+      `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
       "body-shape-rejected",
       1,
     ],

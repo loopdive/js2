@@ -6453,7 +6453,7 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
  * (the closure plan fixes neither a callee's signature nor a dynamic return).
  * A planned closure does not run that scan, so the shape carries its own sink
  * proof; a dynamic-shaped local the shape mints (`var r = m ? m : 1`) carries
- * it onward through `dynamicValueIntoConcreteSlot`.
+ * it onward through `closureWriteUnlowerable`.
  *
  * A top-level subject is never this shape: `currentClosureDynamicParamNames`
  * is empty outside a planned closure, and the move-only scan's conditional
@@ -6511,31 +6511,44 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
 }
 
 /**
- * (#7113) `x = <value>`, or a compound `x += / -= / *= / /= <value>`, with
- * `<value>` a bare dynamic — the closure's dynamic parameter or a
- * dynamic-shaped local (`var r = m ? m : 1; s = r;`, `s += r;`) — and `x` not
- * a dynamic slot: from-ast withdraws such a write after the claim
- * (`assignment to "s" (string) got dynamic`, `typed string += requires …
- * evidence`), and gc native-first then fails to compile, so the identifier
- * walk refuses it first. The slot rule is the one
+ * (#7113) A write inside a planned member closure that from-ast cannot lower,
+ * refused at select so the closure is not claimed and then withdrawn (gc
+ * native-first fails to compile on a withdrawal). `expr` is the value being
+ * written; the write is `x = expr` or an admitted compound `x op= expr`
+ * (`isPhase1CompoundAssignOperator` — every other compound operator is
+ * refused by the assignment arms themselves). Three limits, one rule:
+ *
+ * - a compound other than `+=` on a DYNAMIC slot (`var r = m ? m : 1; r -= 1`,
+ *   `m *= q`), whatever the RHS: from-ast lowers only `+=` on a dynamic slot
+ *   (the dynamic add; "compound assign to non-f64 slot") — and the same
+ *   operators with a dynamic RHS on any slot (`var s = "a"; s -= r`: "RHS
+ *   must be f64");
+ * - `+=` of a bare `null` into a dynamic slot (`r += null`): the dynamic hint
+ *   has no null carrier ("bare 'null' in non-reference context");
+ * - a bare dynamic — the closure's dynamic parameter or a dynamic-shaped
+ *   local — written into a CONCRETE slot by `=` or `+=` (`var s = "a"; s = r`,
+ *   `s += r`): "assignment to "s" (string) got dynamic" / "typed string +=
+ *   requires … evidence". A dynamic RHS into a dynamic slot is sound for
+ *   `=` and `+=` (`m += r`, `var s; s += r`, measured = node).
+ *
+ * The slot rule is `dynamicAssignmentSink`, the one
  * `dynamicConditionalValuePosition` applies to the conditional itself; the
- * compound forms are the ones the assignment arms admit
- * (`isPhase1CompoundAssignOperator`) — every other compound operator is
- * refused by those arms. Of those, only `+=` may take a dynamic RHS: into a
- * dynamic slot it lowers through the dynamic add (`var s; s += r`, `m += r`,
- * measured = node); `-=`, `*=`, `/=` with a dynamic RHS lower on no slot
- * (from-ast: "compound assign to non-f64 slot" / "RHS must be f64"), so they
- * are refused whatever the sink. The conditional itself is never admitted
- * directly as a compound RHS (`s += (m ? m : 1)` stays refused by the #5092
- * route); only the laundered local reaches here.
+ * conditional is never admitted directly as a compound RHS (`s += (m ? m : 1)`
+ * stays with the #5092 route), only a laundered local reaches here.
  */
-function dynamicValueIntoConcreteSlot(expr: ts.Identifier): boolean {
-  if (!currentInPlannedMemberClosure || !dynamicShapedValue(expr)) return false;
+function closureWriteUnlowerable(expr: ts.Expression): boolean {
+  if (!currentInPlannedMemberClosure) return false;
   const node = outermostParenthesized(expr);
   const write = assignmentWrite(node.parent, node, /* compound */ true);
   if (write === undefined) return false;
-  if (write.op !== ts.SyntaxKind.EqualsToken && write.op !== ts.SyntaxKind.PlusEqualsToken) return true;
-  return !dynamicAssignmentSink(write.target);
+  const dynamicSlot = dynamicAssignmentSink(write.target);
+  const value = unwrapPhase1Parens(node);
+  const dynamicValue = ts.isIdentifier(value) && dynamicShapedValue(value);
+  if (write.op !== ts.SyntaxKind.EqualsToken && write.op !== ts.SyntaxKind.PlusEqualsToken) {
+    return dynamicSlot || dynamicValue;
+  }
+  if (dynamicSlot) return write.op === ts.SyntaxKind.PlusEqualsToken && value.kind === ts.SyntaxKind.NullKeyword;
+  return dynamicValue;
 }
 
 /**
@@ -6545,7 +6558,7 @@ function dynamicValueIntoConcreteSlot(expr: ts.Identifier): boolean {
 function dynamicAssignmentSink(left: ts.Expression): boolean {
   if (!ts.isIdentifier(left)) return false;
   if (currentClosureDynamicParamNames.has(left.text)) return true;
-  const declaration = currentModuleBindingResolver?.localVariableDeclaration(left);
+  const declaration = closureLocalDeclaration(left);
   return declaration !== undefined && dynamicShapedLocal(declaration, new Set());
 }
 
@@ -6558,8 +6571,14 @@ function dynamicShapedValue(expr: ts.Expression, seen = new Set<ts.VariableDecla
   if (dynamicConditionalValueArm(expr)) return true;
   const e = unwrapPhase1Parens(expr);
   if (!ts.isIdentifier(e)) return false;
-  const declaration = currentModuleBindingResolver?.localVariableDeclaration(e);
+  const declaration = closureLocalDeclaration(e);
   return declaration !== undefined && dynamicShapedLocal(declaration, seen);
+}
+
+/** The local declaration behind `id` — never a module binding, which has its own arms. */
+function closureLocalDeclaration(id: ts.Identifier): ts.VariableDeclaration | undefined {
+  if (currentModuleBindingResolver?.(id) !== undefined) return undefined;
+  return currentModuleBindingResolver?.localVariableDeclaration(id);
 }
 
 /**
@@ -10779,6 +10798,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
+  // (#7113) Every assignment arm walks its RHS through here, so the planned
+  // closure's write limits are checked once, from the value's position.
+  if (closureWriteUnlowerable(expr)) return shapeNo("expr-closure-write-unlowerable", expr);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
   // Other `isAsExpression` sites are analysis-local, not this shape gate; these
   // wrappers previously reached `expr-unhandled`. Full measurement in #3583.
@@ -10855,7 +10877,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (isUnrepresentableModuleBinding(expr)) {
       return shapeNo("expr-module-storage-unrepresentable", expr);
     }
-    if (dynamicValueIntoConcreteSlot(expr)) return shapeNo("expr-dynamic-into-concrete-slot", expr);
     // (#7106 item 1) the global `undefined` (unshadowed) as a VALUE — a call
     // argument, a member-store value, a logical operand: the dynamic carrier's
     // undefined (`dyn.undefined`, #7104), where the capability holds. Equality

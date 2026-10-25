@@ -110,15 +110,20 @@ joins a dynamic parameter with a string literal.
   conditional and the local reads alike. The same rule admits the conditional
   into a dynamic-shaped local (`var r; r = m ? m : 1;`, `var r = m; r = m ?
   m : 1;`), which the first cut over-refused. The rule covers the plain `=`
-  and the admitted compound writes: `+=` of a dynamic RHS is admitted into a
-  dynamic slot (`m += r`, `var s; s += r` — the dynamic add) and refused into
-  a concrete one (`s += r`, which otherwise claimed and withdrew
-  `string-evidence-unsupported`); `-=`, `*=`, `/=` with a dynamic RHS are
-  refused whatever the slot (from-ast lowers them on no slot — `m -= r`
-  withdrew `compound-assign-unsupported`). Still open, out of scope: a
+  and the admitted compound writes (`closureWriteUnlowerable`, one check on
+  every assignment RHS): `+=` is admitted into a dynamic slot with any RHS
+  but a bare `null` (`m += r`, `var s; s += r`, `r += 1`, `r += undefined` —
+  the dynamic add; `r += null` has no null carrier) and refused into a
+  concrete one with a dynamic RHS (`s += r`, which otherwise claimed and
+  withdrew `string-evidence-unsupported`); `-=`, `*=`, `/=` on a dynamic
+  slot are refused whatever the RHS (from-ast lowers only `+=` there —
+  `r -= 1`, `m -= r` withdrew `compound-assign-unsupported`). Still open,
+  out of scope: a
   dynamic value reaching a typed slot through any other expression (`var r =
-  m + 1; s = r;`), a chained write (`s = r = m`), or `String(r)` /
-  `String(m)` as a throw value (claims, then `late-preparation-unsupported`)
+  m + 1; s = r;`), a chained write (`s = r = m`), a write to a `const`
+  (`const s = m; s += r` — the IR withdraws, legacy throws the TypeError node
+  throws), or `String(r)` / `String(m)` as a throw value (claims, then
+  `late-preparation-unsupported`)
   withdraws after the claim — identical on base and head for a closure with
   a return (measured, `x25r`, `strMr`), and newly reachable in a throw-only
   body, where the base minted no plan at all (`x25`, `strM`). The closure
