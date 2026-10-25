@@ -37,7 +37,8 @@ const AMBIENT_INTRINSIC_VALUE_NAMES: ReadonlySet<string> = new Set([
   "Function",
 ]);
 
-function isAmbientIntrinsicName(name: string): boolean {
+/** Also consulted by the codegen `instanceof` arm (`ir-dynamic-instanceof.ts`). */
+export function isAmbientIntrinsicName(name: string): boolean {
   return AMBIENT_INTRINSIC_VALUE_NAMES.has(name);
 }
 
@@ -97,8 +98,10 @@ function declaredNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
  * Where an intrinsic (or an alias carrying one) is used. Parentheses,
  * conditional branches, `||`/`&&`/`??` operands and the comma's right operand
  * forward the value, so the position is that of the forwarding expression.
- *   - `opaque`: `typeof x`, `!x`, `x === y`/`!==`/`==`/`!=`, a truthiness test,
- *     a statement, or an argument to a callee whose body the IR cannot own
+ *   - `opaque`: `typeof x`, `!x`, `x === y`/`!==`/`==`/`!=`, the right operand
+ *     of `instanceof` (#7106: `dyn.instanceof`, legacy's generic runtime
+ *     operator, reads the realm's object itself), a truthiness test, a
+ *     statement, or an argument to a callee whose body the IR cannot own
  *     (a member call such as `assert.throws`); the value's identity is all
  *     that is observed, and it IS the realm's object.
  *   - `alias`: the value is stored into a local (`var C = x`, `C = x`) or
@@ -163,6 +166,7 @@ function usePosition(node: ts.Expression): UsePosition {
   if (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) return OPAQUE;
   if (ts.isBinaryExpression(parent)) {
     if (EQUALITY_OPERATORS.has(parent.operatorToken.kind)) return OPAQUE;
+    if (parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword && parent.right === child) return OPAQUE;
     if (
       parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       parent.right === child &&
