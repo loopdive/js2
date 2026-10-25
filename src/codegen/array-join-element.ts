@@ -34,6 +34,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { ts } from "../ts-api.js";
 
 /**
  * Is `typeIdx` `$AnyString` or one of its subtypes (`$NativeString`, a rope)?
@@ -95,4 +96,58 @@ export function buildJoinBoxedElementToString(
       else: [{ op: "local.get", index: emptyElem.elemLocal }, ...toStrPath],
     },
   ];
+}
+
+/**
+ * The expression `compileArrayMethodCall` reads (local/global slot, else a
+ * transactional probe-compile) to replace the checker's vec type with the
+ * receiver's lowered storage type. Normally the receiver itself.
+ *
+ * A native-string join over a closure-producing array expression must
+ * compile that receiver exactly once. The ordinary actual-type probe
+ * recompiles `map`/`filter`/… and closure registration is not transactional;
+ * probing and then emitting the receiver can therefore leave the committed
+ * call wired to a stale/null closure. The resolved TS result type already
+ * describes the array produced by these methods, including `map`'s result
+ * element type, so it is used directly (`undefined`: no probe at all).
+ *
+ * (#7146) Except `x.sort(...)`: it sorts `x` in place and returns it, so its
+ * storage vec is `x`'s — and the checker's type need not be (an evolving
+ * `const keys = []` filled by `for…in` is stored as `$__vec_externref` while
+ * the checker says `string[]`). Reading the plain identifier `x` registers no
+ * closure.
+ */
+export function nativeJoinProbeExpr(
+  nativeStrings: boolean | undefined,
+  methodName: string,
+  receiver: ts.Expression,
+): ts.Expression | undefined {
+  const isJoin = methodName === "join" || methodName === "toString" || methodName === "toLocaleString";
+  if (!nativeStrings || !isJoin || !receiverIsClosureProducingArrayCall(receiver)) return receiver;
+  const callee = (receiver as ts.CallExpression).expression as ts.PropertyAccessExpression;
+  return callee.name.text === "sort" && ts.isIdentifier(callee.expression) ? callee.expression : undefined;
+}
+
+/**
+ * True when `expr` is a call to a higher-order array method that allocates a
+ * callback closure (`map`/`filter`/`flatMap`/`forEach`/`reduce`/…). The native
+ * join path re-compiles its receiver via the dispatcher probe, and closure
+ * registration is not idempotent, so such receivers must not route through it
+ * (see #2074/#2075). Conservative: any of these method names on a call.
+ */
+function receiverIsClosureProducingArrayCall(expr: ts.Expression): boolean {
+  if (!ts.isCallExpression(expr)) return false;
+  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
+  const m = expr.expression.name.text;
+  return (
+    m === "map" ||
+    m === "filter" ||
+    m === "flatMap" ||
+    m === "forEach" ||
+    m === "reduce" ||
+    m === "reduceRight" ||
+    m === "find" ||
+    m === "findIndex" ||
+    m === "sort"
+  );
 }

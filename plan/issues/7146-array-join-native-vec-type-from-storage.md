@@ -1,7 +1,8 @@
 ---
 id: 7146
 title: "Native-first: compileArrayJoinNative uses the checker's vec type instead of the storage vec type (invalid wasm on for…in keys)"
-status: ready
+status: done
+completed: 2026-10-25
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
@@ -48,3 +49,34 @@ native-first and standalone; the equivalence suite is byte-identical on every
 program that does not reach the changed path (state the byte delta for those
 that do, in the PR body); a test under `tests/issue-7146-*.test.ts` pins the
 case on standalone and gc.
+
+## Resolution (2026-10-25)
+
+probe/test reference: `tests/issue-7146-array-join-vec-type.test.ts` (WAT pin: the join's `__njoin_vec` local has the receiver global's storage type, gc native-first + standalone) and `tests/equivalence/issue-7146-sorted-array-join.test.ts` (both lanes vs native JS).
+
+**Root cause (verified).** The vec type is not chosen in `compileArrayJoinNative`; it is chosen by
+the dispatcher `compileArrayMethodCall`, which normally reads the receiver's lowered type (identifier
+local/global slot, else a transactional probe-compile) and overrides the checker's `vecTypeIdx`. For
+`join`/`toString`/`toLocaleString` under native strings it skips that whole step when the receiver is a
+closure-producing array call (`receiverIsClosureProducingArrayCall` — closure registration is not
+transactional, #2074/#2075), and `sort` is on that list. So `keys.sort().join(",")` kept the checker's
+`string[]` vec (type 42) while `keys` is stored as `$__vec_externref` (type 2). It only fires at top
+level: inside a function the checker types the module-level evolving array as `any[]`, which already
+maps to the externref vec.
+
+**Fix.** `x.sort(...)` sorts in place and returns `x`, so under the skip the dispatcher now reads the
+storage type off `x`'s own slot (fast path only — no probe compile, so no closure re-registration).
+No element coercion is needed: the existing externref-element arm of `compileArrayJoinNative` already
+stringifies boxed elements. `sortedIdentifierOf` and the moved `receiverIsClosureProducingArrayCall`
+live in `array-join-element.ts` (array-methods.ts net −13 LOC).
+
+**Sibling audit.** `indexOf`, `includes`, `slice`, `concat`, `reverse` get their vec from the same
+dispatcher but are never in the probe skip (it is gated on `join`/`toString`/`toLocaleString`), so they
+already read storage; covered by equivalence rows (`keys.reverse().join()`, `keys.slice(1).join()`,
+`keys.concat([…]).join()`, `keys.sort().indexOf(…)`, `keys.sort().includes(…)`). No follow-up needed.
+
+**Follow-up (not fixed here, needs an id).** A comparator-less `sort()` on an externref-element vec
+is still a no-op on gc native-first and standalone (`__arr_sort_noop`, the #2502 fallback; #3579 fixed
+only the host lane): `for (k in {b:1,a:2}) keys.push(k); keys.sort().join()` yields `"b,a"`. The corpus
+file matches only because its keys enumerate in order. The tests here use already-ordered keys for
+that reason (the comparator row reorders for real).
