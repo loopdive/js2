@@ -117,6 +117,46 @@ describe("#7118 — ambient intrinsics as IR values", () => {
     }
   }
 
+  // (#7127) Once the module's brand companion is seeded (here by an
+  // `Object.getPrototypeOf` call in a legacy function), a
+  // `<Receiver>.prototype.<method>` value read is exact through the IR and claims.
+  const SEEDED = "function seed(o) { return Object.getPrototypeOf(o); }\n";
+  const SEEDED_READS: Record<string, string> = {
+    errorToString: `if (typeof Error.prototype.toString !== "function") { throw "#11"; }`,
+    inheritedIdentity: `if (Array.prototype.hasOwnProperty !== Object.prototype.hasOwnProperty) { throw "#12"; }`,
+    ownIdentity: `if (Array.prototype.toString === Object.prototype.toString) { throw "#13"; }`,
+    functionCall: `if (typeof Function.prototype.call !== "function") { throw "#14"; }`,
+    absentMember: `if (Number.prototype.push !== undefined) { throw "#15"; }`,
+  };
+  for (const [name, body] of Object.entries(SEEDED_READS)) {
+    const source = SEEDED + body;
+    it(`node agrees: seeded ${name}`, () => {
+      expect(() => new Function(source)()).not.toThrow();
+    });
+    for (const target of TARGETS) {
+      it(`seeded ${name} claims <module-init> and runs (${lane(target)})`, async () => {
+        expect(await run(target, source)).toEqual({ claimed: true, threw: false });
+      });
+    }
+  }
+  // …while the shapes legacy or the IR still answer wrongly stay refused, as do
+  // reads through an alias.
+  const SEEDED_REFUSED: Record<string, string> = {
+    protoConstructor: `if (TypeError.prototype.constructor !== TypeError) { throw "#16"; }`,
+    inheritedCall: `if (typeof TypeError.call !== "function") { throw "#17"; }`,
+    functionProto: `if (typeof Function.prototype !== "function") { throw "#18"; }`,
+    dataMember: `if (Error.prototype.message !== "") { throw "#19"; }`,
+    nativeError: `if (typeof RangeError.prototype.toString !== "function") { throw "#20"; }`,
+    viaAlias: `var E = Error; if (typeof E.prototype.toString !== "function") { throw "#21"; }`,
+  };
+  for (const [name, body] of Object.entries(SEEDED_REFUSED)) {
+    for (const target of TARGETS) {
+      it(`seeded ${name} stays legacy and answers as node does (${lane(target)})`, async () => {
+        expect(await run(target, SEEDED + body)).toEqual({ claimed: false, threw: false });
+      });
+    }
+  }
+
   // An intrinsic handed to a same-file function whose parameter is a member
   // receiver stays legacy too (legacy answers this one wrong as well — a
   // pre-existing bug — but the IR must not own it).
