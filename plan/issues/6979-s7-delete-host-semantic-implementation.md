@@ -977,3 +977,116 @@ above (3518 ×2, 4577 ×3, 6474 ×3, quickjs engine absent locally), and they fa
 identically on the S7-a head. I also ran main's 54 test files changed in the
 range: 22 rows fail on S7-b (`issue-1102`, `2960`, `3519`, `5164`,
 `7106-prophelper`, `7106-s3a`), and every one also fails on the S7-a head.
+
+### S7-c landing (2026-10-25)
+
+Carried forward by `opus-s7c-collapse-arms` (claim `6979:s7c`). The S7-c
+branch (head `7063fea46a`, stacked on the old S7-b head `aac2b4040d`) was
+merged with the re-landed S7-b head `8a081af2c3` (PR 6705, which contains S7-a
+PR 6701 and 2026-10-24 main) as `19535a0b9f`, then folded directory by
+directory in seven byte-identical commits. S7 stays `in-progress` (S7-d/e and
+the rest of S7-c remain).
+
+**Merge.** Five conflicts; everything else auto-merged and typechecked.
+- `statements/loops.ts`: S7-b side (main's new imports).
+- `statements/exceptions.ts`: S7-c's fold (unconditional `try_table`) plus
+  main's `finishTryFinallyPreBox` (#6993).
+- `object-runtime.ts`: S7-c's fold. S7-b had widened the gate to
+  `ctx.standalone || ctx.wasi`, which is constant-true after the WASI flip.
+- `object-ops.ts`: S7-c's fold, with main's #7061 method-shorthand `value`
+  route re-applied, un-nested.
+- This file: all sections kept; frontmatter grants unioned.
+
+No S7-b-deleted file was resurrected. The merge brought 55 new
+`ctx.standalone` hits from main's 2026-10-16..24 work (1,014 → 1,069); fold 1
+removes them.
+
+**Hit counts** (`check:standalone-arms`; the baseline is banked with
+`--update-on-decrease` in this commit):
+
+| Directory | Merged tree | After this PR |
+| --- | --- | --- |
+| `src/codegen` (top level) | 894 | 676 |
+| `src/codegen/array` | 22 | 0 |
+| `src/codegen/declarations` | 41 | 0 |
+| `src/codegen/closures` | 13 | 0 |
+| `src/codegen/registry` | 9 | 0 |
+| `src/codegen/expressions` | 8 | 0 |
+| `src/codegen/object-model` | 2 | 0 |
+| `src/codegen/buffers` | 1 | 0 |
+| `src/codegen/classes` / `helpers` | 17 / 6 | 16 / 5 |
+| `src/codegen/context` / `analysis` | 5 / 3 | unchanged |
+| `src/ir` | 42 | 0 |
+| `src` (top level) / `src/runtime/contracts` | 4 / 2 | unchanged |
+| **total** | **1,069** | **711** |
+
+**The folds** (each folded with the S7-c codemod: `ctx.standalone` → `true`,
+then boolean / `if` / unreachable-statement simplification; every remaining
+comment mention reworded; host-only code the fold made unreachable deleted,
+iterating `tsc --noUnusedLocals` against the merged tree and
+`check:dead-exports` to a fixpoint):
+
+| Commit | Scope | Hits | Notable deletions |
+| --- | --- | --- | --- |
+| `115269e38c` | main's new hits (31 files) | 55 | — |
+| `b8fa0dbf7b` | `array*` + `array/` | 81 | `array-push-spread.ts` (+ its compiler-boundaries entry), the JS-host dynamic-spread push, host `__array_flat`/`__array_flatMap`/`__host_eq`/`__same_value_zero` arms, `hofRefElemClosureLaneSafe`, `maybeEmitVecLengthDefine` |
+| `13a218335a` | `string-*` / `native-string*` | 21 | — |
+| `b507796916` | `closures*` + async | 26 | the host function-name sidecar write, the legacy `try`/`catch_all` rest-apply arm, the #6417 host boolean-callback widening (`hostBooleanCallbackResult`, `FunctionContext.hostBooleanReturn`) |
+| `85087e2ce2` | `index.ts` + `registry/` + `declarations/` | 114 | the up-front `__register_*` host-import pre-registration, externref class method/getter/vararg dispatch exports, host eval-string collector facts, `moduleHasFnctorSubclass` |
+| `983c75ec68` | `type-coercion` + `binary-ops*` + `dyn-ops` | 29 | the host `__array_from_iter` materializer arm |
+| `f6a68cd857` | `src/ir` | 24 | the IR resolver's host arms (`__extern_eval`, `__defineProperty_desc`, host Date extern class, `__date_now`, host `__new_*`/`__extern_has`/`__unbox_number`) |
+
+`addHostStringConstantGlobal` now always answers `undefined` (the regime never
+imports a host string). Its callers' host arms are left for a later sub-slice.
+
+**Folds dropped.** None of the merged-tree folds had to be dropped for byte
+identity. One codemod rewrite was reverted by hand because it was not a fold:
+`X || false` → `X` on a pre-existing (non-`ctx.standalone`) expression in
+`funcref-as-closure.ts`, which would change a `boolean` result to
+`boolean | undefined`. A fold of the remaining top-level `src/codegen` files
+(676 hits in 281 files) was started and backed out: the first half (140 files)
+cascaded into whole dead modules (`class-instance-proto.ts`,
+`class-object-of.ts`, `class-value-construct.ts`, `generator-eager-refusal.ts`,
+the opaque generator dispatch tail) that tests and the boundaries inventory
+still name. It is the next sub-slice, together with `classes/`, `helpers/`,
+`context/`, `analysis/`, then removal of the field.
+
+**Byte identity.** Corpus as in the checkpoint: 2,494 programs (equivalence
+sources, playground examples, 1-in-40 test262 sample over 16 directories) on
+gc, standalone and wasi, three fixed shards (7,482 hashes per scan).
+- Every fold commit against its predecessor: 0 differences on all three lanes.
+- Merge commit against the S7-b head: gc 0 and standalone 0 differences.
+- WASI against the S7-b head (the flip, the one intended change): 1,658 of
+  2,494 binaries change; 40 programs that failed now compile (the RegExp family
+  and `wrapper-constructors` #3); 0 programs that compiled now fail (the
+  checkpoint's `Promise.withResolvers` regression no longer reproduces: the S7-b
+  head refuses it too). 0 programs gain a non-WASI import; 48 lose one
+  (`env.__make_getter_callback` 40, `env.__dynamic_import` 8).
+
+**Gates on the final head.** tsc 0, Biome lint 0, Prettier clean.
+`check:standalone-arms` OK (1,069 → 711, banked).
+`check:host-import-policy`: 33 probes, 452 imports, 0 regime-gap, 0 unknown;
+accelerators regexp 4 / date 1 / intl 4 (same as S7-b). `check:ir-fallbacks` OK
+(the informational `async-function` deferred bucket reads 4 against a 0
+baseline; it is not gated). `check:ir-only --policy=hybrid` READY, single-host
+26/12, standalone 38/0. The compiler-boundaries inventory is valid against
+`upstream/main` `93052c9d35`, and `ci.yml` wires `check:standalone-arms` once.
+The ratchet chain (loc, func, coercion-sites, oracle, dead-exports) and import
+cycles are OK with `LOC_GATE_BASE` = `upstream/main` `93052c9d35`; no new
+grants. Equivalence gate: 20 failing, 2,044 passing, 22 known failures, "No new
+equivalence regressions", 2 baseline failures now pass (`delete-sentinel`,
+`reflect-api`), the same as S7-b.
+
+**Tests.** The 3 touched files (`issue-4035`, `issue-4396`,
+`issue-6979-standalone-arms-ratchet`), the 15 `--pinned` files and 49 files
+covering the deleted arms (`issue-1047`, `1989`, `2025`, `2161-matchall`,
+`2891`, `3048`, `3984`, `4371`, `4397`/`4401`/`6978`/`6986`/`6686`,
+`4616-closure-name-leak`, `4617`, `4618-host-class-ctor-bridge`, `5361`,
+`6417`, `6715`, `6950`, `7011`, `7057`, every `7106-*`): 626 passing, 20
+failing. All 20 fail identically on the S7-b head (run in a tree built from
+`8a081af2c3`): `issue-1047` ×1, `1989` ×2, `2025` ×2, `4035` "honours an
+explicit off" ×1, `4371` ×1, `4617` ×2, `4618-host-class-ctor-bridge` ×3,
+`5361` ×2, `6417` ×3, `6715` ×1, `7106-prophelper` ×1, `7106-s3a` ×1. Most pin
+a host lane that S7-b already removed (`standalone: false` contexts, the
+host-assisted gc lane, host string constants). They belong to the S7-d test
+re-pin, not to this slice. No test was re-pinned or skipped here.

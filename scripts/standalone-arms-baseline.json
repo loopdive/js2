@@ -1,14 +1,9 @@
 {
   "src": 4,
-  "src/codegen": 875,
+  "src/codegen": 676,
   "src/codegen/analysis": 3,
-  "src/codegen/array": 21,
   "src/codegen/classes": 16,
-  "src/codegen/closures": 13,
   "src/codegen/context": 5,
-  "src/codegen/declarations": 37,
   "src/codegen/helpers": 5,
-  "src/codegen/registry": 9,
-  "src/ir": 24,
   "src/runtime/contracts": 2
 }
