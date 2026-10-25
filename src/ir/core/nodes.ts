@@ -36,6 +36,7 @@ import type {
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
   IrInstrDynCurrentThis,
+  IrInstrDynGlobalObject,
   IrInstrDynInstanceOfFunction,
   IrInstrDynInstanceOf,
   IrInstrDynPublishArgc,
@@ -1664,6 +1665,7 @@ export type {
   IrInstrDynStringCarrier,
   IrInstrDynArgumentsLength,
   IrInstrDynCurrentThis,
+  IrInstrDynGlobalObject,
   IrInstrDynInstanceOfFunction,
   IrInstrDynInstanceOf,
   IrInstrDynPublishArgc,
@@ -1718,6 +1720,7 @@ export type IrInstr =
   | IrInstrDynStringCarrier
   | IrInstrDynArgumentsLength
   | IrInstrDynCurrentThis
+  | IrInstrDynGlobalObject
   | IrInstrDynInstanceOfFunction
   | IrInstrDynInstanceOf
   | IrInstrDynPublishArgc
@@ -2090,6 +2093,7 @@ export function forEachNestedBuffer(instr: IrInstr, fn: (buffer: readonly IrInst
     case "dyn.string_carrier":
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.instanceof_fn":
     case "dyn.instanceof":
     case "dyn.publish_argc":
@@ -2272,6 +2276,7 @@ export function mapNestedBuffers(
     case "dyn.string_carrier":
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.instanceof_fn":
     case "dyn.instanceof":
     case "dyn.publish_argc":
@@ -2396,6 +2401,7 @@ export function directUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.callee, ...instr.args];
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
     case "dyn.instanceof_fn":

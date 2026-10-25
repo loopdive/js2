@@ -14,7 +14,7 @@
  * ## Exact legacy parity, deliberately including its residuals
  *
  * The IR admits a site only where legacy itself reaches that tail
- * ({@link irDynamicInstanceOfRoutesGeneric}): a dynamic-PARAMETER right
+ * ({@link irDynamicInstanceOfAtLegacyParity}): a dynamic-PARAMETER right
  * operand whose name no named arm of `compileHostInstanceOf` can claim. So the
  * IR answers what legacy answers, including the #2916 residuals. A runtime
  * non-callable target answers `false` instead of throwing (the "no wrong
@@ -28,14 +28,15 @@
 
 import { ts } from "../ts-api.js";
 import type { ValType } from "../ir/types.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { isBuiltinTypeName } from "./builtin-tags.js";
+import { isAmbientIntrinsicName } from "../shared/ambient-intrinsics.js";
+import type { TypeFact } from "../checker/oracle.js";
+import type { CodegenContext } from "./context/types.js";
+import { ERROR_FAMILY_CTOR_NAMES, isBuiltinTypeName } from "./builtin-tags.js";
 import { emitInstanceofThrowGuard } from "./expressions/identifiers.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 import { noJsHost } from "./js-errors.js";
 import { ensureNativeDynamicInstanceOf } from "./native-dynamic-instanceof.js";
 import { identifierIsWrittenTo, moduleInstallsCallableHasInstance } from "./native-ordinary-instanceof.js";
-import { addFuncType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
 
 export const IR_DYN_INSTANCEOF_HELPER = "__ir_dyn_instanceof";
@@ -73,10 +74,14 @@ function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
 }
 
 /**
- * Does legacy lower `site` (`<value> instanceof <parameter>`) through exactly
- * the generic runtime tail this wrapper reproduces?
+ * May the IR lower `site` through `dyn.instanceof` and answer exactly as
+ * legacy does? Two right-hand shapes qualify:
+ * - a dynamic PARAMETER that legacy also sends through the generic runtime tail
+ *   this wrapper reproduces (below);
+ * - an Error-family builtin read off the realm, where legacy takes its
+ *   name-based tag path ({@link errorIntrinsicTargetTakesTagPath}).
  *
- * Legacy dispatches the right operand on its NAME first
+ * For the parameter: legacy dispatches the right operand on its NAME first
  * (`resolveInstanceOfRHS`, the class / fnctor / builtin / alias arms of
  * `compileHostInstanceOf`). Those registries are keyed by the names that class,
  * function and variable declarations bind, and by builtin constructor names.
@@ -89,19 +94,70 @@ function declaredNonParameterNames(file: ts.SourceFile): ReadonlySet<string> {
  * callable `@@hasInstance` takes legacy's operator entry instead, so it is
  * refused here.
  */
-export function irDynamicInstanceOfRoutesGeneric(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
+export function irDynamicInstanceOfAtLegacyParity(ctx: CodegenContext, site: ts.BinaryExpression): boolean {
   if (!noJsHost(ctx) || ctx.fast) return false;
+  // `noJsHost` does not imply native-first: wasi with `strictNoHostImports: false`
+  // keeps host-assisted providers, whose instanceof tail this wrapper does not copy.
+  if (ctx.targetProfile.semanticProviders !== "native-first") return false;
   if (site.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !ts.isIdentifier(site.right)) return false;
-  const declaration = ctx.oracle.valueDeclarationOf(site.right);
-  if (declaration === undefined || !ts.isParameter(declaration) || !ts.isIdentifier(declaration.name)) return false;
-  const name = site.right.text;
-  if (isBuiltinTypeName(name) || name === "Date") return false;
   const file = site.getSourceFile();
+  if (moduleInstallsCallableHasInstance(file)) return false;
+  return (
+    parameterTargetRoutesGeneric(ctx, site.right, file) ||
+    errorIntrinsicTargetTakesTagPath(ctx, site.right, site.left, file)
+  );
+}
+
+/** The parameter half of {@link irDynamicInstanceOfAtLegacyParity}. */
+function parameterTargetRoutesGeneric(ctx: CodegenContext, right: ts.Identifier, file: ts.SourceFile): boolean {
+  const declaration = ctx.oracle.valueDeclarationOf(right);
+  if (declaration === undefined || !ts.isParameter(declaration) || !ts.isIdentifier(declaration.name)) return false;
+  const name = right.text;
+  if (isBuiltinTypeName(name) || name === "Date") return false;
   if (declaredNonParameterNames(file).has(name)) return false;
   if (identifierIsWrittenTo(file, name)) return false;
-  if (moduleInstallsCallableHasInstance(file)) return false;
-  const fact = ctx.oracle.typeFactOf(site.right).kind;
-  return fact === "any" || fact === "unknown";
+  return isDynamicTypeFact(ctx.oracle.typeFactOf(right).kind);
+}
+
+function isDynamicTypeFact(kind: TypeFact["kind"]): boolean {
+  return kind === "any" || kind === "unknown";
+}
+
+/**
+ * (#7106) An Error-family constructor the IR may use as an `instanceof` target:
+ * one with a native `$tag` (`ERROR_FAMILY_CTOR_NAMES`) that the IR can also read
+ * off the realm (#7118's ambient-intrinsic value read). AggregateError and
+ * SuppressedError fall out because that realm read does not admit them.
+ */
+function isInstanceOfErrorIntrinsic(name: string): boolean {
+  return (ERROR_FAMILY_CTOR_NAMES as readonly string[]).includes(name) && isAmbientIntrinsicName(name);
+}
+
+/**
+ * (#7106) `<any> instanceof TypeError` with the realm's own Error-family
+ * constructor on the right. The IR reads that constructor off the realm
+ * (#7118's `dyn.global_object`) and runs the generic operator. With #7120,
+ * that operator answers an Error-family carrier from the value's `$tag`, the
+ * set legacy's name-based path tests (#1473). This holds the site to exactly
+ * where legacy takes that path:
+ * - the name binds the lib declaration only, nothing in the file declares or
+ *   writes it;
+ * - the left operand is typed `any`/`unknown`, so none of
+ *   `tryStaticInstanceOf`'s compile-time folds apply.
+ * Whether the two paths agree row by row is measured, not assumed, in
+ * `tests/issue-7106-ir-instanceof-error-intrinsic.test.ts`.
+ */
+function errorIntrinsicTargetTakesTagPath(
+  ctx: CodegenContext,
+  right: ts.Identifier,
+  left: ts.Expression,
+  file: ts.SourceFile,
+): boolean {
+  const name = right.text;
+  if (!isInstanceOfErrorIntrinsic(name)) return false;
+  if (ctx.oracle.valueDeclarationOf(right)?.getSourceFile().isDeclarationFile !== true) return false;
+  if (declaredNonParameterNames(file).has(name) || identifierIsWrittenTo(file, name)) return false;
+  return isDynamicTypeFact(ctx.oracle.typeFactOf(left).kind);
 }
 
 /**
@@ -118,36 +174,17 @@ export function ensureIrDynamicInstanceOfHelper(ctx: CodegenContext): number | u
 
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
-  const helper: FunctionContext = {
-    name: IR_DYN_INSTANCEOF_HELPER,
-    params: [
+  const helper = helperFunctionContext(
+    IR_DYN_INSTANCEOF_HELPER,
+    [
       { name: "value", type: externref },
       { name: "target", type: externref },
     ],
-    locals: [],
-    localMap: new Map(),
-    returnType: i32,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
+    i32,
+  );
   helper.body.push({ op: "local.get", index: 0 }, { op: "local.get", index: 1 }, { op: "call", funcIdx: ordinary });
   emitInstanceofThrowGuard(ctx, helper);
   // The guard's TypeError may register late imports that shift baked indices.
   flushLateImportShifts(ctx, helper);
-
-  const typeIdx = addFuncType(ctx, [externref, externref], [i32]);
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(IR_DYN_INSTANCEOF_HELPER, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: IR_DYN_INSTANCEOF_HELPER,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
+  return publishHelperFunction(ctx, helper);
 }

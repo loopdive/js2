@@ -769,6 +769,15 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 — the realm's global object (`globalThis`); result dynamic. */
+  emitDynGlobalObject(): IrValueId {
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.global_object", result, resultType });
+    return result;
+  }
+
   /** #7106 S3c — `value instanceof F` for a known top-level function constructor; result i32. */
   emitDynInstanceOfFunction(value: IrValueId, target: IrFuncRef): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {

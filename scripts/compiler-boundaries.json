@@ -7149,6 +7149,14 @@
       "nextBoundary": "IR dynamic delete support (#7106 propertyHelper): the per-strictness wrapper over legacy's generic externref delete arm; moves with the delete lowering's backend split."
     },
     {
+      "path": "src/codegen/helpers/ir-helper-function.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The one home for a compiler-built helper function (#7106): fresh FunctionContext over fixed parameters + publication as a defined function; used by the dyn.construct / dyn.instanceof / dyn.delete / realm-global wrappers."
+    },
+    {
       "path": "src/codegen/ir-dynamic-instanceof.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -12495,6 +12503,14 @@
     },
     {
       "path": "src/ir/function-local-var.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+    },
+    {
+      "path": "src/shared/ambient-intrinsics.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "ir-core",

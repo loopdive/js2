@@ -6,12 +6,12 @@
     "jsInCore": 0
   },
   "counts": {
-    "total": 98,
+    "total": 99,
     "neutral": 55,
-    "js": 40,
+    "js": 41,
     "unresolved": 3,
     "core": 58,
-    "dialect": 40,
+    "dialect": 41,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -201,6 +201,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynEq",
       "why": "ECMAScript abstract/strict equality over dynamically-tagged values (§7.2.13/§7.2.15).",
       "evidence": ["src/ir/core/dialect/js.ts#2b4f27412292"]
+    },
+    "dyn.global_object": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynGlobalObject",
+      "why": "The ECMAScript realm's global object (§9.3.1 [[GlobalObject]], the value of globalThis §19.1.1), the same object legacy's native globalThis read yields.",
+      "evidence": ["src/ir/core/dialect/js.ts#c902bcb2268e"]
     },
     "dyn.instanceof": {
       "verdict": "js",
