@@ -136,9 +136,9 @@ export function run() {
     expect(await initializeAndRun(result)).toBe(1111111);
   }, 35_000);
 
-  // The positions from-ast materialises a bare `null` in: a `throw` operand
-  // (externref hint, also through a comma's right operand) and the direct
-  // operand of an equality it folds (strict against a dynamic value or the
+  // The value positions from-ast materialises a bare `null` in: a `throw`
+  // operand (externref hint, also through a comma's right operand) and the
+  // direct operand of an equality it folds (strict against a dynamic value or the
   // catch binding; any against a numeric operand).
   it("admits null as a throw operand and as a folded equality operand", async () => {
     const source = `/** @returns {number} */ function subject() { return 0; }
@@ -163,6 +163,32 @@ export function run() {
     expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
     expect(node(source)).toBe(1111111);
     expect(await initializeAndRun(result)).toBe(1111111);
+  }, 35_000);
+
+  // A discarded `null` — an expression statement, a comma's left operand, a
+  // `void` operand, a discarded conditional arm — is lowered by
+  // `lowerDiscardedExpression` under an externref hint (no minted local needed).
+  it("admits null in a discarded position", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m, k) { null; throw m; };
+subject.b = function (m, k) { (1, null); throw m; };
+subject.c = function (m, k) { throw (null, m); };
+subject.d = function (m, k) { void null; throw m; };
+subject.e = function (m, k) { k ? null : 1; throw m; };
+export function run() {
+  var n = 0;
+  try { subject.a(2, 0); } catch (e) { if (e === 2) n += 1; }
+  try { subject.b(2, 0); } catch (e) { if (e === 2) n += 10; }
+  try { subject.c(2, 0); } catch (e) { if (e === 2) n += 100; }
+  try { subject.d(2, 0); } catch (e) { if (e === 2) n += 1000; }
+  try { subject.e(2, 1); } catch (e) { if (e === 2) n += 10000; }
+  return n;
+}`;
+    const result = await compile(source, OPTIONS);
+    requirePreparedInit(result);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+    expect(node(source)).toBe(11111);
+    expect(await initializeAndRun(result)).toBe(11111);
   }, 35_000);
 
   // Each row is a planned member closure whose body the producer would
@@ -285,6 +311,27 @@ export function run() {
       "a null-initialized local beside the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var nul = null; r += nul; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "strict equality of an object-literal local against null beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var o = { a: 1 }; if (o === null) throw "n"; throw r; }`,
+      `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "loose `==` of a dynamic member read against null beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; if (m.x == null) throw "n"; throw r; }`,
+      `try { subject.f({ x: 1 }, 0); } catch (e) { if (e !== "n") n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`??` with the minted dynamic local on the left",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var t = r ?? 1; throw t; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
       "body-shape-rejected",
       1,
     ],

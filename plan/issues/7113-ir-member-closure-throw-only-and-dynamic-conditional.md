@@ -235,6 +235,11 @@ identical on every row. Report the new head and a one-line PR-body addition.
   conditional throw, the typed-slot sink, `m ? m : undefined`) are refused at
   select with no post-claim withdrawal on standalone and gc native-first; the
   host-assisted gc lane mints no plan (bytes identical to the base, measured).
+- (Round 9) A discarded `null` (`null;`, `(1, null);`, `throw (null, m)`,
+  `void null;`, `k ? null : 1;`) is a prepared `<module-init>` body, = node.
+  `var o = { a: 1 }; o === null`, `m.x == null` and `var t = r ?? 1` beside
+  the minted dynamic local are refused at select with no post-claim
+  withdrawal on standalone and gc native-first.
 - Census on the Test262Error-stripped probe: the next `<module-init>` blocker
   is `var format = compareArray.format;`. That is a function-object member
   READ (`expr-ident-not-in-scope «compareArray»`), followed by `format(…)` on

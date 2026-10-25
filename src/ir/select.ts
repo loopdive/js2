@@ -6553,45 +6553,66 @@ function closureWriteUnlowerable(expr: ts.Expression): boolean {
 /**
  * (#7113) Where from-ast materialises a bare `null` inside a planned member
  * closure. Its `NullKeyword` lowering emits a null only under an externref /
- * reference hint; two positions supply one:
+ * reference hint, or not at all when the value is dropped; three positions
+ * qualify:
  *
  * - a `throw` operand (`lowerThrowStatement` lowers with an externref hint),
  *   through parentheses and through the right operand of a comma (the comma
  *   arm passes its hint to the right operand: `throw (1, null)`);
+ * - a DISCARDED value. `lowerDiscardedExpression` (from-ast.ts:2546-2620)
+ *   recurses through parentheses, `void`, both comma operands and both
+ *   conditional arms, and lowers the leaf with an externref hint (`:2619`);
+ *   every expression-statement lowering calls it (`:2399`, `:2762`, …), as
+ *   do the left operand of a value comma (`:15233-15235`) and a `void`
+ *   operand (`:5321-5324`; the selector climbs `void` and the arms only
+ *   while the whole is discarded). A `for` incrementor is not discarded:
+ *   `lowerForUpdateExpr` (`:12439-12479`) splits its comma chain into clauses
+ *   and lowers each leaf under an f64 hint, as the initializer is lowered
+ *   (`:12286`);
  * - the DIRECT operand of `==` / `!=` / `===` / `!==` that `tryFoldNullCompare`
- *   (from-ast.ts) folds. The fold's entry test reads the operand kind without
- *   unwrapping, so `(null)` is not seen; it lowers the other operand under an
- *   f64 hint and folds a STRICT compare against a dynamic / externref value
- *   (tag test, `ref.is_null`) and any compare against an operand whose type
- *   reaches its trailing constant (f64, i32, vec, …). It gives up — and the
- *   generic f64-hint lowering then withdraws `nullish-value-unsupported` — for
- *   `null === undefined`, a LOOSE compare against a dynamic or externref
- *   value, a `string` operand, and class / object / closure / callable
- *   operands. `nullCompareFoldFails` mirrors the failures the selector can
- *   name (nullish, loose-on-dynamic, string); a class-typed operand has no
- *   selector family here and keeps its prior answer.
+ *   (from-ast.ts:16115-16213) folds. The fold's entry test reads the operand
+ *   kind without unwrapping, so `(null)` is not seen; it lowers the other
+ *   operand under an f64 hint and folds a STRICT compare against a dynamic /
+ *   externref value (tag test, `ref.is_null`) and any compare against an
+ *   operand whose type reaches its trailing constant (f64, i32, vec, …). It
+ *   gives up — and the generic f64-hint lowering then withdraws
+ *   `nullish-value-unsupported` — for `null === undefined` (`:16132-16138`),
+ *   a LOOSE compare against anything but a numeric value (dynamic
+ *   `:16151-16158`, extern `:16167-16170`, externref `:16201-16204`), a
+ *   class / object / closure / callable operand (`:16186-16193`) and a
+ *   `string` operand (`:16198`); `boxed` (`:16163`) and `ref_null`
+ *   (`:16208`) bail too, and no planned-closure operand lowers to either
+ *   today. `nullCompareFoldFails` is that failure set as the selector names it.
  *
  * Every other position — a slot write or `+=` (dynamic hint), a declaration
- * initializer (`var nul = null`, f64 hint), a string `+=`, `??` / comma-left /
- * conditional arms, a call argument, a member store — withdraws
- * `nullish-value-unsupported`, so the selector refuses it first. (A planned
- * closure's `return null` is refused elsewhere already; measured on the base,
- * it is not a claim to keep.)
+ * initializer (`var nul = null`, f64 hint), a string `+=`, a `??` operand, a
+ * conditional arm in value position, a call argument, a member store, a `for`
+ * clause — withdraws `nullish-value-unsupported`, so the selector refuses it
+ * first. (A planned closure's `return null` is refused elsewhere already;
+ * measured on the base, it is not a claim to keep.)
  */
 function closureNullValuePosition(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
   let node: ts.Expression = expr;
+  // A `void` operand and a conditional arm are climbed for the discarded walk
+  // only: the throw admission does not apply through them — `throw void null`
+  // withdraws "throw val not in slice 9" (an f64 throw value) and
+  // `throw k ? null : m` withdraws on the arm (both measured).
+  let discardedOnly = false;
   for (;;) {
     node = outermostParenthesized(node);
     const parent = node.parent;
-    if (
-      ts.isBinaryExpression(parent) &&
-      parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
-      parent.right === node
-    ) {
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      if (parent.left === node && !isForIncrementorClause(parent)) return true;
       node = parent;
       continue;
     }
-    if (ts.isThrowStatement(parent)) return true;
+    if (ts.isVoidExpression(parent) || (ts.isConditionalExpression(parent) && parent.condition !== node)) {
+      discardedOnly = true;
+      node = parent;
+      continue;
+    }
+    if (ts.isExpressionStatement(parent)) return true;
+    if (ts.isThrowStatement(parent)) return !discardedOnly;
     break;
   }
   const parent = expr.parent;
@@ -6600,14 +6621,49 @@ function closureNullValuePosition(expr: ts.Expression, scope: ReadonlySet<string
   return !nullCompareFoldFails(other, parent.operatorToken.kind, scope);
 }
 
+/** Is `comma` the `for` incrementor, or one of its clauses (from-ast.ts:12449-12452)? */
+function isForIncrementorClause(comma: ts.BinaryExpression): boolean {
+  let node: ts.Expression = comma;
+  while (ts.isBinaryExpression(node.parent) && node.parent.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    node = node.parent;
+  }
+  return ts.isForStatement(node.parent) && node.parent.incrementor === node;
+}
+
 /** The `null`-compare operands `tryFoldNullCompare` does not fold (see `closureNullValuePosition`). */
 function nullCompareFoldFails(other: ts.Expression, op: ts.SyntaxKind, scope: ReadonlySet<string>): boolean {
   if (other.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefinedIdentifier(other, scope)) return true;
-  const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  if (!strict && dynamicShapedValue(other)) return true;
-  return (
-    obviousSelectorValueFamily(other, scope) === "string" || declaredExpressionHasExactFamily(other, "string", scope)
+  const sources = nullCompareOperandSources(other);
+  const array = sources.some(
+    (e) => ts.isArrayLiteralExpression(e) || currentSelectionOptions?.isArrayExpression?.(e) === true,
   );
+  const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  if (!strict) {
+    const family = obviousSelectorValueFamily(other, scope);
+    return !(
+      array ||
+      family === "number" ||
+      family === "boolean" ||
+      declaredExpressionHasExactFamily(other, "number", scope) ||
+      declaredExpressionHasExactFamily(other, "boolean", scope)
+    );
+  }
+  if (array) return false;
+  return (
+    sources.some((e) => obviousSelectorValueFamily(e, scope) === "reference") ||
+    obviousSelectorValueFamily(other, scope) === "string" ||
+    declaredExpressionHasExactFamily(other, "string", scope)
+  );
+}
+
+/**
+ * The operand of a `null` compare and, for a closure local, its declaration
+ * initializer — the selector's family view of the `IrType` the fold lowers.
+ */
+function nullCompareOperandSources(other: ts.Expression): ts.Expression[] {
+  const operand = unwrapPhase1Parens(other);
+  const initializer = ts.isIdentifier(operand) ? closureLocalDeclaration(operand)?.initializer : undefined;
+  return initializer === undefined ? [operand] : [operand, unwrapPhase1Parens(initializer)];
 }
 
 function isEqualityOperator(op: ts.SyntaxKind): boolean {
@@ -11077,6 +11133,16 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (binOp === ts.SyntaxKind.CommaToken) {
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
+    // (#7113) `lowerNullish` (from-ast.ts:15686-15697) lowers `??` only on a
+    // reference-typed left operand; the planned closure's dynamic carrier
+    // (`var t = r ?? 1` beside `var r = m ? m : 1`) withdraws there.
+    if (
+      binOp === ts.SyntaxKind.QuestionQuestionToken &&
+      currentInPlannedMemberClosure &&
+      dynamicShapedValue(expr.left)
+    ) {
+      return shapeNo("expr-closure-nullish-coalesce-dynamic", expr);
     }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
