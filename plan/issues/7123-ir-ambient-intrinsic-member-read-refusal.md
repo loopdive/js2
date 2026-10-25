@@ -18,7 +18,10 @@ assignee: "ttraenkler/lead-c-remote"
 # 2026-10-22 (re-merge after #6829 landed): this PR stacks on #6846 (#7118), whose
 # `dyn.intrinsic_value` growth was granted by the #7106 issue file while #6829 sat
 # in the diff; restated here until #6846 lands (CLAUDE.md "stranded grants").
+# 2026-10-25: #6846's 6158a309 (one shared admission predicate) routes the
+# from-ast identifier arm through it, taking lowerExprUnchecked to 302 lines.
 func-budget-allow:
+  - src/ir/from-ast.ts::lowerExprUnchecked
   - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/lower-generic.ts::emitInstrTree
   - src/ir/integration.ts::makeDynamicLowering
