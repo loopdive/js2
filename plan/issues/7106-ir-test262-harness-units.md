@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-25
 priority: high
 horizon: l
 feasibility: hard
@@ -761,6 +761,53 @@ node on standalone and gc (wasi: validate).
 - Also fixes the pre-existing #2952 slice 6c dual-run case "head compared to a
   literal" on this stack.
 
+**Switch-gate fix (2026-10-25, measured; #6843).** The arm shipped one
+claim-then-demote. `switch (k)` over a dynamic-carrier head was CLAIMED by the
+selector and demoted at build on standalone, wasi and gc native-first
+(`irPostClaimErrors = [{kind:"build", message:"ir/from-ast: string-tested
+switch disc lowered to dynamic, not string, in h"}]`; legacy recompiled it, so
+the result was right by accident). The same `switch` over a dynamic PARAM was
+refused before the claim. Cause: the switch gate's
+`switchDiscHasIrStringCarrier` follows the disc to its declaration and
+certifies any binding without an initializer — a `var k` for-in head has none.
+Fix (round 2 of review #6843, 2026-10-25): the arm's head classification is
+split into its two questions — `dynamicCarrierForInHeadIdentifier(stmt)`, the
+lane + head-shape test (`forInHeadValueIsDynamicCarrier`, not host-string,
+single `var` identifier head), and the body-reads-head (`.used`) test —
+with `dynamicCarrierForInHead` composed from both, so the producer and the
+for-in arm behave exactly as before. The switch gate walks up from the disc
+identifier to the nearest enclosing for-in (same function) whose head
+identifier resolves to the disc's declaration and asks only the lane + shape
+test, answering `false`, so the shape is refused pre-claim as
+`switch-disc-not-string-carrier` (the `body-shape-rejected` family, like the
+dynamic-param case). No second name or shape test; the producer is unchanged.
+- Round-2 finding: the round-1 gate followed the disc to its symbol's FIRST
+  declaration (`localVariableDeclaration`) and asked that for-in's
+  `dynamicCarrierForInHead`, whose `.used` answer is about THAT loop's body.
+  All `var k` heads in a function share one symbol, so with two sequential
+  loops where only the second switches on `k`, the first loop answered "not
+  read", the gate certified `k`, and from-ast demoted the claimed body
+  ("string-tested switch disc lowered to dynamic, not string") on standalone,
+  wasi and gc native-first — identical to main, i.e. an incomplete fix, not a
+  regression. The enclosing-loop walk asks "is this disc a dynamic-carrier
+  head on this lane" independent of which loop reads it.
+- Before/after on the repros (`{a:1,b:2,c:3}`): the single-loop switch (node
+  12) and the two-loop shape (node 15) were claimed then demoted on standalone
+  and wasi; now both are refused before the claim, `irPostClaimErrors` empty,
+  legacy answers 12 / 15. gc native-first with a JSDoc-typed helper behaves
+  the same way.
+- Host-assisted gc bytes (`semanticProviders: "host-assisted"`) are identical
+  between `origin/main` and the fix for the two-loop repro, the switch repro, a
+  plain for-in and a no-shape loop (`88fe65ed…`, `8c1e9e9c…`, `9b85e4dd…`,
+  `114efdc5…`; main tree = `git archive origin/main`, same node_modules).
+- Tests: the switch repro, both two-loop orders (`twoLoopsFirstUnread`,
+  `twoLoopsSecondUnread`, expected 15), a captured head
+  (`forin-head-value-captured`) and a written head
+  (`forin-head-value-written`) each assert the refusal arm, empty
+  `irPostClaimErrors` and the node result, on standalone and gc; wasi pins
+  all three switch refusals and validates. The switch rows fail without the
+  fix (`twoLoopsFirstUnread` also fails with only the round-1 fix).
+
 ## propertyHelper.js, arm 3 — statement-position dynamic delete (2026-10-22, measured)
 
 **Blocker.** `isConfigurable` and `isWritable` delete through their dynamic
@@ -820,6 +867,24 @@ body was claimed and then demoted at build ("unsupported body
 ExpressionStatement shape"), a post-claim error. Both dispatchers now share
 `lowerDroppedDelete`. A bare `{ … }` block holding a delete is still refused
 before the claim (a pre-existing block refusal, so the selector and from-ast agree).
+
+**Review follow-up (2026-10-25).** The arm's PR branch also carried a selector
+widening, `isCertifiedObjectAliasValue` (a second "this alias call is boolean"
+arm in `trackedModuleInfluenceIsBoolean`, beside the
+`declaredExpressionHasExactFamily(…, "boolean")` certification main already
+reuses at the `!` site). Measured on a sloppy script with unannotated
+`function hasK(obj, k) { if (__hasOwnProperty(obj, k)) … }` and
+`function notEnum(obj, k) { return !__gopd(obj, k).enumerable; }`: the
+widening made the selector claim both, and the build demoted both with
+"function typeIdx parity mismatch" — 3 claim-then-demote cases on the branch
+head against 1 (`negHas`, pre-existing) on the base. **Removed**; the exact-family
+certification stays the single predicate, and
+`tests/issue-7106-prophelper-dyn-delete.test.ts` pins that both shapes stay
+legacy with `irPostClaimErrors` empty and node's result. The refactor of
+`ir-dynamic-delete.ts` onto the shared helper builders stands — since #6858
+those are `helperFunctionContext` / `publishHelperFunction` in
+`helpers/ir-helper-function.ts`, which main's `ir-dynamic-delete.ts` already
+uses; host-assisted gc bytes are identical to main.
 
 ## `dyn.instanceof` — generic dynamic instanceof at legacy parity (2026-10-22, measured)
 

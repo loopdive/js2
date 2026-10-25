@@ -72,6 +72,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./core/builtin-method-names.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -101,6 +102,7 @@ import {
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
+  uniformLiteralReturnKind,
 } from "./select-expression-structure.js";
 
 export {
@@ -736,6 +738,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
+      | "host-dynamic-method-call"
       | "native-own-property-descriptor",
   ) => boolean;
   /**
@@ -1455,18 +1458,18 @@ let earlyReturnBarrierDepth = 0;
 let currentInPlannedMemberClosure = false;
 
 /**
- * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers,
- * and the IR's dynamic method call (`__ir_dyn_method_call_N` →
- * `__extern_method_call`) has no brand arms for primitives or vecs on the
- * host-free lanes: it answers `undefined` where legacy dispatches by brand
- * (`list.join(", ")`, `n.toString()`, `sym.toString()` — measured). Such a call
- * stays legacy; a string-literal receiver keeps its native string method.
+ * (#7106 Stage 4 / #7117) A planned member closure's receivers are dynamic
+ * carriers, so `recv.m(…)` there is the IR's generic dynamic method call and
+ * {@link dynamicMethodCallIsExact} decides it (`list.join(", ")`,
+ * `n.toString()`, `sym.toString()` measured `undefined` off the host lane). A
+ * refused call keeps the closure legacy; a string-literal receiver keeps its
+ * native string method.
  */
 function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
   if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
   let receiver: ts.Expression = expr.expression.expression;
   while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
-  return !ts.isStringLiteralLike(receiver);
+  return !ts.isStringLiteralLike(receiver) && !dynamicMethodCallIsExact(expr.expression.name.text);
 }
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
@@ -2657,6 +2660,22 @@ function resolveReturnType(
   ) {
     return "void";
   }
+  // (#7129) A class method carries no lattice entry, but legacy registers its
+  // slot from the checker's inferred return. When every value return is the
+  // same bare literal and control cannot fall out, that inference is exactly
+  // the widened `number` / `string`. Host-free lanes only (standalone, WASI,
+  // the native regime in a JS environment): the host-assisted lane keeps its
+  // legacy output byte-identical, as the sibling admissions do.
+  if (
+    ts.isMethodDeclaration(fn) &&
+    fn.body &&
+    mapped === undefined &&
+    !jsHostExternsEnabled(currentSelectionOptions) &&
+    functionBodyAlwaysTerminates(fn.body)
+  ) {
+    const literalKind = uniformLiteralReturnKind(fn.body);
+    if (literalKind !== null) return literalKind;
+  }
   // (#7106 S1b) An unannotated function whose value returns are all one
   // concrete kind but whose body can FALL OUT (no terminating last statement:
   // `switch` without default, a guard `if`) returns that kind OR `undefined`.
@@ -2991,6 +3010,23 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 }
 
 /**
+ * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
+ * On the host lane `__extern_method_call` is the real JS call. Off it, the
+ * native object runtime dispatches open-`$Object` / instance / closure methods
+ * but answers `undefined` for a primitive or vec receiver (`list.join(", ")`
+ * measured), where legacy dispatches by brand. So a BUILT-IN prototype method
+ * name is refused there — except `charCodeAt`, the string runtime's exact fast
+ * path. The cut is by NAME, so a user method that shares one (`c.get(k)`,
+ * `o.add(x)`, `it.next()`) is refused too; only an uncolliding user name
+ * (`o.inc()`) keeps its open dispatch. #6851's per-(method, arity) wrapper
+ * lifts this.
+ */
+function dynamicMethodCallIsExact(name: string): boolean {
+  if (name === "charCodeAt" || !BUILTIN_PROTOTYPE_METHOD_NAMES.has(name)) return true;
+  return currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
+}
+
+/**
  * True when the current body contains an exact receiver-first dynamic method
  * call (#3793 retained function object or #4387 inherited Array HOF).
  *
@@ -3314,6 +3350,7 @@ function dynamicUsesAreMoveOnly(
         if (!currentDynMemberReadBuildable || !expectDyn || (e.arguments.length > 1 && !narrowStringReplace)) {
           return false;
         }
+        if (!narrowStringReplace && !dynamicMethodCallIsExact(e.expression.name.text)) return false;
         if (!scanExpr(e.expression.expression, true)) return false;
         if (narrowStringReplace) {
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
@@ -5122,7 +5159,26 @@ function switchDiscHasIrStringCarrier(expr: ts.Expression, seen = new Set<ts.Var
   // unresolvable bindings have no initializer to inspect — the checker family
   // gate governs those (a `string`-annotated param IS `IrType.string`).
   const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
-  if (!declaration || seen.has(declaration) || !declaration.initializer) return true;
+  if (!declaration || seen.has(declaration)) return true;
+  // (#7106 propertyHelper arm 2) A `for (var k in <dyn>)` head has no
+  // initializer, yet on the native non-fast lane it lowers as the dynamic
+  // carrier, not `IrType.string`. Ask the arm's own lane + head-shape
+  // classification (`dynamicCarrierForInHeadIdentifier`, the one place that
+  // decides a head is dynamic) of the nearest ENCLOSING for-in that binds
+  // the disc's symbol, so a `switch (k)` is refused before the claim instead
+  // of demoting at build. The enclosing loop, not the symbol's first
+  // declaration: every `var k` head in a function shares one symbol, and
+  // the first loop's body-reads answer says nothing about this read
+  // (measured 2026-10-25 round 2: two sequential loops, only the second
+  // switching on `k`, still claimed then demoted).
+  for (let node: ts.Node = candidate.parent; node !== undefined && !isFunctionLike(node); node = node.parent) {
+    if (!ts.isForInStatement(node)) continue;
+    const head = dynamicCarrierForInHeadIdentifier(node);
+    if (head !== undefined && currentModuleBindingResolver?.localVariableDeclaration(head) === declaration) {
+      return false;
+    }
+  }
+  if (!declaration.initializer) return true;
   seen.add(declaration);
   return switchDiscHasIrStringCarrier(declaration.initializer, seen);
 }
@@ -5546,17 +5602,29 @@ function classifyForInHeadUse(
 }
 
 /**
- * (#7106 propertyHelper) The head name of a `for (var k in <dyn>)` whose body
- * READS `k`, on a lane where that head is a dynamic carrier
- * (`forInHeadValueIsDynamicCarrier`); undefined otherwise.
+ * (#7106 propertyHelper) Lane + head shape: the head identifier of a
+ * `for (var k in <dyn>)` on a lane where that head is a dynamic carrier
+ * (`forInHeadValueIsDynamicCarrier`, not host-string); undefined otherwise.
+ * Whether any body READS the head is a separate question — see
+ * `dynamicCarrierForInHead`; the switch gate asks only this one.
  */
-function dynamicCarrierForInHead(stmt: ts.ForInStatement): string | undefined {
+function dynamicCarrierForInHeadIdentifier(stmt: ts.ForInStatement): ts.Identifier | undefined {
   if (currentSelectionOptions?.forInHeadValueIsDynamicCarrier !== true) return undefined;
   if (currentSelectionOptions?.forInHeadValueIsHostString === true) return undefined;
   const init = stmt.initializer;
   if (!ts.isVariableDeclarationList(init) || init.declarations.length !== 1) return undefined;
   const name = init.declarations[0]!.name;
-  if (!ts.isIdentifier(name)) return undefined;
+  return ts.isIdentifier(name) ? name : undefined;
+}
+
+/**
+ * (#7106 propertyHelper) The head name of a `for (var k in <dyn>)` whose body
+ * READS `k`, on a lane where that head is a dynamic carrier
+ * (`dynamicCarrierForInHeadIdentifier`); undefined otherwise.
+ */
+function dynamicCarrierForInHead(stmt: ts.ForInStatement): string | undefined {
+  const name = dynamicCarrierForInHeadIdentifier(stmt);
+  if (name === undefined) return undefined;
   return classifyForInHeadUse(stmt.statement, name.text).used ? name.text : undefined;
 }
 
@@ -7481,33 +7549,9 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
  * condition representation is already boolean. Non-module subexpressions are
  * left to the existing selector/build type checks.
  */
-/**
- * (#7106) A certified Object alias call, or a member read off one:
- * - the S1g uncurried `Object.prototype` predicate (`__hasOwnProperty(o, k)`,
- *   a boolean `dyn.own_property`);
- * - arm 1's stored `Object.getOwnPropertyDescriptor` (a dynamic carrier).
- * Neither is an unboxed module scalar of unknown family, the case
- * {@link trackedModuleInfluenceIsBoolean} guards. Since #7114 a script's
- * top-level alias `var` is a tracked module binding. The callee resolving to
- * that binding means it is not shadowed.
- */
-function isCertifiedObjectAliasValue(expr: ts.Expression): boolean {
-  let root = unwrapPhase1Parens(expr);
-  while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
-    root = unwrapPhase1Parens(root.expression);
-  }
-  return (
-    ts.isCallExpression(root) &&
-    moduleBinding(root.expression) !== undefined &&
-    (uncurriedObjectAliasMethod(root.expression, () => false) !== undefined ||
-      storedObjectStaticAliasMethod(root.expression, () => false) !== undefined)
-  );
-}
-
 function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   if (!expressionTouchesTrackedModuleValue(candidate)) return true;
-  if (isCertifiedObjectAliasValue(candidate)) return true;
   if (moduleBinding(candidate)) return isDirectBooleanModuleBinding(candidate);
   if (moduleScalarAliasFamily(candidate)) return moduleScalarAliasFamily(candidate) === "boolean";
   if (isModuleMapGetAlias(candidate)) return false;
@@ -10149,7 +10193,6 @@ function collectDirectNestedFunctionNames(body: ts.Block): Set<string> {
   return names;
 }
 
-/**
 /**
  * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
  * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
