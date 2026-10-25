@@ -15,7 +15,7 @@ area: codegen
 language_feature: builtins
 goal: correctness
 parent: 6979
-related: [6899, 2787, 6708]
+related: [6899, 2787, 6708, 7151]
 ---
 
 # #7146 — Native-first: compileArrayJoinNative uses the checker's vec type instead of the storage vec type (invalid wasm on for…in keys)
@@ -64,19 +64,35 @@ transactional, #2074/#2075), and `sort` is on that list. So `keys.sort().join(",
 level: inside a function the checker types the module-level evolving array as `any[]`, which already
 maps to the externref vec.
 
-**Fix.** `x.sort(...)` sorts in place and returns `x`, so under the skip the dispatcher now reads the
-storage type off `x`'s own slot (fast path only — no probe compile, so no closure re-registration).
-No element coercion is needed: the existing externref-element arm of `compileArrayJoinNative` already
-stringifies boxed elements. `sortedIdentifierOf` and the moved `receiverIsClosureProducingArrayCall`
-live in `array-join-element.ts` (array-methods.ts net −13 LOC).
+**Fix.** `nativeJoinProbeExpr` (`array-join-element.ts`) now picks the expression the dispatcher
+reads its storage type from. It peels trailing `sort`/`filter` layers — `x.sort(...)` returns `x`,
+`x.filter(...)` a fresh vec of `x`'s element storage — and the dispatcher reads what remains: an
+identifier's local/global slot, or the transactional `probeCompiledType` for a non-closure call such
+as `keys.slice()` / `keys.reverse()` / `keys.concat([])`. A remainder that is itself closure-producing
+(`map`, `flatMap`, …, which may change the element type) keeps the old skip. No element coercion is
+needed: the existing externref-element arm of `compileArrayJoinNative` already stringifies boxed
+elements. The nine closure-allocating methods are spelled once, `CLOSURE_ARRAY_METHODS`, shared with
+the `emittedClosureArrayMethod` marker (#2007). Review round 1 (2026-10-25) extended the first cut,
+which rescued only `<identifier>.sort(...)`, to `keys.slice().sort()`, `keys.sort().sort()`,
+`keys.reverse().sort()`, `keys.concat([]).sort()`, `keys.sort(cmp).sort()`, `keys.filter(f).sort()`
+and `keys.filter(f).join()` (the last was a runtime illegal cast) — all pinned in both test files.
 
 **Sibling audit.** `indexOf`, `includes`, `slice`, `concat`, `reverse` get their vec from the same
 dispatcher but are never in the probe skip (it is gated on `join`/`toString`/`toLocaleString`), so they
 already read storage; covered by equivalence rows (`keys.reverse().join()`, `keys.slice(1).join()`,
-`keys.concat([…]).join()`, `keys.sort().indexOf(…)`, `keys.sort().includes(…)`). No follow-up needed.
+`keys.concat([…]).join()`, `keys.sort().indexOf(…)`, `keys.sort().includes(…)`).
 
-**Follow-up (not fixed here, needs an id).** A comparator-less `sort()` on an externref-element vec
+**Follow-up: #7151 (not fixed here).** A comparator-less `sort()` on an externref-element vec
 is still a no-op on gc native-first and standalone (`__arr_sort_noop`, the #2502 fallback; #3579 fixed
 only the host lane): `for (k in {b:1,a:2}) keys.push(k); keys.sort().join()` yields `"b,a"`. The corpus
 file matches only because its keys enumerate in order. The tests here use already-ordered keys for
 that reason (the comparator row reorders for real).
+
+**Byte check (round 2, base dd73656f66 vs head).** Corpus: the 13 `website/playground/examples/**/*.ts`
+files plus the 1,698 interpolation-free `export function` snippets extracted from `tests/equivalence/`
+(1,711 units × gc host-assisted / gc native-first / standalone = 5,133 outputs): all identical. Round 1
+quoted 5,097 outputs; that corpus held only one playground file (`benchmarks.ts`, a non-recursive scan).
+Programs that reach the rescue change only on native-first and standalone: the corpus file, the
+comparator/push-grown rows and the six chains go invalid → valid; `keys.filter(f).join(",")` was valid
+but trapped (illegal cast) and now joins through the externref arm. Host-assisted is identical on all
+of them, and `keys.map(f).sort().join()` (skip kept) is identical on every lane.

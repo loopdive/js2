@@ -26,7 +26,12 @@ import {
 } from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
-import { buildJoinBoxedElementToString, isAnyStringSubtype, nativeJoinProbeExpr } from "./array-join-element.js"; // (#4560, #7146)
+import {
+  buildJoinBoxedElementToString,
+  CLOSURE_ARRAY_METHODS,
+  isAnyStringSubtype,
+  nativeJoinProbeExpr,
+} from "./array-join-element.js"; // (#4560, #7146)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addArrayIteratorImports,
@@ -2111,19 +2116,7 @@ export function compileArrayMethodCall(
   // (#2007/#1448) Record closure-allocating array methods so the standalone
   // vec-concat join fast-path can avoid a late `number_toString` registration
   // that would shift indices and corrupt this closure's already-emitted code.
-  if (
-    methodName === "map" ||
-    methodName === "filter" ||
-    methodName === "flatMap" ||
-    methodName === "forEach" ||
-    methodName === "reduce" ||
-    methodName === "reduceRight" ||
-    methodName === "find" ||
-    methodName === "findIndex" ||
-    methodName === "sort"
-  ) {
-    fctx.emittedClosureArrayMethod = true;
-  }
+  if (CLOSURE_ARRAY_METHODS.has(methodName)) fctx.emittedClosureArrayMethod = true;
 
   const receiverExpr = propAccess.expression;
   const arrInfo =

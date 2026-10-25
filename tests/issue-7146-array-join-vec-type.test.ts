@@ -30,6 +30,21 @@ const PROGRAMS: [string, string, string][] = [
   ],
   ["push-grown", `const a = [];\na.push("y");\na.push("z");\nconsole.log(a.sort().join());\n`, "a"],
   ["literal", `const l = ["c", "a", "b"];\nconsole.log(l.sort().join("|"));\n`, "l"],
+  // `.sort()` over a non-identifier receiver: the sort/filter layers are peeled
+  // and the remainder probed (#7146 review).
+  ...[
+    `keys.slice().sort().join(",")`,
+    `keys.sort().sort().join()`,
+    `keys.reverse().sort().join()`,
+    `keys.concat([]).sort().join()`,
+    `keys.sort((x, y) => (x < y ? -1 : 1)).sort().join()`,
+    `keys.filter((x) => x !== "b").sort().join(",")`,
+    `keys.filter((x) => x !== "b").join(",")`,
+  ].map((e): [string, string, string] => [
+    `chain ${e}`,
+    `const keys = [];\nfor (const k in { a: 1, b: 2, c: 3 }) keys.push(k);\nconsole.log(${e});\n`,
+    "keys",
+  ]),
 ];
 
 function typeOf(wat: string, re: RegExp): string | undefined {

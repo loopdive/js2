@@ -48,6 +48,17 @@ describe("#7146 native join of a sorted array reads the storage vec", () => {
     ["concat().join", FILL, `keys.concat(["q"]).join()`],
     ["sort().indexOf", FILL, `keys.sort().indexOf("b")`],
     ["sort().includes", FILL, `keys.sort().includes("a")`],
+    // Chains whose `.sort()` receiver is not an identifier (#7146 review). The
+    // reverse row sorts with a comparator: comparator-less sort is #7151.
+    ...[
+      `keys.slice().sort().join(",")`,
+      `keys.sort().sort().join()`,
+      `keys.reverse().sort((x, y) => (x < y ? -1 : 1)).join()`,
+      `keys.concat([]).sort().join()`,
+      `keys.sort((x, y) => (x < y ? -1 : 1)).sort().join()`,
+      `keys.filter((x) => x !== "b").sort().join(",")`,
+      `keys.filter((x) => x !== "b").join(",")`,
+    ].map((e): [string, string, string] => [`top-level ${e}`, `${FILL}const s = ${e};\n`, `s`]),
   ];
   for (const [name, prelude, expr] of rows) it(name, () => expectSameOnBothLanes(prelude, expr));
 });
