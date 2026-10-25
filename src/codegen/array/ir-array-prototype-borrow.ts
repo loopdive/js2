@@ -17,18 +17,15 @@
  *
  * The naming contract lives in `ir/array-prototype-borrow-call.ts`; the
  * template-wrapper mechanics are shared with the dynamic method-call wrapper
- * (`helpers/template-wrapper.ts`).
+ * (`helpers/template-wrapper.ts`, `ir-dynamic-construct.ts`).
  */
 import type { ValType } from "../../ir/types.js";
+import { irWrapperAdmitted } from "../../ir/dynamic-method-call-names.js";
 import type { CodegenContext } from "../context/types.js";
 import { flushLateImportShifts } from "../shared.js";
-import { irDynamicMethodCallWrapperLane } from "../ir-dynamic-construct.js";
-import {
-  compileTemplateExpressionAsExternref,
-  parseDetachedTemplate,
-  publishReceiverHelper,
-  receiverHelperContext,
-} from "../helpers/template-wrapper.js";
+import { publishReceiverHelper, receiverHelperContext } from "../ir-dynamic-construct.js";
+import { irDynamicMethodCallWrapperLane } from "../object-model/ir-dynamic-method-call.js";
+import { compileTemplateExpressionAs, parseDetachedTemplate } from "../helpers/template-wrapper.js";
 import { arrayPrototypeBorrowCompilesHostFree } from "../array-prototype-borrow.js";
 
 const BORROW_RECEIVER = "__ir_apb_recv";
@@ -37,19 +34,33 @@ const borrowArgumentName = (index: number): string => `__ir_apb_arg${index}`;
 /**
  * May this lane build `Array.prototype.<method>.call(recv, …)` as a wrapper?
  * The host-free non-fast lanes and a method legacy's borrow compiler builds
- * host-free. (Whether the pair is nameable is the IR contract's question —
- * the bridge composes both.)
+ * host-free.
  */
 export function irArrayPrototypeBorrowWrapperLane(ctx: CodegenContext, method: string): boolean {
   return irDynamicMethodCallWrapperLane(ctx) && arrayPrototypeBorrowCompilesHostFree(method);
 }
 
 /**
+ * The selector option's method question alone — legacy's borrow compiler
+ * builds `method` host-free and the IR can name the (method, arity) pair; the
+ * lane is the selector's `dynamic-method-call-wrapper` capability.
+ */
+export function irArrayPrototypeBorrowMethodAdmitted(method: string, arity: number): boolean {
+  return irWrapperAdmitted(arrayPrototypeBorrowCompilesHostFree(method), method, arity);
+}
+
+/** The from-ast resolver's admission: {@link irArrayPrototypeBorrowWrapperLane} on a nameable pair. */
+export function irArrayPrototypeBorrowAdmitted(ctx: CodegenContext, method: string, arity: number): boolean {
+  return irWrapperAdmitted(irArrayPrototypeBorrowWrapperLane(ctx, method), method, arity);
+}
+
+/**
  * Reserve (once per method/arity) the wrapper `name` — the IR names it
  * (`ir/array-prototype-borrow-call.ts`), and only an identifier-safe `method`
  * reaches here. Returns its function index, or undefined off the wrapper
- * lanes or when legacy's borrow compiler reports an error for the template
- * (its diagnostics are dropped).
+ * lanes. Legacy's borrow compiler reports an error only for the methods
+ * {@link irArrayPrototypeBorrowWrapperLane} already excludes, so the template
+ * compiles clean by admission.
  */
 export function ensureIrArrayPrototypeBorrowHelper(
   ctx: CodegenContext,
@@ -73,12 +84,7 @@ export function ensureIrArrayPrototypeBorrowHelper(
     `function __ir_apb(${params.join(", ")}) {\n  Array.prototype.${method}.call(${params.join(", ")});\n}`,
     1,
   );
-  const errorsBefore = ctx.errors.length;
-  compileTemplateExpressionAsExternref(ctx, helper, borrow!);
-  if (ctx.errors.length !== errorsBefore) {
-    ctx.errors.length = errorsBefore;
-    return undefined;
-  }
+  compileTemplateExpressionAs(ctx, helper, borrow!, externref);
   flushLateImportShifts(ctx, helper);
   return publishReceiverHelper(ctx, helper, [externref]);
 }

@@ -76,6 +76,7 @@ const CHECKS = [
   'fmt(like, S) === "[a, 2, true]"',
   'fmt(arr, S) === "[1, 2, 3]"',
   'fmt([], S) === "[]"',
+  'fmt([1, "a", undefined], S) === "[1, a, undefined]"', // compareArray.format's own row shape
   'joined(like, "-") === "a-2-true"',
   'joined(arr, "") === "123"',
   "summed(arr, add, 10) === 16",

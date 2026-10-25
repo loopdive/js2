@@ -12,7 +12,8 @@ const IR_DYN_MCALL_PREFIX = "__ir_dyn_mcall_";
 /** Small fixed arity range: one wrapper per (method, arity) actually used. */
 const IR_WRAPPER_MAX_ARITY = 3;
 
-const METHOD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Identifier-safe and wasm-name-safe: `$` is legal in both. */
+const METHOD_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 /**
  * May the IR name a per-(method, arity) wrapper symbol `<prefix><method>_<arity>`?
@@ -21,6 +22,16 @@ const METHOD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 export function irWrapperSymbolIsNameable(method: string, arity: number): boolean {
   return METHOD_NAME.test(method) && Number.isInteger(arity) && arity >= 0 && arity <= IR_WRAPPER_MAX_ARITY;
+}
+
+/**
+ * The admission every template wrapper family shares: the family's own
+ * question (`admits` — its lane, or its method list) and the IR contract's
+ * nameable (method, arity). One predicate, so a family cannot admit a pair it
+ * could not name.
+ */
+export function irWrapperAdmitted(admits: boolean, method: string, arity: number): boolean {
+  return admits && irWrapperSymbolIsNameable(method, arity);
 }
 
 /** `<prefix><method>_<arity>`; throws for a pair {@link irWrapperSymbolIsNameable} declines. */

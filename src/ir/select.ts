@@ -695,10 +695,10 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly selfGuardedConstructorValue?: (ident: ts.Identifier) => boolean;
   /**
-   * (#7106 compareArray.format) May the IR lower
-   * `Array.prototype.<method>.call(recv, …arity args)` through the
-   * `__ir_arr_borrow_<m>_<n>` wrapper codegen builds from legacy's borrow
-   * compiler? Absent → never.
+   * (#7106 compareArray.format) Does codegen build the
+   * `__ir_arr_borrow_<m>_<n>` wrapper for `Array.prototype.<method>.call(recv,
+   * …arity args)` from legacy's borrow compiler? The method question only —
+   * the lane is the `dynamic-method-call-wrapper` capability. Absent → never.
    */
   readonly arrayPrototypeBorrowMethod?: (method: string, arity: number) => boolean;
   /**

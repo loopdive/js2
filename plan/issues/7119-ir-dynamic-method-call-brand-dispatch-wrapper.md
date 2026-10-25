@@ -4,7 +4,7 @@ title: "IR: brand-dispatch wrapper for method calls on dynamic receivers (host-f
 status: in-review
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-24
 priority: high
 horizon: m
 feasibility: hard
@@ -19,7 +19,6 @@ depends_on: [7117, 7115]
 # makeFromAstResolver), its reservation in preregisterDynamicSupport, the
 # from-ast routing in lowerMethodCall, the selector predicate and capability.
 loc-budget-allow:
-  - src/codegen/ir-dynamic-construct.ts # the wrapper builder joins the S3a/S3c wrappers
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/select.ts
@@ -29,7 +28,12 @@ func-budget-allow:
   - src/ir/integration.ts::preregisterDynamicSupport
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/select.ts::dynamicUsesAreMoveOnly
-  - src/ir/select.ts::scanExprInner
+# 2026-10-24 (#7119 review): the builder is its own module,
+# src/codegen/object-model/ir-dynamic-method-call.ts, which integration imports
+# like the S3a/S3c wrapper module; the module joins the codegen SCC.
+import-cycles-allow:
+  - largestSccSize: 726 # 2026-10-24 (#7119): object-model/ir-dynamic-method-call.ts joins the SCC through integration
+  - ir->codegen: 80 # 2026-10-24 (#7119): integration imports the method-call wrapper module
 ---
 
 # IR: brand-dispatch wrapper for method calls on dynamic receivers
@@ -50,6 +54,29 @@ only. For a primitive or vec receiver it answers `undefined`
 by brand. The stopgaps kept every built-in method name legacy there, and with
 it the harness line `message = message.toString();` (assert.js).
 
+## Implementation Plan
+
+- **Module.** `src/codegen/object-model/ir-dynamic-method-call.ts` holds the
+  builder (one concern: this wrapper); `src/ir/dynamic-method-call-names.ts`
+  holds the naming and the needs-wrapper predicate. Integration reserves the
+  wrapper in `preregisterDynamicSupport` beside the S3a/S3c helpers.
+- **Reuses.** The S3a/S3c helper-context, publish and sequence-capture helpers
+  (`receiverHelperContext`, `publishReceiverHelper`, `captureReceiverSequence`
+  in `ir-dynamic-construct.ts`, the capture gaining a `park` option); legacy's
+  own any-receiver emitters through `compileExpression` over the template;
+  `__is_callable` and `emitThrowTypeError`. The identifier predicate exists
+  once (`METHOD_NAME`); codegen does not re-test the name.
+- **Acceptance — correctness.** Every program in
+  `tests/issue-7106-ir-dynamic-method-wrapper.test.ts` agrees with node on the
+  standalone and default lanes, including a non-callable own property
+  (TypeError), a nullish receiver, an own `undefined` property and an accessor
+  read once; spread and arity > 3 are refused at select.
+- **Acceptance — code quality.** No wrapper mechanics duplicated between this
+  module and `ir-dynamic-construct.ts`; no predicate duplicated between
+  codegen and the names module; no `loc-budget-allow` on a file the change
+  shrinks; the ir-layering and import-cycles growth is paid in the baseline
+  and this frontmatter, not avoided by placing code in a sibling file.
+
 ## Fix
 
 A per-(method, arity) runtime wrapper, `__ir_dyn_mcall_<m>_<n>(recv, a0, …) ->
@@ -58,9 +85,10 @@ built once per (method, arity) from legacy's own emitters, over a fixed
 template whose only free names are its parameters:
 
 ```
-f = recv.m                        // the call's single [[Get]]
-IsCallable(f) ? f.call(recv, a0, …)   // an own / inherited method value
-              : recv.m(a0, …)       // legacy's any-receiver brand dispatch
+f = recv.m
+IsCallable(f)     ? f.call(recv, a0, …)   // an own / inherited method value
+: f === undefined ? recv.m(a0, …)         // legacy's any-receiver brand dispatch
+                  : throw TypeError       // a non-callable own property
 ```
 
 - **Why the [[Get]] first.** Legacy's brand arms do not consult the receiver
@@ -68,17 +96,24 @@ IsCallable(f) ? f.call(recv, a0, …)   // an own / inherited method value
   algorithm, so `{ join() {…} }.join()` and a constructor-prototype `join` came
   out wrong when the template was only `recv.m(…)` (measured). A built-in
   method of a primitive or vec receiver has no runtime value, so the read
-  answers undefined there and the brand arm runs.
+  answers undefined there and the brand arm runs. A defined, non-callable
+  value (`{ join: 1 }`) throws TypeError, as node does; before the review fix
+  it fell through to the brand arm and ran the generic algorithm (measured).
+- **Known limit: the brand arm re-reads.** `recv.m(a0, …)` is legacy's
+  emission and performs its own [[Get]], so an accessor `m` whose getter
+  answers undefined runs twice (node runs it once and throws).
 - **Why `__is_callable` is emitted directly.** A template `typeof f ===
   "function"` was folded to `false` by legacy, because a detached node has no
   checker type (measured: `i32.const 0`).
 - **A runtime operation, not source.** The template text is a function of
   (method, arity) alone and lives in its own detached source file. No source
-  expression is wrapped. This follows S3a's `__ir_dyn_construct_N`, and the
-  builder lives beside it in `src/codegen/ir-dynamic-construct.ts`. The IR
-  names the wrapper and passes the name in, so the builder adds no
-  codegen→ir edge, and integration adds no new codegen import (the
-  import-cycles and ir-layering ratchets are unchanged).
+  expression is wrapped. This follows S3a's `__ir_dyn_construct_N`; the
+  builder is its own module, `src/codegen/object-model/ir-dynamic-method-call.ts`,
+  sharing the helper-context, publish and capture helpers with
+  `ir-dynamic-construct.ts`. The IR names the wrapper and passes the name in,
+  so the builder adds no codegen→ir edge; integration's one new codegen
+  import is banked in the ir-layering baseline and the import-cycles growth
+  granted above.
 
 ### Routing (`src/ir/dynamic-method-call-names.ts`)
 

@@ -86,12 +86,8 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import {
-  compileIrPathFunctions,
-  irArrayPrototypeBorrowAdmitted, // (#7106 compareArray.format)
-  type IrIntegrationError,
-  type IrIntegrationReport,
-} from "../ir/integration.js";
+import { irArrayPrototypeBorrowMethodAdmitted } from "./array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
+import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
 import {
   asVal,
   IR_CLASS_SHAPE_CELL,
@@ -3272,7 +3268,7 @@ function planIrOverlay(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
-      arrayPrototypeBorrowMethod: (method, arity) => irArrayPrototypeBorrowAdmitted(ctx, method, arity), // (#7106 compareArray.format)
+      arrayPrototypeBorrowMethod: irArrayPrototypeBorrowMethodAdmitted, // (#7106 compareArray.format)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,

@@ -97,11 +97,16 @@ import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
 import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-tostring.js";
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
-import { irWrapperSymbolIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
+import {
+  ensureIrDynamicMethodCallHelper,
+  irDynamicMethodCallWrapperLane,
+} from "../codegen/object-model/ir-dynamic-method-call.js";
+import { irWrapperAdmitted, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
 import { parseIrArrayPrototypeBorrowHelperName } from "./array-prototype-borrow-call.js";
 import {
   ensureIrArrayPrototypeBorrowHelper,
-  irArrayPrototypeBorrowWrapperLane,
+  irArrayPrototypeBorrowAdmitted,
+  irArrayPrototypeBorrowMethodAdmitted,
 } from "../codegen/array/ir-array-prototype-borrow.js"; // (#7106 compareArray.format)
 import {
   ensureIrArgumentsLengthHelper,
@@ -112,8 +117,6 @@ import {
 import {
   ensureIrCurrentThisHelper,
   ensureIrDynamicConstructHelper,
-  ensureIrDynamicMethodCallHelper,
-  irDynamicMethodCallWrapperLane,
   ensureIrInstanceOfFunctionHelper,
   IR_CURRENT_THIS_SLOPPY_HELPER,
   IR_CURRENT_THIS_STRICT_HELPER,
@@ -2571,7 +2574,7 @@ export function compileIrPathFunctions(
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
-      arrayPrototypeBorrowMethod: (method, arity) => irArrayPrototypeBorrowAdmitted(ctx, method, arity), // (#7106 compareArray.format)
+      arrayPrototypeBorrowMethod: irArrayPrototypeBorrowMethodAdmitted, // (#7106 compareArray.format)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -7013,7 +7016,7 @@ function makeFromAstResolver(
       return !ctx.fast;
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
-      return irDynamicMethodCallWrapperLane(ctx) && irWrapperSymbolIsNameable(method, arity);
+      return irWrapperAdmitted(irDynamicMethodCallWrapperLane(ctx), method, arity);
     },
     arrayPrototypeBorrowWrapper(method: string, arity: number) {
       return irArrayPrototypeBorrowAdmitted(ctx, method, arity);
@@ -9122,7 +9125,6 @@ function admitFunctionPrototypeCall(
 
 /** The (method, arity) a per-pair template wrapper symbol was named for. */
 type TemplateWrapperPair = { readonly method: string; readonly arity: number };
-type TemplateWrapperFamily = ReadonlyMap<string, TemplateWrapperPair>;
 
 /**
  * Build every wrapper of one template family a unit calls, in symbol order,
@@ -9132,7 +9134,7 @@ type TemplateWrapperFamily = ReadonlyMap<string, TemplateWrapperPair>;
  */
 function buildTemplateWrapperFamily(
   ctx: CodegenContext,
-  wrappers: TemplateWrapperFamily,
+  wrappers: ReadonlyMap<string, TemplateWrapperPair>,
   ensure: (ctx: CodegenContext, symbol: string, method: string, arity: number) => number | undefined,
   family: string,
 ): void {
@@ -10769,14 +10771,4 @@ function observePreparedDynamicBoxHelpers(
     refs.push(ref);
   }
   return refs;
-}
-
-/**
- * (#7106 compareArray.format) The one admission the selector option and the
- * from-ast resolver read for `Array.prototype.<method>.call(recv, …arity
- * args)`: codegen's lane + legacy-borrow question and the IR contract's
- * nameable (method, arity).
- */
-export function irArrayPrototypeBorrowAdmitted(ctx: CodegenContext, method: string, arity: number): boolean {
-  return irArrayPrototypeBorrowWrapperLane(ctx, method) && irWrapperSymbolIsNameable(method, arity);
 }

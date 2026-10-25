@@ -44,8 +44,9 @@ flat-dir-budget-allow:
   - src/codegen/function-member-closure-planning.ts # 2026-10-21 (#7106 Stage 2, #6816 successor): the bounded function-member closure planner beside ir-prepared-free-functions.ts
   - src/codegen/ir-dynamic-construct.ts # 2026-10-21 (#7106 S3a): the dyn.construct wrapper beside its peers (object-proto-tostring.ts, native-construct.ts); the construct-driver split owns its future home
 import-cycles-allow:
-  - ir->codegen: 80 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper
-  - largestSccSize: 727 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it, and codegen/helpers/template-wrapper.ts (the wrapper mechanics lifted out of ir-dynamic-construct.ts) joins it
+  - codegen->ir: 301 # 2026-10-24 (#7106 compareArray.format review): array/ir-array-prototype-borrow.ts composes its admission with the IR's nameable-pair contract (`irWrapperAdmitted`), moved out of integration.ts next to the lane predicate it reads
+  - ir->codegen: 81 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (compareArray.format): …and the Array.prototype borrow wrapper; 2026-10-24 (stacked on #7119): …and the method-call wrapper module (object-model/ir-dynamic-method-call.ts, #7119's own +1 restated here because the stack carries both)
+  - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (compareArray.format): codegen/array/ir-array-prototype-borrow.ts joins it, and codegen/helpers/template-wrapper.ts (the template mechanics lifted out of ir-dynamic-construct.ts) joins it; 2026-10-24 (stacked on #7119): codegen/object-model/ir-dynamic-method-call.ts joins it (#7119's own +1 restated here because the stack carries both)
 # 2026-10-22 (S3c merge-queue fix): both escape-gate call sites pass the
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
@@ -1491,8 +1492,8 @@ is never materialized.
 | piece | module | reuse |
 | --- | --- | --- |
 | shape + naming contract (`matchArrayPrototypeBorrowCall`, `__ir_arr_borrow_<m>_<n>`) | `src/ir/array-prototype-borrow-call.ts` | the per-(method, arity) symbol helpers now shared with the #7119 wrapper (`irWrapperSymbol` / `parseIrWrapperSymbol`, lifted out of `dynamic-method-call-names.ts`) |
-| wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | `receiverHelperContext`, `parseDetachedTemplate`, `compileTemplateExpressionAsExternref`, `publishReceiverHelper` — one module, `codegen/helpers/template-wrapper.ts`, which the #7119 wrapper in `ir-dynamic-construct.ts` now imports too (its inline copies removed) |
-| admission | `arrayPrototypeBorrowCompilesHostFree` in `array-prototype-borrow.ts` (legacy's `ARRAY_METHODS` minus its standalone refusals) → `irArrayPrototypeBorrowIsWrappable` (the one predicate the selector option, the from-ast resolver and the finalize registration read) | no second method list |
+| wrapper builder | `src/codegen/array/ir-array-prototype-borrow.ts` | the helper context and its publication stay `receiverHelperContext` / `publishReceiverHelper` in `ir-dynamic-construct.ts` (#6858/#6847 import them there); the template mechanics `parseDetachedTemplate` / `compileTemplateExpressionAs` are one module, `codegen/helpers/template-wrapper.ts`, which the #7119 wrapper (`object-model/ir-dynamic-method-call.ts`) imports too (its inline parse removed) |
+| admission | `arrayPrototypeBorrowCompilesHostFree` in `array-prototype-borrow.ts` (legacy's `ARRAY_METHODS` minus its standalone refusals), composed with the IR's nameable pair through one shared `irWrapperAdmitted` (the #7119 resolver uses the same fold): `irArrayPrototypeBorrowMethodAdmitted` answers the selector option (method only — the lane is the `dynamic-method-call-wrapper` capability), `irArrayPrototypeBorrowAdmitted` the from-ast resolver (lane + method); finalize's `ensureIrArrayPrototypeBorrowHelper` re-reads the lane and builds — a method the lane excludes is legacy's loud refusal, never a template error, so the builder keeps no error-truncating branch | no second method list |
 | selector | `ambientArrayPrototypeBorrowCall` beside `ambientObjectToStringTagCall`; the same three sites (move-only scan, Phase-1, external-call walk) plus `isDynShaped` (the result is the carrier) and one Phase-1 arm so a method call ON the result is a dynamic-receiver call, whatever the checker types the borrow | the #7119 wrapper carries `.join` on the result |
 | from-ast | `lowerArrayPrototypeBorrowCall`, intercepted before receiver lowering like the `Object.prototype.toString.call` arm; argument boxing shared with the dynamic method call through the new `lowerDynamicOperands` (one loop, was two) | — |
 
@@ -1507,7 +1508,14 @@ binding (`selectorSeesAmbientBinding` + scope, as the toString-tag arm).
 compared with node):** `map`+`String`-shaped callback then `.join`, `join`,
 `reduce` with an initial value, `filter` then `.join`, `some` through `String(…)`
 — IR bodies calling `__ir_arr_borrow_{map_1,join_1,reduce_2,filter_1,some_1}`,
-answers equal to node for an array-like, a real array and `[]`.
+answers equal to node for an array-like, a real array, `[]` and the harness's
+own row shape `[1, "a", undefined]` → `"[1, a, undefined]"` (with the callback
+as a parameter; the harness's `String`-as-value callback is item 3 below).
+
+**gc delta (byte-identity).** A gc/web/node build of a program WITHOUT the
+admitted shape is byte-identical to #6851; one WITH it is not — under the
+native-regime projection (#5385) the function becomes an IR body there too,
+as every IR admission on that lane does.
 
 **Left out, on purpose.** (1) `push` and the standalone-refused borrows (legacy
 refuses them loudly; the wrapper would turn that diagnostic into an integration
