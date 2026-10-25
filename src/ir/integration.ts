@@ -2548,7 +2548,9 @@ export function compileIrPathFunctions(
     definedFunctionAt: (funcIdx) => definedFuncAt(ctx, funcIdx),
     fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
   });
-  const numberConversion = irNumberConversionPlan(ctx.checker, sourceFile);
+  // (#7106 module-init lever B) the overlay's plan when it planned this compile; built here otherwise.
+  const preparedNumberCall =
+    loweringPlans?.preparedNumberCall ?? irNumberConversionPlan(ctx.checker, sourceFile).preparedNumberCall;
   const selected =
     selection ??
     planIrCompilation(sourceFile, {
@@ -2566,7 +2568,7 @@ export function compileIrPathFunctions(
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
       ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
-      preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
+      preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
@@ -3193,7 +3195,7 @@ export function compileIrPathFunctions(
     standaloneDomCapability,
     loweringPlans?.fnctorParameterPreselection,
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
-    numberConversion.preparedNumberCall,
+    preparedNumberCall,
   );
   // (#7001) The verifier's string-result rule needs the lane's string carrier.
   const verifyOptions = {

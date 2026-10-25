@@ -2589,6 +2589,8 @@ export interface IrOverlayPlan {
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** Revalidates the mutable ABI joins immediately before integration. */
   readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
+  /** (#7106 module-init lever B) The one source-bound `Number(v)` plan of this compile. */
+  readonly preparedNumberCall: (call: ts.CallExpression) => boolean;
 }
 
 /**
@@ -3628,6 +3630,7 @@ function planIrOverlay(
         }
       : {}),
     ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
+    preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
   };
 }
 

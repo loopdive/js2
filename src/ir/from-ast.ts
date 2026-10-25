@@ -6261,7 +6261,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   if (
     ts.isIdentifier(expr.expression) &&
     !cx.scope.has(expr.expression.text) &&
-    cx.resolver?.isAmbientBinding?.(expr.expression) !== false
+    cx.resolver?.isAmbientBinding?.(expr.expression) === true
   ) {
     const constant = cx.resolver?.ambientNamespaceConstant?.(expr);
     if (constant !== undefined) return cx.builder.emitConst({ kind: "f64", value: constant }, irVal({ kind: "f64" }));
@@ -7761,9 +7761,12 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
     cx.builder.emitClassSuperInit(parentShape, self, args);
     return null;
   }
-  if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
+  // #5092 first: `Number(c ? 7 : true)` converts each concrete arm inside the
+  // lazy `if`; the source-bound plan (#7106 lever B) sees only what it declined
+  // — the same order as the selector's `preparedNumberConversionCall`.
   const mixedPrimitiveWrapper = tryLowerExactMixedPrimitiveWrapperCall(expr, cx);
   if (mixedPrimitiveWrapper !== null) return mixedPrimitiveWrapper;
+  if (cx.resolver?.preparedNumberCall?.(expr) === true) return lowerPreparedNumberCall(expr, cx);
   const functionAccess = expr.expression;
   if (functionObjects.isPreparedFunctionObjectAccess(functionAccess, cx.topLevelFunctionValues)) {
     return functionObjects.lowerFunctionObjectMemberCall(expr, functionAccess, functionObjectLoweringHost(cx));

@@ -1449,6 +1449,16 @@ emits.
 | piece | where | reuse |
 | --- | --- | --- |
 | the table | `builtinNamespaceConstantValue` in `codegen/builtin-value-read.ts` — `MATH_CONSTANT_VALUES` / `NUMBER_CONSTANT_VALUES`, own keys only; legacy's `tryEmitBuiltinNamespaceConstantValue` now reads through it | no second list anywhere |
+
+**Legacy gc output changes for one shape (disclosed, 2026-10-24 review).** The
+table lookup went from `propName in table` to `Object.hasOwn`, and that is
+legacy's reflective read too: on main `Math["constructor"]` /
+`Number["toString"]` emitted `f64.const` of the prototype function's text (NaN
+at runtime; `Math["constructor"] === Object` answered 0, node 1). Now those
+keys take the generic element read on every lane (`Math["constructor"] ===
+Object` → 1, measured default / host-assisted / standalone). Dot reads of the
+same names already took the method path and are byte-identical. Covered by the
+prototype-key case in `tests/issue-7106-ir-ambient-namespace-constants.test.ts`.
 | bridge | `irAmbientNamespaceConstant(expr)` in `ir/integration.ts`, the one answer behind the selection option and the from-ast resolver, supplied at both planning sites | — |
 | selector | `ambientNamespaceConstantRead` (ambient predicate; the caller's `scope` / `dynNames` settles a local shadow) at the Phase-1 property-access arm and the move-only scan (a concrete f64) | — |
 | from-ast | the first arm of `lowerPropertyAccess`: `emitConst f64` | — |
@@ -1481,9 +1491,10 @@ decisive — **no provider for the intrinsic on any lane**.
 | piece | where | reuse |
 | --- | --- | --- |
 | provider | `native.js.number.from-value` (`ir/runtime/number-conversion-callable.ts`, in `SEMANTIC_CALLABLE_RUNTIME_PROVIDERS`), symbol `__ir_number_from_value` | the manifest's `runtime-callable` shape, like `REFERENCE_ERROR_RUNTIME_PROVIDERS` |
-| the function | `codegen/helpers/ir-number-from-value.ts`: legacy's own `Number(v)` emission (`call-identifier.ts`) over a detached template with one externref parameter — the symbol guard, StringToNumber, the array/object ToPrimitive arms, the ToNumber cascade, byte for byte | `codegen/helpers/template-wrapper.ts` — the helper context, detached parse and publication every template wrapper shares (the #7119 / #6874 copies move here when they land) |
+| the function | `codegen/helpers/ir-number-from-value.ts`: legacy's own `Number(v)` emission (`call-identifier.ts`) over a detached template with one externref parameter — the symbol guard, StringToNumber, the array/object ToPrimitive arms, the ToNumber cascade, byte for byte | `receiverHelperContext` / `publishReceiverHelper` from `codegen/ir-dynamic-construct.ts` (exported, one copy) and the detached parse in `codegen/helpers/template-wrapper.ts` |
 | resolution | `resolveAndObserveCallableProvider` maps the intrinsic to the helper; pre-registered at finalize from the IR scan (`usesNumberFromValue`) so no Phase-3 body drives a late-import shift | the dyn.object_tag pattern |
-| admission | capability `native-number-conversion` (host-free, non-fast, wasmgc) + the plan's own answer (`preparedNumberCall`, supplied to the selector at both planning sites and to the from-ast resolver); `preparedNumberConversionCall` at the three selector sites beside `String(v)` | the plan is the single authority on shadowing |
+| admission | capability `native-number-conversion` (host-free, non-fast, wasmgc) + the plan's own answer (`preparedNumberCall`, built once per compile in `planIrOverlay` and carried to integration on `IrIntegrationLoweringPlans`); `preparedNumberConversionCall` at the three selector sites beside `String(v)`, without a name check at any of them | the plan is the single authority on shadowing (checker-symbol identity of the callee) |
+| order | the #5092 mixed-conditional arm (`Number(c ? 7 : true)`, each concrete arm converted inside the lazy `if`) comes FIRST in both `lowerCall` and `preparedNumberConversionCall` (which refuses that shape); lever B sees only what #5092 declined. `tests/issue-5092-ir-mixed-primitive-conditional.test.ts` 21/21, and that program's binary is byte-identical to main on default, host-assisted and standalone | — |
 | plan | `prepare-number-conversion.ts`: a member-access receiver (`Number.MAX_VALUE`) or a `new Number(…)` callee keeps the plan — neither reads the binding as a value that could be rebound | — |
 
 **Measured** (`tests/issue-7106-ir-number-conversion.test.ts`, standalone vs

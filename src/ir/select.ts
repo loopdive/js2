@@ -3327,7 +3327,7 @@ function dynamicUsesAreMoveOnly(
       }
       // (#7106 module-init lever B) `Number(v)` → a concrete f64; a dynamic
       // operand crosses as the carrier (the plan already settles shadowing).
-      const toNumberArgs = dynNames.has("Number") ? null : preparedNumberConversionCall(e);
+      const toNumberArgs = preparedNumberConversionCall(e);
       if (toNumberArgs !== null) {
         if (expectDyn) return false;
         return toNumberArgs.every((argument) =>
@@ -7922,11 +7922,15 @@ function selectorSeesAmbientStringBinding(node: ts.Identifier): boolean {
  * (#7106 module-init lever B) `Number(…)` under the source-bound conversion
  * plan, on a lane with the host-free provider: its arguments (the first
  * converts, the rest run for effect — exactly `lowerPreparedNumberCall`), else
- * null. A concrete f64 result.
+ * null. A concrete f64 result. Shadowing is the plan's alone (checker-symbol
+ * identity of the callee), so no caller adds a name check. The #5092 mixed
+ * conditional shape is refused here: that arm converts each concrete arm
+ * inside the lazy `if`, and from-ast consults it first.
  */
 function preparedNumberConversionCall(expr: ts.CallExpression): readonly ts.Expression[] | null {
   if (!ts.isIdentifier(expr.expression) || expr.expression.text !== "Number") return null;
   if (expr.arguments.some(ts.isSpreadElement)) return null;
+  if (exactMixedPrimitiveWrapperCall(expr, false) !== null) return null;
   if (currentSelectionOptions?.supportsBackendCapability?.("native-number-conversion") !== true) return null;
   return currentSelectionOptions.preparedNumberCall?.(expr) === true ? expr.arguments : null;
 }
@@ -11324,7 +11328,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     const toStringArg = scope.has("String") ? null : ambientStringToStringCall(expr);
     if (toStringArg !== null) return isPhase1Expr(toStringArg, scope, localClasses);
     // (#7106 module-init lever B) `Number(v)` under the source-bound plan.
-    const toNumberArgs = scope.has("Number") ? null : preparedNumberConversionCall(expr);
+    const toNumberArgs = preparedNumberConversionCall(expr);
     if (toNumberArgs !== null) return toNumberArgs.every((argument) => isPhase1Expr(argument, scope, localClasses));
     // Only the await arm admits local async callees; other uses stay direct.
     if (isUnpreparedAsyncCallee(expr, scope, currentAsyncDeclNames, currentSelectionOptions)) {

@@ -10,16 +10,18 @@
  * cascade), compiled once over a detached template whose only free name is
  * its externref parameter — the dynamic carrier of these lanes, legacy's
  * `any`. The intrinsic's contract (full ToNumeric with observable effects) is
- * therefore legacy's by construction. Mechanics shared with the other
- * template wrappers (`template-wrapper.ts`).
+ * therefore legacy's by construction. The helper context and publication are
+ * `ir-dynamic-construct.ts`'s (its receiver wrappers); the detached parse is
+ * `template-wrapper.ts`'s.
  */
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { IR_NUMBER_FROM_VALUE_NATIVE_FN } from "../../ir/runtime/number-conversion-callable.js";
-import { compileExpression, flushLateImportShifts, VOID_RESULT } from "../shared.js";
+import { compileExpression, flushLateImportShifts } from "../shared.js";
 import { coerceType } from "../type-coercion.js";
 import { noJsHost } from "../js-errors.js";
-import { parseDetachedTemplate, publishReceiverHelper, receiverHelperContext } from "./template-wrapper.js";
+import { publishReceiverHelper, receiverHelperContext } from "../ir-dynamic-construct.js";
+import { parseDetachedTemplate } from "./template-wrapper.js";
 
 const VALUE_PARAM = "__ir_nfv_value";
 
@@ -48,7 +50,7 @@ export function ensureIrNumberFromValueHelper(ctx: CodegenContext): number | und
   );
   const errorsBefore = ctx.errors.length;
   const result = compileExpression(ctx, helper, conversion!, f64);
-  if (ctx.errors.length !== errorsBefore || result === null || (result as unknown) === VOID_RESULT) {
+  if (ctx.errors.length !== errorsBefore || result === null) {
     ctx.errors.length = errorsBefore;
     return undefined;
   }

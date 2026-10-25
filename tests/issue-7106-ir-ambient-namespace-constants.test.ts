@@ -65,6 +65,17 @@ var Number = { MAX_VALUE: 7, NaN: 8 };
 function viaModuleShadow() { return Number.MAX_VALUE + Number.NaN; }
 export function run() { return viaModuleShadow() === 15 ? 1 : 0; }`;
 
+// Prototype keys are not constants: `builtinNamespaceConstantValue` reads the
+// tables with `Object.hasOwn`. Legacy's reflective read used `in`, so
+// `Math["constructor"]` emitted `f64.const` of a stringified function (NaN at
+// runtime, so the identity test answered 0); node answers 1. A dot read of the
+// same name takes the method path, unchanged.
+const PROTOTYPE_KEYS = `
+export function run() {
+  var mathCtor = Math["constructor"];
+  return mathCtor === Object ? 1 : 0;
+}`;
+
 describe("#7106 — ambient Number/Math constants fold in the IR", () => {
   for (const lane of ["standalone", "default"] as const) {
     it(`folds to legacy's constants and answers like node (${lane})`, async () => {
@@ -74,6 +85,14 @@ describe("#7106 — ambient Number/Math constants fold in the IR", () => {
       expect(irBodies(result)).toEqual(expect.arrayContaining(["big", "inf", "nan", "area", "safe"]));
       expect(result.irPostClaimErrors ?? []).toEqual([]);
       expect(await run(result, lane)).toBe(expected);
+    });
+  }
+
+  for (const lane of ["standalone", "default"] as const) {
+    it(`legacy's reflective read does not fold a prototype key (${lane})`, async () => {
+      const result = await compileOn(PROTOTYPE_KEYS, lane);
+      expect(irBodies(result)).toEqual([]);
+      expect(await run(result, lane)).toBe(node(PROTOTYPE_KEYS));
     });
   }
 
