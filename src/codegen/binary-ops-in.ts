@@ -265,10 +265,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // receiver (already known to be a struct/array/etc.) skips this
       // entirely: it's always an Object, no runtime ambiguity to resolve.
       let externCopy: number | undefined;
-      if (receiverIsExternref && !ctx.standalone && !ctx.wasi) {
-        externCopy = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.tee", index: externCopy });
-      }
+
       if (receiverIsExternref) {
         fctx.body.push({ op: "any.convert_extern" });
       }
@@ -525,8 +522,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // unsound for it. Force the runtime `__extern_has` arm below (which the
     // slice-1 tombstone machinery answers correctly for both present and
     // deleted keys).
-    const growableReceiver =
-      ctx.standalone && ts.isIdentifier(expr.right) && ctx.growableObjectLiteralVars.has(expr.right.text);
+    const growableReceiver = ts.isIdentifier(expr.right) && ctx.growableObjectLiteralVars.has(expr.right.text);
     // (#4491 wave-5 T4) §7.3.12 is prototype-inclusive and every ordinary
     // object's chain ends at %Object.prototype%, but standalone's `$Object`
     // chain ends at `null` (the priced `$Object.$proto` vs `$NativeProto`
@@ -536,7 +532,6 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // `__extern_has` already answers correctly — stays byte-identical.
     // See `object-proto-name-in.ts`.
     const inheritsFromObjectPrototype =
-      ctx.standalone &&
       !hasExplicitNullObjectPrototype(ctx, expr.right) &&
       objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
     // (#2175 D5) The fixed Object.prototype name set is a valid positive fold
@@ -560,11 +555,6 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // about this site — the callee may have DELETED the key and the field list
     // does not shrink. Suppress the fold and take the `__extern_has` arm, which
     // consults the delete tombstone. See `in-escaped-receiver.ts`.
-    const escapedReceiverRoute =
-      !ctx.standalone &&
-      !ctx.wasi &&
-      ts.isIdentifier(expr.right) &&
-      identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
     // (#5270 step 10, cluster N) `"prototype" in (() => {})` folded TRUE
     // because `tsTypeHasProperty` reads the checker's APPARENT type, and
     // TypeScript's `Function` interface declares `prototype: any` for every
@@ -587,15 +577,14 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // aliases (`var q = p`) that the alias-widening defect documented in
     // `proxy-value-provenance.ts` nulls out, and routing one of those turns a
     // correct answer into a wrong one. A missed proxy keeps today's behaviour.
-    const proxyReceiverRoute = (ctx.standalone || ctx.wasi) && isDirectProxyBinding(ctx, expr.right);
+    const proxyReceiverRoute = isDirectProxyBinding(ctx, expr.right);
     const has = proxyReceiverRoute
       ? false
       : arrowPrototypeRoute
         ? false
         : terminalAwareObjectPrototypeRoute
           ? false
-          : inheritsFromObjectPrototype ||
-            (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
+          : inheritsFromObjectPrototype || (!growableReceiver && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -609,7 +598,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // overlay and the #3537 bag, so routing makes `in` agree with the read — and
     // only a folded `false` is routed, so no affirmative answer moves.
     const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
-    const fnctorProtoRoute = !has && ctx.standalone && isFnctorInstanceWasm(ctx, rightWasm);
+    const fnctorProtoRoute = !has && isFnctorInstanceWasm(ctx, rightWasm);
     // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
     // stopped a reassigned binding's stale static type from producing a wrong
     // THROW; the same staleness also produces a wrong ANSWER here, because
@@ -645,7 +634,6 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         rightWasm.kind === "anyref" ||
         vecNamedKeyRoute ||
         reassignedReceiverRoute ||
-        escapedReceiverRoute ||
         fnctorProtoRoute ||
         proxyReceiverRoute ||
         terminalAwareObjectPrototypeRoute)
@@ -746,7 +734,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // `key in closedStruct` answered false and, inside `a || k in o`, the
     // stray key made the block invalid (styled-components' `De`). Ask the
     // native [[HasProperty]] helper instead, which reads the struct's fields.
-    if ((eqFunc === undefined || eqFunc < 0) && (ctx.standalone || ctx.wasi)) {
+    if (eqFunc === undefined || eqFunc < 0) {
       const runtimeHas = emitRuntimeExternHas(ctx, fctx, expr);
       if (runtimeHas !== undefined) return runtimeHas;
     }

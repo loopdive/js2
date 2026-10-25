@@ -327,7 +327,7 @@ function ensureDynamicMethodCall(ctx: CodegenContext, carrier: ValType, arity: 0
     if (argumentToExtern === undefined || resultFromExtern === undefined) {
       throw new Error("dyn-ops: fast standalone method-call carrier bridge unavailable");
     }
-  } else if (ctx.standalone || ctx.wasi) {
+  } else {
     // Host-free externref carriers still pass through the canonical AnyValue
     // classifier used by the established standalone path. In native-first
     // JS, however, an externref may be a raw JS-owned boundary object; keep

@@ -912,30 +912,18 @@ export function buildVecFromExternref(
   // protocol via the runtime). In standalone there is no host, and the source
   // we are coercing here is already an indexable externref — the native
   // `$ObjVec` produced by `__object_keys`/`values`/`entries` (Slice 1), which
-  // `__extern_length` + `__extern_get_idx` read directly. So under
-  // `ctx.standalone` we SKIP the materialization step (pass the externref
-  // through unchanged) and read it with the native indexed accessor below,
-  // never leaking `env::__array_from_iter`. (Generators / custom @@iterator
-  // standalone materialization is a separate slice — those don't reach an
-  // $ObjVec source.) The JS-host path is unchanged.
-  //
-  // WASI is host-free at runtime too (the module runs under raw wasmtime — see
-  // `examples/native-messaging/scale-test.mjs`), so it must take the SAME native
-  // reader path: `__extern_get_idx` / `__extern_get` / `__box_number` /
-  // `__unbox_number` are all emitted as DEFINED funcs under WASI, but
-  // `__array_from_iter` is only ever a host import — emitting it makes the WASI
-  // module fail instantiation (`unknown import: env::__array_from_iter`). #2311
-  // gated this on `ctx.standalone` alone, which left the WASI nm_js2wasm_node_*
-  // hosts importing `__array_from_iter` (loopdive/js2wasm#389 / #2311 regression);
-  // `ctx.standalone || ctx.wasi` is the established host-free idiom used
-  // throughout codegen (and elsewhere in this file). (#2839)
+  // `__extern_length` + `__extern_get_idx` read directly. So we SKIP the
+  // materialization step (pass the externref through unchanged) and read it
+  // with the native indexed accessor below, never leaking
+  // `env::__array_from_iter` (#2311/#2839: WASI too). (Generators / custom
+  // @@iterator materialization is a separate slice — those don't reach an
+  // $ObjVec source.)
   // Native-first JS can reach this coercion with a typed Wasm vector (for
   // example the result of `array.map`) as well as an `$ObjVec`. Normalize that
   // broader iterable set through the native materializer before indexed reads;
   // the historical standalone/WASI sites already prove their source is an
   // `$ObjVec` and keep the cheaper direct path.
   const useNativeMaterializer = ctx.targetProfile.environment === "javascript";
-  const useNativeObjVec = useNativeMaterializer || ctx.standalone || ctx.wasi;
   if (useNativeMaterializer) ensureNativeArrayFromIterN(ctx);
   // #2696 — register EVERY late import (helper) FIRST, flush ONCE, then read the
   // funcIdx values from funcMap. ensureLateImport for a NEW env import shifts the
@@ -953,20 +941,7 @@ export function buildVecFromExternref(
   ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
   ensureLateImport(ctx, "__unbox_number", [{ kind: "externref" }], [{ kind: "f64" }]);
   ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
-  if (useNativeObjVec) {
-    // In standalone, indexed reads go through the native `__extern_get_idx`
-    // (f64 index → element) instead of `__extern_get(obj, boxed-index)` — the
-    // native `__extern_get` casts its key to $AnyString and would trap on a
-    // boxed number. (#1472 Phase B Blocker B Slice 2)
-    ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
-  } else {
-    ensureLateImport(
-      ctx,
-      strictIterator ? "__array_from_iter_strict" : "__array_from_iter",
-      [{ kind: "externref" }],
-      [{ kind: "externref" }],
-    );
-  }
+  ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
   const lengthGuard = arrayLikeLengthLimitGuard(ctx, fctx); // (#6651 H6) before the flush
   prepareVecF64UndefElem(ctx, vecInfo.elemType); // (#6771 S8) before the flush
   flushLateImportShifts(ctx, fctx);
@@ -974,12 +949,8 @@ export function buildVecFromExternref(
   const getIdx = ctx.funcMap.get("__extern_get");
   const unboxIdx = ctx.funcMap.get("__unbox_number");
   const boxIdx = ctx.funcMap.get("__box_number");
-  const iterIdx = useNativeMaterializer
-    ? ctx.funcMap.get("__array_from_iter_n")
-    : useNativeObjVec
-      ? undefined
-      : ctx.funcMap.get(strictIterator ? "__array_from_iter_strict" : "__array_from_iter");
-  const getIdxIdx = useNativeObjVec ? ctx.funcMap.get("__extern_get_idx") : undefined;
+  const iterIdx = useNativeMaterializer ? ctx.funcMap.get("__array_from_iter_n") : undefined;
+  const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
 
   if (lenIdx === undefined || getIdx === undefined) {
     return [{ op: "ref.null", typeIdx: vecTypeIdx }];
@@ -996,7 +967,7 @@ export function buildVecFromExternref(
   // (#2866 slice 3, see the i32 element arm) `$Symbol` carrier → its id, else
   // a number unbox. (#6770 S2) Shared with the tuple-field arm below.
   const symbolCarrierOrNumberUnbox = (unbox: number): Instr[] | undefined => {
-    if (!(ctx.standalone || ctx.wasi) || ctx.symbolTypeIdx < 0) return undefined;
+    if (ctx.symbolTypeIdx < 0) return undefined;
     const symIdx = ctx.symbolTypeIdx;
     const tmpSym = allocLocal(fctx, `__sym_elem_${fctx.locals.length}`, { kind: "externref" });
     return [
@@ -1054,10 +1025,7 @@ export function buildVecFromExternref(
       // `ref.cast` that would trap on a non-symbol element, and with no
       // `$Symbol` carrier registered it reaches for the `__unbox_symbol` host
       // import — which a host-free module must never acquire.
-      if (et.kind === "i32" && et.symbol === true && !ctx.standalone && !ctx.wasi) {
-        const symInstrs = symbolBoundaryCoercionInstrs(ctx, { kind: "externref" }, et, fctx);
-        if (symInstrs !== undefined) return symInstrs;
-      }
+
       // (#2866 slice 3) In a symbol-bearing module the externref element may be a
       // `$Symbol` carrier (materialising `Object.getOwnPropertySymbols(o)` into a
       // typed `symbol[]` whose value-position rep is the i32 id) rather than a
@@ -1132,7 +1100,7 @@ export function buildVecFromExternref(
           // The string-keyed `__extern_get` casts its key to `$AnyString` and
           // returns undefined → every pair field read as 0 (the spread-of-
           // entries bug). Mirror the outer-loop reader choice above. (#2162b)
-          if (useNativeObjVec && getIdxIdx !== undefined) {
+          if (getIdxIdx !== undefined) {
             instrs.push({ op: "f64.const", value: fi });
             instrs.push({ op: "call", funcIdx: getIdxIdx });
           } else {
@@ -1209,7 +1177,7 @@ export function buildVecFromExternref(
             // Standalone: native __extern_get_idx(obj, f64(idx)) — reads the
             // $ObjVec element by index without a boxed-string key. JS-host:
             // __extern_get(obj, boxed-numeric-index) (host handles numeric keys).
-            ...(useNativeObjVec && getIdxIdx !== undefined
+            ...(getIdxIdx !== undefined
               ? ([
                   { op: "local.get", index: idxLocal },
                   { op: "f64.convert_i32_s" },
@@ -2881,7 +2849,7 @@ export function coerceType(
   // delegates the kind-keyed dispatch. `jsType: "unknown"` reproduces the
   // historical externref→tag-5 (#1888) / ref→tag-6 behaviour exactly.
   if (isAnyValue(to, ctx)) {
-    if (from.kind === "externref" && (ctx.standalone || ctx.wasi)) {
+    if (from.kind === "externref") {
       addUnionImports(ctx);
     }
     ensureAnyHelpers(ctx);
@@ -3063,7 +3031,7 @@ export function coerceType(
         return;
       }
     }
-    if (ctx.standalone) {
+    {
       const hint = toPrimitiveHint ?? "number";
       // (#3673) Typed member-get rewrite: when the externref on the stack is
       // literally the result of a `call __get_member_<p>` generic dispatcher
@@ -3121,16 +3089,6 @@ export function coerceType(
       fctx.body.push({ op: "f64.const", value: NaN });
       return;
     }
-    addUnionImports(ctx);
-    const funcIdx = ctx.funcMap.get("__unbox_number");
-    if (funcIdx !== undefined) {
-      fctx.body.push({ op: "call", funcIdx });
-      return;
-    }
-    // Fallback: drop and push default
-    fctx.body.push({ op: "drop" });
-    fctx.body.push({ op: "f64.const", value: 0 });
-    return;
   }
   // externref → i64
   if (from.kind === "externref" && to.kind === "i64") {
@@ -3264,13 +3222,7 @@ export function coerceType(
     // may be carried by `$AnyValue` tag 5. Recover only an actual native-string
     // payload. Generic ToString here would corrupt null/undefined sentinels and
     // silently stringify unrelated objects at every typed-string boundary.
-    if (
-      (ctx.standalone || ctx.wasi) &&
-      ctx.nativeStrings &&
-      toIdx === ctx.anyStrTypeIdx &&
-      ctx.anyStrTypeIdx >= 0 &&
-      ctx.anyValueTypeIdx >= 0
-    ) {
+    if (ctx.nativeStrings && toIdx === ctx.anyStrTypeIdx && ctx.anyStrTypeIdx >= 0 && ctx.anyValueTypeIdx >= 0) {
       const anyValueTypeIdx = ctx.anyValueTypeIdx;
       const priorElse = elseBranch;
       const loadAnyValueStringPayload = (): Instr[] => [
@@ -3415,7 +3367,7 @@ export function coerceType(
     // `$Symbol` carrier in standalone/wasi). (#2792/#2866) `ensureLateImport`
     // resolves the right `__box_symbol`: a host `env::__box_symbol` import in gc
     // mode (added by `addUnionImports` above) and the in-module `$Symbol` carrier
-    // builder under `ctx.standalone || ctx.wasi` (`ensureSymbolCarrier`). Before
+    // builder on the native regime (`ensureSymbolCarrier`). Before
     // #2866 the standalone branch had no native helper, so a symbol-keyed boxing
     // (e.g. `o[sym] = v`) fell through to the number box and corrupted the symbol
     // id — or leaked an unsatisfiable host import. Still guarded: falls through to
@@ -3572,7 +3524,6 @@ export function coerceType(
     // structs (no ToPrimitive method) keep the byte-identical `extern.convert_any`
     // below — preserving `typeof`/field-read/identity for the common case.
     if (
-      (ctx.standalone === true || ctx.wasi === true) &&
       name !== undefined &&
       structMustReifyAtExternrefBoundary(ctx, name) &&
       !fctx.regexpLastIndexIdentityStructTypes?.has(typeIdx) &&
@@ -4931,7 +4882,7 @@ export function pushDefaultValue(fctx: FunctionContext, type: ValType, ctx?: Cod
       // (#7019) Host-free, every `ref` slot is widened nullable before emission
       // (`widenNonDefaultableTypes`), so the assertion could only trap — e.g. an
       // omitted JSDoc `{string}` argument (axios `toObjectSet(arr)`).
-      if (!(ctx?.standalone || ctx?.wasi)) fctx.body.push({ op: "ref.as_non_null" });
+
       break;
     default:
       fctx.body.push({ op: "i32.const", value: 0 });
