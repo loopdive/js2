@@ -40,6 +40,10 @@ const s = []; s.push("c"); s.push("a"); console.log(s.sort().join()); // "c,a"
 const n = []; n.push(3); n.push(1);   console.log(n.sort().join());   // "3,1"
 ```
 
+One more shape (review of #6905 round 2): `let keys = []` filled by `for…in`,
+then reassigned to a literal (`keys = ["z","y"]`) — the literal lands in the
+externref global, so `keys.sort().join(",")` prints `"z,y"` (node `"y,z"`).
+
 ## Implementation Plan (Fable, 2026-10-25; implement on Opus)
 
 1. Reproduce the three programs above on gc native-first and standalone and
