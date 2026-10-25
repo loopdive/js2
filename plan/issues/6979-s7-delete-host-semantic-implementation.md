@@ -491,3 +491,6 @@ changed-root gate; all 57 touched files pass, 715 tests). The 27 failing rows in
 Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
 
 - **IR-only readiness re-bank (2026-10-24, stakeholder decision):** `scripts/ir-only-baseline.json` single-host lane re-measured under the regime (38/0 → 26/12) because its basis profile `host-assisted` no longer exists; the 12 legacy units are #7103, which ratchets the lane back. Decided by the stakeholder on 2026-10-24 after the lead presented re-bank vs land-#7103-first.
+  **Waiver confirmed by the stakeholder on 2026-10-25** ("accept the waiver,
+  release #6899"), after the round-2 review of #6899 tabulated the 12 units
+  and reproduced the loss on main with only the profile line removed.
