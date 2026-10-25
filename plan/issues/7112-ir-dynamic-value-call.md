@@ -1,10 +1,10 @@
 ---
 id: 7112
-title: "IR: bare call through a dynamic value (`func()`) + dynamic catch bindings in member closures"
+title: "IR: bare call through a dynamic value (`func()`) in planned member closures"
 status: in-review
 sprint: current
 created: 2026-10-21
-updated: 2026-10-21
+updated: 2026-10-25
 priority: high
 horizon: s
 feasibility: hard
@@ -43,7 +43,10 @@ parameters.
 
 The next blocker in the same closure was the catch binding `thrown`. A lifted
 closure's catch binding was a raw externref slot, so `typeof thrown`
-demoted at build.
+demoted at build — until #7106's `catchIsCarrier` (in `lowerTryStatement`,
+now on main) re-tagged every catch binding on the host-free lanes as the
+carrier, lifted closure bodies included. Nothing closure-specific remains to
+add for it here.
 
 ## Measured legacy behavior (standalone)
 
@@ -63,20 +66,42 @@ it also restores on an exception.
   message. `__apply_closure` always enters `__call_fn_method_N`, which
   installs that undefined receiver as `__current_this` for the callee and
   restores it on a normal return.
-- **Selector** (`dynamicValueCallTarget`): admits a bare call of a dynamic
-  parameter, either of the subject or of a planned member closure, on the
-  `native-dynamic-value-call` lanes (wasmgc, non-fast, standalone or wasi).
-  The calling body must not read `this`. The one difference from legacy is
-  that the shared runtime does not restore `__current_this` when the callee
-  throws, so only a caller that never reads its own receiver is admitted.
-  Planned member closures already satisfy this, because the plan refuses
-  `this`.
+- **Selector** (`dynamicValueCallTarget`): admits a bare call (`func()`, no
+  `?.`, no spread) of one of a **planned function-member closure's** dynamic
+  parameters. The arm has no capability of its own: its lane is the plan's
+  lane (`planMemberClosure` requires non-fast, native-first, standalone or
+  wasi, and the externref carrier; gc native-first projects as standalone).
+  The match is by identifier text, so a catch binding shadowing the parameter
+  also takes the arm — sound, since the catch binding is itself the dynamic
+  carrier on these lanes. The one
+  difference from legacy is that the shared runtime does not restore
+  `__current_this` when the callee throws inside a `try`, which only a caller
+  that reads its own `this` afterwards could observe — a planned member
+  closure never does, because the plan refuses `this`. On host-assisted gc and
+  on the fast lane no plan exists, so the shape is refused at select
+  (`body-shape-rejected`) and gc output stays byte-identical to main.
 - **from-ast:** a dynamic-carrier callee binding (a local, or a slot with a
-  dynamic logical type) goes through `lowerDynamicValueCall`. Inside a planned
-  member closure the catch parameter is bound as the dynamic carrier
-  (`asType: dynamic` over the externref slot, which on the non-fast lanes is
-  that carrier). So `typeof thrown`, `thrown === null` and `thrown.constructor`
-  use the dynamic operations.
+  dynamic logical type) goes through `lowerDynamicValueCall`. The catch
+  parameter inside the lifted closure is already the dynamic carrier on the
+  host-free lanes (#7106's `catchIsCarrier` in `lowerTryStatement` applies to
+  lifted closure bodies as well), so `typeof thrown`, `thrown === null` and
+  `thrown.constructor` use the dynamic operations without a closure-specific
+  predicate. The `?.`/spread and "callee lost its carrier" demotes in the
+  lowering are selector-contract asserts, not lowering decisions: the selector
+  refuses those shapes first.
+
+## Left for a follow-up
+
+A **top-level function** whose own dynamic parameter is called
+(`function self(func: any) { func(); }`) is **not** admitted: the arm's
+closure-parameter name set is empty outside a planned closure. Independently,
+the subject's Phase-1 shape check refuses `func()` at `expr-local-call-target`
+before the move-only scan (`dynamicUsesAreMoveOnly`) runs, so the subject
+stays legacy with `call-resolution-unsupported` exactly as on main. Admitting
+it needs a subject-level name set, the Phase-1 check and the move-only scan
+both extended to treat `func()` as admitted (and the own-`this` constraint
+above checked for the subject), with its own census measurement of how many
+top-level units it unblocks; none of this PR's fixtures depend on it.
 
 ## Acceptance
 
@@ -86,7 +111,8 @@ it also restores on an exception.
     callee;
   - an `assert.throws`-shaped initializer (Test262Error replaced by a plain
     throw) becomes a prepared IR body with no post-claim errors;
-  - a top-level caller that reads `this` stays legacy.
+  - the admission is lane-gated: the same shape stays legacy, refused at
+    select with no post-claim error, on host-assisted gc and on the fast lane.
 - Census, Test262Error-stripped probe: `assert.throws` no longer blocks
   `<module-init>`. The remaining module-init blockers are:
   - `assert.compareArray` (`operand-coercion-unsupported`);

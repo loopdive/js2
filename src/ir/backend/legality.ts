@@ -31,8 +31,8 @@ export type IrBackendTargetCapability =
   | "native-arguments-length"
   | "native-current-this"
   | "native-own-property-test"
-  | "native-own-property-descriptor"
-  | "native-dynamic-value-call";
+  | "host-dynamic-method-call"
+  | "native-own-property-descriptor";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -132,14 +132,13 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
-    case "native-dynamic-value-call":
-      // (#7106 Stage 4) a bare call through a dynamic value: the native
-      // IsCallable + `__apply_closure` member-call runtime (host-free lanes).
-      return (
-        profile.backend === "wasmgc" &&
-        profile.fast !== true &&
-        (profile.target === "standalone" || profile.target === "wasi")
-      );
+    case "host-dynamic-method-call":
+      // (#7117) `recv.m(…)` on a dynamic receiver through the generic
+      // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
+      // the real JS call; the native object runtime dispatches open-`$Object`
+      // methods only and answers `undefined` for primitive / vec / Map / …
+      // receivers, where legacy dispatches by brand.
+      return profile.backend === "wasmgc" && profile.allowHostImports;
     case "native-arguments-length":
       // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
       // host-free lanes (`__ir_arguments_length`).
