@@ -70,7 +70,7 @@ import {
 } from "./async-selection.js";
 export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
-import { isAmbientIntrinsicValueUse } from "./values/ambient-intrinsics.js";
+import { isAmbientIntrinsicValueUse } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
@@ -711,7 +711,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * generic runtime operator (`__instanceof_dynamic` + throw guard), the tail
    * `dyn.instanceof` reproduces? Absent → never.
    */
-  readonly dynamicInstanceOfRoutesGeneric?: (site: ts.BinaryExpression) => boolean;
+  readonly dynamicInstanceOfAtLegacyParity?: (site: ts.BinaryExpression) => boolean;
   /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
@@ -3125,6 +3125,17 @@ function dynamicUsesAreMoveOnly(
     // top-level function object (Stage 2) lowers through the dynamic closed
     // dispatch and produces a dynamic value.
     if (functionObjectMemberCallee(e) !== null) return true;
+    // (#7106) The ambient special forms the scan lowers to a CONCRETE string
+    // (`dyn.json_stringify`, `dyn.object_tag`). Since #7118 an intrinsic root
+    // (`JSON`, `Object`) is itself dynamic-shaped, so without this the member-call
+    // arm below would classify the whole call as a dynamic value.
+    if (
+      ts.isCallExpression(e) &&
+      ((!dynNames.has("JSON") && ambientJsonStringifyCall(e) !== null) ||
+        (!dynNames.has("Object") && ambientObjectToStringTagCall(e) !== null))
+    ) {
+      return false;
+    }
     if (
       currentDynamicRuntimeBuildable &&
       ts.isCallExpression(e) &&
@@ -3423,7 +3434,10 @@ function dynamicUsesAreMoveOnly(
       }
       // (#7106) `<dynamic> instanceof <dynamic parameter>` → `dyn.instanceof`: a concrete i32.
       if (!expectDyn && dynamicInstanceOfUse(e)) {
-        return scanExpr(e.left, true) && scanExpr(e.right, true);
+        // An Error-family builtin target is read off the realm, not moved.
+        const rightIsIntrinsic =
+          ts.isIdentifier(e.right) && !dynNames.has(e.right.text) && isAmbientIntrinsicValue(e.right);
+        return scanExpr(e.left, true) && (rightIsIntrinsic || scanExpr(e.right, true));
       }
       // (#7106 S3c) `<dynamic> instanceof F` → `dyn.instanceof_fn`: a concrete i32.
       if (
@@ -7467,9 +7481,33 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
  * condition representation is already boolean. Non-module subexpressions are
  * left to the existing selector/build type checks.
  */
+/**
+ * (#7106) A certified Object alias call, or a member read off one:
+ * - the S1g uncurried `Object.prototype` predicate (`__hasOwnProperty(o, k)`,
+ *   a boolean `dyn.own_property`);
+ * - arm 1's stored `Object.getOwnPropertyDescriptor` (a dynamic carrier).
+ * Neither is an unboxed module scalar of unknown family, the case
+ * {@link trackedModuleInfluenceIsBoolean} guards. Since #7114 a script's
+ * top-level alias `var` is a tracked module binding. The callee resolving to
+ * that binding means it is not shadowed.
+ */
+function isCertifiedObjectAliasValue(expr: ts.Expression): boolean {
+  let root = unwrapPhase1Parens(expr);
+  while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+    root = unwrapPhase1Parens(root.expression);
+  }
+  return (
+    ts.isCallExpression(root) &&
+    moduleBinding(root.expression) !== undefined &&
+    (uncurriedObjectAliasMethod(root.expression, () => false) !== undefined ||
+      storedObjectStaticAliasMethod(root.expression, () => false) !== undefined)
+  );
+}
+
 function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   if (!expressionTouchesTrackedModuleValue(candidate)) return true;
+  if (isCertifiedObjectAliasValue(candidate)) return true;
   if (moduleBinding(candidate)) return isDirectBooleanModuleBinding(candidate);
   if (moduleScalarAliasFamily(candidate)) return moduleScalarAliasFamily(candidate) === "boolean";
   if (isModuleMapGetAlias(candidate)) return false;
@@ -10153,18 +10191,35 @@ function dynamicDeleteStatementOperand(
 /**
  * (#7106) `<dynamic carrier> instanceof <dynamic parameter>` → `dyn.instanceof`,
  * legacy's generic runtime operator. Admitted only where legacy itself routes the
- * site there (`dynamicInstanceOfRoutesGeneric`), so the IR answers exactly as
+ * site there (`dynamicInstanceOfAtLegacyParity`), so the IR answers exactly as
  * legacy does, including its #2916 residuals.
  */
 function dynamicInstanceOfUse(expr: ts.BinaryExpression): boolean {
-  return (
-    expr.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
-    currentDynamicRuntimeBuildable &&
-    ts.isIdentifier(expr.right) &&
-    currentDynamicParamNames.has(expr.right.text) &&
-    instanceOfLeftIsDynamicCarrier(expr.left) &&
-    currentSelectionOptions?.dynamicInstanceOfRoutesGeneric?.(expr) === true
-  );
+  if (expr.operatorToken.kind !== ts.SyntaxKind.InstanceOfKeyword || !currentDynamicRuntimeBuildable) return false;
+  if (!ts.isIdentifier(expr.right)) return false;
+  // (#7106) …or an Error-family builtin, read off the realm through #7118's
+  // ambient-intrinsic value, never a second name path.
+  const rightIsCarrier = currentDynamicParamNames.has(expr.right.text) || isAmbientIntrinsicValue(expr.right);
+  const left = unwrapPhase1Parens(expr.left);
+  const leftIsCarrier =
+    instanceOfLeftIsDynamicCarrier(left) || (ts.isIdentifier(left) && readsEnclosingCatchBinding(left));
+  return rightIsCarrier && leftIsCarrier && currentSelectionOptions?.dynamicInstanceOfAtLegacyParity?.(expr) === true;
+}
+
+/**
+ * (#7106) Does `ident` read the binding of an enclosing `catch (name)` clause of
+ * the same function? Syntactic, because the shape walk runs before the move-only
+ * scan records catch bindings; that scan still proves the read is a carrier.
+ */
+function readsEnclosingCatchBinding(ident: ts.Identifier): boolean {
+  for (let node: ts.Node | undefined = ident.parent; node !== undefined; node = node.parent) {
+    if (ts.isFunctionLike(node)) return false;
+    if (ts.isCatchClause(node)) {
+      const name = node.variableDeclaration?.name;
+      if (name !== undefined && ts.isIdentifier(name) && name.text === ident.text) return true;
+    }
+  }
+  return false;
 }
 
 /** (#7106 S3c) The left operand of a `dyn.instanceof_fn`: a dynamic carrier the scan can prove. */

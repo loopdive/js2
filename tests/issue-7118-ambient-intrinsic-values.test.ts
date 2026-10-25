@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../src/index.js";
 import { makeIrAmbientBindingPredicate } from "../src/ir/module-bindings.js";
-import { isAmbientIntrinsicValueUse } from "../src/ir/values/ambient-intrinsics.js";
+import { isAmbientIntrinsicValueUse } from "../src/shared/ambient-intrinsics.js";
 import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
