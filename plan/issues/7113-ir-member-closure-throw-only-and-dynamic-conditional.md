@@ -99,7 +99,7 @@ joins a dynamic parameter with a string literal.
   the arms `dynamic` vs `dynamic<tag:1>` and withdrew (pre-existing on the
   base for closures with an early return).
 - **A bare dynamic assigned to a concrete slot** inside a planned closure is
-  refused at select (`expr-dynamic-into-concrete-slot`, reported as
+  refused at select (`expr-closure-write-unlowerable`, reported as
   `body-shape-rejected`): the closure's dynamic parameter (`var s = "a";
   s = m;`) or a dynamic-shaped local it minted (`var r = m ? m : 1; s = r;`)
   written to a local with a type annotation or a non-dynamic initializer. On
@@ -112,13 +112,19 @@ joins a dynamic parameter with a string literal.
   m : 1;`), which the first cut over-refused. The rule covers the plain `=`
   and the admitted compound writes (`closureWriteUnlowerable`, one check on
   every assignment RHS): `+=` is admitted into a dynamic slot with any RHS
-  but a bare `null` (`m += r`, `var s; s += r`, `r += 1`, `r += undefined` —
-  the dynamic add; `r += null` has no null carrier) and refused into a
-  concrete one with a dynamic RHS (`s += r`, which otherwise claimed and
+  (`m += r`, `var s; s += r`, `r += 1`, `r += undefined` — the dynamic add)
+  and refused into a concrete one with a dynamic RHS (`s += r`, which otherwise claimed and
   withdrew `string-evidence-unsupported`); `-=`, `*=`, `/=` on a dynamic
   slot are refused whatever the RHS (from-ast lowers only `+=` there —
-  `r -= 1`, `m -= r` withdrew `compound-assign-unsupported`). Still open,
-  out of scope: a
+  `r -= 1`, `m -= r` withdrew `compound-assign-unsupported`). A bare `null`
+  inside a planned closure is admitted only where from-ast materialises it
+  (`closureNullValuePosition`: a `throw` operand, the direct operand of an
+  equality) and refused everywhere else — a slot write (`r = null`,
+  `r += null`), a declaration (`var nul = null`), behind `??` or a comma, a
+  conditional arm, a call argument, a member store — all of which withdrew
+  `nullish-value-unsupported`. Still open, out of scope: `r += a` with
+  `var a = [4]` (the dynamic `+=` operand has no carrier for `vec<f64>`,
+  pre-existing for `m += a`); a
   dynamic value reaching a typed slot through any other expression (`var r =
   m + 1; s = r;`), a chained write (`s = r = m`), a write to a `const`
   (`const s = m; s += r` — the IR withdraws, legacy throws the TypeError node

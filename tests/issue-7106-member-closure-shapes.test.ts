@@ -136,6 +136,27 @@ export function run() {
     expect(await initializeAndRun(result)).toBe(1111111);
   }, 35_000);
 
+  // The two positions from-ast materialises a bare `null` in: a `throw`
+  // operand (externref hint) and the direct operand of an equality fold.
+  it("admits null as a throw operand and as an equality operand", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m) { var r = m ? m : 1; if (r === 1) throw null; throw r; };
+subject.b = function (m) { var r = m ? m : 1; if (r === null) throw "n"; if (r !== null) throw r; };
+export function run() {
+  var n = 0;
+  try { subject.a(0); } catch (e) { if (e === null) n += 1; }
+  try { subject.a("x"); } catch (e) { if (e === "x") n += 10; }
+  try { subject.b(0); } catch (e) { if (e === 1) n += 100; }
+  try { subject.b("y"); } catch (e) { if (e === "y") n += 1000; }
+  return n;
+}`;
+    const result = await compile(source, OPTIONS);
+    requirePreparedInit(result);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+    expect(node(source)).toBe(1111);
+    expect(await initializeAndRun(result)).toBe(1111);
+  }, 35_000);
+
   // Each row is a planned member closure whose body the producer would
   // withdraw after the claim; the selector refuses it first. `node` is the
   // oracle for the legacy body that then runs.
@@ -213,6 +234,27 @@ export function run() {
     [
       "`+=` of a bare null into the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; r += null; throw r; }`,
+      `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`=` of a bare null into the minted dynamic local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; r = null; throw r; }`,
+      `try { subject.f(0, 0); } catch (e) { if (e === null) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`+=` of a null behind `??` into the minted dynamic local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; r += null ?? 1; throw r; }`,
+      `try { subject.f(0, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "a null-initialized local beside the minted dynamic local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var nul = null; r += nul; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
       "body-shape-rejected",
       1,

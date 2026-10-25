@@ -6520,11 +6520,9 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
  *
  * - a compound other than `+=` on a DYNAMIC slot (`var r = m ? m : 1; r -= 1`,
  *   `m *= q`), whatever the RHS: from-ast lowers only `+=` on a dynamic slot
- *   (the dynamic add; "compound assign to non-f64 slot") — and the same
- *   operators with a dynamic RHS on any slot (`var s = "a"; s -= r`: "RHS
- *   must be f64");
- * - `+=` of a bare `null` into a dynamic slot (`r += null`): the dynamic hint
- *   has no null carrier ("bare 'null' in non-reference context");
+ *   (the dynamic add; "compound assign to non-f64 slot", also what a string
+ *   slot `var s = "a"; s -= r` reports) — and the same operators with a
+ *   dynamic RHS on an f64 slot (`var q = 5; q -= r`: "RHS must be f64");
  * - a bare dynamic — the closure's dynamic parameter or a dynamic-shaped
  *   local — written into a CONCRETE slot by `=` or `+=` (`var s = "a"; s = r`,
  *   `s += r`): "assignment to "s" (string) got dynamic" / "typed string +=
@@ -6534,7 +6532,9 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
  * The slot rule is `dynamicAssignmentSink`, the one
  * `dynamicConditionalValuePosition` applies to the conditional itself; the
  * conditional is never admitted directly as a compound RHS (`s += (m ? m : 1)`
- * stays with the #5092 route), only a laundered local reaches here.
+ * stays with the #5092 route), only a laundered local reaches here. A bare
+ * `null` value is not a write limit: `closureNullValuePosition` refuses it in
+ * every position from-ast cannot materialise it, writes included.
  */
 function closureWriteUnlowerable(expr: ts.Expression): boolean {
   if (!currentInPlannedMemberClosure) return false;
@@ -6547,8 +6547,34 @@ function closureWriteUnlowerable(expr: ts.Expression): boolean {
   if (write.op !== ts.SyntaxKind.EqualsToken && write.op !== ts.SyntaxKind.PlusEqualsToken) {
     return dynamicSlot || dynamicValue;
   }
-  if (dynamicSlot) return write.op === ts.SyntaxKind.PlusEqualsToken && value.kind === ts.SyntaxKind.NullKeyword;
-  return dynamicValue;
+  return !dynamicSlot && dynamicValue;
+}
+
+/**
+ * (#7113) Where from-ast materialises a bare `null` inside a planned member
+ * closure: its `NullKeyword` lowering emits a null only under an externref /
+ * reference hint, which a `throw` operand gets (`lowerThrowStatement`, through
+ * parentheses), and `tryFoldNullCompare` folds `null` as the DIRECT operand of
+ * `==` / `!=` / `===` / `!==` without lowering it. Every other position — a
+ * slot write or `+=` (dynamic hint), a declaration initializer (`var nul =
+ * null`, f64 hint), a string `+=`, `??` / comma / conditional arms, a call
+ * argument, a member store — withdraws `nullish-value-unsupported`, so the
+ * selector refuses it first. (A planned closure's `return null` is refused
+ * elsewhere already; measured on the base, it is not a claim to keep.)
+ */
+function closureNullValuePosition(expr: ts.Expression): boolean {
+  if (ts.isThrowStatement(outermostParenthesized(expr).parent)) return true;
+  const parent = expr.parent;
+  return ts.isBinaryExpression(parent) && isEqualityOperator(parent.operatorToken.kind);
+}
+
+function isEqualityOperator(op: ts.SyntaxKind): boolean {
+  return (
+    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    op === ts.SyntaxKind.EqualsEqualsToken ||
+    op === ts.SyntaxKind.ExclamationEqualsToken
+  );
 }
 
 /**
@@ -10853,7 +10879,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `resolveReturnType` / `resolveParamType`, so accepting the shape
   // here is shape-only acceptance.
   if (ts.isStringLiteral(expr)) return true;
-  if (expr.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (expr.kind === ts.SyntaxKind.NullKeyword) {
+    if (currentInPlannedMemberClosure && !closureNullValuePosition(expr)) {
+      return shapeNo("expr-closure-null-value", expr);
+    }
+    return true;
+  }
   if (ts.isIdentifier(expr)) {
     // Identifier may name either a param/local (scope) or a function
     // (only valid as the callee of a CallExpression, handled below).
@@ -11061,11 +11092,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
     }
     const hasModuleExternOperand = expressionMayBeModuleExtern(expr.left) || expressionMayBeModuleExtern(expr.right);
-    const isEquality =
-      binOp === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-      binOp === ts.SyntaxKind.EqualsEqualsToken ||
-      binOp === ts.SyntaxKind.ExclamationEqualsToken;
+    const isEquality = isEqualityOperator(binOp);
     if (hasModuleExternOperand && isEquality) {
       const left = unwrapPhase1Parens(expr.left);
       const right = unwrapPhase1Parens(expr.right);
