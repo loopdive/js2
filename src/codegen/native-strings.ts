@@ -815,14 +815,16 @@ export function tryCompileNativeVecConcatOperand(
     }
   }
 
-  // Only element kinds we can stringify by value qualify for the join fast-path:
-  // numeric, native-string, or a nested vec. An `externref`-element vec is what a
-  // closure array method (`[...].map(fn)`) produces — its elements are opaque
-  // boxed `any`s, and such operands stringified as "[object Object]" on baseline.
-  // Routing them here would (a) need a host/ToString bridge the standalone lane
-  // lacks and (b) re-introduce the closure index-desync, so fall back to
-  // `$__any_to_string` (the existing "[object Object]" behaviour — no regression).
-  if (!isNumeric && !isNativeStrElem && nestedElemKind === undefined) return false;
+  // Numeric, native-string and nested-vec elements stringify by value; (#7147) any other vec
+  // takes the runtime ToString → the recursive, cycle-guarded `__array_to_primitive_string`.
+  if (!isNumeric && !isNativeStrElem && nestedElemKind === undefined) {
+    const ext: ValType[] = [{ kind: "externref" }];
+    if (ensureLateImport(ctx, "__extern_toString", ext, ext) === undefined) return false;
+    flushLateImportShifts(ctx, fctx);
+    fctx.body.push({ op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__extern_toString")! });
+    fctx.body.push({ op: "any.convert_extern" }, { op: "ref.cast", typeIdx: anyStrTypeIdx });
+    return true;
+  }
 
   // (#1448) If a closure-allocating array method (`map`/`filter`/…) was already
   // lowered in this function, the native array-join lowering corrupts the
@@ -874,9 +876,7 @@ export function tryCompileNativeVecConcatOperand(
   } else if (nestedJoinIdx !== undefined) {
     elemToStr.push({ op: "call", funcIdx: nestedJoinIdx });
   } else {
-    // any other ref / externref element → residual "[object Object]".
-    elemToStr.length = 0;
-    elemToStr.push(...nativeStringLiteralInstrs(ctx, "[object Object]"));
+    elemToStr.splice(0, 3, ...nativeStringLiteralInstrs(ctx, "[object Object]")); // residual, as before
   }
 
   // The vec ref is on the stack — tee into vecTmp, guard null → "".

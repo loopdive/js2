@@ -5695,7 +5695,7 @@ function compileArrayJoinExternNative(
     { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? externGetIdx },
     ...buildExternJoinElementToString(ctx, fctx, anyStrTypeIdx, externToStrIdx, localizedArm),
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr, [{ op: "local.get", index: recvTmp }]); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });
@@ -5998,7 +5998,7 @@ function compileArrayJoinNative(
       else: protoHoleArm ?? repr.literal(""),
     },
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr, emptyElem && vecTmp); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });

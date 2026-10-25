@@ -534,7 +534,7 @@ function emitArrayLikeJoin(
       ],
     },
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, elementToString);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elementToString, [{ op: "local.get", index: 1 }]); // (#7147) cycle guard
 
   fctx.body.push({ op: "local.get", index: resultTmp }, { op: "extern.convert_any" });
   return { kind: "externref" };
