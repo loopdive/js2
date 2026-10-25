@@ -87,7 +87,13 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
+import {
+  compileIrPathFunctions,
+  irAmbientNamespaceConstant, // (#7106 module-init lever A)
+  irNumberConversionPlan, // (#7106 module-init lever B)
+  type IrIntegrationError,
+  type IrIntegrationReport,
+} from "../ir/integration.js";
 import {
   asVal,
   IR_CLASS_SHAPE_CELL,
@@ -2584,6 +2590,8 @@ export interface IrOverlayPlan {
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** Revalidates the mutable ABI joins immediately before integration. */
   readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
+  /** (#7106 module-init lever B) The one source-bound `Number(v)` plan of this compile. */
+  readonly preparedNumberCall: (call: ts.CallExpression) => boolean;
 }
 
 /**
@@ -3067,6 +3075,7 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
@@ -3269,6 +3278,8 @@ function planIrOverlay(
       classifyArrayElementFamily,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
@@ -3625,6 +3636,7 @@ function planIrOverlay(
         }
       : {}),
     ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
+    preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
   };
 }
 

@@ -32,7 +32,8 @@ export type IrBackendTargetCapability =
   | "native-current-this"
   | "native-own-property-test"
   | "host-dynamic-method-call"
-  | "native-own-property-descriptor";
+  | "native-own-property-descriptor"
+  | "native-number-conversion";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -139,6 +140,14 @@ export function supportsIrBackendTargetCapability(
       // methods only and answers `undefined` for primitive / vec / Map / …
       // receivers, where legacy dispatches by brand.
       return profile.backend === "wasmgc" && profile.allowHostImports;
+    case "native-number-conversion":
+      // (#7106 module-init lever B) `Number(v)` through the host-free
+      // `js.number.from-value` provider (legacy's emitter over a template).
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
     case "native-arguments-length":
       // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
       // host-free lanes (`__ir_arguments_length`).

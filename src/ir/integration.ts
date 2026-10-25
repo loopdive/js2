@@ -126,6 +126,10 @@ import {
   irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
+import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
+import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
+import { IR_NUMBER_FROM_VALUE_FEATURE, IR_NUMBER_FROM_VALUE_NATIVE_FN } from "./runtime/number-conversion-callable.js";
+import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
 import {
   ensureIrNativeMapAdapters,
   IR_NATIVE_MAP_GET_NUM_FN,
@@ -2554,6 +2558,9 @@ export function compileIrPathFunctions(
     definedFunctionAt: (funcIdx) => definedFuncAt(ctx, funcIdx),
     fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
   });
+  // (#7106 module-init lever B) the overlay's plan when it planned this compile; built here otherwise.
+  const preparedNumberCall =
+    loweringPlans?.preparedNumberCall ?? irNumberConversionPlan(ctx.checker, sourceFile).preparedNumberCall;
   const selected =
     selection ??
     planIrCompilation(sourceFile, {
@@ -2570,6 +2577,8 @@ export function compileIrPathFunctions(
       isRegExpExpression,
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
@@ -3196,6 +3205,7 @@ export function compileIrPathFunctions(
     standaloneDomCapability,
     loweringPlans?.fnctorParameterPreselection,
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
+    preparedNumberCall,
   );
   // (#7001) The verifier's string-result rule needs the lane's string carrier.
   const verifyOptions = {
@@ -6914,6 +6924,7 @@ function makeFromAstResolver(
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
+  preparedNumberCall?: (call: ts.CallExpression) => boolean, // (#7106 module-init lever B)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -6930,6 +6941,9 @@ function makeFromAstResolver(
       return irImportFuncRef("env", "__extern_eval");
     },
     isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+    ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+    // (#7106 module-init lever B) the selector admitted exactly this plan's calls.
+    ...(preparedNumberCall ? { preparedNumberCall } : {}),
     isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
     isHoleyArrayElementStore: (expr) => {
       if (!ts.isIdentifier(expr.expression)) return false;
@@ -7785,6 +7799,9 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, symbol);
     }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_FROM_VALUE_FEATURE) {
+    // (#7106 module-init lever B) pre-registered at finalize; the helper answers its own index.
+    index = ensureIrNumberFromValueHelper(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_STRING_FN) {
     index = ensureIrNumberToStringProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_FIXED_FN) {
@@ -9185,6 +9202,8 @@ function preregisterDynamicSupport(
   let usesDynJsonStringify = false;
   // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
   let usesDynObjectTag = false;
+  // (#7106 module-init lever B) `js.number.from-value` calls the template-built provider.
+  let usesNumberFromValue = false;
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
   const dynConstructArities = new Set<number>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
@@ -9216,6 +9235,14 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.to_string") usesDynToString = true;
           if (i.kind === "dyn.json_stringify") usesDynJsonStringify = true;
           if (i.kind === "dyn.object_tag") usesDynObjectTag = true;
+          // (#7106 module-init lever B) `Number(v)` through its host-free provider.
+          if (
+            i.kind === "call" &&
+            i.target.binding.kind === "intrinsic" &&
+            i.target.binding.symbol === IR_NUMBER_FROM_VALUE_FEATURE
+          ) {
+            usesNumberFromValue = true;
+          }
           if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
@@ -9462,6 +9489,15 @@ function preregisterDynamicSupport(
       observeNativeRuntimeProvider(ctx, irDynamicConstructHelperName(arity));
     }
     flushLateImportShifts(ctx, null);
+  }
+  if (usesNumberFromValue) {
+    // (#7106 module-init lever B) legacy's `Number(v)` emission over a template,
+    // registered now so no Phase-3 body drives a late-import index shift.
+    if (ensureIrNumberFromValueHelper(ctx) === undefined) {
+      throw new Error(`ir/integration: ${IR_NUMBER_FROM_VALUE_FEATURE} has no host-free provider on this lane (#7106)`);
+    }
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_NUMBER_FROM_VALUE_NATIVE_FN);
   }
   if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     ensureObjectProtoToStringRuntimeHelper(ctx);
@@ -10787,4 +10823,30 @@ function observePreparedDynamicBoxHelpers(
     refs.push(ref);
   }
   return refs;
+}
+
+/**
+ * (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>`
+ * read folds to, from legacy's own tables (`builtin-value-read.ts`) — the one
+ * answer the selector option and the from-ast resolver share. Pure syntax:
+ * whether the identifier is the unshadowed ambient namespace is the caller's
+ * question (scope + the ambient predicate), as for every ambient arm.
+ */
+export function irAmbientNamespaceConstant(expr: ts.PropertyAccessExpression): number | undefined {
+  if (!ts.isIdentifier(expr.expression) || !ts.isIdentifier(expr.name)) return undefined;
+  return builtinNamespaceConstantValue(expr.expression.text, expr.name.text);
+}
+
+/**
+ * (#7106 module-init lever B) The source-bound `Number(v)` conversion plan,
+ * file-wide, for the selector option and the from-ast resolver alike: the
+ * plan's invalidation is file-wide, and a unit's calls are a subset of the
+ * file's, so one instance answers both planning sites exactly as
+ * `prepareSourceBuiltinResolvers` answers the IR program source.
+ */
+export function irNumberConversionPlan(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): ReturnType<typeof prepareNumberConversionResolver> {
+  return prepareNumberConversionResolver(checker, [sourceFile], [...sourceFile.statements]);
 }
