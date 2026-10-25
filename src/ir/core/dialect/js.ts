@@ -291,6 +291,21 @@ export interface IrInstrDynInstanceOfFunction extends IrInstrBase {
 }
 
 /**
+ * `dyn.instanceof{value, target}` — the generic `value instanceof target`
+ * (§13.10.2 InstanceofOperator, §7.3.20 OrdinaryHasInstance) over two dynamic
+ * carriers whose right operand is a runtime value (#7106). It is the SAME
+ * runtime operator legacy's generic `instanceof` uses, so the answer for a given
+ * pair of values is legacy's, and a target the runtime classifies as not
+ * callable throws the TypeError legacy throws. Both operands `dynamic`; result
+ * `i32` (boolean).
+ */
+export interface IrInstrDynInstanceOf extends IrInstrBase {
+  readonly kind: "dyn.instanceof";
+  readonly value: IrValueId;
+  readonly target: IrValueId;
+}
+
+/**
  * `dyn.publish_argc{count}` — the caller half of the same count protocol
  * (#7106 S1i): publishes the number of arguments actually passed at a direct
  * call whose callee reads its own `arguments` (§10.4.4.6: "length" is the

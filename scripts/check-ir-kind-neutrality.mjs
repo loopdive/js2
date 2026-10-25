@@ -841,6 +841,11 @@ const VERDICTS = {
     why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) against a known function constructor's prototype object, shared with legacy's per-function prototype.",
     evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "OrdinaryHasInstance (§7.3.20) walks" }],
   },
+  "dyn.instanceof": {
+    verdict: "js",
+    why: "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) over two dynamic values, the same runtime operator legacy's generic instanceof uses.",
+    evidence: [{ file: path.join(DIALECT_DIR, "js.ts"), quote: "the generic `value instanceof target`" }],
+  },
   "dyn.publish_argc": {
     verdict: "js",
     why: 'The caller half of the ECMAScript arguments count: a direct call site publishes the number of arguments it actually passes (§10.4.4.6 sets "length" to that count), through the call-site count protocol shared with legacy.',

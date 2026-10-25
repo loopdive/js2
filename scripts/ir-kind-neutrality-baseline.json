@@ -1,17 +1,17 @@
 {
-  "generated": "2026-10-22",
+  "generated": "2026-10-25",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
     "jsInCore": 0
   },
   "counts": {
-    "total": 98,
+    "total": 99,
     "neutral": 55,
-    "js": 40,
+    "js": 41,
     "unresolved": 3,
     "core": 58,
-    "dialect": 40,
+    "dialect": 41,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -208,6 +208,13 @@
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynGlobalObject",
       "why": "The ECMAScript realm's global object (§9.3.1 [[GlobalObject]], the value of globalThis §19.1.1), the same object legacy's native globalThis read yields.",
       "evidence": ["src/ir/core/dialect/js.ts#c902bcb2268e"]
+    },
+    "dyn.instanceof": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynInstanceOf",
+      "why": "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) over two dynamic values, the same runtime operator legacy's generic instanceof uses.",
+      "evidence": ["src/ir/core/dialect/js.ts#183a5e6ae944"]
     },
     "dyn.instanceof_fn": {
       "verdict": "js",

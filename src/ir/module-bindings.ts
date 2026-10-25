@@ -451,35 +451,26 @@ export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr:
  * binding resolver, this exposes no source storage capability, so backends
  * without module-global lowering can still distinguish the real lib `Math`
  * object from a source declaration or parameter with the same name.
+ *
+ * `quantifier` picks how many of the symbol's declarations must be
+ * declaration-file ones: `"some"` (the default) is the ambient test;
+ * `"every"` (#7118) is the stricter lib-only test — a script's
+ * `function Number() {}` merges with the lib's `declare var Number`, so
+ * "some" calls it ambient and "every" does not.
  */
-export function makeIrAmbientBindingPredicate(checker: ts.TypeChecker): (node: ts.Identifier) => boolean {
+export function makeIrAmbientBindingPredicate(
+  checker: ts.TypeChecker,
+  quantifier: "some" | "every" = "some",
+): (node: ts.Identifier) => boolean {
   return (node) => {
     try {
       const symbol = checker.getSymbolAtLocation(node);
-      return (
-        symbol !== undefined &&
-        [symbol.valueDeclaration, ...(symbol.declarations ?? [])].some(
-          (declaration) => declaration?.getSourceFile().isDeclarationFile === true,
-        )
+      if (symbol === undefined) return false;
+      const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
+        (declaration): declaration is ts.Declaration => declaration !== undefined,
       );
-    } catch {
-      return false;
-    }
-  };
-}
-
-/**
- * (#7118) Stricter than {@link makeIrAmbientBindingPredicate}: EVERY declaration
- * is a declaration-file one. A script's `function Number() {}` merges with the
- * lib's `declare var Number` — "some" would call it ambient, "every" does not.
- */
-export function makeIrLibOnlyBindingPredicate(checker: ts.TypeChecker): (node: ts.Identifier) => boolean {
-  return (node) => {
-    try {
-      const declarations = checker.getSymbolAtLocation(node)?.declarations ?? [];
-      return (
-        declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
-      );
+      const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
+      return quantifier === "some" ? declarations.some(isLib) : declarations.length > 0 && declarations.every(isLib);
     } catch {
       return false;
     }
@@ -2335,7 +2326,7 @@ export function makeIrLegacyModuleBindingResolver(
       }
     },
     isAmbientBinding,
-    isLibOnlyBinding: makeIrLibOnlyBindingPredicate(checker),
+    isLibOnlyBinding: makeIrAmbientBindingPredicate(checker, "every"),
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       try {
         return localVariableDeclaration(node, checker);

@@ -805,6 +805,8 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
     case "dyn.instanceof_fn":
       return [instr.value];
     case "dyn.own_property":
