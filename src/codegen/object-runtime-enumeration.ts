@@ -1243,6 +1243,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
             },
           ]
         : [];
+    const ownLists = [objOrderedIdx, ctx.funcMap.get("__obj_ordered_symbols")].filter((i) => i !== undefined);
     const body: Instr[] = [
       ...nativeTargetGuard,
       // any = any.convert_extern(sources) ; if !$ObjVec → return target
@@ -1303,107 +1304,112 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                 op: "if",
                 blockType: { kind: "empty" },
                 then: [
-                  // so = cast<$Object>(srcAny) ; arr = so.props ; cap = arr.len
+                  // (#7148) so = cast<$Object>(srcAny); walk the ORDERED string, then symbol, entry
+                  // lists (OrdinaryOwnPropertyKeys), not the hash-ordered `so.props` table.
                   { op: "local.get", index: 6 },
                   { op: "ref.cast", typeIdx: objectTypeIdx },
-                  { op: "local.tee", index: 7 },
-                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 1 },
-                  { op: "local.tee", index: 8 },
-                  { op: "array.len" },
-                  { op: "local.set", index: 9 },
-                  { op: "i32.const", value: 0 },
-                  { op: "local.set", index: 10 },
-                  {
-                    op: "block",
-                    blockType: { kind: "empty" },
-                    body: [
-                      {
-                        op: "loop",
-                        blockType: { kind: "empty" },
-                        body: [
-                          { op: "local.get", index: 10 },
-                          { op: "local.get", index: 9 },
-                          { op: "i32.ge_s" },
-                          { op: "br_if", depth: 1 },
-                          // e = arr[i]
-                          { op: "local.get", index: 8 },
-                          { op: "local.get", index: 10 },
-                          { op: "array.get", typeIdx: propMapTypeIdx },
-                          { op: "local.tee", index: 11 },
-                          { op: "ref.is_null" },
-                          { op: "i32.eqz" },
-                          {
-                            op: "if",
-                            blockType: { kind: "empty" },
-                            then: [
-                              // (!tombstone) && enumerable
-                              { op: "local.get", index: 11 },
-                              { op: "ref.as_non_null" },
-                              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-                              { op: "i32.const", value: FLAG_TOMBSTONE },
-                              { op: "i32.and" },
-                              { op: "i32.eqz" },
-                              { op: "local.get", index: 11 },
-                              { op: "ref.as_non_null" },
-                              { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
-                              { op: "i32.const", value: FLAG_ENUMERABLE },
-                              { op: "i32.and" },
-                              { op: "i32.eqz" },
-                              { op: "i32.eqz" }, // normalise enumerable bit to 0/1
-                              { op: "i32.and" },
-                              {
-                                op: "if",
-                                blockType: { kind: "empty" },
-                                then:
-                                  assignGetIdx !== undefined && assignStrictSetIdx !== undefined
-                                    ? ([
-                                        // §20.1.2.1 step 5.c.ii:
-                                        //   propValue = ? Get(from, nextKey)
-                                        //   ? Set(to, nextKey, propValue, true)
-                                        // Reading through `__extern_get` runs a
-                                        // source ACCESSOR (and lets its throw
-                                        // escape); writing through
-                                        // `__extern_set_strict` turns a refused
-                                        // write into the spec's TypeError.
-                                        { op: "local.get", index: 0 },
-                                        { op: "local.get", index: 11 },
-                                        { op: "ref.as_non_null" },
-                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                                        { op: "extern.convert_any" },
-                                        { op: "local.get", index: 12 },
-                                        { op: "local.get", index: 11 },
-                                        { op: "ref.as_non_null" },
-                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                                        { op: "extern.convert_any" },
-                                        { op: "call", funcIdx: assignGetIdx },
-                                        { op: "call", funcIdx: assignStrictSetIdx },
-                                      ] satisfies Instr[])
-                                    : ([
-                                        // __extern_set(target, extern.convert_any(e.key),
-                                        //              extern.convert_any(e.value))
-                                        { op: "local.get", index: 0 },
-                                        { op: "local.get", index: 11 },
-                                        { op: "ref.as_non_null" },
-                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                                        { op: "extern.convert_any" },
-                                        { op: "local.get", index: 11 },
-                                        { op: "ref.as_non_null" },
-                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                                        { op: "extern.convert_any" },
-                                        { op: "call", funcIdx: externSetIdx },
-                                      ] satisfies Instr[]),
-                              },
-                            ],
-                          },
-                          { op: "local.get", index: 10 },
-                          { op: "i32.const", value: 1 },
-                          { op: "i32.add" },
-                          { op: "local.set", index: 10 },
-                          { op: "br", depth: 0 },
-                        ],
-                      },
-                    ],
-                  },
+                  { op: "local.set", index: 7 },
+                  ...ownLists.flatMap((listIdx): Instr[] => [
+                    { op: "local.get", index: 7 },
+                    { op: "ref.as_non_null" },
+                    { op: "call", funcIdx: listIdx },
+                    { op: "local.tee", index: 8 },
+                    { op: "array.len" },
+                    { op: "local.set", index: 9 },
+                    { op: "i32.const", value: 0 },
+                    { op: "local.set", index: 10 },
+                    {
+                      op: "block",
+                      blockType: { kind: "empty" },
+                      body: [
+                        {
+                          op: "loop",
+                          blockType: { kind: "empty" },
+                          body: [
+                            { op: "local.get", index: 10 },
+                            { op: "local.get", index: 9 },
+                            { op: "i32.ge_s" },
+                            { op: "br_if", depth: 1 },
+                            // e = arr[i]
+                            { op: "local.get", index: 8 },
+                            { op: "local.get", index: 10 },
+                            { op: "array.get", typeIdx: propMapTypeIdx },
+                            { op: "local.tee", index: 11 },
+                            { op: "ref.is_null" },
+                            { op: "i32.eqz" },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                // (!tombstone) && enumerable
+                                { op: "local.get", index: 11 },
+                                { op: "ref.as_non_null" },
+                                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                                { op: "i32.const", value: FLAG_TOMBSTONE },
+                                { op: "i32.and" },
+                                { op: "i32.eqz" },
+                                { op: "local.get", index: 11 },
+                                { op: "ref.as_non_null" },
+                                { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                                { op: "i32.const", value: FLAG_ENUMERABLE },
+                                { op: "i32.and" },
+                                { op: "i32.eqz" },
+                                { op: "i32.eqz" }, // normalise enumerable bit to 0/1
+                                { op: "i32.and" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then:
+                                    assignGetIdx !== undefined && assignStrictSetIdx !== undefined
+                                      ? ([
+                                          // §20.1.2.1 step 5.c.ii:
+                                          //   propValue = ? Get(from, nextKey)
+                                          //   ? Set(to, nextKey, propValue, true)
+                                          // Reading through `__extern_get` runs a
+                                          // source ACCESSOR (and lets its throw
+                                          // escape); writing through
+                                          // `__extern_set_strict` turns a refused
+                                          // write into the spec's TypeError.
+                                          { op: "local.get", index: 0 },
+                                          { op: "local.get", index: 11 },
+                                          { op: "ref.as_non_null" },
+                                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                          { op: "extern.convert_any" },
+                                          { op: "local.get", index: 12 },
+                                          { op: "local.get", index: 11 },
+                                          { op: "ref.as_non_null" },
+                                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                          { op: "extern.convert_any" },
+                                          { op: "call", funcIdx: assignGetIdx },
+                                          { op: "call", funcIdx: assignStrictSetIdx },
+                                        ] satisfies Instr[])
+                                      : ([
+                                          // __extern_set(target, extern.convert_any(e.key),
+                                          //              extern.convert_any(e.value))
+                                          { op: "local.get", index: 0 },
+                                          { op: "local.get", index: 11 },
+                                          { op: "ref.as_non_null" },
+                                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                          { op: "extern.convert_any" },
+                                          { op: "local.get", index: 11 },
+                                          { op: "ref.as_non_null" },
+                                          { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                                          { op: "extern.convert_any" },
+                                          { op: "call", funcIdx: externSetIdx },
+                                        ] satisfies Instr[]),
+                                },
+                              ],
+                            },
+                            { op: "local.get", index: 10 },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: 10 },
+                            { op: "br", depth: 0 },
+                          ],
+                        },
+                      ],
+                    },
+                  ]),
                 ],
               },
               ...classifiedClosedStructSourceCopy,
