@@ -41,9 +41,13 @@ function emitted(result: CompileResult, name: string): boolean | undefined {
 
 async function run(result: CompileResult, host: boolean): Promise<number> {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const imports = (host ? result.importObject : {}) as WebAssembly.Imports;
+  const imports = (host ? result.importObject : {}) as WebAssembly.Imports & {
+    __setExports?: (exports: WebAssembly.Exports) => void;
+    __setInstance?: (instance: WebAssembly.Instance) => void;
+  };
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (result.importObject as { setInstance?: (i: WebAssembly.Instance) => void } | undefined)?.setInstance?.(instance);
+  imports.__setExports?.(instance.exports);
+  imports.__setInstance?.(instance);
   return (instance.exports.run as () => number)();
 }
 
@@ -83,12 +87,29 @@ export function run() {
   }, 35_000);
 
   it("leaves the host lane, whose __extern_method_call is the real JS call, unchanged", async () => {
+    // `semanticProviders: "host-assisted"` IS the host lane (allowHostImports).
+    // A default build is the native-first regime, projected as standalone —
+    // that case is below.
+    const result = await compile(SOURCE, {
+      fileName: "test.js",
+      allowJs: true,
+      semanticProviders: "host-assisted",
+      skipSemanticDiagnostics: true,
+      trackIrOutcomes: true,
+    } as Parameters<typeof compile>[1]);
+    for (const name of ["t", "u", "k"]) expect(emitted(result, name), name).toBe(true);
+    expect(await run(result, true)).toBe(111111);
+  }, 35_000);
+
+  it("keeps the functions legacy on a default (native-first) build, where the gate fires too", async () => {
+    // Measured on origin/main: the default build returned 101010 as well.
     const result = await compile(SOURCE, {
       fileName: "test.js",
       allowJs: true,
       skipSemanticDiagnostics: true,
       trackIrOutcomes: true,
     } as Parameters<typeof compile>[1]);
+    for (const name of ["t", "u", "k"]) expect(emitted(result, name), name).toBe(false);
     expect(await run(result, true)).toBe(111111);
   }, 35_000);
 });
