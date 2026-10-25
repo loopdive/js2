@@ -10103,7 +10103,6 @@ function collectDirectNestedFunctionNames(body: ts.Block): Set<string> {
 }
 
 /**
-/**
  * (#7106 S3c) A self-guarded top-level constructor used as a VALUE — the
  * `new F(…)` callee or the `x instanceof F` right operand. Codegen certifies the
  * binding (`selfGuardedConstructorValue`: the declaration itself, never
