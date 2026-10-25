@@ -69,7 +69,7 @@ elements are boxed (`` `${[1,[2]]}` ``) declined the vec fast path and fell to
 Fix: the driver's element step is `__extern_toString` (recursive through
 `__to_primitive`'s vec arm); the concat/template vec operand with boxed elements
 takes the same `__extern_toString`; and a join cycle stack
-(`src/codegen/array-join-cycle.ts`, V8's contract: an array already being
+(`src/codegen/array/array-join-cycle.ts`, V8's contract: an array already being
 joined renders as "") guards both the driver and the inline native join over
 boxed/GC-ref elements, popping on a thrown element `toString`.
 `JSON.stringify` has its own serializer and is not routed through it.

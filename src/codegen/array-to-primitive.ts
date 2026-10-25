@@ -37,7 +37,7 @@ import { nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#4663) 
 import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js"; // (#4663) §7.1.1.1 walk, shared with the callable arms
 import { makeHelperFctx } from "./helpers/reserved-helper-funcs.js"; // (#6651 U2) scratch fctx for the dyn-view length arm
 import { taDynJoinLengthInstrs } from "./ta-dyn-method-call.js"; // (#6651 U2)
-import { guardedJoinFold } from "./array-join-cycle.js"; // (#7147)
+import { guardedJoinFold } from "./array/array-join-cycle.js"; // (#7147)
 
 export const ARRAY_TO_PRIMITIVE_STRING = "__array_to_primitive_string";
 

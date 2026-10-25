@@ -19,11 +19,11 @@
  * that throws would make every later join of that array answer "", so the
  * joining loop runs inside a catch that pops and rethrows (`guardedJoinFold`).
  */
-import type { Instr, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
-import { addFuncType, registerStructType } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { buildTargetTaggedTry } from "../wasm/physical/exception-control.js";
+import type { Instr, ValType } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
+import { addFuncType, registerStructType } from "../registry/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { buildTargetTaggedTry } from "../../wasm/physical/exception-control.js";
 
 const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
 const ENTER = "__join_cycle_enter";

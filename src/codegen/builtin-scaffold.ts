@@ -38,7 +38,7 @@ import {
   stringConstantExternrefInstrs,
 } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { guardedJoinFold } from "./array-join-cycle.js"; // (#7147)
+import { guardedJoinFold } from "./array/array-join-cycle.js"; // (#7147)
 
 /**
  * A string representation strategy: the minimal per-representation seam the
