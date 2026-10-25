@@ -6758,6 +6758,22 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/helpers/ir-number-from-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The IR's host-free Number(v) provider (#7106): legacy's conversion emitter over a detached template; moves with the coercion-engine backend split."
+    },
+    {
+      "path": "src/codegen/helpers/template-wrapper.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "The detached template parse of the template-built IR wrappers (#7106)."
+    },
+    {
       "path": "src/codegen/helpers/arguments-registration.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

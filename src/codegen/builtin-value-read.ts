@@ -266,11 +266,22 @@ function tryEmitBuiltinNamespaceConstantValue(
   builtinName: string,
   propName: string,
 ): ValType | undefined {
+  const value = builtinNamespaceConstantValue(builtinName, propName);
+  if (value === undefined) return undefined;
+  fctx.body.push({ op: "f64.const", value });
+  return { kind: "f64" };
+}
+
+/**
+ * (#7106) The numeric value of `<Math|Number>.<prop>` — the one table behind
+ * legacy's dot read, its reflective read and the IR's fold
+ * (`irAmbientNamespaceConstant`); undefined for any other pair. Own keys only:
+ * `Math["constructor"]` is not a constant.
+ */
+export function builtinNamespaceConstantValue(builtinName: string, propName: string): number | undefined {
   const table =
     builtinName === "Math" ? MATH_CONSTANT_VALUES : builtinName === "Number" ? NUMBER_CONSTANT_VALUES : undefined;
-  if (!table || !(propName in table)) return undefined;
-  fctx.body.push({ op: "f64.const", value: table[propName]! });
-  return { kind: "f64" };
+  return table !== undefined && Object.hasOwn(table, propName) ? table[propName] : undefined;
 }
 
 /**
