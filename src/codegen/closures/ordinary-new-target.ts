@@ -42,7 +42,7 @@ export function initializeOrdinaryNewTarget(
   fctx: FunctionContext,
   undefinedExternInstrs: typeof import("../any-helpers.js").undefinedExternInstrs,
 ): void {
-  if (!ctx.usesNewTarget || !(ctx.standalone || ctx.wasi)) return;
+  if (!ctx.usesNewTarget) return;
   const global = pendingTargetGlobal(ctx);
   const local = allocLocal(fctx, ORDINARY_NEW_TARGET, EXTERNREF);
   fctx.body.push(
@@ -69,7 +69,7 @@ export function ordinaryConstructTargetFrame(
   paramCount: number,
   ensureExnTag: typeof import("../registry/imports.js").ensureExnTag,
 ): Instr[] {
-  if (!ctx.usesNewTarget || !(ctx.standalone || ctx.wasi)) return call;
+  if (!ctx.usesNewTarget) return call;
   const global = pendingTargetGlobal(ctx);
   const previous = paramCount + locals.length;
   const result = previous + 1;

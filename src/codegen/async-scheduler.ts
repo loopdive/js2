@@ -1017,7 +1017,6 @@ function ensurePromiseThenableSubstrate(
   ctx: CodegenContext,
   state: AsyncSchedulerState,
 ): PromiseThenableSubstrate | null {
-  if (ctx.standalone !== true && ctx.wasi !== true) return null;
   const cache = ctx as unknown as { __promiseThenableSubstrate?: PromiseThenableSubstrate | null };
   if (cache.__promiseThenableSubstrate !== undefined) return cache.__promiseThenableSubstrate;
 
@@ -1072,7 +1071,7 @@ function ensurePromiseThenableSubstrate(
   const capsTypeIdx = getOrRegisterThenCapsType(ctx);
   const applyClosureIdx = reserveApplyClosure(ctx);
   const job = buildPromiseThenableJob({
-    target: { wasi: ctx.wasi, standalone: ctx.standalone },
+    target: { wasi: ctx.wasi, standalone: true },
     promiseTypeIdx: state.promiseTypeIdx,
     promiseRejectFuncIdx: state.promiseRejectFuncIdx,
     capsTypeIdx,
@@ -1136,7 +1135,7 @@ function buildPromiseResolveValueBody(
   const thenGetStringInstrs = hasOwnThenArm ? stringConstantExternrefInstrs(ctx, "then") : [];
   return buildResolutionBody({
     rejectionDispatchFuncIdx: promiseRejectionDispatcher(ctx),
-    target: { wasi: ctx.wasi, standalone: ctx.standalone },
+    target: { wasi: ctx.wasi, standalone: true },
     state,
     promiseTypeIdx,
     callbackTypeIdx,

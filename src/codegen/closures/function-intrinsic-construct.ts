@@ -126,7 +126,7 @@ export function mayHoldFunctionIntrinsic(
  * `Function` class keeps its class arm.
  */
 export function isFunctionIntrinsicValueCallee(ctx: CodegenContext, callee: ts.Expression): boolean {
-  if (!ctx.standalone || ctx.classSet.has("Function")) return false;
+  if (ctx.classSet.has("Function")) return false;
   return mayHoldFunctionIntrinsic(callee, (id) => ctx.oracle.valueDeclarationOf(id));
 }
 
@@ -174,7 +174,6 @@ export function beginFunctionIntrinsicConstruct(
   calleeLocal: number,
   deps: FunctionIntrinsicConstructDeps,
 ): FunctionIntrinsicConstructArm | undefined {
-  if (!ctx.standalone) return undefined;
   if (deps.strictEq(ctx) === undefined) return undefined;
 
   // Build both producers into detached bodies first, so a decline leaves the
