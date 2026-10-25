@@ -182,7 +182,7 @@ export function emitStringJoinFold(
   repr: StringRepr,
   locals: JoinFoldLocals,
   elemToStr: Instr[],
-  cycleVec?: number,
+  cycleRecv?: number | Instr[],
 ): void {
   const { iTmp, lenTmp, resultTmp, sepTmp } = locals;
 
@@ -217,14 +217,15 @@ export function emitStringJoinFold(
     blockType: { kind: "empty" },
     body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
   };
-  // (#7147) `cycleVec`: the local holding the receiver vec of a join whose boxed
-  // elements may be arrays — fold it on the join cycle stack, so an array already
-  // being joined renders as "" (the result local stays at its initial "").
-  if (cycleVec === undefined) fctx.body.push(fold);
-  else
-    fctx.body.push(
-      ...guardedJoinFold(ctx, [{ op: "local.get", index: cycleVec }, { op: "extern.convert_any" }], [fold]),
-    );
+  // (#7147) `cycleRecv`: the receiver of a join whose boxed elements may be
+  // arrays — a vec-ref local, or instrs leaving it as externref. The fold then
+  // runs on the join cycle stack, so an array already being joined renders as ""
+  // (the result local stays at its initial "").
+  if (cycleRecv === undefined) return void fctx.body.push(fold);
+  const recv: Instr[] = Array.isArray(cycleRecv)
+    ? cycleRecv
+    : [{ op: "local.get", index: cycleRecv }, { op: "extern.convert_any" }];
+  fctx.body.push(...guardedJoinFold(ctx, recv, [fold]));
 }
 
 /**

@@ -17,13 +17,22 @@
  * The stack is a linked list of `$__join_frame { arr: eqref, next: eqref }`
  * cells in one mutable global. A frame left behind by an element `toString`
  * that throws would make every later join of that array answer "", so the
- * joining loop runs inside a catch that pops and rethrows (`guardedJoinFold`).
+ * joining loop runs inside a catch that pops and rethrows (`guardedJoinFold`):
+ * the module tag on every lane, plus `catch_all` on the legacy-EH (JS-host
+ * embedded) lane, where a foreign host exception can cross the fold.
+ *
+ * Residual: a wasm TRAP or an engine stack overflow inside an element
+ * `toString` is not catchable by wasm, so the frames of the joins it aborted
+ * stay on the stack, and an embedder that catches the trap and keeps using the
+ * instance sees "" for those arrays in later joins. Nothing in the module can
+ * tell a stale frame from a live outer join, so it is not reset here.
  */
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { addFuncType, registerStructType } from "../registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
 import { buildTargetTaggedTry } from "../../wasm/physical/exception-control.js";
+import { ensureExnTag } from "../registry/physical-imports.js";
 
 const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
 const ENTER = "__join_cycle_enter";
@@ -123,15 +132,21 @@ function ensureJoinCycleGuard(ctx: CodegenContext): { enter: number; leave: numb
  * `arr` (instrs leaving the receiver as externref) → run `fold` with `arr` on
  * the join stack, or skip it when `arr` is already there (the caller's result
  * local keeps its initial ""). A throwing `fold` pops before the exception
- * propagates. (The object runtime every caller reaches has minted the tag.)
+ * propagates (see the module header for the trap residual).
  */
 export function guardedJoinFold(ctx: CodegenContext, arr: Instr[], fold: Instr[]): Instr[] {
   const { enter, leave } = ensureJoinCycleGuard(ctx);
-  const tagIdx = ctx.exnTagIdx;
-  const popAndRethrow: Instr[] = [
-    { op: "call", funcIdx: leave },
-    { op: "throw", tagIdx },
-  ];
+  const tagIdx = ensureExnTag(ctx); // already minted by the object runtime every caller reaches
+  const pop = (): Instr => ({ op: "call", funcIdx: leave }); // fresh per site: index shifts mutate in place
+  // The legacy `try` (JS-host-embedded lane) also pops on a foreign exception;
+  // standalone/WASI throw nothing but the module tag (and traps, see above).
+  const guarded = buildTargetTaggedTry(
+    ctx,
+    { kind: "empty" },
+    fold,
+    [{ tagIdx, body: [pop(), { op: "throw", tagIdx }] }],
+    [pop(), { op: "rethrow", depth: 0 }],
+  );
   return [
     ...arr,
     { op: "call", funcIdx: enter },
@@ -139,12 +154,7 @@ export function guardedJoinFold(ctx: CodegenContext, arr: Instr[], fold: Instr[]
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [
-        ...(tagIdx < 0
-          ? fold
-          : [buildTargetTaggedTry(ctx, { kind: "empty" }, fold, [{ tagIdx, body: popAndRethrow }])]),
-        { op: "call", funcIdx: leave },
-      ],
+      then: [guarded, pop()],
     },
   ];
 }

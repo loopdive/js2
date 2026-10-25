@@ -49,6 +49,22 @@ describe("#7147 native join stringifies nested arrays via Array.prototype.toStri
       `let n = 0; const o = { toString() { if (n++ === 0) throw 1; return "o"; } }; const a: any[] = []; a.push(o); ` +
         `let s = ""; try { s = [a].join(); } catch (e) { s = "T"; } return s + "|" + [a].join() + "|" + String(a);`,
     ],
+    // Review probe4: the element `toString` fails through a builtin's own
+    // exception, the caller catches it, and later joins must not see a stale frame.
+    ...[`JSON.parse("{")`, `decodeURIComponent("%")`].map((thrower): [string, string] => [
+      `exception from ${thrower} inside a nested join`,
+      `let n = 0; const t = { toString(): string { if (n++ === 0) return ${thrower}; return "t"; } }; ` +
+        `const a: any[] = []; a.push(t); const c: any[] = []; c.push(9); c.push([8]); let s = ""; ` +
+        `try { s = [a, c].join("+"); } catch (e) { s = "T"; } return s + "|" + [a, c].join("+") + "|" + c.join() + "|" + a.join();`,
+    ]),
+    [
+      "dynamic (any) receiver self-cycle",
+      `function f(x: any): string { return x.join(); } const a: any[] = []; a.push(1); a.push(a); return f(a) + "|" + f([a, 2]);`,
+    ],
+    [
+      "generator-body join (seeded Array.prototype.join) self-cycle",
+      `function* g(a: any[]): Generator<string> { yield a.join(); } const a: any[] = []; a.push(1); a.push(2); a.push(a); return g(a).next().value;`,
+    ],
     ["mixed nested", `return [1, "a", [true, null, undefined, [2]]].join();`],
     ["string sub-arrays", `return [["a", "b"], ["c"]].join(";");`],
     ["JSON.stringify unaffected", `return JSON.stringify([1, [2, ["x"]]]);`],

@@ -15,7 +15,7 @@ area: codegen
 language_feature: builtins
 goal: correctness
 parent: 6979
-related: [6899, 2787, 6708]
+related: [6899, 2787, 6708, 7153, 7154]
 # 2026-10-25: the native Array.prototype.toString driver stringifies each element
 # with the runtime ToString (`__extern_toString`) instead of the ToPrimitive-less
 # `$__any_to_string` — a delegation to the one ToString, not a new matrix.
@@ -70,15 +70,21 @@ Fix: the driver's element step is `__extern_toString` (recursive through
 `__to_primitive`'s vec arm); the concat/template vec operand with boxed elements
 takes the same `__extern_toString`; and a join cycle stack
 (`src/codegen/array/array-join-cycle.ts`, V8's contract: an array already being
-joined renders as "") guards both the driver and the inline native join over
-boxed/GC-ref elements, popping on a thrown element `toString`.
+joined renders as "") guards the driver and every native join fold whose
+elements can be arrays — the inline vec join over boxed/GC-ref elements, the
+externref-receiver join (`x: any`) and the seeded `Array.prototype.join`
+(generator bodies) — popping on a thrown element `toString` (module tag; plus
+`catch_all` on the legacy-EH lane).
 `JSON.stringify` has its own serializer and is not routed through it.
 
 Probe/test reference: `tests/equivalence/issue-7147-nested-array-join.test.ts`
 (gc native-first and standalone vs native JS).
 
-Left out: a literal-initialised `any[]` that later receives an array drops its
-earlier elements (`const a: any[] = [1]; a.push([2]); a.join()` → `,2` on every
-lane including host-assisted) — a separate pre-existing gap; the tests build
-cyclic arrays with `push`. The host-assisted lane's cycle results are not
-touched (JS-host lane sunset).
+Trap residual: a wasm trap or engine stack overflow inside an element
+`toString` cannot be caught, so the aborted joins' frames stay on the stack and
+an embedder that keeps using the instance sees "" for those arrays later
+(documented in `src/codegen/array/array-join-cycle.ts`).
+
+Left out: WASI still prints `[object Object]` for nested arrays — #7153.
+
+Left out: an `any[]` that receives an array via `push` drops earlier elements (literal-initialised or push-built nesting) — #7154.
