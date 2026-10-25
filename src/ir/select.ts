@@ -2637,10 +2637,18 @@ function resolveReturnType(
     return "void";
   }
   // (#7129) A class method carries no lattice entry, but legacy registers its
-  // slot from the checker's inferred return. When every value return is a bare
-  // literal of one primitive kind and control cannot fall out, that inference
-  // is exactly the widened `number` / `string`.
-  if (ts.isMethodDeclaration(fn) && fn.body && mapped === undefined && functionBodyAlwaysTerminates(fn.body)) {
+  // slot from the checker's inferred return. When every value return is the
+  // same bare literal and control cannot fall out, that inference is exactly
+  // the widened `number` / `string`. Host-free lanes only (standalone, WASI,
+  // the native regime in a JS environment): the host-assisted lane keeps its
+  // legacy output byte-identical, as the sibling admissions do.
+  if (
+    ts.isMethodDeclaration(fn) &&
+    fn.body &&
+    mapped === undefined &&
+    !jsHostExternsEnabled(currentSelectionOptions) &&
+    functionBodyAlwaysTerminates(fn.body)
+  ) {
     const literalKind = uniformLiteralReturnKind(fn.body);
     if (literalKind !== null) return literalKind;
   }

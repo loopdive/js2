@@ -4,7 +4,7 @@ title: "IR: unannotated class methods returning one primitive literal kind resol
 status: done
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-25
 completed: 2026-10-22
 priority: medium
 horizon: s
@@ -48,15 +48,24 @@ Class methods carry no TypeMap lattice entry, so an unannotated method's return
 always resolved `null`. Legacy's class descriptor (`buildIrClassShapes`) takes
 the slot from the checker's inferred return. `resolveReturnType`
 (`src/ir/select.ts`) now resolves a `MethodDeclaration` whose body always
-terminates and whose every value return is a bare number or string literal
-(`uniformLiteralReturnKind`, `src/ir/select-expression-structure.ts`) to `f64` /
-`string` — exactly the widened type the checker infers, so the IR signature
-equals the legacy slot. No call boundary changes.
+terminates and whose every value return is the SAME bare number or string
+literal (`uniformLiteralReturnKind`, `src/ir/select-expression-structure.ts`)
+to `f64` / `string`. The checker widens a single return literal to `number` /
+`string`, so the IR signature equals the legacy slot. No call boundary changes.
+
+The arm is gated to the host-free lanes (standalone, WASI, the native regime
+in a JS environment) with the same `jsHostExternsEnabled` predicate the
+sibling admissions use, so host-assisted gc output stays byte-identical
+(review of PR #6863: a method body that is not a bare literal tail — the same
+literal on two paths, or a class nested in `run()` — lowers differently under
+the IR, so the un-gated arm moved host-assisted bytes).
 
 Refused on purpose: boolean literals (legacy's class-method slot for an
 inferred `boolean` does not match the IR bool signature — `typeIdx parity
-mismatch`, measured), mixed kinds, any non-literal return, bare `return;`, and
-bodies that can fall out (`T | undefined`).
+mismatch`, measured), two distinct literals (`return 1` / `return 2` infer the
+union `1 | 2`, which legacy's descriptor does not register), mixed kinds, any
+non-literal return, bare `return;`, and bodies that can fall out
+(`T | undefined`).
 
 ## Measured
 
@@ -67,8 +76,14 @@ bodies that can fall out (`T | undefined`).
   tests incl. both affected files: 32 pass / 5 fail / 3 CE before and after,
   no row changed.
 - `tests/issue-7129-literal-method-return.test.ts`: IR body, legacy answer and
-  node agree on standalone and gc (6 cases); 6/10 fail on base; 4 refusal
-  cases stay legacy.
+  node agree on standalone and gc native-first (4 shapes × 2 lanes); the same
+  4 shapes stay `return-type-not-resolvable` on gc host-assisted; the boolean
+  and non-literal refusals carry that code (not a body-shape code); 18 direct
+  rows on `uniformLiteralReturnKind`, including the distinct-literal union.
+- Byte probe (sha256 of `result.binary`, merge base `7cc5d52322` vs head),
+  `semanticProviders: "host-assisted"` on gc: identical for the two
+  non-literal-tail shapes, the two literal-tail shapes and three no-shape
+  programs. Standalone claims the literal shapes with node's result.
 
 ## What's left
 
@@ -76,3 +91,10 @@ bodies that can fall out (`T | undefined`).
    later as `class-member-unsupported` (not a type question).
 2. Unannotated method parameters (`m(n)`) drop the class descriptor (#6856 §3).
 3. `makeArrayLike`-style mixed returns need a concrete→dynamic box at return.
+4. Three mechanisms now infer an unannotated return kind — `declarationReturnKind`
+   (`src/ir/type-evidence.ts`, checker signature), `seedReturnType`
+   (`src/ir/propagate.ts`, #7133 literal-union collapse) and this syntactic
+   scan; its visitor skeleton mirrors `irFunctionBodyReturnsValue`. A shared
+   "collect value returns outside nested functions" helper would serve both.
+5. The `mapped === undefined` conjunct is always true for a method at the only
+   call site; it is defensive, mirroring the void arm.
