@@ -26,8 +26,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { flushLateImportShifts } from "./shared.js";
 import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
-import { addFuncType, getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "./native-construct.js";
 import { reserveBuiltinCollectionDynConstruct } from "./builtin-collection-dyn-construct.js";
 import {
@@ -53,6 +52,7 @@ import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
 import { isStrictFunction } from "./helpers/is-strict-function.js";
 import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 
 /** The largest arity `dyn.construct` admits: the fixed-arity driver family. */
 export const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = MAX_NATIVE_CONSTRUCT_ARITY;
@@ -93,22 +93,14 @@ export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: numbe
   if (existing !== undefined) return existing;
 
   const externref: ValType = { kind: "externref" };
-  const helper: FunctionContext = {
+  const helper = helperFunctionContext(
     name,
-    params: [
+    [
       { name: "callee", type: externref },
       ...Array.from({ length: arity }, (_, i) => ({ name: `arg${i}`, type: externref })),
     ],
-    locals: [],
-    localMap: new Map(),
-    returnType: externref,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
+    externref,
+  );
 
   // The arming prelude of `tryCompileNativeConstructFromValue`, same order.
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
@@ -179,21 +171,7 @@ export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: numbe
     helper.body.push(...nativeDriverCall);
   }
 
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((p) => p.type),
-    [externref],
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
+  return publishHelperFunction(ctx, helper);
 }
 
 // ---------------------------------------------------------------------------
@@ -220,44 +198,6 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-function receiverHelperContext(
-  name: string,
-  params: { name: string; type: ValType }[],
-  returnType: ValType,
-): FunctionContext {
-  return {
-    name,
-    params,
-    locals: [],
-    localMap: new Map(params.map((param, index) => [param.name, index])),
-    returnType,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
-}
-
-function publishReceiverHelper(ctx: CodegenContext, helper: FunctionContext, results: ValType[]): number {
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((param) => param.type),
-    results,
-  );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(helper.name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name: helper.name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
-}
-
 /** Collect what `emit` pushes into a detached sequence. */
 function captureReceiverSequence(helper: FunctionContext, emit: () => void): Instr[] {
   const outer = helper.body;
@@ -279,7 +219,7 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
   if (existing !== undefined) return existing;
 
   const externref: ValType = { kind: "externref" };
-  const helper = receiverHelperContext(name, [], externref);
+  const helper = helperFunctionContext(name, [], externref);
   const thisGlobal = ensureCurrentThisGlobal(ctx);
   const receiver = allocLocal(helper, "__receiver", externref);
   // `emitUnboundThis` / `emitExplicitNullThis`, with the strictness decided by
@@ -303,7 +243,25 @@ export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean):
     { op: "if", blockType: { kind: "val", type: externref }, then: unbound, else: installed },
   );
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [externref]);
+  return publishHelperFunction(ctx, helper);
+}
+
+export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
+
+/**
+ * (#7106) Reserve the realm-global-object wrapper `dyn.global_object` calls:
+ * legacy's own `globalThis` read (`emitGlobalObjectAsThis`, the sloppy-`this`
+ * fallback), so an IR read of an ambient global sees the realm's bindings.
+ */
+export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const helper = helperFunctionContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
+  emitGlobalObjectAsThis(ctx, helper);
+  flushLateImportShifts(ctx, null);
+  return publishHelperFunction(ctx, helper);
 }
 
 /**
@@ -326,14 +284,14 @@ export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionNa
   const isProtoOf = ensureLateImport(ctx, "__isPrototypeOf", [externref, externref], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, null);
   if (isProtoOf === undefined) return undefined;
-  const helper = receiverHelperContext(name, [{ name: "value", type: externref }], { kind: "i32" });
+  const helper = helperFunctionContext(name, [{ name: "value", type: externref }], { kind: "i32" });
   if (!emitFnctorProtoGet(ctx, helper, functionName)) return undefined;
   helper.body.push(
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: ctx.funcMap.get("__isPrototypeOf") ?? isProtoOf },
   );
   flushLateImportShifts(ctx, null);
-  return publishReceiverHelper(ctx, helper, [{ kind: "i32" }]);
+  return publishHelperFunction(ctx, helper);
 }
 
 /**

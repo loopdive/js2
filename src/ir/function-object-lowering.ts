@@ -232,6 +232,22 @@ export function isPreparedFunctionObjectAccess(
   );
 }
 
+/**
+ * (#7106 census arm 3) `F.p.x = v`: the receiver `F.p` is a dynamic member get
+ * on the planned, boxed function object `F`, so the write is the same dynamic
+ * member write as `F.x = v`.
+ */
+export function isPreparedFunctionObjectChainedWrite(
+  receiver: ts.Expression,
+  plans: ReadonlyMap<ts.Identifier, IrTopLevelFunctionValueLoweringPlan> | undefined,
+): boolean {
+  return (
+    ts.isPropertyAccessExpression(receiver) &&
+    ts.isIdentifier(receiver.expression) &&
+    plans?.get(receiver.expression)?.objectReceiver === true
+  );
+}
+
 export function lowerFunctionObjectPropertyWrite(
   receiver: IrValueId,
   name: string,
