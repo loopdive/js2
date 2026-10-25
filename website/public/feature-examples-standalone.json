@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4464,
+      "passCount": 4465,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -639,7 +639,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 370,
+          "pass": 371,
           "total": 397
         }
       ]
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2532,
+      "passCount": 2533,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -859,7 +859,7 @@
         },
         {
           "edition": "ES2018",
-          "pass": 18,
+          "pass": 19,
           "total": 19
         },
         {
@@ -1203,7 +1203,7 @@
     {
       "name": "Object spread / rest",
       "testCategories": ["language/expressions/object/spread"],
-      "passCount": 299,
+      "passCount": 303,
       "totalCount": 401
     },
     {
@@ -1564,12 +1564,12 @@
     {
       "name": "Temporal",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 4481,
+      "passCount": 4483,
       "totalCount": 4603,
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 4481,
+          "pass": 4483,
           "total": 4603
         }
       ]
