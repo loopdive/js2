@@ -103,28 +103,56 @@ function typeIndex(tx: PhysicalModuleReservations, types: NativeDeclaredTypeToke
   else tx.physicalIndex(token);
   return token.typeIndex;
 }
+function instantiateValue(value: NativeDeclaredValType, resolve: (key: string) => number): ValType {
+  if (value.kind === "ref" || value.kind === "ref_null") {
+    if (!("typeKey" in value) || "typeIdx" in value) fail("physical or missing reference in symbolic declaration");
+    return { kind: value.kind, typeIdx: resolve(value.typeKey) };
+  }
+  if (!scalarKinds.includes(value.kind) || "typeKey" in value || "typeIdx" in value)
+    fail("unsupported scalar declaration");
+  return { ...value };
+}
 export function instantiateNativeDeclaredValType(
   tx: PhysicalModuleReservations,
   value: NativeDeclaredValType,
   types: NativeDeclaredTypeTokens,
 ): ValType {
-  if (value.kind === "ref" || value.kind === "ref_null") {
-    if (!("typeKey" in value) || "typeIdx" in value) fail("physical or missing reference in symbolic declaration");
-    return { kind: value.kind, typeIdx: typeIndex(tx, types, value.typeKey) };
+  return instantiateValue(value, (key) => typeIndex(tx, types, key));
+}
+
+/** Resolve one descriptor locally, then authenticate every referenced token in
+ * one fresh ledger audit before exposing the result. Nothing is cached across
+ * descriptors; getters/map lookups cannot mutate an earlier type unnoticed.
+ */
+function withDeclaredReferences<T>(
+  tx: PhysicalModuleReservations,
+  types: NativeDeclaredTypeTokens,
+  build: (resolve: (key: string) => number) => T,
+): T {
+  const phase = tx.state;
+  const tokens: TypeReservation[] = [];
+  const result = build((key) => {
+    const token = types.get(key);
+    if (!token || token.key !== key) fail("missing or substituted type key " + key);
+    tokens.push(token);
+    return token.typeIndex;
+  });
+  if (tx.state !== phase) fail("declaration resolution changed ledger phase");
+  if (tokens.length) {
+    if (phase === "reserving") tx.assertTypeReservations(tokens);
+    else tx.physicalIndices(tokens);
   }
-  if (!scalarKinds.includes(value.kind) || "typeKey" in value || "typeIdx" in value)
-    fail("unsupported scalar declaration");
-  return { ...value };
+  return result;
 }
 export function instantiateNativeDeclaredSignature(
   tx: PhysicalModuleReservations,
   signature: NativeDeclaredSignature,
   types: NativeDeclaredTypeTokens,
 ) {
-  return {
-    params: signature.params.map((value) => instantiateNativeDeclaredValType(tx, value, types)),
-    results: signature.results.map((value) => instantiateNativeDeclaredValType(tx, value, types)),
-  };
+  return withDeclaredReferences(tx, types, (resolve) => ({
+    params: signature.params.map((value) => instantiateValue(value, resolve)),
+    results: signature.results.map((value) => instantiateValue(value, resolve)),
+  }));
 }
 export function instantiateNativeDeclaredType(
   tx: PhysicalModuleReservations,
@@ -132,11 +160,18 @@ export function instantiateNativeDeclaredType(
   types: NativeDeclaredTypeTokens,
   self?: { readonly key: string; readonly typeIndex: number },
 ): TypeDef {
+  return withDeclaredReferences(tx, types, (resolve) => instantiateType(shape, resolve, self));
+}
+function instantiateType(
+  shape: NativeDeclaredType,
+  resolve: (key: string) => number,
+  self?: { readonly key: string; readonly typeIndex: number },
+): TypeDef {
   const name = (value: NativeDeclaredName): string => {
     if (typeof value === "string") return value;
-    if (value.kind === "array-ref-index") return `__arr_ref_${typeIndex(tx, types, value.typeKey)}`;
+    if (value.kind === "array-ref-index") return `__arr_ref_${resolve(value.typeKey)}`;
     if (value.kind !== "builtin-function-metadata-index") fail("invalid indexed name");
-    const index = self?.key === value.typeKey ? self.typeIndex : typeIndex(tx, types, value.typeKey);
+    const index = self?.key === value.typeKey ? self.typeIndex : resolve(value.typeKey);
     if (!Number.isSafeInteger(index) || index < 0) fail("invalid self coordinate");
     return `__builtinfn_meta_${index}_struct`;
   };
@@ -144,7 +179,7 @@ export function instantiateNativeDeclaredType(
     return {
       kind: "array",
       name: name(shape.name),
-      element: instantiateNativeDeclaredValType(tx, shape.element, types),
+      element: instantiateValue(shape.element, resolve),
       mutable: shape.mutable,
     };
   if (shape.kind !== "struct") fail("unsupported declaration shape");
@@ -152,14 +187,14 @@ export function instantiateNativeDeclaredType(
   return {
     ...rest,
     name: name(shape.name),
-    fields: fields.map((field) => ({ ...field, type: instantiateNativeDeclaredValType(tx, field.type, types) })),
+    fields: fields.map((field) => ({ ...field, type: instantiateValue(field.type, resolve) })),
     ...(Object.hasOwn(shape, "parent")
       ? {
           superTypeIdx:
             parent?.kind === "root"
               ? -1
               : parent?.kind === "resource"
-                ? typeIndex(tx, types, parent.typeKey)
+                ? resolve(parent.typeKey)
                 : fail("invalid explicit parent"),
         }
       : {}),

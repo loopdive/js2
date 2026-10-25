@@ -4012,3 +4012,58 @@ runtime configuration obligation. Full Promise production composition and
 the independent long-running common-runtime qualification remain unresolved.
 Reviewed publication is a separate configuration branch/PR; the existing
 integration and live performance trees remain unchanged.
+
+
+### Declaration reference audit batching — 2026-10-25 (in progress)
+
+The real public-reservation diagnostic on production commit 770ae1d9 plus the
+retained production/common-contract changes recorded 9,582 assertTypeReservations
+calls taking 37.48 seconds within its first 90.11 seconds. Sampled callers
+repeatedly resolve individual fields/parents through native-resource-declarations.
+This is an instrumented partial observation, not an end-to-end performance result.
+A source-only production case passed 1/1 in 4.19 seconds (eight filtered cases),
+so the empty buffered suite log did not identify the source case as stalled.
+
+Use the existing ledger batch APIs once per signature/type description after
+collecting its exact referenced tokens. Preserve key/owner/phase validation,
+validate after descriptor getters and map lookups have run, and keep standalone
+value-type checks unchanged. Do not cache an authentication across descriptors.
+Tests must include displaced coordinates, source mutation during traversal,
+foreign/copied tokens, changed phase and malformed reference forms before this
+change can be transferred to the active production tree.
+
+Batching checkpoint (2026-10-25): the repaired focused suite passes **19/19**
+with exit 0. Foreign/copied-token negatives use separate ledgers: rejecting an
+owner intentionally poisons that ledger, so reusing it was a test-fixture bug.
+The new test's union-type access errors were fixed by retaining its concrete
+struct definition. All source files plus this test pass TS7 (exit 0).
+
+A removal control replaced only native-resource-declarations.ts with its exact
+770ae1d957253c28493bfb6ba29263b5c23302bd blob, ran the selected tests, and restored
+the candidate. All seven selected new batching/mutation/phase cases fail on
+that base; signature/struct reservation audits are 81/22 rather than one, and
+the base misses mutations after the final reference and a traversal-time phase
+change. The same four existing declaration-text assertions fail with and
+without the candidate. The three remaining expanded-test TS7 diagnostics also
+reproduce with the base source: TypeDef.name in the async test,
+SourceFile.parseDiagnostics in the family test, and an incomplete backend
+options fixture in the general declaration test. They remain test debt; the
+five-file expanded suite is not claimed green. Initial candidate evidence is
+105 passed / 6 failed of 111; after fixing only the new fixture, the focused
+19-case suite is clean. Existing object/async/general declaration suites had
+passed in the initial run; the production performance result remains pending.
+
+Evidence stays in this worktree's .tmp/: batch-focused2.log,
+batch-baseline-tests.log, batch-baseline-types.log, batch-source-types.log and
+the batch gate logs. LOC, function budget, import cycles, IR layering,
+coercion-site and oracle ratchets all exited 0. No budget allowances or
+cross-descriptor authentication cache were added.
+
+Fresh-context review of the two-file implementation and ledger APIs found no
+actionable correctness/regression issue. It confirmed issued tokens are frozen
+and exact identities are authenticated after traversal; it did not independently
+rerun tests or establish end-to-end performance. The complete architecture gate
+still reports inventory-valid-architecture-incomplete (exit 1); removing this
+patch changes only its content fingerprints, not its findings. This is an open migration obligation,
+not a newly green architecture claim. The moved-reference preservation gate
+exits 0 while explicitly leaving retirement/deletion NOT CERTIFIED.
