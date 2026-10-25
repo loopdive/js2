@@ -123,11 +123,12 @@ describe("#7106 Stage 4 — calls through a dynamic value", () => {
     expect(await initializeAndRun(result)).toBe(1101001);
   }, 35_000);
 
-  // The arm is reachable only through a planned member closure, and the plan
-  // exists only on the native-first, non-fast lanes (`native-dynamic-value-call`).
-  // The same shape claims on standalone and stays legacy — refused at select,
-  // before any claim — on host-assisted gc and on the fast lane.
-  it("admits the call only where the capability holds (no claim-then-demote elsewhere)", async () => {
+  // This exercises the planner's lane gate, not a capability: the arm is
+  // reachable only through a planned member closure, and `planMemberClosure`
+  // mints no plan on host-assisted gc or on the fast lane. The same shape
+  // claims on standalone and stays legacy — refused at select, before any
+  // claim — on those two lanes.
+  it("admits the call only where a member-closure plan exists (no claim-then-demote elsewhere)", async () => {
     const standalone = await compile(DYNAMIC_CALL, OPTIONS);
     expect(row(standalone, "<module-init>")).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
     for (const lane of [

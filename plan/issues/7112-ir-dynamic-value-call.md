@@ -68,8 +68,12 @@ it also restores on an exception.
   restores it on a normal return.
 - **Selector** (`dynamicValueCallTarget`): admits a bare call (`func()`, no
   `?.`, no spread) of one of a **planned function-member closure's** dynamic
-  parameters, on the `native-dynamic-value-call` lanes (wasmgc, non-fast,
-  standalone or wasi; gc native-first projects as standalone). The one
+  parameters. The arm has no capability of its own: its lane is the plan's
+  lane (`planMemberClosure` requires non-fast, native-first, standalone or
+  wasi, and the externref carrier; gc native-first projects as standalone).
+  The match is by identifier text, so a catch binding shadowing the parameter
+  also takes the arm — sound, since the catch binding is itself the dynamic
+  carrier on these lanes. The one
   difference from legacy is that the shared runtime does not restore
   `__current_this` when the callee throws inside a `try`, which only a caller
   that reads its own `this` afterwards could observe — a planned member
@@ -89,14 +93,15 @@ it also restores on an exception.
 ## Left for a follow-up
 
 A **top-level function** whose own dynamic parameter is called
-(`function self(func: any) { func(); }`) is **not** admitted. The subject's
-move-only scan (`dynamicUsesAreMoveOnly`, `select.ts`) refuses a called
-dynamic parameter before any call arm runs, so the subject stays legacy with
-`call-resolution-unsupported` / `param-type-not-resolvable` exactly as on main.
-Admitting it needs that scan extended to treat `func()` as a move (and the
-own-`this` constraint above checked for the subject), with its own census
-measurement of how many top-level units it unblocks; none of this PR's
-fixtures depend on it.
+(`function self(func: any) { func(); }`) is **not** admitted: the arm's
+closure-parameter name set is empty outside a planned closure. Independently,
+the subject's Phase-1 shape check refuses `func()` at `expr-local-call-target`
+before the move-only scan (`dynamicUsesAreMoveOnly`) runs, so the subject
+stays legacy with `call-resolution-unsupported` exactly as on main. Admitting
+it needs a subject-level name set, the Phase-1 check and the move-only scan
+both extended to treat `func()` as admitted (and the own-`this` constraint
+above checked for the subject), with its own census measurement of how many
+top-level units it unblocks; none of this PR's fixtures depend on it.
 
 ## Acceptance
 
