@@ -78,7 +78,6 @@ export function addImport(ctx: CodegenContext, module: string, name: string, des
  * {@link reserveLinkedExnTag} exists to make that window practically empty.
  */
 function peerExnTagNamespace(ctx: CodegenContext): string | undefined {
-  if (!ctx.standalone) return undefined;
   if (ctx.standaloneGlobalThisImport?.exceptionTag !== undefined) return ctx.standaloneGlobalThisImport.module;
   if (ctx.exportsConsumedByWasm === true) return undefined;
   const namespaces = [...ctx.linkedNamespaces].filter((name) => name.startsWith("js2wasm:npm:")).sort();

@@ -154,18 +154,6 @@ export function fnctorAncestorOfClass(ctx: CodegenContext, className: string): s
   return undefined;
 }
 
-/**
- * (#3123) True when ANY class in the module has a fnctor ancestor — the gate
- * for emitting the member-kind / getter dispatch exports so modules without
- * the pattern stay byte-identical.
- */
-export function moduleHasFnctorSubclass(ctx: CodegenContext): boolean {
-  for (const className of ctx.classParentMap.keys()) {
-    if (fnctorAncestorOfClass(ctx, className) !== undefined) return true;
-  }
-  return false;
-}
-
 export function resolveMethodOwnerClass(ctx: CodegenContext, start: string, propName: string): string {
   const startFull = `${start}_${propName}`;
   const startIdx = ctx.funcMap.get(classMemberFuncKey(ctx, startFull));

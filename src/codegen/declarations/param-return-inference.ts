@@ -455,7 +455,6 @@ function isKnownAmbientGlobalBinding(ctx: CodegenContext, identifier: ts.Identif
 }
 
 function isStandaloneCollectionNativeProtoArgument(ctx: CodegenContext, expression: ts.Expression): boolean {
-  if (!ctx.standalone) return false;
   let current = expression;
   while (
     ts.isParenthesizedExpression(current) ||
@@ -684,7 +683,7 @@ export function inferParamTypeFromCallSites(
             if ((argType.flags & ~(ts.TypeFlags.Void | ts.TypeFlags.Undefined)) === 0) sawNullishArg = true;
             // (#6774 S6) A symbol's i32 id is not a number: an untyped param
             // narrowed to i32 from it re-boxes as a NUMBER. Keep it externref.
-            if (ctx.standalone && (argType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
+            if ((argType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
               sawOpaqueAnyArg = true;
               return;
             }
@@ -1790,7 +1789,7 @@ export function inferBindingAwareNumericReturnTypes(
   ctx: CodegenContext,
   sourceFiles: readonly ts.SourceFile[],
 ): Map<string, ValType> {
-  if (!ctx.standalone || !numericReturnsFlagEnabled() || !ctx.numericLocalVerdict) return new Map();
+  if (!numericReturnsFlagEnabled() || !ctx.numericLocalVerdict) return new Map();
 
   const candidates = new Map<string, ts.FunctionDeclaration[]>();
   for (const sourceFile of sourceFiles) {

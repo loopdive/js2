@@ -319,7 +319,7 @@ export function getOrRegisterArgumentsVecType(ctx: CodegenContext): number {
   // prototype registration. Keep their established canonical vec ABI; the
   // nominal brand is only needed in the host-free lanes where IsArray is
   // answered by the module-local carrier predicate.
-  if (!ctx.standalone && !ctx.wasi) return getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+
   if (getArgumentsVecTypeIdx(ctx) >= 0) return getArgumentsVecTypeIdx(ctx);
 
   const parentVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });

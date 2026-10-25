@@ -13,7 +13,6 @@ import {
   isStringType,
 } from "../../checker/type-mapper.js";
 import { forEachChild, ts } from "../../ts-api.js";
-import { exactIndirectEvalStatement } from "../../eval-call-shape.js";
 import { ensureWrapperTypes } from "../any-helpers.js";
 import { asyncGenDrivableUnderCarrier, asyncGenStem } from "../async-frame.js";
 import { unwrapTransparentExpression } from "../object-descriptor-analysis.js";
@@ -189,71 +188,8 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
   };
 }
 
-function collectorSeesAmbientEval(ctx: CodegenContext, identifier: ts.Identifier): boolean {
-  const declarations = ctx.oracle.declarationsOf(identifier);
-  // Match `makeIrAmbientBindingPredicate`: a merged lib symbol may carry
-  // several declarations, and the selector/lowerer accept it when one is an
-  // ambient declaration. A source-owned shadow has no declaration-file arm.
-  return declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile);
-}
-
-function collectorHostStringFact(ctx: CodegenContext, expression: ts.Expression): boolean {
-  const fact = ctx.oracle.typeFactOf(expression);
-  return (
-    fact.kind === "string" ||
-    (fact.kind === "union" &&
-      !fact.nullable &&
-      !fact.undefinable &&
-      fact.parts.length > 0 &&
-      fact.parts.every((part) => part.kind === "string"))
-  );
-}
-
-function stripHostEvalTypeAssertions(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
-/**
- * Match the selector's proven-string discipline closely enough that the
- * collector cannot omit an import from a claimed IR body. In particular,
- * diagnostics-off annotations do not make `const s: string = 1` look like a
- * host string merely because its declared type says so.
- */
-function collectorProvesHostEvalString(
-  ctx: CodegenContext,
-  expression: ts.Expression,
-  seen = new Set<ts.VariableDeclaration>(),
-): boolean {
-  const candidate = stripHostEvalTypeAssertions(expression);
-  if (ts.isStringLiteral(candidate) || ts.isNoSubstitutionTemplateLiteral(candidate)) return true;
-  if (!collectorHostStringFact(ctx, candidate)) return false;
-  if (!ts.isIdentifier(candidate)) return true;
-  const declaration = ctx.oracle.variableDeclarationOf(candidate);
-  if (!declaration) return true; // typed parameter / non-local checker binding
-  if (!declaration.initializer || seen.has(declaration)) return false;
-  const nextSeen = new Set(seen);
-  nextSeen.add(declaration);
-  return collectorProvesHostEvalString(ctx, declaration.initializer, nextSeen);
-}
-
 function needsHostIndirectEvalImport(ctx: CodegenContext, node: ts.Node): boolean {
-  if (ctx.standalone || ctx.wasi || ctx.strictNoHostImports || ctx.nativeStrings || !ts.isCallExpression(node)) {
-    return false;
-  }
-  const shape = exactIndirectEvalStatement(node);
-  return (
-    !!shape && collectorSeesAmbientEval(ctx, shape.evalIdentifier) && collectorProvesHostEvalString(ctx, shape.source)
-  );
+  return false;
 }
 
 /** Single-pass visitor called on every AST node */
@@ -456,12 +392,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // which gives real Intl grouping (`(1234).toLocaleString() === "1,234"`), so
     // this registration is gated off there. The 0-arg guard keeps a
     // locale-argument form (which would need real Intl) on the host fallback.
-    if (
-      (ctx.standalone || ctx.wasi) &&
-      isNumberType(receiverType) &&
-      methodName === "toLocaleString" &&
-      node.arguments.length === 0
-    ) {
+    if (isNumberType(receiverType) && methodName === "toLocaleString" && node.arguments.length === 0) {
       state.primitiveNeeded.add("number_toString");
     }
     // (#2160 number-wrapper) Standalone `new Number(x).<fmt>()` recovers the
@@ -471,7 +402,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // recognized here — this scan drives `emitNativeNumberFormat` in standalone —
     // or the helper is never emitted and the call site returns null. Gated on
     // standalone (the recovery path); host/WASI keep their existing routing.
-    const isNumFmtRecv = isNumberType(receiverType) || (ctx.standalone && isNumberWrapperType(receiverType));
+    const isNumFmtRecv = isNumberType(receiverType) || isNumberWrapperType(receiverType);
     if (isNumFmtRecv && methodName === "toFixed") {
       state.primitiveNeeded.add("number_toFixed");
     }
@@ -481,14 +412,10 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     if (isNumFmtRecv && methodName === "toExponential") {
       state.primitiveNeeded.add("number_toExponential");
     }
-    if (
-      ctx.standalone &&
-      isNumberWrapperType(receiverType) &&
-      (methodName === "toString" || methodName === "toLocaleString")
-    ) {
+    if (isNumberWrapperType(receiverType) && (methodName === "toString" || methodName === "toLocaleString")) {
       state.primitiveNeeded.add("number_toString");
     }
-    if (ctx.standalone && isNumberWrapperType(receiverType) && methodName === "toString") {
+    if (isNumberWrapperType(receiverType) && methodName === "toString") {
       // radix form needs the 2-arg helper
       state.primitiveNeeded.add("number_toString_radix");
     }
@@ -550,8 +477,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
     // (mirrors `isNumberWrapperType`'s Object+symbol check).
     const elemRecvExpr = node.expression.expression;
     const isElemNumFmtRecv =
-      ctx.oracle.staticJsTypeOf(elemRecvExpr) === "number" ||
-      (ctx.standalone && ctx.oracle.declaredNameOf(elemRecvExpr) === "Number");
+      ctx.oracle.staticJsTypeOf(elemRecvExpr) === "number" || ctx.oracle.declaredNameOf(elemRecvExpr) === "Number";
     if (isElemNumFmtRecv) {
       if (elemMethodName === "toFixed") {
         state.primitiveNeeded.add("number_toFixed");
@@ -903,24 +829,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
           state.getterCallbackFound = true;
           break;
         }
-        // (#3048) A non-plain-literal computed method key routes through the
-        // host plain-object method arms in literals.ts — the well-known-`Symbol`
-        // arm (`{ [Symbol.iterator]() {} }`) and the runtime-key arm
-        // (`{ [ID(2)]() {} }`, `{ [k]() {} }`) — both of which install the method
-        // value via the `__make_getter_callback` bridge. Only a plain
-        // numeric/string-literal key (`{ [1]() {} }`, `{ ["x"]() {} }`) resolves
-        // to a static method name and takes the struct/string path (no bridge),
-        // so it needs no registration. The pre-pass previously registered the
-        // bridge only for the `dispose`/`asyncDispose` arm above, so every other
-        // well-known-symbol / runtime computed method missed it → hard CE
-        // "Missing __make_getter_callback import" (#1027 resurgence). Host/GC
-        // only: standalone/WASI compile the method as a host-free closure (#2194)
-        // and must not declare the unsatisfiable `env::` bridge import.
-        const isPlainLiteralKey = ts.isNumericLiteral(inner) || ts.isStringLiteralLike(inner);
-        if (!isPlainLiteralKey && !ctx.standalone && !ctx.wasi) {
-          state.getterCallbackFound = true;
-          break;
-        }
       }
     }
   }
@@ -999,7 +907,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       node.asteriskToken &&
       node.body &&
       !hasDeclareModifier(node) &&
-      !((ctx.standalone || ctx.wasi) && isNativeGeneratorCandidate(ctx, node))
+      !isNativeGeneratorCandidate(ctx, node)
     ) {
       state.unionFound = true;
     }
@@ -1109,12 +1017,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // discipline as `moduleHasAsyncGen` above) so a textually-later producer is
   // seen before any `.then` bridge compiles. gc/host + wasi are untouched
   // (standalone-only setter; the consumer re-checks the target too).
-  if (
-    ctx.standalone === true &&
-    ctx.wasi !== true &&
-    ctx.moduleHasHostPromiseSource !== true &&
-    ts.isCallExpression(node)
-  ) {
+  if (ctx.wasi !== true && ctx.moduleHasHostPromiseSource !== true && ts.isCallExpression(node)) {
     if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       ctx.moduleHasHostPromiseSource = true;
     } else {
@@ -1153,7 +1056,6 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   // the subclass shape needs its own flag, keyed on the heritage clause
   // (pre-body, so a textually-later class declaration is still seen).
   if (
-    ctx.standalone === true &&
     ctx.wasi !== true &&
     ctx.moduleHasHostPromiseSource !== true &&
     (ts.isClassDeclaration(node) || ts.isClassExpression(node))
@@ -1631,8 +1533,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
     // can never succeed, so no passing standalone module actually calls it (#3098's
     // native `__apply_closure`/`__hof_*`/`__iter_hof_*` serve exercised callbacks
     // host-free) — the eager registration only ever *declares* an unsatisfiable
-    // never-called import that fails the host-free metric. Gate it off (mirrors the
-    // async-CPS `!ctx.standalone` gate below); any residual host-callback site
+    // never-called import that fails the host-free metric. Gate it off; any residual host-callback site
     // degrades to the native closure struct (see compileArrowAsCallback). JS-host
     // lane byte-identical.
 
@@ -1654,9 +1555,8 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   // claims a generator function (#1169f). The helper is idempotent —
   // guards on `ctx.funcMap.has("__gen_create_buffer")` internally.
   if (state.generatorFound) {
-    const needsNoJsHostFallback =
-      (ctx.standalone || ctx.wasi) && sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
-    if (!(ctx.standalone || ctx.wasi) || needsNoJsHostFallback) {
+    const needsNoJsHostFallback = sourceNeedsGeneratorHostImports(ctx, state.sourceFile);
+    if (needsNoJsHostFallback) {
       addGeneratorImports(ctx, { allowNoJsHost: needsNoJsHostFallback });
     }
     reportEagerGeneratorAbruptResumptions(ctx, state.sourceFile); // (#6781) traced .throw()/.return() on eager
@@ -1730,36 +1630,12 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
   for (const [name, argCount] of state.unknownCtorNeeded) {
     const importName = `__new_${name}`;
     if (ctx.funcMap.has(importName)) continue;
-    // (#1104 Phase 1) In WASI/standalone mode, the JS host is unavailable —
-    // emit Wasm-native `__new_<ErrorName>` functions that build a
-    // `$Error_struct` for the 8 built-in Error constructors instead of
-    // unsatisfiable `env.__new_<ErrorName>` host imports. JS-host mode is
-    // unchanged.
-    // #1473 — standalone mode has no JS host either, so it needs the same
-    // in-module Error constructors as WASI mode.
-    if (isWasiErrorName(name)) {
-      emitWasiErrorConstructor(ctx, name, argCount);
-      continue;
-    }
-    // (#2026 PR-1b) In no-JS-host mode (WASI / standalone) an `env.__new_<name>`
-    // import is *never* satisfiable — there is no host to provide it — and the
-    // strict-import allowlist gate (#1524/#2094) rejects it at registration
-    // time, so a single `new K()` on a value-bound class identifier fails the
-    // whole standalone compile (the original "Host import env.__new_K …" error).
-    // Skip the host import entirely here: the dynamic-new fallback in
-    // `compileNewExpression` (`emitDynamicNewFallback`) is the resolution path
-    // in standalone — it reads the class-object descriptor's `__tag` and
-    // dispatches to the matching `<Class>_new` with pure Wasm (no host import),
-    // and on a no-match descriptor it yields a null externref (the same result
-    // the absent-import `else` branch produced before). Genuine JS-host
-    // builtins cannot exist in standalone anyway, so there is nothing to lose.
-    // Host (JS) mode still registers the import for those builtins.
-    if (ctx.wasi || ctx.standalone) {
-      continue;
-    }
-    const params: ValType[] = Array.from({ length: argCount }, () => ({ kind: "externref" }) as ValType);
-    const typeIdx = addFuncType(ctx, params, [{ kind: "externref" }]);
-    addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    // (#1104 Phase 1 / #1473) The built-in Error constructors are in-module
+    // `__new_<ErrorName>` functions. Any other `__new_<name>` is never
+    // registered (#2026 PR-1b): no host could satisfy it, and the dynamic-new
+    // fallback in `compileNewExpression` (`emitDynamicNewFallback`) resolves a
+    // value-bound class through its class-object descriptor in pure Wasm.
+    if (isWasiErrorName(name)) emitWasiErrorConstructor(ctx, name, argCount);
   }
 }
 
