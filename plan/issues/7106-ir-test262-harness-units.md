@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-25
 priority: high
 horizon: l
 feasibility: hard
@@ -759,6 +759,33 @@ node on standalone and gc (wasi: validate).
 - All 5 cases fail on the base.
 - Also fixes the pre-existing #2952 slice 6c dual-run case "head compared to a
   literal" on this stack.
+
+**Switch-gate fix (2026-10-25, measured; #6843).** The arm shipped one
+claim-then-demote. `switch (k)` over a dynamic-carrier head was CLAIMED by the
+selector and demoted at build on standalone, wasi and gc native-first
+(`irPostClaimErrors = [{kind:"build", message:"ir/from-ast: string-tested
+switch disc lowered to dynamic, not string, in h"}]`; legacy recompiled it, so
+the result was right by accident). The same `switch` over a dynamic PARAM was
+refused before the claim. Cause: the switch gate's
+`switchDiscHasIrStringCarrier` follows the disc to its declaration and
+certifies any binding without an initializer — a `var k` for-in head has none.
+Fix: when that declaration is a for-in head, the predicate asks
+`dynamicCarrierForInHead(stmt)` — the arm's own classification, the one place
+that decides the head is dynamic on this lane — and answers `false`, so the
+shape is refused pre-claim as `switch-disc-not-string-carrier` (the
+`body-shape-rejected` family, like the dynamic-param case). No second name or
+shape test; the producer is unchanged.
+- Before/after on the repro (`{a:1,b:2,c:3}`, node 12): standalone and wasi
+  claimed then demoted; now refused before the claim, `irPostClaimErrors`
+  empty, legacy answers 12. gc native-first with a JSDoc-typed helper behaved
+  the same both ways.
+- Host-assisted gc bytes (`semanticProviders: "host-assisted"`) are identical
+  between `origin/main` and the fix for the switch repro, a plain for-in and a
+  no-shape loop (`8c1e9e9c…`, `9b85e4dd…`, `ebb1550f…`).
+- Tests: the switch repro, a captured head (`forin-head-value-captured`) and a
+  written head (`forin-head-value-written`) each assert the refusal arm, empty
+  `irPostClaimErrors` and the node result, on standalone and gc; wasi pins the
+  switch refusal. The three switch cases fail without the fix.
 
 ## propertyHelper.js, arm 3 — statement-position dynamic delete (2026-10-22, measured)
 

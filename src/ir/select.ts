@@ -5098,7 +5098,16 @@ function switchDiscHasIrStringCarrier(expr: ts.Expression, seen = new Set<ts.Var
   // unresolvable bindings have no initializer to inspect — the checker family
   // gate governs those (a `string`-annotated param IS `IrType.string`).
   const declaration = currentModuleBindingResolver?.localVariableDeclaration(candidate);
-  if (!declaration || seen.has(declaration) || !declaration.initializer) return true;
+  if (!declaration || seen.has(declaration)) return true;
+  // (#7106 propertyHelper arm 2) A `for (var k in <dyn>)` head has no
+  // initializer, yet on the native non-fast lane it lowers as the dynamic
+  // carrier, not `IrType.string`. Ask the arm's own head classification
+  // (`dynamicCarrierForInHead`) — the one place that decides the head is
+  // dynamic — so a `switch (k)` is refused before the claim instead of
+  // demoting at build (measured 2026-10-25, standalone and wasi).
+  const forIn = declaration.parent.parent;
+  if (ts.isForInStatement(forIn) && dynamicCarrierForInHead(forIn) !== undefined) return false;
+  if (!declaration.initializer) return true;
   seen.add(declaration);
   return switchDiscHasIrStringCarrier(declaration.initializer, seen);
 }

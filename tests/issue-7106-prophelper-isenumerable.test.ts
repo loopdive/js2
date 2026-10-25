@@ -8,7 +8,7 @@
 // helpers' externref IS the dynamic carrier of the key string, so the head is
 // now read as a dynamic value. Every result is compared with node.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import ts from "typescript";
 
 import { compile, type CompileResult } from "../src/index.js";
@@ -79,17 +79,100 @@ const HEAD_SHAPES = `
   }
 `;
 
+// Head reads the selector must REFUSE before the claim. Each is a JSDoc-typed
+// JS helper (the IS_ENUMERABLE shape) over a dynamic receiver.
+//
+// `switchKey` is the 2026-10-25 claim-then-demote: TS types the head
+// `string`, the switch gate's carrier predicate followed `k` to a declaration
+// with no initializer and certified it, and from-ast then demoted the CLAIMED
+// body ("string-tested switch disc lowered to dynamic, not string") on
+// standalone and wasi. The gate now asks `dynamicCarrierForInHead`, so the
+// refusal lands in the same `body-shape-rejected` arm family as a `switch`
+// over a dynamic param. `captureKey` and `writeKey` were already refused;
+// their arms are pinned here so the read-admission stays this narrow.
+const REFUSED_HEAD_READS: ReadonlyArray<{
+  readonly name: string;
+  readonly arm: string;
+  readonly expected: number;
+  readonly source: string;
+}> = [
+  {
+    name: "switchKey",
+    arm: "switch-disc-not-string-carrier",
+    expected: 12,
+    source: `
+      /** @param {object} o */
+      function switchKey(o) {
+        var n = 0;
+        for (var k in o) { switch (k) { case "b": n = n + 10; break; default: n = n + 1; } }
+        return n;
+      }
+      export function probe(): number { var o: any = { a: 1, b: 2, c: 3 }; return switchKey(o); }
+    `,
+  },
+  {
+    name: "captureKey",
+    arm: "forin-head-value-captured",
+    expected: 6,
+    source: `
+      /** @param {object} o */
+      function captureKey(o) {
+        var n = 0;
+        for (var k in o) { var g = function () { return k.length; }; n = n + g(); }
+        return n;
+      }
+      export function probe(): number { var o: any = { a: 1, bb: 2, ccc: 3 }; return captureKey(o); }
+    `,
+  },
+  {
+    name: "writeKey",
+    arm: "forin-head-value-written",
+    expected: 3,
+    source: `
+      /** @param {object} o */
+      function writeKey(o) {
+        var n = 0;
+        for (var k in o) { k = "x"; n = n + k.length; }
+        return n;
+      }
+      export function probe(): number { var o: any = { a: 1, b: 2, c: 3 }; return writeKey(o); }
+    `,
+  },
+];
+
+const COMPILE_OPTIONS = {
+  experimentalIR: true,
+  skipSemanticDiagnostics: true,
+  allowJs: true,
+  fileName: "issue-7106-isenumerable.ts",
+  trackIrOutcomes: true,
+} as const;
+
 async function compileProbe(source: string, target?: "standalone" | "wasi"): Promise<CompileResult> {
-  const result = await compile(source, {
-    ...(target ? { target } : {}),
-    experimentalIR: true,
-    skipSemanticDiagnostics: true,
-    allowJs: true,
-    fileName: "issue-7106-isenumerable.ts",
-    trackIrOutcomes: true,
-  } as never);
+  const result = await compile(source, { ...(target ? { target } : {}), ...COMPILE_OPTIONS } as never);
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   return result;
+}
+
+// The reject-arm label (`detail`) is recorded only under
+// `JS2WASM_IR_SHAPE_DIAG=1`, which the selector reads once at module load —
+// so, as in tests/issue-2856-shape-attribution.test.ts, the flag is set and the
+// compiler re-imported for the refusal cases; the static `compile` above is
+// untouched. Production output does not depend on the flag.
+async function compileWithShapeDiag(source: string, target?: "standalone"): Promise<CompileResult> {
+  const previous = process.env.JS2WASM_IR_SHAPE_DIAG;
+  process.env.JS2WASM_IR_SHAPE_DIAG = "1";
+  vi.resetModules();
+  try {
+    const { compile: compileDiag } = await import("../src/index.js");
+    const result = await compileDiag(source, { ...(target ? { target } : {}), ...COMPILE_OPTIONS } as never);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    return result;
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_SHAPE_DIAG");
+    else process.env.JS2WASM_IR_SHAPE_DIAG = previous;
+    vi.resetModules();
+  }
 }
 
 function irBodies(result: CompileResult): string[] {
@@ -131,6 +214,34 @@ describe("#7106 propertyHelper — for-in head as a dynamic carrier", () => {
       expect(got).toBe(63);
     });
   }
+
+  for (const lane of ["standalone", "gc"] as const) {
+    const target = lane === "standalone" ? "standalone" : undefined;
+    for (const shape of REFUSED_HEAD_READS) {
+      it(`${lane}: ${shape.name} is refused before the claim (${shape.arm}) and answers like node`, async () => {
+        const result = await compileWithShapeDiag(shape.source, target);
+        const outcome = (result.irOutcomes ?? []).find((o) => o.displayName === shape.name);
+        expect(outcome).toMatchObject({
+          kind: "unsupported",
+          stage: "select",
+          code: "body-shape-rejected",
+          irBodyEmitted: false,
+        });
+        expect((outcome as { detail?: string } | undefined)?.detail).toMatch(new RegExp(`^${shape.arm}:`));
+        expect(result.irPostClaimErrors ?? []).toEqual([]);
+        const got = await wasmProbe(result);
+        expect(got).toBe(nodeProbe(shape.source));
+        expect(got).toBe(shape.expected);
+      });
+    }
+  }
+
+  it("wasi: the switch over a for-in head is refused before the claim, not demoted at build", async () => {
+    const result = await compileProbe(REFUSED_HEAD_READS[0]!.source, "wasi");
+    expect(irBodies(result)).not.toContain("switchKey");
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+  });
 
   it("wasi: isEnumerable ships an IR body and validates", async () => {
     const result = await compileProbe(IS_ENUMERABLE, "wasi");
