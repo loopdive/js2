@@ -2,6 +2,7 @@ import {
   capturePreparedJobRequest,
   refusePreparedArtifactPaths,
   observePreparedExecutionJobResult,
+  observePreparedFrontendJobResult,
 } from "./test262-prepared-request.mjs";
 import { parseTest262SemanticProviders, test262CompileSemanticProviders } from "./test262-lane.mjs";
 import { requireTest262CompilerPath } from "./test262-compiler-path.mjs";
@@ -1664,7 +1665,8 @@ async function doCompile(
       allowJs: true,
       strictJsSyntax: isNegative,
       enforceJsEarlyErrors: isNegative && negativePhase !== "resolution",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       // Resolution negatives need TypeScript's linked-program diagnostics
@@ -1713,7 +1715,8 @@ async function doCompile(
       ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
@@ -1742,7 +1745,8 @@ async function doCompile(
       ...WORKER_SELF_VALIDATES,
       allowJs: true,
       fileName: "test.js",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
@@ -1788,7 +1792,8 @@ async function doCompile(
     return compileSingleSource(source, {
       allowJs: true,
       fileName: "test.js",
-      sourceMap: true,
+      // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
       sourceMapUrl: sourceMapUrl || "test.wasm.map",
       emitWat: false,
       skipSemanticDiagnostics: true,
@@ -1802,7 +1807,8 @@ async function doCompile(
   }
   return compileSingleSource(source, {
     fileName: "test.ts",
-    sourceMap: true,
+    // Whole-program presentation currently has no source-map producer.
+      sourceMap: preparedRequest ? false : true,
     sourceMapUrl: sourceMapUrl || "test.wasm.map",
     emitWat: false,
     skipSemanticDiagnostics: true,
@@ -2223,6 +2229,14 @@ process.on("message", async (msg) => {
   const sendOwnedResult = (payload, recycle) => {
     if (!preparedRequest) return sendResult(payload, recycle);
     try {
+      if (payload.preparedFrontendReport) {
+        // Re-observe the same failed compiler product immediately before send.
+        // This report never certifies a binary, instance or executed IR unit.
+        const preparedFrontendReport = observePreparedFrontendJobResult(
+          compilerBundle, preparedResult, preparedRequest, msg.source, msg.id, process.pid, msg,
+        );
+        return sendResult({ ...payload, preparedFrontendReport }, recycle);
+      }
       const preparedExecutionReport = observePreparedExecutionJobResult(
         compilerBundle,
         preparedResult,
@@ -2258,6 +2272,7 @@ process.on("message", async (msg) => {
         "preparedRuntimeExecutionObservation",
         "requiredPreparedEmission",
         "requiredPreparedFinalArtifactObservation",
+        "requiredPreparedFrontendFailure",
       ]) {
         if (typeof compilerBundle[capability] !== "function")
           throw new Error(`PREPARED_TRANSPORT_INVALID: compiler bundle lacks strict capability ${capability}`);
@@ -2452,11 +2467,31 @@ process.on("message", async (msg) => {
   // oracle-version-exempt: explicit IR was previously unavailable and has its own result namespace;
   // the added strict refusal cannot reclassify any existing legacy verdict.
   if (preparedRequest && (hasErrors || result.errors.length !== 0)) {
+    const ownedFrontendFailure = compilerBundle.requiredPreparedFrontendFailure(result);
+    if (execute && isNegative && !isRuntimeNegative && ownedFrontendFailure) {
+      try {
+        const preparedFrontendReport = observePreparedFrontendJobResult(
+          compilerBundle, result, preparedRequest, source, id, process.pid, msg,
+        );
+        sendOwnedResult({
+          id, status: "pass", compileMs,
+          errorCodes: ownedFrontendFailure.diagnostics.filter((row) => row.code).map((row) => row.code),
+          preparedFrontendReport,
+        });
+        return;
+      } catch (error) {
+        sendOwnedResult({
+          id, status: "compile_error", compileMs,
+          error: `${result.errors.map((row) => row.message).join("; ")}; ${error?.message ?? String(error)}`,
+        });
+        return;
+      }
+    }
     sendOwnedResult({
       id,
       status: "compile_error",
       compileMs,
-      error: `${result.errors.map((row) => `L${row.line}:${row.column} ${row.message}`).join("; ") || "unsuccessful compiler result"}; strict failed-compilation/diagnostic ownership is unavailable`,
+      error: `${result.errors.map((row) => `L${row.line}:${row.column} ${row.message}`).join("; ") || "unsuccessful compiler result"}; no matching owned static SyntaxError negative verdict is available`,
     });
     return;
   }
@@ -2567,7 +2602,11 @@ process.on("message", async (msg) => {
 
   // Validate Wasm binary before proceeding
   if (!WebAssembly.validate(result.binary)) {
-    const errMsg = await buildInvalidBinaryError(source, msg.sourceMapUrl, result, target);
+    // The legacy diagnostic helper recompiles through the direct frontend.
+    // Strict requests retain the actual validation failure without entering it.
+    const errMsg = preparedRequest
+      ? "invalid prepared Wasm binary: WebAssembly.validate failed"
+      : await buildInvalidBinaryError(source, msg.sourceMapUrl, result, target);
     if (msg.wasmPath && msg.metaPath) {
       try {
         writeFileSync(msg.wasmPath, new Uint8Array(0));

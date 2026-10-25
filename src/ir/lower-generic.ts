@@ -1941,6 +1941,18 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitCurrentThis(instr.strict)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.global_object": {
+        // #7106 — the realm's global object (legacy's `emitNativeGlobalThisObject`).
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.global_object (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitGlobalObject()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.instanceof_fn": {
         // #7106 S3c — OrdinaryHasInstance against F's per-function prototype.
         const dyn = resolver.resolveDynamicLowering?.();
@@ -1952,6 +1964,20 @@ export function lowerIrFunctionBody<S, Slot>(
         emitValue(instr.value, out);
         // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
         for (const op of dyn.emitInstanceOfFunction(instr.target.name)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.instanceof": {
+        // #7106 — legacy's generic runtime operator over two carriers.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.instanceof (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        emitValue(instr.target, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitInstanceOf()) emitter.pushRaw(out, op);
         return;
       }
       case "dyn.publish_argc": {
@@ -3925,8 +3951,11 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
       return [instr.callee, ...instr.args];
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
     case "dyn.instanceof_fn":
       return [instr.value];
     case "dyn.own_property":

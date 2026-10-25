@@ -2331,17 +2331,15 @@ export function addArrayIteratorImports(ctx: CodegenContext): void {
  *   - `__gen_result_done`     (externref) → i32
  *   - `__get_caught_exception` () → externref  (for the body's try/catch wrapper)
  */
-export function addGeneratorImports(ctx: CodegenContext, options?: { allowNoJsHost?: boolean }): void {
-  if ((ctx.standalone || ctx.wasi) && !options?.allowNoJsHost) return;
+export function addGeneratorImports(ctx: CodegenContext): void {
+  // (#7010) The eager buffer is host-only; host-free builds refuse instead.
+  if (ctx.standalone || ctx.wasi) return;
   // Guard: only register once
   if (ctx.funcMap.has("__gen_create_buffer")) return;
 
   // (#2689) Batch + immediate flush — see addIteratorImports for the rationale.
   // Can be registered lazily (IR-path generator claim / body compilation) after
-  // other functions baked their funcIdx; raw addImport would desync them. The
-  // `__gen_*` / `__create_*` / `__get_caught_exception` names are not in any
-  // standalone-refusal / native-helper set, so the `allowNoJsHost` fallback
-  // behaves exactly as the previous raw additions did.
+  // other functions baked their funcIdx; raw addImport would desync them.
   const ER: ValType = { kind: "externref" };
   ensureLateImport(ctx, "__gen_create_buffer", [], [ER]);
   ensureLateImport(ctx, "__gen_push_f64", [ER, { kind: "f64" }], []);

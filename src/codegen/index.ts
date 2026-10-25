@@ -6,6 +6,7 @@ import {
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
 import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -86,7 +87,13 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
+import {
+  compileIrPathFunctions,
+  irAmbientNamespaceConstant, // (#7106 module-init lever A)
+  irNumberConversionPlan, // (#7106 module-init lever B)
+  type IrIntegrationError,
+  type IrIntegrationReport,
+} from "../ir/integration.js";
 import {
   asVal,
   IR_CLASS_SHAPE_CELL,
@@ -2583,6 +2590,8 @@ export interface IrOverlayPlan {
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** Revalidates the mutable ABI joins immediately before integration. */
   readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
+  /** (#7106 module-init lever B) The one source-bound `Number(v)` plan of this compile. */
+  readonly preparedNumberCall: (call: ts.CallExpression) => boolean;
 }
 
 /**
@@ -3066,6 +3075,7 @@ function planIrOverlay(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
+  const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
   const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
@@ -3251,6 +3261,10 @@ function planIrOverlay(
       },
       // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      // (#7106 propertyHelper) …and on a native-strings lane the same externref
+      // IS the non-fast dynamic carrier of the key string, so the head can be
+      // read as a dynamic value instead.
+      forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
       nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
@@ -3264,9 +3278,12 @@ function planIrOverlay(
       classifyArrayElementFamily,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
       functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
       selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
@@ -3619,6 +3636,7 @@ function planIrOverlay(
         }
       : {}),
     ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
+    preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
   };
 }
 
@@ -15469,6 +15487,20 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
+export {
+  ensureIrDynamicDeleteHelper,
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+} from "./ir-dynamic-delete.js";
+// (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
+export {
+  ensureIrDynamicInstanceOfHelper,
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfAtLegacyParity,
+} from "./ir-dynamic-instanceof.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

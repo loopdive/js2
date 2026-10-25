@@ -387,7 +387,7 @@ export function reserveNativePromiseResources(
         same(metadataFields, descriptor.fields.slice(0, 5), "altered inherited metadata fields");
         descriptor = {
           ...descriptor,
-          fields: [...metadataFields.map((field) => ({ ...field })), descriptor.fields[5]!],
+          fields: [...metadataFields.map((field) => ({ ...field })), ...descriptor.fields.slice(metadataFields.length)],
         };
       }
       token = tx.reserveType(row.key, descriptor);

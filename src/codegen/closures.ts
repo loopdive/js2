@@ -59,7 +59,6 @@ import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/typ
 import {
   addFuncType,
   destructureParamObject,
-  addGeneratorImports,
   ensureExnTag,
   ensureStructForType,
   getArrTypeIdxFromVec,
@@ -152,6 +151,7 @@ import {
   isNativeGeneratorCandidate,
   registerNativeGenerator,
 } from "./generators-native.js";
+import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { isGeneratorMethodWithYieldKey, namedFunctionOwnNameShadow } from "./generators-native-ast-scan.js"; // (#6651 A7, A10)
 import type { NativeGeneratorInfo } from "./context/types.js";
 // (#3270) Extracted closure subsystems. Re-exported below so external importers
@@ -3193,8 +3193,8 @@ export function compileLiftedClosureBody(
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
   // extended candidate gate admits the fn-expr (zero/identifier params, no
   // `this`/`arguments`/self-name/capture — the same gate
-  // `sourceNeedsGeneratorHostImports` consulted, so the `__gen_*` host imports
-  // were NOT registered for it), register it under the lifted closure name with
+  // `isNativeGeneratorCandidate` applies everywhere; a rejected fn-expr is a
+  // #7010 compile error on host-free builds), register it under the lifted closure name with
   // the `__self` param threaded as a leading synthetic capture: the state
   // struct's param fields then align 1:1 with the lifted wasm params
   // (`local.get 0..n` in the factory), and the resume prelude rehydrates the
@@ -3291,6 +3291,9 @@ export function compileLiftedClosureBody(
     compileNativeGeneratorFunction(ctx, liftedFctx, arrow, nativeGenExprInfo);
     liftedFctx.body.push({ op: "extern.convert_any" });
     conciseBodyHasValue = true;
+  } else if (isGenerator && ts.isBlock(body) && refuseEagerGeneratorBuffer(ctx, liftedFctx, arrow)) {
+    // (#7010) No host-free lowering for this generator expression — refused.
+    conciseBodyHasValue = true;
   } else if (isGenerator && ts.isBlock(body)) {
     // Generator function expression: eagerly evaluate body, collect yields
     // into a buffer, then wrap with __create_generator.
@@ -3323,16 +3326,6 @@ export function compileLiftedClosureBody(
       runtimeParameters(arrow).length === 0 && // (#3359) a TS `this` param is not a runtime arg
       !(ts.isBlock(body) && closureBodyUsesArguments(body)) &&
       !genBodyReferencesThis(body);
-    // (#3164) Defensive: in a no-JS-host target the eager-buffer path needs the
-    // `__gen_*` host imports, which the pre-scan (`sourceNeedsGeneratorHostImports`)
-    // skips when it classifies every generator as native. If this fn-expr was
-    // admitted by the pre-scan but the emit-time registration bailed (a
-    // candidate/plan desync), baking an undefined funcIdx would produce an
-    // INVALID module — late-register the import bundle instead (idempotent,
-    // shift-safe; the IR path does the same mid-emission).
-    if ((ctx.standalone || ctx.wasi) && !ctx.funcMap.has("__gen_create_buffer")) {
-      addGeneratorImports(ctx, { allowNoJsHost: true });
-    }
     const genOuterBody = liftedFctx.body;
     const eagerSeq: Instr[] = [];
     if (genLazyEligible) liftedFctx.body = eagerSeq;

@@ -152,10 +152,33 @@ export function prepareDynamicInstructionSupportForUnits(input: {
     const types = valueTypesOf(entry.fn);
     const planned = new Map<IrInstr, readonly IrFuncRef[]>();
     let nameable = true;
+    const bindExact = (
+      instr: IrInstr,
+      name: Parameters<typeof exactPreparedDynamicHelperRef>[2],
+      params: readonly ValType[],
+      results: readonly ValType[],
+    ): void => {
+      const ref = exactPreparedDynamicHelperRef(ctx, callableImports, name, ctx.funcMap.get(name), params, results);
+      if (ref === undefined) nameable = false;
+      else planned.set(instr, [ref]);
+    };
     for (const block of entry.fn.blocks)
       for (const root of block.instrs) {
         forEachInstrDeep(root, (instr) => {
           if (!isDynamicInstruction(instr)) return;
+          // Entry-time argc state also belongs to plain functions without a
+          // local function-object call. Cover all native host-free externref
+          // units, not only the function-object population below.
+          if (
+            native &&
+            (ctx.standalone || ctx.wasi) &&
+            !ctx.fast &&
+            carrierValType.kind === "externref" &&
+            instr.kind === "dyn.arguments_length"
+          ) {
+            bindExact(instr, "__ir_arguments_length", [{ kind: "i32" }], [{ kind: "f64" }]);
+            return;
+          }
           // The certified function-object producer uses the existing native
           // externref operations. Name their ACTUAL lowering providers, with
           // exact physical signatures, before dependency discovery. Unsupported
@@ -190,16 +213,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               instr.kind === "dyn.eq" ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
             const results: readonly ValType[] =
               instr.kind === "dyn.typeof" ? [{ kind: "externref" }] : [{ kind: "i32" }];
-            const ref = exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              name,
-              ctx.funcMap.get(name),
-              params,
-              results,
-            );
-            if (ref === undefined) nameable = false;
-            else planned.set(instr, [ref]);
+            bindExact(instr, name, params, results);
             return;
           }
           // (#7106 Stage 4) `message === undefined` / `thrown === null` over the
@@ -222,16 +236,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               nameable = false;
               return;
             }
-            const ref = exactPreparedDynamicHelperRef(
-              ctx,
-              callableImports,
-              "__typeof_undefined",
-              ctx.funcMap.get("__typeof_undefined"),
-              [{ kind: "externref" }],
-              [{ kind: "i32" }],
-            );
-            if (ref === undefined) nameable = false;
-            else planned.set(instr, [ref]);
+            bindExact(instr, "__typeof_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
             return;
           }
           // (#7106 Stage 4) `var x;` / missing-member reads produce the
@@ -292,16 +297,7 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               // and uses __box_number. The conversion itself calls no helper.
               const boolean = instr.toType.tag === JS_TAG_IDS.Boolean;
               const name = boolean ? "__box_boolean" : "__box_number";
-              const ref = exactPreparedDynamicHelperRef(
-                ctx,
-                callableImports,
-                name,
-                ctx.funcMap.get(name),
-                [{ kind: boolean ? "i32" : "f64" }],
-                [{ kind: "externref" }],
-              );
-              if (ref === undefined) nameable = false;
-              else planned.set(instr, [ref]);
+              bindExact(instr, name, [{ kind: boolean ? "i32" : "f64" }], [{ kind: "externref" }]);
               return;
             }
             if (ctx.fast) {
@@ -314,19 +310,8 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             }
           }
           const name = exactHostHelperName(instr, types);
-          const ref =
-            name === null
-              ? undefined
-              : exactPreparedDynamicHelperRef(
-                  ctx,
-                  callableImports,
-                  name,
-                  ctx.funcMap.get(name),
-                  [{ kind: "f64" }],
-                  [{ kind: "externref" }],
-                );
-          if (ref === undefined) nameable = false;
-          else planned.set(instr, [ref]);
+          if (name === null) nameable = false;
+          else bindExact(instr, name, [{ kind: "f64" }], [{ kind: "externref" }]);
         });
       }
     if (!nameable) {

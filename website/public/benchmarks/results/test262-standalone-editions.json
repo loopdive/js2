@@ -48,9 +48,9 @@
   },
   {
     "edition": "ES2015",
-    "pass": 11568,
-    "fail": 124,
-    "ce": 12,
+    "pass": 11566,
+    "fail": 125,
+    "ce": 13,
     "skip": 0,
     "total": 11704,
     "pct": 99,
@@ -138,9 +138,9 @@
       },
       {
         "name": "class",
-        "pass": 397,
+        "pass": 396,
         "fail": 8,
-        "ce": 5,
+        "ce": 6,
         "skip": 0,
         "total": 410,
         "pct": 97
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4584,
+    "pass": 4586,
     "fail": 197,
-    "ce": 140,
+    "ce": 138,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4485,
+        "pass": 4487,
         "fail": 106,
-        "ce": 20,
+        "ce": 18,
         "skip": 0,
         "total": 4611,
         "pct": 97
