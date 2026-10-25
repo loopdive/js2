@@ -139,13 +139,13 @@ function compileConsoleCall(
       // (f64/i32/i64) — e.g. a recursive boolean/numeric kernel whose return TS
       // can't resolve (mutual recursion → implicit any). A raw scalar operand to
       // `console_${method}_externref` (externref param) is invalid wasm, so box
-      // it to externref here. Ref/externref results already match the param and
-      // must NOT be re-coerced via an `expectedType` hint: that would route an
-      // array through the iterable adapter (`__make_iterable`) and change the
-      // printed output. Only scalars need bridging.
+      // it to externref here. (#7145) So is an abstract `anyref`/`eqref` (`Map.get`):
+      // the late call-arg repair cannot see past an inlined `block (result anyref)`.
+      // Ref results must NOT be re-coerced via an `expectedType` hint: that would
+      // route an array through `__make_iterable` and change the printed output.
       if (res && typeof res === "object" && "kind" in res) {
         const k = (res as ValType).kind;
-        if (k === "f64" || k === "i32" || k === "i64") {
+        if (k === "f64" || k === "i32" || k === "i64" || k === "anyref" || k === "eqref") {
           coerceType(ctx, fctx, res as ValType, { kind: "externref" });
         }
       }

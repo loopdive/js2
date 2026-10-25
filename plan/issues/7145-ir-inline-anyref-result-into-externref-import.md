@@ -1,10 +1,11 @@
 ---
 id: 7145
 title: "Native-first: inlined anyref result passed to an externref import without extern.convert_any (invalid wasm)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
+completed: 2026-10-25
 priority: high
 horizon: s
 feasibility: medium
@@ -48,3 +49,28 @@ native-first and standalone; the equivalence suite is byte-identical on every
 program that does not reach the changed path (state the byte delta for those
 that do, in the PR body); a test under `tests/issue-7145-*.test.ts` pins the
 case on standalone and gc.
+
+## Resolution (2026-10-25)
+
+Root cause was not the inliner itself but the console lowering
+(`src/codegen/expressions/builtins.ts`, externref branch): it passed the
+`anyref` result of `m.get(k)` (`__map_get`) uncoerced to the externref
+`console_log_externref` import and relied on the late call-arg repair
+(`fixCallArgTypesInBody`, `src/codegen/stack-balance.ts`) to insert
+`extern.convert_any`. That repair only coerces a bare `call` producer and stops
+at a `block`, so once the inliner spliced `__map_get` as `block (result anyref)`
+the coercion was lost. WAT diff: inline-off emits `call __map_get;
+extern.convert_any; call 0`, inline-on emitted `block (result anyref) …; call 0`.
+Fix: the console lowering now coerces `anyref`/`eqref` results with
+`coerceType(…, externref)` (= `extern.convert_any`) itself.
+
+Bytes (base origin/main 8eeccbeb88 vs head): 1,700 compile units
+(playground examples + `export function` sources in `tests/equivalence`) × gc
+host-assisted / gc native-first / standalone — every pre-existing unit
+byte-identical; the 360 differential-corpus compiles likewise, except
+`builtins/03-map-set.js` gc native-first (invalid → valid, 43,189 B). The
+reduced 3-line program grows by 2 bytes (one `extern.convert_any`).
+
+probe/test reference: `tests/issue-7145-ir-inline-anyref-externref.test.ts`
+(WAT assertion + runtime output, gc native-first; compile on gc + standalone),
+`tests/equivalence/issue-7145-map-get-console-log.test.ts` (both lanes).
