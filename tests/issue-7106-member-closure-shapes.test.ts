@@ -87,6 +87,29 @@ export function run() {
     expect(await initializeAndRun(result)).toBe(111110);
   }, 35_000);
 
+  // The sink rule is one predicate for the conditional and for a local read:
+  // the conditional is admitted into a dynamic-shaped local (`var r;` is the
+  // carrier's undefined, `var r = m` is the parameter's carrier) exactly where
+  // a dynamic read into that local is.
+  it("admits the conditional into a dynamic-shaped local", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m) { var r; r = m ? m : 1; throw r; };
+subject.b = function (m) { var r = m; r = m ? m : 2; throw r; };
+export function run() {
+  var n = 0;
+  try { subject.a(0); } catch (e) { if (e === 1) n += 1; }
+  try { subject.a("x"); } catch (e) { if (e === "x") n += 10; }
+  try { subject.b(0); } catch (e) { if (e === 2) n += 100; }
+  try { subject.b("y"); } catch (e) { if (e === "y") n += 1000; }
+  return n;
+}`;
+    const result = await compile(source, OPTIONS);
+    requirePreparedInit(result);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+    expect(node(source)).toBe(1111);
+    expect(await initializeAndRun(result)).toBe(1111);
+  }, 35_000);
+
   // Each row is a planned member closure whose body the producer would
   // withdraw after the claim; the selector refuses it first. `node` is the
   // oracle for the legacy body that then runs.
@@ -116,6 +139,20 @@ export function run() {
       "dynamic-arm conditional laundered through an untyped local into a typed slot",
       `function (m) { var r = m ? m : 1; var s = "a"; s = r; throw s; }`,
       `try { subject.f(0); } catch (e) { if (e === 1) n += 1; } try { subject.f("x"); } catch (e) { if (e === "x") n += 2; }`,
+      "body-shape-rejected",
+      3,
+    ],
+    [
+      "dynamic-arm conditional laundered through an untyped local into a string `+=` slot",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; s += r; throw s; }`,
+      `try { subject.f(0, 0); } catch (e) { if (e === "a1") n += 1; } try { subject.f("x", 0); } catch (e) { if (e === "ax") n += 2; }`,
+      "body-shape-rejected",
+      3,
+    ],
+    [
+      "dynamic-arm conditional laundered into a string `+=` slot in a throw-only body",
+      `function (m) { var r = m ? m : 1; var s = "a"; s += r; throw s; }`,
+      `try { subject.f(0); } catch (e) { if (e === "a1") n += 1; } try { subject.f("x"); } catch (e) { if (e === "ax") n += 2; }`,
       "body-shape-rejected",
       3,
     ],

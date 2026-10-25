@@ -6501,7 +6501,7 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
   const parent = node.parent;
   if (ts.isThrowStatement(parent) || ts.isExpressionStatement(parent)) return true;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === node && untypedIdentifierDeclaration(parent);
-  const target = plainAssignmentTarget(parent, node);
+  const target = assignmentTarget(parent, node, /* compound */ false);
   if (target !== undefined) return dynamicAssignmentSink(target);
   if (ts.isConditionalExpression(parent) && parent.condition !== node) {
     const sibling = parent.whenTrue === node ? parent.whenFalse : parent.whenTrue;
@@ -6511,17 +6511,23 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
 }
 
 /**
- * (#7113) `x = <value>` with `<value>` a bare dynamic — the closure's dynamic
- * parameter or a dynamic-shaped local (`var r = m ? m : 1; s = r;`) — and `x`
- * not a dynamic slot: from-ast withdraws such a write after the claim
- * (`assignment to "s" (string) got dynamic`), and gc native-first then fails
- * to compile, so the identifier walk refuses it first. The slot rule is the
- * one `dynamicConditionalValuePosition` applies to the conditional itself.
+ * (#7113) `x = <value>`, or a compound `x += / -= / *= / /= <value>`, with
+ * `<value>` a bare dynamic — the closure's dynamic parameter or a
+ * dynamic-shaped local (`var r = m ? m : 1; s = r;`, `s += r;`) — and `x` not
+ * a dynamic slot: from-ast withdraws such a write after the claim
+ * (`assignment to "s" (string) got dynamic`, `typed string += requires …
+ * evidence`), and gc native-first then fails to compile, so the identifier
+ * walk refuses it first. The slot rule is the one
+ * `dynamicConditionalValuePosition` applies to the conditional itself; the
+ * compound forms are the ones the assignment arms admit
+ * (`isPhase1CompoundAssignOperator`) — every other compound operator is
+ * refused by those arms. The conditional's own position stays plain `=`:
+ * a dynamic `+=` into a dynamic slot is not a lowering this shape has proved.
  */
 function dynamicValueIntoConcreteSlot(expr: ts.Identifier): boolean {
   if (!currentInPlannedMemberClosure || !dynamicShapedValue(expr)) return false;
   const node = outermostParenthesized(expr);
-  const target = plainAssignmentTarget(node.parent, node);
+  const target = assignmentTarget(node.parent, node, /* compound */ true);
   return target !== undefined && !dynamicAssignmentSink(target);
 }
 
@@ -6564,10 +6570,16 @@ function dynamicShapedLocal(d: ts.VariableDeclaration, seen: Set<ts.VariableDecl
   return dynamicShapedValue(d.initializer, seen);
 }
 
-/** `left` of `left = value` when `parent` is that plain assignment and `value` its right-hand side. */
-function plainAssignmentTarget(parent: ts.Node, value: ts.Node): ts.Expression | undefined {
-  if (!ts.isBinaryExpression(parent) || parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
-  return parent.right === value ? parent.left : undefined;
+/**
+ * `left` of `left = value` (with `compound`, also `left op= value` for the
+ * admitted compound operators) when `parent` is that assignment and `value`
+ * its right-hand side.
+ */
+function assignmentTarget(parent: ts.Node, value: ts.Node, compound: boolean): ts.Expression | undefined {
+  if (!ts.isBinaryExpression(parent) || parent.right !== value) return undefined;
+  const op = parent.operatorToken.kind;
+  if (op === ts.SyntaxKind.EqualsToken || (compound && isPhase1CompoundAssignOperator(op))) return parent.left;
+  return undefined;
 }
 
 function outermostParenthesized(expr: ts.Expression): ts.Expression {

@@ -109,11 +109,15 @@ joins a dynamic parameter with a string literal.
   conditional shape, so its sink rule (`dynamicAssignmentSink`) now covers the
   conditional and the local reads alike. The same rule admits the conditional
   into a dynamic-shaped local (`var r; r = m ? m : 1;`, `var r = m; r = m ?
-  m : 1;`), which the first cut over-refused. Still open, out of scope: a
+  m : 1;`), which the first cut over-refused. The rule covers the plain `=`
+  and the admitted compound writes (`s += r`, which otherwise claimed and
+  withdrew `string-evidence-unsupported`). Still open, out of scope: a
   dynamic value reaching a typed slot through any other expression (`var r =
-  m + 1; s = r;`) withdraws after the claim — identical on base and head
-  for a closure with a return (measured, `x25r`), and newly reachable in a
-  throw-only body, where the base minted no plan at all (`x25`). The closure
+  m + 1; s = r;`), a chained write (`s = r = m`), or `String(r)` /
+  `String(m)` as a throw value (claims, then `late-preparation-unsupported`)
+  withdraws after the claim — identical on base and head for a closure with
+  a return (measured, `x25r`, `strMr`), and newly reachable in a throw-only
+  body, where the base minted no plan at all (`x25`, `strM`). The closure
   runs no move-only scan; closing it means a selector-side dynamic typing of
   the initializer, not another position list.
 
