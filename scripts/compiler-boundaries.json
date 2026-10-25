@@ -2181,6 +2181,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/native-value-definitions.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-string-value-demands.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -2362,6 +2367,11 @@
     },
     {
       "path": "src/ir/runtime/vector-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/prepared-instructions.ts",
       "state": "clean",
       "layer": "ir-runtime"
     },
@@ -16647,11 +16657,6 @@
       "layer": "backend-wasmgc"
     },
     {
-      "path": "src/ir/program/native-value-definitions.ts",
-      "state": "clean",
-      "layer": "ir-program"
-    },
-    {
       "path": "src/ir/program/prepared-async-frame-contracts.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -16675,11 +16680,6 @@
       "path": "src/ir/program/prepared-native-async-frame-plan.ts",
       "state": "clean",
       "layer": "ir-program"
-    },
-    {
-      "path": "src/ir/runtime/prepared-instructions.ts",
-      "state": "clean",
-      "layer": "ir-runtime"
     },
     {
       "path": "src/runtime/wasmgc/promise/promise-layout.ts",

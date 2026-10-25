@@ -54,17 +54,22 @@ export function isAmbientIntrinsicName(name: string): boolean {
  *     nothing in the same file declares the name — for a SCRIPT's top-level
  *     `function Error() {}` the checker reports the lib declarations alone
  *     (measured, TypeScript 5.9), so the file is checked as well;
- *   - the value reaches only opaque uses — see {@link isOpaqueIntrinsicUse}.
+ *   - the value reaches only opaque uses — see {@link isOpaqueIntrinsicUse} —
+ *     or, once the module's builtin-prototype companion is seeded, is the
+ *     receiver of an exact `<Receiver>.prototype.<method>` value read (#7127,
+ *     {@link isExactProtoMethodValueRead}).
  */
 export function isAmbientIntrinsicValueUse(
   node: ts.Identifier,
   isLibOnlyBinding: (node: ts.Identifier) => boolean,
+  seed?: { builtinProtoCompanionSeeded?(): boolean },
 ): boolean {
   return (
     isAmbientIntrinsicName(node.text) &&
     isLibOnlyBinding(node) &&
     !declaredNames(node.getSourceFile()).has(node.text) &&
-    isOpaqueIntrinsicUse(node)
+    (isOpaqueIntrinsicUse(node) ||
+      (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
 }
 
@@ -306,4 +311,115 @@ function isValueRead(id: ts.Identifier): boolean {
   if (ts.isBindingElement(parent) && parent.name === id) return false;
   if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) return false;
   return true;
+}
+
+/**
+ * (#7127) Intrinsics whose `.prototype.<method>` value read is exact through
+ * the dynamic `__extern_get` chain once the module's brand companion is seeded
+ * (legacy's `protoMemberDirty`). The NativeError constructors are left out:
+ * their prototypes inherit `toString` from `Error.prototype`, and legacy itself
+ * answers `RangeError.prototype.toString === Error.prototype.toString` false.
+ */
+const PROTO_METHOD_RECEIVERS: ReadonlySet<string> = new Set([
+  "Object",
+  "Array",
+  "Function",
+  "Error",
+  "String",
+  "Number",
+  "Boolean",
+  "Symbol",
+]);
+
+/**
+ * (#7127) Methods measured exact as `<Receiver>.prototype.<m>` values (typeof
+ * and identity against `Object.prototype.<m>`, standalone and gc, against
+ * node). Data and accessor members stay refused: legacy itself mis-answers
+ * `Function.prototype.length`, `String.prototype.length` and
+ * `Symbol.prototype.description`, and `constructor` reads a different identity
+ * from the global-object constructor through the IR.
+ */
+const PROTO_METHOD_NAMES: ReadonlySet<string> = new Set([
+  "toString",
+  "toLocaleString",
+  "valueOf",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "call",
+  "apply",
+  "bind",
+  "push",
+  "pop",
+  "concat",
+  "join",
+  "slice",
+  "splice",
+  "indexOf",
+  "lastIndexOf",
+  "forEach",
+  "map",
+  "filter",
+  "reduce",
+  "every",
+  "some",
+  "charAt",
+  "charCodeAt",
+  "toFixed",
+]);
+
+type MemberAccess = ts.PropertyAccessExpression | ts.ElementAccessExpression;
+
+function memberAccessOf(node: ts.Expression): MemberAccess | undefined {
+  let child: ts.Node = node;
+  let parent = node.parent;
+  while (parent && ts.isParenthesizedExpression(parent)) {
+    child = parent;
+    parent = parent.parent;
+  }
+  return parent !== undefined &&
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    parent.expression === child
+    ? parent
+    : undefined;
+}
+
+function staticMemberName(access: MemberAccess): string | undefined {
+  if (ts.isPropertyAccessExpression(access)) return access.name.text;
+  return ts.isStringLiteralLike(access.argumentExpression) ? access.argumentExpression.text : undefined;
+}
+
+/**
+ * (#7127) The intrinsic itself (never an alias) is the receiver of
+ * `<Receiver>.prototype.<method>`, read as a plain VALUE: not called (the
+ * receiver would become `this`), not read further (`.call(x)` keeps the S1c
+ * `Object.prototype.toString.call` arm and the legacy call paths), not a
+ * write, `delete` or update target. The method value itself is an ordinary
+ * function, so where it flows afterwards needs no tracking.
+ */
+function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
+  const protoAccess = memberAccessOf(node);
+  if (protoAccess === undefined || !PROTO_METHOD_RECEIVERS.has(node.text)) return false;
+  if (staticMemberName(protoAccess) !== "prototype") return false;
+  const methodAccess = memberAccessOf(protoAccess);
+  const method = methodAccess && staticMemberName(methodAccess);
+  if (methodAccess === undefined || method === undefined || !PROTO_METHOD_NAMES.has(method)) return false;
+  if (memberAccessOf(methodAccess) !== undefined) return false;
+  let use: ts.Node = methodAccess;
+  while (use.parent && ts.isParenthesizedExpression(use.parent)) use = use.parent;
+  const parent = use.parent;
+  if (parent === undefined) return false;
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === use) return false;
+  if (ts.isTaggedTemplateExpression(parent) && parent.tag === use) return false;
+  if (ts.isDeleteExpression(parent) || ts.isPostfixUnaryExpression(parent)) return false;
+  if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.left === use &&
+    parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    return false;
+  }
+  return !(ts.isForInStatement(parent) || ts.isForOfStatement(parent)) || parent.expression === use;
 }
