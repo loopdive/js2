@@ -31,9 +31,11 @@ count rose +69 in the 11 days since #6979 was written).
 
 Two tracks:
 
-- **Track A — JS-host-mode code.** Gated by a consumer audit (A0) and one
-  stakeholder decision (D1). Execution is #6979 S7-a…e; this issue adds the
-  gate and the two things #6979 lacks (the consumer audit and the arm ratchet).
+- **Track A — JS-host-mode code.** Scope ruled by the stakeholder on
+  2026-10-25 (D1): the browser-side `gc` environment stays; what goes is the
+  `host-assisted` rollback and everything only it reached. Execution is #6979
+  S7-a…e; this issue adds the consumer audit (A0) and the arm ratchet (A1)
+  #6979 lacks.
 - **Track B — legacy twins.** A per-construct protocol: measure whether any
   unit containing kind X still reaches the legacy body on the standalone
   corpus; when zero, fail closed on demote for X, delete the twin, bank the
@@ -52,7 +54,7 @@ host vs standalone semantics is not an axis"; host test262 CI was retired
 | # | Thing | Size (command) | Status |
 | --- | --- | --- | --- |
 | A-1 | `host-assisted` rollback profile: `semanticProviders: "host-assisted"`, `--semantic-providers`, `JS2WASM_NATIVE_REGIME_JS` kill switch, `TEST262_SEMANTIC_PROVIDERS` | ~25 target-profile sites, 3 CLI sites, 23 legacy imports in the `check:host-import-policy` compatibility probe, 80 kill-switch hits, 45 `TEST262_SEMANTIC_PROVIDERS` hits (`rg -c` over `src scripts tests .github`) | **deletable now** — #6979 S7-a (PR #6701, held) / S7-b |
-| A-2 | `gc` target in a JavaScript environment: native core + value adapter (`__boundary_object_*`, `__str_*`) + platform capabilities (console, DOM externs, timers, `__date_now`) + opt-in accelerators (#6978) | still the default target (`src/index.ts:531` "gc (WasmGC, default)"); every consumer in §1.2 depends on it | **scope decision D1** |
+| A-2 | `gc` target in a JavaScript environment: native core + value adapter (`__boundary_object_*`, `__str_*`) + platform capabilities (console, DOM externs, timers, `__date_now`) + opt-in accelerators (#6978) | still the default target (`src/index.ts:531` "gc (WasmGC, default)"); every consumer in §1.2 depends on it | **stays — out of deletion scope (D1, 2026-10-25)** |
 | A-3 | dead `else` arms of `ctx.standalone` in codegen | `ctx.standalone` 1,728 lines / 513 files; 604 `!ctx.standalone` else-arms; 282 `noJsHost(`; 987 `ctx.wasi` (`rg -c`); was 1,659 on 10-14 | #6979 S7-c; **ratchet `check-standalone-arms.mjs` does not exist yet** |
 | A-4 | `src/runtime.ts` | 20,241 lines; `resolveImport` 7,868 lines / 15 cases (`wc -l`, `awk`) | #6979 S7-d |
 
@@ -66,7 +68,7 @@ host vs standalone semantics is not an axis"; host test262 CI was retired
 | `tests/playground-example.test.ts`, dogfood floor | 171 / 179 dogfood tests non-standalone | same as above |
 | `check:host-import-policy` | 33 probes, 452 imports, all value-adapter, 0 legacy / unknown; `compatibility.minimumLegacySemanticImports: 1` | the `compatibility` section goes with S7-a (the one baseline S7 may lower) |
 | npm-compat lane | `perf.lanes.jsHost` / `jsHostNative`, `optimizationLevels.js-host*` in `benchmarks/results/npm-compat*.json` | #6979 entry condition 4 |
-| Published figures | README L16 frozen host 39,379; `test262-current.json` `mode.target gc`, `leaky_pass 34,770`; `playground-benchmark-sidebar.json[].semanticProviders`; `report.html` Host/Standalone switch; `docs/ci-policy.md` §7 "both lanes" | #6979 entry condition 5 (D2) |
+| Published figures | README conformance line and `test262-current.json` still carry the retired host lane's figures; `playground-benchmark-sidebar.json[].semanticProviders`; `report.html` Host/Standalone switch; `docs/ci-policy.md` §7 "both lanes" | D2 (decided): standalone only, host figures dropped — #6979 S7-e |
 
 ### 1.3 Track B — twins, reachability, demotes
 
@@ -108,22 +110,35 @@ host vs standalone semantics is not an axis"; host test262 CI was retired
 | `gen-ir-adoption.mjs --check` | possibly | deleting an `IrFallbackReason` forces a regen |
 | loc / func budgets, oracle-ratchet, coercion-sites, import-cycles, flat-dir, kind-neutrality (0 of 113 cites in `src/codegen`), dialect pin | no | decreases pass; do not merge arms into one function (func budget 300) |
 
-## 2. Decisions the stakeholder must record before the gated slices open
+## 2. Stakeholder decisions
 
-- **D1 — scope of "JS host mode".** Is A-2 (the `gc` target in a JavaScript
-  environment: value adapter, capabilities, accelerators) in scope? CLAUDE.md
-  ("standalone + Linear/WASI only") says yes; #6979 keeps it explicitly
-  ("accelerators and capabilities, not the semantic core"). Until ruled, only
-  A-1 and A-3 are deletable; nothing in §1.2 is.
-- **D2 — published figures** (#6979 entry condition 5): what the README
-  conformance line, `test262-current.json` and the dashboards show once only
-  standalone is measured.
+Recorded (stakeholder, 2026-10-25):
+
+- **D1 — scope of "JS host mode": the browser side is NOT in deletion scope.**
+  A-2 (the `gc` target in a JavaScript environment: value adapter, platform
+  capabilities, named accelerators) stays, as #6979 already states. Deletable
+  are A-1 (the `host-assisted` rollback and everything only it reached) and A-3
+  (the dead `ctx.standalone` arms). Consequences: the §1.2 consumers keep
+  compiling `gc`; no capability embedder, host-free equivalence harness or
+  re-targeting of `check:ir-fallbacks` / playground / dogfood is needed; A0
+  shrinks to confirming that nothing in §1.2 reaches the `host-assisted`
+  profile (none does today — `check:host-import-policy` reports zero
+  legacy-semantic imports on the default probe).
+- **D2 — published figures: the README does not mention the JS-host numbers.**
+  The conformance line reports standalone only; the retired host lane's
+  figures are removed, not labelled. #6979 entry condition 5 is thereby met;
+  S7-e implements it (README, `test262-current.json` summary, `report.html`
+  switch, `docs/ci-policy.md` §7).
+
+Still open:
+
 - **D3 — baseline edits in deletion PRs**: may a deletion PR run
   `audit-legacy-reachability.mjs --update` on `scripts/dead-export-baseline.json`
   and hand-edit `scripts/compiler-boundaries.json`? Both gates fail otherwise.
   Proposed: yes, for a decrease only, with the diff shown in the PR body.
-- **D4 — #6701's playground IR-coverage baseline waiver** (38/0 → 26/12): S7-a
-  is parked on it.
+- **D4 — the S7-a playground IR-coverage baseline waiver** (38/0 → 26/12):
+  #6899 (replaces #6701, same change re-homed on the upstream branch) is
+  parked on it.
 
 ## 3. Track B — per-construct retirement protocol
 
@@ -184,7 +199,7 @@ job, no action); `plan/log/ir-adoption.md` row gets `twin: deleted` + PR;
 | 5 | `ConditionalExpression` | `compileConditionalExpression` 198 | 0 hits |
 | 6 | `TypeOfExpression` | `compileTypeofExpression` 428 | 0 hits; largest clean win |
 | 7 | `DeleteExpression` | `compileDeleteExpression` 569 | 0 hits; largest twin |
-| 8 | `PostfixUnaryExpression` | `compilePostfixUnary` 236 | **4 hits** (host-surface `for` loops) — blocked on `host-surface-unavailable` demotes, i.e. on D1 / capability embedder |
+| 8 | `PostfixUnaryExpression` | `compilePostfixUnary` 236 | **4 hits** (host-surface `for` loops) — the demoting units touch `document` under a host-free target; with the browser side kept (D1) those units are the IR's to claim via the capability imports, so this row waits on that IR work |
 | 9 | `ReturnStatement` | `compileReturnStatement` 370 | **5 hits**; also Annex-B / ctor paths |
 | 10 | `StringLiteral`, `Identifier` | shared helpers 31 + 30 | re-home into the shared emitter layer, not deletions |
 | 11 | inline literal / paren / void / as / block arms | ≈90 LOC in dispatchers | go with the dispatchers |
@@ -199,14 +214,13 @@ flips it to `ir-owned`.
 
 | Slice | Content | Gate | Horizon |
 | --- | --- | --- | --- |
-| **A0 consumer audit** (this issue's deliverable, docs-only) | §1.2 table re-measured; per consumer: keep / re-target / needs embedder; feeds D1 | none | s |
+| **A0 consumer audit** (this issue's deliverable, docs-only) | §1.2 table re-measured; per consumer: confirm it never selects the `host-assisted` profile (D1 keeps the `gc` environment, so "keep" is the default answer) | none | s |
 | **A1 arm ratchet** | add `scripts/check-standalone-arms.mjs`: counts `ctx.standalone`, `!ctx.standalone`, `noJsHost(`, `ctx.wasi` per directory against a committed baseline; growth fails `quality`. Lands **before** any S7 deletion so the +69 drift stops | #6979 S7-c prerequisite | s |
-| **A2 = #6979 S7-a** (PR #6701) | remove `host-assisted` | D4 waiver; round-2 fix on upstream branch `issue-6979-s7a-remove-host-assisted` @ 489b674b51 | m |
+| **A2 = #6979 S7-a** (PR #6899, replaces #6701) | remove `host-assisted` | D4 waiver; round-2 verdict on head 489b674b51 | m |
 | **A3 = #6979 S7-b** | `legacy-semantic` imports → compile error; emitters deleted by prefix family | A2 | l |
 | **A4 = #6979 S7-c** | collapse `ctx.standalone` arms, directory by directory, ratchet from A1 banks each PR | A1, A2 | xl |
 | **A5 = #6979 S7-d** | `runtime.ts` → adapters + capabilities (≤ 8k lines) | A3 | l |
-| **A6 = #6979 S7-e** | docs / dashboards / README line | D2 | s |
-| **A7 (only if D1 = in scope)** | playground capability embedder; host-free equivalence harness; re-target `check:ir-fallbacks`, playground-example and dogfood tests to standalone; retire the value adapter | D1, A7 harness first, then each consumer | xl |
+| **A6 = #6979 S7-e** | docs / dashboards / README line: standalone only, host figures removed (D2) | none | s |
 
 ## 5. Acceptance (program level)
 
@@ -216,18 +230,20 @@ flips it to `ir-owned`.
   after quoted; standalone per-edition ratchet green throughout; gc
   host-assisted bytes identical throughout.
 - Track A: A1 ratchet on main; #6979 S7-a…d landed; `ctx.standalone` arm count
-  = 0 in the directories S7-c covers; D1/D2/D3/D4 recorded in this file.
+  = 0 in the directories S7-c covers; D3/D4 recorded in this file (D1/D2 are).
 - Nothing deleted ahead of its measurement: a slice PR without the §3.1 number
   (Track B) or the §1.2 consumer row (Track A) in its body is not mergeable.
 
 ## 6. Open questions (from the census, for the stakeholder or the lead)
 
-1. D1–D4 above.
+1. D3–D4 above.
 2. Why did the frontend bucket grow 85,609 → 90,953 fn-lines / 107 → 165
    files since 2026-09-03 — direct-front-end growth or `BUCKET_PREFIX`
    membership drift (158 of 165 files are prefix-bucketed)? The 2026-09-03
    JSON is committed; a per-file diff is a one-command follow-up.
-3. Does `report.html`'s Host/Standalone switch stay as a historical view?
+3. `report.html`'s Host/Standalone switch: D2 says the host figures go, so
+   the switch goes with S7-e unless the lead wants the historical runs kept
+   behind it.
 
 ## Implementation Plan — dispatch notes (Fable, 2026-10-25)
 
@@ -240,6 +256,6 @@ flips it to `ir-owned`.
 - Then B rows 1–3 as one PR each (prove PR, then delete PR), in order; D3 is
   needed before the first delete PR.
 - Track A slices A2–A6 are #6979's; this issue adds no work there beyond A0
-  and A1 and the D-decisions.
+  and A1 and the D3/D4 decisions.
 - Every slice PR body: the measurement it rests on (number + command), the gc
   byte-identity statement, and the gate exit codes run bare.
