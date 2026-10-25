@@ -868,6 +868,24 @@ ExpressionStatement shape"), a post-claim error. Both dispatchers now share
 `lowerDroppedDelete`. A bare `{ … }` block holding a delete is still refused
 before the claim (a pre-existing block refusal, so the selector and from-ast agree).
 
+**Review follow-up (2026-10-25).** The arm's PR branch also carried a selector
+widening, `isCertifiedObjectAliasValue` (a second "this alias call is boolean"
+arm in `trackedModuleInfluenceIsBoolean`, beside the
+`declaredExpressionHasExactFamily(…, "boolean")` certification main already
+reuses at the `!` site). Measured on a sloppy script with unannotated
+`function hasK(obj, k) { if (__hasOwnProperty(obj, k)) … }` and
+`function notEnum(obj, k) { return !__gopd(obj, k).enumerable; }`: the
+widening made the selector claim both, and the build demoted both with
+"function typeIdx parity mismatch" — 3 claim-then-demote cases on the branch
+head against 1 (`negHas`, pre-existing) on the base. **Removed**; the exact-family
+certification stays the single predicate, and
+`tests/issue-7106-prophelper-dyn-delete.test.ts` pins that both shapes stay
+legacy with `irPostClaimErrors` empty and node's result. The refactor of
+`ir-dynamic-delete.ts` onto the shared helper builders stands — since #6858
+those are `helperFunctionContext` / `publishHelperFunction` in
+`helpers/ir-helper-function.ts`, which main's `ir-dynamic-delete.ts` already
+uses; host-assisted gc bytes are identical to main.
+
 ## `dyn.instanceof` — generic dynamic instanceof at legacy parity (2026-10-22, measured)
 
 **Why not the intrinsic RHS yet.** propertyHelper's `isConfigurable` and

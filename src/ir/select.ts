@@ -7543,33 +7543,9 @@ function obviousModuleValueFamily(expr: ts.Expression): ObviousModuleValueFamily
  * condition representation is already boolean. Non-module subexpressions are
  * left to the existing selector/build type checks.
  */
-/**
- * (#7106) A certified Object alias call, or a member read off one:
- * - the S1g uncurried `Object.prototype` predicate (`__hasOwnProperty(o, k)`,
- *   a boolean `dyn.own_property`);
- * - arm 1's stored `Object.getOwnPropertyDescriptor` (a dynamic carrier).
- * Neither is an unboxed module scalar of unknown family, the case
- * {@link trackedModuleInfluenceIsBoolean} guards. Since #7114 a script's
- * top-level alias `var` is a tracked module binding. The callee resolving to
- * that binding means it is not shadowed.
- */
-function isCertifiedObjectAliasValue(expr: ts.Expression): boolean {
-  let root = unwrapPhase1Parens(expr);
-  while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
-    root = unwrapPhase1Parens(root.expression);
-  }
-  return (
-    ts.isCallExpression(root) &&
-    moduleBinding(root.expression) !== undefined &&
-    (uncurriedObjectAliasMethod(root.expression, () => false) !== undefined ||
-      storedObjectStaticAliasMethod(root.expression, () => false) !== undefined)
-  );
-}
-
 function trackedModuleInfluenceIsBoolean(expr: ts.Expression): boolean {
   const candidate = unwrapPhase1Parens(expr);
   if (!expressionTouchesTrackedModuleValue(candidate)) return true;
-  if (isCertifiedObjectAliasValue(candidate)) return true;
   if (moduleBinding(candidate)) return isDirectBooleanModuleBinding(candidate);
   if (moduleScalarAliasFamily(candidate)) return moduleScalarAliasFamily(candidate) === "boolean";
   if (isModuleMapGetAlias(candidate)) return false;

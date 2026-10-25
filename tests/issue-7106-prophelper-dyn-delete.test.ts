@@ -105,8 +105,8 @@ function nodeProbe(source: string): unknown {
   return exports.probe!();
 }
 
-async function compileModule(target?: "standalone" | "wasi"): Promise<CompileResult> {
-  const result = await compile(STRICT_MODULE, {
+async function compileModule(target?: "standalone" | "wasi", source: string = STRICT_MODULE): Promise<CompileResult> {
+  const result = await compile(source, {
     ...(target ? { target } : {}),
     experimentalIR: true,
     skipSemanticDiagnostics: true,
@@ -118,8 +118,57 @@ async function compileModule(target?: "standalone" | "wasi"): Promise<CompileRes
   return result;
 }
 
-async function compileScript(target?: "standalone"): Promise<CompileResult> {
-  const result = await compile(SLOPPY_SCRIPT, {
+// Unannotated sloppy-script predicates over the Object aliases. These are NOT
+// IR-claimed: the selector's single boolean certification
+// (`declaredExpressionHasExactFamily(…, "boolean")`) does not cover them, and a
+// wider pre-claim certification was measured to claim-then-demote both bodies
+// ("function typeIdx parity mismatch"). Node runs the same script without
+// throwing; so must the Wasm module's initializer, from the legacy bodies.
+const SLOPPY_ALIAS_SCRIPT = `${ALIAS}
+  var __gopd = Object.getOwnPropertyDescriptor;
+  function hasK(obj, k) { if (__hasOwnProperty(obj, k)) { return 1; } return 0; }
+  function notEnum(obj, k) { return !__gopd(obj, k).enumerable; }
+  var o = { a: 1 };
+  Object.defineProperty(o, "h", { value: 1, enumerable: false });
+  if (hasK(o, "a") !== 1) { throw "#1 own key"; }
+  if (hasK(o, "zz") !== 0) { throw "#2 missing key"; }
+  if (notEnum(o, "h") !== true) { throw "#3 non-enumerable"; }
+  if (notEnum(o, "a") !== false) { throw "#4 enumerable"; }
+`;
+
+// The four strict delete shapes (dynamic key, named key, missing key, array
+// index) beside the expression-position delete that stays off the IR.
+const DELETE_SHAPES_MODULE = `${ALIAS}
+  /** @param {object} obj @param {string|number|symbol} name */
+  function delKey(obj, name) { delete obj[name]; return !__hasOwnProperty(obj, name); }
+  /** @param {object} obj */
+  function delNamed(obj) { delete obj.x; return !__hasOwnProperty(obj, "x"); }
+  /** @param {object} obj */
+  function delMissing(obj) { delete obj.nope; return !__hasOwnProperty(obj, "nope"); }
+  /** @param {object} obj */
+  function delUsed(obj) { if (delete obj.x) return 1; return 0; }
+  /** @param {object} obj */
+  function delArrIdx(obj) { delete obj[1]; return obj.length; }
+  export function probe(): number {
+    var n = 0;
+    var lit: any = { x: 1, y: 2 };
+    if (delNamed(lit) && lit.y === 2) n += 1;
+    var arr: any = [1, 2, 3];
+    if (delKey(arr, 1) && arr.length === 3 && arr[1] === undefined) n += 2;
+    var nc: any = Object.defineProperty({ a: 1 }, "k", { value: 1, configurable: false });
+    try { delKey(nc, "k"); } catch (e) { if (e instanceof TypeError && nc.k === 1) n += 4; }
+    if (delMissing({ a: 1 })) n += 8;
+    if (delUsed({ x: 1 }) === 1) n += 16;
+    if (delArrIdx([1, 2, 3]) === 3) n += 32;
+    try { delKey(undefined, "x"); } catch (e) { if (e instanceof TypeError) n += 64; }
+    return n;
+  }
+`;
+
+const DELETE_SHAPES = ["delKey", "delNamed", "delMissing", "delArrIdx"];
+
+async function compileScript(target?: "standalone", source: string = SLOPPY_SCRIPT): Promise<CompileResult> {
+  const result = await compile(source, {
     ...(target ? { target } : {}),
     fileName: "test.js",
     allowJs: true,
@@ -153,6 +202,27 @@ describe("#7106 propertyHelper — statement-position dynamic delete", () => {
       expect(irBodies(result)).toContain("removeKey");
       expect(result.irPostClaimErrors ?? []).toEqual([]);
       expect(() => new Function(SLOPPY_SCRIPT)()).not.toThrow();
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      expect(() => (instance.exports.__module_init as () => void)()).not.toThrow();
+    });
+
+    it(`${lane}: the four delete shapes claim without post-claim errors and answer like node`, async () => {
+      const result = await compileModule(target, DELETE_SHAPES_MODULE);
+      expect(irBodies(result)).toEqual(expect.arrayContaining(DELETE_SHAPES));
+      expect(irBodies(result)).not.toContain("delUsed");
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      const got = (instance.exports.probe as () => number)();
+      expect(got).toBe(nodeProbe(DELETE_SHAPES_MODULE));
+      expect(got).toBe(127);
+    });
+
+    it(`${lane}: unannotated sloppy alias predicates stay legacy, with no claim-then-demote`, async () => {
+      const result = await compileScript(target, SLOPPY_ALIAS_SCRIPT);
+      expect(irBodies(result)).not.toContain("hasK");
+      expect(irBodies(result)).not.toContain("notEnum");
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      expect(() => new Function(SLOPPY_ALIAS_SCRIPT)()).not.toThrow();
       const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
       expect(() => (instance.exports.__module_init as () => void)()).not.toThrow();
     });
