@@ -117,9 +117,10 @@
         "src/ir/core/tag-domain.ts",
         "src/ir/core/string-runtime.ts",
         "src/ir/core/runtime-symbols.ts",
-        "src/ir/core/date-callables.ts"
+        "src/ir/core/date-callables.ts",
+        "src/ir/core/builtin-method-names.ts"
       ],
-      "minModules": 29
+      "minModules": 30
     },
     {
       "id": "ir-analysis",
@@ -11659,6 +11660,11 @@
       "destination": "ir-core",
       "owner": "3518-coordinator",
       "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
+    },
+    {
+      "path": "src/ir/core/builtin-method-names.ts",
+      "state": "clean",
+      "layer": "ir-core"
     },
     {
       "path": "src/ir/alloc-registry.ts",

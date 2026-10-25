@@ -31,6 +31,7 @@ export type IrBackendTargetCapability =
   | "native-arguments-length"
   | "native-current-this"
   | "native-own-property-test"
+  | "host-dynamic-method-call"
   | "native-own-property-descriptor";
 
 /**
@@ -131,6 +132,13 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
+    case "host-dynamic-method-call":
+      // (#7117) `recv.m(…)` on a dynamic receiver through the generic
+      // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
+      // the real JS call; the native object runtime dispatches open-`$Object`
+      // methods only and answers `undefined` for primitive / vec / Map / …
+      // receivers, where legacy dispatches by brand.
+      return profile.backend === "wasmgc" && profile.allowHostImports;
     case "native-arguments-length":
       // (#7106 S1e) the `__argc`/`__extras_argv` protocol wrapper on the
       // host-free lanes (`__ir_arguments_length`).
