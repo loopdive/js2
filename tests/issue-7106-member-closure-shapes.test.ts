@@ -10,7 +10,9 @@
 //
 // (#7113 review) The refusal rows pin the selector's side of the contract:
 // the shapes the producer cannot lower are refused at select, with no
-// post-claim withdrawal, on standalone and on gc native-first alike.
+// post-claim withdrawal, on standalone and on gc native-first alike. A closure
+// that mints a dynamic-shaped local is admitted only when every value it
+// represents is in the lowerable family set (round 10).
 
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
@@ -191,6 +193,56 @@ export function run() {
     expect(await initializeAndRun(result)).toBe(11111);
   }, 35_000);
 
+  // A value-position `void` discards its operand (from-ast lowers the `null`
+  // through `lowerDiscardedExpression`, then yields an f64 NaN), so a `null`
+  // under it is never the failing node, wherever the `void` sits.
+  it("admits null under a value-position void", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m, k) { if (void null) throw "n"; throw m; };
+subject.b = function (m, k) { while (void null) { k = 0; } throw m; };
+subject.c = function (m, k) { var t = (void null) ? 1 : 2; if (t === 2) throw m; throw "n"; };
+subject.d = function (m, k) { if (!(void null)) throw m; throw "n"; };
+subject.e = function (m, k) { if (void null === null) throw "n"; throw m; };
+export function run() {
+  var n = 0;
+  try { subject.a(2, 0); } catch (e) { if (e === 2) n += 1; }
+  try { subject.b(2, 0); } catch (e) { if (e === 2) n += 10; }
+  try { subject.c(2, 0); } catch (e) { if (e === 2) n += 100; }
+  try { subject.d(2, 0); } catch (e) { if (e === 2) n += 1000; }
+  try { subject.e(2, 0); } catch (e) { if (e === 2) n += 10000; }
+  return n;
+}`;
+    const result = await compile(source, OPTIONS);
+    requirePreparedInit(result);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+    expect(node(source)).toBe(11111);
+    expect(await initializeAndRun(result)).toBe(11111);
+  }, 35_000);
+
+  // A closure that mints the dynamic local is admitted when every value it
+  // represents is in the family set: a numeric array and its alias, a string
+  // ToNumber'd by unary `-`, literals and reads written into the dynamic slot.
+  it("admits a minting closure whose values are all in the lowerable families", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m, k) { var r = m ? m : 1; var a = [1, 2]; var b = a; if (b === null) throw "n"; throw r; };
+subject.b = function (m, k) { var r = m ? m : 1; var s = "3"; var t = -s; if (t === -3) throw r; throw "n"; };
+subject.c = function (m, k) { var r = m ? m : 1; r = "s"; throw r; };
+subject.d = function (m, k) { var r = m ? m : 1; var q = 1; q += 2; if (q === 3) throw r; throw "n"; };
+export function run() {
+  var n = 0;
+  try { subject.a(2, 0); } catch (e) { if (e === 2) n += 1; }
+  try { subject.b(0, 0); } catch (e) { if (e === 1) n += 10; }
+  try { subject.c(2, 0); } catch (e) { if (e === "s") n += 100; }
+  try { subject.d(2, 0); } catch (e) { if (e === 2) n += 1000; }
+  return n;
+}`;
+    const result = await compile(source, OPTIONS);
+    requirePreparedInit(result);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+    expect(node(source)).toBe(1111);
+    expect(await initializeAndRun(result)).toBe(1111);
+  }, 35_000);
+
   // Each row is a planned member closure whose body the producer would
   // withdraw after the claim; the selector refuses it first. `node` is the
   // oracle for the legacy body that then runs.
@@ -332,6 +384,104 @@ export function run() {
       "`??` with the minted dynamic local on the left",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var t = r ?? 1; throw t; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "an object-literal local behind an alias compared with null beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var o = { a: 1 }; var p = o; if (p === null) throw "n"; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "an object-valued property compared with null beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var o = { a: { b: 1 } }; if (o.a === null) throw "n"; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "an array literal of objects beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var o = [{ a: 1 }]; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "an object literal written into an uninitialized local beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var o; o = { a: 1 }; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "unary `-` of an object local beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var o = { a: 1 }; var t = -o; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`??` on a member read of the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var t = r.x ?? 1; throw t; }`,
+      `try { subject.f({ x: 2 }, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`??` on a string local beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; var t = s ?? "b"; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "a dynamic sum written into a string slot beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; s = r + 1; throw s; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 3) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "a write into a const local beside the minted local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; const s = m; s = r; throw s; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e instanceof TypeError) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "`+=` of a numeric array into the minted dynamic local",
+      `function (m, k) { if (k === 9) return; var r = m ? m : 1; var a = [4]; r += a; throw r; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === "24") n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "throw of `void 0`",
+      `function (m, k) { if (k === 9) return; throw void 0; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === undefined) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "throw of `void null`",
+      `function (m, k) { if (k === 9) return; throw void null; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === undefined) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "a value `void` as a declaration initializer",
+      `function (m, k) { if (k === 9) return; var t = void null; throw m; }`,
+      `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
+      "body-shape-rejected",
+      1,
+    ],
+    [
+      "a chained write of the dynamic parameter into a string slot",
+      `function (m) { var s = "a"; var r; s = r = m; throw s; }`,
+      `try { subject.f("x"); } catch (e) { if (e === "x") n += 1; }`,
       "body-shape-rejected",
       1,
     ],

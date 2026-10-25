@@ -17,6 +17,9 @@ depends_on: [7112]
 assignee: "ttraenkler/session-d"
 # 2026-10-21 (#7113): the selector's dynamic-arm conditional predicate and
 # from-ast's `tryLowerDynamicConditionalValue`.
+# 2026-10-25 (#7113 round 10): select.ts grows by the positive value-family
+# admission for closures that mint a dynamic-shaped local
+# (`plannedClosureValueFamilyAdmissible` and its write / family helpers).
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
@@ -329,11 +332,48 @@ round 9 incl. `LOC_GATE_BASE=origin/main` on a throwaway main merge.
   `var o = { a: 1 }; o === null`, `m.x == null` and `var t = r ?? 1` beside
   the minted dynamic local are refused at select with no post-claim
   withdrawal on standalone and gc native-first.
+- (Round 10) A closure that mints a dynamic-shaped local is admitted only
+  when every value it represents is in the lowerable family set
+  (`plannedClosureValueFamilyAdmissible`, `expr-closure-value-family-unproved`).
+  Refused at select with no post-claim withdrawal on standalone and gc
+  native-first: an aliased object local and an object-valued property
+  compared with `null`, an array of objects, an object written into `var o;`,
+  unary `-` of an object, `r.x ?? 1` and `s ?? "b"` (`??` is refused in every
+  planned closure), a dynamic sum written into a string slot, a write into a
+  `const` local, `r += [4]`, `throw void 0` and `throw void null`; in every
+  planned closure also a value `void` as a declaration initializer
+  (`var t = void null`) and a chained write over slots of different types
+  (`var s = "a"; var r; s = r = m`). A `null`
+  under a value-position `void` (`if (void null)`, `while (void null)`,
+  `(void null) ? 1 : 2`, `!(void null)`, `void null === null`) is a prepared
+  `<module-init>` body again, = node.
 - Census on the Test262Error-stripped probe: the next `<module-init>` blocker
   is `var format = compareArray.format;`. That is a function-object member
   READ (`expr-ident-not-in-scope «compareArray»`), followed by `format(…)` on
   a dynamic local. Both belong to Stage 2's function-object surface, so this
   slice leaves them for that owner.
+
+## Residual (round 10, not fixed here)
+
+- **`void 0 == null` / `void 0 != null` miscompile on the base.** In a planned
+  member closure, `if (void 0 == null) throw "n"; throw m;` was claimed by
+  the base (`1f01ea20`) and returned 0 where node returns 1 (and the `!=`
+  twin likewise): `tryFoldNullCompare` (from-ast.ts:16115-16213)
+  constant-folds the f64 NaN that `void 0` lowers to as non-nullish, so
+  `undefined == null` folds to `false`. The positive loose-operand rule in
+  `nullCompareFoldFails` refuses both today (legacy body, = node). The fold
+  itself is a from-ast bug for the lead to file: a loose null compare
+  against `void <expr>`, or any f64 "undefined sentinel", must fold to
+  `true` / `false` the other way round, or bail.
+- **wasi `call-graph-closure` (class P).** A direct call to a top-level
+  function inside a planned closure (`r += subject()`, `subject() == null`,
+  `var o = subject()` beside the minted local) claims and withdraws on wasi
+  only — `direct call to "subject" has no exact AST-site plan`
+  (from-ast.ts:7862-7867) — and claims, = node, on standalone and gc. The
+  no-`D` twin `m += subject()` withdraws identically on the base, so this is
+  the wasi lane's missing direct-call plan, not a family limit; the selector
+  has no lane signal to refuse it on wasi alone, and refusing it everywhere
+  would drop the standalone / gc claims.
 
 ## Addendum (2026-10-22): `message.toString()`
 
