@@ -1,5 +1,6 @@
 import { builtinModules } from "node:module";
-import { defineConfig } from "vite";
+import { defineConfig, type ConfigEnv, type Plugin, type UserConfig } from "vite";
+import { separateLibraryDeclarations } from "./scripts/build/library-phases";
 import dts from "vite-plugin-dts";
 
 // Library build config for npm publishing as @loopdive/js2.
@@ -8,24 +9,30 @@ import dts from "vite-plugin-dts";
 // bare `node:*` / `fs` / `path` imports are preserved as externals.
 const nodeBuiltins = [...builtinModules, ...builtinModules.map((m) => `node:${m}`)];
 const PROCESS_ENV_BINDING = "__js2wasmProcessEnv";
+const declarationSources = {
+  include: ["src/**/*.ts"],
+  exclude: ["src/**/*.test.ts"],
+};
 
-export default defineConfig(({ mode }) => {
+export function createLibraryConfig({ mode }: ConfigEnv, { declarations = true, declarationOnly = false } = {}) {
   const jsrBuild = mode === "jsr";
 
   return {
-    plugins: [
-      dts({
-        entryRoot: "src",
-        include: ["src/**/*.ts"],
-        exclude: ["src/**/*.test.ts"],
-        rollupTypes: false,
-        // Don't ship .d.ts.map: the published tarball has no src/, so their
-        // "../src/*.ts" sources are dead references that just double the file
-        // count. tsconfig keeps declarationMap on for in-repo editor
-        // go-to-definition; this overrides it for the published lib build only.
-        compilerOptions: { declarationMap: false },
-      }),
-    ],
+    plugins: (declarations
+      ? [
+          dts({
+            ...(declarationOnly ? { declarationOnly: true } : {}),
+            entryRoot: "src",
+            ...declarationSources,
+            rollupTypes: false,
+            // Don't ship .d.ts.map: the published tarball has no src/, so their
+            // "../src/*.ts" sources are dead references that just double the file
+            // count. tsconfig keeps declarationMap on for in-repo editor
+            // go-to-definition; this overrides it for the published lib build only.
+            compilerOptions: { declarationMap: false },
+          }),
+        ]
+      : []) as Plugin[],
     publicDir: false,
     // #6782 — the library must load and compile without a global `process`
     // (browser bundles, `delete globalThis.process`). `src/` reads its switches
@@ -78,5 +85,12 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-  };
+  } satisfies UserConfig;
+}
+
+export default defineConfig((env) => {
+  if (env.command !== "build") return createLibraryConfig(env);
+  const config = createLibraryConfig(env, { declarations: false });
+  config.plugins.push(separateLibraryDeclarations(declarationSources));
+  return config;
 });
