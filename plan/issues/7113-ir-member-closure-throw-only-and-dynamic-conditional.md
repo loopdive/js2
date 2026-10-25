@@ -118,8 +118,12 @@ joins a dynamic parameter with a string literal.
   slot are refused whatever the RHS (from-ast lowers only `+=` there —
   `r -= 1`, `m -= r` withdrew `compound-assign-unsupported`). A bare `null`
   inside a planned closure is admitted only where from-ast materialises it
-  (`closureNullValuePosition`: a `throw` operand, the direct operand of an
-  equality) and refused everywhere else — a slot write (`r = null`,
+  (`closureNullValuePosition`: a `throw` operand, also behind a comma's right
+  side — `throw (1, null)`; the direct operand of an equality
+  `tryFoldNullCompare` folds — strict against a dynamic value or the catch
+  binding, any against a numeric / boolean operand — but not `null ===
+  undefined`, a loose compare against a dynamic value, or a string operand)
+  and refused everywhere else — a slot write (`r = null`,
   `r += null`), a declaration (`var nul = null`), behind `??` or a comma, a
   conditional arm, a call argument, a member store — all of which withdrew
   `nullish-value-unsupported`. Still open, out of scope: `r += a` with

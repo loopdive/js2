@@ -6552,20 +6552,62 @@ function closureWriteUnlowerable(expr: ts.Expression): boolean {
 
 /**
  * (#7113) Where from-ast materialises a bare `null` inside a planned member
- * closure: its `NullKeyword` lowering emits a null only under an externref /
- * reference hint, which a `throw` operand gets (`lowerThrowStatement`, through
- * parentheses), and `tryFoldNullCompare` folds `null` as the DIRECT operand of
- * `==` / `!=` / `===` / `!==` without lowering it. Every other position — a
- * slot write or `+=` (dynamic hint), a declaration initializer (`var nul =
- * null`, f64 hint), a string `+=`, `??` / comma / conditional arms, a call
- * argument, a member store — withdraws `nullish-value-unsupported`, so the
- * selector refuses it first. (A planned closure's `return null` is refused
- * elsewhere already; measured on the base, it is not a claim to keep.)
+ * closure. Its `NullKeyword` lowering emits a null only under an externref /
+ * reference hint; two positions supply one:
+ *
+ * - a `throw` operand (`lowerThrowStatement` lowers with an externref hint),
+ *   through parentheses and through the right operand of a comma (the comma
+ *   arm passes its hint to the right operand: `throw (1, null)`);
+ * - the DIRECT operand of `==` / `!=` / `===` / `!==` that `tryFoldNullCompare`
+ *   (from-ast.ts) folds. The fold's entry test reads the operand kind without
+ *   unwrapping, so `(null)` is not seen; it lowers the other operand under an
+ *   f64 hint and folds a STRICT compare against a dynamic / externref value
+ *   (tag test, `ref.is_null`) and any compare against an operand whose type
+ *   reaches its trailing constant (f64, i32, vec, …). It gives up — and the
+ *   generic f64-hint lowering then withdraws `nullish-value-unsupported` — for
+ *   `null === undefined`, a LOOSE compare against a dynamic or externref
+ *   value, a `string` operand, and class / object / closure / callable
+ *   operands. `nullCompareFoldFails` mirrors the failures the selector can
+ *   name (nullish, loose-on-dynamic, string); a class-typed operand has no
+ *   selector family here and keeps its prior answer.
+ *
+ * Every other position — a slot write or `+=` (dynamic hint), a declaration
+ * initializer (`var nul = null`, f64 hint), a string `+=`, `??` / comma-left /
+ * conditional arms, a call argument, a member store — withdraws
+ * `nullish-value-unsupported`, so the selector refuses it first. (A planned
+ * closure's `return null` is refused elsewhere already; measured on the base,
+ * it is not a claim to keep.)
  */
-function closureNullValuePosition(expr: ts.Expression): boolean {
-  if (ts.isThrowStatement(outermostParenthesized(expr).parent)) return true;
+function closureNullValuePosition(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
+  let node: ts.Expression = expr;
+  for (;;) {
+    node = outermostParenthesized(node);
+    const parent = node.parent;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+      parent.right === node
+    ) {
+      node = parent;
+      continue;
+    }
+    if (ts.isThrowStatement(parent)) return true;
+    break;
+  }
   const parent = expr.parent;
-  return ts.isBinaryExpression(parent) && isEqualityOperator(parent.operatorToken.kind);
+  if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
+  const other = parent.left === expr ? parent.right : parent.left;
+  return !nullCompareFoldFails(other, parent.operatorToken.kind, scope);
+}
+
+/** The `null`-compare operands `tryFoldNullCompare` does not fold (see `closureNullValuePosition`). */
+function nullCompareFoldFails(other: ts.Expression, op: ts.SyntaxKind, scope: ReadonlySet<string>): boolean {
+  if (other.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefinedIdentifier(other, scope)) return true;
+  const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  if (!strict && dynamicShapedValue(other)) return true;
+  return (
+    obviousSelectorValueFamily(other, scope) === "string" || declaredExpressionHasExactFamily(other, "string", scope)
+  );
 }
 
 function isEqualityOperator(op: ts.SyntaxKind): boolean {
@@ -6608,12 +6650,16 @@ function closureLocalDeclaration(id: ts.Identifier): ts.VariableDeclaration | un
 }
 
 /**
- * A local whose slot is the dynamic carrier: untyped, with no initializer
- * (`var x;`, `uninitializedVarIsDynamicUndefined`) or a dynamic-shaped one.
+ * A local whose slot is the dynamic carrier: a catch binding, or untyped with
+ * no initializer (`var x;`, `uninitializedVarIsDynamicUndefined`) or with a
+ * dynamic-shaped one.
  */
 function dynamicShapedLocal(d: ts.VariableDeclaration, seen: Set<ts.VariableDeclaration>): boolean {
   if (seen.has(d) || !untypedIdentifierDeclaration(d)) return false;
   seen.add(d);
+  // The catch binding is the dynamic carrier on every lane that mints a plan
+  // (`catchIsCarrier`), wherever the `try` sits.
+  if (ts.isCatchClause(d.parent)) return true;
   if (d.initializer === undefined) {
     const isLexical =
       ts.isVariableDeclarationList(d.parent) && !!(d.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const));
@@ -10880,7 +10926,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // here is shape-only acceptance.
   if (ts.isStringLiteral(expr)) return true;
   if (expr.kind === ts.SyntaxKind.NullKeyword) {
-    if (currentInPlannedMemberClosure && !closureNullValuePosition(expr)) {
+    if (currentInPlannedMemberClosure && !closureNullValuePosition(expr, scope)) {
       return shapeNo("expr-closure-null-value", expr);
     }
     return true;
