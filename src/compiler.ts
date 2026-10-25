@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "./ts-api.js";
+import { createPreparedFrontendBoundary } from "./compiler/prepared-pipeline-boundary.js";
 import {
   analyzeFiles,
   analyzeMultiSource,
@@ -72,12 +73,9 @@ import {
 } from "./compiler/output.js";
 import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
 import {
-  detectEarlyErrors,
   gateEmittedModule,
   pushSourceAnchoredDiagnostic,
   rewriteEvalSuperCallWithMap,
-  validateHardenedMode,
-  validateSafeMode,
   withEngineRejectedIrOutcomes,
 } from "./compiler/validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
@@ -947,7 +945,7 @@ function buildCodegenOptions(
 }
 
 /** #1927 — the shared pipeline core. See {@link runPipeline}. */
-interface PipelineInput {
+export interface PipelineInput {
   /** Per-file user sources for early-error / safe / hardened passes. */
   userSourceFiles: ts.SourceFile[];
   /** The AST surface codegen + dts/wit consume (single = the file; multi = entry). */
@@ -987,77 +985,10 @@ export type PipelineOutputContext = Pick<
   readonly preparedStartup?: Extract<IrProgramPresentationResult, { kind: "prepared-presentation" }>["startup"];
 };
 
-/** The existing pre-generation validation, shared by both internal routes. */
-function validatePipelineSource(input: PipelineInput): CompileResult | undefined {
-  const { errors, options, entryAst, userSourceFiles } = input;
-  // Each validation pass below gates on the errors IT produced, NOT on the whole
-  // accumulated `errors` array. This is load-bearing (#1927 regression fix): the
-  // pre-collected `errors` may already hold non-fatal TS diagnostics of severity
-  // "error" — e.g. TS2678 "Type '2' is not comparable to type '1'" on a switch
-  // case — which the single-source path has always TOLERATED (it compiles and
-  // succeeds, leaving the diagnostic in `errors`). The legacy single-source
-  // driver gated each pass only on that pass's fresh output; gating on the whole
-  // array here would turn every tolerated non-hard TS error into a hard failure.
-  const hasNewError = (added: { severity: string }[]) => added.some((e) => e.severity !== "warning");
-
-  // Step 1a: ES early-error detection — catch spec syntax errors TS misses, on
-  // EVERY user source file (#1931). allowJs dependency files are skipped (their
-  // JS may use patterns we cannot control) — same scoping as the diagnostic
-  // loop in the adapters. #1958 — EXCEPT the single-source path
-  // (`runEarlyErrorsOnAllowJs`), whose lone source IS the entry: the legacy
-  // `compileSourceSync` ran this pass unconditionally, and the `eval` host shim
-  // (always `allowJs: true`) depends on it to reject e.g. `export` in eval code.
-  if (!options.allowJs || input.runEarlyErrorsOnAllowJs) {
-    const earlyErrors: CompileError[] = [];
-    // #3419 — module-goal signal for rules where Script vs Module top level
-    // genuinely differ (duplicate top-level function declarations). The test262
-    // runner passes `inferModuleStrictArguments` as an EXPLICIT boolean — `true`
-    // exactly for `flags: [module]` tests (whose sources often carry no
-    // syntactic import/export the checker could infer module-ness from), `false`
-    // for script tests. Product compiles leave it undefined and are covered by
-    // the real `ts.isExternalModule` indicator inside the rule.
-    const moduleGoal = options.inferModuleStrictArguments === true;
-    // (#6491 r3) Script goal is an EXPLICIT opt-in, never `!moduleGoal` — see
-    // the `scriptGoal` doc comment in index.ts for why the negation is unsafe.
-    const scriptGoal = options.scriptGoal === true;
-    const scriptTopLevel = options.inferModuleStrictArguments === false; // (#6988) synthetic-`export` Script
-    for (const sf of userSourceFiles) {
-      earlyErrors.push(...detectEarlyErrors(sf, { moduleGoal, scriptGoal, scriptTopLevel }));
-    }
-    errors.push(...earlyErrors);
-    if (hasNewError(earlyErrors)) {
-      return failResult(errors);
-    }
-  }
-
-  // Step 1b: Safe mode validation for all user source files.
-  if (options.safe) {
-    const safeErrors: CompileError[] = [];
-    for (const sf of userSourceFiles) {
-      safeErrors.push(...validateSafeMode(sf, entryAst.checker, options));
-    }
-    errors.push(...safeErrors);
-    if (hasNewError(safeErrors)) {
-      return failResult(errors);
-    }
-  }
-
-  // Step 1c: Hardened mode validation for all user source files. #1927 — moving
-  // this into the shared core gives the multi paths hardened-mode parity (they
-  // previously skipped it entirely).
-  if (options.hardened) {
-    const hardenedErrors: CompileError[] = [];
-    for (const sf of userSourceFiles) {
-      hardenedErrors.push(...validateHardenedMode(sf));
-    }
-    errors.push(...hardenedErrors);
-    if (hasNewError(hardenedErrors)) {
-      return failResult(errors);
-    }
-  }
-
-  return undefined;
-}
+const preparedFrontendBoundary = createPreparedFrontendBoundary();
+export const preparedFrontendRejectionObservation = preparedFrontendBoundary.observe;
+export type { PreparedFrontendRejectionObservation } from "./compiler/prepared-pipeline-boundary.js";
+const validatePipelineSource = preparedFrontendBoundary.validate;
 
 function isWasmException(e: unknown): boolean {
   return (
@@ -1195,11 +1126,23 @@ export function runPreparedIrPipelinePresentation(input: PipelineInput): Prepare
     diagnostics: entryAst.diagnostics,
     syntacticDiagnostics: entryAst.syntacticDiagnostics,
   };
-  if (collectMultiDiagnostics(diagnostics, options, errors))
-    return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(failResult(errors)) };
+  const collectedDiagnosticStart = errors.length;
+  if (collectMultiDiagnostics(diagnostics, options, errors)) {
+    const rejected = {
+      kind: "output-failed" as const,
+      errors,
+      artifacts: preparedPipelineArtifacts(failResult(errors)),
+    };
+    preparedFrontendBoundary.syntax(rejected, diagnostics, errors, collectedDiagnosticStart);
+    return rejected;
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   const sourceFailure = validatePipelineSource(snapshot);
-  if (sourceFailure) return { kind: "output-failed", errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
+  if (sourceFailure) {
+    const rejected = { kind: "output-failed" as const, errors, artifacts: preparedPipelineArtifacts(sourceFailure) };
+    preparedFrontendBoundary.early(sourceFailure, rejected);
+    return rejected;
+  }
   const target = options.target === "standalone" ? "standalone" : options.target === "wasi" ? "wasi" : "host";
   const backendOptions: PreparedIrBackendOptions = {
     backend: targetProfile.backend,
