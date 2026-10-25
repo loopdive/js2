@@ -72,6 +72,7 @@ export { isAsyncIrReady } from "./async-selection.js";
 import { collectIrSafeModuleVarDeclarationLists, collectIrSafeVarDeclarationLists } from "./function-local-var.js";
 import { isAmbientIntrinsicName, isMemberReadReceiver } from "../shared/ambient-intrinsics.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
+import { BUILTIN_PROTOTYPE_METHOD_NAMES } from "./core/builtin-method-names.js";
 import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
@@ -101,6 +102,7 @@ import {
   effectiveIrReturnTypeNode,
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
+  uniformLiteralReturnKind,
 } from "./select-expression-structure.js";
 
 export {
@@ -744,6 +746,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-arguments-length"
       | "native-current-this"
       | "native-own-property-test"
+      | "host-dynamic-method-call"
       | "native-own-property-descriptor"
       | "native-number-conversion",
   ) => boolean;
@@ -1464,18 +1467,18 @@ let earlyReturnBarrierDepth = 0;
 let currentInPlannedMemberClosure = false;
 
 /**
- * (#7106 Stage 4) A planned member closure's receivers are dynamic carriers,
- * and the IR's dynamic method call (`__ir_dyn_method_call_N` →
- * `__extern_method_call`) has no brand arms for primitives or vecs on the
- * host-free lanes: it answers `undefined` where legacy dispatches by brand
- * (`list.join(", ")`, `n.toString()`, `sym.toString()` — measured). Such a call
- * stays legacy; a string-literal receiver keeps its native string method.
+ * (#7106 Stage 4 / #7117) A planned member closure's receivers are dynamic
+ * carriers, so `recv.m(…)` there is the IR's generic dynamic method call and
+ * {@link dynamicMethodCallIsExact} decides it (`list.join(", ")`,
+ * `n.toString()`, `sym.toString()` measured `undefined` off the host lane). A
+ * refused call keeps the closure legacy; a string-literal receiver keeps its
+ * native string method.
  */
 function plannedClosureDynamicMethodCall(expr: ts.CallExpression): boolean {
   if (!currentInPlannedMemberClosure || !ts.isPropertyAccessExpression(expr.expression)) return false;
   let receiver: ts.Expression = expr.expression.expression;
   while (ts.isParenthesizedExpression(receiver)) receiver = receiver.expression;
-  return !ts.isStringLiteralLike(receiver);
+  return !ts.isStringLiteralLike(receiver) && !dynamicMethodCallIsExact(expr.expression.name.text);
 }
 let currentFnIsGenerator = false;
 let currentFnIsVoidReturn = false;
@@ -2666,6 +2669,22 @@ function resolveReturnType(
   ) {
     return "void";
   }
+  // (#7129) A class method carries no lattice entry, but legacy registers its
+  // slot from the checker's inferred return. When every value return is the
+  // same bare literal and control cannot fall out, that inference is exactly
+  // the widened `number` / `string`. Host-free lanes only (standalone, WASI,
+  // the native regime in a JS environment): the host-assisted lane keeps its
+  // legacy output byte-identical, as the sibling admissions do.
+  if (
+    ts.isMethodDeclaration(fn) &&
+    fn.body &&
+    mapped === undefined &&
+    !jsHostExternsEnabled(currentSelectionOptions) &&
+    functionBodyAlwaysTerminates(fn.body)
+  ) {
+    const literalKind = uniformLiteralReturnKind(fn.body);
+    if (literalKind !== null) return literalKind;
+  }
   // (#7106 S1b) An unannotated function whose value returns are all one
   // concrete kind but whose body can FALL OUT (no terminating last statement:
   // `switch` without default, a guard `if`) returns that kind OR `undefined`.
@@ -3000,6 +3019,23 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
 }
 
 /**
+ * (#7117) Is a generic dynamic method call `recv.<name>(…)` exact on this lane?
+ * On the host lane `__extern_method_call` is the real JS call. Off it, the
+ * native object runtime dispatches open-`$Object` / instance / closure methods
+ * but answers `undefined` for a primitive or vec receiver (`list.join(", ")`
+ * measured), where legacy dispatches by brand. So a BUILT-IN prototype method
+ * name is refused there — except `charCodeAt`, the string runtime's exact fast
+ * path. The cut is by NAME, so a user method that shares one (`c.get(k)`,
+ * `o.add(x)`, `it.next()`) is refused too; only an uncolliding user name
+ * (`o.inc()`) keeps its open dispatch. #6851's per-(method, arity) wrapper
+ * lifts this.
+ */
+function dynamicMethodCallIsExact(name: string): boolean {
+  if (name === "charCodeAt" || !BUILTIN_PROTOTYPE_METHOD_NAMES.has(name)) return true;
+  return currentSelectionOptions?.supportsBackendCapability?.("host-dynamic-method-call") === true;
+}
+
+/**
  * True when the current body contains an exact receiver-first dynamic method
  * call (#3793 retained function object or #4387 inherited Array HOF).
  *
@@ -3323,6 +3359,7 @@ function dynamicUsesAreMoveOnly(
         if (!currentDynMemberReadBuildable || !expectDyn || (e.arguments.length > 1 && !narrowStringReplace)) {
           return false;
         }
+        if (!narrowStringReplace && !dynamicMethodCallIsExact(e.expression.name.text)) return false;
         if (!scanExpr(e.expression.expression, true)) return false;
         if (narrowStringReplace) {
           return scanExpr(e.arguments[0]!, false) && scanExpr(e.arguments[1]!, false);
