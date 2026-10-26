@@ -115,6 +115,7 @@ import {
 } from "./array-callback-dyn-invoke.js"; // (#6690)
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
+import { prepareExternVecDefaultSortCompare } from "./array/array-sort-value.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
 import {
   buildVecFromExternMaterializer,
@@ -9040,13 +9041,15 @@ function compileArrayDefaultToStringSort(
   // NativeString — `ref.cast` of an `(ref extern)` against `(ref $AnyString)` is
   // invalid Wasm (different reference-type hierarchies → "ref.as_non_null of
   // (ref extern) has to be in the same reference type hierarchy as (ref N)" in
-  // `__module_init`). Bail so the caller no-ops the sort (#2502) instead of
-  // emitting a poisoned binary. Boxed-any ToString-order sorting is a separate
-  // follow-up needing a runtime any→string step, not this static cast.
+  // `__module_init`). (#7151) On the no-host lanes that element instead takes
+  // the runtime ToString of `prepareExternVecDefaultSortCompare` (SortCompare,
+  // undefined last); elsewhere bail so the caller no-ops the sort (#2502).
   // HOST mode is unaffected: there `cmpStrType` is `externref` and the string
   // branch emits only `ref.as_non_null` (no cast), so a host externref element
   // sorts correctly — do NOT bail there or valid host string sorts break.
-  if (!isNumeric && native && elemType.kind === "externref") {
+  const externCompare =
+    !isNumeric && native && elemType.kind === "externref" ? prepareExternVecDefaultSortCompare(ctx, fctx) : undefined;
+  if (!isNumeric && native && elemType.kind === "externref" && externCompare === undefined) {
     return null;
   }
 
@@ -9186,7 +9189,7 @@ function compileArrayDefaultToStringSort(
     getOp,
     dataLocal: dataTmp,
     lenLocal: lenTmp,
-    buildCompareGtZero: compareGtZero,
+    buildCompareGtZero: externCompare ?? compareGtZero,
   });
 
   fctx.body.push({ op: "local.get", index: vecTmp });
