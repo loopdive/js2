@@ -109,7 +109,7 @@ agreement matrix, standalone + gc native-first) and the committed probes
 hand with `npx tsx <probe> <worktree-root>`).
 
 2026-10-26 stakeholder: #7144 first; #6834 to be rebuilt on it. (Recorded here because
-`plan/issues/7113-*.md` exists only on the #6834 branch, not on `main`.)
+the #7113 issue file exists only on the #6834 branch, not on `main`.)
 
 ### What moved
 
