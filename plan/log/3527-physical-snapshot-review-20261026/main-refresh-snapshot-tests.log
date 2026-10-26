@@ -1,0 +1,16 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-physical-snapshot-review-20261026
+
+ ✓ tests/issue-3518-module-reservations.test.ts (149 tests) 280ms
+ ✓ tests/issue-3518-physical-snapshot-comparison.test.ts (49 tests) 66ms
+ ✓ tests/issue-3527-publication-snapshot-comparison.test.ts (29 tests) 21ms
+ ✓ tests/issue-3518-final-parent-reservations.test.ts (42 tests) 19ms
+ ✓ tests/issue-3527-descriptor-snapshots.test.ts (20 tests) 10ms
+ ✓ tests/issue-3518-reservation-completion-assertion.test.ts (15 tests) 9ms
+ ✓ tests/issue-3518-type-reservation-auth.test.ts (6 tests) 4ms
+ ✓ tests/issue-3527-snapshot-intrinsic-observations.test.ts (6 tests) 4ms
+
+ Test Files  8 passed (8)
+      Tests  316 passed (316)
+   Start at  11:42:22
+   Duration  23.77s (transform 14.48s, setup 0ms, collect 21.52s, tests 413ms, environment 1ms, prepare 505ms)

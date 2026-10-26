@@ -43,3 +43,17 @@ Caching successful checks or removing intermediate observations is not justified
 by the final closing audit. This branch provides the physical boundary and its
 counterexamples; it does not contain the complete uncommitted recursive-owner
 integration graph or claim to resolve its timeout failures.
+
+## Main refresh for C review
+
+The refreshed tree incorporates main
+`3b6489436318e8f863ef474e41797b48911eac59`. Both appended issue sections are
+preserved; production source merged without conflict. Current regression logs
+record 316/316 snapshot controls and 38/38 realm layout/completion controls.
+The original logs remain historical evidence. PR 6925 is held for C's verdict.
+
+Read-only merge review (`snapshot_extraction_review`) found no actionable
+findings: both issue sections survive exactly once, the extracted runtime
+comparator bodies match main, and the realm audit and its six controls are
+retained verbatim. The reviewer did not rerun tests; external C review remains
+outstanding.

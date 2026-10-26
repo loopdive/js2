@@ -2511,6 +2511,7 @@ No baseline, test expectation, CI workflow or global architecture rule was
 weakened for these environment failures.
 
 
+
 ### 2026-10-26 — readable physical-validation review boundary
 
 Implementation plan: extract the existing filled-function snapshot traversal from
@@ -2564,3 +2565,21 @@ The repaired eight-file selection passes 316/316. Follow-up read-only review
 confirms all previous assertions remain intact and both new mutations have
 unique target checks; no actionable findings. Historical 315/316 failures
 remain preserved alongside the final log in the review evidence directory.
+
+## Implementation Plan — close realm completion comparison mutation window (2026-10-26)
+
+Canonical initializer comparison may invoke Proxy traps after an earlier realm anchor has been compared. Reaudit the completed source initializer through the existing physical ledger before returning the layout owner; this checks every completed resource, including both anchors. Keep the existing checks, layout and emitted bodies unchanged. Add genuine filling/sealed controls using the existing realm fixture: healthy transparent Proxy, late realm-anchor mutation and late function-prototype-anchor mutation. Prove the defect against unchanged main, then run the layout regression and targeted type/lint checks. Quality criterion: one existing audit call, no new validator, cache, ABI or producer. This is a bounded integrity correction, not complete runtime or IR migration qualification.
+
+Validation: unchanged main `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` fails the four late-mutation cases and passes both healthy controls; the corrected source passes all 38 cases (six new controls plus 32 existing layout regressions). Targeted TS7, Biome lint, Prettier and all five source ratchets pass. A fresh-context review found no actionable defect in the bounded post-comparison physical-ledger check. Three default-compiler programs (numeric loop, string slice/concat, captured object) have byte-identical Wasm and exact matching WAT before/after; this is scoped output preservation, not full backend equivalence. The first baseline probe armed too early and passed all six cases; its log is retained, and only the corrected trigger establishes the defect. Full IR migration and the separate integration candidate remain open.
+
+### 2026-10-26 — refresh the physical snapshot review head
+
+Merge upstream main `3b6489436318e8f863ef474e41797b48911eac59` into the
+physical snapshot extraction branch. The sole conflict was the independent
+append-only evidence sections in this issue; preserve both, including the
+realm comparison closing audit that has now landed. No source conflict or
+additional algorithm change was needed. The refreshed tree passes 316/316
+snapshot controls and 38/38 realm layout/completion controls. All five source
+ratchets pass against this exact main base; the dead-export gate proves only
+preservation, not full closure or retirement. PR 6925 retains `hold` pending
+C's independent review of the refreshed head.
