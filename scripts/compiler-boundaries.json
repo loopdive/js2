@@ -11839,6 +11839,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/analysis/operand-admissibility.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-core",
+      "owner": "7144-ir-shared-operand-admissibility-predicate",
+      "nextBoundary": "Key the shared operand / write admissibility predicates on an IR operator enum instead of the TS SyntaxKind so the module leaves the frontend wrapper."
+    },
+    {
       "path": "src/ir/analysis/string-evidence.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -16649,6 +16657,14 @@
       "destination": "frontend-ts",
       "owner": "7106-stage2-function-objects",
       "nextBoundary": "Source closure shape/body selection through required canonical selector operations; isolate frontend AST admission from core IR."
+    },
+    {
+      "path": "src/ir/select-planned-closure-operands.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "7144-ir-shared-operand-admissibility-predicate",
+      "nextBoundary": "Source planned-closure operand family proof over the shared admissibility predicates; isolate frontend AST admission from core IR."
     },
     {
       "path": "src/backend/wasmgc/resources/native-frame-bindings.ts",
