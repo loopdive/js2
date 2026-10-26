@@ -45,6 +45,19 @@ const EXPRS = [
   `keys.every(k => k !== "b") ? 1 : 0`,
   `(() => { let n = 0; keys.forEach(k => { if (typeof k === "number") n += k; }); return n; })()`,
   `(() => { let n = 0; keys.forEach(k => { if (k !== "a") n++; }); return n; })()`,
+  // Round 2: a nested closure writes the parameter (ref cell holds the raw externref).
+  `keys.filter(k => { const f = () => { k = 5; }; f(); return typeof k === "number"; }).length`,
+  `keys.filter(k => { const f = () => { k = 5; }; f(); return typeof k === "string"; }).length`,
+  `keys.filter(k => { const g = () => { if (k === "never") k = 0; }; g(); return typeof k === "number"; }).length`,
+  `keys.some(k => { const f = () => { k = k; }; f(); return typeof k === "number"; }) ? 1 : 0`,
+  `(() => { let n = 0; keys.forEach(k => { const f = () => { k = k; }; f(); if (typeof k === "number") n++; }); return n; })()`,
+  // Round 2: parenthesized callback.
+  `keys.filter((k => typeof k === "number")).length`,
+  // Round 2: reduce / reduceRight with an initial value (the accumulator carries the same lie).
+  `keys.reduce((acc, k) => acc + (typeof k === "number" ? k : 0), 0) === 4 ? 1 : 0`,
+  `keys.reduce((acc, k) => (typeof k === "number" ? acc + 1 : acc), 0) === 2 ? 1 : 0`,
+  `keys.reduce((acc, k) => acc + k, "") === "ca31" ? 1 : 0`,
+  `keys.reduceRight((acc, k) => acc + (typeof k === "number" ? k : 0), 0) === 4 ? 1 : 0`,
 ];
 
 describe("#7152 HOF callback over an externref-storage vec takes the element live", () => {

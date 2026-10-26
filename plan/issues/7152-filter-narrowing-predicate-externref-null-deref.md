@@ -66,11 +66,19 @@ and dereferenced as a concrete struct in the `typeof` / `!==` lowering.
   `string | number`) while the vec stores `externref`; the HOF loop's
   externref→`$AnyValue` coercion is a `ref.test` cast that yields null.
 - Fix: `nullableElemParamOverrideFor` now also arms for an `externref` element
-  (scoped to the callback node), and `applyNullableElemParamOverride` re-types
-  only an `$AnyValue` parameter of that callback to `externref`. `typeof k`'s
-  `$AnyValue` tag fast path is skipped for an identifier held in a raw
-  `externref` slot (boxing would tag a stored number as 5), so it uses the
-  `__typeof_*` helpers.
-- Bytes: identical on 11 playground examples and 20 HOF-using equivalence
-  programs × gc/standalone/wasi; only the repro program changes.
-- Test: `tests/equivalence/issue-7152-hof-narrowing-externref-vec.test.ts` (27 rows, gc native-first / standalone / wasi vs node).
+  (scoped to the callback node, parentheses peeled), and
+  `applyNullableElemParamOverride` re-types only an `$AnyValue` parameter of
+  that callback to `externref` — the element, and for `reduce`/`reduceRight`
+  also the accumulator (its loop slot is the callback's externref result).
+  `typeof k`'s `$AnyValue` tag fast path is skipped for an identifier held in a
+  raw `externref` slot, or in a ref cell whose value type is `externref` (a
+  nested closure writes `k`): boxing would tag a stored number as 5, so it uses
+  the `__typeof_*` helpers.
+- Bytes: identical on the 13 playground examples, 18 HOF-using equivalence
+  programs and 8 hand-written reduce/filter programs × gc/standalone/wasi;
+  only function-local repro-shaped programs change.
+- Test: `tests/equivalence/issue-7152-hof-narrowing-externref-vec.test.ts` (47 rows, gc native-first / standalone / wasi vs node).
+- Left out: `typeof k` outside a `=== "literal"` comparison (`switch (typeof k)`,
+  `const t = typeof k`, `typeof k + ""`) still traps with an illegal cast in
+  these callbacks — fails on base too, likely the #7173 root cause. On wasi,
+  `keys.reduce((acc, k) => acc + k, "").length` reads `undefined` (base traps).
