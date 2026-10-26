@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3901,
-    "fail": 532,
+    "pass": 3905,
+    "fail": 528,
     "ce": 390,
     "skip": 0,
     "total": 4823,
@@ -1134,12 +1134,12 @@
       },
       {
         "name": "object-spread",
-        "pass": 85,
-        "fail": 10,
+        "pass": 89,
+        "fail": 6,
         "ce": 24,
         "skip": 0,
         "total": 119,
-        "pct": 71
+        "pct": 75
       },
       {
         "name": "default-parameters",
@@ -1188,12 +1188,12 @@
       },
       {
         "name": "Symbol",
-        "pass": 17,
-        "fail": 15,
+        "pass": 21,
+        "fail": 11,
         "ce": 8,
         "skip": 0,
         "total": 40,
-        "pct": 43
+        "pct": 53
       },
       {
         "name": "Promise.prototype.finally",
@@ -3571,18 +3571,18 @@
   },
   {
     "edition": "ES2026",
-    "pass": 4583,
+    "pass": 4578,
     "fail": 197,
-    "ce": 141,
+    "ce": 146,
     "skip": 0,
     "total": 4921,
     "pct": 93,
     "features": [
       {
         "name": "Temporal",
-        "pass": 4484,
+        "pass": 4479,
         "fail": 106,
-        "ce": 21,
+        "ce": 26,
         "skip": 0,
         "total": 4611,
         "pct": 97
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4719,
-    "fail": 663,
+    "pass": 4721,
+    "fail": 661,
     "ce": 63,
     "skip": 0,
     "total": 5445,

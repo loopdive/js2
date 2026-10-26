@@ -129,7 +129,7 @@ describe("#4769 C02 — selected class/object method families", () => {
     expect((instance.exports.test as () => number)()).toBe(28);
   });
 
-  it("keeps yielding class-expression methods on the conservative host path", async () => {
+  it("refuses yielding class-expression methods instead of the host buffer (#7010)", async () => {
     const result = await compile(
       [
         "const C = class { *m({ K = class { v(): number { return 41; } } } = {}) { yield 0; yield new K().v() + 1; } };",
@@ -137,7 +137,10 @@ describe("#4769 C02 — selected class/object method families", () => {
       ].join("\n"),
       { fileName: "issue-4769-class-expression-yield.ts", target: "standalone" },
     );
-    expect(result.success).toBe(true);
-    expect((result.imports ?? []).map((i) => i.name)).toContain("__create_generator");
+    // (#7010) Still not lowered natively, but no longer a silent host-buffer
+    // dependency: a compile error naming #7010.
+    expect(result.success).toBe(false);
+    expect(result.errors.map((e) => e.message).join("\n")).toMatch(/#7010/);
+    expect((result.imports ?? []).map((i) => i.name)).not.toContain("__create_generator");
   });
 });

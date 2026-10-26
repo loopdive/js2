@@ -26,7 +26,12 @@ import {
 } from "./array-species.js"; // (#5145) ArraySpeciesCreate + CreateDataPropertyOrThrow
 import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
-import { buildJoinBoxedElementToString, isAnyStringSubtype } from "./array-join-element.js"; // (#4560)
+import {
+  buildJoinBoxedElementToString,
+  CLOSURE_ARRAY_METHODS,
+  isAnyStringSubtype,
+  nativeJoinProbeExpr,
+} from "./array-join-element.js"; // (#4560, #7146)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import {
   addArrayIteratorImports,
@@ -2110,19 +2115,7 @@ export function compileArrayMethodCall(
   // (#2007/#1448) Record closure-allocating array methods so the standalone
   // vec-concat join fast-path can avoid a late `number_toString` registration
   // that would shift indices and corrupt this closure's already-emitted code.
-  if (
-    methodName === "map" ||
-    methodName === "filter" ||
-    methodName === "flatMap" ||
-    methodName === "forEach" ||
-    methodName === "reduce" ||
-    methodName === "reduceRight" ||
-    methodName === "find" ||
-    methodName === "findIndex" ||
-    methodName === "sort"
-  ) {
-    fctx.emittedClosureArrayMethod = true;
-  }
+  if (CLOSURE_ARRAY_METHODS.has(methodName)) fctx.emittedClosureArrayMethod = true;
 
   const receiverExpr = propAccess.expression;
   const arrInfo =
@@ -2143,17 +2136,8 @@ export function compileArrayMethodCall(
     );
   }
 
-  // A native-string join over a closure-producing array expression must
-  // compile that receiver exactly once. The ordinary actual-type probe below
-  // recompiles `map`/`filter`/… and closure registration is not transactional;
-  // probing and then emitting the receiver can therefore leave the committed
-  // call wired to a stale/null closure. The resolved TS result type already
-  // describes the array produced by these methods, including `map`'s result
-  // element type, so use it directly for this narrow nested-call shape.
-  const skipReceiverProbeForNativeJoin =
-    ctx.nativeStrings &&
-    (methodName === "join" || methodName === "toString" || methodName === "toLocaleString") &&
-    receiverIsClosureProducingArrayCall(receiverExpr);
+  // The expression whose lowered type replaces the checker's vec (see nativeJoinProbeExpr).
+  const storageExpr = nativeJoinProbeExpr(ctx.nativeStrings, methodName, receiverExpr);
 
   let { vecTypeIdx, arrTypeIdx, elemType } = arrInfo;
   // #1286: tracks whether the probe found the receiver to be externref at
@@ -2186,11 +2170,11 @@ export function compileArrayMethodCall(
   // `[0, true].lastIndexOf(...)` infers i32 elements during construction,
   // but resolveArrayInfo resolves (number|boolean)[] → __vec_externref.
   // Probe-compile the receiver to determine the actual Wasm type (#826).
-  if (receiverExpr && !skipReceiverProbeForNativeJoin) {
+  if (storageExpr) {
     // Fast path: check the Wasm local/global type directly
     let actualType: ValType | undefined;
-    if (ts.isIdentifier(receiverExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(receiverExpr)) {
-      const name = receiverExpr.text;
+    if (ts.isIdentifier(storageExpr) && !fctx.nativeGeneratorExpressionValueLocals?.has(storageExpr)) {
+      const name = storageExpr.text;
       const localIdx = fctx.localMap.get(name);
       if (localIdx !== undefined) {
         // #1247: localIdx is the wasm-level index (params + locals);
@@ -2214,7 +2198,7 @@ export function compileArrayMethodCall(
       // #1919 — transactional probe: the method function re-compiles the
       // receiver below, so discard the body plus any locals / late imports /
       // errors this probe leaks.
-      const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, receiverExpr));
+      const probeResult = probeCompiledType(ctx, fctx, () => compileExpression(ctx, fctx, storageExpr));
       if (
         probeResult &&
         (probeResult.kind === "ref" || probeResult.kind === "ref_null") &&
@@ -5570,7 +5554,7 @@ function compileArrayJoinExternNative(
     { op: "call", funcIdx: ctx.funcMap.get("__extern_get_idx") ?? externGetIdx },
     ...buildExternJoinElementToString(ctx, fctx, anyStrTypeIdx, externToStrIdx, localizedArm),
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, elemToStr, [{ op: "local.get", index: recvTmp }]); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });
@@ -5621,30 +5605,6 @@ export function compileArrayJoinExtern(
 
   fctx.body.push({ op: "call", funcIdx: joinAnyIdx });
   return { kind: "externref" };
-}
-
-/**
- * True when `expr` is a call to a higher-order array method that allocates a
- * callback closure (`map`/`filter`/`flatMap`/`forEach`/`reduce`/…). The native
- * join path re-compiles its receiver via the dispatcher probe, and closure
- * registration is not idempotent, so such receivers must not route through it
- * (see #2074/#2075). Conservative: any of these method names on a call.
- */
-function receiverIsClosureProducingArrayCall(expr: ts.Expression): boolean {
-  if (!ts.isCallExpression(expr)) return false;
-  if (!ts.isPropertyAccessExpression(expr.expression)) return false;
-  const m = expr.expression.name.text;
-  return (
-    m === "map" ||
-    m === "filter" ||
-    m === "flatMap" ||
-    m === "forEach" ||
-    m === "reduce" ||
-    m === "reduceRight" ||
-    m === "find" ||
-    m === "findIndex" ||
-    m === "sort"
-  );
 }
 
 /**
@@ -5894,7 +5854,7 @@ function compileArrayJoinNative(
       else: protoHoleArm ?? repr.literal(""),
     },
   ];
-  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr);
+  emitStringJoinFold(ctx, fctx, repr, foldLocals, joinBoundsCheckedElemToStr, emptyElem && vecTmp); // (#7147)
 
   // Return the joined native string as externref for the caller.
   fctx.body.push({ op: "local.get", index: resultTmp });

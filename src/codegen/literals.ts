@@ -91,6 +91,7 @@ import {
   nativeGeneratorInfoForForOfSubject,
   registerNativeGenerator,
 } from "./generators-native.js";
+import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
 import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier } from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
@@ -4533,6 +4534,8 @@ export function compileObjectLiteralForStruct(
       ) {
         emitAsyncGenerator(ctx, methodFctx, prop);
         methodFctx.body.push({ op: "return" });
+      } else if (isGeneratorMethod && prop.body && refuseEagerGeneratorBuffer(ctx, methodFctx, prop)) {
+        // (#7010) No host-free lowering for this generator method — refused.
       } else if (isGeneratorMethod && prop.body) {
         // Generator method: eagerly evaluate body, collect yields into a buffer,
         // then wrap with __create_generator to return a Generator-like object.

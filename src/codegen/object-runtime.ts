@@ -8817,7 +8817,7 @@ type EnumShapeEntry = {
  * the NAMES from presence words is not possible — a presence word holds bits,
  * not names, and unconditionally-assigned fields have no presence bit at all.)
  */
-function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEntry[] {
+function collectClosedStructEnumerationEntries(ctx: CodegenContext, emptyTypeIdxs?: number[]): EnumShapeEntry[] {
   const entries: EnumShapeEntry[] = [];
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName)) continue;
@@ -8854,7 +8854,13 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
         byName.set(layoutField.name, { name: layoutField.name, presenceSlot: layoutField.presenceSlot });
       }
     }
-    if (byName.size === 0) continue;
+    // (#7149) A shape with no enumerable own field (`class C { #x = 1 }`) has
+    // no arm, but it is still an ordinary object: the caller's classifier
+    // needs it so JSON.stringify answers `{}`, not `null`.
+    if (byName.size === 0) {
+      emptyTypeIdxs?.push(typeIdx);
+      continue;
+    }
 
     const orderedNames = orderNamesByInsertion(ctx, structName, [...byName.keys()]);
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
@@ -9068,10 +9074,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (objVecNewIdx === undefined || objVecPushIdx === undefined) return;
 
-  const entries = collectClosedStructEnumerationEntries(ctx);
-  if (entries.length === 0) return;
+  const emptyTypeIdxs: number[] = [];
+  const entries = collectClosedStructEnumerationEntries(ctx, emptyTypeIdxs);
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
+  const emptyAllocated = emptyTypeIdxs.filter((typeIdx) => allocatedTypes.has(typeIdx));
+  if (entries.length === 0 && emptyAllocated.length === 0) return;
 
-  for (const name of ["__object_keys", "__object_keys_forin"]) {
+  for (const name of entries.length === 0 ? [] : ["__object_keys", "__object_keys_forin"]) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
     // `(externref obj) -> externref`: one param, so the first appended local
@@ -9111,13 +9120,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
   if (closedAssignSourceClassifier) {
     const seenTypeIdxs = new Set<number>();
     const body: Instr[] = [];
-    for (const entry of entries) {
-      if (seenTypeIdxs.has(entry.typeIdx)) continue;
-      seenTypeIdxs.add(entry.typeIdx);
+    for (const typeIdx of [...entries.map((entry) => entry.typeIdx), ...emptyAllocated]) {
+      if (seenTypeIdxs.has(typeIdx)) continue;
+      seenTypeIdxs.add(typeIdx);
       body.push(
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        { op: "ref.test", typeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },

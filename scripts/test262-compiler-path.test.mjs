@@ -288,6 +288,7 @@ test("actual worker admission refuses missing strict APIs before any compiler ca
     "preparedRuntimeExecutionObservation",
     "requiredPreparedEmission",
     "requiredPreparedFinalArtifactObservation",
+    "requiredPreparedFrontendFailure",
   ];
   const complete = Object.fromEntries(names.map((name) => [name, () => {}]));
   for (const missing of ["all", ...names]) {
@@ -356,5 +357,122 @@ test("actual worker startup host primes remain legacy-only without mutating glob
     promise(env, { _installPromiseKeyedCombinators: () => promiseCalls++ }, function FakePromise() {});
     assert.equal(iteratorCalls, path === "ir" ? 0 : 1);
     assert.equal(promiseCalls, path === "ir" ? 0 : 1);
+  }
+});
+
+// These reporting controls use serialized observations; they grant no compiler
+// or runtime ownership and do not count as a Test262 corpus execution.
+const frontendProof = {
+  schema: "test262-prepared-frontend-report-v1",
+  requestVersion: 1,
+  jobId: 4,
+  workerPid: 7,
+  backend: "wasmgc",
+  target: "standalone",
+  sourceSha256: "0".repeat(64),
+  sources: [{ file: "test.js", sourceSha256: "0".repeat(64) }],
+  phase: "syntax",
+  expectedPhase: "parse",
+  errorType: "SyntaxError",
+  diagnostics: [{ severity: "error", code: "syntax", message: "actual grammar rejection" }],
+};
+test("verified frontend negatives remain distinct from executed IR cases", () => {
+  const row = {
+    compilerPath: "ir",
+    executionCompilerPath: "unknown",
+    status: "pass",
+    compilerAttempts: 1,
+    frontendPathVerified: true,
+    preparedFrontendReport: frontendProof,
+  };
+  const summary = summarizeTest262CompilerPaths([row], "ir");
+  assert.equal(summary.verifiedFrontendCases, 1);
+  assert.equal(summary.verifiedExecutionCases, 0);
+  assert.equal(summary.unverifiedExecutionCases, 1);
+  assert.equal(summary.compilerPathVerified, false);
+  assert.equal(summary.executionCompilerPath, "unknown");
+  assert.equal(summary.measurementState, "measured");
+});
+test("frontend flags alone, mismatched phases and resolution claims cannot admit a negative pass", () => {
+  const row = { compilerPath: "ir", status: "pass", frontendPathVerified: true };
+  assert.throws(() => summarizeTest262CompilerPaths([row], "ir"));
+  for (const override of [
+    { phase: "syntax", expectedPhase: "early" },
+    { expectedPhase: "resolution" },
+    { diagnostics: [] },
+  ]) {
+    assert.throws(() =>
+      summarizeTest262CompilerPaths([{ ...row, preparedFrontendReport: { ...frontendProof, ...override } }], "ir"),
+    );
+  }
+});
+
+test("a genuine static early SyntaxError can satisfy a Test262 parse negative", () => {
+  const summary = summarizeTest262CompilerPaths(
+    [
+      {
+        compilerPath: "ir",
+        status: "pass",
+        compilerAttempts: 1,
+        frontendPathVerified: true,
+        preparedFrontendReport: { ...frontendProof, phase: "early" },
+      },
+    ],
+    "ir",
+  );
+  assert.equal(summary.verifiedFrontendCases, 1);
+  assert.equal(summary.verifiedExecutionCases, 0);
+});
+
+test("generated IR request metadata roundtrips as configuration without execution credit", () => {
+  const metadata = test262RequestedCompilerPathMetadata("ir", "standalone");
+  const summary = summarizeTest262CompilerPaths([{ ...metadata, status: "compile_error", compilerAttempts: 1 }], "ir");
+  assert.equal(summary.configuredCompilerPath, "ir");
+  assert.equal(summary.compilerPathVerified, false);
+  assert.equal(summary.verifiedExecutionCases, 0);
+});
+
+test("duplicate frontend reporting rows do not inflate distinct-case denominators", () => {
+  const directory = mkdtempSync(join(tmpdir(), "test262-ir-frontend-dedup-"));
+  try {
+    const input = join(directory, "rows.jsonl"),
+      output = join(directory, "report.json");
+    const row = {
+      file: "language/negative.js",
+      category: "language",
+      scope: "standard",
+      status: "pass",
+      compilerPath: "ir",
+      executionCompilerPath: "unknown",
+      compilerAttempts: 1,
+      frontendPathVerified: true,
+      preparedFrontendReport: frontendProof,
+    };
+    writeFileSync(input, [row, row].map((value) => JSON.stringify(value)).join("\n") + "\n");
+    const child = spawnSync(
+      process.execPath,
+      [
+        join(root, "scripts/build-test262-report.mjs"),
+        "--input",
+        input,
+        "--output",
+        output,
+        "--target",
+        "standalone",
+        "--compiler-path",
+        "ir",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(child.status, 0, child.stderr);
+    const report = JSON.parse(readFileSync(output, "utf8"));
+    assert.equal(report.summary.total, 1);
+    assert.equal(report.completedCases, 1);
+    assert.equal(report.attemptedCases, 1);
+    assert.equal(report.verifiedFrontendCases, 1);
+    assert.equal(report.verifiedExecutionCases, 0);
+    assert.equal(report.compilerPathVerified, false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

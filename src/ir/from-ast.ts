@@ -835,6 +835,8 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
   isAmbientBinding?(node: ts.Identifier): boolean;
   /** (#7118) Every declaration of the identifier's symbol is a lib one. */
   isLibOnlyBinding?(node: ts.Identifier): boolean;
+  /** (#7127) The module's builtin-prototype brand companion is seeded. */
+  builtinProtoCompanionSeeded?(): boolean;
   /** Exact source-bound Number call; no physical conversion provider is implied. */
   preparedNumberCall?(call: ts.CallExpression): boolean;
   /** Exact current ambient Object.create(null) source call; symbolic provider only. */
@@ -5027,6 +5029,13 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   return value;
 }
 
+/** (#7106) `<Name>` read as a value: `dyn.member_get(dyn.global_object, "<Name>")`. */
+function lowerAmbientIntrinsicValue(expr: ts.Identifier, cx: LowerCtx): IrValueId {
+  const realm = cx.builder.emitDynGlobalObject();
+  const key = cx.builder.emitBox(cx.builder.emitStringConst(expr.text), irDynamic(JS_TAG_IDS.String));
+  return cx.builder.emitDynMemberGet(realm, key);
+}
+
 function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerExprUnchecked(expr, cx, hint));
@@ -5209,11 +5218,8 @@ function lowerExprUnchecked(expr: ts.Expression, cx: LowerCtx, hint: IrType): Ir
     }
     // (#7106) An ambient intrinsic as a VALUE: a named read off the realm's
     // global object; the selector's predicate, a refused use demotes below.
-    if (!p && isAmbientIntrinsicValueUse(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true)) {
-      const realm = cx.builder.emitDynGlobalObject();
-      const key = cx.builder.emitBox(cx.builder.emitStringConst(expr.text), irDynamic(JS_TAG_IDS.String));
-      return cx.builder.emitDynMemberGet(realm, key);
-    }
+    if (!p && isAmbientIntrinsicValueUse(expr, (node) => cx.resolver?.isLibOnlyBinding?.(node) === true, cx.resolver))
+      return lowerAmbientIntrinsicValue(expr, cx);
     if (!p)
       demoteToLegacy("body-shape-rejected", `ir/from-ast: identifier "${expr.text}" is not in scope in ${cx.funcName}`);
     // Slice 6 part 2 (#1181): slot-bound identifier (let mutated across
@@ -7833,6 +7839,16 @@ function lowerCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = fa
   }
   if (binding?.kind === "nestedFunc") {
     return lowerNestedFuncCall(binding, expr.arguments, cx);
+  }
+  // (#7106 Stage 4) `func()` where `func` is a dynamic-carrier binding.
+  const bindingLogicalType =
+    binding?.kind === "slot" ? (binding.asType ?? binding.type) : binding?.kind === "local" ? binding.type : undefined;
+  if (bindingLogicalType?.kind === "dynamic") {
+    const callee = lowerExpr(expr.expression, cx, irDynamic());
+    if (cx.builder.typeOf(callee).kind !== "dynamic") {
+      demoteToLegacy("call-resolution-unsupported", `ir/from-ast: dynamic callee lost its carrier in ${cx.funcName}`);
+    }
+    return functionObjects.lowerDynamicValueCall(expr, callee, functionObjectLoweringHost(cx));
   }
 
   // (#7106 S1g) propertyHelper's uncurried `__hasOwnProperty(obj, name)` /

@@ -26,6 +26,7 @@
 // Physical allocation is owned by the Wasm module reservation ledger. This
 // consumer imports no source frontend, checker or legacy CodegenContext.
 
+import { forEachPreparedIrInstruction } from "./runtime/prepared-instructions.js";
 import {
   planNativeInvocationRequirements,
   assertNativeInvocationRequirementsCurrent,
@@ -141,7 +142,7 @@ import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
 import { irCallableBindingKey } from "./callable-bindings.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { lowerIrFunctionBody, wasmValueTypeConverter, type IrLowerResolver } from "./lower.js";
-import { forEachInstrDeep, type IrFuncRef, type IrFunction, type IrGlobalRef } from "./nodes.js";
+import type { IrFuncRef, IrFunction, IrGlobalRef } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import { ProgramAbiMap, type ProgramAbiFinalIndex } from "./program-abi.js";
 import { observePreparedIrProgram } from "./program-observation.js";
@@ -208,10 +209,6 @@ function locate(program: PreparedIrProgram, unitId: IrUnitId, failure: IrPrepara
   if (!owner) programInvariant("invalid-prepared-data", `cannot locate ${unitId}: ${failure.detail}`);
   const { cause: _cause, ...diagnostic } = failure;
   return Object.freeze({ ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile });
-}
-
-function instructionBuffers(fn: IrFunction) {
-  return [...fn.blocks.map((block) => block.instrs), ...(fn.asyncPlan?.states.map((state) => state.body) ?? [])];
 }
 
 function selectProjection(
@@ -343,14 +340,10 @@ export function acceptPreparedIrProgram(
         missing = `${what} unit body ${ref.binding.unitId}, which the ${options.backend}:${options.target} projection does not carry`;
       }
     };
-    for (const buffer of instructionBuffers(fn)) {
-      for (const root of buffer) {
-        forEachInstrDeep(root, (instruction) => {
-          if (instruction.kind === "call") check(instruction.target, "calls");
-          else if (instruction.kind === "closure.new") check(instruction.liftedFunc, "captures");
-        });
-      }
-    }
+    forEachPreparedIrInstruction(fn, (instruction) => {
+      if (instruction.kind === "call") check(instruction.target, "calls");
+      else if (instruction.kind === "closure.new") check(instruction.liftedFunc, "captures");
+    });
     if (missing !== undefined) {
       return locate(program, fn.unitId, {
         kind: "invariant",

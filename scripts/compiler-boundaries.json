@@ -1874,6 +1874,10 @@
     {
       "path": "src/ir/dialect/README.md",
       "reason": "Dialect documentation; not implementation or type code."
+    },
+    {
+      "path": "src/codegen-linear/runtime/arrays/README.md",
+      "reason": "Linear array runtime body documentation; not implementation or type code."
     }
   ],
   "moves": [
@@ -2181,6 +2185,11 @@
       "layer": "ir-program"
     },
     {
+      "path": "src/ir/program/native-value-definitions.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
       "path": "src/ir/program/native-string-value-demands.ts",
       "state": "clean",
       "layer": "ir-program"
@@ -2362,6 +2371,11 @@
     },
     {
       "path": "src/ir/runtime/vector-callables.ts",
+      "state": "clean",
+      "layer": "ir-runtime"
+    },
+    {
+      "path": "src/ir/runtime/prepared-instructions.ts",
       "state": "clean",
       "layer": "ir-runtime"
     },
@@ -2845,6 +2859,11 @@
       "layer": "legacy-linear"
     },
     {
+      "path": "src/codegen-linear/runtime/arrays/forwarding-resolver.ts",
+      "state": "unmigrated",
+      "layer": "legacy-linear"
+    },
+    {
       "path": "src/codegen-linear/runtime/string-slice.ts",
       "state": "unmigrated",
       "layer": "legacy-linear"
@@ -3295,6 +3314,14 @@
     },
     {
       "path": "src/codegen/array-indexof-scan.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
+    },
+    {
+      "path": "src/codegen/array/array-join-cycle.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
@@ -16473,6 +16500,30 @@
       "layer": "ir-analysis"
     },
     {
+      "path": "src/compiler/prepared-pipeline-boundary.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate TypeScript/safe-mode frontend validation and diagnostic capture from source-free prepared output-profile association before compiler-layer activation."
+    },
+    {
+      "path": "src/test262/test262-prepared-entry.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate strict Test262 request capture and frontend analysis from prepared-program orchestration and optional legacy API delegation before compiler-layer activation."
+    },
+    {
+      "path": "src/test262/test262-prepared-runtime.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "compiler",
+      "owner": "3525-prepared-presentation",
+      "nextBoundary": "Separate Test262 engine/import lifecycle integration from source-free final-artifact evidence; retain the existing JavaScript adapter dependency as explicit migration debt."
+    },
+    {
       "path": "src/compiler/ir-program-presentation.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -16598,6 +16649,51 @@
       "destination": "frontend-ts",
       "owner": "7106-stage2-function-objects",
       "nextBoundary": "Source closure shape/body selection through required canonical selector operations; isolate frontend AST admission from core IR."
+    },
+    {
+      "path": "src/backend/wasmgc/resources/native-frame-bindings.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-frame-layout.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/resources/prepared-native-async-frame.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-contracts.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-declarations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-layout.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-async-frame-operations.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/prepared-native-async-frame-plan.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/promise-layout.ts",
+      "state": "clean",
+      "layer": "native-runtime"
     }
   ]
 }
