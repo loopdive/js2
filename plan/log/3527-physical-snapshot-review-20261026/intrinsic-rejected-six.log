@@ -1,0 +1,121 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-physical-snapshot-review-20261026
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts (6 tests | 6 failed) 5ms
+   × preserves the textual audit's observation of map replacement by a live getter 4ms
+     → expected 'accepted' to be 'physical module reservations: map rep…' // Object.is equality
+   × does not introduce a freeze call after a descriptor getter during capture 0ms
+     → expected 'physical module reservations: freeze …' to be 'accepted' // Object.is equality
+   × preserves live stringify replacement in textual global audits 0ms
+     → expected 'accepted' to be 'physical module reservations: stringi…' // Object.is equality
+   × preserves live toString replacement in textual global audits 0ms
+     → expected 'accepted' to be 'physical module reservations: toStrin…' // Object.is equality
+   × preserves live padStart replacement in textual global audits 0ms
+     → expected 'accepted' to be 'physical module reservations: padStar…' // Object.is equality
+   × preserves live join replacement in textual global audits 0ms
+     → expected 'accepted' to be 'physical module reservations: join re…' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3527-snapshot-intrinsic-observations.test.ts > preserves the textual audit's observation of map replacement by a live getter
+AssertionError: expected 'accepted' to be 'physical module reservations: map rep…' // Object.is equality
+
+Expected: "physical module reservations: map replacement sentinel"
+Received: "accepted"
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts:44:18
+     42|     Array.prototype.map = originalMap;
+     43|   }
+     44|   expect(result).toBe("physical module reservations: map replacement s…
+       |                  ^
+     45| });
+     46| it("does not introduce a freeze call after a descriptor getter during …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  tests/issue-3527-snapshot-intrinsic-observations.test.ts > does not introduce a freeze call after a descriptor getter during capture
+AssertionError: expected 'physical module reservations: freeze …' to be 'accepted' // Object.is equality
+
+Expected: "accepted"
+Received: "physical module reservations: freeze replacement sentinel"
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts:64:18
+     62|     Object.freeze = originalFreeze;
+     63|   }
+     64|   expect(result).toBe("accepted");
+       |                  ^
+     65| });
+     66| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  tests/issue-3527-snapshot-intrinsic-observations.test.ts > preserves live stringify replacement in textual global audits
+AssertionError: expected 'accepted' to be 'physical module reservations: stringi…' // Object.is equality
+
+Expected: "physical module reservations: stringify replacement sentinel"
+Received: "accepted"
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts:103:20
+    101|       Object.defineProperty(target, name, descriptor);
+    102|     }
+    103|     expect(result).toBe(`physical module reservations: ${name} replace…
+       |                    ^
+    104|   },
+    105| );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  tests/issue-3527-snapshot-intrinsic-observations.test.ts > preserves live toString replacement in textual global audits
+AssertionError: expected 'accepted' to be 'physical module reservations: toStrin…' // Object.is equality
+
+Expected: "physical module reservations: toString replacement sentinel"
+Received: "accepted"
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts:103:20
+    101|       Object.defineProperty(target, name, descriptor);
+    102|     }
+    103|     expect(result).toBe(`physical module reservations: ${name} replace…
+       |                    ^
+    104|   },
+    105| );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  tests/issue-3527-snapshot-intrinsic-observations.test.ts > preserves live padStart replacement in textual global audits
+AssertionError: expected 'accepted' to be 'physical module reservations: padStar…' // Object.is equality
+
+Expected: "physical module reservations: padStart replacement sentinel"
+Received: "accepted"
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts:103:20
+    101|       Object.defineProperty(target, name, descriptor);
+    102|     }
+    103|     expect(result).toBe(`physical module reservations: ${name} replace…
+       |                    ^
+    104|   },
+    105| );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  tests/issue-3527-snapshot-intrinsic-observations.test.ts > preserves live join replacement in textual global audits
+AssertionError: expected 'accepted' to be 'physical module reservations: join re…' // Object.is equality
+
+Expected: "physical module reservations: join replacement sentinel"
+Received: "accepted"
+
+ ❯ tests/issue-3527-snapshot-intrinsic-observations.test.ts:103:20
+    101|       Object.defineProperty(target, name, descriptor);
+    102|     }
+    103|     expect(result).toBe(`physical module reservations: ${name} replace…
+       |                    ^
+    104|   },
+    105| );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+   Start at  10:24:13
+   Duration  163ms (transform 45ms, setup 0ms, collect 53ms, tests 5ms, environment 0ms, prepare 28ms)
+

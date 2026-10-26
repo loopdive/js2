@@ -2509,3 +2509,40 @@ gates misdecode spaces in this checkout path; exact source/script copies under a
 space-free temporary directory pass. Initial failure logs are retained locally.
 No baseline, test expectation, CI workflow or global architecture rule was
 weakened for these environment failures.
+
+
+### 2026-10-26 — readable physical-validation review boundary
+
+Implementation plan: extract the existing filled-function snapshot traversal from
+`src/wasm/physical/module-reservations.ts` into the physical-layer module
+`src/wasm/physical/data-snapshot.ts`. Reuse the pinned historical textual oracle
+through `tests/helpers/physical-snapshot-oracle.ts`; remove its duplicate from
+the filled-function comparison tests. Preserve every ledger observation and
+keep the other descriptor/global/publication/recgroup domains on their original
+textual algorithm. Quality acceptance: one function snapshot implementation,
+one shared test oracle, no validation cache or new ownership layer.
+
+The initial isolated candidate broadened structural matching to the remaining
+domains. Public global-initializer controls disproved equivalent behavior when
+a getter replaces map, freeze, stringify, numeric toString, padStart, or join.
+All six fail on the rejected candidate. The extraction-only candidate and the
+exact upstream ledger pass those controls. The broader optimization is rejected;
+its patch and raw failures are retained in
+`plan/log/3527-physical-snapshot-review-20261026/` for C's review.
+
+The 316-case baseline and candidate runs each pass 315 and fail the same existing
+canonical module-record declaration hash assertion. Neither arm changes that
+file; the failure is preserved, not rebaselined here. The first isolation run
+also exposed test fixtures calling integration-only batch methods; those tests
+now use the upstream scalar authentication boundary. No native integration
+speedup, complete producer population, both-backend qualification, or frontend
+retirement is claimed. Recursive owner validation still requires architectural
+work after this independently readable observation contract is reviewed.
+
+
+Final extraction-only run after shared-oracle cleanup: 315/316, with the same
+baseline declaration-hash failure. The three default-compiler binary/WAT
+controls pass 3/3 in both arms with exact equality. Fresh-context read-only
+review (`snapshot_extraction_review`) reports no actionable findings in the
+final production extraction; it independently confirms unchanged traversal and
+oracle literal. C's broader recursive-validation architecture review remains open.

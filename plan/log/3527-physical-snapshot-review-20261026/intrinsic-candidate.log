@@ -1,0 +1,49 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-physical-snapshot-review-20261026
+
+ ❯ .tmp/snapshot-intrinsic-observations.test.ts (2 tests | 2 failed) 5ms
+   × preserves the textual audit's observation of map replacement by a live getter 4ms
+     → expected 'accepted' to be 'physical module reservations: map rep…' // Object.is equality
+   × does not introduce a freeze call after a descriptor getter during capture 0ms
+     → expected 'physical module reservations: freeze …' to be 'accepted' // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  .tmp/snapshot-intrinsic-observations.test.ts > preserves the textual audit's observation of map replacement by a live getter
+AssertionError: expected 'accepted' to be 'physical module reservations: map rep…' // Object.is equality
+
+Expected: "physical module reservations: map replacement sentinel"
+Received: "accepted"
+
+ ❯ .tmp/snapshot-intrinsic-observations.test.ts:30:18
+     28|   try { result = observed(() => f.tx.assertCompletedReservation(f.glob…
+     29|   finally { Array.prototype.map = originalMap; }
+     30|   expect(result).toBe("physical module reservations: map replacement s…
+       |                  ^
+     31| });
+     32| it("does not introduce a freeze call after a descriptor getter during …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  .tmp/snapshot-intrinsic-observations.test.ts > does not introduce a freeze call after a descriptor getter during capture
+AssertionError: expected 'physical module reservations: freeze …' to be 'accepted' // Object.is equality
+
+Expected: "accepted"
+Received: "physical module reservations: freeze replacement sentinel"
+
+ ❯ .tmp/snapshot-intrinsic-observations.test.ts:42:18
+     40|   try { result = observed(() => f.tx.fillGlobal(f.global, f.init)); }
+     41|   finally { Object.freeze = originalFreeze; }
+     42|   expect(result).toBe("accepted");
+       |                  ^
+     43| });
+     44| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  10:21:12
+   Duration  174ms (transform 54ms, setup 0ms, collect 48ms, tests 5ms, environment 0ms, prepare 53ms)
+

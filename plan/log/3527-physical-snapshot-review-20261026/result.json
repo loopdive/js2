@@ -1,0 +1,55 @@
+{
+  "base": "61b1b07d2b5666b6ebb84fbbe93ee8a07655d090",
+  "scope": "Function comparator extraction only; textual descriptor/global/publication/recgroup audits retained. No caching or audit removal.",
+  "baseline": {
+    "passed": 315,
+    "failed": 1,
+    "total": 316
+  },
+  "candidateBeforeFinalOracleHelperCleanup": {
+    "passed": 315,
+    "failed": 1,
+    "total": 316
+  },
+  "sharedFailure": "issue-3518-module-reservations: stale canonical declaration SHA256; expected 490bf9a75ee595ac2dcadba160a8b71149e38f195e7fae6abaeb86043eb0858e, observed 1e50d9cd1fcce90871a6a5ea7e80cc1d4bbb2bb34c24e82a13c7d986985dda00 on unchanged module-records.ts in both arms",
+  "rejectedBroadening": {
+    "passed": 0,
+    "failed": 6,
+    "total": 6,
+    "reason": "map/freeze/stringify/toString/padStart/join replacement observation differs at global initializer boundary",
+    "sha256": "12195202a3a64cd8324f1dddc89ec9e8b232fa6557a01607073e247cf4f7786a"
+  },
+  "qualification": "No production speedup or whole native integration completion claimed.",
+  "candidateFinal": {
+    "passed": 315,
+    "failed": 1,
+    "total": 316,
+    "exitCode": 1
+  },
+  "legacyDefaultCompiler": {
+    "baselinePassed": 3,
+    "candidatePassed": 3,
+    "exactBinaryAndWat": true
+  },
+  "freshReview": {
+    "agent": "snapshot_extraction_review",
+    "verdict": "No actionable findings; read-only source review; no tests rerun"
+  },
+  "files": {
+    "src/wasm/physical/module-reservations.ts": "00b0ddf85dff77686a2c0b48f85fa840c4533d225aaabc70dc373b465129e1a5",
+    "src/wasm/physical/data-snapshot.ts": "778870189ebb8f4bcd7e02214beb3f097a4691a2ad833c83b590e5d46328db10",
+    "tests/helpers/physical-snapshot-oracle.ts": "154bec06805f03a82c4dbfcb7433a58d71346633c1936d089d483a4a581067ec",
+    "tests/issue-3518-physical-snapshot-comparison.test.ts": "4d630b6b0704cb1e574f1c2e6bd16d3f18390994cd438c13e8aa1ab6b64c9436",
+    "tests/issue-3527-snapshot-intrinsic-observations.test.ts": "ffad34c60f762c669284a15b3795b905f91e8f06decf5c142651afad0d34a287"
+  },
+  "typecheck": {
+    "configuredTs7": "exit 0",
+    "rawDefaultTsconfigAttempt": "failed: omitted explicit Node types; see types-full.log",
+    "targetedIncludingNewTests": "exit 0"
+  },
+  "integrationRepair": {
+    "passed": 104,
+    "total": 104,
+    "exitCode": 0
+  }
+}

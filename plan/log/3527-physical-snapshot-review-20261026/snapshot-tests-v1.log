@@ -1,0 +1,384 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-physical-snapshot-review-20261026
+
+ ❯ tests/issue-3518-module-reservations.test.ts (149 tests | 1 failed) 57ms
+   ✓ retains all four collection brands after importing the low-level context first 8ms
+   ✓ explicit-rec grouping admission > checks earlier params type-definition refs in flattened coordinates 2ms
+   ✓ explicit-rec grouping admission > checks earlier results type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks earlier field type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks earlier array type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks earlier struct-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks earlier sub-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks at-first params type-definition refs in flattened coordinates 1ms
+   ✓ explicit-rec grouping admission > checks at-first results type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks at-first field type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks at-first array type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks at-first struct-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks at-first sub-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks internal-forward params type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks internal-forward results type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks internal-forward field type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks internal-forward array type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks internal-forward struct-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks internal-forward sub-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks trailing-forward params type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks trailing-forward results type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks trailing-forward field type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks trailing-forward array type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks trailing-forward struct-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > checks trailing-forward sub-super type-definition refs in flattened coordinates 0ms
+   ✓ explicit-rec grouping admission > preserves params refs solely into the preceding flat prefix and flattened body/local refs 1ms
+   ✓ explicit-rec grouping admission > preserves results refs solely into the preceding flat prefix and flattened body/local refs 0ms
+   ✓ explicit-rec grouping admission > preserves field refs solely into the preceding flat prefix and flattened body/local refs 0ms
+   ✓ explicit-rec grouping admission > preserves array refs solely into the preceding flat prefix and flattened body/local refs 0ms
+   ✓ explicit-rec grouping admission > preserves struct-super refs solely into the preceding flat prefix and flattened body/local refs 0ms
+   ✓ explicit-rec grouping admission > preserves sub-super refs solely into the preceding flat prefix and flattened body/local refs 0ms
+   ✓ explicit-rec grouping admission > emits High's no-prefix rec([A ref1, B]) plus function counterexample 0ms
+   ✓ review controls — exact emitter-affecting state > rejects a sparse hole in exports 0ms
+   ✓ review controls — exact emitter-affecting state > rejects a prototype-backed hole in exports 0ms
+   ✓ review controls — exact emitter-affecting state > rejects a sparse hole in declaredFuncRefs 0ms
+   ✓ review controls — exact emitter-affecting state > rejects a prototype-backed hole in declaredFuncRefs 0ms
+   ✓ review controls — exact emitter-affecting state > rejects changed NaN payload bits that the actual encoder distinguishes 0ms
+   ✓ review controls — exact emitter-affecting state > accepts an unchanged payload-bearing NaN snapshot 0ms
+   ✓ review controls — exact emitter-affecting state > indexes rec members and subsequent interned signatures in the emitted index space 0ms
+   ✓ review controls — exact emitter-affecting state > counts sub as one and resolves its actual inner record rather than the wrapper 0ms
+   ✓ review controls — exact emitter-affecting state > does not alias two interned signatures after multi-member rec groups 0ms
+   ✓ review controls — exact emitter-affecting state > uses the flattened member kind for instruction validation 0ms
+   ✓ review controls — exact emitter-affecting state > reserves the exact canonical group descriptor before its future members and emits it 0ms
+   ✓ review controls — exact emitter-affecting state > supports explicit rec wrappers after an independently retained flat canonical group 0ms
+   ✓ review controls — exact emitter-affecting state > retains the canonical group after an explicit group in flattened coordinates 0ms
+   ✓ review controls — exact emitter-affecting state > rejects reserving canonical group add-undefined 0ms
+   ✓ review controls — exact emitter-affecting state > rejects reserving canonical group delete-undefined 0ms
+   ✓ review controls — exact emitter-affecting state > rejects reserving canonical group substitute 0ms
+   ✓ review controls — exact emitter-affecting state > rejects reserving canonical group content 0ms
+   ✓ review controls — exact emitter-affecting state > rejects filling canonical group add-undefined 0ms
+   ✓ review controls — exact emitter-affecting state > rejects filling canonical group delete-undefined 0ms
+   ✓ review controls — exact emitter-affecting state > rejects filling canonical group substitute 0ms
+   ✓ review controls — exact emitter-affecting state > rejects filling canonical group content 0ms
+   ✓ review controls — exact emitter-affecting state > rejects canonical group duplicate 0ms
+   ✓ review controls — exact emitter-affecting state > rejects canonical group late 0ms
+   ✓ review controls — exact emitter-affecting state > rejects canonical group missing-member 0ms
+   ✓ review controls — exact emitter-affecting state > rejects canonical group adjacent-merge 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a defined body ref.func via declarative after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a imported body ref.func via declarative after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a defined body ref.func via element after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a imported body ref.func via element after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a defined body ref.func via offset after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a imported body ref.func via offset after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a defined body ref.func via global after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a imported body ref.func via global after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a defined body ref.func via export after fills 0ms
+   ✓ review controls — exact emitter-affecting state > accepts a imported body ref.func via export after fills 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in body, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in block, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in loop, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in then, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in else, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in catch, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in catchAll, even if target is startup 0ms
+   ✓ review controls — exact emitter-affecting state > rejects undeclared ref.func in try_table, even if target is startup 0ms
+   × physical record relocation — fifteen complete declarations > pins mandatory canonical declarations, order, members and documentation 11ms
+     → expected '1e50d9cd1fcce90871a6a5ea7e80cc1d4bbb2…' to be '490bf9a75ee595ac2dcadba160a8b71149e38…' // Object.is equality
+   ✓ physical record relocation — fifteen complete declarations > requires exactly the explicit compatibility exports and no local replacement 4ms
+   ✓ physical record relocation — fifteen complete declarations > retains all fifteen type identities 0ms
+   ✓ physical record relocation — fifteen complete declarations > keeps the new kernel's dependencies entirely inside canonical Wasm modules 12ms
+   ✓ shared existing allocator authority > resolves mint order independently of push order using the one ordinal array 0ms
+   ✓ shared existing allocator authority > retains legacy trace failure ordering: ordinal commit, trace, then append 2ms
+   ✓ shared existing allocator authority > shares function-type key/interner, cache-hit naming and exact descriptor references 0ms
+   ✓ shared existing allocator authority > shares the exact import append while legacy policy/counters stay authoritative 0ms
+   ✓ module completion lifecycle and exact locators > keeps tag/import/global/function/startup order and distinct instruction/ABI indices 1ms
+   ✓ module completion lifecycle and exact locators > counts real table/element/memory/data/string/reference objects including passive data 0ms
+   ✓ module completion lifecycle and exact locators > fills exact objects in place and treats an explicitly completed empty void body as complete 0ms
+   ✓ module completion lifecycle and exact locators > rejects an unfilled empty placeholder 0ms
+   ✓ module completion lifecycle and exact locators > rejects an unfilled valid-looking nonempty placeholder 0ms
+   ✓ module completion lifecycle and exact locators > rejects a duplicate function fill 0ms
+   ✓ module completion lifecycle and exact locators > rejects missing global completion 0ms
+   ✓ module completion lifecycle and exact locators > rejects duplicate global completion 0ms
+   ✓ module completion lifecycle and exact locators > rejects empty global completion 0ms
+   ✓ module completion lifecycle and exact locators > rejects reserving function population substitute 0ms
+   ✓ module completion lifecycle and exact locators > rejects reserving function population reorder 0ms
+   ✓ module completion lifecycle and exact locators > rejects reserving function population append 0ms
+   ✓ module completion lifecycle and exact locators > rejects reserving function population replace-array 0ms
+   ✓ module completion lifecycle and exact locators > rejects filling function population substitute 0ms
+   ✓ module completion lifecycle and exact locators > rejects filling function population reorder 0ms
+   ✓ module completion lifecycle and exact locators > rejects filling function population append 0ms
+   ✓ module completion lifecycle and exact locators > rejects filling function population replace-array 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze ordinal mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze type mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze signature-brand mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze export mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze start mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze completed-body mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze completed-locals mutation 0ms
+   ✓ module completion lifecycle and exact locators > rejects a duplicate identity, not just a duplicate display name 0ms
+   ✓ module completion lifecycle and exact locators > rejects reserving the same physical object under two distinct identities 0ms
+   ✓ module completion lifecycle and exact locators > retains the optional start field's exact presence even before publication 0ms
+   ✓ module completion lifecycle and exact locators > rejects negative zero mutation inside the exact completed instruction buffer 0ms
+   ✓ module completion lifecycle and exact locators > accepts an unchanged negative zero instruction snapshot 0ms
+   ✓ module completion lifecycle and exact locators > rejects non-finite mutation inside the exact completed instruction buffer 0ms
+   ✓ module completion lifecycle and exact locators > accepts an unchanged non-finite instruction snapshot 0ms
+   ✓ module completion lifecycle and exact locators > rejects delete of a present-undefined optional descriptor field 0ms
+   ✓ module completion lifecycle and exact locators > rejects add of a present-undefined optional descriptor field 0ms
+   ✓ module completion lifecycle and exact locators > accepts unchanged present-undefined optional fields and distinguishes bigint instruction values 0ms
+   ✓ module completion lifecycle and exact locators > rejects physical index lookup before freeze 0ms
+   ✓ module completion lifecycle and exact locators > rejects a foreign or cloned token despite equal names, keys and handles 0ms
+   ✓ module completion lifecycle and exact locators > rejects a wrong-kind owned token 0ms
+   ✓ module completion lifecycle and exact locators > rejects new imports after defined globals without changing their positional regime 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze function allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze global allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze type allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze tag allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze table allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze memory allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze string allocation 0ms
+   ✓ module completion lifecycle and exact locators > rejects post-freeze data allocation 0ms
+   ✓ module completion lifecycle and exact locators > permits only an already reserved exact signature after freeze 0ms
+   ✓ module completion lifecycle and exact locators > distinguishes the complete signature [{"kind":"ref","typeIdx":0},{"kind":"ref","typeIdx":1}] 0ms
+   ✓ module completion lifecycle and exact locators > distinguishes the complete signature [{"kind":"ref","typeIdx":0},{"kind":"ref_null","typeIdx":0}] 0ms
+   ✓ module completion lifecycle and exact locators > distinguishes the complete signature [{"kind":"i32"},{"kind":"i32","boolean":true}] 0ms
+   ✓ module completion lifecycle and exact locators > distinguishes the complete signature [{"kind":"i32"},{"kind":"i32","symbol":true}] 0ms
+   ✓ module completion lifecycle and exact locators > distinguishes the complete signature [{"kind":"i64"},{"kind":"i64","bigint":true}] 0ms
+   ✓ module completion lifecycle and exact locators > distinguishes the complete signature [{"kind":"f64"},{"kind":"f64","undefSentinel":true}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects a missing reference-type dependency at freeze 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"call","funcIdx":2097156}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"call","funcIdx":9}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"global.get","index":9}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"ref.cast","typeIdx":9}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"struct.new","typeIdx":0}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"call_indirect","typeIdx":0,"tableIdx":9}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"throw","tagIdx":9}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"memory.init","dataIdx":9}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects unresolved/wrong-kind body references [{"op":"if","blockType":{"kind":"empty"},"then":[{"op":"global.get","index":9}]}] 0ms
+   ✓ module completion lifecycle and exact locators > rejects export collision without toggling the actual function exported bit 0ms
+   ✓ module completion lifecycle and exact locators > rejects duplicate startup and incompatible startup signatures 0ms
+   ✓ module completion lifecycle and exact locators > rejects an existing unregistered population at transaction creation 0ms
+ ✓ tests/issue-3518-physical-snapshot-comparison.test.ts (49 tests) 24ms
+ ✓ tests/issue-3527-publication-snapshot-comparison.test.ts (29 tests) 10ms
+ ✓ tests/issue-3518-final-parent-reservations.test.ts (42 tests) 8ms
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts (20 tests | 20 failed) 11ms
+   × fresh descriptor audits preserve the pinned textual algorithm > captures type and token separately, then audits token before type: [ 1, 2, 2, 1 ] 5ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > captures type and token separately, then audits token before type: [ 1, 2, 3, 1 ] 1ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: altered…' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > captures type and token separately, then audits token before type: [ 1, 2, 2, 3 ] 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: altered…' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > accepts equal data repeatedly without retaining a successful audit 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed signed zero 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed NaN payload 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed infinity sign 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed present undefined 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed key order 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed array hole 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > rejects changed byte tag 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > preserves sibling getter order and a later error ahead of mismatch 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: later e…' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > preserves cycle error precedence 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: cyclic …' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > preserves symbol error precedence 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: unsuppo…' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > preserves function error precedence 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: unsuppo…' // Object.is equality
+   × fresh descriptor audits preserve the pinned textual algorithm > preserves Proxy reads in both token and type audits 0ms
+     → expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+   × authenticates current function without using a prior success 0ms
+     → tx.assertCallableReservations is not a function
+   × authenticates current global without using a prior success 0ms
+     → tx.assertCallableReservations is not a function
+   × authenticates current interned-type without using a prior success 0ms
+     → tx.assertCallableReservations is not a function
+   × authenticates current rec-member without using a prior success 0ms
+     → tx.assertCallableReservations is not a function
+ ✓ tests/issue-3518-reservation-completion-assertion.test.ts (15 tests) 5ms
+ ✓ tests/issue-3518-type-reservation-auth.test.ts (6 tests) 3ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 21 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3518-module-reservations.test.ts > physical record relocation — fifteen complete declarations > pins mandatory canonical declarations, order, members and documentation
+AssertionError: expected '1e50d9cd1fcce90871a6a5ea7e80cc1d4bbb2…' to be '490bf9a75ee595ac2dcadba160a8b71149e38…' // Object.is equality
+
+Expected: "490bf9a75ee595ac2dcadba160a8b71149e38f195e7fae6abaeb86043eb0858e"
+Received: "1e50d9cd1fcce90871a6a5ea7e80cc1d4bbb2bb34c24e82a13c7d986985dda00"
+
+ ❯ tests/issue-3518-module-reservations.test.ts:561:27
+    559|     const text = source("src/wasm/model/module-records.ts");
+    560|     expect(declarations(text).map((node) => node.name.text)).toEqual(n…
+    561|     expect(receipt(text)).toBe("490bf9a75ee595ac2dcadba160a8b71149e38f…
+       |                           ^
+    562|     const mutated = text.replace("presenceBit?: number;", "presenceBit…
+    563|     expect(receipt(mutated)).not.toBe(receipt(text));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > captures type and token separately, then audits token before type: [ 1, 2, 2, 1 ]
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+
+Expected: "ok"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:77:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > captures type and token separately, then audits token before type: [ 1, 2, 3, 1 ]
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > captures type and token separately, then audits token before type: [ 1, 2, 2, 3 ]
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: altered…' // Object.is equality
+
+Expected: "physical module reservations: altered type descriptor control"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:77:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > accepts equal data repeatedly without retaining a successful audit
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+
+Expected: "ok"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:86:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed signed zero
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed NaN payload
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed infinity sign
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed present undefined
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed key order
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed array hole
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > rejects changed byte tag
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+
+Expected: "ok"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:104:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > preserves sibling getter order and a later error ahead of mismatch
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: later e…' // Object.is equality
+
+Expected: "physical module reservations: later error"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:141:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > preserves cycle error precedence
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: cyclic …' // Object.is equality
+
+Expected: "physical module reservations: cyclic physical descriptor"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:151:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > preserves symbol error precedence
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > preserves function error precedence
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'physical module reservations: unsuppo…' // Object.is equality
+
+Expected: "physical module reservations: unsupported physical descriptor value"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:151:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > fresh descriptor audits preserve the pinned textual algorithm > preserves Proxy reads in both token and type audits
+AssertionError: expected 'tx.assertTypeReservations is not a fu…' to be 'ok' // Object.is equality
+
+Expected: "ok"
+Received: "tx.assertTypeReservations is not a function"
+
+ ❯ Object.check tests/issue-3527-descriptor-snapshots.test.ts:44:23
+     42|       });
+     43|       const current = observe(() => tx.assertTypeReservations([token])…
+     44|       expect(current).toBe(old === "ok" ? old : "physical module reser…
+       |                       ^
+     45|       expect(events.actual).toEqual(events.original);
+     46|       return current;
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:169:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/21]⎯
+
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > authenticates current function without using a prior success
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > authenticates current global without using a prior success
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > authenticates current interned-type without using a prior success
+ FAIL  tests/issue-3527-descriptor-snapshots.test.ts > authenticates current rec-member without using a prior success
+TypeError: tx.assertCallableReservations is not a function
+ ❯ tests/issue-3527-descriptor-snapshots.test.ts:183:8
+    181|     const member: StructTypeDef = { kind: "struct", name: "member", fi…
+    182|     tx.reserveType("rec", { kind: "rec", types: [member] });
+    183|     tx.assertCallableReservations([fn]);
+       |        ^
+    184|     if (kind === "function") fn.object.exported = true;
+    185|     else if (kind === "global") global.object.type = { kind: "f64" };
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/21]⎯
+
+
+ Test Files  2 failed | 5 passed (7)
+      Tests  21 failed | 289 passed (310)
+   Start at  10:20:09
+   Duration  9.69s (transform 6.45s, setup 0ms, collect 8.90s, tests 117ms, environment 0ms, prepare 190ms)
+
