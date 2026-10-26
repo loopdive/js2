@@ -16,6 +16,7 @@
 // `undefined`), literals and operators produce their result family.
 
 import { forEachChild, ts } from "../ts-api.js";
+import { i32IdentityBitwiseOperand, isWrapI32Lowerable } from "./analysis/i32-slots.js";
 import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan.js";
 import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import {
@@ -24,6 +25,7 @@ import {
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isEqualityOperator,
+  isStrictEqualityOperator,
   isTypedBinaryOperator,
   nullComparisonFolds,
   nullishLeftAdmissible,
@@ -118,6 +120,56 @@ function nullConsumerFamily(node: ts.Node): OperandFamily {
 }
 
 /**
+ * Whether a value `void x` — the f64 NaN sentinel for `undefined` — reaches a
+ * consumer that reads it correctly or that the predicates judge: discarded
+ * (also through a discarded conditional), a typed binary operand, the value of
+ * a closure-slot write, a ToBoolean / ToNumber reader (`!`, `-`, `+`, `~`, a
+ * condition). Anywhere else (a call argument, a member store, a declaration,
+ * `typeof`, `throw`, a joined conditional arm) the NaN would be observed as a
+ * number, or from-ast has no carrier box for it.
+ */
+function voidValueConsumerAdmissible(node: ts.VoidExpression, isClosureSlot: (name: string) => boolean): boolean {
+  let child: ts.Node = node;
+  let throughConditional = false;
+  for (let parent = node.parent; ; child = parent, parent = parent.parent) {
+    if (ts.isParenthesizedExpression(parent)) continue;
+    if (ts.isExpressionStatement(parent) || ts.isVoidExpression(parent)) return true;
+    if (ts.isConditionalExpression(parent) && parent.condition !== child) {
+      throughConditional = true;
+      continue;
+    }
+    if (ts.isBinaryExpression(parent)) {
+      const op = parent.operatorToken.kind;
+      if (op === ts.SyntaxKind.CommaToken) {
+        if (parent.left === child) return true;
+        continue;
+      }
+      if (throughConditional) return false;
+      if (isTypedBinaryOperator(op)) return true;
+      const target = unwrapParens(parent.left);
+      return (
+        isAssignmentOperator(op) && parent.right === child && ts.isIdentifier(target) && isClosureSlot(target.text)
+      );
+    }
+    if (throughConditional) return false;
+    if (ts.isPrefixUnaryExpression(parent)) {
+      return (
+        parent.operator === ts.SyntaxKind.ExclamationToken ||
+        parent.operator === ts.SyntaxKind.MinusToken ||
+        parent.operator === ts.SyntaxKind.PlusToken ||
+        parent.operator === ts.SyntaxKind.TildeToken
+      );
+    }
+    if (ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) {
+      return parent.expression === child;
+    }
+    if (ts.isForStatement(parent)) return parent.condition === child;
+    if (ts.isConditionalExpression(parent)) return true;
+    return false;
+  }
+}
+
+/**
  * The first operator or slot write in `fn`'s body that from-ast's typing would
  * withdraw, or `null` when every one the walk sees is admissible.
  */
@@ -149,6 +201,7 @@ export function plannedClosureOperandRefusal(
   };
   if (fn.body) collect(fn.body);
   const parameterNames = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+  const isClosureSlot = (name: string): boolean => locals.has(name) || parameterNames.has(name);
 
   const resolving = new Set<string>();
   const slotProof = (name: string): OperandProof => {
@@ -186,7 +239,7 @@ export function plannedClosureOperandRefusal(
 
   const operandProof = (raw: ts.Expression): OperandProof => {
     const expr = unwrapParens(raw);
-    if (ts.isIdentifier(expr) && (locals.has(expr.text) || parameterNames.has(expr.text))) return slotProof(expr.text);
+    if (ts.isIdentifier(expr) && isClosureSlot(expr.text)) return slotProof(expr.text);
     if (ts.isArrayLiteralExpression(expr)) {
       const numeric = expr.elements.every((element) => operandProof(element).family === "number");
       return { family: numeric ? "vec<number>" : "vec<other>", additive: "unprovable" };
@@ -203,9 +256,8 @@ export function plannedClosureOperandRefusal(
       case "reference":
         return { family: "reference", additive: "unprovable" };
     }
-    // A value `void` is the f64 undefined sentinel, which the `+` proof cannot
-    // type (`(void 0) - 1` lowers, `(void 0) + 1` withdraws).
-    if (ts.isVoidExpression(expr)) return { family: "number", additive: "unprovable" };
+    // A value `void` is the f64 sentinel for `undefined` (`irOperandFamily`).
+    if (ts.isVoidExpression(expr)) return { family: "undefined", additive: "unprovable" };
     if (ts.isConditionalExpression(expr)) {
       const whenTrue = operandProof(expr.whenTrue);
       const whenFalse = operandProof(expr.whenFalse);
@@ -289,7 +341,7 @@ export function plannedClosureOperandRefusal(
       const target = unwrapParens(expr.left);
       // Writes to member / element targets and to module bindings have their
       // own lowerings; only a closure slot is judged here.
-      if (!ts.isIdentifier(target) || (!locals.has(target.text) && !parameterNames.has(target.text))) return null;
+      if (!ts.isIdentifier(target) || !isClosureSlot(target.text)) return null;
       const slot = slotProof(target.text).family;
       const value = operandProof(expr.right).family;
       if (op === ts.SyntaxKind.EqualsToken) {
@@ -306,11 +358,16 @@ export function plannedClosureOperandRefusal(
         ? null
         : { arm: "closure-null-compare", node: expr };
     }
+    // `x | 0` with an i32-lowerable `x` takes from-ast's fused-i32 identity
+    // (no promoted slot is visible here, so only the slot-free shapes).
+    const identityOperand = i32IdentityBitwiseOperand(expr);
+    if (identityOperand !== null && isWrapI32Lowerable(identityOperand, () => false)) return null;
     const left = unwrapParens(expr.left);
     const right = unwrapParens(expr.right);
     // The strict `undefined` compare has its own lowering (`tryLowerUndefinedCompare`).
-    const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-    if (strict && (isUndefinedIdentifier(left, locals) || isUndefinedIdentifier(right, locals))) return null;
+    if (isStrictEqualityOperator(op) && (isUndefinedIdentifier(left, locals) || isUndefinedIdentifier(right, locals))) {
+      return null;
+    }
     const leftProof = operandProof(left);
     const rightProof = operandProof(right);
     if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
@@ -326,7 +383,7 @@ export function plannedClosureOperandRefusal(
   ): PlannedClosureOperandRefusal | null => {
     if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return null;
     const target = unwrapParens(expr.operand);
-    if (!ts.isIdentifier(target) || (!locals.has(target.text) && !parameterNames.has(target.text))) return null;
+    if (!ts.isIdentifier(target) || !isClosureSlot(target.text)) return null;
     return incrementSlotAdmissible(slotProof(target.text).family)
       ? null
       : { arm: "closure-increment-slot", node: expr };
@@ -339,6 +396,8 @@ export function plannedClosureOperandRefusal(
     else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) refusal = updateRefusal(node);
     else if (node.kind === ts.SyntaxKind.NullKeyword && !nullIsComparedOperand(node)) {
       refusal = nullValueAdmissible(nullConsumerFamily(node)) ? null : { arm: "closure-null-value", node };
+    } else if (ts.isVoidExpression(node) && !voidValueConsumerAdmissible(node, isClosureSlot)) {
+      refusal = { arm: "closure-void-value", node };
     }
     if (refusal === null) forEachChild(node, visit);
   };

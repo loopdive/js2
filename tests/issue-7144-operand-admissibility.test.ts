@@ -7,8 +7,9 @@
 // asserts the two halves agree: a closure the selector claims lowers with no
 // post-claim withdrawal (and returns node's result), and a closure the
 // predicate refuses is refused AT SELECT (legacy body, no post-claim error) —
-// on standalone and on gc native-first.
+// on standalone, wasi and gc native-first.
 
+import { WASI } from "node:wasi";
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
 import {
@@ -25,7 +26,7 @@ import {
 } from "../src/ir/analysis/operand-admissibility.js";
 import { ts } from "../src/ts-api.js";
 
-const LANES = { standalone: { target: "standalone" }, gc: { target: "gc" } } as const;
+const LANES = { standalone: { target: "standalone" }, wasi: { target: "wasi" }, gc: { target: "gc" } } as const;
 
 /** An operand expression the closure `(m, k)` can name, with its proved family. */
 interface Producer {
@@ -71,10 +72,20 @@ async function outcome(body: string, lane: keyof typeof LANES): Promise<Outcome>
   };
 }
 
-async function runStandalone(result: CompileResult): Promise<number> {
+async function runInstance(result: CompileResult, lane: "standalone" | "wasi"): Promise<number> {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-  const { instance } = await WebAssembly.instantiate(result.binary, {});
-  (instance.exports.__module_init as () => void)();
+  const wasi = lane === "wasi" ? new WASI({ version: "preview1", args: [], env: {} }) : undefined;
+  const module = await WebAssembly.compile(result.binary);
+  const instance = await WebAssembly.instantiate(module, (wasi?.getImportObject() ?? {}) as WebAssembly.Imports);
+  if (wasi) {
+    try {
+      wasi.initialize(instance);
+    } catch {
+      // A module without `_initialize` needs no WASI start-up.
+    }
+  }
+  // wasi runs the deferred initializer from `_initialize`.
+  (instance.exports.__module_init as (() => void) | undefined)?.();
   return (instance.exports.run as () => number)();
 }
 
@@ -88,8 +99,8 @@ async function expectAgreement(body: string, admissible: boolean): Promise<void>
     const { claimed, postClaimErrors, result } = await outcome(body, lane);
     expect(postClaimErrors, `${lane}: ${body}`).toEqual([]);
     expect(claimed, `${lane}: ${body}`).toBe(admissible);
-    if (lane === "standalone") expect(await runStandalone(result), body).toBe(node(body));
-    else expect(result.success, `${lane}: ${body}`).toBe(true);
+    if (lane === "gc") expect(result.success, `${lane}: ${body}`).toBe(true);
+    else expect(await runInstance(result, lane), `${lane}: ${body}`).toBe(node(body));
   }
 }
 
@@ -200,4 +211,36 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
     ];
     for (const [body, consumer] of cases) await expectAgreement(body, nullValueAdmissible(consumer));
   }, 120_000);
+  it("a value `void` (the NaN sentinel for `undefined`) is admitted only where ToNumber reads it", async () => {
+    // Observed as a value: refused at select (each was an IR-claimed wrong result before #7144 round 2).
+    for (const body of [
+      'if ((void 0) === (void 0)) throw "y"; throw "nn";',
+      'if (void 0 == null) throw "y"; throw "nn";',
+      'if (void 0 != null) throw "y"; throw "nn";',
+      'm = void 0; if (m === undefined) throw "y"; throw "nn";',
+      "m = void 0; throw m;",
+      "m = void 0; throw typeof m;",
+      'if (k == void 0) throw "y"; throw "nn";',
+      // A consumer with no judgement of its own observes the NaN, or needs a box.
+      "var t = void 0; throw m;",
+      "throw typeof void 0;",
+      "throw void 0;",
+      "subject(void 0); throw m;",
+    ]) {
+      await expectAgreement(body, false);
+    }
+    expect(binaryOperandsAdmissible(ts.SyntaxKind.EqualsEqualsEqualsToken, "undefined", "undefined")).toBe(false);
+    expect(nullComparisonFolds(ts.SyntaxKind.EqualsEqualsToken, "undefined")).toBe(false);
+    expect(slotWriteVerdict("dynamic", "undefined")).toBe("inadmissible");
+    // Read through ToNumber, or strictly compared with `null`: lowered, = node.
+    for (const body of [
+      'var t = (void 0) - 1; if (t === t) throw "self"; throw m;',
+      'if (k < void 0) throw "y"; throw m;',
+      'if (void 0 === null) throw "y"; throw m;',
+      'if (n == void 0) throw "y"; throw m;',
+      "var u = (k < 1) | 0; throw m;",
+    ]) {
+      await expectAgreement(body, true);
+    }
+  }, 240_000);
 });

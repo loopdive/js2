@@ -33,6 +33,11 @@ import { ts } from "../../ts-api.js";
  *   `null` at runtime, carries a shape identity the families do not.
  * - `nullish` — the `null` literal (selector only; from-ast never lowers one
  *   as an operand).
+ * - `undefined` — a value `void x`: from-ast lowers it to the f64 NaN
+ *   sentinel, which is right wherever ToNumber(undefined) is what the operator
+ *   reads (`- * / %`, the relationals, the bitwise operators, an equality
+ *   against an f64) and wrong wherever the VALUE is observed (any other
+ *   equality, `+`, a box into the carrier, a slot write, a loose `== null`).
  * - `other` — any other IR representation (unions, packed values, …).
  * - `unknown` — the selector has no proof. Refused by every predicate.
  */
@@ -49,6 +54,7 @@ export type OperandFamily =
   | "nullable-ref"
   | "reference"
   | "nullish"
+  | "undefined"
   | "other"
   | "unknown";
 
@@ -82,6 +88,10 @@ export function isComparisonResultOperator(op: ts.SyntaxKind): boolean {
     op === ts.SyntaxKind.InstanceOfKeyword ||
     op === ts.SyntaxKind.InKeyword
   );
+}
+
+export function isStrictEqualityOperator(op: ts.SyntaxKind): boolean {
+  return op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 }
 
 export function isEqualityOperator(op: ts.SyntaxKind): boolean {
@@ -138,6 +148,10 @@ export function isTypedBinaryOperator(op: ts.SyntaxKind): boolean {
   );
 }
 
+function numberIfUndefined(family: OperandFamily): OperandFamily {
+  return family === "undefined" ? "number" : family;
+}
+
 function isI32Carrier(family: OperandFamily): boolean {
   return family === "boolean" || family === "int32";
 }
@@ -157,6 +171,15 @@ function isI32Carrier(family: OperandFamily): boolean {
  *   equality and bitwise take f64 or i32.
  */
 export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (left === "undefined" || right === "undefined") {
+    // The NaN sentinel is ToNumber(undefined): exact for the numeric readers.
+    // Equality observes the value, and is exact only against an f64 — neither
+    // `undefined` nor NaN equals any number, loosely or strictly; against the
+    // carrier, a string or another `void` it is not. `+` never is.
+    const other = left === "undefined" ? right : left;
+    if (op === ts.SyntaxKind.PlusToken || (isEqualityOperator(op) && other !== "number")) return false;
+    return binaryOperandsAdmissible(op, numberIfUndefined(left), numberIfUndefined(right));
+  }
   if (left === "dynamic" || right === "dynamic") {
     const other = left === "dynamic" ? right : left;
     if (isEqualityOperator(op) || op === ts.SyntaxKind.PlusToken) return boxableIntoDynamic(other);
@@ -179,13 +202,15 @@ export function binaryOperandsAdmissible(op: ts.SyntaxKind, left: OperandFamily,
  * `tryFoldNullCompare`: an equality against the `null` literal is lowered for
  * a dynamic or externref operand only when STRICT (one tag / `ref.is_null`
  * test — loose equality also matches `undefined`), and constant-folded for a
- * representation that can never hold `null` (f64, i32, vecs, non-null refs).
+ * representation that can never hold `null` (f64, i32, vecs, non-null refs;
+ * `undefined` strictly only).
  * A string, a nullable struct reference or a class / object value may be
  * `null` at runtime and has no fold.
  */
 export function nullComparisonFolds(op: ts.SyntaxKind, other: OperandFamily): boolean {
-  const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  if (other === "dynamic" || other === "externref") return strict;
+  // `undefined` is never `null` strictly; loosely it IS (`void 0 == null`),
+  // which no constant fold of the NaN sentinel says.
+  if (other === "dynamic" || other === "externref" || other === "undefined") return isStrictEqualityOperator(op);
   return (
     other === "number" ||
     other === "boolean" ||
@@ -226,14 +251,16 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
  * its own lowering): `+=` concatenates into a string slot only with a string
  * value (string-evidence then also requires an encoding), and is the dynamic
  * `+` into a dynamic slot with a boxable value; `+= -= *= /=` are f64
- * arithmetic on an f64 slot with an f64 value. Nothing else lowers.
+ * arithmetic on an f64 slot with an f64 value (or `void x`, whose NaN is
+ * ToNumber(undefined)). Nothing else lowers.
  */
 export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, value: OperandFamily): boolean {
   if (op === ts.SyntaxKind.PlusEqualsToken) {
     if (slot === "string") return value === "string";
     if (slot === "dynamic") return boxableIntoDynamic(value);
   }
-  return isF64CompoundAssignOperator(op) && slot === "number" && value === "number";
+  // ToNumber(undefined) is the NaN sentinel the f64 arithmetic reads.
+  return isF64CompoundAssignOperator(op) && slot === "number" && (value === "number" || value === "undefined");
 }
 
 /**
@@ -261,6 +288,8 @@ export function incrementSlotAdmissible(slot: OperandFamily): boolean {
  * means the families agree but the write still needs representation identity
  * (`irTypeAssignable`: a vec's element type and nullability, a class / object
  * shape, …) that no family carries — the selector cannot prove it and refuses.
+ * A `void x` value is inadmissible into every slot: its NaN sentinel would be
+ * stored where `undefined` was written (`irTypeAssignable` sees two f64s).
  */
 export type SlotWriteVerdict = "admissible" | "representation-refined" | "inadmissible";
 

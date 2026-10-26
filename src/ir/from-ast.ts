@@ -49,6 +49,7 @@ import {
   binaryOperandsAdmissible,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
+  isStrictEqualityOperator,
   nullComparisonFolds,
   nullishLeftAdmissible,
   nullValueAdmissible,
@@ -101,6 +102,7 @@ import {
   COMPOUND_TO_BITWISE_TOKEN,
   counterStepAssignment,
   I32_COMPARE_BINOPS,
+  i32IdentityBitwiseOperand,
   i32LiteralValue,
   isBitwiseToken,
   isCanonI32Lowerable,
@@ -3857,12 +3859,9 @@ function lowerBitwiseAsI32(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   // pattern, so when `x` is already i32-lowerable the operator disappears
   // entirely. (One level deeper than #3733's `lower.ts` fast path, which still
   // had to run `emitJsToInt32` on `x`.)
-  if (
-    (k === ts.SyntaxKind.BarToken || k === ts.SyntaxKind.CaretToken) &&
-    i32LiteralValue(expr.right) === 0 &&
-    isFusedI32Lowerable(expr.left, cx)
-  ) {
-    return lowerAsI32(expr.left, cx, "wrap");
+  const identityOperand = i32IdentityBitwiseOperand(expr);
+  if (identityOperand !== null && isFusedI32Lowerable(identityOperand, cx)) {
+    return lowerAsI32(identityOperand, cx, "wrap");
   }
   const binop = jsBitwiseBinop(k);
   if (binop === null) {
@@ -3979,12 +3978,9 @@ function tryLowerFusedI32Binary(expr: ts.BinaryExpression, op: ts.SyntaxKind, cx
   //     i32.or`: that path lowers the `0` as `i32.trunc_sat_f64_s(f64.const
   //     0)`, which `lower.ts`'s #3733 `tryConstOf(rhs) === 0` check cannot
   //     see through.
-  if (
-    (op === ts.SyntaxKind.BarToken || op === ts.SyntaxKind.CaretToken) &&
-    i32LiteralValue(expr.right) === 0 &&
-    isFusedI32Lowerable(expr.left, cx)
-  ) {
-    return cx.builder.emitUnary("f64.convert_i32_s", lowerAsI32(expr.left, cx, "wrap"), IR_F64);
+  const identityOperand = i32IdentityBitwiseOperand(expr);
+  if (identityOperand !== null && isFusedI32Lowerable(identityOperand, cx)) {
+    return cx.builder.emitUnary("f64.convert_i32_s", lowerAsI32(identityOperand, cx, "wrap"), IR_F64);
   }
 
   // (a) Bitwise op that actually READS an i32-promoted slot. The
@@ -13611,9 +13607,9 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
       newType = cx.builder.typeOf(newValue);
     }
   }
-  // (#7144) `slotWriteVerdict` decides the families; a family match that needs
-  // representation identity (a vec's element type, a class shape) is then
-  // `irTypeAssignable`'s.
+  // (#7144) `slotWriteVerdict` decides the families (it alone refuses `void x`
+  // into an f64 slot, two f64s to `irTypeAssignable`); a match that needs
+  // representation identity (vec element type, class shape) is then `irTypeAssignable`'s.
   if (
     slotWriteVerdict(irOperandFamily(logicalType, id), irOperandFamily(newType, rhs)) === "inadmissible" ||
     !irTypeAssignable(newType, logicalType)
@@ -16147,8 +16143,7 @@ function tryLowerDynamicEq(
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => tryLowerDynamicEq(expr, op, lhs, rhs, lt, rt, cx));
   const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
-  const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  if (!loose && !strict) return null;
+  if (!loose && !isStrictEqualityOperator(op)) return null;
   const negate = op === ts.SyntaxKind.ExclamationEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
 
   const dynL = lt.kind === "dynamic" ? lhs : boxConcreteToDynamic(lhs, lt, expr.left, cx);
@@ -16261,7 +16256,7 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
   }
   switch (t.val.kind) {
     case "f64":
-      return "number";
+      return isValueVoid(operand) ? "undefined" : "number";
     case "i32":
       return irTypeIsBoolean(t) || expressionIsDefinitelyBoolean(operand) ? "boolean" : "int32";
     case "externref":
@@ -16273,6 +16268,15 @@ function irOperandFamily(t: IrType, operand: ts.Expression): OperandFamily {
     default:
       return "other";
   }
+}
+
+/** A value `void x` (through parens and a comma's right side): the f64 NaN sentinel for `undefined`. */
+function isValueVoid(operand: ts.Expression): boolean {
+  let candidate = peelParensExpr(operand);
+  while (ts.isBinaryExpression(candidate) && candidate.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    candidate = peelParensExpr(candidate.right);
+  }
+  return ts.isVoidExpression(candidate);
 }
 
 /**

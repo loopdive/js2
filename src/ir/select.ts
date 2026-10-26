@@ -148,7 +148,12 @@ import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
-import { isComparisonResultOperator, isF64CompoundAssignOperator } from "./analysis/operand-admissibility.js";
+import {
+  isComparisonResultOperator,
+  isEqualityOperator,
+  isF64CompoundAssignOperator,
+  isStrictEqualityOperator,
+} from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
@@ -3005,18 +3010,7 @@ function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): 
   if (ts.isBinaryExpression(candidate)) {
     const op = candidate.operatorToken.kind;
     return (
-      op === ts.SyntaxKind.LessThanToken ||
-      op === ts.SyntaxKind.LessThanEqualsToken ||
-      op === ts.SyntaxKind.GreaterThanToken ||
-      op === ts.SyntaxKind.GreaterThanEqualsToken ||
-      op === ts.SyntaxKind.EqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsToken ||
-      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-      op === ts.SyntaxKind.InstanceOfKeyword ||
-      op === ts.SyntaxKind.InKeyword ||
-      op === ts.SyntaxKind.AmpersandAmpersandToken ||
-      op === ts.SyntaxKind.BarBarToken
+      isComparisonResultOperator(op) || op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken
     );
   }
   return (
@@ -3615,12 +3609,7 @@ function dynamicUsesAreMoveOnly(
         return scanExpr(e.left, leftIsDyn) && scanExpr(e.right, true);
       }
 
-      if (
-        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-        op === ts.SyntaxKind.EqualsEqualsToken ||
-        op === ts.SyntaxKind.ExclamationEqualsToken
-      ) {
+      if (isEqualityOperator(op)) {
         if (leftIsDyn || rightIsDyn) {
           // #2949 S5.P — open only the concrete equality operands that the
           // from-ast producer can box without consulting a runtime type:
@@ -3643,9 +3632,10 @@ function dynamicUsesAreMoveOnly(
             // A scalar parameter projected from the direct declaration ABI is
             // just as boxable as a literal: from-ast has its exact f64/bool/
             // string IrType and emits the canonical box before dyn.eq.
-            const strict =
-              op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-            return concreteDynamicEqualityOperandIsBuildable(concrete, strict) && scanExpr(concrete, false);
+            return (
+              concreteDynamicEqualityOperandIsBuildable(concrete, isStrictEqualityOperator(op)) &&
+              scanExpr(concrete, false)
+            );
           };
           return scanEqualityOperand(e.left, leftIsDyn) && scanEqualityOperand(e.right, rightIsDyn);
         }
@@ -4572,10 +4562,7 @@ function isPhase1StatementListInScope(
       // shape; mirror it here for `<early return>; x -= n; return ...`.
       if (
         ts.isBinaryExpression(s.expression) &&
-        (s.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
-          s.expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken ||
-          s.expression.operatorToken.kind === ts.SyntaxKind.AsteriskEqualsToken ||
-          s.expression.operatorToken.kind === ts.SyntaxKind.SlashEqualsToken) &&
+        isF64CompoundAssignOperator(s.expression.operatorToken.kind) &&
         ts.isIdentifier(s.expression.left)
       ) {
         if (isUnrepresentableModuleBinding(s.expression.left)) {
@@ -7685,9 +7672,7 @@ function moduleExternConsumerIsProven(expr: ts.Expression, scope: ReadonlySet<st
     ) {
       return true;
     }
-    if (op !== ts.SyntaxKind.EqualsEqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsEqualsToken) {
-      return false;
-    }
+    if (!isStrictEqualityOperator(op)) return false;
     const left = unwrapPhase1Parens(candidate.left);
     const right = unwrapPhase1Parens(candidate.right);
     const isExactExternLike = (operand: ts.Expression): boolean =>
@@ -8407,11 +8392,7 @@ function selectorPrimitiveWrapperOrGenericBinary(
       }
     }
   }
-  const isEquality =
-    binOp === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-    binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-    binOp === ts.SyntaxKind.EqualsEqualsToken ||
-    binOp === ts.SyntaxKind.ExclamationEqualsToken;
+  const isEquality = isEqualityOperator(binOp);
   if (
     isEquality &&
     obviousSelectorValueFamily(expr.left, scope) === "reference" &&
@@ -10821,11 +10802,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (leftTracksModule || rightTracksModule) {
       const leftFamily = obviousModuleValueFamily(expr.left);
       const rightFamily = obviousModuleValueFamily(expr.right);
-      const isEquality =
-        binOp === ts.SyntaxKind.EqualsEqualsToken ||
-        binOp === ts.SyntaxKind.ExclamationEqualsToken ||
-        binOp === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-        binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      const isEquality = isEqualityOperator(binOp);
       const nullishEquality =
         isEquality &&
         (leftFamily === "nullish" ||
@@ -10861,11 +10838,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       }
     }
     const hasModuleExternOperand = expressionMayBeModuleExtern(expr.left) || expressionMayBeModuleExtern(expr.right);
-    const isEquality =
-      binOp === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-      binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-      binOp === ts.SyntaxKind.EqualsEqualsToken ||
-      binOp === ts.SyntaxKind.ExclamationEqualsToken;
+    const isEquality = isEqualityOperator(binOp);
     if (hasModuleExternOperand && isEquality) {
       const left = unwrapPhase1Parens(expr.left);
       const right = unwrapPhase1Parens(expr.right);
@@ -10897,7 +10870,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // never-undefined representations → constant fold). LOOSE `==`/`!=` stay
     // rejected: `null == undefined` is true, so a nullable-ref operand would
     // need a runtime null check this slice doesn't emit.
-    if (binOp === ts.SyntaxKind.EqualsEqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken) {
+    if (isStrictEqualityOperator(binOp)) {
       const leftUndef = isUnshadowedUndefinedIdentifier(expr.left, scope);
       const rightUndef = isUnshadowedUndefinedIdentifier(expr.right, scope);
       if (leftUndef && rightUndef) return true;

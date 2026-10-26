@@ -101,12 +101,12 @@ withdrawal become the same function evaluated at two times.
 - `tryFoldNullCompare` constant-folds `void 0 == null` as `false` (base
   miscompile, `ran=0` vs node `1`).
 
-## Resolution (2026-10-26, Opus)
+## Resolution (2026-10-26, Opus; review round 2 the same day)
 
 probe/test reference: `tests/issue-7144-operand-admissibility.test.ts` (selector ⇔ from-ast
-agreement matrix, standalone + gc native-first) and the committed probes
-`tests/fixtures/ir-closure-probes/probe{7,9..24}.mts` (p7–p24 of the #6834 rounds; run by
-hand with `npx tsx <probe> <worktree-root>`).
+agreement matrix on standalone, wasi and gc native-first; IR-claimed rows run against node) and
+the committed probes `tests/fixtures/ir-closure-probes/probe{7,9..24}.mts` (p7–p24 of the
+#6834 rounds; run by hand with `npx tsx <probe> <worktree-root>`).
 
 2026-10-26 stakeholder: #7144 first; #6834 to be rebuilt on it. (Recorded here because
 the #7113 issue file exists only on the #6834 branch, not on `main`.)
@@ -115,45 +115,77 @@ the #7113 issue file exists only on the #6834 branch, not on `main`.)
 
 `src/ir/analysis/operand-admissibility.ts` (new, pure: no IR builder, no checker) holds the
 rules. `from-ast` maps every lowered value to an `OperandFamily` once
-(`irOperandFamily(IrType, operand)`) and its withdrawal sites now call the predicates; the
+(`irOperandFamily(IrType, operand)`) and its withdrawal sites call the predicates; the
 selector calls the same predicates over the families it proves before lowering
 (`src/ir/select-planned-closure-operands.ts`, new), from `isPhase1ClosureLiteral` for every
 closure that carries a function-member plan.
 
-| from-ast site | condition (unchanged) | predicate | selector arm (`operand-coercion-unsupported`) |
-|---|---|---|---|
-| `lowerBinary` `+` proof gate (#2781) | both number / both string unless an operand produces the carrier | `additiveOperandsProvable` (+ `additiveOperandProof`) | `closure-additive-operands` |
-| `lowerBinary` dynamic arms (`tryLowerDynamicEq`, `IR_DYN_ADD_FN`, `tryLowerDynamicRelational`, `tryLowerDynamicArithmetic`) | other side boxable / f64 / carrier | `binaryOperandsAdmissible` (gates the arms; an admitted pair with no producer is now an invariant) | `closure-binary-operands` |
-| `lowerBinary` string path ("mixed string/non-string", "string operator") | both string; `+`, equality, relational | `binaryOperandsAdmissible` | `closure-binary-operands` |
-| `lowerBinary` matching-carrier path ("requires matching operand types", the 15 `requireF64` calls, "`==` on X operands") | one carrier; f64 for `+ - * / %` | `binaryOperandsAdmissible` (`requireF64` deleted) | `closure-binary-operands` |
-| `tryFoldNullCompare` | strict-only for dynamic / externref; no fold for string / class / object / closure / callable / boxed / `ref_null` | `nullComparisonFolds` | `closure-null-compare` (direct `null` operand only, as the fold sees it) |
-| `lowerExpr` `null` arm ("bare 'null' in non-reference context") | consumer is externref / `ref_null` | `nullValueAdmissible` | `closure-null-value` (discarded / `throw` consumers are externref) |
-| `lowerNullish` | left is externref / `ref_null` | `nullishLeftAdmissible` | `closure-nullish-left` |
-| `lowerCompoundAssignment` (string `+=`, dynamic `+=`, f64 arithmetic, RHS f64) | per slot family | `compoundWriteAdmissible`, `isF64CompoundAssignOperator` | `closure-compound-write` |
-| `lowerIncrementDecrement` | f64 or dynamic slot | `incrementSlotAdmissible` | `closure-increment-slot` |
-| `lowerIdentifierAssignment` slot write | families, then `irTypeAssignable` | `slotWriteVerdict` (`representation-refined` = needs `irTypeAssignable`; the selector refuses it) | `closure-slot-write` (also chained writes: a write's value family is its slot's) |
-| `boxConcreteToDynamic` | string / proven boolean / f64 (+ numeric-literal tag corner) | `boxableIntoDynamic` via `irOperandFamily` | — |
-| select.ts `isPhase1CompoundAssignOperator` + three inline `+= -= *= /=` lists | — | `isF64CompoundAssignOperator` (one spelling) | — |
-| select.ts `isComparisonResultOperator` | — | moved to the module (shared) | — |
+| from-ast site | predicate | selector arm (`operand-coercion-unsupported`) |
+|---|---|---|
+| `lowerBinary` `+` proof gate (#2781) | `additiveOperandsProvable` (+ `additiveOperandProof`) | `closure-additive-operands` |
+| `lowerBinary` dynamic arms (`tryLowerDynamicEq`, `IR_DYN_ADD_FN`, `tryLowerDynamicRelational`, `tryLowerDynamicArithmetic`) | `binaryOperandsAdmissible` gates the arms; an admitted pair with no producer is an invariant | `closure-binary-operands` |
+| `lowerBinary` string path ("mixed string/non-string", "string operator") | `binaryOperandsAdmissible` | `closure-binary-operands` |
+| `lowerBinary` matching-carrier path ("requires matching operand types", the 15 `requireF64` calls, "`==` on X operands") | `binaryOperandsAdmissible` (`requireF64` deleted) | `closure-binary-operands` |
+| fused-i32 `x \| 0` / `x ^ 0` identity (`lowerBitwiseAsI32`, `tryLowerFusedI32Binary`) | `i32IdentityBitwiseOperand` (`analysis/i32-slots.ts`) + `isWrapI32Lowerable` | accepted before the operand predicate |
+| `tryFoldNullCompare` | `nullComparisonFolds` | `closure-null-compare` (direct `null` operand only, as the fold sees it) |
+| `lowerExpr` `null` arm ("bare 'null' in non-reference context") | `nullValueAdmissible` | `closure-null-value` (discarded / `throw` consumers are externref) |
+| `lowerNullish` | `nullishLeftAdmissible` | `closure-nullish-left` |
+| `lowerCompoundAssignment` (string `+=`, dynamic `+=`, f64 arithmetic, RHS f64) | `compoundWriteAdmissible`, `isF64CompoundAssignOperator` | `closure-compound-write` |
+| `lowerIncrementDecrement` | `incrementSlotAdmissible` | `closure-increment-slot` |
+| `lowerIdentifierAssignment` slot write | `slotWriteVerdict`, then `irTypeAssignable` for `representation-refined` (the selector refuses that verdict) | `closure-slot-write` (also chained writes: a write's value family is its slot's) |
+| `boxConcreteToDynamic` | `boxableIntoDynamic` via `irOperandFamily` | — |
+| a value `void x` (round 2) | `OperandFamily` `"undefined"` (`isValueVoid`): every predicate above | `closure-void-value` for consumers no predicate judges |
+| select.ts `isPhase1CompoundAssignOperator` + four inline `+= -= *= /=` lists | `isF64CompoundAssignOperator` | — |
+| select.ts `isComparisonResultOperator`, five inline equality lists, three strict-equality spellings | `isComparisonResultOperator`, `isEqualityOperator`, `isStrictEqualityOperator` | — |
 
 `lowerDiscardedExpression` needed no predicate of its own: it lowers any value under an
 externref hint, and the only operand family that constrains is `null` (`nullValueAdmissible`).
 The selector's family proof reuses `obviousSelectorValueFamily` (literal / operator result
 families) and the checker's declared primitive family; `unknown` is refused by every predicate.
 
-### Measured (base = `origin/main` 61b1b07d2b)
+**`void` (review round 2, finding A).** from-ast lowers a value `void x` to the f64 NaN
+sentinel. That is ToNumber(undefined), so it is exact for `- * / %`, the relationals, the
+bitwise operators, a ToBoolean / ToNumber reader and an equality against an f64 (neither
+`undefined` nor NaN equals a number), and for `=== null`. It is wrong wherever the value is
+observed: any other equality, `+`, `== null`, a box into the carrier, a slot write, `typeof`,
+a call argument. `irOperandFamily` now maps it to `"undefined"`, the predicates refuse it in the
+second group (so from-ast demotes those functions instead of emitting the NaN), and the walk
+refuses a `void` whose consumer is not judged by a predicate (`voidValueConsumerAdmissible`).
+This is a from-ast behaviour change only for functions that observed `void x` as a value — each
+was wrong code; the byte samples below do not contain one.
 
-- p7–p24 (5,680 row × lane results over standalone / wasi / gc / gchost / fast): **0 lost
-  claims, 0 new post-claim errors, 0 new claims, 0 host-assisted gc / fast byte changes**.
-  366 claim-then-withdraw results become refusals at select (legacy body, `= node`); 176
-  remain, all in the left-out classes below. gc native-first compile failures on the probe
-  programs: 169 → 51.
+**Scope of the selector half.** It covers planned member closures only — not the
+`isPhase1Expr` arms of top-level functions (plan step 3). Those arms decide top-level selection,
+which the host-assisted gc lane shares; routing them through the walk would move top-level
+claims and host-assisted bytes, and top-level dynamic subjects already have the move-only scan.
+That is the next slice.
+
+### Measured
+
+Base `origin/main` 61b1b07d2b for p7–p24 and the byte sample; base eef2ba9c3c (the current
+merge-base; differs by one 2-line backend file) for the review's adversarial probes.
+
+- p7–p24 (5,680 row × lane results over standalone / wasi / gc / gchost / fast): 0 new
+  post-claim errors, 0 new claims, 0 host-assisted gc / fast byte changes, 0 IR-claimed result
+  that differs from node. 414 claim-then-withdraw results become refusals at select; 128 remain,
+  all in the left-out classes below. gc native-first compile failures on the probe programs:
+  169 → 35.
+- **Claims given up (51 on p7–p24, 36 on the review's two probes), all a value `void` being
+  observed:** `void 0 == null` / `!= null` (wrong on base), `m = void 0`, `m(void 0)`,
+  `[void 0]`, `void 0 === m`, `m += void 0`, `q = void 0`, `k += void 0`, `m + void 0`,
+  `(void 0) === (void 0)`. Base returned node's answer on some of them only because the probes'
+  inputs could not tell NaN from `undefined`. Also given up, deliberately: `void 0 === "x"`
+  (always false, but the predicate refuses equality of `void` against a string), and on wasi
+  only `m == undefined` / `k == undefined` (the walk does not type the `undefined` identifier;
+  the loose carrier `==` it would admit fails at preparation on standalone and gc).
+- Round-2 claims restored: `(k < 1) | 0` (the fused-i32 identity) and `n == void 0`.
 - No-`D` twins of review-6834-r10 now refused at select: AI `"a" + 1`, `true + 1`,
   `true + "a"`, `(void 0) + 1`, `a + 1` (`var a = [1]`), `"3" * 2`, `s * s`, `s - 1`, `b - 1`,
   `(k === 1) - 1`, `!k - 1`, `typeof k - 1`, `` `3` - 1 ``, `a[0] + "s"`, `s < m`,
   `k < "1"`, `s == 1`, `true == 1`; AJ `s += true`, `q += "a"`, `q += true`, `s = 1`,
   `s++`, `b++`, `a++`, `m = [1]`, `var o; o = {…}`, mixed chained writes; AF/AA `??` everywhere; AD the
-  aliased object `=== null`; r8/r9 bare `null` in a value position.
+  aliased object `=== null`; r8/r9 bare `null` in a value position; `throw void 0`,
+  `var t = void 0`.
 - Byte sample (20 equivalence programs + the 13 playground examples): identical on gc
   native-first, gc host-assisted, standalone, wasi, fast and `JS2WASM_NATIVE_REGIME_JS=0`.
 - `check:ir-fallbacks`: identical to base (no bucket moved).
@@ -161,15 +193,16 @@ families) and the checker's declared primitive family; `unknown` is refused by e
 ### Left out (pre-existing on main, recorded for the next slice)
 
 - Typing gates outside operand / write admissibility, still claim-then-withdraw in a planned
-  closure: throw of a scalar (`throw void 0`, "throw val not in slice 9"), an f64 local whose
-  TS type is not provably number (`var t = void 0`), unary `-` of an object, conditional arms
-  of different types (`throw k ? void 0 : m`), `switch` on a dynamic discriminant, element /
-  member stores (`a[0] = "s"`, `m.x = 1`, `m[0] = 1`), array literals of objects / dynamics,
-  `compound assign to const`, and the wasi-only direct-call plan (class P).
+  closure: scalar `throw` (`throw 42`), unary `-` of an object, conditional arms of different
+  types (`throw k ? void 0 : m`), `switch` on a dynamic discriminant, element / member stores
+  (`a[0] = "s"`, `m.x = 1`, `m[0] = 1`), element reads (`a[k]` with a dynamic index, `a[0]` on a
+  string array: `element-access-unsupported`), array literals of objects / dynamics, writes to
+  a `const`, and the wasi-only direct-call plan (class P).
 - `__ir_dyn_call_box` / `__dyn_member_get` ABI identity (loose `==` on the carrier, `in`,
-  regex): the predicates admit these (from-ast lowers them); they fail later at preparation on
+  regex): from-ast lowers these, so the predicates admit them; they fail later at preparation on
   standalone / gc. Unchanged.
-- `void 0 == null` constant-fold miscompile: `void` is an f64 to the fold; unchanged.
+- `void` outside planned closures: from-ast now refuses the observing uses everywhere (above),
+  but a top-level function's selector does not refuse them up front.
 - The top-level move-only scan (`concreteDynamicAssignmentOperandIsBuildable`, select.ts)
   keeps its own spelling of the boxable families; folding it in would move top-level selection
   and host-assisted bytes.
