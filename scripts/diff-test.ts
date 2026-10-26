@@ -177,6 +177,42 @@ async function drainAsync(): Promise<void> {
   }
 }
 
+/** (#6979) Upper bound on native-queue drain rounds before a program is an error. */
+const MAX_NATIVE_DRAIN_ROUNDS = 10_000;
+
+/**
+ * (#6979) Drain the module's OWN Promise job queue as well as the host's. A
+ * native-first module keeps its Promise jobs in a Wasm ring (exported
+ * `__drain_microtasks`, `__microtasks_pending`); nothing on the host side runs
+ * it after `__module_init()` returns, so `Promise.resolve(42).then(console.log)`
+ * printed nothing. Drain it, then interleave host ticks (a host timer can
+ * enqueue native jobs) until the ring reports empty. A ring that never empties
+ * is a program ERROR, never a silent pass.
+ */
+async function drainNativeAndHostJobs(exports: Record<string, unknown>): Promise<void> {
+  const drain = typeof exports.__drain_microtasks === "function" ? (exports.__drain_microtasks as () => void) : null;
+  const pending =
+    typeof exports.__microtasks_pending === "function" ? (exports.__microtasks_pending as () => number) : null;
+  if (!drain) {
+    await drainAsync();
+    return;
+  }
+  drain();
+  // The existing host ticks, each followed by a native drain.
+  for (let i = 0; i < 5; i++) {
+    await new Promise<void>((res) => setTimeout(res, 0));
+    drain();
+  }
+  if (!pending) return;
+  for (let round = 0; pending() !== 0; round++) {
+    if (round >= MAX_NATIVE_DRAIN_ROUNDS) {
+      throw new Error(`native job queue still pending after ${MAX_NATIVE_DRAIN_ROUNDS} drain rounds`);
+    }
+    drain();
+    await new Promise<void>((res) => setTimeout(res, 0));
+  }
+}
+
 /**
  * Compile a JS file with js2wasm, instantiate, capture console.log output.
  * Exported so the scoped regression test (tests/issue-2787.test.ts) can assert
@@ -262,7 +298,8 @@ export async function runJs2wasm(file: string): Promise<{
     // (#2796) Run the deferred top-level code now that `setInstance` has wired
     // the struct-introspection exports. A program with NO top-level statements
     // emits no `__module_init` export, so this is a no-op for those.
-    const moduleInit = (instance.exports as Record<string, unknown>).__module_init;
+    const exports = instance.exports as Record<string, unknown>;
+    const moduleInit = exports.__module_init;
     if (typeof moduleInit === "function") (moduleInit as () => void)();
     // #2787 — Drain asynchronous side-effects BEFORE restoring console.log.
     // Top-level code may schedule callbacks (`Promise.resolve().then(...)`,
@@ -274,8 +311,8 @@ export async function runJs2wasm(file: string): Promise<{
     // runs the full job queue before the process exits, so the js2wasm lane
     // must too. A `setTimeout(0)` boundary flushes the entire preceding
     // microtask queue; looping a few ticks lets promise chains that re-schedule
-    // settle.
-    await drainAsync();
+    // settle. (#6979) The module's own native job queue is drained too.
+    await drainNativeAndHostJobs(exports);
   } catch (e: unknown) {
     console.log = origLog;
     console.error = origError;

@@ -494,3 +494,30 @@ Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
   **Waiver confirmed by the stakeholder on 2026-10-25** ("accept the waiver,
   release #6899"), after the round-2 review of #6899 tabulated the 12 units
   and reproduced the loss on main with only the profile line removed.
+
+- **Differential-test harness + baseline re-bank (2026-10-26, stakeholder decision**
+  "Testaufbau reparieren und die Baseline neu festschreiben"**):** S7-a removes the
+  `host-assisted` pin in `scripts/diff-test.ts`, so the 120-program Node-host corpus now
+  runs on the default native-first gc profile. The harness now drains the module's own
+  native Promise job queue (`__drain_microtasks`, looped on `__microtasks_pending`,
+  interleaved with host timer ticks, bounded at 10 000 rounds — exhaustion is a
+  `runtime_error`, never a pass). Without it `07-promise-basic`, `08-promise-chain`,
+  `09-async-await` printed nothing; with it they match. The other six native-first gaps
+  from the first #6899 merge-queue failure were fixed on main by #7145–#7150.
+  `benchmarks/results/diff-test-baseline.json` re-banked to the native-first lane with
+  `diff-test-gate.ts --update`: 116/120 → 117/120 (`generators/06-closure-state` mismatch
+  → match; `generators/04-sent-values` runtime_error → compile_error). Remaining
+  non-matches, all already failing in the old host-lane baseline:
+  - `builtins/14-spread-args.js` — runtime_error (`WebAssembly.Exception`) on
+    `sum(...[10,20,30])` with a rest-param `reduce`; filed under #2787.
+  - `generators/04-sent-values.js` — compile_error, `join` not on
+    `number | any[] | "ready"` (sent value typed as the yield union); #3710.
+  - `object/06-delete.js` — `o.a` after `delete o.a` prints `NaN`, not `undefined`; #2787.
+  **Not fixed here, needs an id:** the optimize-lane gate
+  (`scripts/diff-test-optimize-gate.ts`, same `Differential test` job) fails on the
+  native-first lane: `builtins/10-error-classes.js`, `control/07-try-catch.js` and
+  `builtins/09-async-await.js` trap `unreachable` inside `__module_init` only under
+  `optimize: true` (the unoptimized binary is correct). Pre-existing for this lane — it
+  fails identically with the pre-drain harness; main never saw it because its harness
+  pinned `host-assisted`. Root cause (wasm-opt vs the native throw/catch shape) not
+  isolated.
