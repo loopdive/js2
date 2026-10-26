@@ -6649,7 +6649,7 @@ function setupArrayCallback(
   // type, and the consumer only honours it against the exact non-null twin, so
   // every other receiver compiles byte-for-byte as before.
   const savedNullableElemOverride = ctx.arrayHofNullableElemParamOverride;
-  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType, elemParamIndex);
+  ctx.arrayHofNullableElemParamOverride = nullableElemParamOverrideFor(elemType, elemParamIndex, cbArg);
   const cbResult =
     hoistedCallback ??
     (ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)

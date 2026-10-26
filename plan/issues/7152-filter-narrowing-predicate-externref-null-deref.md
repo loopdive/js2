@@ -1,10 +1,11 @@
 ---
 id: 7152
 title: "Native-first: Array.prototype.filter with a narrowing predicate on a mixed externref-element array dereferences null in the predicate"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-26
+completed: 2026-10-26
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +16,11 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7146, 7151]
+# 2026-10-26 (#7152): +1 line — the import of the raw-externref guard that keeps
+# `typeof`'s `$AnyValue` tag fast path off a re-typed HOF callback parameter;
+# the guard itself lives in array-hof-nullable-elem-param.ts.
+loc-budget-allow:
+  - src/codegen/typeof-delete.ts
 ---
 
 # #7152 — `filter` with a narrowing predicate on a mixed externref vec traps
@@ -53,3 +59,17 @@ and dereferenced as a concrete struct in the `typeof` / `!==` lowering.
 4. Tests: `tests/equivalence/issue-7152-*.test.ts` with the four lines plus
    `find`, `some`, `every`, `forEach` with the same narrowing predicates (same
    callback path), both lanes vs node.
+
+## Resolution (2026-10-26)
+
+- Cause: the callback's element parameter was typed `$AnyValue` (checker:
+  `string | number`) while the vec stores `externref`; the HOF loop's
+  externref→`$AnyValue` coercion is a `ref.test` cast that yields null.
+- Fix: `nullableElemParamOverrideFor` now also arms for an `externref` element
+  (scoped to the callback node), and `applyNullableElemParamOverride` re-types
+  only an `$AnyValue` parameter of that callback to `externref`. `typeof k`'s
+  `$AnyValue` tag fast path is skipped for an identifier held in a raw
+  `externref` slot (boxing would tag a stored number as 5), so it uses the
+  `__typeof_*` helpers.
+- Bytes: identical on 11 playground examples and 20 HOF-using equivalence
+  programs × gc/standalone/wasi; only the repro program changes.
