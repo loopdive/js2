@@ -74,7 +74,7 @@ externref global, so `keys.sort().join(",")` prints `"z,y"` (node `"y,z"`).
    keys once this lands (they use ordered keys by design today so they cannot
    mask it).
 
-## Resolution (2026-10-25)
+## Resolution (2026-10-25, revised 2026-10-26 after review)
 
 Cause confirmed: the module-level array is a `$__vec_externref`, and in
 native-string mode `compileArrayDefaultToStringSort` bailed on an externref
@@ -82,36 +82,44 @@ element (#2379: its string branch `ref.cast`s to `$AnyString`, invalid for a
 boxed-any element), so the caller emitted the #2502 no-op. On the no-host lanes
 (standalone / WASI, which gc native-first is) that bail now first asks
 `prepareExternVecDefaultSortCompare` (`src/codegen/array/array-sort-value.ts`)
-for a SortCompare over externref elements — undefined (and a `$Hole`) last,
-otherwise the runtime ToString of each element compared with `__str_compare` —
-and feeds it to the same `emitStableMergeSort` the typed vecs use. Its
-undefined-last frame is shared with the `Array.prototype.sort` value body's
-`sortCompareGreater` (refactored onto the same helper, bytes unchanged).
-Host-assisted gc is untouched (`native` is false there).
+for a SortCompare over externref elements and feeds it to the same
+`emitStableMergeSort` the typed vecs use:
+
+- holes (`$Hole`) sort last, behind the undefineds, which sort behind every
+  value (spec: SortIndexedProperties leaves the holes trailing);
+- every other element goes through the coercion engine's spec ToString
+  (`ensureSpecExternrefToStringProvider`, deps via `prepareArrayLikeToString`),
+  so a Symbol element throws TypeError and an element's throwing `toString`
+  propagates; the strings compare with `__str_compare`.
+
+The undefined test (`externUndefinedTest`) and the sorts-last frame are shared
+with the `Array.prototype.sort` value body's `sortCompareGreater` (bytes
+unchanged there). Host-assisted gc is untouched (`native` is false there).
 
 Left out (all also wrong on the merge-base):
 
 - Native-first with `JS2WASM_NATIVE_REGIME_JS=0` (host-connected, not
   `ctx.standalone`) keeps the #2379 bail, so its sort is still a no-op; the fix
   there would need the host ToString arm, which is JS-host work. Defect.
-- `const g = []; g.push("y"); g.length = 3;` fills the grown slots with JS
-  `null` instead of holes on the native lanes (`g[1]` reads `"null"`, `1 in g`
-  is `true`), so `g.sort()` orders them as values and the following `join`
-  traps. Defect (length growth on an externref vec, not the sort).
-- A typed string vec holding `undefined` (`["c", undefined, "a"].sort()`)
-  traps with a null dereference on the native lanes: the string-element branch
-  `ref.as_non_null`s each element. Defect.
-- `a.sort() === a` (and `a.reverse() === a`) is `false` on gc native-first and
-  standalone for a module-level externref vec. Defect (result identity, not
-  ordering).
+- #7164: `g.length = 3` on an externref vec fills the grown slots with JS
+  `null` instead of holes, so `g.sort()` orders them as values and a following
+  `join` traps.
+- #7165: a typed string vec holding `undefined` (`["c", undefined,
+  "a"].sort()`) traps with a null dereference on the native lanes.
+- #7166: `a.sort() === a` (and `a.reverse() === a`) is `false` on gc
+  native-first and standalone for a module-level externref vec.
+- #7167: `Array.prototype.sort.call(arrayLike)` leaves the array-like unsorted
+  on standalone.
 - The host-assisted lane orders `undefined` by its string `"undefined"` rather
   than last (`[undefined, "zz"].sort()` gives `undefined|zz`; V8 `zz|undefined`).
   Untouched: host lane. Defect.
-- A `$Hole` and `undefined` compare equal here, so `[<hole>, undefined]` keeps
-  the hole first (V8 puts `undefined` before the trailing holes). Not a defect
-  worth an id on its own; it is part of the length-growth note above.
-- `Array.prototype.sort.call({ length: 3, 0: "c", 1: undefined, 2: "a" })`
-  leaves the array-like unsorted on standalone (`cundefineda`; V8
-  `acundefined`). Different path (generic receiver), byte-identical. Defect.
+- On wasi, `i in g` / `g.hasOwnProperty(i)` answer wrongly for a holey `any[]`
+  even without `sort` (`["b", , "a"]`: `1 in g` is `true`), and on gc
+  native-first / standalone `hasOwnProperty` reports a hole as own. The test's
+  hole row therefore runs on gc native-first and standalone only, via `in`.
+  Defect.
+- On wasi, `console.log(<inline call result>)` prints `[object]` for a string
+  result (`console.log(s.join())`), with or without `sort`; a bound value prints
+  correctly, which is how the test's wasi lane logs. Defect.
 
 probe/test reference: tests/issue-7151-native-sort-externref-vec.test.ts
