@@ -15,9 +15,15 @@ node node_modules/vitest/vitest.mjs run --config plan/log/3527-physical-snapshot
 node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
 ```
 
-The baseline and final candidate both have 315 passes and one failure out of
-316: the unrelated declaration-hash pin in the unchanged module-records file.
-The six intrinsic mutation controls pass on both. Three default compiler samples
+The original baseline and extraction each had 315 passes and one failure out of
+316: a stale declaration-hash pin. History traces it to commit
+`2d0610751954975e0ec634ab83b181a28530454f`, which added `FieldDef.optional?: true`
+and its documentation. Removing those six lines restores the old receipt. The
+corrected pin retains all existing controls and adds independent field-type and
+documentation mutations; the final selection passes **316/316**. Original
+failures remain in the historical logs. See `snapshot-receipt-repair.log` and
+`result.json`. Follow-up read-only review found no actionable findings.
+The six intrinsic mutation controls pass on both production variants. Three default compiler samples
 (arithmetic, strings, closure/object) have identical binaries and WAT in both
 arms; this is bounded compatibility evidence, not full IR runtime qualification.
 

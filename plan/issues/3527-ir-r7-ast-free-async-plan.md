@@ -2546,3 +2546,21 @@ controls pass 3/3 in both arms with exact equality. Fresh-context read-only
 review (`snapshot_extraction_review`) reports no actionable findings in the
 final production extraction; it independently confirms unchanged traversal and
 oracle literal. C's broader recursive-validation architecture review remains open.
+
+### 2026-10-26 — repair the canonical declaration receipt with provenance
+
+Read-only history audit identifies commit
+`2d0610751954975e0ec634ab83b181a28530454f` as the sole cause of the preserved
+canonical declaration pin failure: it adds `FieldDef.optional?: true` plus its
+five-line documentation. The current module-records file is byte-identical to
+that commit, and removing exactly those six added lines restores its entire
+parent file and the old receipt. Refresh the pinned receipt to that authorized
+schema, retaining all existing declaration/order/type/documentation controls
+and adding negative controls for the optional field type and its documentation.
+This repairs the known baseline test; it does not broaden the snapshot matcher
+or grant an exemption from live mutation observation.
+
+The repaired eight-file selection passes 316/316. Follow-up read-only review
+confirms all previous assertions remain intact and both new mutations have
+unique target checks; no actionable findings. Historical 315/316 failures
+remain preserved alongside the final log in the review evidence directory.

@@ -21,10 +21,11 @@
   },
   "qualification": "No production speedup or whole native integration completion claimed.",
   "candidateFinal": {
-    "passed": 315,
-    "failed": 1,
+    "passed": 316,
+    "failed": 0,
     "total": 316,
-    "exitCode": 1
+    "exitCode": 0,
+    "log": "snapshot-receipt-repair.log"
   },
   "legacyDefaultCompiler": {
     "baselinePassed": 3,
@@ -40,7 +41,8 @@
     "src/wasm/physical/data-snapshot.ts": "778870189ebb8f4bcd7e02214beb3f097a4691a2ad833c83b590e5d46328db10",
     "tests/helpers/physical-snapshot-oracle.ts": "154bec06805f03a82c4dbfcb7433a58d71346633c1936d089d483a4a581067ec",
     "tests/issue-3518-physical-snapshot-comparison.test.ts": "4d630b6b0704cb1e574f1c2e6bd16d3f18390994cd438c13e8aa1ab6b64c9436",
-    "tests/issue-3527-snapshot-intrinsic-observations.test.ts": "ffad34c60f762c669284a15b3795b905f91e8f06decf5c142651afad0d34a287"
+    "tests/issue-3527-snapshot-intrinsic-observations.test.ts": "ffad34c60f762c669284a15b3795b905f91e8f06decf5c142651afad0d34a287",
+    "tests/issue-3518-module-reservations.test.ts": "154e0a84428bbeedf429e63293bc3469181eb75497bea48f86bd9b1279965553"
   },
   "typecheck": {
     "configuredTs7": "exit 0",
@@ -51,5 +53,27 @@
     "passed": 104,
     "total": 104,
     "exitCode": 0
+  },
+  "candidateBeforeReceiptRepair": {
+    "passed": 315,
+    "failed": 1,
+    "total": 316,
+    "exitCode": 1
+  },
+  "receiptRepair": {
+    "originCommit": "2d0610751954975e0ec634ab83b181a28530454f",
+    "change": "FieldDef.optional?: true and its five-line documentation",
+    "proof": "Removing exactly the six added lines restores the parent file and old receipt.",
+    "negativeControls": "Existing controls retained; two unique-target mutations added for optional field type and documentation.",
+    "review": "snapshot_extraction_review: no actionable findings; read-only, no tests rerun.",
+    "gates": {
+      "loc": 0,
+      "func": 0,
+      "coercion": 0,
+      "oracle": 0,
+      "deadexports": 0,
+      "biomeLint": 0,
+      "prettier": 0
+    }
   }
 }
