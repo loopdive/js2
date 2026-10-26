@@ -8,12 +8,14 @@
 // checks only bite on Node 22; the SHAPE checks (no ref-typed try_table left
 // in the -O3 output) catch a regression on any Node, CI's included.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { mayContainUnsafeTryTable, reshapeUnsafeTryTables } from "../src/optimize-try-table-shape.js";
+import { optimizeBinaryAsync } from "../src/optimize.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 
 const CORPUS = resolve(__dirname, "differential/corpus");
@@ -139,6 +141,63 @@ async function optimizedShape(source: string, opts: Record<string, unknown>): Pr
   return printBinary(r.binary);
 }
 
+/**
+ * Run `body` with a fake `wasm-opt` first on PATH (the #6742 pattern). The
+ * fake sees the real binary as REAL_WASM_OPT and its own argv as `args`.
+ */
+async function withFakeWasmOpt<T>(script: string, body: () => Promise<T>): Promise<T> {
+  const root = mkdtempSync(join(tmpdir(), "js2-wasm-opt-7168-"));
+  const fake = join(root, "wasm-opt");
+  writeFileSync(
+    fake,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const cp = require("node:child_process");
+const args = process.argv.slice(2);
+if (args.includes("--help")) { console.log("--disable-compact-imports"); process.exit(0); }
+${script}
+`,
+  );
+  chmodSync(fake, 0o755);
+  const previousPath = process.env.PATH;
+  process.env.PATH = [root, dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter);
+  process.env.REAL_WASM_OPT = WASM_OPT;
+  try {
+    return await body();
+  } finally {
+    process.env.PATH = previousPath;
+    Reflect.deleteProperty(process.env, "REAL_WASM_OPT");
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** The `-O` run of the fake: hand the input back as the "optimized" output. */
+const FAKE_OPTIMIZE = `fs.copyFileSync(args[0], args[args.indexOf("-o") + 1]);`;
+
+/**
+ * A valid module whose code holds the byte run `1f 64 6a 00` that the
+ * pre-scan cannot tell from a try_table — `local.get 31` (`20 1f`),
+ * `f64.gt` (`64`), `i32.add` (`6a`), `unreachable` (`00`) — and no try_table.
+ */
+function falsePositiveModule(): Uint8Array {
+  const type = [0x60, 32, ...Array<number>(32).fill(0x7c), 1, 0x7f];
+  const body = [0x00, 0x41, 0x01, 0x20, 0x00, 0x20, 0x1f, 0x64, 0x6a, 0x00, 0x0b];
+  return new Uint8Array([
+    ...[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+    ...[0x01, type.length + 1, 0x01, ...type],
+    ...[0x03, 0x02, 0x01, 0x00],
+    ...[0x0a, body.length + 2, 0x01, body.length, ...body],
+  ]);
+}
+
+const REF_TRY_TABLE_WAT = `(module
+ (import "env" "mk" (func $mk (result externref)))
+ (tag $t (param externref))
+ (func (export "f") (result externref)
+  (block $b (result externref)
+   (try_table (result (ref extern)) (catch $t $b)
+    (ref.as_non_null (call $mk))))))`;
+
 async function drain(): Promise<void> {
   for (let i = 0; i < 5; i++) await new Promise<void>((res) => setTimeout(res, 0));
 }
@@ -260,11 +319,68 @@ describe("#7168 exception code survives wasm-opt", () => {
     );
   });
 
-  it("byte pre-scan flags a ref-typed try_table and passes plain ones", () => {
-    expect(mayContainUnsafeTryTable(new Uint8Array([0x02, 0x6f, 0x1f, 0x64, 0x6f, 0x01]))).toBe(true);
-    expect(mayContainUnsafeTryTable(new Uint8Array([0x1f, 0x63, 0x02]))).toBe(true);
-    expect(mayContainUnsafeTryTable(new Uint8Array([0x1f, 0x40, 0x01, 0x1f, 0x7f, 0x1f]))).toBe(false);
+  it("pre-scan: hits a real ref-typed try_table in code, ignores pairs outside code or that do not decode", () => {
+    const real = execFileSync(WASM_OPT, ["-", "-o", "-", ...FEATURES], {
+      input: REF_TRY_TABLE_WAT,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    expect(mayContainUnsafeTryTable(new Uint8Array(real))).toBe(true);
+    const safe = execFileSync(WASM_OPT, ["-", "-o", "-", ...FEATURES], {
+      input: REF_TRY_TABLE_WAT.replace("(result (ref extern))", "(result externref)"),
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    expect(mayContainUnsafeTryTable(new Uint8Array(safe))).toBe(false);
+    // The pair inside a data segment is not code.
+    const data = execFileSync(WASM_OPT, ["-", "-o", "-", ...FEATURES], {
+      input: '(module (memory 1) (data (i32.const 0) "\\1f\\64\\6f\\01\\00\\00\\00"))',
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    expect(mayContainUnsafeTryTable(new Uint8Array(data))).toBe(false);
+    // `local.get 31; f64.gt; i32.const 1` — the byte after the pair (0x41) is no heap type.
+    const fp = falsePositiveModule();
+    const noHeap = fp.slice();
+    noHeap[noHeap.length - 3] = 0x41;
+    expect(mayContainUnsafeTryTable(noHeap)).toBe(false);
   });
+
+  it("a pre-scan false positive whose print fails keeps the OPTIMIZED bytes", async () => {
+    const raw = falsePositiveModule();
+    expect(WebAssembly.validate(raw)).toBe(true);
+    expect(mayContainUnsafeTryTable(raw)).toBe(true);
+    const result = await withFakeWasmOpt(
+      `if (args.includes("--print")) { process.stderr.write("print exploded\\n"); process.exit(1); }
+${FAKE_OPTIMIZE}`,
+      () => optimizeBinaryAsync(raw, { level: 3, timeoutMs: 20_000 }),
+    );
+    expect(result.optimized).toBe(true);
+    expect(result.warning).toBeUndefined();
+    expect(result.timedOut).toBeUndefined();
+    expect(result.binary).toEqual(raw);
+  }, 60_000);
+
+  it("a confirmed ref-typed try_table whose re-assembly times out ships unoptimized with timedOut", async () => {
+    const raw = new Uint8Array(
+      execFileSync(WASM_OPT, ["-", "-o", "-", ...FEATURES], {
+        input: REF_TRY_TABLE_WAT,
+        stdio: ["pipe", "pipe", "ignore"],
+      }),
+    );
+    expect(mayContainUnsafeTryTable(raw)).toBe(true);
+    const timeoutMs = 6_000;
+    const result = await withFakeWasmOpt(
+      `if (args.includes("--print")) { process.stdout.write(cp.execFileSync(process.env.REAL_WASM_OPT, args)); process.exit(0); }
+if (args[0].endsWith(".wat")) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000); }
+${FAKE_OPTIMIZE}`,
+      () => optimizeBinaryAsync(raw, { level: 3, timeoutMs }),
+    );
+    expect(result.optimized).toBe(false);
+    expect(result.timedOut).toBe(true);
+    expect(result.binary).toEqual(raw);
+    // The message names the budget that was left for re-assembly, not the full timeoutMs.
+    const applied = Number(/timed out after (\d+) ms/.exec(result.warning ?? "")?.[1]);
+    expect(applied).toBeGreaterThan(0);
+    expect(applied).toBeLessThan(timeoutMs);
+  }, 60_000);
 
   for (const [name, source, gcExpected] of PROGRAMS) {
     it(`${name}: -O3 output has no ref-typed try_table (gc native-first, standalone, wasi)`, async () => {

@@ -655,11 +655,15 @@ const WASM_OPT_PRINT_MAX_BUFFER = 1 << 30;
  * (#7168) Finish a successful CLI run. When the optimized binary may hold a
  * `try_table` with a ref block type — which V8 12.4 (Node 22) executes as
  * `unreachable`, see `optimize-try-table-shape.ts` — print it, re-shape the
- * text and re-assemble it with no passes. A module without one (byte
- * pre-scan miss, or a printed text with nothing to rewrite) keeps its bytes
- * exactly. If printing or re-assembly fails, ship the unoptimized input: the
- * optimized bytes would trap on Node 22. `deadline` (ms epoch) bounds both
- * extra runs when the caller's timeout covers the whole call (#6742).
+ * text and re-assemble it with no passes. A module without one (pre-scan
+ * miss, or printed text with nothing to rewrite) keeps its bytes exactly.
+ *
+ * Failure policy. The pre-scan can hit by accident, so a print that fails
+ * or times out leaves the shape UNVERIFIED: ship the optimized bytes and say
+ * so on stderr. Only a CONFIRMED shape whose re-assembly fails ships the
+ * unoptimized input, since the optimized bytes would trap on Node 22.
+ * `deadline` (ms epoch) bounds both extra runs when the caller's timeout
+ * covers the whole call (#6742).
  */
 function reshapeOptimizedTryTables(
   n: NonNullable<typeof _nodeImports>,
@@ -679,27 +683,39 @@ function reshapeOptimizedTryTables(
   if (!mayContainUnsafeTryTable(optimized)) return ok(optimized);
   const budget = () => (deadline === undefined ? timeoutMs : Math.max(1, deadline - Date.now()));
   const flags = [...featureFlags, ...(preserveNames ? ["-g"] : [])];
-  const watPath = n.join(tmpDir, "reshaped.wat");
-  const outPath = n.join(tmpDir, "reshaped.wasm");
+  let reshaped: string | null;
+  const printBudget = budget();
   try {
     const printed = n.execFileSync(wasmOptPath, [outputPath, "--print", ...flags], {
-      timeout: budget(),
+      timeout: printBudget,
       stdio: ["ignore", "pipe", "pipe"],
       maxBuffer: WASM_OPT_PRINT_MAX_BUFFER,
     });
-    const reshaped = reshapeUnsafeTryTables(printed.toString("utf-8"));
-    if (reshaped === null) return ok(optimized);
+    reshaped = reshapeUnsafeTryTables(printed.toString("utf-8"));
+  } catch (err) {
+    const { text } = wasmOptFailure(err, printBudget);
+    process.stderr.write(
+      `[optimize] try_table check (#7168) could not print the optimized module (${text.slice(0, 160).trim()}); ` +
+        "shipping it UNVERIFIED — it may trap on Node 22 (V8 12.4) if it holds a ref-typed try_table.\n",
+    );
+    return ok(optimized);
+  }
+  if (reshaped === null) return ok(optimized);
+  const watPath = n.join(tmpDir, "reshaped.wat");
+  const outPath = n.join(tmpDir, "reshaped.wasm");
+  const assembleBudget = budget();
+  try {
     n.writeFileSync(watPath, reshaped);
     // No passes, but keep the final StackIR stage `-O<level>` ends with, which
     // re-assembly would otherwise skip (it is what keeps the size delta small).
     const stackIr = [`--optimize-level=${level}`, "--generate-stack-ir", "--optimize-stack-ir"];
     n.execFileSync(wasmOptPath, [watPath, "-o", outPath, ...stackIr, ...flags], {
-      timeout: budget(),
+      timeout: assembleBudget,
       stdio: ["ignore", "ignore", "pipe"],
     });
     return ok(restoreCustomSections(optimized, new Uint8Array(n.readFileSync(outPath))));
   } catch (err) {
-    const { text } = wasmOptFailure(err, timeoutMs);
+    const { text, timedOut } = wasmOptFailure(err, assembleBudget);
     process.stderr.write(
       `[optimize] try_table re-shape (#7168) FAILED — shipping UNOPTIMIZED binary (${original.length} bytes). ` +
         `Cause: ${text.slice(0, 200).trim()}\n`,
@@ -708,8 +724,9 @@ function reshapeOptimizedTryTables(
       binary: original,
       optimized: false,
       warning:
-        "wasm-opt output may hold a try_table that Node 22 (V8 12.4) executes as unreachable, and re-shaping it " +
+        "wasm-opt output holds a try_table that Node 22 (V8 12.4) executes as unreachable, and re-shaping it " +
         `(#7168) failed, so the UNOPTIMIZED binary ships: ${text.slice(0, 600).trim()}`,
+      ...(timedOut ? { timedOut } : {}),
     };
   } finally {
     for (const path of [watPath, outPath]) {

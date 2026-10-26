@@ -36,16 +36,93 @@
  * the try_table exactly as before. Semantics are identical.
  */
 
+/** Unsigned LEB128 at `p` (at most 5 bytes): `[value, next]`, or null if malformed / past `end`. */
+function readU32(b: Uint8Array, p: number, end: number): [number, number] | null {
+  let value = 0;
+  for (let shift = 0; shift < 35 && p < end; shift += 7) {
+    const byte = b[p++]!;
+    value += (byte & 0x7f) * 2 ** shift;
+    if ((byte & 0x80) === 0) return [value, p];
+  }
+  return null;
+}
+
+/** One-byte abstract heap types: `noexn` 0x74 down to `exn` 0x69, plus the strings-proposal range down to 0x67. */
+const ABSTRACT_HEAP_TYPE_MIN = 0x67;
+const ABSTRACT_HEAP_TYPE_MAX = 0x74;
+/** Catch clauses per try_table, and branch depth, beyond which the bytes are not a try_table. */
+const MAX_CATCHES = 64;
+const MAX_LABEL_DEPTH = 1 << 16;
+
+interface ScanBounds {
+  /** Upper bound on the module's type count (the type section's byte size). */
+  types: number;
+  /** Upper bound on the tag index space (imports + defined tags). */
+  tags: number;
+}
+
 /**
- * Byte pre-scan: true when `binary` holds a `try_table` opcode (`0x1f`)
- * followed by a ref-prefixed block type (`0x63` / `0x64`). Every unsafe
- * try_table produces this pair. Other bytes can produce it by accident, and a
- * false positive only costs one extra print.
+ * Do the bytes after `0x1f 0x63|0x64` at `p` decode as a heap type and a
+ * well-formed catch vector? Every real ref-typed try_table passes; most
+ * accidental byte pairs in code do not.
+ */
+function plausibleTryTableTail(b: Uint8Array, p: number, end: number, bounds: ScanBounds): boolean {
+  const heap = b[p];
+  if (heap === undefined) return false;
+  if (heap >= ABSTRACT_HEAP_TYPE_MIN && heap <= ABSTRACT_HEAP_TYPE_MAX) p++;
+  else {
+    // A type index: a non-negative s33, i.e. bit 6 of the last byte clear.
+    const idx = readU32(b, p, end);
+    if (!idx || (b[idx[1] - 1]! & 0x40) !== 0 || idx[0] >= bounds.types) return false;
+    p = idx[1];
+  }
+  const count = readU32(b, p, end);
+  if (!count || count[0] > MAX_CATCHES) return false;
+  p = count[1];
+  for (let c = 0; c < count[0]; c++) {
+    const kind = b[p++];
+    if (kind === undefined || kind > 3) return false;
+    if (kind <= 1) {
+      const tag = readU32(b, p, end);
+      if (!tag || tag[0] >= bounds.tags) return false;
+      p = tag[1];
+    }
+    const label = readU32(b, p, end);
+    if (!label || label[0] >= MAX_LABEL_DEPTH) return false;
+    p = label[1];
+  }
+  return p < end;
+}
+
+/**
+ * Pre-scan (#7168): could `binary` hold a `try_table` whose block type is a
+ * ref type (`0x1f` then `0x63`/`0x64`)? Only the code section is searched,
+ * and the bytes after the pair must decode as a heap type plus a catch
+ * vector within the module's type/tag bounds. A real ref-typed try_table
+ * always passes. A false positive is still possible (an accidental byte run
+ * in code); it costs one `--print`, and the caller treats a failed print as
+ * "unverified" rather than as a confirmed shape.
  */
 export function mayContainUnsafeTryTable(binary: Uint8Array): boolean {
-  for (let i = binary.indexOf(0x1f); i >= 0 && i + 1 < binary.length; i = binary.indexOf(0x1f, i + 1)) {
+  const bounds: ScanBounds = { types: 0, tags: 0 };
+  let codeStart = -1;
+  let codeEnd = -1;
+  let p = 8;
+  while (p < binary.length) {
+    const id = binary[p++]!;
+    const size = readU32(binary, p, binary.length);
+    if (!size) return true; // unreadable layout: let the printed text decide
+    const start = size[1];
+    const end = start + size[0];
+    if (id === 1) bounds.types = size[0];
+    if (id === 2 || id === 13) bounds.tags += readU32(binary, start, end)?.[0] ?? 0;
+    if (id === 10) [codeStart, codeEnd] = [start, Math.min(end, binary.length)];
+    p = end;
+  }
+  if (codeStart < 0) return false;
+  for (let i = binary.indexOf(0x1f, codeStart); i >= 0 && i + 1 < codeEnd; i = binary.indexOf(0x1f, i + 1)) {
     const next = binary[i + 1];
-    if (next === 0x63 || next === 0x64) return true;
+    if ((next === 0x63 || next === 0x64) && plausibleTryTableTail(binary, i + 2, codeEnd, bounds)) return true;
   }
   return false;
 }

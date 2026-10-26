@@ -77,9 +77,19 @@ The bug is V8 12.4's alone. Multi-value block types are safe.
 
 `src/optimize.ts` + `src/optimize-try-table-shape.ts`, CLI path only:
 
-1. After `wasm-opt -O<level>`, scan the optimized binary for the try_table
-   opcode `0x1f` followed by a ref block-type prefix `0x63`/`0x64`. On a
-   miss (most modules) nothing else runs and the bytes are unchanged.
+1. After `wasm-opt -O<level>`, pre-scan the code section of the optimized
+   binary. It looks for the try_table opcode `0x1f` followed by a ref
+   block-type prefix `0x63`/`0x64`, then requires the following bytes to
+   decode as a heap type and a catch vector:
+   - the heap type is a one-byte abstract type, or a type index below the
+     type-section bound
+   - the catch vector has at most 64 clauses
+   - each clause has kind 0–3, a tag index below imports + tags, and a label
+     depth below 2^16
+
+   A real ref-typed try_table always passes. On a miss nothing else runs and
+   the bytes are unchanged. The pair-only scan of the first revision
+   false-positived on `js/algorithms.ts` and on multi-MB modules.
 2. On a hit, print the module (`wasm-opt out.wasm --print`) and rewrite each
    try_table whose single result is a ref type in the text. Labels are
    names, so no branch needs retargeting:
@@ -97,9 +107,14 @@ The bug is V8 12.4's alone. Multi-value block types are safe.
    ends with (`--optimize-level=<level> --generate-stack-ir
    --optimize-stack-ir`). Add back custom sections the text dropped.
 4. The print and re-assembly runs share the caller's remaining time budget
-   when `timeoutMs` covers the whole call (as in the #6742 retry). If either
-   fails, ship the unoptimized input with a loud stderr line and a warning
-   that names the cause.
+   when `timeoutMs` covers the whole call (as in the #6742 retry).
+   - **Print fails or times out:** the shape is unverified, because the
+     pre-scan can still hit by accident. Ship the OPTIMIZED bytes with a loud
+     stderr line.
+   - **Shape confirmed but re-assembly fails:** ship the unoptimized input
+     with a warning that names the cause and the budget that applied.
+     `timedOut` is set on a timeout, so the npm-compat ladder records it as a
+     timeout.
 
 The in-process binaryen.js fallback is unchanged. binaryen.js 132 cannot read
 js2wasm GC modules (`readBinary` throws), so a hook there could not be tested.
@@ -143,12 +158,37 @@ non-matching programs fail the same way unoptimized:
 - runtime error: `builtins/14-spread-args`
 - compile error: `generators/04-sent-values`
 
+Pre-scan precision, measured 2026-10-26: 264 `-O3` modules (every playground
+example and corpus program, gc native-first and standalone). The pair-only
+scan hit 9, 3 of them false positives (`js/algorithms.ts`,
+`builtins/17-regex-matchall` gc, `closures/04-shared-state` standalone). The
+structural scan hits exactly the 6 true shapes: 0 false positives, 0 misses.
+On a 4.4 MB js2wasm module it reports no hit, in 2.3 ms.
+
+npm-compat standalone lanes (`generate-npm-compat-report.mjs --only
+lodash-es,axios --lane standalone --no-write`), base vs fix, run once each:
+
+| package | base | fix |
+| --- | --- | --- |
+| lodash-es | `-O4` on the first rung, 190.4 s, 6,788,684 → 5,436,209 B | `-O4` on the first rung, 184.5 s, 6,788,684 → 5,436,209 B (identical) |
+| axios | compile-error, no optimizer run | same |
+
+axios fails before optimization: an async generator has no host-free
+lowering (#7010). This is pre-existing and unrelated.
+
 probe/test reference: `tests/issue-7168-optimize-exceptions.test.ts`. It covers:
 
 - the rewriter on the review's shapes module: nested try_tables, `br`/`br_if`
   to the try_table's own label, `catch_ref`/`catch_all_ref`, multi-value
   left alone, quoted names, and a data segment containing try_table text
-- the byte pre-scan
+- the pre-scan:
+  - it hits a real ref-typed try_table
+  - it ignores a safe one, the pair inside a data segment, and a pair whose
+    next byte is no heap type
+- the failure paths, with a fake `wasm-opt`:
+  - a false positive whose print fails keeps the optimized bytes
+  - a confirmed shape whose re-assembly times out ships unoptimized, with
+    `timedOut` set and the remaining budget in the message
 - a shape assertion that works on any Node: no `try_table … (result (ref …`
   left in the `-O3` output of the 2 minimised and 3 corpus programs on gc
   native-first, standalone and wasi. Against the old `optimize.ts` it fails

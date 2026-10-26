@@ -9,7 +9,7 @@
       "loadPolicy": "runtime-configurable",
       "defaultSpecifier": "binaryen",
       "reviewedSourceRevision": "8d037affc752b63c407245a35fa7fd59ed9ff727",
-      "contentHash": "d5e836321342bfa53d0defcf7e2554bb5d409779",
+      "contentHash": "17570c6a8816bbada24179f98bd1c1a81aa0e2a2",
       "digestAlgorithm": "git-blob-sha1",
       "importer": "src/optimize.ts",
       "resolutionBase": "original-importer",
