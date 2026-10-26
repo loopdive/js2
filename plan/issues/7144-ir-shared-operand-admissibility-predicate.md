@@ -1,10 +1,11 @@
 ---
 id: 7144
 title: "IR: one spelling of operand/write admissibility — from-ast exports its typing gates and the selector calls them"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-26
+completed: 2026-10-26
 priority: high
 horizon: l
 feasibility: hard
@@ -99,3 +100,76 @@ withdrawal become the same function evaluated at two times.
   `late-preparation-unsupported`); wasi lowers them.
 - `tryFoldNullCompare` constant-folds `void 0 == null` as `false` (base
   miscompile, `ran=0` vs node `1`).
+
+## Resolution (2026-10-26, Opus)
+
+probe/test reference: `tests/issue-7144-operand-admissibility.test.ts` (selector ⇔ from-ast
+agreement matrix, standalone + gc native-first) and the committed probes
+`tests/fixtures/ir-closure-probes/probe{7,9..24}.mts` (p7–p24 of the #6834 rounds; run by
+hand with `npx tsx <probe> <worktree-root>`).
+
+2026-10-26 stakeholder: #7144 first; #6834 to be rebuilt on it. (Recorded here because
+`plan/issues/7113-*.md` exists only on the #6834 branch, not on `main`.)
+
+### What moved
+
+`src/ir/analysis/operand-admissibility.ts` (new, pure: no IR builder, no checker) holds the
+rules. `from-ast` maps every lowered value to an `OperandFamily` once
+(`irOperandFamily(IrType, operand)`) and its withdrawal sites now call the predicates; the
+selector calls the same predicates over the families it proves before lowering
+(`src/ir/select-planned-closure-operands.ts`, new), from `isPhase1ClosureLiteral` for every
+closure that carries a function-member plan.
+
+| from-ast site | condition (unchanged) | predicate | selector arm (`operand-coercion-unsupported`) |
+|---|---|---|---|
+| `lowerBinary` `+` proof gate (#2781) | both number / both string unless an operand produces the carrier | `additiveOperandsProvable` (+ `additiveOperandProof`) | `closure-additive-operands` |
+| `lowerBinary` dynamic arms (`tryLowerDynamicEq`, `IR_DYN_ADD_FN`, `tryLowerDynamicRelational`, `tryLowerDynamicArithmetic`) | other side boxable / f64 / carrier | `binaryOperandsAdmissible` (gates the arms; an admitted pair with no producer is now an invariant) | `closure-binary-operands` |
+| `lowerBinary` string path ("mixed string/non-string", "string operator") | both string; `+`, equality, relational | `binaryOperandsAdmissible` | `closure-binary-operands` |
+| `lowerBinary` matching-carrier path ("requires matching operand types", the 15 `requireF64` calls, "`==` on X operands") | one carrier; f64 for `+ - * / %` | `binaryOperandsAdmissible` (`requireF64` deleted) | `closure-binary-operands` |
+| `tryFoldNullCompare` | strict-only for dynamic / externref; no fold for string / class / object / closure / callable / boxed / `ref_null` | `nullComparisonFolds` | `closure-null-compare` (direct `null` operand only, as the fold sees it) |
+| `lowerExpr` `null` arm ("bare 'null' in non-reference context") | consumer is externref / `ref_null` | `nullValueAdmissible` | `closure-null-value` (discarded / `throw` consumers are externref) |
+| `lowerNullish` | left is externref / `ref_null` | `nullishLeftAdmissible` | `closure-nullish-left` |
+| `lowerCompoundAssignment` (string `+=`, dynamic `+=`, f64 arithmetic, RHS f64) | per slot family | `compoundWriteAdmissible`, `isF64CompoundAssignOperator` | `closure-compound-write` |
+| `lowerIncrementDecrement` | f64 or dynamic slot | `incrementSlotAdmissible` | `closure-increment-slot` |
+| `lowerIdentifierAssignment` slot write | families, then `irTypeAssignable` | `slotWriteVerdict` (`representation-refined` = needs `irTypeAssignable`; the selector refuses it) | `closure-slot-write` (also chained writes: a write's value family is its slot's) |
+| `boxConcreteToDynamic` | string / proven boolean / f64 (+ numeric-literal tag corner) | `boxableIntoDynamic` via `irOperandFamily` | — |
+| select.ts `isPhase1CompoundAssignOperator` + three inline `+= -= *= /=` lists | — | `isF64CompoundAssignOperator` (one spelling) | — |
+| select.ts `isComparisonResultOperator` | — | moved to the module (shared) | — |
+
+`lowerDiscardedExpression` needed no predicate of its own: it lowers any value under an
+externref hint, and the only operand family that constrains is `null` (`nullValueAdmissible`).
+The selector's family proof reuses `obviousSelectorValueFamily` (literal / operator result
+families) and the checker's declared primitive family; `unknown` is refused by every predicate.
+
+### Measured (base = `origin/main` 61b1b07d2b)
+
+- p7–p24 (5,680 row × lane results over standalone / wasi / gc / gchost / fast): **0 lost
+  claims, 0 new post-claim errors, 0 new claims, 0 host-assisted gc / fast byte changes**.
+  366 claim-then-withdraw results become refusals at select (legacy body, `= node`); 176
+  remain, all in the left-out classes below. gc native-first compile failures on the probe
+  programs: 169 → 51.
+- No-`D` twins of review-6834-r10 now refused at select: AI `"a" + 1`, `true + 1`,
+  `true + "a"`, `(void 0) + 1`, `a + 1` (`var a = [1]`), `"3" * 2`, `s * s`, `s - 1`, `b - 1`,
+  `(k === 1) - 1`, `!k - 1`, `typeof k - 1`, `` `3` - 1 ``, `a[0] + "s"`, `s < m`,
+  `k < "1"`, `s == 1`, `true == 1`; AJ `s += true`, `q += "a"`, `q += true`, `s = 1`,
+  `s++`, `b++`, `a++`, `m = [1]`, `var o; o = {…}`, mixed chained writes; AF/AA `??` everywhere; AD the
+  aliased object `=== null`; r8/r9 bare `null` in a value position.
+- Byte sample (20 equivalence programs + the 13 playground examples): identical on gc
+  native-first, gc host-assisted, standalone, wasi, fast and `JS2WASM_NATIVE_REGIME_JS=0`.
+- `check:ir-fallbacks`: identical to base (no bucket moved).
+
+### Left out (pre-existing on main, recorded for the next slice)
+
+- Typing gates outside operand / write admissibility, still claim-then-withdraw in a planned
+  closure: throw of a scalar (`throw void 0`, "throw val not in slice 9"), an f64 local whose
+  TS type is not provably number (`var t = void 0`), unary `-` of an object, conditional arms
+  of different types (`throw k ? void 0 : m`), `switch` on a dynamic discriminant, element /
+  member stores (`a[0] = "s"`, `m.x = 1`, `m[0] = 1`), array literals of objects / dynamics,
+  `compound assign to const`, and the wasi-only direct-call plan (class P).
+- `__ir_dyn_call_box` / `__dyn_member_get` ABI identity (loose `==` on the carrier, `in`,
+  regex): the predicates admit these (from-ast lowers them); they fail later at preparation on
+  standalone / gc. Unchanged.
+- `void 0 == null` constant-fold miscompile: `void` is an f64 to the fold; unchanged.
+- The top-level move-only scan (`concreteDynamicAssignmentOperandIsBuildable`, select.ts)
+  keeps its own spelling of the boxable families; folding it in would move top-level selection
+  and host-assisted bytes.

@@ -147,6 +147,8 @@ import type { RecursiveTypeEvidence } from "./type-evidence.js";
 import type { IntrinsicId } from "./intrinsics.js";
 import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-typeof.js";
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
+import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
+import { isComparisonResultOperator, isF64CompoundAssignOperator } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 // excluded here (eval, non-selected with shapes, import(), Proxy)
@@ -4029,21 +4031,6 @@ export function peelAssignmentChain(
 }
 
 /**
- * (#5163) The compound-assignment operators the IR desugars to an f64 binop.
- * Kept in lockstep with `compoundF64Binop` in from-ast.ts — an operator
- * admitted here but absent there demotes at build stage instead of being
- * refused cleanly at selection.
- */
-function isPhase1CompoundAssignOperator(op: ts.SyntaxKind): boolean {
-  return (
-    op === ts.SyntaxKind.PlusEqualsToken ||
-    op === ts.SyntaxKind.MinusEqualsToken ||
-    op === ts.SyntaxKind.AsteriskEqualsToken ||
-    op === ts.SyntaxKind.SlashEqualsToken
-  );
-}
-
-/**
  * (#5163 S1/S2) Shape gate for the TARGET of a mutating member statement
  * (`o.x += e`, `a[i]++`). Deliberately the intersection of the plain-`=`
  * property and element store arms: the same receiver/index restrictions, so a
@@ -4182,7 +4169,7 @@ function phase1MutatingStatementVerdict(
     // before the RHS), which is why this is a separate arm and not a widening
     // of the `=` ones.
     if (
-      isPhase1CompoundAssignOperator(op) &&
+      isF64CompoundAssignOperator(op) &&
       (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
     ) {
       if (!isPhase1MutableMemberTarget(expr.left, scope, localClasses)) {
@@ -5506,13 +5493,7 @@ function isPhase1ForUpdateExpr(
     const moduleBinding = currentModuleBindingResolver?.(expr.left);
     if (moduleBinding) {
       if (currentSubjectIsModuleInit) {
-        if (
-          op !== ts.SyntaxKind.EqualsToken &&
-          op !== ts.SyntaxKind.PlusEqualsToken &&
-          op !== ts.SyntaxKind.MinusEqualsToken &&
-          op !== ts.SyntaxKind.AsteriskEqualsToken &&
-          op !== ts.SyntaxKind.SlashEqualsToken
-        ) {
+        if (op !== ts.SyntaxKind.EqualsToken && !isF64CompoundAssignOperator(op)) {
           return false;
         }
         if (!scope.has(expr.left.text)) return false;
@@ -5524,13 +5505,7 @@ function isPhase1ForUpdateExpr(
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // Plain or compound assignment to an identifier in scope.
-    if (
-      op === ts.SyntaxKind.EqualsToken ||
-      op === ts.SyntaxKind.PlusEqualsToken ||
-      op === ts.SyntaxKind.MinusEqualsToken ||
-      op === ts.SyntaxKind.AsteriskEqualsToken ||
-      op === ts.SyntaxKind.SlashEqualsToken
-    ) {
+    if (op === ts.SyntaxKind.EqualsToken || isF64CompoundAssignOperator(op)) {
       if (!scope.has(expr.left.text)) return false;
       if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) return false;
       if (!isPhase1Expr(expr.right, scope, localClasses)) return false;
@@ -5932,12 +5907,7 @@ function isPhase1BodyStatement(
       }
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
-      if (
-        op === ts.SyntaxKind.PlusEqualsToken ||
-        op === ts.SyntaxKind.MinusEqualsToken ||
-        op === ts.SyntaxKind.AsteriskEqualsToken ||
-        op === ts.SyntaxKind.SlashEqualsToken
-      ) {
+      if (isF64CompoundAssignOperator(op)) {
         if (ts.isIdentifier(stmt.expression.left)) {
           if (isUnrepresentableModuleBinding(stmt.expression.left)) {
             return shapeNo("body-module-storage-unrepresentable", stmt.expression);
@@ -6907,7 +6877,7 @@ function isPhase1ClosureLiteral(
   const plan = ts.isFunctionExpression(expr)
     ? currentSelectionOptions?.functionMemberClosures?.resolve(expr)
     : undefined;
-  return closureLiteralIsBuildable(expr, scope, localClasses, allowNumericDefaultSuffix, plan, {
+  const buildable = closureLiteralIsBuildable(expr, scope, localClasses, allowNumericDefaultSuffix, plan, {
     shapeNo,
     annotationToResolvedKind,
     closureLiteralDefaultParamStart,
@@ -6930,6 +6900,13 @@ function isPhase1ClosureLiteral(
     restoreProjectionBindings,
     withClosureState: withFunctionMemberClosureState,
   });
+  if (!buildable || !plan) return buildable;
+  // (#7144) Every operator and slot write of the planned body, judged by the predicates from-ast lowers it with.
+  const refusal = plannedClosureOperandRefusal(plan, {
+    obviousFamily: (expression) => obviousSelectorValueFamily(expression, scope),
+    declaredFamily: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
+  });
+  return refusal === null || capabilityNo("operand-coercion-unsupported", refusal.arm, refusal.node);
 }
 
 /** New RHS facts never borrow module-init, caller-return, class or mutable-slot authority. */
@@ -7532,21 +7509,6 @@ function expressionIsModuleBindingRootedCall(expr: ts.Expression): boolean {
   if (!ts.isPropertyAccessExpression(callee)) return false;
   return (
     expressionIsModuleBindingAccessChain(callee.expression) || expressionIsModuleBindingRootedCall(callee.expression)
-  );
-}
-
-function isComparisonResultOperator(op: ts.SyntaxKind): boolean {
-  return (
-    op === ts.SyntaxKind.LessThanToken ||
-    op === ts.SyntaxKind.LessThanEqualsToken ||
-    op === ts.SyntaxKind.GreaterThanToken ||
-    op === ts.SyntaxKind.GreaterThanEqualsToken ||
-    op === ts.SyntaxKind.EqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsToken ||
-    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-    op === ts.SyntaxKind.InstanceOfKeyword ||
-    op === ts.SyntaxKind.InKeyword
   );
 }
 
