@@ -9,11 +9,7 @@
  * Vitest runs chunks sequentially; fork dies between chunks for full
  * memory reclaim of the vitest process itself.
  */
-import {
-  parseTest262SemanticProviders,
-  test262CompileSemanticProviders,
-  test262ResultPrefix,
-} from "../scripts/test262-lane.mjs";
+import { test262ResultPrefix } from "../scripts/test262-lane.mjs";
 import {
   requireTest262CompilerPath,
   test262CacheDirectoryName,
@@ -177,7 +173,6 @@ function parseTest262Target(): Test262CompileTarget | undefined {
 }
 
 const TEST262_TARGET = parseTest262Target();
-const TEST262_SEMANTIC_PROVIDERS = parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS);
 
 // #3462 — oracle LANE selection (the #3450 hybrid two-oracle pipeline). Two
 // oracles run under the same `ORACLE_VERSION`:
@@ -218,8 +213,7 @@ const LINKED_HARNESS_ORACLE = ORACLE_LANE === "linked-harness";
 // (#5383 S3) May this lane link the compiled `Temporal` provider (#4628)?
 // Read ONCE — it consults the pre-warm stamp on disk, and the answer is a
 // property of the run, not of a row. See scripts/test262-temporal.mjs.
-const TEMPORAL_LANE_ENABLED =
-  !REQUIRED_PREPARED && test262TemporalLaneEnabled(TEST262_TARGET, undefined, TEST262_SEMANTIC_PROVIDERS);
+const TEMPORAL_LANE_ENABLED = !REQUIRED_PREPARED && test262TemporalLaneEnabled(TEST262_TARGET);
 
 // (#3461) Fast native-harness oracle — the execution side of the fast lane that
 // #3462 stamps above. Active ONLY when `TEST262_ORACLE_MODE=fast` AND the run is
@@ -235,7 +229,6 @@ function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: str
     .update(wrappedSource)
     .update(compilerHash)
     .update(TEST262_TARGET ?? "gc")
-    .update(TEST262_SEMANTIC_PROVIDERS)
     .digest("hex");
   return {
     wasmPath: join(CACHE_DIR, `${hash}.wasm`),
@@ -292,8 +285,7 @@ mkdirSync(RESULTS_DIR, { recursive: true });
 const RUN_TIMESTAMP =
   process.env.RUN_TIMESTAMP || new Date().toISOString().replace(/[-:T]/g, "").replace(/\..+/, "").slice(0, 15);
 const RESULT_PREFIX =
-  process.env.TEST262_RESULT_PREFIX ||
-  test262ResultPrefix(TEST262_TARGET ?? "gc", TEST262_SEMANTIC_PROVIDERS, TEST262_COMPILER_PATH);
+  process.env.TEST262_RESULT_PREFIX || test262ResultPrefix(TEST262_TARGET ?? "gc", TEST262_COMPILER_PATH);
 const JSONL_PATH = join(RESULTS_DIR, `${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl`);
 
 // Open results JSONL — each chunk appends independently
@@ -499,7 +491,9 @@ function recordResult(
     // counted as one — it is stamped separately rather than silently.
     oracle_lane:
       ORACLE_LANE === "linked-harness" && metadata?.linkedFallback === true ? "linked-harness-fallback" : ORACLE_LANE,
-    semantic_providers: TEST262_SEMANTIC_PROVIDERS,
+    // (#6979) Row-format constant: the regime is the only policy since S7, but
+    // baseline-pair admission and report merging still key on this field.
+    semantic_providers: "auto",
     oracle_fast_rev: ORACLE_LANE === "fast-nativeharness" ? ORACLE_FAST_REV : undefined,
     file,
     category,
@@ -772,7 +766,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
         chunkIndex,
         chunkTotal: totalChunks,
         target: TEST262_TARGET ?? "gc",
-        semanticProviders: TEST262_SEMANTIC_PROVIDERS,
         registeredTests: registeredPaths.length,
         registeredPaths,
         // Keep recordedRows for the existing artifact readers while naming the
@@ -969,7 +962,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // #6776: this path instantiates and classifies the bytes itself; the library default would turn the negative-test arm's compile failure into an incidental pass (see #2920).
                   validate: false,
                   target: TEST262_TARGET,
-                  semanticProviders: test262CompileSemanticProviders(TEST262_SEMANTIC_PROVIDERS),
                   inferModuleStrictArguments,
                   scriptGoal,
                   // (#3049 C1 / #3123 / #2900) The FIXTURE compile defers
@@ -1100,7 +1092,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // interpreter globals never leak between fixtures.
                   const instance = await instantiateTest262Module(result.binary, importObj as any, {
                     target: TEST262_TARGET,
-                    semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                     providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
                   });
                   fixtureInstance = instance;
@@ -1342,7 +1333,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                         requiresEntrySelfImportGraph: fixtureGraph.requiresEntrySelfImportGraph || selfModuleImport,
                       }
                     : {}),
-                  semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
                   scriptGoal,
                   temporal: needsTemporal,
@@ -1458,7 +1448,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                             requiresEntrySelfImportGraph: fixtureGraph.requiresEntrySelfImportGraph || selfModuleImport,
                           }
                         : {}),
-                      semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
                       scriptGoal,
                       temporal: needsTemporal,
@@ -1547,7 +1536,6 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                             requiresEntrySelfImportGraph: fixtureGraph.requiresEntrySelfImportGraph || selfModuleImport,
                           }
                         : {}),
-                      semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
                       scriptGoal,
                       temporal: needsTemporal,

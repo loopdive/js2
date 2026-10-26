@@ -3,24 +3,19 @@
 import { readFileSync } from "node:fs";
 import { compile } from "../src/index.ts";
 
-// (#6686/#5385 S5, #6708 S6) native-first is the compiler's DEFAULT policy in
-// every environment, and the native regime its default lowering in a JS
+// (#6686/#5385 S5, #6708 S6, #6979 S7) native-first is the compiler's only
+// semantic-provider policy and the native regime its lowering in a JS
 // environment; the probes compile with no semanticProviders option, so this
-// ratchet measures exactly what the compiler ships. The compatibility control
-// spells the retired `host-assisted` profile explicitly. Set
-// JS2WASM_NATIVE_REGIME_JS=0 to measure the kill-switch lane.
+// ratchet measures exactly what the compiler ships. No profile may emit a
+// `legacy-semantic` or `unknown` import any more, so every probe is held to a
+// hard zero (the S6 host-assisted compatibility control is gone with the
+// profile).
 
 interface HostImportPolicyBaseline {
   schemaVersion: 1;
   nativeFirst: {
     minimumProbes: number;
     maximumImports: number;
-    maximumLegacySemanticImports: number;
-    maximumUnknownImports: number;
-  };
-  compatibility: {
-    minimumLegacySemanticImports: number;
-    maximumLegacySemanticImports: number;
   };
   runtimeSource: {
     maximumRuntimeTsLines: number;
@@ -293,17 +288,6 @@ for (const [probe, names] of Object.entries(requiredBoundaryAdapters)) {
   }
 }
 
-const compatibility = await compile(probes.core, {
-  fileName: "host-import-policy-compatibility.ts",
-  semanticProviders: "host-assisted",
-});
-const compatibilityDebt = compatibility.hostImportSummary?.byClassification["legacy-semantic"] ?? 0;
-if (!compatibility.success || compatibilityDebt === 0) {
-  throw new Error(
-    "compatibility control must compile and retain at least one legacy semantic import (non-vacuity control)",
-  );
-}
-
 // #6978 — per-family host-accelerator probes: a family's host imports appear
 // only when that accelerator is selected, classify as `host-accelerator`, and
 // never smuggle in legacy/unknown imports. Families whose host path is not
@@ -407,26 +391,10 @@ if (probeCount < baseline.nativeFirst.minimumProbes) {
 if (nativeImportTotal > baseline.nativeFirst.maximumImports) {
   budgetViolations.push(`native-first imports ${nativeImportTotal} > maximum ${baseline.nativeFirst.maximumImports}`);
 }
-if (nativeLegacySemanticTotal > baseline.nativeFirst.maximumLegacySemanticImports) {
-  budgetViolations.push(
-    `native-first legacy imports ${nativeLegacySemanticTotal} > maximum ${baseline.nativeFirst.maximumLegacySemanticImports}`,
-  );
-}
-if (nativeUnknownTotal > baseline.nativeFirst.maximumUnknownImports) {
-  budgetViolations.push(
-    `native-first unknown imports ${nativeUnknownTotal} > maximum ${baseline.nativeFirst.maximumUnknownImports}`,
-  );
-}
-if (compatibilityDebt < baseline.compatibility.minimumLegacySemanticImports) {
-  budgetViolations.push(
-    `compatibility legacy imports ${compatibilityDebt} < non-vacuity minimum ${baseline.compatibility.minimumLegacySemanticImports}`,
-  );
-}
-if (compatibilityDebt > baseline.compatibility.maximumLegacySemanticImports) {
-  budgetViolations.push(
-    `compatibility legacy imports ${compatibilityDebt} > maximum ${baseline.compatibility.maximumLegacySemanticImports}`,
-  );
-}
+// (#6979) Hard zero, not a baseline: no profile may publish implicit or
+// unclassified host semantics.
+if (nativeLegacySemanticTotal > 0) budgetViolations.push(`legacy-semantic imports ${nativeLegacySemanticTotal} > 0`);
+if (nativeUnknownTotal > 0) budgetViolations.push(`unknown imports ${nativeUnknownTotal} > 0`);
 for (const [metric, maximum] of [
   ["runtimeTsLines", baseline.runtimeSource.maximumRuntimeTsLines],
   ["resolveImportLines", baseline.runtimeSource.maximumResolveImportLines],
@@ -454,7 +422,6 @@ console.log(
       legacySemanticImports: nativeLegacySemanticTotal,
       unknownImports: nativeUnknownTotal,
     },
-    compatibilityLegacySemanticImports: compatibilityDebt,
     hostAcceleratorImports: acceleratorImports,
     migrationMetrics,
   }),

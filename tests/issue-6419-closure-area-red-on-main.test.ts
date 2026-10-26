@@ -43,7 +43,6 @@ import { buildImports } from "../src/runtime.js";
 async function runHost(source: string): Promise<unknown> {
   const result = await compile(source, {
     skipSemanticDiagnostics: true,
-    semanticProviders: "host-assisted",
   });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const imports = buildImports(result.imports, undefined, result.stringPool);
@@ -54,7 +53,7 @@ async function runHost(source: string): Promise<unknown> {
 }
 
 async function emitsConstructClosure(source: string): Promise<boolean> {
-  const result = await compile(source, { semanticProviders: "host-assisted" });
+  const result = await compile(source);
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   return (result.imports ?? []).some((i: { name?: string; intent?: { name?: string } }) => {
     return (i.name ?? i.intent?.name) === "__construct_closure";
@@ -148,23 +147,23 @@ describe("#6419 (3) a generator/async method value is not constructable", () => 
     ).toBe(false);
   });
 
-  it("DOES still route a plain function value through the construct bridge (control)", async () => {
+  it("does not reintroduce the retired host construct bridge for a plain function value", async () => {
     expect(
       await emitsConstructClosure(`
         function mk() { return function C(x: number) { (this as any).x = x; }; }
         const C = mk();
         export function test(): number { const i: any = new C(1); return i.x; }
       `),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("keeps a PLAIN method value on the bridge (control — deliberately unchanged)", async () => {
+  it("does not reintroduce the retired host construct bridge for a plain method value", async () => {
     expect(
       await emitsConstructClosure(`
         const pm: any = { m() {} }.m;
         export function test(): number { const x: any = new pm(); return 0; }
       `),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 

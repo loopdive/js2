@@ -112,7 +112,6 @@ import {
   emitSetArgc,
   functionExprBodyReferencesOwnName,
   tryEmitInlineDynamicCall,
-  usesNativeFunctionBindProvider,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
 import { compileInlineIifeArguments } from "./inline-iife-arguments.js"; // (#5207)
@@ -1958,7 +1957,6 @@ export function compileTailDispatch(
       // `Class_method` targets are handled by the two static arms above and
       // keep their bytes.
       if (
-        usesNativeFunctionBindProvider(ctx) &&
         ts.isPropertyAccessExpression(bindCall.expression) &&
         ts.isPropertyAccessExpression(bindCall.expression.expression)
       ) {

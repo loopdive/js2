@@ -146,10 +146,7 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
         params: [],
         results: f64Result,
         locals: [],
-        body:
-          ctx.standalone || ctx.targetProfile.semanticProviders === "native-first"
-            ? nativeStandaloneRandomBody(ctx)
-            : [f64c(0)],
+        body: nativeStandaloneRandomBody(ctx),
       });
     } else {
       // The IR doesn't include `i64.load`, so we read 8 bytes as TWO `i32.load`s
