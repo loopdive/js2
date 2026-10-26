@@ -73,3 +73,4 @@ and dereferenced as a concrete struct in the `typeof` / `!==` lowering.
   `__typeof_*` helpers.
 - Bytes: identical on 11 playground examples and 20 HOF-using equivalence
   programs × gc/standalone/wasi; only the repro program changes.
+- Test: `tests/equivalence/issue-7152-hof-narrowing-externref-vec.test.ts` (27 rows, gc native-first / standalone / wasi vs node).
