@@ -1,10 +1,11 @@
 ---
 id: 7150
 title: "Native-first: `#x in v` must throw TypeError when v is not an object"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
+completed: 2026-10-25
 priority: medium
 horizon: s
 feasibility: medium
@@ -14,7 +15,7 @@ area: codegen
 language_feature: builtins
 goal: correctness
 parent: 6979
-related: [6899, 2787, 6708]
+related: [6899, 2787, 6708, 7157, 7159]
 ---
 
 # #7150 — Native-first: `#x in v` must throw TypeError when v is not an object
@@ -47,3 +48,44 @@ native-first and standalone; the equivalence suite is byte-identical on every
 program that does not reach the changed path (state the byte delta for those
 that do, in the PR body); a test under `tests/issue-7150-*.test.ts` pins the
 case on standalone and gc.
+
+## Resolution (2026-10-25)
+
+probe/test reference: `tests/issue-7150-private-in-non-object-typeerror.test.ts`
+(corpus program + 16 operands + brand-before-throw, each on gc native-first and
+standalone, compared with V8; message text on host-assisted, gc native-first
+and standalone; 24 of the 39 cases fail on the merge-base).
+
+Cause confirmed: `compileInOperator`'s `#x in` arm (`src/codegen/binary-ops-in.ts`)
+asked the host `__extern_is_object` for step 1, gated on `!ctx.standalone &&
+!ctx.wasi`. gc native-first compiles with `ctx.standalone` set, so it shared
+standalone's gap: a failed brand test answered `false` for `null`, `undefined`
+and every primitive.
+
+Fix: on the no-host lanes, a failed brand test now checks Object-ness with the
+module's own `typeof` classifiers (`__typeof_object | __typeof_function`, minus
+wasm null and the Symbol carrier) and throws the host lane's TypeError text.
+The host-assisted arm is untouched (byte-identical). The IR has no private-`in`
+arm (`selectorDynamicLaneIn` declines a `PrivateIdentifier` key), so there is no
+twin to keep in step.
+
+`scripts/diff-test.ts` with the host-assisted pin removed: row
+`private-fields/05-brand-checks.js` `mismatch → match`; corpus 111 → 112
+matches, no other row changes.
+
+Left out on purpose:
+
+- `#x in C` (the class constructor itself) answers `true` on every lane,
+  host-assisted included (V8: `false`), also on the merge-base — the
+  constructor shares the instance struct, the same root as #7159.
+- Standalone `console.log(<boolean or number>)` prints an empty line whenever
+  the module holds an untyped function (`function f(x){return x===1}
+  console.log(f(1)); console.log(1)` → two empty lines), also on the
+  merge-base. Broader trigger than #7157 (JSON helpers); the test logs
+  `String(v)` on standalone.
+- The message text is the host lane's (`… private field in a non-object`), not
+  V8's (`… search for '#v' in null`); no lane formats the operand.
+- A statically object-typed TS receiver (`o: C | object`) still pays the guard
+  (+~26 KB on standalone when the module did not already link the `typeof` and
+  error helpers). Not a defect; a static-type skip would need an oracle query
+  that proves the receiver can never be a primitive.
