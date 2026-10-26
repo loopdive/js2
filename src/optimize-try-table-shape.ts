@@ -1,21 +1,26 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * (#7168) Re-shape optimizer-introduced `try_table`s whose block type V8 12.4
- * (Node 22, the `engines` floor) executes as `unreachable`.
+ * (Node 22, a supported engine) executes as `unreachable`.
  *
- * The engine bug (isolated in hand-built modules, see #4620/#5141): a
- * `try_table` whose block type is anything but a single-byte value type — a
- * prefixed ref type `(ref $T)` / `(ref null $T)` / `(ref extern)` / `(ref any)`,
- * or a type-index block type (multi-value) — traps `RuntimeError: unreachable`
- * on ENTRY, with nothing thrown. `i32` / `externref` / `anyref` / empty block
- * types run fine. Codegen already avoids emitting the shape (it uses empty
- * try_tables and parks values in locals), but Binaryen re-creates it:
- * `remove-unused-brs` turns a `throw $tag X` that is caught by an enclosing
- * `try_table (catch $tag $b)` in the same function into `br $b X`, and when the
- * try_table is the last child of `$b` a later `remove-unused-brs` round drops
- * that branch so `X` falls through — refinalize then types the try_table with
- * X's refined type, e.g. `try_table (result (ref extern))`. Every native-first
- * `try { throw new Error(..) } catch {}` hit it after `-O3`.
+ * The engine bug is V8 12.4's alone (Node 22 — `engines` is `node >=20`,
+ * and Node 20 has no try_table). Node 23.11 / 24 / 25 run the same bytes
+ * correctly. V8 12.4 mis-decodes a `try_table` block type written with the
+ * ref prefix (`0x63` / `0x64`): `(ref $T)`, `(ref null $T)`, `(ref extern)`,
+ * `(ref any)`. Such a try_table traps `RuntimeError: unreachable` on entry
+ * with nothing thrown, and some type indices make the module fail to compile
+ * instead ("block type index N is not a signature definition"). Empty, `i32`,
+ * `externref` / `anyref` and multi-value (type-index) block types run fine.
+ * Binaryen prints multi-value ones as `(type $N) (result ...)`, and the parser
+ * below leaves those alone on purpose.
+ *
+ * Codegen avoids the shape (empty try_tables, values parked in locals; #4620,
+ * #5141), but Binaryen re-creates it: `remove-unused-brs` turns a `throw $tag
+ * X` caught by an enclosing `try_table (catch $tag $b)` in the same function
+ * into `br $b X`. When the try_table is the last child of `$b`, a later round
+ * drops that branch so `X` falls through, and refinalize types the try_table
+ * with X's refined type, e.g. `try_table (result (ref extern))`. Every
+ * native-first `try { throw new Error(..) } catch {}` hits it after `-O3`.
  *
  * The rewrite operates on Binaryen's printed text (names, not depths, so no
  * branch retargeting is needed):
@@ -30,6 +35,20 @@
  * inner block (same value, same continuation); catch labels resolve outside
  * the try_table exactly as before. Semantics are identical.
  */
+
+/**
+ * Byte pre-scan: true when `binary` holds a `try_table` opcode (`0x1f`)
+ * followed by a ref-prefixed block type (`0x63` / `0x64`). Every unsafe
+ * try_table produces this pair. Other bytes can produce it by accident, and a
+ * false positive only costs one extra print.
+ */
+export function mayContainUnsafeTryTable(binary: Uint8Array): boolean {
+  for (let i = binary.indexOf(0x1f); i >= 0 && i + 1 < binary.length; i = binary.indexOf(0x1f, i + 1)) {
+    const next = binary[i + 1];
+    if (next === 0x63 || next === 0x64) return true;
+  }
+  return false;
+}
 
 /** Single-byte block types V8 12.4 executes correctly. */
 const SAFE_RESULT =

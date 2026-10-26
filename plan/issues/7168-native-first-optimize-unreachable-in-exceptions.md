@@ -1,6 +1,6 @@
 ---
 id: 7168
-title: "Native-first exception code traps `unreachable` after wasm-opt: Binaryen types a try_table `(result (ref extern))`, which V8 12.4 mis-executes"
+title: "Optimized exception code traps `unreachable` on Node 22: Binaryen types a try_table `(result (ref extern))`, which V8 12.4 mis-executes"
 status: done
 sprint: current
 created: 2026-10-26
@@ -17,24 +17,28 @@ parent: 6979
 related: [6899, 2787]
 ---
 
-# #7168 — Native-first exception code traps `unreachable` after wasm-opt
+# #7168 — Optimized exception code traps `unreachable` on Node 22 (V8 12.4)
 
 ## Problem
 
-Found while unblocking PR #6899 (its `Differential test` optimize gate,
-`scripts/diff-test-optimize-gate.ts`). On the default native-first gc profile
-the corpus programs `control/07-try-catch`, `builtins/10-error-classes` and
-`builtins/09-async-await` trap `RuntimeError: unreachable` inside
-`__module_init` when compiled with `optimize: true` (wasm-opt `-O3`), and run
-correctly without it. Reproduces on `origin/main` on Node 22 — `--target
-standalone` and `--target wasi` too. Main's diff harness pinned
-`semanticProviders: "host-assisted"`, so CI never saw it.
+On Node 22 (V8 12.4), native-first `try { throw new Error(..) } catch {}`
+traps `RuntimeError: unreachable` inside `__module_init` after `optimize: true`
+(wasm-opt `-O3`). It happens in every lane: gc native-first, `--target
+standalone` and `--target wasi`. Without `-O3` the same programs run correctly.
+Node 22 is a supported engine (`package.json` `engines`: `node >=20`; Node 20
+has no `try_table` at all), so optimized output must run there.
 
-Smallest reproducer (traps only optimized, every lane):
+Affected corpus programs: `control/07-try-catch`, `builtins/10-error-classes`,
+`builtins/09-async-await`. Smallest reproducer:
 
 ```js
 try { throw new Error("boom"); } catch (e) { console.log("caught"); }
 ```
+
+Found while looking at PR #6899's diff-test with the host-assisted pin
+removed. CI does not see it: CI runs Node 24/25, where these bytes run
+correctly, and the optimize gate passes there on base. This does not unblock
+#6899; its CI failure is the delta gate.
 
 ## Root cause
 
@@ -50,62 +54,104 @@ Two pieces combine:
    (`--dce --remove-unused-brs` alone reproduces it); the throw only becomes
    local after inlining (`__new_Error` returns `(ref extern)`), which is why
    `inlining-optimizing` is the first pass of `-O3` that shows it.
-2. **V8 12.4 (Node 22, the `engines` floor)** executes a `try_table` whose
-   block type is not a single-byte value type — `(ref $T)`, `(ref null $T)`,
-   `(ref extern)`, `(ref any)`, or a type-index (multi-value) block type — as
-   `unreachable` on entry. `i32`, `externref`, `anyref` and empty block types
-   run fine. Confirmed with hand-built modules, no compiler involved. Codegen
-   already avoids the shape (#4620 `named-this-call.ts`, #5141
+2. **V8 12.4 mis-decodes a `try_table` block type written with the ref prefix**
+   (`0x63`/`0x64`). Codegen already avoids the shape
+   ([#4620](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4620-sloppy-this-boxing-arguments-object)
+   `named-this-call.ts`,
+   [#5141](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5141-es2015-standalone-generators-wave1)
    `generators-native.ts`: empty try_tables, values parked in locals), but
    wasm-opt re-creates it.
 
-So the compiler emits correct, engine-safe Wasm, and wasm-opt turns it into
-valid Wasm that Node 22 mis-executes. Not checked on Node 24/25 here: this
-container cannot run downloaded Node binaries.
+Hand-built modules, one `try_table` each (from the PR #6929 review):
+
+| block type | Node 20.20 (V8 11.3) | Node 22.22 (V8 12.4) | Node 23.11 (V8 12.9) | Node 24.22 (V8 13.6) | Node 25.9 (V8 14.1) |
+| --- | --- | --- | --- | --- | --- |
+| empty, `i32`, `externref`, `anyref` | CompileError (no try_table) | ok | ok | ok | ok |
+| `(ref extern)`, `(ref any)` | CompileError | **unreachable** | ok | ok | ok |
+| `(ref $S)`, `(ref null $S)` | CompileError | **unreachable**, or CompileError "block type index N is not a signature definition" | ok | ok | ok |
+| multi-value `(i32 i64)`, `(i32 (ref $S))` | CompileError | ok | ok | ok | ok |
+
+The bug is V8 12.4's alone. Multi-value block types are safe.
 
 ## Fix
 
-`src/optimize-try-table-shape.ts` + `src/optimize.ts`: after a successful
-wasm-opt run, rewrite each unsafe result-typed try_table in Binaryen's printed
-text (names, not depths, so no branch retargeting):
+`src/optimize.ts` + `src/optimize-try-table-shape.ts`, CLI path only:
 
-```
-(try_table $l? (result R) CATCHES BODY...)
-→ (block $__js2_ttN (result R)
-    (try_table CATCHES (br $__js2_ttN (block $l? (result R) BODY...)))
-    (unreachable))
-```
+1. After `wasm-opt -O<level>`, scan the optimized binary for the try_table
+   opcode `0x1f` followed by a ref block-type prefix `0x63`/`0x64`. On a
+   miss (most modules) nothing else runs and the bytes are unchanged.
+2. On a hit, print the module (`wasm-opt out.wasm --print`) and rewrite each
+   try_table whose single result is a ref type in the text. Labels are
+   names, so no branch needs retargeting:
 
-The CLI run appends `--print` as its last pass (one process; the text is the
-final module). Only when the text has an unsafe try_table is it re-assembled
-with no passes, and any custom sections the text dropped are re-appended. A
-module without one keeps its optimized bytes exactly. If re-assembly fails, the
-unoptimized binary is shipped with a warning. The in-process binaryen-module
-fallback applies the same rewrite through `emitText`/`parseText`.
+   ```
+   (try_table $l? (result R) CATCHES BODY...)
+   → (block $__js2_ttN (result R)
+       (try_table CATCHES (br $__js2_ttN (block $l? (result R) BODY...)))
+       (unreachable))
+   ```
+
+   Multi-value try_tables (printed `(type $N) (result ...)`) are left alone.
+   A byte false positive with nothing to rewrite keeps the original bytes.
+3. Re-assemble with no passes, but with the final StackIR stage `-O<level>`
+   ends with (`--optimize-level=<level> --generate-stack-ir
+   --optimize-stack-ir`). Add back custom sections the text dropped.
+4. The print and re-assembly runs share the caller's remaining time budget
+   when `timeoutMs` covers the whole call (as in the #6742 retry). If either
+   fails, ship the unoptimized input with a loud stderr line and a warning
+   that names the cause.
+
+The in-process binaryen.js fallback is unchanged. binaryen.js 132 cannot read
+js2wasm GC modules (`readBinary` throws), so a hook there could not be tested.
 
 No codegen change, so unoptimized output is byte-identical in every lane.
-Optimized output changes only for modules that contained the unsafe shape.
 
-Measured 2026-10-26 (Node 22.22.0, Binaryen 132), `-O3`, on 20 corpus
-programs (17 evenly spaced plus the three above) × 4 lanes, base vs. fix:
+Measured 2026-10-26 (Node 22.22.0, Binaryen 132). Sample: 17 corpus programs
+(evenly spaced, including the three above) × 4 lanes, base vs. fix:
 
-| lane | identical | changed |
+| lane | unoptimized identical | `-O3` identical | `-O3` changed |
+| --- | --- | --- | --- |
+| gc host-assisted | 17/17 | 17/17 | — |
+| gc native-first | 17/17 | 14/17 | 07-try-catch +11 B, 10-error-classes +17 B, 09-async-await +87 B |
+| standalone | 17/17 | 14/17 | +6 / +12 / +82 B |
+| wasi | 17/17 | 14/17 | +6 / +12 / +74 B |
+
+- All 9 changed binaries trapped (or failed to compile) on Node 22 before the fix.
+- Without the StackIR flags on re-assembly the deltas were +28…+166 B.
+  Those flags restore the StackIR stage only, not the rest of `-O3`'s
+  final-stage passes.
+
+Compile time, `website/playground/examples/dom/calendar.ts` with `optimize:
+true` (no unsafe try_table, so only the byte scan runs), base and fix
+interleaved 3×, median of 3 compiles each:
+
+| lane | base | fix |
 | --- | --- | --- |
-| gc host-assisted | 20/20 | — |
-| gc native-first | 17/20 | the 3 exception programs, +40 / +42 / +166 B |
-| standalone | 17/20 | same 3, +32 / +34 / +154 B |
-| wasi | 17/20 | same 3, +28 / +30 / +166 B |
+| gc | 6304 / 5892 / 5213 ms | 6282 / 5962 / 5157 ms |
+| standalone | 2871 / 2854 / 2755 ms | 2619 / 2616 / 2298 ms |
 
-Before the fix all 9 changed binaries trapped. Wall time for the 80
-optimized compiles went from 146 s to 168 s: `--print` costs about 5 % per
-run, and the 9 re-assemblies account for the rest.
+No measurable cost (shared box, load ≈ 6). Only modules that hit the
+pre-scan pay for one print and one re-assembly.
 
-Optimize gate (`scripts/diff-test-optimize-gate.ts`, run with the
-host-assisted pin removed locally as PR #6899 does): 0 regressions, 114/120
-match in both lanes. The six non-matching programs fail the same way
-unoptimized and are out of scope here: `builtins/07-promise-basic`,
-`08-promise-chain`, `09-async-await` and `object/06-delete` mismatch,
-`builtins/14-spread-args` has a runtime error, and
-`generators/04-sent-values` fails to compile.
+Optimize gate (`scripts/diff-test-optimize-gate.ts`, host-assisted pin removed
+locally): on Node 22 base has 3 regressions (`unreachable`) and the fix has 0
+(114/120 match in both lanes). On Node 24 base already has 0. The six
+non-matching programs fail the same way unoptimized:
 
-probe/test reference: `tests/issue-7168-optimize-exceptions.test.ts` (the rewriter, then the two minimised programs and the three corpus programs with `-O3`, on gc native-first, standalone and wasi; each must match its unoptimized run).
+- mismatch: `builtins/07-promise-basic`, `08-promise-chain`,
+  `09-async-await`, `object/06-delete`
+- runtime error: `builtins/14-spread-args`
+- compile error: `generators/04-sent-values`
+
+probe/test reference: `tests/issue-7168-optimize-exceptions.test.ts`. It covers:
+
+- the rewriter on the review's shapes module: nested try_tables, `br`/`br_if`
+  to the try_table's own label, `catch_ref`/`catch_all_ref`, multi-value
+  left alone, quoted names, and a data segment containing try_table text
+- the byte pre-scan
+- a shape assertion that works on any Node: no `try_table … (result (ref …`
+  left in the `-O3` output of the 2 minimised and 3 corpus programs on gc
+  native-first, standalone and wasi. Against the old `optimize.ts` it fails
+  5/5.
+- execution parity (`-O3` equals unoptimized), which only catches a
+  regression on Node 22
