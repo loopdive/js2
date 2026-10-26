@@ -10,9 +10,11 @@
 //
 // (#7113 review) The refusal rows pin the selector's side of the contract:
 // the shapes the producer cannot lower are refused at select, with no
-// post-claim withdrawal, on standalone and on gc native-first alike. A closure
-// that mints a dynamic-shaped local is admitted only when every value it
-// represents is in the lowerable family set (round 10).
+// post-claim withdrawal, on standalone and on gc native-first alike. Since
+// round 11 the operator, write, `??`, `null` / `void`, `throw`, store and
+// `switch` refusals come from the #7144 closure walk over the shared
+// predicates (`operand-coercion-unsupported`); the representation rules that
+// carry no operand family stay shape refusals (`body-shape-rejected`).
 
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
@@ -251,14 +253,14 @@ export function run() {
       "throw of a numeric literal in a throw-only body (void plan)",
       `function (message) { throw 42; }`,
       `try { subject.f(0); } catch (e) { if (e === 42) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "throw of a numeric literal after a conditional throw",
       `function (message) { if (message) { throw message; } throw 1; }`,
       `try { subject.f(0); } catch (e) { if (e === 1) n += 1; } try { subject.f("y"); } catch (e) { if (e === "y") n += 2; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       3,
     ],
     [
@@ -272,98 +274,98 @@ export function run() {
       "dynamic-arm conditional laundered through an untyped local into a typed slot",
       `function (m) { var r = m ? m : 1; var s = "a"; s = r; throw s; }`,
       `try { subject.f(0); } catch (e) { if (e === 1) n += 1; } try { subject.f("x"); } catch (e) { if (e === "x") n += 2; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       3,
     ],
     [
       "dynamic-arm conditional laundered through an untyped local into a string `+=` slot",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; s += r; throw s; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === "a1") n += 1; } try { subject.f("x", 0); } catch (e) { if (e === "ax") n += 2; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       3,
     ],
     [
       "dynamic-arm conditional laundered into a string `+=` slot in a throw-only body",
       `function (m) { var r = m ? m : 1; var s = "a"; s += r; throw s; }`,
       `try { subject.f(0); } catch (e) { if (e === "a1") n += 1; } try { subject.f("x"); } catch (e) { if (e === "ax") n += 2; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       3,
     ],
     [
       "numeric compound `-=` of a dynamic-shaped local into the dynamic parameter",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; m -= r; throw m; }`,
       `try { subject.f(5, 0); } catch (e) { if (e === 0) n += 1; } try { subject.f(0, 0); } catch (e) { if (e === -1) n += 2; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       3,
     ],
     [
       "numeric compound `-=` of a dynamic-shaped local into an uninitialized local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s; s -= r; throw s; }`,
       `try { subject.f(5, 0); } catch (e) { if (e !== e) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "numeric compound `-=` of a literal into the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; r -= 1; throw r; }`,
       `try { subject.f(5, 0); } catch (e) { if (e === 4) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "numeric compound `-=` of a literal into the dynamic parameter beside the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; m -= 1; throw r; }`,
       `try { subject.f(5, 0); } catch (e) { if (e === 5) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "`+=` of a bare null into the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; r += null; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "`=` of a bare null into the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; r = null; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === null) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "`+=` of a null behind `??` into the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; r += null ?? 1; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 2) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "loose `==` of the minted dynamic local against null",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; if (r == null) throw "n"; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "strict equality of a string local against null beside the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; if (s === null) throw "n"; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "`null === undefined` beside the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; if (null === undefined) throw "n"; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "a null-initialized local beside the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var nul = null; r += nul; throw r; }`,
       `try { subject.f(0, 0); } catch (e) { if (e === 1) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
@@ -377,14 +379,14 @@ export function run() {
       "loose `==` of a dynamic member read against null beside the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; if (m.x == null) throw "n"; throw r; }`,
       `try { subject.f({ x: 1 }, 0); } catch (e) { if (e !== "n") n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "`??` with the minted dynamic local on the left",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var t = r ?? 1; throw t; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
@@ -426,21 +428,21 @@ export function run() {
       "`??` on a member read of the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var t = r.x ?? 1; throw t; }`,
       `try { subject.f({ x: 2 }, 0); } catch (e) { if (e === 2) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "`??` on a string local beside the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; var t = s ?? "b"; throw r; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "a dynamic sum written into a string slot beside the minted local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var s = "a"; s = r + 1; throw s; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === 3) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
@@ -454,35 +456,35 @@ export function run() {
       "`+=` of a numeric array into the minted dynamic local",
       `function (m, k) { if (k === 9) return; var r = m ? m : 1; var a = [4]; r += a; throw r; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === "24") n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "throw of `void 0`",
       `function (m, k) { if (k === 9) return; throw void 0; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === undefined) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "throw of `void null`",
       `function (m, k) { if (k === 9) return; throw void null; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === undefined) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "a value `void` as a declaration initializer",
       `function (m, k) { if (k === 9) return; var t = void null; throw m; }`,
       `try { subject.f(2, 0); } catch (e) { if (e === 2) n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
       "a chained write of the dynamic parameter into a string slot",
       `function (m) { var s = "a"; var r; s = r = m; throw s; }`,
       `try { subject.f("x"); } catch (e) { if (e === "x") n += 1; }`,
-      "body-shape-rejected",
+      "operand-coercion-unsupported",
       1,
     ],
     [
@@ -522,28 +524,124 @@ export function run() { var n = 0; ${calls} return n; }`;
     60_000,
   );
 
-  // The planner mints no member-closure plan on host-assisted gc, so the
-  // conditional program is refused at select there and its bytes are the
-  // legacy bytes — measured identical to the base of this change
-  // (sha256[0:12] 9a516be80340 on both trees, 2026-10-25).
-  it("leaves the host-assisted gc lane untouched (no plan, no claim)", async () => {
+  // (#7113 round 11) The rules below are the shared predicates of
+  // `src/ir/analysis/operand-admissibility.ts`, read by the selector's closure
+  // walk and by from-ast alike.
+  it("joins a dynamic parameter and a value `void` on the carrier's real undefined", async () => {
     const source = `/** @returns {number} */ function subject() { return 0; }
-subject.cmp = function (actual, expected, message) {
-  message = message === undefined ? '' : message;
-  if (actual === expected) return;
-  throw message;
-};
-export function run() { var n = 0; try { subject.cmp(1, 2); } catch (e) { if (e === "") n += 10; } return n; }`;
-    const result = await compile(source, { ...OPTIONS, target: "gc", semanticProviders: "host-assisted" });
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    const rows = (result.irOutcomes ?? []).filter((entry) => entry.displayName === "<module-init>");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      irBodyEmitted: false,
-      legacyBodyEmitted: true,
-      stage: "select",
-      code: "body-shape-rejected",
-    });
-    expect(result.irPostClaimErrors ?? []).toEqual([]);
+subject.a = function (m, k) { var r = k ? m : void 0; if (typeof r === "undefined") throw "u"; throw r; };
+subject.b = function (m) { var r = m ? void 0 : m; if (r === undefined) throw "v"; throw r; };
+subject.c = function (m, k) { throw k ? m : void 0; };
+export function run() {
+  var n = 0;
+  try { subject.a(2, 0); } catch (e) { if (e === "u") n += 1; }
+  try { subject.a(2, 1); } catch (e) { if (e === 2) n += 10; }
+  try { subject.b(3); } catch (e) { if (e === "v") n += 100; }
+  try { subject.b(0); } catch (e) { if (e === 0) n += 1000; }
+  try { subject.c(4, 0); } catch (e) { if (e === undefined) n += 10000; }
+  return n;
+}`;
+    expect(node(source)).toBe(11111);
+    for (const lane of [{ target: "standalone" }, { target: "gc" }] as const) {
+      const result = await compile(source, { ...OPTIONS, ...lane });
+      requirePreparedInit(result);
+      expect((result.irPostClaimErrors ?? []).filter((error) => error.func !== "run")).toEqual([]);
+      if (lane.target === "standalone") expect(await initializeAndRun(result)).toBe(11111);
+    }
   }, 35_000);
+
+  it("admits a dynamic or string throw operand in a member closure", async () => {
+    const source = `/** @returns {number} */ function subject() { return 0; }
+subject.a = function (m) { throw m; };
+subject.b = function (m, k) { throw "s" + k; };
+subject.c = function (m) { var r = m ? m : "z"; throw r; };
+export function run() {
+  var n = 0;
+  try { subject.a("x"); } catch (e) { if (e === "x") n += 1; }
+  try { subject.b(0, 7); } catch (e) { if (e === "s7") n += 10; }
+  try { subject.c(0); } catch (e) { if (e === "z") n += 100; }
+  return n;
+}`;
+    expect(node(source)).toBe(111);
+    for (const lane of [{ target: "standalone" }, { target: "gc" }] as const) {
+      const result = await compile(source, { ...OPTIONS, ...lane });
+      requirePreparedInit(result);
+      expect((result.irPostClaimErrors ?? []).filter((error) => error.func !== "run")).toEqual([]);
+      if (lane.target === "standalone") expect(await initializeAndRun(result)).toBe(111);
+    }
+  }, 35_000);
+
+  const CARRIER_REFUSED: readonly [name: string, body: string, calls: string, expected: number][] = [
+    [
+      "a loose `==` on the minted carrier local",
+      `function (m) { var r = m ? m : 1; if (r == 2) throw "e"; throw r; }`,
+      `try { subject.f(2); } catch (e) { if (e === "e") n += 1; }`,
+      1,
+    ],
+    [
+      "a loose `!=` on the dynamic parameter",
+      `function (m) { if (m != "2") throw "e"; throw m; }`,
+      `try { subject.f(2); } catch (e) { if (e === 2) n += 1; }`,
+      1,
+    ],
+    [
+      "`in` on the dynamic parameter",
+      `function (m) { if ("a" in m) throw "i"; throw m; }`,
+      `try { subject.f({ a: 1 }); } catch (e) { if (e === "i") n += 1; }`,
+      1,
+    ],
+    [
+      "a regex literal",
+      `function (m) { var re = /a/; throw m; }`,
+      `try { subject.f(2); } catch (e) { if (e === 2) n += 1; }`,
+      1,
+    ],
+    [
+      "a property store on the minted carrier local",
+      `function (m) { var r = m ? m : 1; r.x = 1; throw r; }`,
+      `try { subject.f({}); } catch (e) { if (e.x === 1) n += 1; }`,
+      1,
+    ],
+    [
+      "an element store on the dynamic parameter",
+      `function (m, k) { k[0] = m; throw m; }`,
+      `try { subject.f(2, []); } catch (e) { if (e === 2) n += 1; }`,
+      1,
+    ],
+    [
+      "a switch on the minted carrier local",
+      `function (m) { var r = m ? m : 1; switch (r) { case 2: throw "two"; } throw r; }`,
+      `try { subject.f(2); } catch (e) { if (e === "two") n += 1; }`,
+      1,
+    ],
+  ];
+
+  it.each(CARRIER_REFUSED)(
+    "refuses on the carrier at select, without a post-claim withdrawal: %s",
+    async (_name, body, calls, expected) => {
+      const source = `/** @returns {number} */ function subject() { return 0; }
+subject.f = ${body};
+export function run() { var n = 0; ${calls} return n; }`;
+      expect(node(source)).toBe(expected);
+      for (const lane of [{ target: "standalone" }, { target: "gc" }] as const) {
+        const result = await compile(source, { ...OPTIONS, ...lane });
+        expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+        const rows = (result.irOutcomes ?? []).filter((entry) => entry.displayName === "<module-init>");
+        expect(rows, JSON.stringify(lane)).toHaveLength(1);
+        expect(rows[0], JSON.stringify(lane)).toMatchObject({
+          irBodyEmitted: false,
+          legacyBodyEmitted: true,
+          stage: "select",
+        });
+        // The walk's refusal, or an earlier shape refusal on a lane that has one.
+        expect(["operand-coercion-unsupported", "body-shape-rejected"]).toContain(rows[0]?.code);
+        expect(
+          (result.irPostClaimErrors ?? []).filter((error) => error.func !== "run"),
+          JSON.stringify(lane),
+        ).toEqual([]);
+        if (lane.target === "standalone") expect(await initializeAndRun(result)).toBe(expected);
+      }
+    },
+    60_000,
+  );
 });

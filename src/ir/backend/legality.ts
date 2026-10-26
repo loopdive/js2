@@ -33,7 +33,8 @@ export type IrBackendTargetCapability =
   | "native-own-property-test"
   | "host-dynamic-method-call"
   | "native-own-property-descriptor"
-  | "native-number-conversion";
+  | "native-number-conversion"
+  | "prepared-dynamic-helper-abi";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -140,6 +141,13 @@ export function supportsIrBackendTargetCapability(
       // methods only and answers `undefined` for primitive / vec / Map / …
       // receivers, where legacy dispatches by brand.
       return profile.backend === "wasmgc" && profile.allowHostImports;
+    case "prepared-dynamic-helper-abi":
+      // (#7113) A planned member closure inside a prepared `<module-init>`
+      // component binds the carrier's loose-equality / `in` helpers by
+      // Program ABI identity on WASI. Standalone and the native-first gc lane
+      // (projected as standalone) have no symbolic ref for them yet and
+      // withdraw at preparation (`implicit-support-reference-unavailable`).
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
     case "native-number-conversion":
       // (#7106 module-init lever B) `Number(v)` through the host-free
       // `js.number.from-value` provider (legacy's emitter over a template).

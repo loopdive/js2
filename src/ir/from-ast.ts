@@ -56,6 +56,9 @@ import {
   nullishLeftAdmissible,
   nullValueAdmissible,
   slotWriteVerdict,
+  conditionalJoinArmFamily,
+  conditionalJoinFamily,
+  throwOperandAdmissible,
   type AdditiveProof,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js"; // (#7144)
@@ -14216,10 +14219,13 @@ function ambientTypeofIdentifierTagFromAst(id: ts.Identifier, cx: LowerCtx): "ob
 
 /**
  * (#7106 Stage 4, #7113) The selector's `dynamicConditionalValueArms` shape:
- * exactly one arm is a primitive literal, the other is bound to the dynamic
- * carrier (or is a nested conditional of this shape). The literal arm is boxed
- * into the carrier inside its own branch and the join is bare dynamic. `null`
- * = not this shape (the generic tail below joins two same-typed arms).
+ * one arm is bound to the dynamic carrier (or is a nested conditional of this
+ * shape), the other is a literal or value-`void` arm
+ * (`conditionalJoinArmFamily`) that `conditionalJoinFamily` — the rule the
+ * selector reads — joins onto the carrier. The concrete arm is boxed into the
+ * carrier inside its own branch; a `void x` arm discards `x` and yields the
+ * carrier's real `undefined`, never its f64 NaN sentinel. `null` = not this
+ * shape (the generic tail below joins two same-typed arms).
  */
 function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: LowerCtx): IrValueId | null {
   const dynamicArm = (arm: ts.Expression): boolean => {
@@ -14235,26 +14241,23 @@ function tryLowerDynamicConditionalValue(expr: ts.ConditionalExpression, cx: Low
           : undefined;
     return logical?.kind === "dynamic";
   };
-  const isLiteral = (arm: ts.Expression): boolean => {
-    const e = peelParensExpr(arm);
-    return (
-      ts.isStringLiteral(e) ||
-      ts.isNoSubstitutionTemplateLiteral(e) ||
-      ts.isNumericLiteral(e) ||
-      e.kind === ts.SyntaxKind.TrueKeyword ||
-      e.kind === ts.SyntaxKind.FalseKeyword
-    );
-  };
   const isDynamicConditionalValueShape = (e: ts.ConditionalExpression): boolean => {
     const trueDynamic = dynamicArm(e.whenTrue);
     const falseDynamic = dynamicArm(e.whenFalse);
-    return trueDynamic !== falseDynamic && isLiteral(trueDynamic ? e.whenFalse : e.whenTrue);
+    if (trueDynamic === falseDynamic) return false;
+    const other = conditionalJoinArmFamily(trueDynamic ? e.whenFalse : e.whenTrue);
+    return other !== null && conditionalJoinFamily("dynamic", other) === "dynamic";
   };
   if (!isDynamicConditionalValueShape(expr)) return null;
   return lowerConditionalBranches(
     expr,
     cx,
     (arm, armCx) => {
+      const peeled = peelParensExpr(arm);
+      if (ts.isVoidExpression(peeled)) {
+        lowerDiscardedExpression(peeled.expression, armCx);
+        return armCx.builder.emitDynUndefined(JS_TAG_IDS.Undefined);
+      }
       const value = lowerExpr(arm, armCx, irDynamic());
       const type = cx.builder.typeOf(value);
       if (type.kind === "dynamic") return value;
@@ -17569,10 +17572,11 @@ function lowerThrowStatement(stmt: ts.ThrowStatement, cx: LowerCtx): void {
     cx.builder.emitThrow(boxed);
     return;
   }
-  if (valTy?.kind === "f64" || valTy?.kind === "i32") {
+  if (!throwOperandAdmissible(irOperandFamily(valueType, stmt.expression))) {
     // Slice 9 still defers numerics (they need a box helper). Class instances
     // are lowered again (#4097): #4035 declined them for a render gap that the
-    // `__exn_render_prepare` user-class arm now closes on BOTH paths.
+    // `__exn_render_prepare` user-class arm now closes on BOTH paths. (#7113)
+    // `throwOperandAdmissible` is the rule the selector's closure walk reads.
     demoteToLegacy("throw-value-unsupported", `ir/from-ast: throw ${valueType.kind} not in slice 9 (${cx.funcName})`);
   }
   // Reference-shaped — coerce to externref. The helper is a no-op

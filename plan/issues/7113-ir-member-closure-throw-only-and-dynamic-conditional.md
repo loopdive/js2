@@ -4,7 +4,7 @@ title: "IR: throw-only member closures (void plan) and dynamic-arm conditional v
 status: in-review
 sprint: current
 created: 2026-10-21
-updated: 2026-10-25
+updated: 2026-10-26
 priority: high
 horizon: s
 feasibility: hard
@@ -20,6 +20,11 @@ assignee: "ttraenkler/session-d"
 # 2026-10-25 (#7113 round 10): select.ts grows by the positive value-family
 # admission for closures that mint a dynamic-shaped local
 # (`plannedClosureValueFamilyAdmissible` and its write / family helpers).
+# 2026-10-26 (#7113 round 11, rebuilt on #7144): the hand-written refusal
+# helpers are deleted in favour of the shared walk; select.ts keeps +302
+# against main (the dynamic-join shape and position gate, the
+# representation walk for minting closures); from-ast +72 (the dynamic-join
+# lowering with the real-undefined `void` arm, `lowerConditionalBranches`).
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
@@ -434,3 +439,70 @@ This covers round-10 findings AI, AJ and AF, which are operator, write, incremen
 - **Bytes:** unoptimized output is byte-identical to base on a sample of playground and equivalence programs. Report native gc, standalone, wasi and fast separately. Note that the host-assisted lane was removed by #6979.
 - **Gates:** every gate run bare (loc, func with both bases, coercion-sites, oracle-ratchet, dead-exports, import-cycles, ir-layering, `check:ir-fallbacks`), and the equivalence gate with no new failures.
 - **Review:** keep `hold` until C's fresh-context review records a verdict.
+
+## Round 11 — result (Opus, 2026-10-26)
+
+Rebuilt on origin/main `00adb35c26` (contains #7144). The merge had no
+textual conflicts; it left two compile errors (`isEqualityOperator` declared
+twice, `isPhase1CompoundAssignOperator` renamed by #7144), both resolved by
+taking #7144's spelling.
+
+**Deleted from `select.ts`** (the shared walk now owns them):
+`plannedClosureWriteProved`, `plannedClosureConcreteFamily`,
+`closureWriteUnlowerable`, `writtenValue`, `plannedClosureChainTargetsShareSlot`,
+`closureNullValuePosition`, `nullCompareFoldFails`, `nullCompareOperandSources`,
+`plannedClosureVoidValueUnlowerable`, `isPlannedClosureArithmeticOperator`,
+`isAssignmentOperatorKind`, `isPrimitiveLiteralArm`, the local
+`isEqualityOperator`, the `throw-closure-concrete-scalar` block, the `??` arm
+(`expr-closure-nullish-coalesce`), the `null` / `void` value arms and the chain
+check. `plannedClosureValueFamilyAdmissible` keeps only what no operand family
+carries: reference literals, array element evidence, declaration initializers,
+unary operands and `const` writes. `isForIncrementorClause` moved into the walk.
+
+**Added to `analysis/operand-admissibility.ts`:**
+
+| Predicate | Read by |
+| --- | --- |
+| `conditionalJoinArmFamily`, `conditionalJoinFamily` | selector shape, the walk's `operandProof`, from-ast `tryLowerDynamicConditionalValue` |
+| `throwOperandAdmissible` | the walk, from-ast `lowerThrowStatement` |
+| `carrierHelperOperator` (+ capability `prepared-dynamic-helper-abi`, true on WASI only) | the walk |
+| `storeAdmissible`, `switchDiscriminantAdmissible`, `dynamicCallArgumentAdmissible` | the walk |
+
+The last four have no single from-ast site to share. They name from-ast
+withdrawals that the selector reaches only on a dynamic carrier:
+- "property assignment on dynamic";
+- `element-store-unsupported`;
+- "switch disc must lower to i32/f64";
+- "array literal flows into a widening sink".
+
+The preparation gap is a lane fact, not a from-ast rule. A value `void` arm of
+the join now yields `dyn.undefined` (asserted by a test: `typeof r ===
+"undefined"`, `r === undefined`). It never yields the NaN. The walk also types
+the unshadowed `undefined` identifier as the carrier, as from-ast lowers it.
+
+**Probes** (p7, p9–p24, `6927-adv1`, `6927-adv2`, `r2-probe`, round-11 rows):
+1,430 rows × standalone / wasi / gc. Compared with origin/main (base) and
+with `f1bf7dae9d` (round 10, old):
+
+- **New post-claim errors vs base:** 7, all on wasi and all class P (a direct
+  call to `subject()` in a minting closure). The old head had the same 7. This
+  is still left out.
+- **IR-claimed results ≠ node:** 17. All 17 are pre-existing and
+  byte-identical on base:
+  - 11 are p7 gc rows where the probe harness's throwing import stub fires
+    (`stub:env.__boundary_object_set`; legacy on base hits it too);
+  - 6 are the top-level `F_asV` (`(void 0 as any) == null`, #7144 N2) and
+    `F_assignVnum`.
+- **Lost claims:** 0 vs base. 90 row-lanes vs old, and on every one of them
+  the head matches base. They are #7144's `void` / write rules (finding A)
+  applied to closures the old head claimed.
+- **Changes vs base:** 966 newly claimed row-lanes, and 567 row-lanes whose post-claim error is gone (now refused at select or lowered).
+
+**Bytes** (unoptimized, 111 playground and equivalence units): identical to
+base on native gc, standalone, wasi and fast.
+
+**Left out:** element / member stores beyond the carrier refusal, element
+reads, `switch` on the carrier (refused, not lowered), the wasi direct-call
+plan (class P), `(void 0 as any) == null` (#7144 N2), and the shadowed
+`let undefined` legacy miscompile
+([#7175](7175-shadowed-undefined-compare-legacy-wrong.md)).

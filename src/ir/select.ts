@@ -149,6 +149,8 @@ import { AMBIENT_TYPEOF_TAGS, foldAmbientTypeofComparison } from "./ambient-type
 import type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
 import { plannedClosureOperandRefusal } from "./select-planned-closure-operands.js";
 import {
+  conditionalJoinArmFamily,
+  conditionalJoinFamily,
   isComparisonResultOperator,
   isEqualityOperator,
   isF64CompoundAssignOperator,
@@ -761,7 +763,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-own-property-test"
       | "host-dynamic-method-call"
       | "native-own-property-descriptor"
-      | "native-number-conversion",
+      | "native-number-conversion"
+      | "prepared-dynamic-helper-abi",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -4078,9 +4081,6 @@ function isPhase1ChainedAssignmentStatement(
 ): boolean {
   const chain = peelAssignmentChain(expr);
   if (chain === null) return false;
-  if (!plannedClosureChainTargetsShareSlot(chain.targets, scope)) {
-    return shapeNo("expr-closure-chain-mixed-slots", expr);
-  }
   for (const target of chain.targets) {
     if (ts.isIdentifier(target)) {
       if (isUnrepresentableModuleBinding(target)) return false;
@@ -4792,32 +4792,6 @@ function isPhase1ThrowStatement(
   }
   if (expressionTouchesScalarModuleBinding(stmt.expression) && obviousModuleValueFamily(stmt.expression) !== "string") {
     return shapeNo("throw-module-scalar-unboxed", stmt.expression);
-  }
-  // (#7113) `lowerThrowStatement` refuses an f64/i32 value unless its
-  // number-boundary projection is configured, and no lane that mints a member
-  // closure plan configures it (measured: `throw 42` in a planned closure
-  // withdraws on standalone, wasi and gc native-first alike). The void plan
-  // now reaches throw-only bodies, so refuse the concrete number/boolean value
-  // here instead of claiming it. A top-level subject keeps its pre-existing
-  // post-claim withdrawal: its refusal would move host-assisted gc bytes.
-  // A `void` value is the same f64: from-ast lowers it to NaN whatever its
-  // operand (from-ast.ts:5321-5324), so `throw void 0`, `throw void null` and
-  // `throw (1, void 0)` (the comma yields its right operand) withdraw "throw
-  // val not in slice 9" like `throw 42`.
-  if (currentInPlannedMemberClosure) {
-    const family = obviousSelectorValueFamily(stmt.expression, scope);
-    let thrown = unwrapPhase1Parens(stmt.expression);
-    while (ts.isBinaryExpression(thrown) && thrown.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-      thrown = unwrapPhase1Parens(thrown.right);
-    }
-    if (
-      family === "number" ||
-      family === "boolean" ||
-      expressionIsProvenNumber(stmt.expression) ||
-      ts.isVoidExpression(thrown)
-    ) {
-      return shapeNo("throw-closure-concrete-scalar", stmt.expression);
-    }
   }
   return isPhase1Expr(stmt.expression, scope, localClasses);
 }
@@ -6472,8 +6446,10 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
 
 /**
  * (#7106 Stage 4, #7113) A conditional VALUE joining one of the planned member
- * closure's dynamic parameters with a primitive literal — assert.compareArray's
- * `message === undefined ? '' : message`. Exactly one arm is the literal; the
+ * closure's dynamic parameters with a primitive literal or a value `void` —
+ * assert.compareArray's `message === undefined ? '' : message`. Exactly one arm
+ * is that literal / `void` arm and the shared `conditionalJoinFamily` (also
+ * read by from-ast and the #7144 closure walk) joins it onto the carrier; the
  * other is the parameter (or a nested conditional of this same shape). Two
  * dynamic arms are not this shape: the generic conditional walk already admits
  * them, and from-ast's generic tail joins two dynamic arms as it stands.
@@ -6490,8 +6466,9 @@ function dynamicValueCallTarget(expr: ts.CallExpression): boolean {
  * dynamic parameter and a dynamic `return`, which this list omits by design
  * (the closure plan fixes neither a callee's signature nor a dynamic return).
  * A planned closure does not run that scan, so the shape carries its own sink
- * proof; a dynamic-shaped local the shape mints (`var r = m ? m : 1`) carries
- * it onward through `closureWriteUnlowerable`.
+ * proof; a dynamic-shaped local the shape mints (`var r = m ? m : 1`) is
+ * proved `dynamic` by the #7144 closure walk (`conditionalJoinFamily`), which
+ * types every later operator and write on it.
  *
  * A top-level subject is never this shape: `currentClosureDynamicParamNames`
  * is empty outside a planned closure, and the move-only scan's conditional
@@ -6506,7 +6483,9 @@ function dynamicConditionalValueShape(expr: ts.ConditionalExpression): boolean {
   const trueDynamic = dynamicConditionalValueArm(expr.whenTrue);
   const falseDynamic = dynamicConditionalValueArm(expr.whenFalse);
   if (trueDynamic === falseDynamic) return false;
-  return isPrimitiveLiteralArm(trueDynamic ? expr.whenFalse : expr.whenTrue);
+  // The other arm is a literal or a value `void` the shared join rule puts on the carrier.
+  const other = conditionalJoinArmFamily(trueDynamic ? expr.whenFalse : expr.whenTrue);
+  return other !== null && conditionalJoinFamily("dynamic", other) === "dynamic";
 }
 
 /** The dynamic arm: the closure's dynamic parameter, or a nested conditional of the shape. */
@@ -6514,17 +6493,6 @@ function dynamicConditionalValueArm(arm: ts.Expression): boolean {
   const e = unwrapPhase1Parens(arm);
   if (ts.isIdentifier(e)) return currentClosureDynamicParamNames.has(e.text);
   return ts.isConditionalExpression(e) && dynamicConditionalValueShape(e);
-}
-
-function isPrimitiveLiteralArm(arm: ts.Expression): boolean {
-  const e = unwrapPhase1Parens(arm);
-  return (
-    ts.isStringLiteral(e) ||
-    ts.isNoSubstitutionTemplateLiteral(e) ||
-    ts.isNumericLiteral(e) ||
-    e.kind === ts.SyntaxKind.TrueKeyword ||
-    e.kind === ts.SyntaxKind.FalseKeyword
-  );
 }
 
 /**
@@ -6539,7 +6507,7 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
   const parent = node.parent;
   if (ts.isThrowStatement(parent) || ts.isExpressionStatement(parent)) return true;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === node && untypedIdentifierDeclaration(parent);
-  const write = assignmentWrite(parent, node, /* compound */ false);
+  const write = assignmentWrite(parent, node);
   if (write !== undefined) return dynamicAssignmentSink(write.target);
   if (ts.isConditionalExpression(parent) && parent.condition !== node) {
     const sibling = parent.whenTrue === node ? parent.whenFalse : parent.whenTrue;
@@ -6549,57 +6517,34 @@ function dynamicConditionalValuePosition(expr: ts.ConditionalExpression): boolea
 }
 
 /**
- * (#7113) The positive value-family admission for a planned member closure
- * that MINTS a dynamic-shaped local (`var r = m ? m : 1`, or `r = m ? m : 1`
- * into a slot — the conditional, or an outer conditional it is an arm of, is
- * a declaration initializer or an assignment RHS). The base refused every such
+ * (#7113) The representation admission for a planned member closure that
+ * MINTS a dynamic-shaped local (`var r = m ? m : 1`, or `r = m ? m : 1` into
+ * a slot — the conditional, or an outer conditional it is an arm of, is a
+ * declaration initializer or an assignment RHS). The base refused every such
  * closure at the conditional, so this rule only turns a claim-then-withdraw
  * into a select refusal; a closure that mints none is not checked here.
  * Evaluated once per closure; a refusal names the first unproved value
  * (`expr-closure-value-family-unproved`).
  *
- * The walk reads every value from-ast must REPRESENT and every write:
+ * Operator, write, increment, `??`, `null` / `void` value and `throw` typing
+ * is NOT here: the #7144 closure walk (`plannedClosureOperandRefusal`) judges
+ * every one of them by the predicates from-ast lowers them with, and proves
+ * the minted local `dynamic` by the shared `conditionalJoinFamily`. What this
+ * walk adds is what no operand family carries:
  *
- * - an object / function / class literal anywhere in the body: refused (the
- *   `"reference"` family; an object element is out of the vec scope,
- *   from-ast.ts:5761-5764, an object into a dynamic slot has no box,
- *   `boxConcreteToDynamic` :16326-16345, an object operand of `-` / `+` is
- *   `unary '-' expects number` :14505-14511 / :14527-14533, and an object
- *   behind an alias, comma or property read reaches the null fold's object
- *   bail :16181-16187, which the selector cannot see through the hop);
+ * - an object / function / class literal anywhere in the body: refused (an
+ *   object element is out of the vec scope, an object behind an alias, comma
+ *   or property read reaches the null fold's object bail, which the selector
+ *   cannot see through the hop);
  * - an array literal: admitted only with one or more `number` elements (a
  *   `vec<f64>`); an empty literal has no element evidence (`empty array …
- *   has unresolved supported element evidence`,
- *   array-element-inference.ts:367) and any other element kind is out of
- *   scope (:5761-5764);
+ *   has unresolved supported element evidence`) and any other element kind
+ *   is out of scope;
  * - a declaration initializer: `plannedClosureValueFamilyProved` with arrays
  *   admitted (the local takes the vec);
- * - an operand of an arithmetic / bitwise / shift / `+` operator, of a
- *   numeric prefix or postfix unary: proved with arrays REFUSED (a vec has no
- *   ToNumber / ToPrimitive in the IR: `'+' operands not provably …`
- *   :15310-15316, `requires matching operand types` :15469, `unary '-'
- *   expects number`);
- * - a write (`plannedClosureWriteProved`): into a `const` local, refused
- *   (`assignment to const` :13555-13557, `compound assign to const`
- *   :13638-13643); into a dynamic slot (the dynamic parameter, a
- *   dynamic-shaped local, a member), the value proved with arrays refused — the slot boxes f64 / boolean /
- *   string (`boxConcreteToDynamic` :16326-16345, applied at :13578-13584 and
- *   :13711) and nothing else (`got vec<f64>` :13585-13590, `operand vec<f64>
- *   has no carrier` :13712-13717); into a CONCRETE local, the value's own
- *   family must be the slot's (`=`), or a concat operand of a string slot /
- *   a number into a number slot (compound): any other value lowers dynamic
- *   and is `assignment to "s" (string) got dynamic` (:13585-13590) — the
- *   chain `s = t = r` included (`chained assignment needs one shared
- *   destination type`, :11066-11073).
- *
- * The values the selector has no family for — a call result, a member /
- * element read, `typeof`, a comparison, the dynamic parameter, a
- * dynamic-shaped local — are proved in every position except a concrete
- * slot: they lower to f64 / i32 / string / the dynamic carrier, which every
- * consumer above takes. Their remaining limits stay with the arms that police
- * them in every planned closure (`closureWriteUnlowerable`,
- * `closureNullValuePosition`, `plannedClosureVoidValueUnlowerable`, the `??`
- * arm, `throw-closure-concrete-scalar`).
+ * - an operand of a numeric prefix / postfix unary: proved with arrays
+ *   REFUSED (`unary '-' expects number`; the walk types binary operands only);
+ * - a write into a `const` local (`assignment to const`).
  */
 function plannedClosureValueFamilyAdmissible(expr: ts.ConditionalExpression, scope: ReadonlySet<string>): boolean {
   if (!conditionalMintsDynamicLocal(expr)) return true;
@@ -6629,7 +6574,7 @@ function conditionalMintsDynamicLocal(expr: ts.ConditionalExpression): boolean {
     node = outermostParenthesized(node.parent);
   }
   if (ts.isVariableDeclaration(node.parent)) return node.parent.initializer === node;
-  return assignmentWrite(node.parent, node, /* compound */ false) !== undefined;
+  return assignmentWrite(node.parent, node) !== undefined;
 }
 
 /** One node of the walk in `plannedClosureValueFamilyAdmissible`. */
@@ -6643,93 +6588,27 @@ function plannedClosureValueAdmitted(node: ts.Expression, scope: ReadonlySet<str
     return false;
   }
   if (ts.isArrayLiteralExpression(node)) return plannedClosureValueFamilyProved(node, scope, true, new Set());
-  if (ts.isBinaryExpression(node) && isAssignmentOperatorKind(node.operatorToken.kind)) {
-    return plannedClosureWriteProved(node, scope);
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+  ) {
+    const target = unwrapPhase1Parens(node.left);
+    const declaration = ts.isIdentifier(target) ? closureLocalDeclaration(target) : undefined;
+    if (declaration !== undefined && isConstDeclaration(declaration)) return false;
   }
   const parent = node.parent;
   if (ts.isVariableDeclaration(parent) && parent.initializer === node) {
     return plannedClosureValueFamilyProved(node, scope, true, new Set());
   }
-  const operand =
-    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
-      parent.operator !== ts.SyntaxKind.ExclamationToken) ||
-    (ts.isBinaryExpression(parent) && isPlannedClosureArithmeticOperator(parent.operatorToken.kind));
-  return !operand || plannedClosureValueFamilyProved(node, scope, false, new Set());
-}
-
-function isAssignmentOperatorKind(op: ts.SyntaxKind): boolean {
-  return op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment;
-}
-
-function isPlannedClosureArithmeticOperator(op: ts.SyntaxKind): boolean {
-  switch (op) {
-    case ts.SyntaxKind.PlusToken:
-    case ts.SyntaxKind.MinusToken:
-    case ts.SyntaxKind.AsteriskToken:
-    case ts.SyntaxKind.SlashToken:
-    case ts.SyntaxKind.PercentToken:
-    case ts.SyntaxKind.AsteriskAsteriskToken:
-    case ts.SyntaxKind.AmpersandToken:
-    case ts.SyntaxKind.BarToken:
-    case ts.SyntaxKind.CaretToken:
-    case ts.SyntaxKind.LessThanLessThanToken:
-    case ts.SyntaxKind.GreaterThanGreaterThanToken:
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
-      return true;
-    default:
-      return false;
-  }
-}
-
-/** A write in a minting closure (see `plannedClosureValueFamilyAdmissible`). */
-function plannedClosureWriteProved(write: ts.BinaryExpression, scope: ReadonlySet<string>): boolean {
-  const target = unwrapPhase1Parens(write.left);
-  const declaration = ts.isIdentifier(target) ? closureLocalDeclaration(target) : undefined;
-  if (declaration === undefined || dynamicShapedLocal(declaration, new Set())) {
-    if (declaration !== undefined && isConstDeclaration(declaration)) return false;
-    return plannedClosureValueFamilyProved(write.right, scope, false, new Set());
-  }
-  if (isConstDeclaration(declaration) || declaration.initializer === undefined) return false;
-  const slot = plannedClosureConcreteFamily(declaration.initializer, scope, new Set());
-  const value = plannedClosureConcreteFamily(write.right, scope, new Set());
-  switch (write.operatorToken.kind) {
-    case ts.SyntaxKind.EqualsToken:
-      return slot !== undefined && value === slot;
-    case ts.SyntaxKind.PlusEqualsToken:
-      return slot === "string"
-        ? value === "string" || value === "number" || value === "boolean"
-        : slot === "number" && value === "number";
-    default:
-      return slot === "number" && value === "number";
-  }
+  const unaryOperand =
+    (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+    parent.operator !== ts.SyntaxKind.ExclamationToken;
+  return !unaryOperand || plannedClosureValueFamilyProved(node, scope, false, new Set());
 }
 
 function isConstDeclaration(declaration: ts.VariableDeclaration): boolean {
   return ts.isVariableDeclarationList(declaration.parent) && !!(declaration.parent.flags & ts.NodeFlags.Const);
-}
-
-/**
- * The concrete family a planned-closure value lowers to — `number`, `boolean`
- * or `string` — through parens, a comma's value, an assignment's value, a
- * numeric parameter and a closure local's initializer; `undefined` when it may
- * lower dynamic (or is a reference).
- */
-function plannedClosureConcreteFamily(
-  expr: ts.Expression,
-  scope: ReadonlySet<string>,
-  seen: Set<ts.VariableDeclaration>,
-): "number" | "boolean" | "string" | undefined {
-  let e = writtenValue(expr);
-  while (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken) e = writtenValue(e.right);
-  if (ts.isIdentifier(e)) {
-    if (currentNumericParamNames.has(e.text) && !closureLocalDeclaration(e)) return "number";
-    const declaration = closureLocalDeclaration(e);
-    if (declaration === undefined || declaration.initializer === undefined || seen.has(declaration)) return undefined;
-    seen.add(declaration);
-    return plannedClosureConcreteFamily(declaration.initializer, scope, seen);
-  }
-  const family = obviousSelectorValueFamily(e, scope);
-  return family === "number" || family === "boolean" || family === "string" ? family : undefined;
 }
 
 /**
@@ -6769,225 +6648,6 @@ function plannedClosureValueFamilyProved(
     }
   }
   return obviousSelectorValueFamily(e, scope) !== "reference";
-}
-
-/**
- * (#7113) A write inside a planned member closure that from-ast cannot lower,
- * refused at select so the closure is not claimed and then withdrawn (gc
- * native-first fails to compile on a withdrawal). `expr` is the value being
- * written; the write is `x = expr` or an admitted compound `x op= expr`
- * (`isPhase1CompoundAssignOperator` — every other compound operator is
- * refused by the assignment arms themselves). Three limits, one rule:
- *
- * - a compound other than `+=` on a DYNAMIC slot (`var r = m ? m : 1; r -= 1`,
- *   `m *= q`), whatever the RHS: from-ast lowers only `+=` on a dynamic slot
- *   (the dynamic add; "compound assign to non-f64 slot", also what a string
- *   slot `var s = "a"; s -= r` reports) — and the same operators with a
- *   dynamic RHS on an f64 slot (`var q = 5; q -= r`: "RHS must be f64");
- * - a bare dynamic — the closure's dynamic parameter or a dynamic-shaped
- *   local — written into a CONCRETE slot by `=` or `+=` (`var s = "a"; s = r`,
- *   `s += r`, also behind a comma `s = (1, m)`, `writtenValue`):
- *   "assignment to "s" (string) got dynamic" / "typed string += requires …
- *   evidence" (a chain `s = r = m` is `plannedClosureChainTargetsShareSlot`'s).
- *   A dynamic RHS into a dynamic slot is sound for
- *   `=` and `+=` (`m += r`, `var s; s += r`, measured = node).
- *
- * The slot rule is `dynamicAssignmentSink`, the one
- * `dynamicConditionalValuePosition` applies to the conditional itself; the
- * conditional is never admitted directly as a compound RHS (`s += (m ? m : 1)`
- * stays with the #5092 route), only a laundered local reaches here. A bare
- * `null` value is not a write limit: `closureNullValuePosition` refuses it in
- * every position from-ast cannot materialise it, writes included.
- */
-function closureWriteUnlowerable(expr: ts.Expression): boolean {
-  if (!currentInPlannedMemberClosure) return false;
-  const node = outermostParenthesized(expr);
-  const write = assignmentWrite(node.parent, node, /* compound */ true);
-  if (write === undefined) return false;
-  const dynamicSlot = dynamicAssignmentSink(write.target);
-  const value = writtenValue(node);
-  const dynamicValue = ts.isIdentifier(value) && dynamicShapedValue(value);
-  if (write.op !== ts.SyntaxKind.EqualsToken && write.op !== ts.SyntaxKind.PlusEqualsToken) {
-    return dynamicSlot || dynamicValue;
-  }
-  return !dynamicSlot && dynamicValue;
-}
-
-/** The value a write stores: through parentheses and a comma's right operand (`s = (1, m)` stores `m`). */
-function writtenValue(expr: ts.Expression): ts.Expression {
-  let value = unwrapPhase1Parens(expr);
-  while (ts.isBinaryExpression(value) && value.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-    value = unwrapPhase1Parens(value.right);
-  }
-  return value;
-}
-
-/**
- * (#7113) A chained assignment statement in a planned member closure lowers
- * only when every local target has the SAME slot type: from-ast stores the
- * one RHS value into each target with no per-target coercion and refuses
- * otherwise (`chained assignment needs one shared destination type`,
- * from-ast.ts:11066-11073). The slot type is the dynamic carrier
- * (`dynamicAssignmentSink`) or the concrete family of the local's
- * initializer; a local of neither kind is not proved. `var s = "a"; var r;
- * s = r = m` (string and dynamic) is refused; `s = t = "c"` over two string
- * locals is not.
- */
-function plannedClosureChainTargetsShareSlot(targets: readonly ts.Expression[], scope: ReadonlySet<string>): boolean {
-  if (!currentInPlannedMemberClosure) return true;
-  const slots = targets.filter(ts.isIdentifier).map((target) => {
-    if (dynamicAssignmentSink(target)) return "dynamic";
-    const initializer = closureLocalDeclaration(target)?.initializer;
-    return initializer === undefined ? undefined : plannedClosureConcreteFamily(initializer, scope, new Set());
-  });
-  return slots.every((slot) => slot !== undefined && slot === slots[0]);
-}
-
-/**
- * (#7113) Where from-ast materialises a bare `null` inside a planned member
- * closure. Its `NullKeyword` lowering emits a null only under an externref /
- * reference hint, or not at all when the value is dropped; three positions
- * qualify:
- *
- * - a `throw` operand (`lowerThrowStatement` lowers with an externref hint),
- *   through parentheses and through the right operand of a comma (the comma
- *   arm passes its hint to the right operand: `throw (1, null)`);
- * - a DISCARDED value. `lowerDiscardedExpression` (from-ast.ts:2546-2620)
- *   recurses through parentheses, `void`, both comma operands and both
- *   conditional arms, and lowers the leaf with an externref hint (`:2619`);
- *   every expression-statement lowering calls it (`:2399`, `:2762`, …), as
- *   do the left operand of a value comma (`:15233-15235`) and the operand of
- *   a `void` in ANY position: a value `void` discards its operand and yields
- *   an f64 NaN (`:5321-5324`), so the `null` under it is never the failing
- *   node (`if (void null)`, `void null === null`). Where that NaN cannot
- *   go is the `void` value's own limit, not this one: a throw
- *   (`throw-closure-concrete-scalar`), a declaration initializer or a `+`
- *   operand (`plannedClosureVoidValueUnlowerable`). The conditional arms are
- *   climbed only while the whole is discarded. A `for` incrementor is not
- *   discarded: `lowerForUpdateExpr` (`:12439-12479`) splits its comma chain
- *   into clauses and lowers each leaf under an f64 hint, as the initializer is lowered
- *   (`:12286`);
- * - the DIRECT operand of `==` / `!=` / `===` / `!==` that `tryFoldNullCompare`
- *   (from-ast.ts:16115-16213) folds. The fold's entry test reads the operand
- *   kind without unwrapping, so `(null)` is not seen; it lowers the other
- *   operand under an f64 hint and folds a STRICT compare against a dynamic /
- *   externref value (tag test, `ref.is_null`) and any compare against an
- *   operand whose type reaches its trailing constant (f64, i32, vec, …). It
- *   gives up — and the generic f64-hint lowering then withdraws
- *   `nullish-value-unsupported` — for `null === undefined` (`:16132-16138`),
- *   a LOOSE compare against anything but a numeric value (dynamic
- *   `:16151-16158`, extern `:16167-16170`, externref `:16201-16204`), a
- *   class / object / closure / callable operand (`:16181-16187`) and a
- *   `string` operand (`:16198`); `boxed` (`:16161`) and `ref_null`
- *   (`:16208`) bail too, and no planned-closure operand lowers to either
- *   today. `nullCompareFoldFails` is that failure set as the selector names it.
- *
- * Every other position — a slot write or `+=` (dynamic hint), a declaration
- * initializer (`var nul = null`, f64 hint), a string `+=`, a `??` operand, a
- * conditional arm in value position, a call argument, a member store, a `for`
- * clause — withdraws `nullish-value-unsupported`, so the selector refuses it
- * first. (A planned closure's `return null` is refused elsewhere already;
- * measured on the base, it is not a claim to keep.)
- */
-function closureNullValuePosition(expr: ts.Expression, scope: ReadonlySet<string>): boolean {
-  let node: ts.Expression = expr;
-  // A conditional arm is climbed for the discarded walk only: the throw
-  // admission does not apply through it — `throw k ? null : m` withdraws on
-  // the arm (measured).
-  let discardedOnly = false;
-  for (;;) {
-    node = outermostParenthesized(node);
-    const parent = node.parent;
-    if (ts.isVoidExpression(parent)) return true;
-    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-      if (parent.left === node && !isForIncrementorClause(parent)) return true;
-      node = parent;
-      continue;
-    }
-    if (ts.isConditionalExpression(parent) && parent.condition !== node) {
-      discardedOnly = true;
-      node = parent;
-      continue;
-    }
-    if (ts.isExpressionStatement(parent)) return true;
-    if (ts.isThrowStatement(parent)) return !discardedOnly;
-    break;
-  }
-  const parent = expr.parent;
-  if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
-  const other = parent.left === expr ? parent.right : parent.left;
-  return !nullCompareFoldFails(other, parent.operatorToken.kind, scope);
-}
-
-/**
- * (#7113) Where a planned member closure cannot take a value `void`'s f64 NaN
- * (from-ast.ts:5321-5324): as a declaration initializer (the untyped local
- * withdraws `unboxed-number-local-unprovable`) and as an operand of a binary
- * `+` (`'+' operands not provably both-number or both-string`, :15310-15316).
- * Both withdraw on the base too; every other measured position — a condition,
- * `!`, unary `-`, an equality operand, a slot write, `+=` into a dynamic slot,
- * a call argument, an array element — lowers it.
- */
-function plannedClosureVoidValueUnlowerable(expr: ts.VoidExpression): boolean {
-  if (!currentInPlannedMemberClosure) return false;
-  const node = outermostParenthesized(expr);
-  const parent = node.parent;
-  if (ts.isVariableDeclaration(parent)) return parent.initializer === node;
-  return ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.PlusToken;
-}
-
-/** Is `comma` the `for` incrementor, or one of its clauses (from-ast.ts:12449-12452)? */
-function isForIncrementorClause(comma: ts.BinaryExpression): boolean {
-  let node: ts.Expression = comma;
-  while (ts.isBinaryExpression(node.parent) && node.parent.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-    node = node.parent;
-  }
-  return ts.isForStatement(node.parent) && node.parent.incrementor === node;
-}
-
-/** The `null`-compare operands `tryFoldNullCompare` does not fold (see `closureNullValuePosition`). */
-function nullCompareFoldFails(other: ts.Expression, op: ts.SyntaxKind, scope: ReadonlySet<string>): boolean {
-  if (other.kind === ts.SyntaxKind.NullKeyword || isUnshadowedUndefinedIdentifier(other, scope)) return true;
-  const sources = nullCompareOperandSources(other);
-  const array = sources.some(
-    (e) => ts.isArrayLiteralExpression(e) || currentSelectionOptions?.isArrayExpression?.(e) === true,
-  );
-  const strict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  if (!strict) {
-    const family = obviousSelectorValueFamily(other, scope);
-    return !(
-      array ||
-      family === "number" ||
-      family === "boolean" ||
-      declaredExpressionHasExactFamily(other, "number", scope) ||
-      declaredExpressionHasExactFamily(other, "boolean", scope)
-    );
-  }
-  if (array) return false;
-  return (
-    sources.some((e) => obviousSelectorValueFamily(e, scope) === "reference") ||
-    obviousSelectorValueFamily(other, scope) === "string" ||
-    declaredExpressionHasExactFamily(other, "string", scope)
-  );
-}
-
-/**
- * The operand of a `null` compare and, for a closure local, its declaration
- * initializer — the selector's family view of the `IrType` the fold lowers.
- */
-function nullCompareOperandSources(other: ts.Expression): ts.Expression[] {
-  const operand = unwrapPhase1Parens(other);
-  const initializer = ts.isIdentifier(operand) ? closureLocalDeclaration(operand)?.initializer : undefined;
-  return initializer === undefined ? [operand] : [operand, unwrapPhase1Parens(initializer)];
-}
-
-function isEqualityOperator(op: ts.SyntaxKind): boolean {
-  return (
-    op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
-    op === ts.SyntaxKind.EqualsEqualsToken ||
-    op === ts.SyntaxKind.ExclamationEqualsToken
-  );
 }
 
 /**
@@ -7039,22 +6699,10 @@ function dynamicShapedLocal(d: ts.VariableDeclaration, seen: Set<ts.VariableDecl
   return dynamicShapedValue(d.initializer, seen);
 }
 
-/**
- * The target and operator of `left = value` (with `compound`, also
- * `left op= value` for the admitted compound operators) when `parent` is that
- * assignment and `value` its right-hand side.
- */
-function assignmentWrite(
-  parent: ts.Node,
-  value: ts.Node,
-  compound: boolean,
-): { readonly target: ts.Expression; readonly op: ts.SyntaxKind } | undefined {
+/** The target of `left = value` when `parent` is that assignment and `value` its right-hand side. */
+function assignmentWrite(parent: ts.Node, value: ts.Node): { readonly target: ts.Expression } | undefined {
   if (!ts.isBinaryExpression(parent) || parent.right !== value) return undefined;
-  const op = parent.operatorToken.kind;
-  if (op === ts.SyntaxKind.EqualsToken || (compound && isPhase1CompoundAssignOperator(op))) {
-    return { target: parent.left, op };
-  }
-  return undefined;
+  return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken ? { target: parent.left } : undefined;
 }
 
 function outermostParenthesized(expr: ts.Expression): ts.Expression {
@@ -7525,6 +7173,8 @@ function isPhase1ClosureLiteral(
   const refusal = plannedClosureOperandRefusal(plan, {
     obviousFamily: (expression) => obviousSelectorValueFamily(expression, scope),
     declaredFamily: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
+    preparedDynamicHelpers:
+      currentSelectionOptions?.supportsBackendCapability?.("prepared-dynamic-helper-abi") === true,
   });
   return refusal === null || capabilityNo("operand-coercion-unsupported", refusal.arm, refusal.node);
 }
@@ -11228,9 +10878,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     return shapeNo("expr-module-extern-consumer", expr);
   }
   if (ts.isParenthesizedExpression(expr)) return isPhase1Expr(expr.expression, scope, localClasses);
-  // (#7113) Every assignment arm walks its RHS through here, so the planned
-  // closure's write limits are checked once, from the value's position.
-  if (closureWriteUnlowerable(expr)) return shapeNo("expr-closure-write-unlowerable", expr);
   // (#3583) Type-erased assertion wrappers emit nothing; `lowerExpr` unwraps the identical operand shape.
   // Other `isAsExpression` sites are analysis-local, not this shape gate; these
   // wrappers previously reached `expr-unhandled`. Full measurement in #3583.
@@ -11283,12 +10930,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // `resolveReturnType` / `resolveParamType`, so accepting the shape
   // here is shape-only acceptance.
   if (ts.isStringLiteral(expr)) return true;
-  if (expr.kind === ts.SyntaxKind.NullKeyword) {
-    if (currentInPlannedMemberClosure && !closureNullValuePosition(expr, scope)) {
-      return shapeNo("expr-closure-null-value", expr);
-    }
-    return true;
-  }
+  if (expr.kind === ts.SyntaxKind.NullKeyword) return true;
   if (ts.isIdentifier(expr)) {
     // Identifier may name either a param/local (scope) or a function
     // (only valid as the callee of a CallExpression, handled below).
@@ -11435,14 +11077,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (binOp === ts.SyntaxKind.CommaToken) {
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
-    }
-    // (#7113) `lowerNullish` (from-ast.ts:15682-15698) lowers `??` only on an
-    // `extern` / `externref` / `ref_null` left operand, and no planned-closure
-    // value lowers to one (the dynamic carrier, f64, string, `vec`, object all
-    // withdraw `'??' on non-reference lhs`), so `??` is refused in every
-    // planned closure, with or without a minted dynamic local.
-    if (binOp === ts.SyntaxKind.QuestionQuestionToken && currentInPlannedMemberClosure) {
-      return shapeNo("expr-closure-nullish-coalesce", expr);
     }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
@@ -12505,7 +12139,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   // Slice 11 (#1169n) — `void <expr>`: lower expr for side effects, push
   // `f64 NaN` (the undefined sentinel the IR uses in f64-typed contexts).
   if (ts.isVoidExpression(expr)) {
-    if (plannedClosureVoidValueUnlowerable(expr)) return shapeNo("expr-closure-void-value", expr);
     return isPhase1Expr(expr.expression, scope, localClasses);
   }
   // (#2856) Unhandled expression KIND — closures (Arrow/FunctionExpression),
