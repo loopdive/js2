@@ -53,11 +53,25 @@ const EXPRS = [
   `(() => { let n = 0; keys.forEach(k => { const f = () => { k = k; }; f(); if (typeof k === "number") n++; }); return n; })()`,
   // Round 2: parenthesized callback.
   `keys.filter((k => typeof k === "number")).length`,
-  // Round 2: reduce / reduceRight with an initial value (the accumulator carries the same lie).
-  `keys.reduce((acc, k) => acc + (typeof k === "number" ? k : 0), 0) === 4 ? 1 : 0`,
-  `keys.reduce((acc, k) => (typeof k === "number" ? acc + 1 : acc), 0) === 2 ? 1 : 0`,
-  `keys.reduce((acc, k) => acc + k, "") === "ca31" ? 1 : 0`,
-  `keys.reduceRight((acc, k) => acc + (typeof k === "number" ? k : 0), 0) === 4 ? 1 : 0`,
+  // Round 3: `typeof k` outside a `=== "literal"` comparison (the `__any_typeof` arm),
+  // plain and with a nested closure writing `k`.
+  `keys.filter(k => { const t = typeof k; return t === "number"; }).length`,
+  `keys.filter(k => { switch (typeof k) { case "number": return true; default: return false; } }).length`,
+  `keys.filter(k => (typeof k + "") === "number").length`,
+  `(() => { let s = ""; keys.forEach(k => { s += typeof k; }); return s.length; })()`,
+  `keys.filter(k => { const f = () => { k = 7; }; f(); const t = typeof k; return t === "number"; }).length`,
+  `keys.filter(k => { const f = () => { k = 7; }; f(); const g = () => typeof k; return g() === "number"; }).length`,
+  `keys.filter(k => { const f = () => { k = 7; }; f(); switch (typeof k) { case "number": return true; default: return false; } }).length`,
+  `keys.filter(k => { const f = () => { k = 7; }; f(); return (typeof k + "") === "number"; }).length`,
+  // Round 3: reduce / reduceRight whose callback passes the accumulator through. The
+  // accumulator is deliberately NOT re-typed (the call's result stays `$AnyValue`);
+  // these read the value directly.
+  `keys.reduce((acc, k) => acc, 5) * 1`,
+  `keys.reduce((acc, k) => acc, "q") === "q" ? 1 : 0`,
+  `keys.reduceRight((acc, k) => acc, 5) * 1`,
+  `keys.reduceRight((acc, k) => acc, "q") === "q" ? 1 : 0`,
+  `keys.reduce((best, k) => (typeof k === "number" && k > best ? k : best), 0) * 1`,
+  `keys.reduce((acc, k) => (k === "zz" ? 9 : acc), 5) * 1`,
 ];
 
 describe("#7152 HOF callback over an externref-storage vec takes the element live", () => {

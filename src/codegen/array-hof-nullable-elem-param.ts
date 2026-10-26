@@ -86,9 +86,10 @@ export function nullableElemParamOverrideFor(
  * correctly is compiled exactly as before.
  *
  * (#7152) For an `externref` element the only re-typed pair is an `$AnyValue`
- * parameter of the callback itself (`fn`) — the element, and for `reduce*` also
- * the accumulator: it then takes the value live, where the loop's
- * externref→`$AnyValue` cast would hand it null.
+ * parameter of the callback itself (`fn`): it then takes the element live,
+ * where the loop's externref→`$AnyValue` cast would hand it null. (The
+ * `reduce*` accumulator is deliberately NOT re-typed: the call's result is
+ * still typed `$AnyValue`, so a pass-through `acc` would be cast to null.)
  */
 export function applyNullableElemParamOverride(
   resolved: ValType,
@@ -97,16 +98,12 @@ export function applyNullableElemParamOverride(
   anyValueTypeIdx = -1,
   fn?: ts.Node,
 ): ValType {
-  if (override === undefined) return resolved;
+  if (override === undefined || override.paramIndex !== runtimeIndex) return resolved;
   if (override.elemType.kind === "externref") {
-    // `reduce`/`reduceRight` (element at 1): the ACCUMULATOR at 0 carries the
-    // same `$AnyValue` lie — its loop slot is the callback's externref result.
-    if (override.paramIndex !== runtimeIndex && !(override.paramIndex === 1 && runtimeIndex === 0)) return resolved;
     const boxed = resolved.kind === "ref" || resolved.kind === "ref_null";
     const isAnyValue = boxed && anyValueTypeIdx >= 0 && resolved.typeIdx === anyValueTypeIdx;
     return isAnyValue && fn === override.callback ? override.elemType : resolved;
   }
-  if (override.paramIndex !== runtimeIndex) return resolved;
   if (resolved.kind !== "ref" || override.elemType.kind !== "ref_null") return resolved;
   return resolved.typeIdx === override.elemType.typeIdx ? override.elemType : resolved;
 }

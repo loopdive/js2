@@ -16,11 +16,17 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7146, 7151]
-# 2026-10-26 (#7152): +1 line — the import of the raw-externref guard that keeps
-# `typeof`'s `$AnyValue` tag fast path off a re-typed HOF callback parameter;
+# 2026-10-26 (#7152): +2 lines — the import of the raw-externref guard that keeps
+# `typeof`'s `$AnyValue` arms off a re-typed HOF callback parameter, and the
+# guard on the generic `__any_typeof` arm (round 3);
 # the guard itself lives in array-hof-nullable-elem-param.ts.
 loc-budget-allow:
   - src/codegen/typeof-delete.ts
+# 2026-10-26 (#7152 round 3): +1 line — the same raw-externref guard on the
+# generic `__any_typeof` arm (a boxed `$AnyValue` read of a re-typed parameter
+# threw "illegal cast" for `const t = typeof k` / `switch (typeof k)`).
+func-budget-allow:
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
 ---
 
 # #7152 — `filter` with a narrowing predicate on a mixed externref vec traps
@@ -67,18 +73,21 @@ and dereferenced as a concrete struct in the `typeof` / `!==` lowering.
   externref→`$AnyValue` coercion is a `ref.test` cast that yields null.
 - Fix: `nullableElemParamOverrideFor` now also arms for an `externref` element
   (scoped to the callback node, parentheses peeled), and
-  `applyNullableElemParamOverride` re-types only an `$AnyValue` parameter of
-  that callback to `externref` — the element, and for `reduce`/`reduceRight`
-  also the accumulator (its loop slot is the callback's externref result).
-  `typeof k`'s `$AnyValue` tag fast path is skipped for an identifier held in a
-  raw `externref` slot, or in a ref cell whose value type is `externref` (a
-  nested closure writes `k`): boxing would tag a stored number as 5, so it uses
-  the `__typeof_*` helpers.
-- Bytes: identical on the 13 playground examples, 18 HOF-using equivalence
-  programs and 8 hand-written reduce/filter programs × gc/standalone/wasi;
-  only function-local repro-shaped programs change.
-- Test: `tests/equivalence/issue-7152-hof-narrowing-externref-vec.test.ts` (47 rows, gc native-first / standalone / wasi vs node).
-- Left out: `typeof k` outside a `=== "literal"` comparison (`switch (typeof k)`,
-  `const t = typeof k`, `typeof k + ""`) still traps with an illegal cast in
-  these callbacks — fails on base too, likely the #7173 root cause. On wasi,
-  `keys.reduce((acc, k) => acc + k, "").length` reads `undefined` (base traps).
+  `applyNullableElemParamOverride` re-types only the `$AnyValue` element
+  parameter of that callback to `externref`. The `reduce*` accumulator is not
+  re-typed: the call's result stays `$AnyValue`, so a pass-through `acc` would
+  be cast to null (round-3 review). Both `typeof` arms that box into
+  `$AnyValue` — the `=== "literal"` tag fast path and the generic
+  `__any_typeof` arm — skip an identifier held in a raw `externref` slot, or in
+  a ref cell whose value type is `externref` (a nested closure writes `k`):
+  boxing would tag a stored number as 5.
+- Bytes: identical on the 13 playground examples, 24 HOF/typeof-using
+  equivalence programs and 12 hand-written reduce/filter/typeof programs ×
+  gc/standalone/wasi (147 compiles); only function-local repro-shaped programs
+  change.
+- Test: `tests/equivalence/issue-7152-hof-narrowing-externref-vec.test.ts` (67 rows, gc native-first / standalone / wasi vs node).
+- Left out: `reduce`/`reduceRight` with an initial value whose callback
+  combines the accumulator (`keys.reduce((acc, k) => acc + …, 0)`,
+  `(…, "")`) still traps with a null deref, as on base; pass-through and
+  element-only callbacks are correct. `.length` of a `$AnyValue` string result
+  on wasi is #7176 (pre-existing).

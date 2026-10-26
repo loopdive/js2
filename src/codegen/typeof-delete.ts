@@ -2088,6 +2088,7 @@ export function compileTypeofExpression(
   if (
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
     isAnyValue(wasmType, ctx) &&
+    !identifierHoldsRawExternref(fctx, operand) &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0
   ) {
