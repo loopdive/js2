@@ -22,12 +22,7 @@ import {
   type PromiseWithResolversResources,
 } from "../../runtime/wasmgc/promise/with-resolvers-bodies.js";
 import { ts } from "../../ts-api.js";
-import {
-  DENO_PROMISE_HOOK_INIT,
-  buildDenoPromiseHookCall,
-  ensurePromiseExecutorClosures,
-  isStandalonePromiseActive,
-} from "../async-scheduler.js";
+import { DENO_PROMISE_HOOK_INIT, buildDenoPromiseHookCall, ensurePromiseExecutorClosures } from "../async-scheduler.js";
 import { closureBagInitInstr } from "../closures/closure-header-layout.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { resolvesToNamedAmbientGlobal } from "../expressions/non-constructable.js";
@@ -116,7 +111,7 @@ export function tryEmitNativePromiseWithResolvers(
   expr: ts.CallExpression,
   propAccess: ts.PropertyAccessExpression,
 ): InnerResult | undefined {
-  if (propAccess.name.text !== "withResolvers" || !isStandalonePromiseActive(ctx)) return undefined;
+  if (propAccess.name.text !== "withResolvers") return undefined;
   let receiver: ts.Expression = propAccess.expression;
   while (ts.isParenthesizedExpression(receiver) || ts.isAsExpression(receiver) || ts.isNonNullExpression(receiver)) {
     receiver = receiver.expression;

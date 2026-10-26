@@ -369,30 +369,25 @@ describe("#3526 F3-S1 provider policy", () => {
 // --------------------------------------------------------------------------
 
 describe("#3526 F3-S1 end-to-end behaviour is unchanged", () => {
-  it("keeps the maker at its pre-slice import position and spells it from the record", async () => {
+  // (#6979 S7-a) Re-pinned from the retired host-assisted gc-host cell, where
+  // the arrow crossed through the host `__make_callback` maker. On the native
+  // regime the closure stays a module-native value and JavaScript reaches it
+  // through the exported dispatchers, so no maker (and no host
+  // `number_toString` / string-constant imports) is emitted.
+  it("crosses the arrow without the host maker on the native regime", async () => {
     const result = await compileB2();
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(result.irCompiledFuncs ?? []).toContain("install");
-    // V-B: the exact ordered import list of the gc-host B2 cell.
-    expect(
-      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map((entry) => `${entry.module}.${entry.name}`),
-    ).toEqual([
-      "env.EventTarget_addEventListener",
-      "env.Element_set_textContent",
-      "env.number_toString",
-      "string_constants.install",
-      "string_constants.tick",
-      "string_constants.",
-      "env.__make_callback",
-      "env.__call_function_0",
-    ]);
-    const makerIndex = functionImportIndex(result.binary, HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field);
-    expect(makerIndex).toBe(3);
-    expect(result.wat).toContain("i32.const -2");
-    expect(result.wat).toContain(`call ${makerIndex}`);
+    const imports = WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map(
+      (entry) => `${entry.module}.${entry.name}`,
+    );
+    expect(imports.slice(0, 2)).toEqual(["env.EventTarget_addEventListener", "env.Element_set_textContent"]);
+    expect(imports).not.toContain(`env.${HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field}`);
+    expect(imports).not.toContain("env.number_toString");
+    expect(functionImportIndex(result.binary, HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field)).toBe(-1);
   });
 
-  it("dispatches the wrapped one-shot callback exactly as before", async () => {
+  it("dispatches the wrapped one-shot callback on the native regime", async () => {
     const result = await compileB2();
     const imports = buildImports(result.imports, undefined, result.stringPool);
     const { instance } = await WebAssembly.instantiate(result.binary, imports);
@@ -408,6 +403,25 @@ describe("#3526 F3-S1 end-to-end behaviour is unchanged", () => {
     expect(listeners).toHaveLength(1);
     expect(listeners[0]!({ type: "tick" })).toBeUndefined();
     expect(sink.textContent).toBe("42");
+  });
+
+  // (#6979 S7-a) Split out of the row above. The host maker produced a
+  // non-constructable function; the regime's boundary wrapper for an ARROW is
+  // still constructible (identical on main's default profile before S7-a).
+  // A regime gap against #5385, kept as an inverted sentinel so it is promoted
+  // the moment the wrapper refuses [[Construct]].
+  it.fails("an arrow callback crossing to JavaScript is not constructible (regime gap)", async () => {
+    const result = await compileB2();
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    const listeners: Function[] = [];
+    const target = {
+      addEventListener(_type: string, listener: Function): void {
+        listeners.push(listener);
+      },
+    };
+    (instance.exports.install as (t: object, s: object, v: number) => void)(target, { textContent: "" }, 42);
     expect(() => Reflect.construct(listeners[0]!, [])).toThrow(TypeError);
   });
 
@@ -637,7 +651,8 @@ describe("#3526 F3-S1 the demand scan", () => {
     const projection = INTEGRATION_SOURCE.slice(start, INTEGRATION_SOURCE.indexOf("\n}", start));
     expect(projection).toContain("ctx.requiresStandaloneDomInteractionCapability === true");
     expect(projection).toContain('ctx.targetProfile.environment === "none"');
-    expect(projection).toContain('ctx.targetProfile.semanticProviders === "native-first"');
+    // (#6979) The semantic-provider leg folded away: native-first is the only policy.
+    expect(projection).not.toContain("semanticProviders");
     expect(projection).toContain('ctx.targetProfile.capabilityPolicy === "ambient-js"');
     // No live manifest read, and no third arm invented here.
     expect(projection).not.toContain("prepared");

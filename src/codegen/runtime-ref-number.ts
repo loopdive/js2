@@ -3,7 +3,6 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { addUnionImports } from "./registry/imports.js";
 import { coerceType } from "./shared.js";
 import { emitStandaloneObjectToNumber } from "./tonumber-fast-paths.js";
-import { emitHostArrayCarrierToNumber } from "./host-carrier-to-primitive.js";
 
 /** Actual runtime carriers use their canonical numeric path, not a nominal default. */
 export function tryRuntimeRefToNumber(
@@ -22,7 +21,7 @@ export function tryRuntimeRefToNumber(
   }
   // (#6788) A JS-host array carrier reduces to its join, not through the host
   // struct walker, which answers "[object Object]" → NaN.
-  if (emitHostArrayCarrierToNumber(ctx, fctx, typeIdx, hint)) return true;
+
   if (
     ctx.nativeStrings &&
     (typeIdx === ctx.anyStrTypeIdx || (ctx.nativeStrTypeIdx >= 0 && typeIdx === ctx.nativeStrTypeIdx))

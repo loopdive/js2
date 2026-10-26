@@ -72,7 +72,6 @@ export function tryCompileClassToPrimitiveOperand(
   fctx: FunctionContext,
   expr: ts.Expression,
 ): RawToPrimitiveOperand | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
   const inner = unwrapTypeOnly(expr);
   const name = resolveStructNameForExpr(ctx, fctx, inner);

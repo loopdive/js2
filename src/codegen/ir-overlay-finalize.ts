@@ -596,7 +596,6 @@ export function preparePromiseDelayLoweringByIdentity(
       !ctx.standalone ||
       !ctx.nativeStrings ||
       ctx.wasi ||
-      ctx.targetProfile.semanticProviders !== "native-first" ||
       !timerExact ||
       !canEnsureIrNativePromiseDelayProvider(ctx)
     ) {

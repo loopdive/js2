@@ -19,7 +19,7 @@
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { buildThrowJsErrorInstrs, usesNativeJsErrors } from "./js-errors.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobals } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
@@ -95,7 +95,6 @@ const armedRefArgThrow = new WeakMap<CodegenContext, Instr[]>();
  * added at fill time.
  */
 export function armExternRefArgTypeGuard(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!usesNativeJsErrors(ctx)) return;
   if (armedRefArgThrow.has(ctx)) return;
   armedRefArgThrow.set(ctx, buildThrowJsErrorInstrs(ctx, "TypeError", REF_ARG_TYPE_ERROR_MESSAGE, { flush: fctx }));
 }
@@ -123,7 +122,7 @@ export function armExternRefArgTypeGuard(ctx: CodegenContext, fctx: FunctionCont
  */
 export function armExternRefArgTypeGuardForLinkedProvider(ctx: CodegenContext): void {
   if (!ctx.exportsConsumedByWasm) return;
-  if (!usesNativeJsErrors(ctx)) return;
+
   if (armedRefArgThrow.has(ctx)) return;
   armedRefArgThrow.set(ctx, buildThrowJsErrorInstrs(ctx, "TypeError", REF_ARG_TYPE_ERROR_MESSAGE));
 }
@@ -151,7 +150,6 @@ const armedF64ArgThrow = new WeakMap<CodegenContext, { symbol: Instr[]; bigint: 
  * marshal, never by `__unbox_number` itself.
  */
 export function armExternF64ArgTypeGuard(ctx: CodegenContext, fctx: FunctionContext): void {
-  if (!usesNativeJsErrors(ctx)) return;
   if (armedF64ArgThrow.has(ctx)) return;
   armedF64ArgThrow.set(ctx, {
     symbol: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", { flush: fctx }),
@@ -168,7 +166,7 @@ export function armExternF64ArgTypeGuard(ctx: CodegenContext, fctx: FunctionCont
  */
 export function armExternF64ArgTypeGuardForLinkedProvider(ctx: CodegenContext): void {
   if (!ctx.exportsConsumedByWasm) return;
-  if (!usesNativeJsErrors(ctx)) return;
+
   if (armedF64ArgThrow.has(ctx)) return;
   armedF64ArgThrow.set(ctx, {
     symbol: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number"),

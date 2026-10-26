@@ -30,7 +30,6 @@ async function scenario(options: Scenario) {
     "COMPILER_POOL_SIZE",
     "TEST262_TARGET",
     "TEST262_COMPILER_PATH",
-    "TEST262_SEMANTIC_PROVIDERS",
     "TEST262_INCLUDE_PROPOSALS",
     "TEST262_REALM_CANARY",
     "TEST262_STANDALONE_LINKED",
@@ -69,7 +68,6 @@ async function scenario(options: Scenario) {
       COMPILER_POOL_SIZE: "1",
       TEST262_TARGET: "standalone",
       TEST262_COMPILER_PATH: "legacy",
-      TEST262_SEMANTIC_PROVIDERS: "auto",
       JS2WASM_TEMPORAL_CACHE: join(directory, "temporal"),
     });
     Reflect.deleteProperty(process.env, "TEST262_INCLUDE_PROPOSALS");

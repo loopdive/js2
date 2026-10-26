@@ -5,8 +5,7 @@
 // Activates the third arm of `lowerForOfStatement`: `for (const c of
 // <string>)`. In native-strings mode the loop lowers through the new
 // `forof.string` declarative IR instr (counter loop with
-// `__str_charAt`); in host-strings mode it falls through to the
-// iter-host arm (#1182).
+// `__str_charAt`).
 //
 // Each test compiles the same source twice — once with the legacy
 // path (`experimentalIR: false`) and once through the IR
@@ -16,9 +15,7 @@
 // Note: in nativeStrings mode the user function CANNOT take a `string`
 // param directly from JS (the JS string isn't auto-coerced to a
 // `(ref $AnyString)`). Tests for native-strings mode use a wrapper
-// function that materialises the string literal inline. Host-strings
-// mode tests can take the string as a param since the param IR type
-// lowers to externref.
+// function that materialises the string literal inline.
 
 import { describe, expect, it } from "vitest";
 
@@ -66,18 +63,6 @@ async function runOnce(
   } catch (e: unknown) {
     return { kind: "invoke_fail", reason: e instanceof Error ? e.message : String(e) };
   }
-}
-
-async function dualRun(
-  source: string,
-  fnName: string,
-  nativeStrings: boolean,
-): Promise<{ legacy: Outcome; ir: Outcome }> {
-  const [legacy, ir] = await Promise.all([
-    runOnce(source, fnName, false, nativeStrings),
-    runOnce(source, fnName, true, nativeStrings),
-  ]);
-  return { legacy, ir };
 }
 
 interface Case {
@@ -198,27 +183,7 @@ const NATIVE_CASES: Case[] = [
   },
 ];
 
-// Host-strings case: falls through to iter-host. The legacy path also
-// works here, so we keep dual-run (legacy↔IR equivalence).
-const HOST_CASES: Case[] = [
-  {
-    name: "host: count chars (falls through to iter-host)",
-    source: `
-      export function fn(): number {
-        const s = "hello";
-        let count = 0;
-        for (const c of s) {
-          count = count + 1;
-        }
-        return count;
-      }
-    `,
-    fn: "fn",
-    expectedClaimed: ["fn"],
-    nativeStrings: false,
-    expectedValue: 5,
-  },
-];
+// (#6979) host-strings variant removed with the host-assisted profile.
 
 describe("#1183 — string for-of through IR (slice 6 part 4) — native mode", () => {
   // Legacy path has a pre-existing bug in nativeStrings mode for string
@@ -237,23 +202,8 @@ describe("#1183 — string for-of through IR (slice 6 part 4) — native mode", 
   }
 });
 
-describe("#1183 — string for-of through IR (slice 6 part 4) — host-strings fall-through", () => {
-  for (const tc of HOST_CASES) {
-    it(tc.name, async () => {
-      const { legacy, ir } = await dualRun(tc.source, tc.fn, tc.nativeStrings);
-      if (legacy.kind !== "ok") {
-        throw new Error(`legacy run failed: ${JSON.stringify(legacy)}`);
-      }
-      if (ir.kind !== "ok") {
-        throw new Error(`ir run failed: ${JSON.stringify(ir)}`);
-      }
-      expect(ir.value).toBe(legacy.value);
-    });
-  }
-});
-
 describe("#1183 — selector claims string-for-of-shaped functions", () => {
-  for (const tc of [...NATIVE_CASES, ...HOST_CASES]) {
+  for (const tc of NATIVE_CASES) {
     it(`selector claims ${tc.fn} from "${tc.name}"`, () => {
       const sf = ts.createSourceFile("test.ts", tc.source, ts.ScriptTarget.ES2022, true);
       const sel = planIrCompilation(sf, { experimentalIR: true });
@@ -265,7 +215,7 @@ describe("#1183 — selector claims string-for-of-shaped functions", () => {
 });
 
 describe("#1183 — IR compile produces no IR-fallback errors", () => {
-  for (const tc of [...NATIVE_CASES, ...HOST_CASES]) {
+  for (const tc of NATIVE_CASES) {
     it(`compiles "${tc.name}" cleanly under experimentalIR`, async () => {
       const r = await compile(tc.source, { experimentalIR: true, nativeStrings: tc.nativeStrings });
       expect(r.success).toBe(true);
@@ -298,9 +248,14 @@ describe("#1183 — vec / iter-host arms still work alongside string arm", () =>
     expect(result).toBe(15);
   });
 
-  it("Set iteration still routes through forof.iter (host iterator protocol)", async () => {
+  // (#6979 S7-a) Re-pinned from the retired host-iterator lane: on the native
+  // regime a `Set` is a module-native collection, so it is built in-module
+  // rather than handed in from JavaScript; the subject (for-of over a Set
+  // beside the string arm) is unchanged.
+  it("Set iteration still works alongside the string arm (native Set)", async () => {
     const source = `
-      export function fn(s: Set<number>): number {
+      export function fn(): number {
+        const s = new Set<number>([1, 2, 3]);
         let count = 0;
         for (const x of s) {
           count = count + 1;
@@ -315,7 +270,7 @@ describe("#1183 — vec / iter-host arms still work alongside string arm", () =>
       env: built.env,
       string_constants: built.string_constants,
     });
-    const result = (instance.exports.fn as (a: unknown) => unknown)(new Set([1, 2, 3]));
+    const result = (instance.exports.fn as () => unknown)();
     expect(result).toBe(3);
   });
 });
