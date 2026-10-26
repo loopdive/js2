@@ -163,8 +163,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
-  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
-   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  /** (#5247) Provider build — exports are wasm→wasm call targets that no
+   *  JS host consumes directly. */
   exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any

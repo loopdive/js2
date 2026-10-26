@@ -540,7 +540,6 @@ describe("#6712 completeness and wrapper wiring", () => {
     const baseEnv = {
       ...process.env,
       TEST262_TARGET: "gc",
-      TEST262_SEMANTIC_PROVIDERS: "auto",
       TEST262_PATH_FILTER: "",
       TEST262_PATH_FILTER_FILE: "",
     };

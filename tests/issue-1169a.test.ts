@@ -5,8 +5,7 @@
 // Each case compiles the same source twice — once with the legacy path
 // (experimentalIR off) and once through the IR (experimentalIR on) — and
 // asserts the exported function returns the same value for the same inputs.
-// Both string backends are exercised (`nativeStrings: true` and
-// `nativeStrings: false`).
+// The native-strings backend is exercised (`nativeStrings: true`).
 //
 // The test suite is the gate for #1169a: if any case here fails with
 // experimentalIR on, the slice 1 widening is wrong.
@@ -242,21 +241,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe("#1169a — IR slice 1 (host strings)", () => {
-  for (const c of CASES) {
-    it(c.name, async () => {
-      const { legacy, ir } = await dualRun(c.source, c.fn, c.args, { nativeStrings: false });
-      // IR must produce the same outcome (value or error mode) as legacy.
-      expect(ir).toStrictEqual(legacy);
-      // Slice 1 should reach a successful invoke for host-string mode —
-      // every case in CASES is in slice 1's scope. If we land in
-      // compile_fail / instantiate_fail / invoke_fail here, something is
-      // genuinely wrong (not just legacy-parity).
-      expect(ir.kind).toBe("ok");
-    });
-  }
-});
-
+// (#6979) host-strings variant removed with the host-assisted profile.
 describe("#1169a — IR slice 1 (native strings, IR-correctness)", () => {
   // Static `typeof`-fold in native-strings mode is a known correctness
   // win over legacy: legacy produces a runtime NativeString for
@@ -291,9 +276,7 @@ describe("#1169a — IR slice 1 (native strings, legacy-parity)", () => {
   // resolver. We restrict the comparison to cases whose return value is
   // representable in JS (not an opaque WasmGC ref) — string-returning
   // functions in native mode return a `(ref $NativeString)` that is
-  // opaque to JS, so vitest's `toStrictEqual` chokes on it. The
-  // string-returning cases are still exercised by the host-string suite
-  // above.
+  // opaque to JS, so vitest's `toStrictEqual` chokes on it.
   //
   // Additionally, slice-1's `typeof` static-fold diverges from legacy
   // in native mode for some operand types (legacy compares native-
@@ -349,11 +332,6 @@ const COVERAGE_SOURCES = [
 describe("#1169a — slice 1 functions reach the IR path without errors", () => {
   for (const src of COVERAGE_SOURCES) {
     const label = src.slice(0, 60);
-    it(`host: ${label}`, async () => {
-      const r = await compile(src, { experimentalIR: true, nativeStrings: false });
-      expect(r.success).toBe(true);
-      expect(irFallbacks(r)).toEqual([]);
-    });
     it(`native: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);

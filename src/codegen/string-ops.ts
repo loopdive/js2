@@ -28,13 +28,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext, HoistedCharRead } from "./context/types.js";
-import {
-  buildThrowJsErrorInstrs,
-  emitThrowTypeError,
-  getFuncParamTypes,
-  noJsHost,
-  usesNativeJsErrors,
-} from "./expressions/helpers.js";
+import { buildThrowJsErrorInstrs, emitThrowTypeError, getFuncParamTypes, noJsHost } from "./expressions/helpers.js";
 import { addStringImports, flatStringType, nativeStringType, resolveIdentifierType, resolveWasmType } from "./index.js";
 import {
   ensureAnyToStringHelper,
@@ -69,7 +63,7 @@ import {
 } from "./regexp-standalone.js";
 import { tryCompileStandaloneSplitSeparator, tryCompileStandaloneStringValueReplace } from "./string-search-value.js";
 import { tryCompileStandaloneDynamicStringRegExpCall } from "./string-regexp-dynamic.js";
-import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { addStringConstantGlobal, nextModuleGlobalIdx } from "./registry/imports.js";
 import { resolveStrictConstant, staticStringLength } from "./analysis/static-string-constants.js";
 import { staticConstStringValues } from "./analysis/static-string-values.js";
 import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
@@ -2492,40 +2486,9 @@ function emitTypeErrorThrow(ctx: CodegenContext, fctx: FunctionContext, msg: str
   addStringConstantGlobal(ctx, msg);
   // #1473 — no JS host: throw a TypeError INSTANCE via the in-module
   // constructor (no `__throw_type_error` host import).
-  if (usesNativeJsErrors(ctx)) {
-    emitThrowTypeError(ctx, fctx, msg);
-    fctx.body.push({ op: "unreachable" });
-    return;
-  }
-  const throwIdx = ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
-  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
-    compileNativeStringLiteral(ctx, fctx, msg);
-    if (throwIdx !== undefined) {
-      flushLateImportShifts(ctx, fctx);
-      // GC-ref → externref bridge so the host import receives a JS string.
-      fctx.body.push({ op: "extern.convert_any" });
-      const funcIdx = ctx.funcMap.get("__throw_type_error")!;
-      fctx.body.push({ op: "call", funcIdx });
-      fctx.body.push({ op: "unreachable" });
-    } else {
-      const tagIdx = ensureExnTag(ctx);
-      fctx.body.push({ op: "extern.convert_any" });
-      fctx.body.push({ op: "throw", tagIdx });
-    }
-    return;
-  }
-  const strIdx = ctx.stringGlobalMap.get(msg)!;
-  if (throwIdx !== undefined) {
-    flushLateImportShifts(ctx, fctx);
-    const funcIdx = ctx.funcMap.get("__throw_type_error")!;
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "call", funcIdx });
-    fctx.body.push({ op: "unreachable" });
-  } else {
-    const tagIdx = ensureExnTag(ctx);
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "throw", tagIdx });
-  }
+  emitThrowTypeError(ctx, fctx, msg);
+  fctx.body.push({ op: "unreachable" });
+  return;
 }
 
 /**
@@ -4060,7 +4023,7 @@ export function compileNativeStringMethodCall(
   // #1539 Phase 2c — `String.prototype.split(/re/)` against a backend-created
   // static, non-capturing, non-nullable RegExp routes through the pure-WasmGC
   // matcher and returns the same native string vec shape as string split.
-  if ((ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") && method === "split") {
+  if (method === "split") {
     const splitResult = tryCompileStandaloneStringSplit(ctx, fctx, expr, propAccess, receiverOverride);
     if (splitResult !== undefined) return splitResult;
   }

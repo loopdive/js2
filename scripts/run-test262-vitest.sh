@@ -38,30 +38,17 @@ if [ "$TEST262_TARGET" = "standalone" ]; then
   esac
 fi
 
-# (#6708 S6) The default policy is native-first in every environment, so the
-# default lane measures the native regime. `native-first` and `auto` are
-# spellings of that default (one lane, one result prefix); `host-assisted` is
-# the explicit control spelling for the retired pre-S6 JS-host profile —
-# measurement only, never promoted.
-TEST262_SEMANTIC_PROVIDERS="${TEST262_SEMANTIC_PROVIDERS:-auto}"
-case "$TEST262_SEMANTIC_PROVIDERS" in
-  auto|native-first) TEST262_SEMANTIC_PROVIDERS=auto ;;
-  host-assisted) ;;
-  *) echo "ERROR: TEST262_SEMANTIC_PROVIDERS must be native-first, host-assisted or auto"; exit 1 ;;
-esac
+# (#6979 S7) The native semantic regime is the only ECMAScript implementation,
+# so a lane is named by its target alone (the former TEST262_SEMANTIC_PROVIDERS
+# host-assisted control lane is gone).
 RESULT_PREFIX="test262"
 if [ "$TEST262_TARGET" != "gc" ]; then
   RESULT_PREFIX="test262-${TEST262_TARGET}"
 fi
-if [ "$TEST262_SEMANTIC_PROVIDERS" != "auto" ]; then
-  RESULT_PREFIX="${RESULT_PREFIX}-${TEST262_SEMANTIC_PROVIDERS}"
-fi
-export TEST262_SEMANTIC_PROVIDERS
 TEST262_COMPILER_PATH="${TEST262_COMPILER_PATH:-legacy}"
-# (#5385, #6708) The JS-host lane lowers with the native regime unless
-# `host-assisted` is spelled; JS2WASM_NATIVE_REGIME_JS=0 remains the kill switch.
+# (#5385, #6708) The JS-host lane lowers with the native regime.
 JS_HOST_REGIME_LANE=0
-if [ "$TEST262_TARGET" = "gc" ] && [ "$TEST262_SEMANTIC_PROVIDERS" = "auto" ]; then
+if [ "$TEST262_TARGET" = "gc" ]; then
   JS_HOST_REGIME_LANE=1
 fi
 
@@ -341,15 +328,12 @@ else
     else
       echo "Temporal provider (standalone): OFF (set JS2WASM_TEST262_TEMPORAL_STANDALONE=1 to link)"
     fi
-  elif [ "$JS_HOST_REGIME_LANE" = "1" ]; then
-    # (#6706, #6708) The default JS-host lane is the regime lane: it links a
-    # provider compiled under the native regime, stamped separately. Soft, like
-    # standalone: no stamp means the rows run unlinked (announced) — never
-    # against the host-semantics provider.
+  else
+    # (#6706, #6708) The JS-host lane links a provider compiled under the
+    # native regime, stamped separately. Soft, like standalone: no stamp means
+    # the rows run unlinked (announced).
     node scripts/prewarm-temporal-provider.mjs --target host ||
       echo "Temporal provider (native-first): UNAVAILABLE — those rows run unlinked"
-  else
-    node scripts/prewarm-temporal-provider.mjs --target host --semantic-providers "$TEST262_SEMANTIC_PROVIDERS"
   fi
 fi
 
@@ -407,7 +391,7 @@ if [ "$USE_WORKTREE" = "1" ]; then
 fi
 
 echo "Run ID: $RUN_TIMESTAMP"
-echo "Target: $TEST262_TARGET; semantic providers: $TEST262_SEMANTIC_PROVIDERS"
+echo "Target: $TEST262_TARGET"
 echo "Reporter: $TEST262_REPORTER"
 echo "Worktree at $(git -C "$WT_DIR" rev-parse --short HEAD)"
 echo "Running vitest (unified compile+execute in fork pool)..."
@@ -455,7 +439,16 @@ fi
 cd "$WT_DIR"
 LOCAL_SHARD_GLOB="${TEST262_LOCAL_SHARD_GLOB:-tests/test262-local-shard*.test.ts}"
 CHUNKS=$(ls $LOCAL_SHARD_GLOB 2>/dev/null | sort)
-> /tmp/test262-vitest-run.log
+# Keep strict IR qualification logs separate from prior run history.
+VITEST_RUN_LOG="/tmp/test262-vitest-run.log"
+if [ "$TEST262_COMPILER_PATH" = "ir" ]; then
+  VITEST_RUN_LOG="$RESULTS_DIR/${RESULT_PREFIX}-vitest-${RUN_TIMESTAMP}.log"
+  if [ -e "$VITEST_RUN_LOG" ] || [ -L "$VITEST_RUN_LOG" ]; then
+    echo "ERROR: refusing to overwrite existing IR run log: $VITEST_RUN_LOG"
+    exit 1
+  fi
+fi
+> "$VITEST_RUN_LOG"
 
 # Vitest loses TTY detection when piped through tee. Force ANSI colors so
 # failures stay readable in the terminal while still being captured to disk.
@@ -470,10 +463,10 @@ if [ -n "$CHUNKS" ]; then
   if [ ${#forwarded_args[@]} -gt 0 ]; then
     node node_modules/vitest/dist/cli.js run $LOCAL_SHARD_GLOB \
       --reporter="$TEST262_REPORTER" \
-      "${forwarded_args[@]}" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      "${forwarded_args[@]}" 2>&1 | tee "$VITEST_RUN_LOG" || true
   else
     node node_modules/vitest/dist/cli.js run $LOCAL_SHARD_GLOB \
-      --reporter="$TEST262_REPORTER" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      --reporter="$TEST262_REPORTER" 2>&1 | tee "$VITEST_RUN_LOG" || true
   fi
 else
   # Single file mode: run the monolithic test file
@@ -481,10 +474,10 @@ else
   if [ ${#forwarded_args[@]} -gt 0 ]; then
     node node_modules/vitest/dist/cli.js run tests/test262-vitest.test.ts \
       --reporter="$TEST262_REPORTER" \
-      "${forwarded_args[@]}" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      "${forwarded_args[@]}" 2>&1 | tee "$VITEST_RUN_LOG" || true
   else
     node node_modules/vitest/dist/cli.js run tests/test262-vitest.test.ts \
-      --reporter="$TEST262_REPORTER" 2>&1 | tee /tmp/test262-vitest-run.log || true
+      --reporter="$TEST262_REPORTER" 2>&1 | tee "$VITEST_RUN_LOG" || true
   fi
 fi
 # A JSONL can be syntactically valid and still be missing verdict callbacks.
@@ -669,7 +662,7 @@ print('Appended to index: %d pass / %d total' % (entry['pass'], entry['total']))
 else
   echo "INCOMPLETE: $COMPLETENESS_REASON"
   echo "Timestamped JSONL preserved for diagnosis: $JSONL_FILE"
-  echo "Check /tmp/test262-vitest-run.log for errors."
+  echo "Check $VITEST_RUN_LOG for errors."
   exit 2
 fi
 

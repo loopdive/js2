@@ -10,7 +10,7 @@
  */
 import type { AsyncConsumerKind } from "./async-cps.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { PROMISE_STATE_REJECTED, getOrRegisterPromiseType, isStandalonePromiseActive } from "./async-scheduler.js";
+import { PROMISE_STATE_REJECTED, getOrRegisterPromiseType } from "./async-scheduler.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
@@ -130,7 +130,7 @@ export function emitAsyncValueSinkUnwrap(
   callResult: InnerResult,
 ): InnerResult {
   if (consumerKind !== "value") return callResult;
-  if (!isStandalonePromiseActive(ctx)) return callResult;
+
   if (callResult === null || callResult === VOID_RESULT) return callResult;
   if ((callResult as ValType).kind !== "externref") return callResult;
   emitStandaloneAwaitUnwrap(ctx, fctx);

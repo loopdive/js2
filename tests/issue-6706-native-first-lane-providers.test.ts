@@ -9,7 +9,7 @@
  *    never certifies it (no silent fallback to host semantics), and a stamp
  *    recorded outside the regime never certifies a regime consumer.
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -55,70 +55,56 @@ describe("#6706 A — eval provider on the native-first lane", () => {
 
 describe("#6706 B — regime-compiled Temporal provider", () => {
   let dir: string;
-  const savedRegime = process.env.JS2WASM_NATIVE_REGIME_JS;
   const savedDisable = process.env.JS2WASM_TEST262_TEMPORAL;
   const info = { key: "k", namespace: "n", bytes: 1, buildMs: 1, cacheHit: false };
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "issue-6706-"));
     Reflect.deleteProperty(process.env, "JS2WASM_TEST262_TEMPORAL");
-    process.env.JS2WASM_NATIVE_REGIME_JS = "1";
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
-    if (savedRegime === undefined) Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
-    else process.env.JS2WASM_NATIVE_REGIME_JS = savedRegime;
     if (savedDisable === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST262_TEMPORAL");
     else process.env.JS2WASM_TEST262_TEMPORAL = savedDisable;
   });
 
-  // (#6708 S6) The default JS-host lane IS the regime lane; "native-first" and
-  // "auto" spell it, and "host-assisted" is the explicit control lane.
-  it("keys the regime provider separately and leaves host/standalone unchanged", () => {
-    for (const lane of [undefined, "auto", "native-first"]) {
-      expect(temporalProviderCompileOptions(undefined, lane)).toEqual({ hostBridge: "always" });
-      expect(temporalPrewarmStampName(undefined, lane)).toBe("prewarm-native-first.json");
-    }
-    expect(temporalProviderCompileOptions(undefined, "host-assisted")).toEqual({ semanticProviders: "host-assisted" });
-    expect(temporalProviderCompileOptions("standalone", "native-first")).toEqual({
-      target: "standalone",
-      hostBridge: "off",
-    });
-    expect(temporalPrewarmStampName(undefined, "host-assisted")).toBe("prewarm.json");
-    expect(temporalPrewarmStampName("standalone", "native-first")).toBe("prewarm-standalone.json");
+  // (#6979 S7) The JS-host lane IS the regime lane; there is no other policy.
+  it("keys the regime provider separately and leaves standalone unchanged", () => {
+    expect(temporalProviderCompileOptions(undefined)).toEqual({ hostBridge: "always" });
+    expect(temporalPrewarmStampName(undefined)).toBe("prewarm-native-first.json");
+    expect(temporalProviderCompileOptions("standalone")).toEqual({ target: "standalone", hostBridge: "off" });
+    expect(temporalPrewarmStampName("standalone")).toBe("prewarm-standalone.json");
   });
 
-  it("never lets the host-assisted stamp certify the default regime lane", () => {
-    writeTemporalPrewarmStamp(dir, info, undefined, "host-assisted");
-    expect(test262TemporalLaneEnabled(undefined, dir, "host-assisted")).toBe(true);
+  it("never lets a pre-S6 host-semantics stamp certify the regime lane", () => {
+    writeFileSync(join(dir, "prewarm.json"), JSON.stringify({ ...info, target: null }));
     expect(test262TemporalLaneEnabled(undefined, dir)).toBe(false);
     expect(readTemporalPrewarmStamp(dir, undefined)).toBeNull();
   });
 
-  it("links with a regime stamp and records the provider policy", () => {
+  it("links with a regime stamp", () => {
     const stamp = writeTemporalPrewarmStamp(dir, info, undefined);
-    expect(stamp).toMatchObject({ semanticProviders: "native-first", nativeRegime: true, target: null });
+    expect(stamp).toMatchObject({ target: null, key: "k" });
     expect(test262TemporalLaneEnabled(undefined, dir)).toBe(true);
-    // The host-assisted control lane is unaffected by a regime stamp.
-    expect(readTemporalPrewarmStamp(dir, undefined, "host-assisted")).toBeNull();
   });
 
-  it("refuses a stamp recorded under a different regime flag", () => {
-    process.env.JS2WASM_NATIVE_REGIME_JS = "0";
-    writeTemporalPrewarmStamp(dir, info, undefined);
-    Reflect.deleteProperty(process.env, "JS2WASM_NATIVE_REGIME_JS");
+  it("refuses a stamp recorded while the removed S6 kill switch was off", () => {
+    writeFileSync(
+      join(dir, "prewarm-native-first.json"),
+      JSON.stringify({ ...info, target: null, nativeRegime: false }),
+    );
     expect(test262TemporalLaneEnabled(undefined, dir)).toBe(false);
   });
 
-  it("threads the lane's semantic-provider policy through prewarm and worker", () => {
+  it("threads the target-only lane through prewarm and worker", () => {
     const prewarm = readFileSync(join(process.cwd(), "scripts/prewarm-temporal-provider.mjs"), "utf8");
-    expect(prewarm).toContain("--semantic-providers");
-    expect(prewarm).toContain("temporalProviderCompileOptions(target, semanticProviders)");
+    expect(prewarm).not.toContain("--semantic-providers");
+    expect(prewarm).toContain("temporalProviderCompileOptions(target)");
     expect(prewarm).toContain("temporalProviderCacheKey({ polyfillSource, compileOptions })");
     const worker = readFileSync(join(process.cwd(), "scripts/test262-worker.mjs"), "utf8");
-    expect(worker).toContain("getWorkerTemporalProvider(target, semanticProviders)");
-    expect(worker).toContain("temporalProviderCompileOptions(target, semanticProviders)");
-    expect(worker).toContain("readTemporalPrewarmStamp(cacheDir, target, semanticProviders)");
+    expect(worker).toContain("getWorkerTemporalProvider(target)");
+    expect(worker).toContain("temporalProviderCompileOptions(target)");
+    expect(worker).toContain("readTemporalPrewarmStamp(cacheDir, target)");
   });
 
   it("builds and ships the regime provider under its own artifact", () => {

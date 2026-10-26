@@ -75,6 +75,50 @@ function buildThrowTypeErrorBranch(ctx: CodegenContext, fctx: FunctionContext, m
   return throwInstrs;
 }
 
+const EXTERNREF: ValType = { kind: "externref" };
+const PRIVATE_IN_NON_OBJECT = "Cannot use 'in' operator to search for private field in a non-object";
+
+/**
+ * (#7150) §13.10.1 `#x in v` step 1 on the no-host lanes: with the brand i32 on
+ * the stack, throw a TypeError when it is 0 and `v` is not an Object. Object-ness
+ * is the module's own `typeof` pair ("object" | "function"), minus wasm null —
+ * also standalone's `undefined` — and minus the Symbol carrier, which
+ * `__typeof_object` reports as object-like. Leaves the brand i32 on the stack;
+ * the caller releases `copy`.
+ */
+function emitNativePrivateInObjectGuard(ctx: CodegenContext, fctx: FunctionContext, copy: number): void {
+  ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+  const throwInstrs = buildThrowTypeErrorBranch(ctx, fctx, PRIVATE_IN_NON_OBJECT);
+  const typeofObject = ctx.funcMap.get("__typeof_object");
+  const typeofFunction = ctx.funcMap.get("__typeof_function");
+  if (typeofObject === undefined || typeofFunction === undefined) return;
+  // Fresh instruction objects per use: later passes rewrite local indices in place.
+  const get = (): Instr => ({ op: "local.get", index: copy });
+  const notObject: Instr[] = [
+    get(),
+    { op: "call", funcIdx: typeofObject },
+    get(),
+    { op: "call", funcIdx: typeofFunction },
+  ];
+  notObject.push({ op: "i32.or" }, { op: "i32.eqz" }, get(), { op: "ref.is_null" }, { op: "i32.or" });
+  if (ctx.symbolTypeIdx >= 0) {
+    notObject.push(
+      get(),
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+      { op: "i32.or" },
+    );
+  }
+  notObject.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+  const brand = allocTempLocal(fctx, { kind: "i32" });
+  fctx.body.push({ op: "local.tee", index: brand }, { op: "i32.eqz" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: notObject, else: [] });
+  fctx.body.push({ op: "local.get", index: brand });
+  releaseTempLocal(fctx, brand);
+}
+
 /**
  * Keep a dynamic `key in value` comparison on the JavaScript property surface.
  * Physical structs also contain compiler-only fields such as `__tag`; unlike
@@ -260,23 +304,23 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // cannot distinguish "a real object of the wrong class" (should stay
       // `false`) from "not an object at all" (should throw). Stash a raw
       // copy of the externref BEFORE `any.convert_extern` so the JS-host
-      // fast-path check below can ask the host directly — Wasm has no
-      // visibility into what an opaque externref wraps. A statically-typed
+      // check below can ask the host directly, and (#7150) the no-host lanes
+      // ask the module's own `typeof` classifiers. A statically-typed
       // receiver (already known to be a struct/array/etc.) skips this
       // entirely: it's always an Object, no runtime ambiguity to resolve.
+      const hostFree = ctx.standalone || ctx.wasi;
       let externCopy: number | undefined;
-      if (receiverIsExternref && !ctx.standalone && !ctx.wasi) {
+      if (receiverIsExternref) {
         externCopy = allocTempLocal(fctx, { kind: "externref" });
         fctx.body.push({ op: "local.tee", index: externCopy });
-      }
-      if (receiverIsExternref) {
         fctx.body.push({ op: "any.convert_extern" });
       }
       const tmpAny = allocTempLocal(fctx, { kind: "anyref" });
       fctx.body.push({ op: "local.set", index: tmpAny });
       emitPrivateBrandPredicate(ctx, fctx, tmpAny, declared.className, declared.structTypeIdx);
+      if (externCopy !== undefined && hostFree) emitNativePrivateInObjectGuard(ctx, fctx, externCopy);
       const isObjectIdx =
-        externCopy !== undefined
+        externCopy !== undefined && !hostFree
           ? ensureLateImport(ctx, "__extern_is_object", [{ kind: "externref" }], [{ kind: "i32" }])
           : undefined;
       if (externCopy !== undefined && isObjectIdx !== undefined) {
@@ -309,10 +353,10 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         releaseTempLocal(fctx, brandLocal);
         releaseTempLocal(fctx, externCopyLocal);
       } else if (externCopy !== undefined) {
-        // Defensive: `ensureLateImport` failed (should not happen for a
-        // brand-new import name). The brand predicate's i32 is already on
+        // The no-host lanes (their #7150 guard ran above), or defensive:
+        // `ensureLateImport` failed. The brand predicate's i32 is already on
         // the stack from `emitPrivateBrandPredicate` above — just release
-        // the unused externref copy and fall back to the pre-existing
+        // the externref copy and, defensively, fall back to the pre-existing
         // false-no-throw behavior rather than failing the compile.
         releaseTempLocal(fctx, externCopy);
       }

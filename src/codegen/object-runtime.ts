@@ -190,7 +190,7 @@ import {
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
 import { captureVecOrClosureReadBinding, buildVecOrClosurePropSetMissArm, reserveVecPropHelpers } from "./vec-props.js";
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureVecElemSet } from "./vec-elem-set.js";
 import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
 // (#4160) prototype-index store — reserve + registration-time consult builders
@@ -1052,7 +1052,6 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // that were not admitted by this module instance. Register the pair before
   // any native helper body captures function indices.
   const boundaryObjectInterop =
-    ctx.targetProfile.semanticProviders === "native-first" &&
     ctx.targetProfile.environment === "javascript" &&
     ctx.targetProfile.hostValueInterop !== "off" &&
     !ctx.strictNoHostImports;
@@ -1236,19 +1235,16 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // idempotent. Register BEFORE the helper bodies bake their `call` funcIdx.
   // (`number_toString` also upgrades __extern_toString's boxed-number arm from
   // "[object Object]" to the real decimal, which is spec-correct.)
-  const objArrayLikeArms = ctx.targetProfile.semanticProviders === "native-first" || ctx.standalone;
-  if (objArrayLikeArms) {
-    emitNativeNumberFormat(ctx, new Set(["number_toString"]));
-    // (#3183) `__str_to_number` (§7.1.4.1 StringToNumber) is the scanner the
-    // finalize-time `$__vec_base` arms of `__extern_get`/`__extern_has` use to
-    // turn a string element key ("0".."n-1", from a for-in loop or a computed
-    // `arr[k]` with a string `k`) into the numeric index they delegate on. It is
-    // otherwise emitted on demand, so register it eagerly here (a DEFINED func —
-    // no import shift) to give the arms a stable, shift-maintained funcIdx at
-    // finalize; dead-elimination prunes it when no arm references it.
-    emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
-    addUnionImportsViaRegistry(ctx);
-  }
+  emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+  // (#3183) `__str_to_number` (§7.1.4.1 StringToNumber) is the scanner the
+  // finalize-time `$__vec_base` arms of `__extern_get`/`__extern_has` use to
+  // turn a string element key ("0".."n-1", from a for-in loop or a computed
+  // `arr[k]` with a string `k`) into the numeric index they delegate on. It is
+  // otherwise emitted on demand, so register it eagerly here (a DEFINED func —
+  // no import shift) to give the arms a stable, shift-maintained funcIdx at
+  // finalize; dead-elimination prunes it when no arm references it.
+  emitNativeParseNumber(ctx, new Set(["__str_to_number"]));
+  addUnionImportsViaRegistry(ctx);
 
   const anyStrTypeIdx = ctx.anyStrTypeIdx;
   const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
@@ -1263,7 +1259,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `symbolTypeIdx` stays -1 when not registered, and every symbol branch below
   // is guarded on `symbolKeysEnabled` (idx >= 0) so the string-only key path is
   // byte-unchanged when symbols are absent from the type space.
-  const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
+  const symbolTypeIdx = ensureSymbolCarrier(ctx);
   const symbolKeysEnabled = symbolTypeIdx >= 0;
 
   // --- 1. Register the three struct/array types. ---
@@ -1719,7 +1715,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     const body: Instr[] = buildObjectHashBody({
       ...keyResources,
       hashedStrTypeIdx: ctx.hashedStrTypeIdx,
-      nativeFirst: !symbolKeysEnabled && ctx.targetProfile.semanticProviders === "native-first",
+      nativeFirst: !symbolKeysEnabled,
     });
     registerNative(
       "__obj_hash",
@@ -5193,7 +5189,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
 
   buildObjectEnumerationHelpers(ctx, {
     registerNative,
-    objArrayLikeArms,
+    objArrayLikeArms: true,
     symbolTypeIdx,
     anyStrTypeIdx,
     propEntryTypeIdx,
@@ -5770,11 +5766,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // objects through the existing identity-cached host proxy. Export only the
   // narrow MOP surface that proxy needs at the boundary; semantic operations
   // remain in Wasm and standalone/WASI gain no JS-facing exports or imports.
-  if (
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off"
-  ) {
+  if (ctx.targetProfile.environment === "javascript" && ctx.targetProfile.hostValueInterop !== "off") {
     ensureNativeStringBoundaryBridge(ctx);
     if (!ctx.funcMap.has("__object_is_native_open")) {
       registerNative(
@@ -5860,7 +5852,7 @@ export function ensureNativeProxyRuntime(ctx: CodegenContext): ObjectRuntimeType
 
 /** (#6686) Admitted-object callable classifier for `__is_callable`/`typeof` (adds an import). */
 export function ensureBoundaryCallableKind(ctx: CodegenContext): void {
-  if (ctx.targetProfile.semanticProviders === "native-first" && jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
+  if (jsValueBoundary(ctx) && !ctx.strictNoHostImports) {
     ensureLateImport(ctx, "__boundary_object_callable_kind", [{ kind: "externref" }], [{ kind: "i32" }]);
     flushLateImportShifts(ctx, null);
   }
@@ -7299,9 +7291,7 @@ export function fillBindDynHelper(ctx: CodegenContext): void {
     ...buildClosureRefTestArms(ctx, ANY, mintArm),
   ];
   const jsBoundaryFallback =
-    ctx.targetProfile.semanticProviders === "native-first" &&
-    ctx.targetProfile.environment === "javascript" &&
-    ctx.targetProfile.hostValueInterop !== "off";
+    ctx.targetProfile.environment === "javascript" && ctx.targetProfile.hostValueInterop !== "off";
   if (jsBoundaryFallback && methodCallIdx !== undefined) {
     body.push(
       { op: "local.get", index: 0 },
@@ -8827,7 +8817,7 @@ type EnumShapeEntry = {
  * the NAMES from presence words is not possible — a presence word holds bits,
  * not names, and unconditionally-assigned fields have no presence bit at all.)
  */
-function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEntry[] {
+function collectClosedStructEnumerationEntries(ctx: CodegenContext, emptyTypeIdxs?: number[]): EnumShapeEntry[] {
   const entries: EnumShapeEntry[] = [];
   for (const [structName, fields] of ctx.structFields) {
     if (isSyntheticStructName(structName)) continue;
@@ -8864,7 +8854,13 @@ function collectClosedStructEnumerationEntries(ctx: CodegenContext): EnumShapeEn
         byName.set(layoutField.name, { name: layoutField.name, presenceSlot: layoutField.presenceSlot });
       }
     }
-    if (byName.size === 0) continue;
+    // (#7149) A shape with no enumerable own field (`class C { #x = 1 }`) has
+    // no arm, but it is still an ordinary object: the caller's classifier
+    // needs it so JSON.stringify answers `{}`, not `null`.
+    if (byName.size === 0) {
+      emptyTypeIdxs?.push(typeIdx);
+      continue;
+    }
 
     const orderedNames = orderNamesByInsertion(ctx, structName, [...byName.keys()]);
     const shapeFieldIdx = fields.findIndex((field) => field?.name === "$shape");
@@ -9074,15 +9070,17 @@ export function fillClosedStructOwnPropertyNamesArms(ctx: CodegenContext): void 
  * standalone, so their dynamically-routed closed structs need these arms too.
  */
 export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.standalone) return;
   const objVecNewIdx = ctx.funcMap.get("__objvec_new");
   const objVecPushIdx = ctx.funcMap.get("__objvec_push");
   if (objVecNewIdx === undefined || objVecPushIdx === undefined) return;
 
-  const entries = collectClosedStructEnumerationEntries(ctx);
-  if (entries.length === 0) return;
+  const emptyTypeIdxs: number[] = [];
+  const entries = collectClosedStructEnumerationEntries(ctx, emptyTypeIdxs);
+  const allocatedTypes = allocatedStructTypeIndices(ctx.mod);
+  const emptyAllocated = emptyTypeIdxs.filter((typeIdx) => allocatedTypes.has(typeIdx));
+  if (entries.length === 0 && emptyAllocated.length === 0) return;
 
-  for (const name of ["__object_keys", "__object_keys_forin"]) {
+  for (const name of entries.length === 0 ? [] : ["__object_keys", "__object_keys_forin"]) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
     // `(externref obj) -> externref`: one param, so the first appended local
@@ -9122,13 +9120,13 @@ export function fillClosedStructEnumerationArms(ctx: CodegenContext): void {
   if (closedAssignSourceClassifier) {
     const seenTypeIdxs = new Set<number>();
     const body: Instr[] = [];
-    for (const entry of entries) {
-      if (seenTypeIdxs.has(entry.typeIdx)) continue;
-      seenTypeIdxs.add(entry.typeIdx);
+    for (const typeIdx of [...entries.map((entry) => entry.typeIdx), ...emptyAllocated]) {
+      if (seenTypeIdxs.has(typeIdx)) continue;
+      seenTypeIdxs.add(typeIdx);
       body.push(
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: entry.typeIdx },
+        { op: "ref.test", typeIdx },
         {
           op: "if",
           blockType: { kind: "empty" },

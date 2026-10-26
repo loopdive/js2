@@ -390,6 +390,12 @@ export interface IrIntegrationLoweringPlans {
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** Build-time callback that revalidates the mutable fnctor join. */
   readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
+  /**
+   * (#7106 module-init lever B) The overlay's source-bound `Number(v)`
+   * conversion plan — built once per compile, carried to integration so the
+   * selector option and the from-ast resolver answer from the same instance.
+   */
+  readonly preparedNumberCall?: (call: ts.CallExpression) => boolean;
   /** Exact projected classes used by class-member body integration. */
   readonly classShapesById?: ReadonlyMap<IrClassId, IrClassShape>;
   /** Exact active terminal owners behind the remaining name-keyed integration API. */

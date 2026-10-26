@@ -62,8 +62,9 @@ async function runHost(src: string): Promise<unknown> {
   const result = await compile(src, {
     fileName: "issue-1102-host-eval.ts",
     skipSemanticDiagnostics: true,
-    // (#6708 S7) Host-scope eval is the host-assisted profile.
-    semanticProviders: "host-assisted",
+    // (#6979 S7-a) Runs on the default profile (the native regime in a JS
+    // environment): the literal eval is folded onto the caller-scope splice at
+    // compile time, so no host eval shim is involved.
   });
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   expect(
@@ -369,19 +370,44 @@ describe("#1102 — host mode: widened direct eval sees the caller scope", () =>
     expect((instance.exports as { test(): number }).test()).toBe(9);
   });
 
-  it("keeps an explicitly strict literal eval on the caller-scope splice", async () => {
-    expect(
-      await runHost(`
+  // (#6979 S7-a) Re-pinned. The retired host-assisted profile spliced this
+  // explicitly strict eval into the caller, sharing its locals. On the native
+  // regime a strict eval with its own `var` needs a private
+  // VariableEnvironment, so the splice declines and the call goes to the
+  // runtime-eval provider (eval-inline.ts, "Strict eval declarations require a
+  // private VariableEnvironment"). With the refusal provider linked that call
+  // throws catchably; a real provider (the QuickJS lane) answers 5.
+  it("routes an explicitly strict eval with its own var to the runtime-eval provider", async () => {
+    const result = await compile(
+      `
         export function test(): number {
           "use strict";
           var y = 2;
           var z = 3;
           var result = 0;
-          eval("var x = y + z; result = x;");
+          try {
+            eval("var x = y + z; result = x;");
+          } catch {
+            return -1;
+          }
           return result;
         }
-      `),
-    ).toBe(5);
+      `,
+      { fileName: "issue-1102-host-eval.ts", skipSemanticDiagnostics: true },
+    );
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const names = WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map(
+      (entry) => `${entry.module}::${entry.name}`,
+    );
+    expect(names).toContain(`${RUNTIME_EVAL_IMPORT_MODULE}::__runtime_direct_eval`);
+    expect(names.some((name) => name.endsWith("::__extern_eval"))).toBe(false);
+    const imports = result.importObject as WebAssembly.Imports & { __setExports?: (exports: unknown) => void };
+    (imports as Record<string, unknown>)[RUNTIME_EVAL_IMPORT_MODULE] = instantiateRuntimeEvalNamespace(
+      await refusalModule(),
+    );
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.__setExports?.(instance.exports);
+    expect((instance.exports as { test(): number }).test()).toBe(-1);
   });
 
   it("creates a current-function var when eval shadows an outer capture", async () => {

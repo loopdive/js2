@@ -1,0 +1,411 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #7144 — the selector half of the shared operand / write admissibility rule
+// for a planned function-member closure (#7106 Stage 4).
+//
+// A planned closure's body is walked once, after the shape walk admitted it.
+// Every operator and every slot write is judged by the SAME predicates
+// `ir/from-ast` consults when it lowers them
+// (`analysis/operand-admissibility.ts`), over the families this file can prove
+// before lowering. A family it cannot prove is `unknown`, which every predicate
+// refuses — so a claim is never followed by a typing withdrawal of an operand
+// the walk saw. The family proof mirrors how from-ast represents each value in
+// a planned closure: the dynamic parameters and the catch binding are the
+// boxed-any carrier, an f64-planned parameter is a number, an untyped local
+// takes the family of its initializer (no initializer: the carrier's
+// `undefined`), literals and operators produce their result family.
+
+import { forEachChild, ts } from "../ts-api.js";
+import { i32IdentityBitwiseOperand, isWrapI32Lowerable } from "./analysis/i32-slots.js";
+import type { IrFunctionMemberClosurePlan } from "./function-member-closure-plan.js";
+import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
+import {
+  additiveOperandsProvable,
+  binaryOperandsAdmissible,
+  compoundWriteAdmissible,
+  incrementSlotAdmissible,
+  isEqualityOperator,
+  isStrictEqualityOperator,
+  isTypedBinaryOperator,
+  isUndefinedCompareOperand,
+  nullComparisonFolds,
+  undefinedCompareOperandAdmissible,
+  nullishLeftAdmissible,
+  nullValueAdmissible,
+  slotWriteVerdict,
+  type AdditiveProof,
+  type OperandFamily,
+} from "./analysis/operand-admissibility.js";
+
+/** The selector's own family proofs the walk builds on. */
+export interface PlannedClosureFamilySources {
+  /** `obviousSelectorValueFamily`: the syntactic family of a literal / operator result. */
+  readonly obviousFamily: (
+    expr: ts.Expression,
+  ) => "number" | "boolean" | "string" | "reference" | "nullish" | undefined;
+  /** The checker's declared primitive family (a call to a JSDoc-typed function, a module binding, …). */
+  readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
+}
+
+/** The refused operator / write; selection reports it as `operand-coercion-unsupported`. */
+export interface PlannedClosureOperandRefusal {
+  readonly arm: string;
+  readonly node: ts.Node;
+}
+
+interface OperandProof {
+  readonly family: OperandFamily;
+  readonly additive: AdditiveProof;
+}
+
+const UNKNOWN: OperandProof = { family: "unknown", additive: "unprovable" };
+const DYNAMIC: OperandProof = { family: "dynamic", additive: "dynamic" };
+const NUMBER: OperandProof = { family: "number", additive: "number" };
+const STRING: OperandProof = { family: "string", additive: "string" };
+const BOOLEAN: OperandProof = { family: "boolean", additive: "unprovable" };
+
+function unwrapParens(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
+function isAssignmentOperator(op: ts.SyntaxKind): boolean {
+  return op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment;
+}
+
+/** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */
+function nullComparedOperand(expr: ts.BinaryExpression): ts.Expression | null {
+  if (!isEqualityOperator(expr.operatorToken.kind)) return null;
+  const leftNull = expr.left.kind === ts.SyntaxKind.NullKeyword;
+  const rightNull = expr.right.kind === ts.SyntaxKind.NullKeyword;
+  if (leftNull === rightNull) return null;
+  return leftNull ? expr.right : expr.left;
+}
+
+function nullIsComparedOperand(node: ts.Node): boolean {
+  const parent = node.parent;
+  if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
+  return parent.left === node || parent.right === node;
+}
+
+/**
+ * The consumer a bare `null` value lowers into: a discarded expression (a
+ * statement, a `void` operand, a comma's left side, an arm of a discarded
+ * conditional) and a `throw` operand take the externref hint
+ * (`lowerDiscardedExpression`, `lowerThrowStatement`); every other position
+ * has a scalar or dynamic consumer, or one the walk does not type.
+ */
+function nullConsumerFamily(node: ts.Node): OperandFamily {
+  let child = node;
+  let throughConditional = false;
+  for (let parent = node.parent; ; child = parent, parent = parent.parent) {
+    if (ts.isParenthesizedExpression(parent)) continue;
+    if (ts.isVoidExpression(parent) || ts.isExpressionStatement(parent)) return "externref";
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      if (parent.left === child) return "externref";
+      continue;
+    }
+    // A conditional's arms join into one value; only a discarded conditional
+    // lowers each arm discarded.
+    if (ts.isConditionalExpression(parent) && parent.condition !== child) {
+      throughConditional = true;
+      continue;
+    }
+    if (ts.isThrowStatement(parent) && !throughConditional) return "externref";
+    return "unknown";
+  }
+}
+
+/**
+ * Whether a value `void x` — the f64 NaN sentinel for `undefined` — reaches a
+ * consumer that reads it correctly or that the predicates judge: discarded
+ * (also through a discarded conditional), a typed binary operand, the value of
+ * a closure-slot write, a ToBoolean / ToNumber reader (`!`, `-`, `+`, `~`, a
+ * condition). Anywhere else (a call argument, a member store, a declaration,
+ * `typeof`, `throw`, a joined conditional arm) the NaN would be observed as a
+ * number, or from-ast has no carrier box for it.
+ */
+function voidValueConsumerAdmissible(node: ts.VoidExpression, isClosureSlot: (name: string) => boolean): boolean {
+  let child: ts.Node = node;
+  let throughConditional = false;
+  for (let parent = node.parent; ; child = parent, parent = parent.parent) {
+    if (ts.isParenthesizedExpression(parent)) continue;
+    if (ts.isExpressionStatement(parent) || ts.isVoidExpression(parent)) return true;
+    if (ts.isConditionalExpression(parent) && parent.condition !== child) {
+      throughConditional = true;
+      continue;
+    }
+    if (ts.isBinaryExpression(parent)) {
+      const op = parent.operatorToken.kind;
+      if (op === ts.SyntaxKind.CommaToken) {
+        if (parent.left === child) return true;
+        continue;
+      }
+      if (throughConditional) return false;
+      if (isTypedBinaryOperator(op)) return true;
+      const target = unwrapParens(parent.left);
+      return (
+        isAssignmentOperator(op) && parent.right === child && ts.isIdentifier(target) && isClosureSlot(target.text)
+      );
+    }
+    if (throughConditional) return false;
+    if (ts.isPrefixUnaryExpression(parent)) {
+      return (
+        parent.operator === ts.SyntaxKind.ExclamationToken ||
+        parent.operator === ts.SyntaxKind.MinusToken ||
+        parent.operator === ts.SyntaxKind.PlusToken ||
+        parent.operator === ts.SyntaxKind.TildeToken
+      );
+    }
+    if (ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) {
+      return parent.expression === child;
+    }
+    if (ts.isForStatement(parent)) return parent.condition === child;
+    if (ts.isConditionalExpression(parent)) return true;
+    return false;
+  }
+}
+
+/**
+ * The first operator or slot write in `fn`'s body that from-ast's typing would
+ * withdraw, or `null` when every one the walk sees is admissible.
+ */
+export function plannedClosureOperandRefusal(
+  plan: IrFunctionMemberClosurePlan,
+  sources: PlannedClosureFamilySources,
+): PlannedClosureOperandRefusal | null {
+  const fn = plan.expression;
+  const dynamicParameterNames = new Set<string>();
+  const numericParameterNames = new Set<string>();
+  fn.parameters.forEach((parameter, index) => {
+    if (!ts.isIdentifier(parameter.name)) return;
+    const type = plan.signature.params[index];
+    if (plan.dynamicParameterIndices.has(index)) dynamicParameterNames.add(parameter.name.text);
+    else if (type?.kind === "val" && type.val.kind === "f64") numericParameterNames.add(parameter.name.text);
+  });
+  // Slot bindings: name → initializer (`null` = declared without one) or the
+  // `"carrier"` marker for a catch binding. Parameters are resolved from the plan.
+  const locals = new Map<string, ts.Expression | null | "carrier">();
+  const collect = (node: ts.Node): void => {
+    if (node !== fn && ts.isFunctionLike(node)) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && !locals.has(node.name.text)) {
+      locals.set(node.name.text, node.initializer ?? null);
+    }
+    if (ts.isCatchClause(node) && node.variableDeclaration && ts.isIdentifier(node.variableDeclaration.name)) {
+      locals.set(node.variableDeclaration.name.text, "carrier");
+    }
+    forEachChild(node, collect);
+  };
+  if (fn.body) collect(fn.body);
+  const parameterNames = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+  const isClosureSlot = (name: string): boolean => locals.has(name) || parameterNames.has(name);
+
+  const resolving = new Set<string>();
+  const slotProof = (name: string): OperandProof => {
+    const local = locals.get(name);
+    if (local === undefined) {
+      if (!parameterNames.has(name)) return UNKNOWN;
+      if (dynamicParameterNames.has(name)) return DYNAMIC;
+      return numericParameterNames.has(name) ? NUMBER : UNKNOWN;
+    }
+    if (local === "carrier" || local === null) return DYNAMIC;
+    if (resolving.has(name)) return UNKNOWN;
+    resolving.add(name);
+    try {
+      const proof = operandProof(local);
+      // An identifier read of a dynamic slot produces the carrier (`expressionProducesDynamic`).
+      return proof.family === "dynamic" ? DYNAMIC : proof;
+    } finally {
+      resolving.delete(name);
+    }
+  };
+
+  const declared = (expr: ts.Expression): OperandProof => {
+    // A primitive union proves nothing.
+    switch (sources.declaredFamily?.(expr)) {
+      case "number":
+        return NUMBER;
+      case "string":
+        return STRING;
+      case "boolean":
+        return BOOLEAN;
+      default:
+        return UNKNOWN;
+    }
+  };
+
+  const operandProof = (raw: ts.Expression): OperandProof => {
+    const expr = unwrapParens(raw);
+    if (ts.isIdentifier(expr) && isClosureSlot(expr.text)) return slotProof(expr.text);
+    if (ts.isArrayLiteralExpression(expr)) {
+      const numeric = expr.elements.every((element) => operandProof(element).family === "number");
+      return { family: numeric ? "vec<number>" : "vec<other>", additive: "unprovable" };
+    }
+    switch (sources.obviousFamily(expr)) {
+      case "number":
+        return NUMBER;
+      case "string":
+        return STRING;
+      case "boolean":
+        return BOOLEAN;
+      case "nullish":
+        return { family: "nullish", additive: "unprovable" };
+      case "reference":
+        return { family: "reference", additive: "unprovable" };
+    }
+    // A value `void` is the f64 sentinel for `undefined` (`irOperandFamily`).
+    if (ts.isVoidExpression(expr)) return { family: "undefined", additive: "unprovable" };
+    if (ts.isConditionalExpression(expr)) {
+      const whenTrue = operandProof(expr.whenTrue);
+      const whenFalse = operandProof(expr.whenFalse);
+      if (whenTrue.family !== whenFalse.family) return UNKNOWN;
+      return whenTrue.additive === whenFalse.additive ? whenTrue : { ...whenTrue, additive: "unprovable" };
+    }
+    if (ts.isBinaryExpression(expr)) return binaryProof(expr);
+    if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+      const receiver = operandProof(expr.expression);
+      // A member of the carrier is the carrier (`expressionProducesDynamic`
+      // follows the receiver).
+      if (receiver.family === "dynamic" && receiver.additive === "dynamic") return DYNAMIC;
+      if (ts.isPropertyAccessExpression(expr) && expr.name.text === "length") {
+        if (receiver.family === "string" || receiver.family === "vec<number>" || receiver.family === "vec<other>") {
+          return NUMBER;
+        }
+      }
+      if (ts.isElementAccessExpression(expr) && receiver.family === "vec<number>") return NUMBER;
+      return declared(expr);
+    }
+    if (ts.isCallExpression(expr)) {
+      const callee = unwrapParens(expr.expression);
+      // A method call on the carrier is the carrier; a call THROUGH a dynamic
+      // value is a carrier the `+` proof cannot see (`expressionProducesDynamic`
+      // reads only a planned callee's return type).
+      if (ts.isPropertyAccessExpression(callee) && operandProof(callee.expression).additive === "dynamic")
+        return DYNAMIC;
+      if (ts.isIdentifier(callee) && slotProof(callee.text).family === "dynamic" && parameterNames.has(callee.text)) {
+        return { family: "dynamic", additive: "unprovable" };
+      }
+      return declared(expr);
+    }
+    if (
+      ts.isNewExpression(expr) ||
+      ts.isClassExpression(expr) ||
+      expr.kind === ts.SyntaxKind.RegularExpressionLiteral
+    ) {
+      return { family: "reference", additive: "unprovable" };
+    }
+    return declared(expr);
+  };
+
+  const binaryProof = (expr: ts.BinaryExpression): OperandProof => {
+    const op = expr.operatorToken.kind;
+    if (op === ts.SyntaxKind.CommaToken) return operandProof(expr.right);
+    // A write's value is its slot's (a chained `s = t = v` stores one value
+    // into slots that must share the family).
+    if (isAssignmentOperator(op)) {
+      const target = unwrapParens(expr.left);
+      return ts.isIdentifier(target) ? operandProof(target) : UNKNOWN;
+    }
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken) {
+      const left = operandProof(expr.left);
+      const right = operandProof(expr.right);
+      return left.family === "boolean" && right.family === "boolean" ? BOOLEAN : UNKNOWN;
+    }
+    if (op === ts.SyntaxKind.PlusToken) {
+      const left = operandProof(expr.left);
+      const right = operandProof(expr.right);
+      if (left.family === "dynamic" || right.family === "dynamic") {
+        return {
+          family: "dynamic",
+          additive: left.additive === "dynamic" || right.additive === "dynamic" ? "dynamic" : "unprovable",
+        };
+      }
+      if (left.family === right.family && (left.family === "number" || left.family === "string")) {
+        return left.family === "number" ? NUMBER : STRING;
+      }
+      return UNKNOWN;
+    }
+    if (isTypedBinaryOperator(op)) return NUMBER;
+    return UNKNOWN;
+  };
+
+  const binaryRefusal = (expr: ts.BinaryExpression): PlannedClosureOperandRefusal | null => {
+    const op = expr.operatorToken.kind;
+    if (op === ts.SyntaxKind.QuestionQuestionToken) {
+      return nullishLeftAdmissible(operandProof(expr.left).family) ? null : { arm: "closure-nullish-left", node: expr };
+    }
+    if (isAssignmentOperator(op)) {
+      const target = unwrapParens(expr.left);
+      // Writes to member / element targets and to module bindings have their
+      // own lowerings; only a closure slot is judged here.
+      if (!ts.isIdentifier(target) || !isClosureSlot(target.text)) return null;
+      const slot = slotProof(target.text).family;
+      const value = operandProof(expr.right).family;
+      if (op === ts.SyntaxKind.EqualsToken) {
+        return slotWriteVerdict(slot, value) === "admissible" ? null : { arm: "closure-slot-write", node: expr };
+      }
+      return compoundWriteAdmissible(op, slot, value) ? null : { arm: "closure-compound-write", node: expr };
+    }
+    if (!isTypedBinaryOperator(op)) return null;
+    // `tryFoldNullCompare` sees a DIRECT `null` operand only (`(null) === x`
+    // lowers the literal like any operand).
+    const other = nullComparedOperand(expr);
+    if (other !== null) {
+      // `null === undefined` (the identifier) has no lowering; `null === void 0` folds.
+      const undefinedIdentifier = ts.isIdentifier(other) && other.text === "undefined" && !locals.has(other.text);
+      return !undefinedIdentifier && nullComparisonFolds(op, operandProof(other).family)
+        ? null
+        : { arm: "closure-null-compare", node: expr };
+    }
+    // `x | 0` with an i32-lowerable `x` takes from-ast's fused-i32 identity
+    // (no promoted slot is visible here, so only the slot-free shapes).
+    const identityOperand = i32IdentityBitwiseOperand(expr);
+    if (identityOperand !== null && isWrapI32Lowerable(identityOperand, () => false)) return null;
+    // The strict `undefined` compare has its own lowering (`tryLowerUndefinedCompare`).
+    const isShadowed = (name: string): boolean => locals.has(name);
+    const leftUndefined = isUndefinedCompareOperand(expr.left, isShadowed);
+    const rightUndefined = isUndefinedCompareOperand(expr.right, isShadowed);
+    if (isStrictEqualityOperator(op) && (leftUndefined || rightUndefined)) {
+      if (leftUndefined && rightUndefined) return null;
+      const compared = operandProof(leftUndefined ? expr.right : expr.left).family;
+      return undefinedCompareOperandAdmissible(compared) ? null : { arm: "closure-undefined-compare", node: expr };
+    }
+    const left = unwrapParens(expr.left);
+    const right = unwrapParens(expr.right);
+    const leftProof = operandProof(left);
+    const rightProof = operandProof(right);
+    if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
+      return { arm: "closure-additive-operands", node: expr };
+    }
+    return binaryOperandsAdmissible(op, leftProof.family, rightProof.family)
+      ? null
+      : { arm: "closure-binary-operands", node: expr };
+  };
+
+  const updateRefusal = (
+    expr: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression,
+  ): PlannedClosureOperandRefusal | null => {
+    if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return null;
+    const target = unwrapParens(expr.operand);
+    if (!ts.isIdentifier(target) || !isClosureSlot(target.text)) return null;
+    return incrementSlotAdmissible(slotProof(target.text).family)
+      ? null
+      : { arm: "closure-increment-slot", node: expr };
+  };
+
+  let refusal: PlannedClosureOperandRefusal | null = null;
+  const visit = (node: ts.Node): void => {
+    if (refusal !== null || (node !== fn && ts.isFunctionLike(node))) return;
+    if (ts.isBinaryExpression(node)) refusal = binaryRefusal(node);
+    else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) refusal = updateRefusal(node);
+    else if (node.kind === ts.SyntaxKind.NullKeyword && !nullIsComparedOperand(node)) {
+      refusal = nullValueAdmissible(nullConsumerFamily(node)) ? null : { arm: "closure-null-value", node };
+    } else if (ts.isVoidExpression(node) && !voidValueConsumerAdmissible(node, isClosureSlot)) {
+      refusal = { arm: "closure-void-value", node };
+    }
+    if (refusal === null) forEachChild(node, visit);
+  };
+  if (fn.body) forEachChild(fn.body, visit);
+  return refusal;
+}

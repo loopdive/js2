@@ -62,7 +62,6 @@ import {
 } from "./async-cps.js";
 import { supportedAsyncGraphModulePlan } from "./async-graph-module-plan.js";
 import {
-  asyncFnNeedsHostDrive,
   asyncGenDrivableUnderCarrier,
   asyncGenStem,
   buildAsyncFrameInfo,
@@ -131,7 +130,6 @@ import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
   getOrRegisterPromiseType,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 import {
   ensureNativeDynamicBoundaryTag,
@@ -150,11 +148,7 @@ import { emitNativeParseNumber } from "./parse-number-native.js";
 import { emitNativeUriDecode, emitNativeUriEncode } from "./uri-encoding-native.js";
 import { emitNativeEscape, emitNativeUnescape } from "./escape-native.js";
 import { emitNativeNumberFormat } from "./number-format-native.js";
-import {
-  isNativeGeneratorCandidate,
-  registerNativeGenerator,
-  sourceNeedsGeneratorHostImports,
-} from "./generators-native.js";
+import { isNativeGeneratorCandidate, registerNativeGenerator } from "./generators-native.js";
 import { emitWasiErrorConstructor, isWasiErrorName } from "./registry/error-types.js";
 import { addImport, addStringConstantGlobal, localGlobalIdx, nextModuleGlobalIdx } from "./registry/imports.js";
 import {
@@ -394,7 +388,7 @@ function recordExportListSignature(
   localName: string,
   exportedName: string,
 ): void {
-  if (ctx.targetProfile.semanticProviders !== "native-first" || !jsValueBoundary(ctx)) return;
+  if (!jsValueBoundary(ctx)) return;
   if (ctx.exportSignatures.has(exportedName)) return;
   const decl = sourceFile.statements.find(
     (s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === localName && !!s.body,
@@ -464,10 +458,10 @@ function recordExportSignature(
   if (!anyHit) return;
   ctx.exportSignatures.set(exportName, { params, result });
   if (ctx.nativeStrings && stringHit) ensureNativeStringBoundaryBridge(ctx);
-  if ((symbolHit || dynamicHit) && ctx.targetProfile.semanticProviders === "native-first") {
+  if (symbolHit || dynamicHit) {
     ensureNativeSymbolBoundaryBridge(ctx);
   }
-  if (dynamicHit && ctx.targetProfile.semanticProviders === "native-first") {
+  if (dynamicHit) {
     ensureNativeDynamicBoundaryBridge(ctx);
   }
   if (promiseHit) {
@@ -3309,10 +3303,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
             // pre-unwrap under the carrier so the declared result matches the
             // raw-T body (else externref-result vs f64-body = invalid Wasm).
             // Carrier-gated → off-carrier bytes identical.
-            const effRetType =
-              isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-                ? unwrapPromiseType(retType, ctx.checker)
-                : retType;
+            const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
             const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
             const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
             const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;
@@ -3379,10 +3370,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           // function-expression export; pre-unwrap an async fn's Promise<T>
           // result under the carrier so the declared result matches the raw-T
           // body. Carrier-gated → off-carrier bytes identical.
-          const effRetType =
-            isStandalonePromiseActive(ctx) && hasAsyncModifier(fnExpr)
-              ? unwrapPromiseType(retType, ctx.checker)
-              : retType;
+          const effRetType = hasAsyncModifier(fnExpr) ? unwrapPromiseType(retType, ctx.checker) : retType;
           const results = isVoidType(effRetType) ? [] : [resolveWasmType(ctx, effRetType)];
           const typeIdx = addFuncType(ctx, params, results, `${name}_type`);
           const funcIdx = ctx.numImportFuncs + ctx.mod.functions.length;

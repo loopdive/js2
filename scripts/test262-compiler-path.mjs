@@ -54,7 +54,8 @@ export function summarizeTest262CompilerPaths(records, requested) {
     skippedCases = 0,
     compileErrorCases = 0,
     compileTimeoutCases = 0,
-    verifiedExecutionCases = 0;
+    verifiedExecutionCases = 0,
+    verifiedFrontendCases = 0;
   let infrastructure = false;
   for (const record of records) {
     const path = record.compilerPath ?? "unknown";
@@ -84,6 +85,34 @@ export function summarizeTest262CompilerPaths(records, requested) {
         !/^[a-f0-9]{64}$/.test(proof.sourceSha256 ?? "")
       )
         throw new Error("Missing same-job Prepared execution report");
+    }
+    // Syntax/early rejection is conformance evidence for negative tests,
+    // independently from constructing and executing a prepared Wasm program.
+    if (record.frontendPathVerified === true) {
+      const proof = record.preparedFrontendReport;
+      if (
+        path !== "ir" ||
+        verified ||
+        execution !== "unknown" ||
+        record.status !== "pass" ||
+        !proof ||
+        proof.schema !== "test262-prepared-frontend-report-v1" ||
+        proof.requestVersion !== 1 ||
+        proof.errorType !== "SyntaxError" ||
+        !["parse", "early"].includes(proof.expectedPhase) ||
+        !(proof.expectedPhase === "parse" ? ["syntax", "early"].includes(proof.phase) : proof.phase === "early") ||
+        !Number.isSafeInteger(proof.jobId) ||
+        proof.jobId < 0 ||
+        !Number.isSafeInteger(proof.workerPid) ||
+        proof.workerPid <= 0 ||
+        !/^[a-f0-9]{64}$/.test(proof.sourceSha256 ?? "") ||
+        !Array.isArray(proof.sources) ||
+        proof.sources.length === 0 ||
+        !Array.isArray(proof.diagnostics) ||
+        proof.diagnostics.length === 0
+      )
+        throw new Error("Missing distinct same-job Prepared frontend report");
+      verifiedFrontendCases++;
     }
     paths.add(path);
     const configuration = record.configuredCompilerPath ?? "unknown";
@@ -117,6 +146,7 @@ export function summarizeTest262CompilerPaths(records, requested) {
     compileErrorCases,
     compileTimeoutCases,
     verifiedExecutionCases,
+    verifiedFrontendCases,
     unverifiedExecutionCases,
   };
 }

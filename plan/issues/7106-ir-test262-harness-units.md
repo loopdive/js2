@@ -4,7 +4,7 @@ title: "IR: ship the six test262 harness units (assert.js + sta.js) so a fallbac
 status: in-progress
 sprint: current
 created: 2026-10-20
-updated: 2026-10-22
+updated: 2026-10-25
 priority: high
 horizon: l
 feasibility: hard
@@ -41,8 +41,10 @@ flat-dir-budget-allow:
   - src/codegen/ir-dynamic-delete.ts # 2026-10-22 (#7106 propertyHelper arm 3): the dynamic delete wrapper beside ir-dynamic-construct.ts
   - src/codegen/ir-dynamic-instanceof.ts # 2026-10-22 (#7106 dyn.instanceof): the generic dynamic instanceof wrapper beside ir-dynamic-delete.ts
 import-cycles-allow:
-  - ir->codegen: 79 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers
-  - largestSccSize: 727 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way
+  - ir->codegen: 81 # 2026-10-21 (#7106 S3a/S1c/S1e): integration.ts pre-registers the dynamic-construct, string-carrier and arguments-length wrappers; 2026-10-22 (module-init lever A): the bridge reads legacy's Math/Number constant table (`codegen/builtin-value-read.ts`); 2026-10-22 (lever B): …and pre-registers the Number(v) provider (`codegen/helpers/ir-number-from-value.ts`)
+  - codegen->ir: 301 # 2026-10-22 (#7106 lever B): the Number(v) provider names its symbol from the IR runtime contract (`ir/runtime/number-conversion-callable.ts`), where the provider definition lives
+  - ir->frontend: 8 # 2026-10-22 (#7106 lever B): the bridge builds the source-bound Number-conversion plan (`frontend/builtins/prepare-number-conversion.ts`) for the selector, as program-source.ts does for its resolver
+  - largestSccSize: 728 # 2026-10-21 (#7106 S3a/S1c/S1e): codegen/ir-dynamic-construct.ts, ir-string-carrier.ts and ir-arguments-length.ts join the SCC; 2026-10-22 (GDI prologue): codegen/declarations/module-init-prologue.ts, split out of declarations.ts (already in the SCC), joins it; 2026-10-22 (propertyHelper arm 3): codegen/ir-dynamic-delete.ts (reached from the codegen/index.ts facade) joins it; 2026-10-22 (dyn.instanceof): codegen/ir-dynamic-instanceof.ts joins it the same way; 2026-10-22 (lever B): codegen/helpers/ir-number-from-value.ts joins it
 # 2026-10-24 (dyn.instanceof Error intrinsic, #6858 quality fix): ambient-intrinsics.ts moved from src/ir/values/ to src/shared/ — it imports only `typescript`, and codegen/ir-dynamic-instanceof.ts now reads it too; keeping it under src/ir/ would have grown the codegen->ir two-way edge count (300 → 301).
 # 2026-10-22 (propertyHelper arm 3): makeFromAstResolver gains the
 # dynamicDeleteSymbol method; isPhase1StatementListInScope gains the dropped
@@ -51,7 +53,11 @@ import-cycles-allow:
 # self-guarded refusal predicate (`selfGuardedConstructorsLeaveFnctor`), so S3c
 # stands down when runtime eval may share the realm.
 func-budget-allow:
+  # 2026-10-22 (module-init lever A): one resolver entry for the namespace-constant fold
+  # 2026-10-22 (propertyHelper arm 3): the dynamicDeleteSymbol method
   - src/ir/integration.ts::makeFromAstResolver
+  # 2026-10-22 (lever B): one intrinsic→provider branch
+  - src/ir/integration.ts::resolveAndObserveCallableProvider
   - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/from-ast.ts::lowerPropertyAccess
   - src/ir/select.ts::scanExprInner
@@ -79,6 +85,10 @@ func-budget-allow:
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
 loc-budget-allow:
+  # 2026-10-22 (module-init lever A): the table accessor beside legacy's fold
+  - src/codegen/builtin-value-read.ts
+  # 2026-10-22 (lever B): one provider-id set spread in the manifest registry
+  - src/ir/runtime/manifest.ts
   - src/ir/builder.ts
   - src/ir/core/nodes.ts
   - src/ir/core/dialect/js.ts
@@ -761,6 +771,53 @@ node on standalone and gc (wasi: validate).
 - Also fixes the pre-existing #2952 slice 6c dual-run case "head compared to a
   literal" on this stack.
 
+**Switch-gate fix (2026-10-25, measured; #6843).** The arm shipped one
+claim-then-demote. `switch (k)` over a dynamic-carrier head was CLAIMED by the
+selector and demoted at build on standalone, wasi and gc native-first
+(`irPostClaimErrors = [{kind:"build", message:"ir/from-ast: string-tested
+switch disc lowered to dynamic, not string, in h"}]`; legacy recompiled it, so
+the result was right by accident). The same `switch` over a dynamic PARAM was
+refused before the claim. Cause: the switch gate's
+`switchDiscHasIrStringCarrier` follows the disc to its declaration and
+certifies any binding without an initializer — a `var k` for-in head has none.
+Fix (round 2 of review #6843, 2026-10-25): the arm's head classification is
+split into its two questions — `dynamicCarrierForInHeadIdentifier(stmt)`, the
+lane + head-shape test (`forInHeadValueIsDynamicCarrier`, not host-string,
+single `var` identifier head), and the body-reads-head (`.used`) test —
+with `dynamicCarrierForInHead` composed from both, so the producer and the
+for-in arm behave exactly as before. The switch gate walks up from the disc
+identifier to the nearest enclosing for-in (same function) whose head
+identifier resolves to the disc's declaration and asks only the lane + shape
+test, answering `false`, so the shape is refused pre-claim as
+`switch-disc-not-string-carrier` (the `body-shape-rejected` family, like the
+dynamic-param case). No second name or shape test; the producer is unchanged.
+- Round-2 finding: the round-1 gate followed the disc to its symbol's FIRST
+  declaration (`localVariableDeclaration`) and asked that for-in's
+  `dynamicCarrierForInHead`, whose `.used` answer is about THAT loop's body.
+  All `var k` heads in a function share one symbol, so with two sequential
+  loops where only the second switches on `k`, the first loop answered "not
+  read", the gate certified `k`, and from-ast demoted the claimed body
+  ("string-tested switch disc lowered to dynamic, not string") on standalone,
+  wasi and gc native-first — identical to main, i.e. an incomplete fix, not a
+  regression. The enclosing-loop walk asks "is this disc a dynamic-carrier
+  head on this lane" independent of which loop reads it.
+- Before/after on the repros (`{a:1,b:2,c:3}`): the single-loop switch (node
+  12) and the two-loop shape (node 15) were claimed then demoted on standalone
+  and wasi; now both are refused before the claim, `irPostClaimErrors` empty,
+  legacy answers 12 / 15. gc native-first with a JSDoc-typed helper behaves
+  the same way.
+- Host-assisted gc bytes (`semanticProviders: "host-assisted"`) are identical
+  between `origin/main` and the fix for the two-loop repro, the switch repro, a
+  plain for-in and a no-shape loop (`88fe65ed…`, `8c1e9e9c…`, `9b85e4dd…`,
+  `114efdc5…`; main tree = `git archive origin/main`, same node_modules).
+- Tests: the switch repro, both two-loop orders (`twoLoopsFirstUnread`,
+  `twoLoopsSecondUnread`, expected 15), a captured head
+  (`forin-head-value-captured`) and a written head
+  (`forin-head-value-written`) each assert the refusal arm, empty
+  `irPostClaimErrors` and the node result, on standalone and gc; wasi pins
+  all three switch refusals and validates. The switch rows fail without the
+  fix (`twoLoopsFirstUnread` also fails with only the round-1 fix).
+
 ## propertyHelper.js, arm 3 — statement-position dynamic delete (2026-10-22, measured)
 
 **Blocker.** `isConfigurable` and `isWritable` delete through their dynamic
@@ -820,6 +877,24 @@ body was claimed and then demoted at build ("unsupported body
 ExpressionStatement shape"), a post-claim error. Both dispatchers now share
 `lowerDroppedDelete`. A bare `{ … }` block holding a delete is still refused
 before the claim (a pre-existing block refusal, so the selector and from-ast agree).
+
+**Review follow-up (2026-10-25).** The arm's PR branch also carried a selector
+widening, `isCertifiedObjectAliasValue` (a second "this alias call is boolean"
+arm in `trackedModuleInfluenceIsBoolean`, beside the
+`declaredExpressionHasExactFamily(…, "boolean")` certification main already
+reuses at the `!` site). Measured on a sloppy script with unannotated
+`function hasK(obj, k) { if (__hasOwnProperty(obj, k)) … }` and
+`function notEnum(obj, k) { return !__gopd(obj, k).enumerable; }`: the
+widening made the selector claim both, and the build demoted both with
+"function typeIdx parity mismatch" — 3 claim-then-demote cases on the branch
+head against 1 (`negHas`, pre-existing) on the base. **Removed**; the exact-family
+certification stays the single predicate, and
+`tests/issue-7106-prophelper-dyn-delete.test.ts` pins that both shapes stay
+legacy with `irPostClaimErrors` empty and node's result. The refactor of
+`ir-dynamic-delete.ts` onto the shared helper builders stands — since #6858
+those are `helperFunctionContext` / `publishHelperFunction` in
+`helpers/ir-helper-function.ts`, which main's `ir-dynamic-delete.ts` already
+uses; host-assisted gc bytes are identical to main.
 
 ## `dyn.instanceof` — generic dynamic instanceof at legacy parity (2026-10-22, measured)
 
@@ -1685,3 +1760,78 @@ for (let k = 1; k <= 12; k++) {
 ```
 
 </details>
+
+## `<module-init>` lever A — ambient `Number.<CONST>` / `Math.<CONST>` fold (built 2026-10-22)
+
+Arm A of the plan in #6876 (the 80-file census on the integrated stack:
+`expr-ident-not-in-scope «Number»` first among the `<module-init>` blockers,
+37 of 71). The read folds, in the IR, to the SAME constant legacy's dot read
+emits.
+
+| piece | where | reuse |
+| --- | --- | --- |
+| the table | `builtinNamespaceConstantValue` in `codegen/builtin-value-read.ts` — `MATH_CONSTANT_VALUES` / `NUMBER_CONSTANT_VALUES`, own keys only; legacy's `tryEmitBuiltinNamespaceConstantValue` now reads through it | no second list anywhere |
+
+**Legacy gc output changes for one shape (disclosed, 2026-10-24 review).** The
+table lookup went from `propName in table` to `Object.hasOwn`, and that is
+legacy's reflective read too: on main `Math["constructor"]` /
+`Number["toString"]` emitted `f64.const` of the prototype function's text (NaN
+at runtime; `Math["constructor"] === Object` answered 0, node 1). Now those
+keys take the generic element read on every lane (`Math["constructor"] ===
+Object` → 1, measured default / host-assisted / standalone). Dot reads of the
+same names already took the method path and are byte-identical. Covered by the
+prototype-key case in `tests/issue-7106-ir-ambient-namespace-constants.test.ts`.
+| bridge | `irAmbientNamespaceConstant(expr)` in `ir/integration.ts`, the one answer behind the selection option and the from-ast resolver, supplied at both planning sites | — |
+| selector | `ambientNamespaceConstantRead` (ambient predicate; the caller's `scope` / `dynNames` settles a local shadow) at the Phase-1 property-access arm and the move-only scan (a concrete f64) | — |
+| from-ast | the first arm of `lowerPropertyAccess`: `emitConst f64` | — |
+
+**Measured** (`tests/issue-7106-ir-ambient-namespace-constants.test.ts`,
+standalone and default, compared with node): `MAX_VALUE`, `MIN_VALUE`,
+`EPSILON`, `NaN`, `±Infinity`, `MAX/MIN_SAFE_INTEGER`, `Math.PI/LN2/SQRT2/
+SQRT1_2` in functions ship IR bodies; a `<module-init>` of
+`var eps = Number.EPSILON; var big = Number.MAX_VALUE; …` ships an IR body
+(was `expr-ident-not-in-scope «Number»`). A module-level `var Number = {…}`
+is never folded by the IR (the function is declined, not miscompiled).
+
+**Found on the way (legacy, not IR) — to file.** Legacy's dot-read fold
+ignores a shadowing binding: with `var Number = { MAX_VALUE: 7 }` (module
+level) or a parameter named `Number`, legacy still emits `1.7976931348623157e+308`
+(node answers the shadow's value). Measured on both lanes; the IR declines
+both shapes. `claim-issue.mjs --allocate` was refused here (open-PR scan
+degraded, no `gh` GraphQL from this session), so the id is left for a lane
+with `gh`.
+
+## `<module-init>` lever B — `Number(v)` through its host-free provider (built 2026-10-22)
+
+The 37 «Number» module-init blockers of the census are `Number(…)` calls.
+from-ast already lowered a source-bound `Number(v)` (`lowerPreparedNumberCall`
+→ intrinsic `js.number.from-value`, the full ToNumeric contract), but nothing
+reached it: no selector admission, a plan invalidated by any `Number.X` /
+`new Number` in the file, no plan on the integration from-ast resolver, and —
+decisive — **no provider for the intrinsic on any lane**.
+
+| piece | where | reuse |
+| --- | --- | --- |
+| provider | `native.js.number.from-value` (`ir/runtime/number-conversion-callable.ts`, in `SEMANTIC_CALLABLE_RUNTIME_PROVIDERS`), symbol `__ir_number_from_value` | the manifest's `runtime-callable` shape, like `REFERENCE_ERROR_RUNTIME_PROVIDERS` |
+| the function | `codegen/helpers/ir-number-from-value.ts`: legacy's own `Number(v)` emission (`call-identifier.ts`) over a detached template with one externref parameter — the symbol guard, StringToNumber, the array/object ToPrimitive arms, the ToNumber cascade, byte for byte | `receiverHelperContext` / `publishReceiverHelper` from `codegen/ir-dynamic-construct.ts` (exported, one copy) and the detached parse in `codegen/helpers/template-wrapper.ts` |
+| resolution | `resolveAndObserveCallableProvider` maps the intrinsic to the helper; pre-registered at finalize from the IR scan (`usesNumberFromValue`) so no Phase-3 body drives a late-import shift | the dyn.object_tag pattern |
+| admission | capability `native-number-conversion` (host-free, non-fast, wasmgc) + the plan's own answer (`preparedNumberCall`, built once per compile in `planIrOverlay` and carried to integration on `IrIntegrationLoweringPlans`); `preparedNumberConversionCall` at the three selector sites beside `String(v)`, without a name check at any of them | the plan is the single authority on shadowing (checker-symbol identity of the callee) |
+| order | the #5092 mixed-conditional arm (`Number(c ? 7 : true)`, each concrete arm converted inside the lazy `if`) comes FIRST in both `lowerCall` and `preparedNumberConversionCall` (which refuses that shape); lever B sees only what #5092 declined. `tests/issue-5092-ir-mixed-primitive-conditional.test.ts` 21/21, and that program's binary is byte-identical to main on default, host-assisted and standalone | — |
+| plan | `prepare-number-conversion.ts`: a member-access receiver (`Number.MAX_VALUE`) or a `new Number(…)` callee keeps the plan — neither reads the binding as a value that could be rebound | — |
+
+**Measured** (`tests/issue-7106-ir-number-conversion.test.ts`, standalone vs
+node): a dynamic operand answers node on `{valueOf}`, `[5]`, `"0x10"`,
+`null`, `undefined`, `true`, `"abc"`, `new Number(9)`, `{toString}`,
+`Symbol()` → TypeError, `[]`, `[1,2]` (2047/2047); legacy's SITE arm for the
+same program answers 6143 (it does not throw for a dynamic Symbol) — the
+template takes legacy's `any` arm, which does. A module-init of six literal
+conversions beside `Number.MAX_VALUE` / `Number.NaN` / `Number.NEGATIVE_INFINITY`
+reads ships an IR body. Standalone's caller-closure rule still drops a
+parameterless claimed callee of an unclaimed caller (`zero()` called from a
+legacy `run`), pre-existing.
+
+**Left out.** Host lanes (no `host.js.number.from-value` provider; the
+selector capability excludes them). **Found on the way (legacy, to file with
+the constants-shadow defect):** with `var Number = function (x) { return 7; }`
+at module level, legacy's by-name `Number(x)` arm still converts (node: 7).
+

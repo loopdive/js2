@@ -4,7 +4,7 @@
 // the optimizable cases and confirm the guard declines unsafe shapes.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.js";
-import { compileAndInstantiate } from "../src/runtime.js";
+import { compileAndInstantiate, instantiateWasm, wrapCompiledExports } from "../src/runtime.js";
 
 const BUILDER_SWITCH = "JS2WASM_IR_STRING_BUILDER";
 const DIRECT_POISON = "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY";
@@ -38,7 +38,27 @@ function watCallTargets(wat: string, body: string): string[] {
 }
 
 async function runStr(src: string): Promise<string> {
-  const exports = (await compileAndInstantiate(src)) as { test(): string };
+  const result = await compile(src);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  // The default GC lane is native-first; cross its string boundary with the
+  // authentic compiled signatures and policy instead of treating a raw GC
+  // string handle as an already-marshalled JavaScript string.
+  expect(result.targetProfile).toMatchObject({
+    target: "gc",
+    backend: "wasmgc",
+    semanticProviders: "native-first",
+    nativeRegime: true,
+  });
+  const { buildCompiledImports } = await import("../src/index.js");
+  const imports = buildCompiledImports(result);
+  const { instance } = await instantiateWasm(
+    new Uint8Array(result.binary),
+    imports.env,
+    imports.string_constants,
+    imports.string_constants16,
+  );
+  imports.setInstance?.(instance);
+  const exports = wrapCompiledExports(result, instance) as { test(): string };
   return exports.test();
 }
 async function runNum(src: string): Promise<number> {
@@ -97,7 +117,7 @@ describe("#1004 counted string-append aggregation", () => {
       `test call targets: ${JSON.stringify(targets)}`,
     ).toHaveLength(1);
     expect(targets.filter((target) => /^__str_concat(?:_owned)?$/.test(target))).toHaveLength(1);
-    const { instance } = await WebAssembly.instantiate(result.binary);
+    const { instance } = await WebAssembly.instantiate(new Uint8Array(result.binary));
     expect((instance.exports.test as () => number)()).toBe(5000);
   });
 
@@ -128,7 +148,7 @@ describe("#1004 counted string-append aggregation", () => {
       targets.filter((target) => target === "__sh_str_repeat"),
       `test call targets: ${JSON.stringify(targets)}`,
     ).toHaveLength(1);
-    const { instance } = await WebAssembly.instantiate(result.binary);
+    const { instance } = await WebAssembly.instantiate(new Uint8Array(result.binary));
     expect((instance.exports.test as () => number)()).toBe(3);
   });
 
@@ -143,6 +163,8 @@ describe("#1004 counted string-append aggregation", () => {
         }
       `,
       {
+        // This case specifically pins the explicit host repeat adapter.
+        semanticProviders: "host-assisted",
         trackIrOutcomes: true,
         emitWat: true,
       },
@@ -169,7 +191,12 @@ describe("#1004 counted string-append aggregation", () => {
     ).toHaveLength(1);
     const { buildCompiledImports } = await import("../src/index.js");
     const imports = buildCompiledImports(result);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    const { instance } = await instantiateWasm(
+      new Uint8Array(result.binary),
+      imports.env,
+      imports.string_constants,
+      imports.string_constants16,
+    );
     imports.setInstance?.(instance);
     expect((instance.exports.test as () => number)()).toBe(9);
   });

@@ -891,6 +891,7 @@ jobs:
           scripts/test262-compiler-path.test.mjs
           scripts/website-ir-view-state.test.mjs
           scripts/test262-ir-pages-artifacts.test.mjs
+          scripts/test262-prepared-frontend-report.test.mjs
       - name: Select changed issue test files
         id: select
         env:

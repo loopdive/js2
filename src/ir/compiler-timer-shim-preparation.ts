@@ -46,6 +46,7 @@ interface PreparedCompilerTimerShimDynamicShape {
 
 type PreparedTimerDynamicHelperName =
   | "__box_number"
+  | "__ir_arguments_length"
   | "__unbox_number"
   | "__to_primitive"
   | "__to_number"
