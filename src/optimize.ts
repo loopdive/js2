@@ -21,6 +21,7 @@ import {
   BINARYEN_COMPACT_IMPORTS_DISABLE_FLAG,
   BINARYEN_PORTABLE_FEATURE_FLAGS,
 } from "./binaryen-features.js";
+import { reshapeUnsafeTryTables, restoreCustomSections } from "./optimize-try-table-shape.js";
 
 // Dynamic imports to avoid vite bundling node-only modules for the browser.
 // These are only used by optimizeWithSystemBinary which only runs in Node.js.
@@ -522,8 +523,17 @@ function optimizeWithBinaryenModule(
       }
     }
 
-    const optimizedBinary = mod.emitBinary();
-    return { binary: new Uint8Array(optimizedBinary), optimized: true };
+    const optimizedBinary = new Uint8Array(mod.emitBinary());
+    // (#7168) Same engine-safe try_table re-shape as the CLI path.
+    const reshaped = reshapeUnsafeTryTables(mod.emitText());
+    if (reshaped === null) return { binary: optimizedBinary, optimized: true };
+    const fixed = binaryen.parseText(reshaped);
+    try {
+      fixed.setFeatures(features);
+      return { binary: restoreCustomSections(optimizedBinary, new Uint8Array(fixed.emitBinary())), optimized: true };
+    } finally {
+      fixed.dispose();
+    }
   } finally {
     mod.dispose();
   }
@@ -644,6 +654,57 @@ function wasmOptFailure(err: unknown, timeoutMs: number): { text: string; timedO
   return { text: text || "unknown error", timedOut: false };
 }
 
+/** (#7168) Ceiling for the `--print` text of the optimized module (≈15× its binary size). */
+const WASM_OPT_PRINT_MAX_BUFFER = 1 << 30;
+
+/**
+ * (#7168) Finish a successful CLI run: read the optimized binary, and when
+ * Binaryen left a `try_table` with a block type V8 12.4 executes as
+ * `unreachable` (see `optimize-try-table-shape.ts`), re-assemble the reshaped
+ * printed text with no passes. A module without one keeps its bytes exactly.
+ * If re-assembly fails, ship the unoptimized input: the optimized bytes would
+ * trap on Node 22.
+ */
+function reshapeOptimizedTryTables(
+  n: NonNullable<typeof _nodeImports>,
+  wasmOptPath: string,
+  tmpDir: string,
+  original: Uint8Array,
+  printed: Buffer,
+  featureFlags: string[],
+  preserveNames: boolean,
+  timeoutMs: number,
+  warning?: string,
+): OptimizeResult {
+  const optimized = new Uint8Array(n.readFileSync(n.join(tmpDir, "output.wasm")));
+  const ok = (binary: Uint8Array): OptimizeResult => ({ binary, optimized: true, ...(warning ? { warning } : {}) });
+  const reshaped = reshapeUnsafeTryTables(printed.toString("utf-8"));
+  if (reshaped === null) return ok(optimized);
+  const watPath = n.join(tmpDir, "reshaped.wat");
+  const outPath = n.join(tmpDir, "reshaped.wasm");
+  try {
+    n.writeFileSync(watPath, reshaped);
+    const args = [watPath, "-o", outPath, ...featureFlags, ...(preserveNames ? ["-g"] : [])];
+    n.execFileSync(wasmOptPath, args, { timeout: timeoutMs, stdio: ["ignore", "ignore", "pipe"] });
+    return ok(restoreCustomSections(optimized, new Uint8Array(n.readFileSync(outPath))));
+  } catch (err) {
+    const { text } = wasmOptFailure(err, timeoutMs);
+    return {
+      binary: original,
+      optimized: false,
+      warning: `wasm-opt output needed a try_table re-shape (#7168) that failed: ${text.slice(0, 600).trim()}`,
+    };
+  } finally {
+    for (const path of [watPath, outPath]) {
+      try {
+        n.unlinkSync(path);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 function optimizeWithSystemBinary(
   binary: Uint8Array,
   level: number,
@@ -706,6 +767,9 @@ function optimizeWithSystemBinary(
       ...hints.post,
     ];
     if (preserveNames) args.push("-g");
+    // (#7168) Print the final module too (a pass, so it runs last) — the text
+    // is what `reshapeOptimizedTryTables` inspects and, rarely, rewrites.
+    args.push("--print");
     void gc;
     void referenceTypes;
     void exceptionHandling;
@@ -713,10 +777,24 @@ function optimizeWithSystemBinary(
     const execOptions = {
       timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+      maxBuffer: WASM_OPT_PRINT_MAX_BUFFER,
     };
     const firstRunStarted = Date.now();
+    const reshape = (printed: Buffer, warning?: string): OptimizeResult =>
+      reshapeOptimizedTryTables(
+        n,
+        wasmOptPath,
+        tmpDir,
+        binary,
+        printed,
+        [...featureFlags],
+        preserveNames,
+        timeoutMs,
+        warning,
+      );
+    let printed: Buffer;
     try {
-      n.execFileSync(wasmOptPath, args, execOptions);
+      printed = n.execFileSync(wasmOptPath, args, execOptions);
     } catch (err) {
       // Surface wasm-opt's actual error message instead of falling through to
       // the misleading "not available" warning. A validator error here means
@@ -738,14 +816,14 @@ function optimizeWithSystemBinary(
       if (unsupportedFlatten) {
         try {
           const retryTimeout = timeoutCoversRetry ? Math.max(1, timeoutMs - (Date.now() - firstRunStarted)) : timeoutMs;
-          n.execFileSync(wasmOptPath, [...args, "--skip-pass=flatten"], { ...execOptions, timeout: retryTimeout });
-          const optimizedBinary = n.readFileSync(outputPath);
-          return {
-            binary: new Uint8Array(optimizedBinary),
-            optimized: true,
-            warning:
-              "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
-          };
+          const retried = n.execFileSync(wasmOptPath, [...args, "--skip-pass=flatten"], {
+            ...execOptions,
+            timeout: retryTimeout,
+          });
+          return reshape(
+            retried,
+            "wasm-opt -O4 omitted Binaryen's unsupported flatten pass for standardized try_table output; all remaining O4 passes completed.",
+          );
         } catch (retryError) {
           // (#6732) The retry's failure is the actionable one: put it first
           // so the 800-char cut below cannot drop it.
@@ -771,8 +849,7 @@ function optimizeWithSystemBinary(
       };
     }
 
-    const optimizedBinary = n.readFileSync(outputPath);
-    return { binary: new Uint8Array(optimizedBinary), optimized: true };
+    return reshape(printed);
   } finally {
     // Cleanup temp files
     try {
