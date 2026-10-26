@@ -385,3 +385,52 @@ With it in place, the stripped-probe census stops at
 `closure-member-dynamic-method`), before reaching
 `var format = compareArray.format;`. This slice's two shapes, the throw-only
 plan and the dynamic-arm conditional, are unaffected.
+
+## Implementation Plan: round 11, rebuild on #7144 (C, 2026-10-26)
+
+The stakeholder decided on 2026-10-26 that [#7144](https://js2wasm.loopdive.com/dashboard/issue.html?slug=7144-ir-shared-operand-admissibility-predicate) lands first and #6834 is then rebuilt on top of it. Round 11 replaces #6834's hand-written refusal logic with the shared predicates in `src/ir/analysis/operand-admissibility.ts` and adds only the missing rules. Inputs:
+- the #6927 review section "Readiness for the #6834 rebuild" (round 1);
+- the round-2 and round-3 reviews.
+
+### 0. Base
+- Merge origin/main, which contains #7144, into `claude/7106-module-init-member-shapes`.
+- Resolve conflicts in `src/ir/select.ts`, `src/ir/select-planned-closure-operands.ts` and `src/ir/from-ast.ts` by **taking #7144's shared predicates**. Do not keep both mechanisms.
+- Then run `npm run -s check:dead-exports`. A supersede-style merge leaves the old twins' exports unreferenced, and that fails `quality`.
+
+### 1. Delete in favour of the shared walk
+#7144 already covers these, so delete #6834's own versions:
+- `plannedClosureWriteProved`;
+- the operator arm of `plannedClosureValueAdmitted`;
+- the `??` arm;
+- the families inside `nullCompareFoldFails`.
+
+This covers round-10 findings AI, AJ and AF, which are operator, write, increment, `??` and null-compare typing inside a closure that mints a dynamic local (`var r = m ? m : 1`). They map onto these predicates: `binaryOperandsAdmissible`, `compoundWriteAdmissible`, `slotWriteVerdict`, `incrementSlotAdmissible`, `nullishLeftAdmissible` and `nullComparisonFolds`.
+
+### 2. New shared rules (add to `operand-admissibility.ts`; both the selector and from-ast read them)
+1. **`conditionalJoinFamily(whenTrue, whenFalse)`.** It returns `dynamic` when one arm is dynamic and the other passes `boxableIntoDynamic`.
+   - A `void` arm is family `"undefined"`, so `m ? m : void 0` must box a real undefined into the carrier and never mint NaN. Assert this.
+   - Use it in `operandProof`, which today returns `unknown` for mismatched arms at `select-planned-closure-operands.ts:212`.
+   - Use it again where from-ast lowers the join to the carrier.
+2. **`throwOperandAdmissible(family)`** for member-closure throw-only. It admits externref, dynamic and string, and refuses scalar `throw`, which stays a left-out class. Share it with `lowerThrowStatement`.
+3. **Loose `==`, `in` and regex on the carrier.** They fail at preparation on standalone and gc because of the `__ir_dyn_call_box` / `__dyn_member_get` ABI gap. Gate them with a lane capability through `supportsBackendCapability`, or with a refusal predicate, so they are refused at select and never claimed and then withdrawn.
+
+### 3. Still out of scope (list under Left out)
+- element and member stores;
+- element reads;
+- `switch` on the carrier;
+- the wasi direct-call plan;
+- `(void 0 as any) == null` (#7144 N2);
+- the shadowed `let undefined` legacy miscompile (#7144 round-3 NIT 2, pre-existing).
+
+### 4. Acceptance
+- **Probes:** the p7–p24 probe matrix and the #6927 reviewers' probes (scratchpad `6927-adv1/2`, `r2-*`) on standalone, wasi and gc native-first must show:
+  - 0 new post-claim errors;
+  - 0 IR-claimed results that differ from node;
+  - no claim lost against the #7144 merge base, unless it is listed with its reason.
+- **New tests**, covering the closure shapes from round 10 and:
+  - `m ? m : void 0`, then observed;
+  - `throw` of a dynamic or string value in a member closure;
+  - a loose `==` on the carrier, refused on standalone and gc.
+- **Bytes:** unoptimized output is byte-identical to base on a sample of playground and equivalence programs. Report native gc, standalone, wasi and fast separately. Note that the host-assisted lane was removed by #6979.
+- **Gates:** every gate run bare (loc, func with both bases, coercion-sites, oracle-ratchet, dead-exports, import-cycles, ir-layering, `check:ir-fallbacks`), and the equivalence gate with no new failures.
+- **Review:** keep `hold` until C's fresh-context review records a verdict.
