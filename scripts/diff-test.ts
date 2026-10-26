@@ -12,15 +12,15 @@
 //   Lane A (V8 reference): `node <program.js>` via spawnSync, capture stdout
 //   Lane B (js2wasm):       compile in-process via `compile()`, instantiate via
 //                           `buildImports`/`instantiateWasm` against a monkey-
-//                           patched `console.log` that buffers output. This is
-//                           the explicit `host-assisted` compatibility lane.
+//                           patched `console.log` that buffers output. Since
+//                           S7-a (#6979) this measures the DEFAULT native-first
+//                           gc profile; the harness drains the module's own
+//                           native Promise job queue (`__drain_microtasks`)
+//                           as well as the host's after `__module_init()`.
 //
 // Why not wasmtime: the `--target wasi` codegen has a known type-mismatch in
 // `__wasi_write_i32` that prevents non-trivial programs from running through
-// wasmtime today. The Node-host lane exercises the primary codegen target
-// (WasmGC + wasm:js-string + JS host imports). Native-first coverage belongs
-// to the standalone/equivalence lanes; wasmtime/SpiderMonkey lanes are
-// documented follow-ups.
+// wasmtime today. wasmtime/SpiderMonkey lanes are documented follow-ups.
 //
 // Output: `benchmarks/results/diff-test.json` — per-file results.
 // Triage:  `scripts/diff-triage.ts` — buckets mismatches by category.
@@ -186,8 +186,11 @@ const MAX_NATIVE_DRAIN_ROUNDS = 10_000;
  * `__drain_microtasks`, `__microtasks_pending`); nothing on the host side runs
  * it after `__module_init()` returns, so `Promise.resolve(42).then(console.log)`
  * printed nothing. Drain it, then interleave host ticks (a host timer can
- * enqueue native jobs) until the ring reports empty. A ring that never empties
- * is a program ERROR, never a silent pass.
+ * enqueue native jobs) until the ring reports empty. A ring that stays
+ * non-empty across MAX_NATIVE_DRAIN_ROUNDS host-tick rounds (e.g. a timer that
+ * keeps re-enqueueing) is a program ERROR. A truly infinite promise chain never
+ * returns from a single `__drain_microtasks` call at all (it runs until memory
+ * is exhausted), so it never reaches the bound — but it cannot pass either.
  */
 async function drainNativeAndHostJobs(exports: Record<string, unknown>): Promise<void> {
   const drain = typeof exports.__drain_microtasks === "function" ? (exports.__drain_microtasks as () => void) : null;

@@ -509,15 +509,15 @@ Not touched here: `issue-5226`, `issue-5247`, `issue-5363` (also red on main).
   → match; `generators/04-sent-values` runtime_error → compile_error). Remaining
   non-matches, all already failing in the old host-lane baseline:
   - `builtins/14-spread-args.js` — runtime_error (`WebAssembly.Exception`) on
-    `sum(...[10,20,30])` with a rest-param `reduce`; filed under #2787.
+    `sum(...[10,20,30])` with a rest-param `reduce`; open tracker #2797.
   - `generators/04-sent-values.js` — compile_error, `join` not on
-    `number | any[] | "ready"` (sent value typed as the yield union); #3710.
-  - `object/06-delete.js` — `o.a` after `delete o.a` prints `NaN`, not `undefined`; #2787.
-  **Not fixed here, needs an id:** the optimize-lane gate
-  (`scripts/diff-test-optimize-gate.ts`, same `Differential test` job) fails on the
-  native-first lane: `builtins/10-error-classes.js`, `control/07-try-catch.js` and
-  `builtins/09-async-await.js` trap `unreachable` inside `__module_init` only under
-  `optimize: true` (the unoptimized binary is correct). Pre-existing for this lane — it
-  fails identically with the pre-drain harness; main never saw it because its harness
-  pinned `host-assisted`. Root cause (wasm-opt vs the native throw/catch shape) not
-  isolated.
+    `number | any[] | "ready"` (sent value typed as the yield union); #3710 (blocked).
+  - `object/06-delete.js` — `o.a` after `delete o.a` prints `NaN`, not `undefined`.
+    Its trackers (#2787, #2796, #2130) are all `done`; no open tracker exists, so it
+    needs an id (not allocated here).
+  The optimize-lane gate (`scripts/diff-test-optimize-gate.ts`, same job) passes on
+  Node 24, which CI runs: all 120 rows behave identically with and without
+  `optimize: true`. On Node 22 only, `builtins/10-error-classes`, `control/07-try-catch`
+  and `builtins/09-async-await` trap `unreachable` in the optimized binary — a V8 12.4
+  bug (Node 23.11/24/25 run the same modules correctly), tracked as #7168 and fixed
+  separately in PR #6929.
