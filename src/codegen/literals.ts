@@ -19,7 +19,6 @@ import {
   collectMutatedCaptureNames,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
-  compileArrowAsCallback,
   compileArrowAsClosure,
   type SharedRefCellMap,
   emitMethodParamDefaults,
@@ -94,12 +93,7 @@ import {
 } from "./generators-native.js";
 import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
-import {
-  emitSymbolDescStore,
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  usesNativeSymbolProvider,
-} from "./symbol-native.js";
+import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier } from "./symbol-native.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
@@ -129,7 +123,6 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { registerCountedPushArray } from "./array-indexof-scan.js";
 import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js";
 import { foldedComputedMethodKey } from "./single-assignment-binding.js"; // (#6651 A7)
-import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { getToPrimitiveProvider } from "./coercion-engine.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
@@ -504,14 +497,9 @@ export function compileObjectLiteralAsExternref(
         // Phase B Slice 3 — native __object_assign iterates a $ObjVec).
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.targetProfile.semanticProviders === "native-first") {
-          const b = ensureObjVecBuilders(ctx);
-          arrNewIdx = b.newIdx;
-          arrPushIdx = b.pushIdx;
-        } else {
-          arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-          arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-        }
+        const b = ensureObjVecBuilders(ctx);
+        arrNewIdx = b.newIdx;
+        arrPushIdx = b.pushIdx;
         const assignIdx = ensureLateImport(
           ctx,
           "__object_assign",
@@ -831,72 +819,6 @@ export function materializeStructAsDynamicObject(
 
 registerMaterializeStructAsObject(materializeStructAsDynamicObject);
 
-/**
- * (#4435) True when a spread source is backed by a compiler-visible plain data
- * literal. In the JS-host lane a top-level spread runs during Wasm module
- * initialization, before `setExports` makes the generated struct-field readers
- * available to `_wrapForHost`. Passing the opaque struct to host
- * `Object.assign` therefore exposes zero keys. Such a source can be copied by
- * the existing struct materializer without changing observable accessor order:
- * every property is a statically named data property and there are no getters,
- * setters, methods, computed keys, or nested spreads to invoke while copying.
- *
- * Keep this deliberately narrower than a type-only "has no accessors" test.
- * The accessor-order regressions pinned by #4466 rely on the general host path
- * remaining lazy; only a direct literal, or an identifier declared from one,
- * is admitted here.
- */
-function isPlainDataLiteralSpreadSource(ctx: CodegenContext, expression: ts.Expression): boolean {
-  let current = expression;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isSatisfiesExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-
-  let literal: ts.ObjectLiteralExpression | undefined;
-  if (ts.isObjectLiteralExpression(current)) {
-    literal = current;
-  } else if (ts.isIdentifier(current)) {
-    let symbol = ctx.checker.getSymbolAtLocation(current);
-    if (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
-      try {
-        symbol = ctx.checker.getAliasedSymbol(symbol);
-      } catch {
-        symbol = undefined;
-      }
-    }
-    const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-    if (declaration && ts.isVariableDeclaration(declaration) && declaration.initializer) {
-      let initializer = declaration.initializer;
-      while (
-        ts.isParenthesizedExpression(initializer) ||
-        ts.isAsExpression(initializer) ||
-        ts.isTypeAssertionExpression(initializer) ||
-        ts.isSatisfiesExpression(initializer) ||
-        ts.isNonNullExpression(initializer)
-      ) {
-        initializer = initializer.expression;
-      }
-      if (ts.isObjectLiteralExpression(initializer)) literal = initializer;
-    }
-  }
-
-  return (
-    literal !== undefined &&
-    literal.properties.length > 0 &&
-    literal.properties.every(
-      (property) =>
-        (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
-        resolvePropertyNameText(ctx, property) !== undefined,
-    )
-  );
-}
-
 function materializableSpreadStructTypeIdx(
   ctx: CodegenContext,
   expression: ts.Expression,
@@ -905,8 +827,7 @@ function materializableSpreadStructTypeIdx(
   if (srcType.kind !== "ref" && srcType.kind !== "ref_null") return undefined;
   const typeIdx = srcType.typeIdx;
   if (!ctx.typeIdxToStructName.has(typeIdx)) return undefined;
-  if (ctx.targetProfile.semanticProviders === "native-first") return typeIdx;
-  return isPlainDataLiteralSpreadSource(ctx, expression) ? typeIdx : undefined;
+  return typeIdx;
 }
 
 /**
@@ -1234,10 +1155,7 @@ function compileObjectLiteralWithAccessors(
         // (`language/expressions/{array,new,super}/spread-obj-manipulate-outter-
         // obj-in-getter.js` all flip pass→fail). Dropping the gate to reach a
         // dogfood case in the host lane is not a safe trade.
-        const spreadStructIdx =
-          ctx.targetProfile.semanticProviders === "native-first"
-            ? materializableSpreadStructTypeIdx(ctx, prop.expression, srcType)
-            : undefined;
+        const spreadStructIdx = materializableSpreadStructTypeIdx(ctx, prop.expression, srcType);
         if (
           spreadStructIdx !== undefined &&
           materializeStructAsDynamicObject(ctx, fctx, spreadStructIdx, { skipInternalFields: true })
@@ -1249,14 +1167,9 @@ function compileObjectLiteralWithAccessors(
         }
         let arrNewIdx: number | undefined;
         let arrPushIdx: number | undefined;
-        if (ctx.targetProfile.semanticProviders === "native-first") {
-          const b = ensureObjVecBuilders(ctx);
-          arrNewIdx = b.newIdx;
-          arrPushIdx = b.pushIdx;
-        } else {
-          arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
-          arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
-        }
+        const b = ensureObjVecBuilders(ctx);
+        arrNewIdx = b.newIdx;
+        arrPushIdx = b.pushIdx;
         const assignIdx = ensureLateImport(
           ctx,
           "__object_assign",
@@ -1603,21 +1516,16 @@ function emitObjectLiteralAccessorFn(
   // earlier rounds fixed.
   homeObjectLocal?: number,
 ): boolean {
-  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    // Same narrowing as the method arm: only a body that actually mentions
-    // `super` takes the capture, so every other accessor stays byte-stable.
-    const superHomeLocal =
-      homeObjectLocal !== undefined && fn.body !== undefined && genBodyReferencesSuper(fn.body)
-        ? homeObjectLocal
-        : undefined;
-    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
-    if (!closureType) return false;
-    if (closureType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    return true;
+  const superHomeLocal =
+    homeObjectLocal !== undefined && fn.body !== undefined && genBodyReferencesSuper(fn.body)
+      ? homeObjectLocal
+      : undefined;
+  const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
+  if (!closureType) return false;
+  if (closureType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" });
   }
-  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true, ...captureOptions });
+  return true;
 }
 
 /**
@@ -1644,19 +1552,13 @@ function emitObjectLiteralMethodFn(
   fn: ts.FunctionExpression,
   homeObjectLocal?: number,
 ): boolean {
-  if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    // Keep ordinary object-literal methods byte-stable. Only a method whose
-    // own body contains `super` needs the synthetic [[HomeObject]] capture.
-    const superHomeLocal =
-      homeObjectLocal !== undefined && genBodyReferencesSuper(fn.body) ? homeObjectLocal : undefined;
-    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
-    if (!closureType) return false;
-    if (closureType.kind !== "externref") {
-      fctx.body.push({ op: "extern.convert_any" });
-    }
-    return true;
+  const superHomeLocal = homeObjectLocal !== undefined && genBodyReferencesSuper(fn.body) ? homeObjectLocal : undefined;
+  const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
+  if (!closureType) return false;
+  if (closureType.kind !== "externref") {
+    fctx.body.push({ op: "extern.convert_any" });
   }
-  return !!compileArrowAsCallback(ctx, fctx, fn, { needsThis: true });
+  return true;
 }
 
 /**
@@ -3065,55 +2967,8 @@ function compileNativeSymbolCall(ctx: CodegenContext, fctx: FunctionContext, arg
  * the host provider retains its existing registration boundary below.
  */
 export function compileSymbolCall(ctx: CodegenContext, fctx: FunctionContext, args: readonly ts.Expression[]): ValType {
-  const nativeSymbolProvider = usesNativeSymbolProvider(ctx);
-  if (nativeSymbolProvider) {
-    // Native lowering evaluates the whole argument list into its own raw
-    // description/trailing-effect sequence before doing the §7.1.17 check.
-    // The host lane retains its existing registration ABI below.
-    ensureNativeSymbolBoundaryBridge(ctx);
-    return compileNativeSymbolCall(ctx, fctx, args);
-  }
-  // (#3481) §20.4.1.1 step 2: a description that is not `undefined` goes
-  // through `? ToString(description)`, and ToString(Symbol) throws (§7.1.17
-  // step 3). `Symbol(anotherSymbol)` used to succeed — the description
-  // argument is coerced with a STRING target, which for a bare `i32` symbol id
-  // renders the id, so the nested symbol became the description "101"
-  // (built-ins/Symbol/desc-to-string-symbol.js). Guarded before the counter is
-  // bumped so a throwing call reserves no id.
-  if (args.length > 0 && emitSymbolOperandCoercionThrow(ctx, fctx, args[0]!, "string")) {
-    return { kind: "i32" };
-  }
-  const counterIdx = ensureSymbolCounter(ctx);
-  // Increment counter first so the new id is reserved before we register a
-  // description for it: `++counter; register_desc(counter, desc); return counter`.
-  fctx.body.push({ op: "global.get", index: counterIdx });
-  fctx.body.push({ op: "i32.const", value: 1 });
-  fctx.body.push({ op: "i32.add" });
-  fctx.body.push({ op: "global.set", index: counterIdx });
-  // (#1467) Pre-register the description so `__box_symbol(id)` later returns
-  // `Symbol(desc)` instead of `Symbol("wasm_<id>")`. This preserves
-  // `Symbol(s).description === s` and `Symbol().description === undefined`.
-  // The native provider returned above; this host lane preserves its existing
-  // description-registration boundary and associated import contract.
-  const regIdx = ensureLateImport(ctx, "__symbol_register_desc", [{ kind: "i32" }, { kind: "externref" }], []);
-  if (regIdx !== undefined) {
-    fctx.body.push({ op: "global.get", index: counterIdx });
-    if (args.length > 0) {
-      const argType = compileExpression(ctx, fctx, args[0]!, { kind: "externref" });
-      if (argType && argType.kind !== "externref") {
-        coerceType(ctx, fctx, argType, { kind: "externref" });
-      }
-    } else {
-      // `Symbol()` with no arg → register `null` so the host knows to construct
-      // a Symbol with no description (so `.description === undefined`).
-      fctx.body.push({ op: "ref.null.extern" });
-    }
-    flushLateImportShifts(ctx, fctx);
-    fctx.body.push({ op: "call", funcIdx: regIdx });
-  }
-  // Push the symbol id (the counter) as the result.
-  fctx.body.push({ op: "global.get", index: counterIdx });
-  return { kind: "i32" };
+  ensureNativeSymbolBoundaryBridge(ctx);
+  return compileNativeSymbolCall(ctx, fctx, args);
 }
 
 /**
@@ -3448,20 +3303,11 @@ function emitRuntimeSpreadCopy(
     if (!runtimeSpreadSources.some((source) => source.propIndex === i)) return;
   }
 
-  let arrNewName = "__js_array_new";
-  let arrPushName = "__js_array_push";
-  let arrNewIdx: number | undefined;
-  let arrPushIdx: number | undefined;
-  if (ctx.targetProfile.semanticProviders === "native-first") {
-    const builders = ensureObjVecBuilders(ctx);
-    arrNewName = "__objvec_new";
-    arrPushName = "__objvec_push";
-    arrNewIdx = builders.newIdx;
-    arrPushIdx = builders.pushIdx;
-  } else {
-    arrNewIdx = ensureLateImport(ctx, arrNewName, [], [{ kind: "externref" }]);
-    arrPushIdx = ensureLateImport(ctx, arrPushName, [{ kind: "externref" }, { kind: "externref" }], []);
-  }
+  const arrNewName = "__objvec_new";
+  const arrPushName = "__objvec_push";
+  const builders = ensureObjVecBuilders(ctx);
+  const arrNewIdx: number | undefined = builders.newIdx;
+  const arrPushIdx: number | undefined = builders.pushIdx;
   const assignIdx = ensureLateImport(
     ctx,
     "__object_assign",
@@ -5752,11 +5598,7 @@ export function compileArrayLiteral(
         "symLike=",
         (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0,
       );
-    if (
-      usesNativeSymbolProvider(ctx) &&
-      elemWasm.kind === "i32" &&
-      (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0
-    ) {
+    if (elemWasm.kind === "i32" && (firstElemType.flags & ts.TypeFlags.ESSymbolLike) !== 0) {
       elemWasm = { kind: "externref" };
     }
     // (#2021) The first element's class type can be a SUBTYPE of the array's

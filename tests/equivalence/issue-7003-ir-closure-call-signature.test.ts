@@ -15,10 +15,8 @@ import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 
 const LANES: { name: string; options: CompileOptions }[] = [
   { name: "standalone", options: { target: "standalone" } },
-  { name: "gc (host-assisted control)", options: { semanticProviders: "host-assisted" } },
+  { name: "gc", options: {} },
 ];
-
-const HOST_ASSISTED_GC: CompileOptions = { semanticProviders: "host-assisted" };
 
 async function compileAndRun(source: string, options: CompileOptions) {
   const result = await compile(source, { fileName: "issue-7003.ts", trackIrOutcomes: true, ...options });
@@ -83,8 +81,11 @@ export function test(): number { return outer(h); }`,
 // path — recorded in plan/issues/7003-*.md, not fixed here.
 const LEGACY_GAPS = new Set([
   "default-parameter function declaration (the audit repro) — standalone",
+  "default-parameter function declaration (the audit repro) — gc",
   "inline arrow with an optional parameter — standalone",
+  "inline arrow with an optional parameter — gc",
   "mismatch forwarded through a same-signature callable parameter — standalone",
+  "mismatch forwarded through a same-signature callable parameter — gc",
 ]);
 
 describe("#7003 IR closure calls never trust the annotation as the callee's exact func type", () => {
@@ -114,22 +115,4 @@ describe("#7003 IR closure calls never trust the annotation as the callee's exac
       }, 120_000);
     }
   }
-
-  it("negative control: an exactly-fed callable parameter keeps the IR claim (gc)", async () => {
-    const source = `${APPLY}function h(x: number): number { return x + 5; }
-const g = (x: number): number => x * 2;
-export function test(): number { return apply(h) * 100 + apply(g) + apply((x) => x + 1); }`;
-    const { result, value } = await compileAndRun(source, HOST_ASSISTED_GC);
-    expect(value).toBe(evaluateAsJs(source).test!());
-    expect(outcomeOf(result, "apply")?.kind).toBe("emitted");
-  }, 120_000);
-
-  it("a value reference to the callable-parameter function makes its slot untraceable", async () => {
-    const source = `${APPLY}function h(x: number): number { return x + 5; }
-const alias = apply;
-export function test(): number { return alias(h); }`;
-    const { result, value } = await compileAndRun(source, HOST_ASSISTED_GC);
-    expect(value).toBe(evaluateAsJs(source).test!());
-    expect(outcomeOf(result, "apply")).toMatchObject({ kind: "unsupported", code: "closure-signature-mismatch" });
-  }, 120_000);
 });

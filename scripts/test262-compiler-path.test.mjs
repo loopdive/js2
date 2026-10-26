@@ -42,8 +42,8 @@ test("compatibility request records hybrid configuration without proving executi
 test("cache and artifact namespaces preserve the old lane and isolate IR", () => {
   assert.equal(test262CacheDirectoryName("legacy"), ".test262-cache");
   assert.equal(test262CacheDirectoryName("ir"), ".test262-cache-ir");
-  assert.equal(test262ResultPrefix("standalone", "auto", "legacy"), "test262-standalone");
-  assert.equal(test262ResultPrefix("standalone", "auto", "ir"), "test262-standalone-ir");
+  assert.equal(test262ResultPrefix("standalone", "legacy"), "test262-standalone");
+  assert.equal(test262ResultPrefix("standalone", "ir"), "test262-standalone-ir");
 });
 
 test("neither IR_FIRST nor caller supplied verified flags admit IR numbers", () => {
