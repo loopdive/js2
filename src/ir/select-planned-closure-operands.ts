@@ -27,7 +27,9 @@ import {
   isEqualityOperator,
   isStrictEqualityOperator,
   isTypedBinaryOperator,
+  isUndefinedCompareOperand,
   nullComparisonFolds,
+  undefinedCompareOperandAdmissible,
   nullishLeftAdmissible,
   nullValueAdmissible,
   slotWriteVerdict,
@@ -70,10 +72,6 @@ function unwrapParens(expr: ts.Expression): ts.Expression {
 
 function isAssignmentOperator(op: ts.SyntaxKind): boolean {
   return op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment;
-}
-
-function isUndefinedIdentifier(expr: ts.Expression, locals: ReadonlyMap<string, unknown>): boolean {
-  return ts.isIdentifier(expr) && expr.text === "undefined" && !locals.has(expr.text);
 }
 
 /** The operand an equality compares with a direct `null` literal (`null === null`: none to type). */
@@ -354,7 +352,9 @@ export function plannedClosureOperandRefusal(
     // lowers the literal like any operand).
     const other = nullComparedOperand(expr);
     if (other !== null) {
-      return !isUndefinedIdentifier(other, locals) && nullComparisonFolds(op, operandProof(other).family)
+      // `null === undefined` (the identifier) has no lowering; `null === void 0` folds.
+      const undefinedIdentifier = ts.isIdentifier(other) && other.text === "undefined" && !locals.has(other.text);
+      return !undefinedIdentifier && nullComparisonFolds(op, operandProof(other).family)
         ? null
         : { arm: "closure-null-compare", node: expr };
     }
@@ -362,12 +362,17 @@ export function plannedClosureOperandRefusal(
     // (no promoted slot is visible here, so only the slot-free shapes).
     const identityOperand = i32IdentityBitwiseOperand(expr);
     if (identityOperand !== null && isWrapI32Lowerable(identityOperand, () => false)) return null;
+    // The strict `undefined` compare has its own lowering (`tryLowerUndefinedCompare`).
+    const isShadowed = (name: string): boolean => locals.has(name);
+    const leftUndefined = isUndefinedCompareOperand(expr.left, isShadowed);
+    const rightUndefined = isUndefinedCompareOperand(expr.right, isShadowed);
+    if (isStrictEqualityOperator(op) && (leftUndefined || rightUndefined)) {
+      if (leftUndefined && rightUndefined) return null;
+      const compared = operandProof(leftUndefined ? expr.right : expr.left).family;
+      return undefinedCompareOperandAdmissible(compared) ? null : { arm: "closure-undefined-compare", node: expr };
+    }
     const left = unwrapParens(expr.left);
     const right = unwrapParens(expr.right);
-    // The strict `undefined` compare has its own lowering (`tryLowerUndefinedCompare`).
-    if (isStrictEqualityOperator(op) && (isUndefinedIdentifier(left, locals) || isUndefinedIdentifier(right, locals))) {
-      return null;
-    }
     const leftProof = operandProof(left);
     const rightProof = operandProof(right);
     if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {

@@ -10842,8 +10842,7 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (hasModuleExternOperand && isEquality) {
       const left = unwrapPhase1Parens(expr.left);
       const right = unwrapPhase1Parens(expr.right);
-      const isStrict =
-        binOp === ts.SyntaxKind.EqualsEqualsEqualsToken || binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+      const isStrict = isStrictEqualityOperator(binOp);
       // The builder has proven runtime identity checks only for an exact
       // module extern against strict null / undefined. Extern-to-extern,
       // host-member, loose, and wrapped-value equality stay legacy-owned.

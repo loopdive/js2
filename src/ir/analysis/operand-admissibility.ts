@@ -64,6 +64,28 @@ export type OperandFamily =
  */
 export type AdditiveProof = "number" | "string" | "dynamic" | "unprovable";
 
+/**
+ * `tryLowerUndefinedCompare`'s `undefined` operand of a strict equality: the
+ * unshadowed identifier `undefined` or a literal `void 0` — read DIRECTLY, as
+ * the lowering does (`(void 0) === x` types the parenthesised operand like any
+ * other). `=== void 0` is how TypeScript and Babel emit `=== undefined`.
+ */
+export function isUndefinedCompareOperand(expr: ts.Expression, isShadowed: (name: string) => boolean): boolean {
+  if (ts.isIdentifier(expr)) return expr.text === "undefined" && !isShadowed(expr.text);
+  return ts.isVoidExpression(expr) && ts.isNumericLiteral(expr.expression) && Number(expr.expression.text) === 0;
+}
+
+/**
+ * The other operand of that strict `undefined` compare. A value `void x` is
+ * the NaN sentinel, which no representation test tells from a number (and its
+ * static type is `undefined`, so the never-undefined fold cannot apply): it is
+ * never lowered. Every other family is decided by the lowering's own dispatch
+ * (tag test, externref probe, checker-proved fold).
+ */
+export function undefinedCompareOperandAdmissible(other: OperandFamily): boolean {
+  return other !== "undefined";
+}
+
 /** The dynamic carrier boxes exactly these families (`boxConcreteToDynamic`). */
 export function boxableIntoDynamic(family: OperandFamily): boolean {
   return family === "number" || family === "boolean" || family === "string" || family === "dynamic";

@@ -21,6 +21,7 @@ import {
   nullishLeftAdmissible,
   nullValueAdmissible,
   slotWriteVerdict,
+  undefinedCompareOperandAdmissible,
   type AdditiveProof,
   type OperandFamily,
 } from "../src/ir/analysis/operand-admissibility.js";
@@ -226,18 +227,25 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
       "throw typeof void 0;",
       "throw void 0;",
       "subject(void 0); throw m;",
+      // A parenthesised `void` is not the compare's `undefined` operand but its other side.
+      'if ((void 0) === undefined) throw m; throw "y";',
     ]) {
       await expectAgreement(body, false);
     }
     expect(binaryOperandsAdmissible(ts.SyntaxKind.EqualsEqualsEqualsToken, "undefined", "undefined")).toBe(false);
     expect(nullComparisonFolds(ts.SyntaxKind.EqualsEqualsToken, "undefined")).toBe(false);
     expect(slotWriteVerdict("dynamic", "undefined")).toBe("inadmissible");
+    expect(undefinedCompareOperandAdmissible("undefined")).toBe(false);
     // Read through ToNumber, or strictly compared with `null`: lowered, = node.
     for (const body of [
       'var t = (void 0) - 1; if (t === t) throw "self"; throw m;',
       'if (k < void 0) throw "y"; throw m;',
       'if (void 0 === null) throw "y"; throw m;',
       'if (n == void 0) throw "y"; throw m;',
+      // `=== void 0` is the strict undefined compare (TS / Babel emit it for `=== undefined`).
+      'if (k === void 0) throw "y"; throw m;',
+      'if (m !== void 0) throw m; throw "y";',
+      'if (void 0 === void 0) throw m; throw "y";',
       "var u = (k < 1) | 0; throw m;",
     ]) {
       await expectAgreement(body, true);

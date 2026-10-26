@@ -50,7 +50,9 @@ import {
   compoundWriteAdmissible,
   incrementSlotAdmissible,
   isStrictEqualityOperator,
+  isUndefinedCompareOperand,
   nullComparisonFolds,
+  undefinedCompareOperandAdmissible,
   nullishLeftAdmissible,
   nullValueAdmissible,
   slotWriteVerdict,
@@ -15970,11 +15972,9 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
   const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
   const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
   if (!isStrictEq && !isStrictNeq) return null;
-  const isUndefinedValue = (e: ts.Expression): boolean =>
-    (ts.isIdentifier(e) && e.text === "undefined" && !cx.scope.has("undefined")) ||
-    (ts.isVoidExpression(e) && ts.isNumericLiteral(e.expression) && Number(e.expression.text) === 0);
-  const leftU = isUndefinedValue(expr.left);
-  const rightU = isUndefinedValue(expr.right);
+  const isShadowed = (name: string): boolean => cx.scope.has(name);
+  const leftU = isUndefinedCompareOperand(expr.left, isShadowed);
+  const rightU = isUndefinedCompareOperand(expr.right, isShadowed);
   if (!leftU && !rightU) return null;
   if (leftU && rightU) {
     // `undefined === undefined` → true / `!==` → false.
@@ -16063,7 +16063,11 @@ function tryLowerUndefinedCompare(expr: ts.BinaryExpression, op: ts.SyntaxKind, 
     t.kind === "object" ||
     t.kind === "closure" ||
     t.kind === "string"; // native-strings mode only (host mode took the branch above)
-  if (neverUndefinedRep && !staticTypeMayBeUndefined()) {
+  if (
+    undefinedCompareOperandAdmissible(irOperandFamily(t, other)) &&
+    neverUndefinedRep &&
+    !staticTypeMayBeUndefined()
+  ) {
     return cx.builder.emitConst({ kind: "bool", value: isStrictNeq }, IR_BOOL);
   }
   throw new IrUnsupportedError(
