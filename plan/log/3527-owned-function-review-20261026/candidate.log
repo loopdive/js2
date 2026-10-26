@@ -1,0 +1,108 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-owned-function-review-20261026
+
+ ✓ tests/issue-3518-native-number-primitive-classifier.test.ts (192 tests) 37938ms
+   ✓ issued native Number primitive classifier authority > rejects an authentic but foreign complete dependency root before allocation  319ms
+   ✓ issued native Number primitive classifier authority > rejects duplicate canonical fill without replacing completed instruction arrays  330ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed primitive body  391ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed symbol body  384ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed nullish body  382ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed number body  306ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed boolean body  390ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed bigint body  308ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed symbol-box body  308ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed scanner body  310ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed undefined initializer  305ms
+   ✓ issued native Number primitive classifier authority > refuses a same-signature substituted function object at its original coordinate  303ms
+   ✓ issued native Number primitive classifier authority > refuses a replaced function signature  311ms
+   ✓ issued native Number primitive classifier authority > refuses a changed Symbol layout after successful completion  363ms
+   ✓ Number classifier descriptor and definition authentication > rejects an equal replacement of the nested source record after warm completion  465ms
+   ✓ Number classifier descriptor and definition authentication > rejects warmed scanner getters without running them  322ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isPrimitive locals and body after warm completion  992ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isSymbol locals and body after warm completion  1027ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isNullish locals and body after warm completion  997ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isPrimitive on every public audit route  4459ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isSymbol on every public audit route  4103ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isNullish on every public audit route  4029ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isPrimitive array getters before dependency completion and permits fill retry  464ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isSymbol array getters before dependency completion and permits fill retry  485ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isNullish array getters before dependency completion and permits fill retry  476ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isPrimitive getters before any audit route  2314ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isSymbol getters before any audit route  2302ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isNullish getters before any audit route  2326ms
+   ✓ number classifier descriptor-first live definitions > refuses hidden live data and permits exact restoration  341ms
+   ✓ number classifier descriptor-first live definitions > refuses inherited live data and permits exact restoration  429ms
+   ✓ number classifier descriptor-first live definitions > refuses sparse live data and permits exact restoration  343ms
+   ✓ number classifier descriptor-first live definitions > refuses extra-array live data and permits exact restoration  340ms
+   ✓ number classifier descriptor-first live definitions > refuses symbol live data and permits exact restoration  342ms
+   ✓ number classifier descriptor-first live definitions > refuses cycle live data and permits exact restoration  343ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill locals identity or attributes after warm completion  341ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill body identity or attributes after warm completion  344ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill field-attributes identity or attributes after warm completion  340ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill deep-attributes identity or attributes after warm completion  344ms
+   ✓ owned numeric provenance boundary > admits genuine copied completion while preserving protected data  311ms
+ ✓ tests/issue-3518-native-string-output-resources.test.ts (156 tests) 7065ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity false utf8=false  922ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity true utf8=false  726ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity false utf8=true  782ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity true utf8=true  769ms
+ ✓ tests/issue-3518-native-bigint-number-owner.test.ts (82 tests) 7833ms
+   ✓ BigInt number descriptor-first live definitions > baseline original-array getter control for number on every public audit route  1736ms
+   ✓ BigInt number descriptor-first live definitions > refuses deep original-returning number getters before any audit route  1962ms
+ ✓ tests/issue-3518-native-boolean-boxes.test.ts (31 tests) 263ms
+ ✓ tests/issue-3518-native-boolean-resources.test.ts (12 tests) 174ms
+ ✓ tests/issue-3518-physical-snapshot-comparison.test.ts (49 tests) 40ms
+ ❯ tests/issue-3527-owned-function-data.test.ts (29 tests | 1 failed) 13ms
+   ✓ owned function admission > matches exact binary/WAT and executes real Wasm 4ms
+   ✓ owned function admission > detaches caller aliases without freezing caller data 1ms
+   ✓ owned function admission > leaves legacy fill live and rejects its later mutation 0ms
+   ✓ owned function admission > protects own publication fields and nested instruction data 0ms
+   ✓ owned function admission > retains live function-shell checking 0ms
+   ✓ owned function admission > retains live mutable module population checking 0ms
+   ✓ owned function admission > resists ArrayIteratorPrototype.next substitution in real binary output 0ms
+   ✓ owned function admission > records remaining ambient join sensitivity in emitter-created WAT arrays 0ms
+   ✓ owned function admission > protects map results derived directly from the private nested body 0ms
+   × owned function admission > retains mixed legacy/owned function mutation detection 2ms
+     → tx.assertCompletedReservations is not a function
+   ✓ owned function admission > preserves floating-point binary and WAT payload -0 1ms
+   ✓ owned function admission > preserves floating-point binary and WAT payload NaN 0ms
+   ✓ owned function admission > copies byte payloads but retains full live audit for mutable copies 0ms
+   ✓ owned function admission > preserves shared DAG references privately 0ms
+   ✓ owned function admission > copies a byte subview without retaining its backing storage 0ms
+   ✓ owned function admission > rejects extra byte-view metadata rather than silently losing it 0ms
+   ✓ owned function admission > protects entries-derived pair lookup without changing nested values 0ms
+   ✓ owned function admission > rejects unsupported input: accessor 0ms
+   ✓ owned function admission > rejects unsupported input: cycle 0ms
+   ✓ owned function admission > rejects unsupported input: hole 0ms
+   ✓ owned function admission > rejects unsupported input: symbol 0ms
+   ✓ owned function admission > rejects unsupported input: extra-index 0ms
+   ✓ owned function admission > reauthenticates after copy proxy callbacks change the function header 0ms
+   ✓ owned function admission > rejects reentrant fill through copy proxy callbacks 0ms
+   ✓ owned function admission > rejects phase changes during copy callbacks 0ms
+   ✓ owned function admission > closing audit rejects shell corruption after the publication snapshot 0ms
+   ✓ owned function admission > does not rewrite reduce accumulator arrays frozen=false 0ms
+   ✓ owned function admission > does not rewrite reduce accumulator arrays frozen=true 0ms
+   ✓ owned function admission > does not rewrite a borrowed map method's custom species result 0ms
+ ✓ tests/issue-3518-native-boolean-boundary-contracts.test.ts (16 tests) 8ms
+ ✓ tests/issue-3518-native-boolean-bodies.test.ts (10 tests) 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/issue-3527-owned-function-data.test.ts > owned function admission > retains mixed legacy/owned function mutation detection
+TypeError: tx.assertCompletedReservations is not a function
+ ❯ tests/issue-3527-owned-function-data.test.ts:154:8
+    152|     const body: Instr[] = [{ op: "nop" }];
+    153|     tx.fillFunction(b, { locals: [], body });
+    154|     tx.assertCompletedReservations([a, b]);
+       |        ^
+    155|     body.push({ op: "nop" });
+    156|     expect(() => tx.assertCompletedReservation(a)).toThrow(/altered co…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 8 passed (9)
+      Tests  1 failed | 576 passed (577)
+   Start at  12:36:59
+   Duration  64.66s (transform 5.19s, setup 0ms, collect 10.49s, tests 53.34s, environment 1ms, prepare 201ms)
+

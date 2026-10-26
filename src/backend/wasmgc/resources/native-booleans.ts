@@ -131,8 +131,8 @@ export function fillNativeBooleanResources(tx: PhysicalModuleReservations, pack:
   requireNativeBooleanReservations(tx, pack, owner.values, owner.requirements, owner.dependencies);
   requireCompletedNativeValues(tx, owner.values, owner.requirements, owner.dependencies);
   const type = owner.values.types.boxedBoolean.typeIndex;
-  tx.fillFunction(pack.isBoolean, { locals: [], body: buildTypeofBooleanBody(type) });
-  tx.fillFunction(pack.unboxBoolean, { locals: buildUnboxBooleanLocals(), body: buildUnboxBooleanBody(type) });
+  tx.fillOwnedFunction(pack.isBoolean, { locals: [], body: buildTypeofBooleanBody(type) });
+  tx.fillOwnedFunction(pack.unboxBoolean, { locals: buildUnboxBooleanLocals(), body: buildUnboxBooleanBody(type) });
   owner.filled = true;
 }
 
@@ -236,7 +236,7 @@ export function fillNativeBooleanBoxResources(
       : buildBoxBooleanBody({ mode: "allocating", typeIndex });
   for (const [index, token] of pack.globals.entries())
     tx.fillGlobal(token, buildBooleanBoxInitializer(typeIndex, index === 0 ? 1 : 0));
-  tx.fillFunction(pack.boxBoolean, { locals: [], body });
+  tx.fillOwnedFunction(pack.boxBoolean, { locals: [], body });
   owner.filled = true;
 }
 

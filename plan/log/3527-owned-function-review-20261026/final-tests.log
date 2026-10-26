@@ -1,0 +1,63 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-owned-function-review-20261026
+
+ ✓ tests/issue-3518-module-reservations.test.ts (149 tests) 58ms
+ ✓ tests/issue-3527-owned-function-data.test.ts (29 tests) 12ms
+ ✓ tests/issue-3518-native-number-primitive-classifier.test.ts (192 tests) 35641ms
+   ✓ issued native Number primitive classifier authority > rejects an authentic but foreign complete dependency root before allocation  328ms
+   ✓ issued native Number primitive classifier authority > rejects duplicate canonical fill without replacing completed instruction arrays  326ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed primitive body  395ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed symbol body  393ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed nullish body  386ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed number body  304ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed boolean body  406ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed bigint body  315ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed symbol-box body  318ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed scanner body  313ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed undefined initializer  303ms
+   ✓ issued native Number primitive classifier authority > refuses a same-signature substituted function object at its original coordinate  302ms
+   ✓ issued native Number primitive classifier authority > refuses a replaced function signature  309ms
+   ✓ issued native Number primitive classifier authority > refuses a changed Symbol layout after successful completion  313ms
+   ✓ Number classifier descriptor and definition authentication > rejects an equal replacement of the nested source record after warm completion  304ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isPrimitive locals and body after warm completion  767ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isSymbol locals and body after warm completion  764ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isNullish locals and body after warm completion  762ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isPrimitive on every public audit route  3999ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isSymbol on every public audit route  4096ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isNullish on every public audit route  4069ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isPrimitive array getters before dependency completion and permits fill retry  464ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isSymbol array getters before dependency completion and permits fill retry  471ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isNullish array getters before dependency completion and permits fill retry  464ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isPrimitive getters before any audit route  2226ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isSymbol getters before any audit route  2243ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isNullish getters before any audit route  2294ms
+   ✓ number classifier descriptor-first live definitions > refuses hidden live data and permits exact restoration  329ms
+   ✓ number classifier descriptor-first live definitions > refuses inherited live data and permits exact restoration  413ms
+   ✓ number classifier descriptor-first live definitions > refuses sparse live data and permits exact restoration  332ms
+   ✓ number classifier descriptor-first live definitions > refuses extra-array live data and permits exact restoration  330ms
+   ✓ number classifier descriptor-first live definitions > refuses symbol live data and permits exact restoration  330ms
+   ✓ number classifier descriptor-first live definitions > refuses cycle live data and permits exact restoration  332ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill locals identity or attributes after warm completion  328ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill body identity or attributes after warm completion  327ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill field-attributes identity or attributes after warm completion  332ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill deep-attributes identity or attributes after warm completion  338ms
+   ✓ owned numeric provenance boundary > admits genuine copied completion while preserving protected data  307ms
+ ✓ tests/issue-3518-native-bigint-number-owner.test.ts (82 tests) 7353ms
+   ✓ BigInt number descriptor-first live definitions > baseline original-array getter control for number on every public audit route  1659ms
+   ✓ BigInt number descriptor-first live definitions > refuses deep original-returning number getters before any audit route  1918ms
+ ✓ tests/issue-3518-native-string-output-resources.test.ts (156 tests) 7412ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity false utf8=false  965ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity true utf8=false  737ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity false utf8=true  790ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity true utf8=true  788ms
+ ✓ tests/issue-3518-native-boolean-boxes.test.ts (31 tests) 268ms
+ ✓ tests/issue-3518-native-boolean-resources.test.ts (12 tests) 194ms
+ ✓ tests/issue-3518-physical-snapshot-comparison.test.ts (49 tests) 41ms
+ ✓ tests/issue-3518-native-boolean-boundary-contracts.test.ts (16 tests) 8ms
+ ✓ tests/issue-3518-native-boolean-bodies.test.ts (10 tests) 5ms
+
+ Test Files  10 passed (10)
+      Tests  726 passed (726)
+   Start at  12:39:41
+   Duration  65.05s (transform 6.26s, setup 0ms, collect 12.95s, tests 50.99s, environment 1ms, prepare 302ms)
+

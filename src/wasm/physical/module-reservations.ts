@@ -1,5 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import {
+  createOwnedFunctionSnapshotStore,
+  copyOwnedFunctionDefinition,
+  publishOwnedFunctionDefinition,
+  ownedFunctionShell,
+} from "./owned-function-data.js";
+
 import type { FuncHandle, Instr, LocalDef, ValType } from "../model/instructions.js";
 import type {
   TypeDef,
@@ -329,6 +336,7 @@ export class PhysicalModuleReservations {
     FunctionReservation,
     { locals: LocalDef[]; body: Instr[]; snapshot: FunctionSnapshot }
   >();
+  readonly #ownedFunctions = createOwnedFunctionSnapshotStore<FunctionReservation, FunctionSnapshot>();
   readonly #filledGlobals = new Map<GlobalReservation, { init: Instr[]; text: string }>();
   readonly #publications = new Map<Element | WasmExport, string>();
   readonly #exportNames = new Set<string>();
@@ -498,7 +506,10 @@ export class PhysicalModuleReservations {
       if (
         token.object.locals !== fill.locals ||
         token.object.body !== fill.body ||
-        !this.#matchesFunction(token.object, fill.snapshot)
+        !this.#matchesFunction(
+          this.#ownedFunctions.get(token) !== undefined ? ownedFunctionShell(token.object) : token.object,
+          this.#ownedFunctions.get(token) ?? fill.snapshot,
+        )
       )
         this.#fail(`altered completed function ${token.key}`);
     }
@@ -895,6 +906,46 @@ export class PhysicalModuleReservations {
     token.object.locals = definition.locals;
     token.object.body = definition.body;
     this.#filledFunctions.set(token, { ...definition, snapshot: this.#captureFunction(token.object) });
+  }
+
+  /**
+   * Copies dense arrays and plain own-data records, detaching caller aliases.
+   * Published locals/body are locked; copied records and private-prototype arrays
+   * are frozen. Callers keep ownership and mutability of their original inputs.
+   * Byte views are copied but remain mutable, so those definitions retain full
+   * recursive live audits. Immutable payloads retain shell and module audits.
+   * Copy callbacks cannot carry authority across phases: recheck before and
+   * after publication. Legacy fillFunction retains live caller-data semantics.
+   */
+  fillOwnedFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
+    this.#require("filling");
+    this.#owned(token);
+    if (token.kind !== "function") this.#fail("function fill requires a defined-function token");
+    if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+    try {
+      const data = copyOwnedFunctionDefinition(definition);
+      // Capture may invoke proxy traps: do not carry reservation authority across it.
+      this.#require("filling");
+      this.#owned(token);
+      if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+      for (const local of data.locals) this.#validateValue(local.type);
+      this.#validateInstructions(data.body);
+      this.#require("filling");
+      if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+      publishOwnedFunctionDefinition(token.object, data.locals, data.body);
+      const snapshot = this.#captureFunction(token.object);
+      const shell = data.immutable ? this.#captureFunction(ownedFunctionShell(token.object)) : undefined;
+      if (this.#state !== "filling") this.#fail("owned publication changed ledger phase");
+      this.#verifyLayout();
+      if (this.#state !== "filling" || this.#filledFunctions.has(token)) this.#fail("reentrant owned publication");
+      this.#filledFunctions.set(token, { locals: data.locals, body: data.body, snapshot });
+      if (shell !== undefined) this.#ownedFunctions.set(token, shell);
+      // Registration must participate in the closing audit before returning authority.
+      this.#verifyLayout();
+      if (this.#state !== "filling") this.#fail("owned closing audit changed ledger phase");
+    } catch (error) {
+      this.#fail(error instanceof Error ? error.message : String(error));
+    }
   }
 
   fillGlobal(token: GlobalReservation, initializer: Instr[]): void {

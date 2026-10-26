@@ -1,0 +1,63 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-owned-function-review-20261026
+
+ ✓ tests/issue-3518-native-number-primitive-classifier.test.ts (192 tests) 36004ms
+   ✓ issued native Number primitive classifier authority > rejects an authentic but foreign complete dependency root before allocation  345ms
+   ✓ issued native Number primitive classifier authority > rejects duplicate canonical fill without replacing completed instruction arrays  338ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed primitive body  405ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed symbol body  404ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed nullish body  395ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed number body  315ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed boolean body  401ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed bigint body  314ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed symbol-box body  314ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed scanner body  316ms
+   ✓ issued native Number primitive classifier authority > refuses a changed completed undefined initializer  315ms
+   ✓ issued native Number primitive classifier authority > refuses a same-signature substituted function object at its original coordinate  312ms
+   ✓ issued native Number primitive classifier authority > refuses a replaced function signature  319ms
+   ✓ issued native Number primitive classifier authority > refuses a changed Symbol layout after successful completion  317ms
+   ✓ Number classifier descriptor and definition authentication > rejects an equal replacement of the nested source record after warm completion  315ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isPrimitive locals and body after warm completion  802ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isSymbol locals and body after warm completion  823ms
+   ✓ Number classifier descriptor and definition authentication > rederives full isNullish locals and body after warm completion  798ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isPrimitive on every public audit route  4137ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isSymbol on every public audit route  4009ms
+   ✓ number classifier descriptor-first live definitions > baseline original-array getter control for isNullish on every public audit route  4027ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isPrimitive array getters before dependency completion and permits fill retry  465ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isSymbol array getters before dependency completion and permits fill retry  476ms
+   ✓ number classifier descriptor-first live definitions > refuses unfilled isNullish array getters before dependency completion and permits fill retry  463ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isPrimitive getters before any audit route  2255ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isSymbol getters before any audit route  2255ms
+   ✓ number classifier descriptor-first live definitions > refuses deep original-returning isNullish getters before any audit route  2261ms
+   ✓ number classifier descriptor-first live definitions > refuses hidden live data and permits exact restoration  332ms
+   ✓ number classifier descriptor-first live definitions > refuses inherited live data and permits exact restoration  417ms
+   ✓ number classifier descriptor-first live definitions > refuses sparse live data and permits exact restoration  332ms
+   ✓ number classifier descriptor-first live definitions > refuses extra-array live data and permits exact restoration  330ms
+   ✓ number classifier descriptor-first live definitions > refuses symbol live data and permits exact restoration  333ms
+   ✓ number classifier descriptor-first live definitions > refuses cycle live data and permits exact restoration  331ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill locals identity or attributes after warm completion  333ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill body identity or attributes after warm completion  330ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill field-attributes identity or attributes after warm completion  331ms
+   ✓ number classifier descriptor-first live definitions > retains successful-fill deep-attributes identity or attributes after warm completion  334ms
+   ✓ owned numeric provenance boundary > admits genuine copied completion while preserving protected data  301ms
+ ✓ tests/issue-3518-native-string-output-resources.test.ts (156 tests) 7425ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity false utf8=false  982ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity true utf8=false  745ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity false utf8=true  798ms
+   ✓ real canonical string-output execution > executes 'empty-both' with empty identity true utf8=true  795ms
+ ✓ tests/issue-3518-native-bigint-number-owner.test.ts (82 tests) 7322ms
+   ✓ BigInt number descriptor-first live definitions > baseline original-array getter control for number on every public audit route  1662ms
+   ✓ BigInt number descriptor-first live definitions > refuses deep original-returning number getters before any audit route  1903ms
+ ✓ tests/issue-3518-native-boolean-boxes.test.ts (31 tests) 295ms
+ ✓ tests/issue-3518-native-boolean-resources.test.ts (12 tests) 176ms
+ ✓ tests/issue-3518-module-reservations.test.ts (149 tests) 56ms
+ ✓ tests/issue-3518-physical-snapshot-comparison.test.ts (49 tests) 41ms
+ ✓ tests/issue-3527-owned-function-data.test.ts (31 tests) 11ms
+ ✓ tests/issue-3518-native-boolean-boundary-contracts.test.ts (16 tests) 10ms
+ ✓ tests/issue-3518-native-boolean-bodies.test.ts (10 tests) 5ms
+
+ Test Files  10 passed (10)
+      Tests  728 passed (728)
+   Start at  12:43:41
+   Duration  69.28s (transform 8.57s, setup 0ms, collect 16.79s, tests 51.35s, environment 1ms, prepare 311ms)
+

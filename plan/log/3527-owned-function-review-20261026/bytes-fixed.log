@@ -1,0 +1,10 @@
+
+ RUN  v3.2.4 /Volumes/Archiv Mini/Users/thomas/Code/ts2wasm/.claude/worktrees/codex-3527-owned-function-review-20261026
+
+ ✓ tests/issue-3527-owned-function-data.test.ts (31 tests) 12ms
+
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+   Start at  12:42:31
+   Duration  250ms (transform 85ms, setup 0ms, collect 94ms, tests 12ms, environment 0ms, prepare 50ms)
+

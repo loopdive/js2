@@ -2515,3 +2515,39 @@ weakened for these environment failures.
 Canonical initializer comparison may invoke Proxy traps after an earlier realm anchor has been compared. Reaudit the completed source initializer through the existing physical ledger before returning the layout owner; this checks every completed resource, including both anchors. Keep the existing checks, layout and emitted bodies unchanged. Add genuine filling/sealed controls using the existing realm fixture: healthy transparent Proxy, late realm-anchor mutation and late function-prototype-anchor mutation. Prove the defect against unchanged main, then run the layout regression and targeted type/lint checks. Quality criterion: one existing audit call, no new validator, cache, ABI or producer. This is a bounded integrity correction, not complete runtime or IR migration qualification.
 
 Validation: unchanged main `61b1b07d2b5666b6ebb84fbbe93ee8a07655d090` fails the four late-mutation cases and passes both healthy controls; the corrected source passes all 38 cases (six new controls plus 32 existing layout regressions). Targeted TS7, Biome lint, Prettier and all five source ratchets pass. A fresh-context review found no actionable defect in the bounded post-comparison physical-ledger check. Three default-compiler programs (numeric loop, string slice/concat, captured object) have byte-identical Wasm and exact matching WAT before/after; this is scoped output preservation, not full backend equivalence. The first baseline probe armed too early and passed all six cases; its log is retained, and only the corrected trigger establishes the defect. Full IR migration and the separate integration candidate remain open.
+
+### Implementation Plan — isolated owned-function publication (2026-10-26)
+
+Add the explicit detached-copy path in wasm/physical/owned-function-data.ts and
+PhysicalModuleReservations.fillOwnedFunction. Reuse the existing function snapshot
+algorithm at this main baseline; do not import unrelated ledger changes from the
+integration worktree. Preserve caller-owned legacy fillFunction behavior and all
+layout/closing audits. Freeze copied plain records and dense private-prototype
+arrays, lock publication fields and retain full recursive audits for mutable byte
+payloads. Immutable payloads can use the existing shell comparison after capture.
+
+Adopt in the four producers present on main: native string output, BigInt number,
+number classifier, and Boolean. Numeric validators require private-copy provenance
+in addition to their existing recursive descriptor/canonical checks. The ToBoolean
+producer is integration-only and remains a subsequent adoption, not bundled here.
+Quality: one copy implementation, explicit opt-in, no generic prototype exemption,
+no new validation cache, no changes to legacy textual descriptor observations.
+Validate original and adapted owner controls, actual binary/WAT and Wasm execution,
+callback/intrinsic mutation witnesses, TS7 and five ratchets. Fresh adversarial
+review precedes any hold release. The broader source/realm adoption and dynamic
+ToNumber owner/resolver remain required for complete IR migration.
+
+Isolation preflight: unchanged main producer tests pass 485/485. The old ledger
+declaration receipt fails identically on exact main and candidate (148/149 each);
+carry the already provenance-backed FieldDef.optional receipt repair from PR6925,
+including type and documentation mutation witnesses. Its baseline failure remains
+in the evidence. One copied owned test called an integration-only batch method;
+use two existing single-token checks while retaining detection of legacy function
+corruption through the owned sibling. No batch API is added by this publication.
+
+Fresh-review correction: copied byte views remained extensible. Hidden own length
+and iterator callbacks could alter real output while restoring indexed bytes
+before the next full audit. Lock the copied view's shape/prototype, publish a fixed
+non-enumerable length and captured iterator, and retain mutable indexed bytes plus
+full content audits. Cover both concrete emitters and prototype substitution. This
+is an owned-path correction; legacy caller-owned bytes remain unchanged.
