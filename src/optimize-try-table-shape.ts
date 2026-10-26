@@ -48,6 +48,12 @@ function readU32(b: Uint8Array, p: number, end: number): [number, number] | null
 }
 
 /** One-byte abstract heap types: `noexn` 0x74 down to `exn` 0x69, plus the strings-proposal range down to 0x67. */
+// Deliberately NOT matched (a ref-typed try_table using them would be missed):
+// the shared-everything prefix 0x65, the stringview heap types 0x66 / 0x62 /
+// 0x61, the continuation types (`nocont` 0x75, `cont`), and more than
+// MAX_CATCHES catch clauses. js2wasm never emits them and Binaryen does not
+// introduce them (V8 12.4 rejects the shared/stringview forms outright).
+// Widen these bounds before enabling any of those features.
 const ABSTRACT_HEAP_TYPE_MIN = 0x67;
 const ABSTRACT_HEAP_TYPE_MAX = 0x74;
 /** Catch clauses per try_table, and branch depth, beyond which the bytes are not a try_table. */
@@ -99,9 +105,9 @@ function plausibleTryTableTail(b: Uint8Array, p: number, end: number, bounds: Sc
  * ref type (`0x1f` then `0x63`/`0x64`)? Only the code section is searched,
  * and the bytes after the pair must decode as a heap type plus a catch
  * vector within the module's type/tag bounds. A real ref-typed try_table
- * always passes. A false positive is still possible (an accidental byte run
- * in code); it costs one `--print`, and the caller treats a failed print as
- * "unverified" rather than as a confirmed shape.
+ * always passes. A false positive is still possible in principle (an
+ * accidental byte run in code; none in 264 measured modules). It costs one
+ * `--print`, or the optimization itself if that print then fails.
  */
 export function mayContainUnsafeTryTable(binary: Uint8Array): boolean {
   const bounds: ScanBounds = { types: 0, tags: 0 };

@@ -658,10 +658,11 @@ const WASM_OPT_PRINT_MAX_BUFFER = 1 << 30;
  * text and re-assemble it with no passes. A module without one (pre-scan
  * miss, or printed text with nothing to rewrite) keeps its bytes exactly.
  *
- * Failure policy. The pre-scan can hit by accident, so a print that fails
- * or times out leaves the shape UNVERIFIED: ship the optimized bytes and say
- * so on stderr. Only a CONFIRMED shape whose re-assembly fails ships the
- * unoptimized input, since the optimized bytes would trap on Node 22.
+ * Failure policy. The structural pre-scan has no known false positive, so a
+ * hit means the optimized bytes almost certainly trap on Node 22. If the
+ * print OR the re-assembly then fails or times out, ship the unoptimized
+ * input with `warning` set (and `timedOut` on a timeout). That costs size,
+ * but the result is correct on every engine.
  * `deadline` (ms epoch) bounds both extra runs when the caller's timeout
  * covers the whole call (#6742).
  */
@@ -683,6 +684,21 @@ function reshapeOptimizedTryTables(
   if (!mayContainUnsafeTryTable(optimized)) return ok(optimized);
   const budget = () => (deadline === undefined ? timeoutMs : Math.max(1, deadline - Date.now()));
   const flags = [...featureFlags, ...(preserveNames ? ["-g"] : [])];
+  const unoptimized = (step: string, err: unknown, applied: number): OptimizeResult => {
+    const { text, timedOut } = wasmOptFailure(err, applied);
+    process.stderr.write(
+      `[optimize] try_table re-shape (#7168) ${step} FAILED — shipping UNOPTIMIZED binary (${original.length} bytes). ` +
+        `Cause: ${text.slice(0, 200).trim()}\n`,
+    );
+    return {
+      binary: original,
+      optimized: false,
+      warning:
+        "wasm-opt output holds a try_table that Node 22 (V8 12.4) executes as unreachable, and re-shaping it " +
+        `(#7168) failed at the ${step} step, so the UNOPTIMIZED binary ships: ${text.slice(0, 600).trim()}`,
+      ...(timedOut ? { timedOut } : {}),
+    };
+  };
   let reshaped: string | null;
   const printBudget = budget();
   try {
@@ -693,12 +709,7 @@ function reshapeOptimizedTryTables(
     });
     reshaped = reshapeUnsafeTryTables(printed.toString("utf-8"));
   } catch (err) {
-    const { text } = wasmOptFailure(err, printBudget);
-    process.stderr.write(
-      `[optimize] try_table check (#7168) could not print the optimized module (${text.slice(0, 160).trim()}); ` +
-        "shipping it UNVERIFIED — it may trap on Node 22 (V8 12.4) if it holds a ref-typed try_table.\n",
-    );
-    return ok(optimized);
+    return unoptimized("print", err, printBudget);
   }
   if (reshaped === null) return ok(optimized);
   const watPath = n.join(tmpDir, "reshaped.wat");
@@ -715,19 +726,7 @@ function reshapeOptimizedTryTables(
     });
     return ok(restoreCustomSections(optimized, new Uint8Array(n.readFileSync(outPath))));
   } catch (err) {
-    const { text, timedOut } = wasmOptFailure(err, assembleBudget);
-    process.stderr.write(
-      `[optimize] try_table re-shape (#7168) FAILED — shipping UNOPTIMIZED binary (${original.length} bytes). ` +
-        `Cause: ${text.slice(0, 200).trim()}\n`,
-    );
-    return {
-      binary: original,
-      optimized: false,
-      warning:
-        "wasm-opt output holds a try_table that Node 22 (V8 12.4) executes as unreachable, and re-shaping it " +
-        `(#7168) failed, so the UNOPTIMIZED binary ships: ${text.slice(0, 600).trim()}`,
-      ...(timedOut ? { timedOut } : {}),
-    };
+    return unoptimized("re-assembly", err, assembleBudget);
   } finally {
     for (const path of [watPath, outPath]) {
       try {

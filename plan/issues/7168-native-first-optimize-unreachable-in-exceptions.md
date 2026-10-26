@@ -108,13 +108,12 @@ The bug is V8 12.4's alone. Multi-value block types are safe.
    --optimize-stack-ir`). Add back custom sections the text dropped.
 4. The print and re-assembly runs share the caller's remaining time budget
    when `timeoutMs` covers the whole call (as in the #6742 retry).
-   - **Print fails or times out:** the shape is unverified, because the
-     pre-scan can still hit by accident. Ship the OPTIMIZED bytes with a loud
-     stderr line.
-   - **Shape confirmed but re-assembly fails:** ship the unoptimized input
-     with a warning that names the cause and the budget that applied.
-     `timedOut` is set on a timeout, so the npm-compat ladder records it as a
-     timeout.
+   - **Print or re-assembly fails or times out after a pre-scan hit:** ship
+     the unoptimized input. The warning names the failed step, the cause and
+     the budget that applied, and `timedOut` is set on a timeout, so the
+     npm-compat ladder records a timeout. The structural scan has no known
+     false positive, so a hit means the optimized bytes would trap on
+     Node 22. Unoptimized costs size but is correct on every engine.
 
 The in-process binaryen.js fallback is unchanged. binaryen.js 132 cannot read
 js2wasm GC modules (`readBinary` throws), so a hook there could not be tested.
@@ -186,7 +185,9 @@ probe/test reference: `tests/issue-7168-optimize-exceptions.test.ts`. It covers:
   - it ignores a safe one, the pair inside a data segment, and a pair whose
     next byte is no heap type
 - the failure paths, with a fake `wasm-opt`:
-  - a false positive whose print fails keeps the optimized bytes
+  - a pre-scan hit whose print fails ships unoptimized with a warning; a
+    false positive only costs size
+  - a hit whose print times out ships unoptimized with `timedOut`
   - a confirmed shape whose re-assembly times out ships unoptimized, with
     `timedOut` set and the remaining budget in the message
 - a shape assertion that works on any Node: no `try_table … (result (ref …`

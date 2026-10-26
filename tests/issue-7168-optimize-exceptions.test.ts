@@ -343,7 +343,7 @@ describe("#7168 exception code survives wasm-opt", () => {
     expect(mayContainUnsafeTryTable(noHeap)).toBe(false);
   });
 
-  it("a pre-scan false positive whose print fails keeps the OPTIMIZED bytes", async () => {
+  it("a pre-scan hit whose print fails ships unoptimized with a warning (a false positive only costs size)", async () => {
     const raw = falsePositiveModule();
     expect(WebAssembly.validate(raw)).toBe(true);
     expect(mayContainUnsafeTryTable(raw)).toBe(true);
@@ -352,9 +352,29 @@ describe("#7168 exception code survives wasm-opt", () => {
 ${FAKE_OPTIMIZE}`,
       () => optimizeBinaryAsync(raw, { level: 3, timeoutMs: 20_000 }),
     );
-    expect(result.optimized).toBe(true);
-    expect(result.warning).toBeUndefined();
+    expect(result.optimized).toBe(false);
+    expect(result.warning).toMatch(/re-shaping it \(#7168\) failed at the print step/);
+    expect(result.warning).toContain("print exploded");
     expect(result.timedOut).toBeUndefined();
+    expect(result.binary).toEqual(raw);
+  }, 60_000);
+
+  it("a pre-scan hit whose print times out ships unoptimized with timedOut", async () => {
+    const raw = new Uint8Array(
+      execFileSync(WASM_OPT, ["-", "-o", "-", ...FEATURES], {
+        input: REF_TRY_TABLE_WAT,
+        stdio: ["pipe", "pipe", "ignore"],
+      }),
+    );
+    const timeoutMs = 5_000;
+    const result = await withFakeWasmOpt(
+      `if (args.includes("--print")) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30000); }
+${FAKE_OPTIMIZE}`,
+      () => optimizeBinaryAsync(raw, { level: 3, timeoutMs }),
+    );
+    expect(result.optimized).toBe(false);
+    expect(result.timedOut).toBe(true);
+    expect(result.warning).toMatch(/failed at the print step/);
     expect(result.binary).toEqual(raw);
   }, 60_000);
 
@@ -375,6 +395,7 @@ ${FAKE_OPTIMIZE}`,
     );
     expect(result.optimized).toBe(false);
     expect(result.timedOut).toBe(true);
+    expect(result.warning).toMatch(/failed at the re-assembly step/);
     expect(result.binary).toEqual(raw);
     // The message names the budget that was left for re-assembly, not the full timeoutMs.
     const applied = Number(/timed out after (\d+) ms/.exec(result.warning ?? "")?.[1]);
