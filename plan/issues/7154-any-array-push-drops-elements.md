@@ -1,10 +1,11 @@
 ---
 id: 7154
 title: "Native-first and host lanes: an any[] literal that later receives an array via push loses its earlier elements"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-27
+completed: 2026-10-27
 priority: high
 horizon: m
 feasibility: medium
@@ -59,3 +60,28 @@ empty arrays for this reason).
    untyped `const a = [1]` literals, all three lanes vs node; afterwards
    change #7147's cyclic test rows to build the cycle on a literal-initialised
    array.
+
+## Resolution (2026-10-27)
+
+Root cause was static, not a runtime migration: `inferArrayVecType` (the
+legacy slot-type inference for an `Array<any>` / initially-empty binding)
+pinned the vec element kind from `push` / index-store arguments only. For
+`const a: any[] = [1]; a.push([2])` it chose a vec-of-`number[]` slot, so the
+literal's `1` was coerced to a null element on the declaration store. Fix
+(moved into `src/codegen/statements/array-vec-inference.ts`):
+
+- a non-empty literal initializer's elements count as stores (holes and
+  spreads force the dynamic `externref` carrier);
+- `unshift`, `fill` and `splice` insert arguments count as stores too, but
+  only constrain a kind that a push / index store already pinned, so a binding
+  without those keeps its checker-typed slot;
+- a binding that shares its vec with another binding (`cur = b`,
+  `const root = cur`, or an initializer that is not a fresh array) takes the
+  dynamic carrier, because differing slot types converted by copying and lost
+  later pushes (the depth-100 chain).
+
+`concat` returns a new array and needed no change. Test:
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (18 rows, gc
+native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
+cycle on a literal-initialised array
+(`tests/equivalence/issue-7147-nested-array-join.test.ts`).
