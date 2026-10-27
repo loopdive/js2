@@ -107,6 +107,16 @@ const PARTNERS: Record<string, Partner> = {
     after: "",
     pushed: '"s"',
   },
+  // (round 7) An all-number any[] that a typed `number[]` escape may receive.
+  "fresh numeric literal": {
+    setup: "",
+    ysType: "any[]",
+    leaf: "[1]",
+    nonNullLeaf: "[1]",
+    under: "number[]",
+    after: "",
+    pushed: "2",
+  },
   "any local": viaAny("const o: any = n; ", "o"),
   "unknown local": viaAny("const o: unknown = n; ", "(o as any[])"),
   "any property": viaAny("const box: any = { arr: n }; ", "box.arr"),
@@ -190,6 +200,78 @@ describe("#7154 any[] share sweep: every alias observes every push", () => {
         const test = knownGap(wrapperName, partnerName, form) ? it.fails : it;
         test(`${form} via ${wrapperName} with a ${partnerName} partner`, () =>
           expectSameOnAllLanes(program(partner, wrapper, form), partner.top ?? ""));
+      }
+    }
+  }
+});
+
+// Review round 7: a member that escapes (call argument, method argument,
+// arrow parameter, object field, array element, return, shorthand property,
+// closure capture) must keep every alias and the escape target on one vec.
+// Crossed with every partner kind, with and without a second `any[]` alias.
+const ESCAPES: Record<string, (p: Partner) => string> = {
+  none: () => "",
+  "typed call argument": (p) => `function add(a: ${p.under}) { a.push(${p.pushed}); } add(xs); `,
+  "any[] call argument": (p) => `function addAny(a: any[]) { a.push(${p.pushed}); } addAny(xs); `,
+  "method argument": (p) => `const h = { add(a: ${p.under}) { a.push(${p.pushed}); } }; h.add(xs); `,
+  "arrow parameter": (p) => `const addF = (a: ${p.under}) => { a.push(${p.pushed}); }; addF(xs); `,
+  "object field": (p) => `const o: { a: ${p.under} } = { a: xs }; o.a.push(${p.pushed}); `,
+  "array element": (p) => `const outer: ${p.under}[] = [xs]; outer[0].push(${p.pushed}); `,
+  return: (p) => `const get = (): ${p.under} => xs; get().push(${p.pushed}); `,
+  shorthand: (p) => `const o: { xs: ${p.under} } = { xs }; o.xs.push(${p.pushed}); `,
+  "closure capture": (p) => `const pushIt = () => { xs.push(${p.pushed}); }; pushIt(); `,
+};
+
+function escapeProgram(partner: Partner, emitEscape: (p: Partner) => string, alias: boolean): string {
+  const core =
+    `const xs: any[] = ${partner.nonNullLeaf}; ` +
+    (alias ? `const zs: any[] = xs; zs.push(${partner.pushed}); ` : "") +
+    emitEscape(partner) +
+    `xs.push(${partner.pushed}); let r = xs.join() + "|" + xs.length` +
+    (alias ? ` + "|" + zs.join(); ` : "; ");
+  if (partner.asParam) {
+    return (
+      PRELUDE +
+      partner.setup +
+      `function run(o: any): string { ${core}return r; } let r = run(n); ${partner.after}return r;`
+    );
+  }
+  return PRELUDE + partner.setup + core + `${partner.after}return r;`;
+}
+
+// Escape rows wrong on main too (each fails there as well; `it.fails` so a
+// fix shows up). Passing an any[] whose vec is typed (or held by a bare
+// `any`) to an `any[]` parameter, storing an `any`-valued vec in a typed
+// object field, returning a typed call result through a typed getter, and
+// shorthand properties `{ xs }`.
+const TYPED_SOURCE = [
+  "number[]",
+  "string[]",
+  "any local",
+  "unknown local",
+  "any property",
+  "any optional chain",
+  "any parameter",
+  "call returning number[]",
+];
+const KNOWN_ESCAPE_GAPS: Record<string, readonly string[]> = {
+  "any[] call argument": TYPED_SOURCE,
+  "object field": ["any local", "unknown local", "any parameter"],
+  return: ["call returning number[]"],
+  shorthand: ["any[]", "any[] | undefined", "any local", "unknown local", "any parameter", "call returning any[]"],
+};
+function knownEscapeGap(escapeName: string, partnerName: string, alias: boolean): boolean {
+  if (escapeName === "shorthand" && partnerName === "fresh literal") return alias;
+  return KNOWN_ESCAPE_GAPS[escapeName]?.includes(partnerName) ?? false;
+}
+
+describe("#7154 any[] share sweep: escapes keep every alias on one vec", () => {
+  for (const [escapeName, emitEscape] of Object.entries(ESCAPES)) {
+    for (const [partnerName, partner] of Object.entries(PARTNERS)) {
+      for (const alias of [false, true]) {
+        const test = knownEscapeGap(escapeName, partnerName, alias) ? it.fails : it;
+        test(`${escapeName} escape, ${partnerName} partner${alias ? ", aliased" : ""}`, () =>
+          expectSameOnAllLanes(escapeProgram(partner, emitEscape, alias), partner.top ?? ""));
       }
     }
   }

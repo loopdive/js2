@@ -207,3 +207,26 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
     it(name, () => expectSameOnAllLanes(body));
   }
 });
+
+// Review round 7 (NIT 1): the share-group verdict is computed once per group
+// and each scope's identifiers are indexed once, so a large alias mesh stays
+// near-linear (it took ~176 s for 400 aliases before; ~6 s now, base ~5 s).
+describe("#7154 share-group analysis stays near-linear", () => {
+  for (const mode of ["chain", "mesh"] as const) {
+    it(`compiles 200 ${mode} aliases within the time budget`, async () => {
+      let body = mode === "chain" ? "const a0: any[] = []; a0.push(0);\n" : "let a0: any[] = []; a0.push(0);\n";
+      for (let i = 1; i < 200; i++) {
+        body +=
+          mode === "chain"
+            ? `const a${i}: any[] = a${i - 1}; a${i}.push(${i});\n`
+            : `let a${i}: any[] = []; a${i}.push("s"); a${i} = a${(i * 7) % i}; a0 = a${i};\n`;
+      }
+      const src = `export function test(): number { ${body} return a0.length; }`;
+      const start = performance.now();
+      const result = await compile(src, { fileName: "probe.ts", target: "standalone" });
+      const elapsed = performance.now() - start;
+      expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
+      expect(elapsed, `${mode}: ${Math.round(elapsed)} ms`).toBeLessThan(10_000);
+    }, 60_000);
+  }
+});

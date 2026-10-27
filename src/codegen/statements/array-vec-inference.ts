@@ -226,6 +226,8 @@ interface UseVerdict {
   readonly typed: boolean;
   /** Places the vec is copied to or from (other side of `=` / a declaration). */
   readonly partners: readonly ts.Node[];
+  /** The vec escapes into an `any` / `unknown` array slot (parameter, field, return). */
+  readonly escapesDynamic?: boolean;
 }
 
 const SAFE_USE: UseVerdict = { typed: false, partners: [] };
@@ -249,7 +251,7 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier): UseVerdict
   const safe = (): UseVerdict => (partners.length === 0 ? SAFE_USE : { typed: false, partners });
   const escapeVerdict = (value: ts.Node): UseVerdict => {
     const fact = ts.isExpression(value) ? ctx.oracle.contextualFactOf(value) : undefined;
-    return fact && factIsDynamicArray(fact) ? safe() : TYPED_USE;
+    return fact && factIsDynamicArray(fact) ? { typed: false, partners, escapesDynamic: true } : TYPED_USE;
   };
   let use: ts.Node = identifier;
   let passedThrough = false;
@@ -406,7 +408,8 @@ function identifiersNamed(scope: ts.Node, name: string): readonly ts.Identifier[
 /**
  * (#7154) The binding's share group needs the dynamic carrier. The group is
  * every binding reachable through shares (initializers and use sites, both
- * directions). It goes dynamic only when it shares at all, every member is an
+ * directions). It goes dynamic only when it shares at all (another binding,
+ * or an escape into an `any` / `unknown` array slot), every member is an
  * `any` / `unknown` element local, every use of every member is positively
  * recognised by `classifyUse`, and every other share endpoint is an array
  * literal or has a static `any` / `unknown` array type. The verdict is
@@ -455,6 +458,7 @@ function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration):
       }
       const verdict = classifyUse(ctx, id);
       if (verdict.typed) dynamic = false;
+      if (verdict.escapesDynamic) shared = true;
       partners.push(...verdict.partners);
     }
     for (const partner of partners) {
