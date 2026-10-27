@@ -394,9 +394,11 @@ export function carrierHelperOperator(op: ts.SyntaxKind, left: OperandFamily, ri
  * `r.x`; `property` is `null` for an element read). An element read never
  * throws on a `null` / `undefined` receiver (`m[k]` with `m === null` answers
  * a value), and WASI's dynamic read has no string or vec receiver arm, so its
- * `.length` / `[i]` answer `undefined`. A named property other than `length`
- * reads correctly on every lane. `nativeMemberRead` is the lane's
- * `native-dynamic-member-read` capability.
+ * `.length` / `[i]` answer `undefined`. A named OWN property other than
+ * `length` reads correctly on every lane; an inherited one (`r.push`,
+ * `r.charAt`, `r.constructor`) answers `undefined` on every lane — the same
+ * wrong value legacy gives, so it is not refused here (#7177).
+ * `nativeMemberRead` is the lane's `native-dynamic-member-read` capability.
  */
 export function carrierMemberReadAdmissible(
   receiver: OperandFamily,
@@ -406,6 +408,25 @@ export function carrierMemberReadAdmissible(
   if (receiver !== "dynamic") return true;
   if (property === null) return false;
   return nativeMemberRead || property !== "length";
+}
+
+/**
+ * (#7113, #7178) A loose `==` / `!=` with a carrier operand. WASI's loose
+ * equality ToPrimitives an object / array carrier by an illegal cast and
+ * traps (`r == 1` with `r = [1, 2]`); only a string other side takes the
+ * string arm. `nativeLooseEquality` is the lane's
+ * `native-dynamic-loose-equality` capability.
+ */
+export function carrierLooseEqualityAdmissible(
+  op: ts.SyntaxKind,
+  left: OperandFamily,
+  right: OperandFamily,
+  nativeLooseEquality: boolean,
+): boolean {
+  if (nativeLooseEquality) return true;
+  if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return true;
+  if (left !== "dynamic" && right !== "dynamic") return true;
+  return (left === "dynamic" ? right : left) === "string";
 }
 
 /**

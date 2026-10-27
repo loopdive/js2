@@ -36,7 +36,8 @@ export type IrBackendTargetCapability =
   | "native-number-conversion"
   | "prepared-dynamic-helper-abi"
   | "native-dynamic-member-read"
-  | "planned-closure-direct-call";
+  | "planned-closure-direct-call"
+  | "native-dynamic-loose-equality";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -148,6 +149,10 @@ export function supportsIrBackendTargetCapability(
     // a planned member closure. WASI's IR read has no string or vec
     // receiver arm and answers `undefined` (`.length`, `[i]`), so only the
     // standalone regime (native gc projects as standalone) is admitted.
+    case "native-dynamic-loose-equality":
+    // (#7113, #7178) Loose `==` / `!=` on the carrier against a non-string:
+    // WASI's helper ToPrimitives an object / array operand by an illegal
+    // cast and traps.
     case "planned-closure-direct-call":
       // (#7113) A direct call to a module function from a planned member
       // closure: WASI mints no AST-site call plan for it and withdraws

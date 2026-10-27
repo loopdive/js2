@@ -39,7 +39,20 @@ Measured on origin/main `72e8b57763` and on the #6834 round-12 head. A string re
 | `var r = m ? m : ""; r += m; throw r` | 1006 | **1030** (claimed at head) | **1030** (main) | 1006 |
 | `var r = m ? m : 1; r = r + undefined; throw r` | 1012 | **1024** (claimed at head) | **1024** (main) | 1012 |
 
-Refusing these at select on WASI would not help: legacy gives the same wrong value in every row
+Loose equality against a number **traps** on WASI (`RuntimeError: illegal cast`): the helper
+ToPrimitives an object / array operand by a cast. It is IR-claimed on main as `if (m == 1)`; legacy
+answers `[1, 2] == 1` and `{} == 1` correctly but `[1] == 1` wrong. Against a string, IR and legacy
+agree but `[1] == "1"` is wrong in both (`false`). Since #6834 round 13 the selector refuses the
+non-string case in the shapes #6834 newly plans (capability `native-dynamic-loose-equality`).
+
+| Closure body (wasi) | Input | node | wasi IR | wasi legacy |
+| --- | --- | --- | --- | --- |
+| `if (m == 1) throw "n"; throw m` | `[1, 2]` | throws `m` | **illegal cast** (claimed on main) | — |
+| `var r = m ? m : 1; if (r == 1) throw "n"; throw r` | `[1, 2]` / `{}` | throws `r` | **illegal cast** (#6834 r12 head) | throws `r` |
+| same | `[1]` | throws `"n"` | **illegal cast** | **throws `r`** |
+| `var r = m ? m : 1; if (r == "1") throw "n"; throw r` | `[1]` | throws `"n"` | **throws `r`** | **throws `r`** |
+
+For the `+` / `String` rows below, refusing at select on WASI would not help: legacy gives the same wrong value in every row
 (and throws for `r + r`).
 
 ## Implementation Plan
@@ -50,5 +63,7 @@ Refusing these at select on WASI would not help: legacy gives the same wrong val
 2. **Add the array arm.** Add Array.prototype.join(",") semantics for a vec payload: elements
    through ToString, with `undefined` / `null` elements as the empty string. Share it with the
    standalone regime's implementation if the WASI runtime can link it.
-3. **Tests.** Cover `m + 1`, `m + ""`, `String(m)`, `` `${m}` `` and `r += m` with `[1, 2]`, `[]`,
+3. **Loose equality.** Route an object / vec carrier through the same ToPrimitive in WASI's loose
+   `==`, then flip `native-dynamic-loose-equality` to true for WASI.
+4. **Tests.** Cover `m + 1`, `m + ""`, `String(m)`, `` `${m}` `` and `r += m` with `[1, 2]`, `[]`,
    `[null, 3]` and nested arrays, on all three lanes, executed.

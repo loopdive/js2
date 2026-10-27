@@ -54,6 +54,11 @@ dynamic method call behaves the same way when the receiver is `null` or has no c
 `if (m.g() === null) throw "n"` gives `"n"` for `m = null` and for `m = [1, 2]`, where node
 throws.
 
+Inherited named reads are wrong on every lane, in the IR and in legacy alike, with the same value.
+`typeof r.push` gives `"undefined"` for `[1, 2]` where node gives `"function"`; likewise
+`typeof r.charAt` for `"ab"`, and `r.constructor` gives `undefined` for any input. They are not
+refused, because legacy gives the same wrong value (#6834 round-12 review J).
+
 Since #6834 round 12 the selector refuses these reads and calls at select
 (`carrierMemberReadAdmissible`, `carrierMethodCallAdmissible` in
 `src/ir/analysis/operand-admissibility.ts`). It refuses every element read and method call on the
@@ -80,5 +85,7 @@ this issue is fixed, retire the refusal.
    `src/ir/backend/legality.ts`, let `carrierMemberReadAdmissible` admit element reads and `carrierMethodCallAdmissible` admit
    method calls, and drop
    the refusal rows from `tests/issue-7106-member-closure-shapes.test.ts`.
-6. **Tests.** Cover `.length`, `[0]`, `[k]` and out-of-range reads on array, string, object and
+6. **Inherited members.** Resolve a named read through the receiver's prototype (`Array.prototype`,
+   `String.prototype`, `Object.prototype`) on every lane.
+7. **Tests.** Cover `.length`, `[0]`, `[k]` and out-of-range reads on array, string, object and
    number inputs, on all three lanes, executed.

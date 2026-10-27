@@ -24,6 +24,7 @@ import {
   binaryOperandsAdmissible,
   carrierHelperCall,
   carrierHelperOperator,
+  carrierLooseEqualityAdmissible,
   carrierMethodCallAdmissible,
   carrierMemberReadAdmissible,
   compoundWriteAdmissible,
@@ -58,6 +59,8 @@ export interface PlannedClosureFamilySources {
   readonly preparedDynamicHelpers?: boolean;
   /** (#7113, #7177) The lane's dynamic member read handles string and vec receivers. */
   readonly nativeDynamicMemberRead?: boolean;
+  /** (#7113, #7178) The lane's loose equality ToPrimitives an object carrier without trapping. */
+  readonly nativeDynamicLooseEquality?: boolean;
   /** (#7113) The lane plans a direct call to a module function from a planned closure. */
   readonly directCalls?: boolean;
   /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
@@ -461,6 +464,17 @@ export function plannedClosureOperandRefusal(
     if (!sources.preparedDynamicHelpers && carrierHelperOperator(op, leftProof.family, rightProof.family)) {
       return { arm: "closure-carrier-helper-operator", node: expr };
     }
+    if (
+      !carrierLooseEqualityAdmissible(
+        op,
+        leftProof.family,
+        rightProof.family,
+        sources.nativeDynamicLooseEquality === true,
+      ) &&
+      isNewShape()
+    ) {
+      return { arm: "closure-carrier-loose-equality", node: expr };
+    }
     if (op === ts.SyntaxKind.PlusToken && !additiveOperandsProvable(leftProof.additive, rightProof.additive)) {
       return { arm: "closure-additive-operands", node: expr };
     }
@@ -512,7 +526,7 @@ export function plannedClosureOperandRefusal(
       ) {
         return { arm: "closure-carrier-helper-call", node: expr };
       }
-      if (!sources.directCalls && moduleDeclares(fn.getSourceFile(), callee.text, true)) {
+      if (!sources.directCalls && moduleDeclares(fn.getSourceFile(), callee.text, true) && isNewShape()) {
         return { arm: "closure-direct-call", node: expr };
       }
     }

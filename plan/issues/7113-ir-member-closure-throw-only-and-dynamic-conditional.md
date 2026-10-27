@@ -32,6 +32,9 @@ loc-budget-allow:
 # member-read, `String(carrier)`, direct-call and shadowed-`undefined` arms
 # (review findings A, C, D, class P); they need the walk's own operand proofs,
 # so they stay inside `plannedClosureOperandRefusal` (337 lines).
+# 2026-10-27 (#7113 round 13): + the wasi loose-equality arm (finding H);
+# the function is now 382 source lines. Follow-up, not in this PR: hoist the
+# walk into a `PlannedClosureWalk` context with module-level refusal arms.
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
@@ -581,3 +584,28 @@ gc, standalone, wasi and fast.
 **Tests:** `tests/issue-7106-member-closure-shapes.test.ts` runs all three lanes, executed, with
 array and string inputs. It covers `.length` on wasi, element reads, a method call and `.length`
 in a throw-only body, `String(r)`, a direct call on wasi, and a shadowed `undefined`.
+
+## Round 13 — result (Opus, 2026-10-27)
+
+This round answers the round-12 delta review (REQUEST CHANGES). A, C, D and G were confirmed closed.
+
+- **H (blocking), fixed.** On wasi, loose `==` / `!=` between the carrier and a non-string trapped
+  (`illegal cast`) when `m` was an array or an object.
+  - Repro: `var r = m ? m : 1; if (r == 1) throw "n"`. Legacy was right for `[1, 2]` and `{}`.
+  - Fix: `carrierLooseEqualityAdmissible` now refuses that comparison at select in the new
+    shapes. It reads the new capability `native-dynamic-loose-equality`, which is false on wasi.
+  - A string other side stays claimed. `[1] == "1"` is wrong in both legacy and the IR, with the
+    same value.
+  - Main's own `if (m == 1)` trap is unchanged and is recorded in
+    [#7178](7178-wasi-dynamic-array-arithmetic-wrong.md).
+- **I, fixed.** The wasi direct-call refusal now applies only in the new shapes. Main's correct
+  `subject.f = function (m) { helper(); }` claim is back. Main's 8 wasi direct-call post-claim
+  errors stay as they are on main, so none of them is new.
+- **J, documented.** The `carrierMemberReadAdmissible` doc now says that inherited named reads
+  (`r.push`, `r.charAt`, `r.constructor`) answer `undefined` on every lane, with the same wrong
+  value as legacy. Added to [#7177](7177-wasi-ir-dynamic-member-read-undefined.md).
+- **K, grant updated.** `plannedClosureOperandRefusal` is now 382 source lines. Follow-up, not
+  done in this PR: hoist the walk into a `PlannedClosureWalk` context so each refusal arm is a
+  module-level function under the limit.
+- **Comparison fix.** A row-lane's claims are now counted whatever post-claim errors its other
+  functions have.

@@ -759,6 +759,36 @@ export function run() { var n = 0; ${inputs
     }
   }, 90_000);
 
+  it.each([
+    ["`r == 1`", `var r = m ? m : 1; if (r == 1) throw "n"; throw r;`],
+    ["`r != 1`", `var r = m ? m : 1; if (r != 1) throw "n"; throw r;`],
+    ["`r == 1` over a string join", `var r = m ? m : "a"; if (r == 1) throw "n"; throw r;`],
+  ])(
+    "refuses the loose equality %s on wasi, where an object carrier traps (#7178)",
+    async (_name, body) => {
+      // Legacy wasi answers `[1] == 1` wrong too, so `[1]` is only checked for the refusal.
+      const agreed = program(body, [`[1, 2], 0`, `{ a: 1 }, 0`, `{}, 0`, `2, 0`]);
+      const refusedOnly = program(body, [`[1], 0`]);
+      const wasi = await compile(agreed, { ...OPTIONS, target: "wasi" });
+      expect(initRow(wasi)).toMatchObject({
+        irBodyEmitted: false,
+        stage: "select",
+        code: "operand-coercion-unsupported",
+      });
+      expect(await runOnLane(wasi, "wasi")).toBe(node(agreed));
+      expect(initRow(await compile(refusedOnly, { ...OPTIONS, target: "wasi" })).irBodyEmitted).toBe(false);
+    },
+    60_000,
+  );
+
+  it("keeps a loose equality against a string claimed on wasi", async () => {
+    // `[1] == "1"` is wrong on wasi in legacy and IR alike (#7178), so `[1]` is left out.
+    const source = program(`var r = m ? m : 1; if (r == "1") throw "n"; throw r;`, [`[1, 2], 0`, `{}, 0`, `"1", 0`]);
+    const result = await compile(source, { ...OPTIONS, target: "wasi" });
+    expect(initRow(result).irBodyEmitted).toBe(true);
+    expect(await runOnLane(result, "wasi")).toBe(node(source));
+  }, 60_000);
+
   it("refuses `String(<carrier>)` at select on standalone and gc", async () => {
     const source = program(`var r = m ? m : 1; throw String(r);`, [...ARRAYS, ...STRINGS]);
     for (const lane of ["standalone", "gc"] as const) {
