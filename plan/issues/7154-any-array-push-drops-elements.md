@@ -16,6 +16,8 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7147, 7146, 7152]
+import-cycles-allow:
+  - largestSccSize: 724 # 2026-10-27 (#7154): inferArrayVecType moved out of statements/variables.ts (LOC budget) into statements/array-vec-inference.ts, which imports resolveWasmType from codegen/index.ts and is imported back by variables.ts, so the split file joins the existing SCC
 ---
 
 # #7154 — `any[]` literal + `push(array)` drops earlier elements
