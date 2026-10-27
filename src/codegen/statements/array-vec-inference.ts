@@ -2,6 +2,7 @@
 //
 // Usage-driven vec element inference for an `Array<any>` / initially-empty
 // array binding (moved out of statements/variables.ts by #7154).
+import type { TypeFact } from "../../checker/oracle.js";
 import { forEachChild, ts } from "../../ts-api.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
@@ -73,10 +74,23 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
     // the other binding's converts by COPYING, so a later push on one is lost
     // on the other. Keep the dynamic carrier both share instead.
     if (ts.isIdentifier(node) && node.text === varName && node !== decl.name) {
-      const partner = sharePartnerOf(node);
-      if (partner && ctx.oracle.variableDeclarationOf(node) === decl && partnerIsDynamic(ctx, partner)) {
+      const partners = sharePartnersOf(node);
+      if (
+        partners.length > 0 &&
+        ctx.oracle.variableDeclarationOf(node) === decl &&
+        partners.every((partner) => partnerIsDynamic(ctx, partner))
+      ) {
         sharesVec = true;
       }
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === varName &&
+      ctx.oracle.variableDeclarationOf(node.left) === decl
+    ) {
+      seedLiterals.push(node.right);
     }
     // arr[i] = value
     if (
@@ -130,6 +144,7 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   }
 
   const secondaryStores: ts.Expression[] = [];
+  const seedLiterals: ts.Expression[] = [];
   let sharesVec =
     decl.initializer !== undefined &&
     !isFreshArrayExpression(decl.initializer) &&
@@ -145,8 +160,12 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   // `const a: any[] = [1]; a.push([2])` must not pin a vec-of-vec slot that
   // coerces the seeded `1` to null. Holes and spreads are not single typed
   // values, so they force the dynamic carrier.
-  if (decl.initializer && ts.isArrayLiteralExpression(decl.initializer)) {
-    for (const element of decl.initializer.elements) {
+  // An array literal assigned later (`xs = [1]`) seeds the same way.
+  if (decl.initializer) seedLiterals.push(decl.initializer);
+  for (const seed of seedLiterals) {
+    const literal = skipValueWrappers(seed);
+    if (!ts.isArrayLiteralExpression(literal)) continue;
+    for (const element of literal.elements) {
       if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) sawDynamicElementWrite = true;
       else secondaryStores.push(element);
     }
@@ -171,71 +190,115 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
 
 /** (#7154) The binding's declared element type is `any` or `unknown`. */
 function declaredElementIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  const fact = ctx.oracle.typeFactOf(decl.name);
-  return fact.kind === "array" && (fact.element.kind === "any" || fact.element.kind === "unknown");
-}
-
-/** (#7154) An expression that yields a vec no other binding can name yet. */
-function isFreshArrayExpression(expression: ts.Expression): boolean {
-  let inner = expression;
-  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isNonNullExpression(inner)) {
-    inner = inner.expression;
-  }
-  return ts.isArrayLiteralExpression(inner) || ts.isCallExpression(inner) || ts.isNewExpression(inner);
+  return factIsDynamicArray(ctx.oracle.typeFactOf(decl.name));
 }
 
 /**
- * (#7154) The other side when this use of an array binding copies the
- * reference to or from another place: `other = arr`, `const other = arr`, or
- * `arr = other` with a right side that is not a fresh array.
+ * (#7154) A static type whose array value lives in the dynamic carrier: `any`,
+ * `unknown`, or an array of those. `null` / `undefined` union members are
+ * already dropped by the oracle, so `any[] | undefined` counts.
  */
-function sharePartnerOf(identifier: ts.Identifier): ts.Expression | ts.BindingName | undefined {
-  let use: ts.Node = identifier;
-  while (
-    ts.isParenthesizedExpression(use.parent) ||
-    ts.isAsExpression(use.parent) ||
-    ts.isNonNullExpression(use.parent)
-  ) {
-    use = use.parent;
-  }
-  const parent = use.parent;
-  if (ts.isVariableDeclaration(parent)) return parent.initializer === use ? parent.name : undefined;
-  if (!ts.isBinaryExpression(parent) || parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
-  if (parent.right === use) return parent.left;
-  return parent.left === use && !isFreshArrayExpression(parent.right) ? parent.right : undefined;
+function factIsDynamicArray(fact: TypeFact): boolean {
+  if (fact.kind === "any" || fact.kind === "unknown") return true;
+  if (fact.kind === "array") return fact.element.kind === "any" || fact.element.kind === "unknown";
+  if (fact.kind === "union") return fact.parts.length > 0 && fact.parts.every(factIsDynamicArray);
+  return false;
 }
 
-/**
- * (#7154) The share partner also holds the dynamic carrier: every binding,
- * field or element it can yield has an `any` / `unknown` element type. Fresh
- * and other leaves (`c ? [] : [1]`, `x || []`) name no binding to agree with.
- */
-function partnerIsDynamic(ctx: CodegenContext, partner: ts.Expression | ts.BindingName): boolean {
-  let inner: ts.Node = partner;
+/** Strip wrappers that pass their operand's value through unchanged. */
+function skipValueWrappers(node: ts.Node): ts.Node {
+  let inner = node;
   while (
     ts.isParenthesizedExpression(inner) ||
     ts.isAsExpression(inner) ||
+    ts.isTypeAssertionExpression(inner) ||
     ts.isNonNullExpression(inner) ||
     ts.isSatisfiesExpression(inner)
   ) {
     inner = inner.expression;
   }
-  // `c ? n : []`, `n || []` and `n ?? []` may yield either operand, so a typed
-  // leaf anywhere keeps the typed layout it shares. `x && n` yields an array
-  // only from `n` (an array is truthy).
+  return inner;
+}
+
+/** (#7154) An expression that yields a vec no other binding can name yet. */
+function isFreshArrayExpression(expression: ts.Expression): boolean {
+  const inner = skipValueWrappers(expression);
+  return ts.isArrayLiteralExpression(inner) || ts.isCallExpression(inner) || ts.isNewExpression(inner);
+}
+
+/**
+ * (#7154) Every other place this use of an array binding copies the reference
+ * to or from: `other = arr`, `const other = arr`, `arr = other` (a right side
+ * that is not a fresh array), seen through value wrappers, `,`, nested `=`,
+ * `?:` branches and `||` / `??` / `&&` operands that pass the value on.
+ */
+function sharePartnersOf(identifier: ts.Identifier): (ts.Expression | ts.BindingName)[] {
+  const partners: (ts.Expression | ts.BindingName)[] = [];
+  let use: ts.Node = identifier;
+  let passedThrough = false;
+  for (;;) {
+    const parent = use.parent;
+    if (skipValueWrappers(parent) !== parent && (parent as { expression?: ts.Node }).expression === use) {
+      use = parent;
+      continue;
+    }
+    if (ts.isVariableDeclaration(parent)) {
+      if (parent.initializer === use) partners.push(parent.name);
+      return partners;
+    }
+    if (ts.isConditionalExpression(parent) && (parent.whenTrue === use || parent.whenFalse === use)) {
+      use = parent;
+      passedThrough = true;
+      continue;
+    }
+    if (!ts.isBinaryExpression(parent)) return partners;
+    const op = parent.operatorToken.kind;
+    const passes =
+      parent.right === use ||
+      (parent.left === use && (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken));
+    if (op === ts.SyntaxKind.EqualsToken && parent.left === use) {
+      if (!passedThrough && !isFreshArrayExpression(parent.right)) partners.push(parent.right);
+      return partners;
+    }
+    if (!passes) return partners;
+    if (op === ts.SyntaxKind.EqualsToken) partners.push(parent.left);
+    else if (
+      op !== ts.SyntaxKind.CommaToken &&
+      op !== ts.SyntaxKind.BarBarToken &&
+      op !== ts.SyntaxKind.QuestionQuestionToken &&
+      op !== ts.SyntaxKind.AmpersandAmpersandToken
+    ) {
+      return partners;
+    }
+    use = parent;
+    passedThrough = true;
+  }
+}
+
+/**
+ * (#7154) The share partner holds the dynamic carrier: every value it can
+ * yield (through wrappers, `,` / `=` right sides, `?:` branches and `||` /
+ * `??` / `&&` operands) is a fresh array or has a static `any` / `unknown`
+ * element type. Any typed leaf keeps the typed layout it shares.
+ */
+function partnerIsDynamic(ctx: CodegenContext, partner: ts.Expression | ts.BindingName): boolean {
+  const inner = skipValueWrappers(partner);
   if (ts.isConditionalExpression(inner)) {
     return partnerIsDynamic(ctx, inner.whenTrue) && partnerIsDynamic(ctx, inner.whenFalse);
   }
   if (ts.isBinaryExpression(inner)) {
     const op = inner.operatorToken.kind;
-    if (op === ts.SyntaxKind.AmpersandAmpersandToken) return partnerIsDynamic(ctx, inner.right);
-    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) {
+    if (op === ts.SyntaxKind.CommaToken || op === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return partnerIsDynamic(ctx, inner.right);
+    }
+    if (
+      op === ts.SyntaxKind.EqualsToken ||
+      op === ts.SyntaxKind.BarBarToken ||
+      op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
       return partnerIsDynamic(ctx, inner.left) && partnerIsDynamic(ctx, inner.right);
     }
   }
-  if (!ts.isIdentifier(inner) && !ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner)) {
-    return true;
-  }
-  const fact = ctx.oracle.typeFactOf(inner);
-  return fact.kind === "array" && (fact.element.kind === "any" || fact.element.kind === "unknown");
+  if (ts.isArrayLiteralExpression(inner) || ts.isCallExpression(inner) || ts.isNewExpression(inner)) return true;
+  return factIsDynamicArray(ctx.oracle.typeFactOf(inner));
 }
