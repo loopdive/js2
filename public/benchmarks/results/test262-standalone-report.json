@@ -12,9 +12,9 @@
   "verifiedExecutionCases": 0,
   "verifiedFrontendCases": 0,
   "unverifiedExecutionCases": 48621,
-  "timestamp": "2026-10-27T18:38:57.312Z",
-  "baseline_generated_at": "2026-10-27T18:38:57.312Z",
-  "baseline_sha": "bce699d749bfbf793a303ee95de2a3c308d110b4",
+  "timestamp": "2026-10-27T19:42:42.259Z",
+  "baseline_generated_at": "2026-10-27T19:42:42.259Z",
+  "baseline_sha": "2b0565cb14a800882d9c5f26697331c5f2686be0",
   "oracle_version": 16,
   "mode": {
     "target": "standalone",
@@ -1836,8 +1836,8 @@
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::AsyncDisposableStack_disposeAsync, env::AsyncDisposableStack_new, env::AsyncDisposableStack_use (##)",
           "assertion_fail:Test262Error: Symbol(Symbol.asyncDispose) should be an own property",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected SameValue(«undefined», «function () { [native code] }») to be true",
+          "assertion_fail:Test262Error: Expected SameValue(«null», «[object Object]») to be true",
           "assertion_fail:Test262Error: Expected stack2 to be an instance of AsyncDisposableStack"
         ]
       },
@@ -2604,8 +2604,8 @@
           "ES2020": 17,
           "ES2018": 12,
           "ES2024": 15,
-          "ES2023": 5,
           "ES2015": 14,
+          "ES2023": 5,
           "ES2022": 19,
           "ES2019": 14,
           "ES2021": 13,
