@@ -176,6 +176,10 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
       "any[] from n ?? [] (number[] partner)",
       `const n: number[] = []; n.push(1); const xs: any[] = n ?? []; xs.push(2); return xs.join() + "|" + n.join();`,
     ],
+    [
+      "any[] from a fresh-only conditional",
+      `function cond(k: number): boolean { return k > 0; } const c = cond(1); const xs: any[] = c ? [1] : []; xs.push([2]); xs.push("s"); return xs.join();`,
+    ],
   ];
   for (const [name, body] of rows) {
     it(name, () => expectSameOnAllLanes(body));

@@ -88,10 +88,13 @@ literal's `1` was coerced to a null element on the declaration store. Fix
   and forcing one side generic broke `const ys = xs` aliasing and boxed swap /
   `cur = next` buffers. A mixed `any[]` <-> `T[]` share (review round 3:
   `const ys: number[] = xs`, `o.f = xs`, `q.items = xs`, either direction)
-  keeps the typed layout both sides infer, as before this fix.
+  keeps the typed layout both sides infer, as before this fix. A
+  conditional / `||` / `??` initializer or assignment is checked leaf by leaf
+  (review round 4): a typed leaf (`n || []`, `c ? n : m`, `n ?? []`) keeps the
+  typed layout; only fresh leaves (`c ? [1] : []`) or `any` leaves go dynamic.
 
 `concat` returns a new array and needed no change. Test:
-`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (35 rows, gc
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (45 rows, gc
 native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
 cycle on a literal-initialised array too
 (`tests/equivalence/issue-7147-nested-array-join.test.ts`).
@@ -110,3 +113,7 @@ Left out (wrong on main and on this fix, not worse):
 - `(string | number)[]` aliases with pushes of the other kind on one side,
   and `any[][]` aliases then pushed: wrong on all lanes.
 - `Map<string, any[]>` + `m.get(k)!.push(..)`: invalid Wasm.
+- A three-way chain `any[]` -> `any[]` -> `number[]`
+  (`const b: any[] = a; ...; const c: number[] = b; c.push(3)`): the typed
+  `c` copies the generic vec, so pushes through `c` are lost (main trapped
+  with an illegal cast).
