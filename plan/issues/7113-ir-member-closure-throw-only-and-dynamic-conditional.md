@@ -609,3 +609,30 @@ This round answers the round-12 delta review (REQUEST CHANGES). A, C, D and G we
   module-level function under the limit.
 - **Comparison fix.** A row-lane's claims are now counted whatever post-claim errors its other
   functions have.
+
+**Measurement (round 13).** I re-ran every probe row and the reviewer's `r11rev-cases1…8` and
+`r12rev/casesA…E`, plus the H and I repros.
+- Each closure was called with 10 inputs. The gc lane ran on the real runtime.
+- That covers 1,955 rows × standalone, wasi and gc = 5,865 row-lanes, against origin/main
+  `f79bff67c3`.
+- Claims are counted per row-lane, ignoring post-claim errors elsewhere in the row. The
+  reviewer's `lost.py` agrees.
+
+| Measure vs main | Result |
+| --- | --- |
+| Lost claims | **0** |
+| New post-claim errors | **0** (199 of main's are gone) |
+| New compile failures | 0 |
+| Newly claimed row-lanes | 1,429 |
+
+Newly claimed row-lanes that differ from node fall into three groups:
+- **84 give main's legacy value exactly.** 72 are on wasi (the #7178 class). 12 are on standalone
+  and gc (the J inherited reads).
+- **6 are wrong in a different way.** These are wasi `r + r` and `r + s` with an array: head gives
+  an object string, while legacy throws a non-primitive. Neither traps.
+- **2 are a harness artifact.** `c8:minLenV`: head throws the correct TypeError.
+
+No new claim traps. The only claimed `illegal cast` rows are main's own `m == 1` claims, and they
+are identical on main.
+
+**Bytes:** unoptimized output is identical on 111 units × native gc, standalone, wasi and fast.
