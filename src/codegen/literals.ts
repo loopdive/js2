@@ -94,7 +94,7 @@ import {
 import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import { emitCollectionIteratorVec } from "./map-runtime.js";
 import { emitSymbolDescStore, ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier } from "./symbol-native.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType, isVecBaseSubtype } from "./registry/types.js";
 import {
   coerceType,
   compileExpression,
@@ -827,6 +827,9 @@ function materializableSpreadStructTypeIdx(
   if (srcType.kind !== "ref" && srcType.kind !== "ref_null") return undefined;
   const typeIdx = srcType.typeIdx;
   if (!ctx.typeIdxToStructName.has(typeIdx)) return undefined;
+  // (#7155) An array carrier's physical fields (`length`, `data`) are not its
+  // own properties; `__object_assign`'s array arm copies its indices instead.
+  if (isVecBaseSubtype(ctx, typeIdx)) return undefined;
   return typeIdx;
 }
 
