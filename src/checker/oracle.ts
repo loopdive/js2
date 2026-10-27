@@ -168,6 +168,17 @@ export interface TypeOracle {
    * declaration syntax such as `var` versus `let`/`const`.
    */
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined;
+  /**
+   * (#7156) The string keys a `for (k in <expr>)` over a CLOSED static shape
+   * enumerates, in enumeration order — the key list the static for-in unroll
+   * emits. A class instance yields only its own public instance fields
+   * (constructor parameter properties, then fields, base class first); private
+   * names, methods, accessors, statics and `declare` fields are not own
+   * enumerable properties. An object literal with a spread is ordered as the
+   * literal builds it (`{...a, z}` is `a`'s keys, then `z`). `undefined` when
+   * this backend cannot answer.
+   */
+  forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -409,6 +420,42 @@ export class TsCheckerOracle implements TypeOracle {
     return this.variableDeclarationOf(id)?.initializer;
   }
 
+  forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined {
+    try {
+      return this.forInKeysOfExpr(expr, 0);
+    } catch {
+      return undefined;
+    }
+  }
+
+  private forInKeysOfExpr(expr: ts.Expression, depth: number): readonly string[] {
+    let e = expr;
+    while (ts.isParenthesizedExpression(e)) e = e.expression;
+    const typeKeys = (): readonly string[] => forInKeysOfType(this.checker, this.checker.getTypeAtLocation(expr));
+    if (depth > 8) return typeKeys();
+    const literal = ts.isIdentifier(e) ? this.constInitializerOf(e) : e;
+    if (!literal || !ts.isObjectLiteralExpression(literal) || !literal.properties.some(ts.isSpreadAssignment)) {
+      return typeKeys();
+    }
+    // `{...a, z}`: the checker's spread type lists the literal's own members
+    // first, but the object is built left to right and a redefined key keeps
+    // its first position. Use that order when every member name is static and
+    // the resulting set is exactly the checker's; otherwise keep the checker's.
+    const keys: string[] = [];
+    for (const prop of literal.properties) {
+      const names = ts.isSpreadAssignment(prop)
+        ? this.forInKeysOfExpr(prop.expression, depth + 1)
+        : [staticMemberName(prop.name)];
+      for (const name of names) {
+        if (name === undefined) return typeKeys();
+        if (!keys.includes(name)) keys.push(name);
+      }
+    }
+    const checkerKeys = typeKeys();
+    if (keys.length !== checkerKeys.length || !checkerKeys.every((k) => keys.includes(k))) return checkerKeys;
+    return keys;
+  }
+
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
     try {
       const decl = this.valueDeclarationOf(id);
@@ -559,6 +606,90 @@ export class TsCheckerOracle implements TypeOracle {
     }
     return { kind: "unresolvable" };
   }
+}
+
+/** (#7156) A member name that is a plain identifier or string literal. */
+function staticMemberName(name: ts.Node | undefined): string | undefined {
+  return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
+}
+
+/**
+ * (#7156) Does this declaration create an own enumerable property on an
+ * instance? A field (not static, not a private name, not `declare`/`abstract`),
+ * a constructor parameter property, or a JS `this.x = …` assignment. Methods,
+ * accessors and interface members live elsewhere or nowhere at runtime.
+ */
+function isOwnFieldDeclaration(decl: ts.Declaration): boolean {
+  if (ts.isPropertyDeclaration(decl)) {
+    if (ts.isPrivateIdentifier(decl.name)) return false;
+    const mods = ts.getModifiers(decl) ?? [];
+    return !mods.some(
+      (m) =>
+        m.kind === ts.SyntaxKind.StaticKeyword ||
+        m.kind === ts.SyntaxKind.DeclareKeyword ||
+        m.kind === ts.SyntaxKind.AbstractKeyword,
+    );
+  }
+  if (ts.isParameter(decl)) return ts.isParameterPropertyDeclaration(decl, decl.parent);
+  return ts.isBinaryExpression(decl) || ts.isPropertyAccessExpression(decl);
+}
+
+/** (#7156) The class (interface) type behind a class-instance type, else undefined. */
+function classTargetOf(t: ts.Type): ts.InterfaceType | undefined {
+  const objectFlags = (t as ts.ObjectType).objectFlags ?? 0;
+  const target = objectFlags & ts.ObjectFlags.Reference ? (t as ts.TypeReference).target : t;
+  return ((target as ts.ObjectType).objectFlags ?? 0) & ts.ObjectFlags.Class ? (target as ts.InterfaceType) : undefined;
+}
+
+/** (#7156) The class declaration behind a class-instance type, else undefined. */
+function classDeclarationOfInstance(t: ts.Type): ts.ClassLikeDeclaration | undefined {
+  return classTargetOf(t)?.symbol?.declarations?.find(ts.isClassLike);
+}
+
+/** (#7156) Own-field names a class declares, in the order its constructor defines them. */
+function classOwnFieldNames(decl: ts.ClassLikeDeclaration): string[] {
+  const names: string[] = [];
+  const ctor = decl.members.find((m): m is ts.ConstructorDeclaration => ts.isConstructorDeclaration(m) && !!m.body);
+  for (const param of ctor?.parameters ?? []) {
+    if (ts.isParameterPropertyDeclaration(param, ctor!)) {
+      const name = staticMemberName(param.name);
+      if (name !== undefined) names.push(name);
+    }
+  }
+  for (const member of decl.members) {
+    if (!ts.isPropertyDeclaration(member) || !isOwnFieldDeclaration(member)) continue;
+    const name = staticMemberName(member.name);
+    if (name !== undefined) names.push(name);
+  }
+  return names;
+}
+
+/**
+ * (#7156) Static for-in keys of a checker type. A class instance enumerates its
+ * own fields, base class first (a base constructor runs before the derived
+ * class defines its fields, and a redeclared field keeps the base position).
+ * Any other type keeps the checker's property order.
+ */
+function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type): readonly string[] {
+  const t = type.getNonNullableType();
+  const props = t.getProperties();
+  const classDecl = classDeclarationOfInstance(t);
+  if (!classDecl) return props.map((p) => p.name);
+  const own = props.filter((p) => (p.declarations ?? []).some(isOwnFieldDeclaration)).map((p) => p.name);
+  const chain: ts.ClassLikeDeclaration[] = [];
+  for (let cur: ts.Type | undefined = t; cur && chain.length < 32; ) {
+    const target = classTargetOf(cur);
+    const decl = target?.symbol?.declarations?.find(ts.isClassLike);
+    if (!target || !decl) break;
+    chain.unshift(decl);
+    cur = checker.getBaseTypes(target)[0];
+  }
+  const ordered: string[] = [];
+  for (const name of chain.flatMap(classOwnFieldNames)) {
+    if (own.includes(name) && !ordered.includes(name)) ordered.push(name);
+  }
+  for (const name of own) if (!ordered.includes(name)) ordered.push(name);
+  return ordered;
 }
 
 /**

@@ -339,6 +339,15 @@ export class DifferentialOracle implements TypeOracle {
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
     return this.compare("variableDeclarationOf", id, (o) => o.variableDeclarationOf(id), describeOptionalNode);
   }
+
+  forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined {
+    return this.compare(
+      "forInStaticKeysOf",
+      expr,
+      (o) => o.forInStaticKeysOf(expr),
+      (v) => (v ? v.join(",") : "undefined"),
+    );
+  }
 }
 
 function describeOptionalNode(node: ts.Node | undefined): string {

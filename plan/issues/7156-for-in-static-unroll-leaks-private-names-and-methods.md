@@ -1,10 +1,11 @@
 ---
 id: 7156
 title: "Native-first and standalone: static for-in unroll over a class instance enumerates private names and prototype methods"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-27
+completed: 2026-10-27
 priority: medium
 horizon: s
 feasibility: medium
@@ -64,3 +65,39 @@ orders the literal's own keys first.
 Acceptance: `for…in` over a class instance lists only public own instance
 fields in declaration order on gc native-first and standalone; host-assisted gc
 bytes unchanged; equivalence gate reports no new regressions.
+
+## Resolution (2026-10-27)
+
+Diagnosis confirmed on gc native-first, standalone and wasi: `new C()` with
+`#x = 1; y = 2; m() {}` enumerated `#x,y,m`; a subclass listed its own members
+before the base's (`w,n,#x,y,m`, node `y,w`); `{...a, z}` gave `z,x,y`.
+
+Fix: the static unroll now takes its key list from a new oracle query,
+`ctx.oracle.forInStaticKeysOf(expr)` (`src/checker/oracle.ts`; the in-house
+backend answers `undefined` and the unroll falls back to the checker's raw
+property list, so no new raw checker call in `src/codegen/`).
+
+- A class instance keeps only own fields: parameter properties, then fields,
+  base class first (a redeclared field keeps the base position). Private
+  names, methods, accessors, statics and `declare`/`abstract` fields are
+  dropped.
+- An object literal with a spread (directly, or through a `const`) is ordered
+  as it is built, left to right. Deviation from plan step 3: instead of
+  falling through to the dynamic `$Object` for-in, the unroll keeps the static
+  path with the correct order — same bytes, only the key order changes. The
+  AST order is used only when it names exactly the checker's key set.
+- Every other receiver keeps the checker's order, so its bytes are unchanged
+  (60 of 72 sampled lane/program compiles byte-identical; the 12 that differ
+  are the for-in-over-class / spread programs).
+
+Tests: `tests/equivalence/issue-7156-for-in-class-instance.test.ts` (gc
+native-first, standalone, wasi vs node).
+
+Left out:
+
+- `o[k]` read back inside the loop on **wasi** returns `undefined` for a struct
+  receiver, plain object literals included (pre-existing, not #7156); the
+  value-read row runs on gc and standalone only.
+- Integer-like keys (`{ b: 1, 1: 2 }`) are not reordered ascending; unchanged.
+- `Object.keys` static paths were not moved onto the new query (they already
+  print `y` for the issue's class).

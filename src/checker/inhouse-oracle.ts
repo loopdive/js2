@@ -143,6 +143,11 @@ export class InHouseOracle implements TypeOracle {
     return this.bindingOf(node)?.declarations ?? [];
   }
 
+  /** (#7156) Needs the checker's property list; this backend cannot answer. */
+  forInStaticKeysOf(_expr: ts.Expression): readonly string[] | undefined {
+    return undefined;
+  }
+
   constInitializerOf(id: ts.Node): ts.Expression | undefined {
     const binding = this.bindingOf(id);
     if (!binding || binding.kind !== "const" || binding.destructured) return undefined;
