@@ -74,6 +74,16 @@ export type TypeFact =
  */
 export type OracleTypeKey = symbol & { readonly __brand: "OracleTypeKey" };
 
+/** Exact binding evidence; query failure throws rather than becoming absence. */
+export type BindingDeclarationEvidence =
+  | { readonly kind: "unknown" }
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "resolved";
+      readonly declarations: readonly ts.Declaration[];
+      readonly valueDeclaration: ts.Declaration | undefined;
+    };
+
 export interface TypeOracle {
   /** The workhorse: the registry-free fact for a node's type. */
   typeFactOf(node: ts.Node): TypeFact;
@@ -161,6 +171,9 @@ export interface TypeOracle {
   aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
   /** All declarations for an exact binding, without exposing its Symbol. */
   declarationsOf(node: ts.Node): readonly ts.Declaration[];
+  /** Exact symbol declarations/value declaration, or explicit unavailable evidence.
+   * Successful absence is distinct from unknown; checker/accessor errors propagate. */
+  bindingDeclarationEvidenceOf(id: ts.Identifier): BindingDeclarationEvidence;
   /**
    * Variable declaration for a plain identifier binding. Returning the AST
    * declaration (rather than the checker Symbol) keeps binding-identity
@@ -222,6 +235,7 @@ export class TsCheckerOracle implements TypeOracle {
   // cached too.
   private readonly valueDeclCache = new WeakMap<ts.Node, ts.Declaration | null>();
   private readonly declarationsCache = new WeakMap<ts.Node, readonly ts.Declaration[]>();
+  private readonly bindingEvidenceCache = new WeakMap<ts.Identifier, BindingDeclarationEvidence>();
   private keyCounter = 0;
 
   constructor(private readonly checker: ts.TypeChecker) {}
@@ -479,6 +493,32 @@ export class TsCheckerOracle implements TypeOracle {
     }
     this.declarationsCache.set(node, decls);
     return decls;
+  }
+
+  bindingDeclarationEvidenceOf(id: ts.Identifier): BindingDeclarationEvidence {
+    const cached = this.bindingEvidenceCache.get(id);
+    if (cached) return cached;
+    const seen = new Set<ts.Node>();
+    let owner: ts.Node | undefined = id;
+    while (owner && !ts.isSourceFile(owner)) {
+      if (seen.has(owner) || owner.pos < 0 || (owner.flags & ts.NodeFlags.Synthesized) !== 0) {
+        return Object.freeze({ kind: "unknown" });
+      }
+      seen.add(owner);
+      owner = owner.parent;
+    }
+    if (!owner) return Object.freeze({ kind: "unknown" });
+    const symbol = this.checker.getSymbolAtLocation(id);
+    // Finish every symbol read before publishing; a thrown query is never cached.
+    const evidence: BindingDeclarationEvidence = symbol
+      ? Object.freeze({
+          kind: "resolved",
+          declarations: Object.freeze([...(symbol.getDeclarations() ?? [])]),
+          valueDeclaration: symbol.valueDeclaration,
+        })
+      : Object.freeze({ kind: "absent" });
+    this.bindingEvidenceCache.set(id, evidence);
+    return evidence;
   }
 
   /** Internal: classify a checker type into a registry-free fact. */
