@@ -1,11 +1,10 @@
 {
   "id": "7154",
-  "assignee": "",
-  "requested_by": "ttraenkler/claude-c-lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-25T16:16:54Z",
-  "updated_at": "2026-10-25T16:16:54Z",
-  "write_id": "14566-4zad0wsu",
-  "pr_scan": "off"
+  "assignee": "ttraenkler/c-impl-7154",
+  "requested_by": "ttraenkler/c-impl-7154",
+  "status": "in-progress",
+  "branch": "issue-7154-any-array-push-migration",
+  "claimed_at": "2026-10-27T04:16:49Z",
+  "updated_at": "2026-10-27T04:16:49Z",
+  "write_id": "28837-p3tltloa"
 }
