@@ -26,9 +26,13 @@ function decode(f: (i: number) => unknown): string {
   return out;
 }
 
-async function expectSameOnLanes(body: string, lanes: readonly (typeof LANES)[number][] = LANES): Promise<void> {
+async function expectSameOnLanes(
+  body: string,
+  lanes: readonly (typeof LANES)[number][] = LANES,
+  pinned?: string,
+): Promise<void> {
   const src = `${body}\n${READ}`;
-  const expected = decode(evaluateAsJs(src).test as (i: number) => unknown);
+  const expected = pinned ?? decode(evaluateAsJs(src).test as (i: number) => unknown);
   for (const { lane, options } of lanes) {
     const result = await compile(src, { fileName: "probe.ts", ...options });
     expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
@@ -60,6 +64,15 @@ const CASES: Record<string, string> = {
   "spread literal through a const": `const a = { x: 1, y: 2 };\nconst o = { ...a, z: 3 };\n${keysOf("o")}`,
   "spread of a class instance": `class C { #x = 1; y = 2; m() {} }\n${keysOf("{ ...new C(), z: 1 }")}`,
   "plain literal order unchanged": keysOf("{ b: 1, a: 2 }"),
+  // Integer-index keys come first, ascending (OrdinaryOwnPropertyKeys).
+  "integer key in a derived class": `class B { b = 1; }\nclass D extends B { 0 = 2; }\n${keysOf("new D()")}`,
+  "string integer key in a derived class": `class B { b = 1; }\nclass D extends B { "3" = 2; }\n${keysOf("new D()")}`,
+  "computed integer key in a derived class": `class B { b = 1; }\nclass D extends B { [7] = 2; }\n${keysOf("new D()")}`,
+  "integer key before a parameter property": `class C { 0 = 1; constructor(public p: number) {} }\n${keysOf("new C(5)")}`,
+  "mixed integer and string keys": `class C { b = 1; 2 = 2; a = 3; 1 = 4; "01" = 5; }\n${keysOf("new C()")}`,
+  // A const bound to \`new C()\` is provably that class's instance.
+  "const bound to new C()": `class C { #x = 1; y = 2; m() {} }\nconst c = new C();\n${keysOf("c")}`,
+  "const bound to new C() with its own annotation": `class C { #x = 1; y = 2; m() {} }\nconst c: C = new C();\n${keysOf("c")}`,
 };
 
 // Not a SIMPLE class chain (a `declare`/`abstract` field, an interface merge, or
@@ -78,6 +91,12 @@ const NOT_SIMPLE: Record<string, string> = {
   "base field under a derived getter": `class B { x = 1; a = 2; }\nclass D extends B { get x() { return 5; } }\n${keysOf("new D()")}`,
   "base field under a derived getter (count)": `class B { x = 1; a = 2; }\nclass D extends B { get x() { return 5; } }\nfunction run(): string { let n = 0; for (const k in new D()) n++; return String(n); }`,
   "base method under a derived field (sorted)": `class B { m() { return 1; } a = 1; }\nclass D extends B { m = () => 2; }\n${sortedKeysOf("new D()")}`,
+  // A class-TYPED value need not be built by that class (review round 3): TS
+  // accepts an object literal, or a subclass that turns a method into a field.
+  "object literal in a class-annotated const": `class P { x = 0; m(): number { return 1; } }\nconst p: P = { x: 1, m() { return 2; } };\n${keysOf("p")}`,
+  "object literal in a class-annotated const (sorted)": `class P { x = 0; m(): number { return 1; } }\nconst p: P = { x: 1, m() { return 2; } };\n${sortedKeysOf("p")}`,
+  "object literal passed to a class-typed parameter": `class P { x = 0; m(): number { return 1; } }\nfunction f(p: P): string { const keys: string[] = []; for (const k in p) keys.push(k); return keys.join(); }\nfunction run(): string { return f({ x: 1, m() { return 2; } }); }`,
+  "subclass instance through a base-typed parameter (sorted)": `class B { m() { return 1; } a = 1; }\nclass D extends B { m = () => 2; }\nfunction f(b: B): string { const keys: string[] = []; for (const k in b) keys.push(k); return keys.sort().join(); }\nfunction run(): string { return f(new D()); }`,
   "unassigned base declare under a derived field": `class B { declare x: number; }\nclass D extends B { y = 2; x = 1; }\n${keysOf("new D()")}`,
 };
 
@@ -91,6 +110,14 @@ describe("#7156 static for-in unroll lists only own enumerable keys, in order", 
   // Reading the value back through the key. On wasi `o[k]` over a WasmGC
   // struct reads `undefined` for a plain object literal too (pre-existing,
   // outside #7156), so that lane is left out of this row.
+  // A class-typed parameter keeps the checker's list (methods included), as
+  // before #7156: node prints "y". Pinned so a change here is deliberate (#4138).
+  it("class-typed parameter keeps the old key list (pinned)", () =>
+    expectSameOnLanes(
+      `class C { y = 2; m() {} }\nfunction f(c: C): string { const keys: string[] = []; for (const k in c) keys.push(k); return keys.join(); }\nfunction run(): string { return f(new C()); }`,
+      LANES,
+      "y,m",
+    ));
   it("values read through the key (gc, standalone)", () =>
     expectSameOnLanes(
       `class C { #x = 1; y = 2; z = 3; m() {} }\nfunction run(): string { const c = new C(); let s = ""; for (const k in c) s += k + "=" + (c as any)[k] + ";"; return s; }`,

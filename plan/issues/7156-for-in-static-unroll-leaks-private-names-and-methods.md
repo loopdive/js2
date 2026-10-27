@@ -77,8 +77,15 @@ Fix: the static unroll now takes its key list from a new oracle query,
 backend answers `undefined` and the unroll falls back to the checker's raw
 property list, so no new raw checker call in `src/codegen/`).
 
-- A class instance gets the new key list only when its whole class chain is
-  SIMPLE (review rounds 1–2, PR #6940): one plain class declaration per level
+- A class receiver gets the new key list only when it is PROVABLY built by
+  that class (review round 3): a `new C(…)` expression, or a `const` bound to
+  one with no annotation or an annotation of exactly the constructed type. A
+  class-TYPED value proves nothing — TypeScript accepts an object literal, or a
+  subclass that turns a method into a field — so parameters, `let`,
+  properties, annotated consts with a literal initializer and call results
+  keep the checker's list, byte-identical to the base.
+- It also applies only when the whole class chain is SIMPLE (review rounds
+  1–2, PR #6940): one plain class declaration per level
   (no interface/namespace merge), a chain that ends at no base (not a builtin,
   mixin or other non-class), and every member a plain field, parameter
   property, method, accessor, auto-`accessor`, static member or `#private`
@@ -87,7 +94,9 @@ property list, so no new raw checker call in `src/codegen/`).
   checker property is explained by those members. Then the keys are the own
   fields — parameter properties, then fields, base class first, a redeclared
   field keeping the base position — and names come from the checker's
-  symbols, so `["k1"] = 1` / `[K] = 1` keep their position.
+  symbols, so `["k1"] = 1` / `[K] = 1` keep their position. Integer-index keys
+  (canonical `"0"`..`"4294967294"`) then move to the front in ascending order,
+  as OrdinaryOwnPropertyKeys lists them.
 - Any class chain that is not simple (a `declare` or `abstract` field, an
   interface merge, a base field under a derived method/getter or the reverse,
   a JS `this.x = …` assignment, an `Error` base, …) keeps exactly the checker's
@@ -99,9 +108,9 @@ property list, so no new raw checker call in `src/codegen/`).
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (87 of 99 sampled lane/program compiles byte-identical, including all 8
-  not-simple class programs; the 12 that differ are simple-class / spread
-  programs).
+  (99 of 114 sampled lane/program compiles byte-identical, including every
+  not-simple class program and every non-provable class receiver; the 15 that
+  differ are provable simple-class / spread programs).
 
 Tests: `tests/equivalence/issue-7156-for-in-class-instance.test.ts` (gc
 native-first, standalone, wasi vs node).
@@ -111,7 +120,12 @@ Left out:
 - `o[k]` read back inside the loop on **wasi** returns `undefined` for a struct
   receiver, plain object literals included (pre-existing, not #7156); the
   value-read row runs on gc and standalone only.
-- Integer-like keys (`{ b: 1, 1: 2 }`) are not reordered ascending; unchanged.
+- Polymorphic / class-typed receivers (parameters, `let`, properties, an
+  annotated const holding a literal) keep the old key list, methods included,
+  so `function f(c: C)` over `new C()` still prints `y,m` where node prints
+  `y` (pinned in the test; #4138 tracks polymorphic receivers).
+- Integer-like keys in object literals (`{ b: 1, 1: 2 }`) are not reordered
+  ascending; unchanged.
 - `Object.keys` static paths were not moved onto the new query (they already
   print `y` for the issue's class).
 - Not-simple class chains keep the old order and key set, which can still

@@ -171,12 +171,13 @@ export interface TypeOracle {
   /**
    * (#7156) The string keys a `for (k in <expr>)` over a CLOSED static shape
    * enumerates, in enumeration order — the key list the static for-in unroll
-   * emits. A class instance drops only what is certainly not an own property
-   * (private names, methods, accessors, statics) and orders the rest as the
-   * constructors define them (parameter properties, fields, then `declare`
-   * fields; base class first). An object literal with a spread is ordered as the
-   * literal builds it (`{...a, z}` is `a`'s keys, then `z`). `undefined` when
-   * this backend cannot answer.
+   * emits. A receiver that is provably a `new C(…)` of a simple class chain
+   * yields only its own fields (parameter properties, then fields, base class
+   * first, integer-index keys ahead); private names, methods, accessors and
+   * statics are dropped. An object literal with a spread is ordered as the
+   * literal builds it (`{...a, z}` is `a`'s keys, then `z`). Everything else
+   * keeps the checker's property list and order. `undefined` when this backend
+   * cannot answer.
    */
   forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined;
 }
@@ -431,7 +432,8 @@ export class TsCheckerOracle implements TypeOracle {
   private forInKeysOfExpr(expr: ts.Expression, depth: number): readonly string[] {
     let e = expr;
     while (ts.isParenthesizedExpression(e)) e = e.expression;
-    const typeKeys = (): readonly string[] => forInKeysOfType(this.checker, this.checker.getTypeAtLocation(expr));
+    const typeKeys = (): readonly string[] =>
+      forInKeysOfType(this.checker, this.checker.getTypeAtLocation(expr), this.isProvableNewInstance(e));
     if (depth > 8) return typeKeys();
     const literal = ts.isIdentifier(e) ? this.constInitializerOf(e) : e;
     if (!literal || !ts.isObjectLiteralExpression(literal) || !literal.properties.some(ts.isSpreadAssignment)) {
@@ -454,6 +456,24 @@ export class TsCheckerOracle implements TypeOracle {
     const checkerKeys = typeKeys();
     if (keys.length !== checkerKeys.length || !checkerKeys.every((k) => keys.includes(k))) return checkerKeys;
     return keys;
+  }
+
+  /**
+   * (#7156) Is this receiver provably an object built by its class's own
+   * constructor? A `new C(…)` expression, or a `const` bound to one with no
+   * type annotation or an annotation of exactly the constructed type. A
+   * class-TYPED value proves nothing: TypeScript accepts an object literal, or
+   * a subclass instance that turns a method into a field, for a class type.
+   */
+  private isProvableNewInstance(e: ts.Expression): boolean {
+    const unwrap = (x: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(x) ? unwrap(x.expression) : x);
+    if (ts.isNewExpression(e)) return true;
+    if (!ts.isIdentifier(e)) return false;
+    const init = this.constInitializerOf(e);
+    if (!init || !ts.isNewExpression(unwrap(init))) return false;
+    const decl = this.variableDeclarationOf(e);
+    if (!decl) return false;
+    return !decl.type || this.checker.getTypeAtLocation(decl.type) === this.checker.getTypeAtLocation(init);
   }
 
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
@@ -613,6 +633,12 @@ function staticMemberName(name: ts.Node | undefined): string | undefined {
   return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
 }
 
+/** (#7156) A canonical array-index key: "0".."4294967294", no leading zeros. */
+function isArrayIndexKey(key: string): boolean {
+  const n = Number(key);
+  return Number.isInteger(n) && n >= 0 && n < 2 ** 32 - 1 && String(n) === key;
+}
+
 /** (#7156) The class (interface) type behind a class-instance type, else undefined. */
 function classTargetOf(t: ts.Type): ts.InterfaceType | undefined {
   const objectFlags = (t as ts.ObjectType).objectFlags ?? 0;
@@ -714,20 +740,22 @@ function simpleChainFieldDeclarations(checker: ts.TypeChecker, t: ts.Type): ts.D
 }
 
 /**
- * (#7156) Static for-in keys of a checker type. A class instance whose whole
- * chain is simple (`simpleChainFieldDeclarations`) enumerates exactly its own
- * fields — parameter properties, then fields, base class first, a redeclared
- * field keeping the base position; methods, accessors, statics and `#private`
- * names are dropped, and names come from the checker's symbols so computed
- * literal keys keep their place. ANY other type, or a class chain with a member
- * that is not understood, keeps the checker's property list and order, exactly
- * as before #7156.
+ * (#7156) Static for-in keys of a checker type. A PROVABLE instance (see
+ * `isProvableNewInstance`) whose whole class chain is simple
+ * (`simpleChainFieldDeclarations`) enumerates exactly its own fields:
+ * parameter properties, then fields, base class first, a redeclared field
+ * keeping the base position; methods, accessors, statics and `#private` names
+ * are dropped, names come from the checker's symbols so computed literal keys
+ * keep their place, and integer-index keys go first in ascending order. ANY
+ * other receiver or type, or a class chain with a member that is not
+ * understood, keeps the checker's property list and order, exactly as before
+ * #7156.
  */
-function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type): readonly string[] {
+function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type, provableInstance: boolean): readonly string[] {
   const t = type.getNonNullableType();
   const props = t.getProperties();
   const checkerKeys = props.map((p) => p.name);
-  if (!classTargetOf(t)) return checkerKeys;
+  if (!provableInstance || !classTargetOf(t)) return checkerKeys;
   const fieldDecls = simpleChainFieldDeclarations(checker, t);
   if (!fieldDecls) return checkerKeys;
   const fieldDeclSet = new Set<ts.Declaration>(fieldDecls);
@@ -758,7 +786,10 @@ function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type): readonly strin
     if (!isField && !decls.every((d) => ts.isClassElement(d) || ts.isParameter(d))) return checkerKeys;
   }
   if (!ordered.every((name) => checkerKeys.includes(name))) return checkerKeys;
-  return ordered;
+  // OrdinaryOwnPropertyKeys: integer-index keys first, ascending, then the
+  // string keys in creation order.
+  const indices = ordered.filter(isArrayIndexKey).sort((x, y) => Number(x) - Number(y));
+  return [...indices, ...ordered.filter((k) => !isArrayIndexKey(k))];
 }
 
 /**
