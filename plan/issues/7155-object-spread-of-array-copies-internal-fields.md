@@ -1,10 +1,11 @@
 ---
 id: 7155
 title: "Native-first and standalone: object spread of an array copies the vec's internal fields (length,data) instead of its indices"
-status: ready
+status: done
+completed: 2026-10-27
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-27
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +16,15 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7148, 7154, 6708]
+# 2026-10-27: `__object_assign` (inside `buildObjectEnumerationHelpers`) gains
+# one line spreading the new array-source arm, which itself lives in
+# object-model/object-assign-array-source.ts; `materializableSpreadStructTypeIdx`
+# gains one vec-carrier exclusion. Both are the minimal call-site change.
+func-budget-allow:
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+loc-budget-allow:
+  - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/literals.ts
 ---
 
 # #7155 — `{ ...[5, 6] }` yields keys `length,data` on the no-host lanes
@@ -63,3 +73,42 @@ from the assign path. `Object.assign({}, [5, 6])` takes the same route.
 Acceptance: `Object.keys({ ...[5, 6] })` prints `0,1` and `JSON.stringify`
 prints `{"0":5,"1":6}` on gc native-first and standalone; host-assisted gc
 bytes unchanged; the equivalence gate reports no new regressions.
+
+## Resolution (2026-10-27)
+
+The diagnosis above was half right. `__object_assign` did skip an array
+source (a `__vec_<k>` struct is not an `$Object`), but the `length,data` keys
+came from the call site: `materializableSpreadStructTypeIdx`
+(`src/codegen/literals.ts`) admitted the vec struct and
+`materializeStructAsDynamicObject` copied its physical fields into a fresh
+`$Object` before `__object_assign` ever saw it.
+
+Fix:
+
+- `materializableSpreadStructTypeIdx` declines any `$__vec_base` subtype, so
+  the array reaches `__object_assign` as itself.
+- `__object_assign` gains an array-source arm
+  (`src/codegen/object-model/object-assign-array-source.ts`): the same
+  `ref.test $__vec_base` predicate the `__object_keys` vec arm uses, then for
+  each index `0..length-1` present per `__extern_has_idx` (holes skipped),
+  `Set(to, i, Get(from, i), true)` through `__extern_set_strict`. The
+  target's #7148 ordering puts integer keys first. No new host imports.
+- `objectAssignResultNeedsExternref` treats `Object.assign(<non-array>, …,
+  <array>)` like the #6770 primitive case: lib types it `T & U[]`, so an
+  unannotated binding took an array slot and read the `$Object` result as an
+  empty array.
+
+Tests: `tests/issue-7155-object-spread-of-array.test.ts` — 17 programs on gc
+native-first, standalone and wasi against V8 (49 cases).
+
+Left out (pre-existing, not caused by `__object_assign`):
+
+- `for (k in c)` over a `const c = { ...[7, 8] }` binding statically unrolls
+  the checker's spread type (`length`, `push`, … every Array member); through
+  an untyped receiver it is correct and pinned.
+- An array grown sparsely by assignment (`h[3] = …` on `[]`) stores real
+  `undefined` slots, so `Object.keys(h)` and `in` already list them; the
+  spread matches those.
+- wasi: `__extern_has_idx` has no hole arm (a holey literal spreads its hole
+  as a key) and string spread copies nothing; both rows are skipped on wasi.
+

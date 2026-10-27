@@ -37,6 +37,7 @@ import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // 
 import { definedFuncAt } from "./func-space.js";
 import { orProxyArrayLikeTest, proxyArrayLikeTypeIdx } from "./proxy-array-like.js"; // (#6651 H6)
 import { stringExoticAssignSourceInstrs } from "./object-model/object-assign-primitive-operands.js"; // (#6770 S1)
+import { arrayAssignSourceInstrs } from "./object-model/object-assign-array-source.js"; // (#7155)
 import { nonObjectEnumerableOwnInstrs } from "./object-model/object-own-key-order.js"; // (#6770 S3)
 
 /**
@@ -1409,6 +1410,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                   ]),
                 ],
               },
+              ...arrayAssignSourceInstrs(ctx, getOrRegisterVecBaseType(ctx)), // (#7155) index keys, not vec fields
               ...classifiedClosedStructSourceCopy,
               // si++
               { op: "local.get", index: 5 },
