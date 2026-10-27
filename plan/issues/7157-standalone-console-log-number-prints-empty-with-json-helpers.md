@@ -61,3 +61,19 @@ of the two programs (with / without the `JSON.stringify` call) around the
 
 Acceptance: the three programs print node's output on standalone; host-assisted
 gc bytes unchanged; equivalence gate reports no new regressions.
+
+## Addendum (2026-10-25, from #7150 / PR #6915)
+
+Wider trigger than the JSON helpers: on standalone, `console.log` of a
+boolean or a number prints an empty line whenever the module contains an
+**untyped function** (a function whose parameter or return type is `any` /
+unannotated):
+
+```js
+function f(x) { return x === 1 }
+console.log(f(1));   // empty line   (node: true)
+console.log(1);      // empty line   (node: 1)
+```
+
+Add this program to step 1 of the plan and to the test; the fix in step 2
+must hold regardless of which helpers or untyped functions are linked.

@@ -20,6 +20,7 @@ import {
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, externrefCompatibleLocal, releaseTempLocal } from "./context/locals.js";
+import { identifierHoldsRawExternref } from "./array-hof-nullable-elem-param.js"; // (#7152)
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isStrictContext } from "./expressions/assignment.js";
@@ -2087,6 +2088,7 @@ export function compileTypeofExpression(
   if (
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
     isAnyValue(wasmType, ctx) &&
+    !identifierHoldsRawExternref(fctx, operand) &&
     ctx.nativeStrings &&
     ctx.anyStrTypeIdx >= 0
   ) {
@@ -2454,7 +2456,7 @@ export function compileTypeofComparison(
   // Any-typed typeof comparison via tag check
   // Instead of calling __any_typeof + string comparison, we can directly check the tag
   // on the $AnyValue struct. This avoids pulling in the full native string helpers.
-  if (isAnyValue(resolveWasmType(ctx, tsType), ctx)) {
+  if (isAnyValue(resolveWasmType(ctx, tsType), ctx) && !identifierHoldsRawExternref(fctx, operand)) {
     ensureAnyHelpers(ctx);
     // Map the string literal to canonical JsTag (#2104) tag check(s):
     //   0 Null · 1 Undefined · 2 NumberI32 · 3 NumberF64 · 4 Boolean ·
