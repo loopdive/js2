@@ -15,6 +15,15 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7148, 7154, 6708]
+# 2026-10-27: `__object_assign` (inside `buildObjectEnumerationHelpers`) gains
+# one line spreading the new array-source arm, which itself lives in
+# object-model/object-assign-array-source.ts; `materializableSpreadStructTypeIdx`
+# gains one vec-carrier exclusion. Both are the minimal call-site change.
+func-budget-allow:
+  - src/codegen/object-runtime-enumeration.ts::buildObjectEnumerationHelpers
+loc-budget-allow:
+  - src/codegen/object-runtime-enumeration.ts
+  - src/codegen/literals.ts
 ---
 
 # #7155 — `{ ...[5, 6] }` yields keys `length,data` on the no-host lanes
