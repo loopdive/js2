@@ -78,6 +78,7 @@ const CASES: Record<string, string> = {
   // Writes that cannot reach a class instance do not count: an array index
   // loop and a `Record<string, number>` write leave the improvement on.
   "array and Record writes in the same program": `class C { #x = 1; y = 2; m() {} }\nconst arr: number[] = [0, 0];\nfor (let i = 0; i < arr.length; i++) arr[i] = i;\nconst rec: Record<string, number> = {};\nconst rk = "m" + "";\nrec[rk] = 1;\n${keysOf("new C()")}`,
+  "Record<string, number> counter in the same program": `class C { #x = 1; y = 2; m() {} }\nconst counts: Record<string, number> = {};\nfor (const w of ["a", "b", "a"]) counts[w] = (counts[w] ?? 0) + 1;\n${keysOf("new C()")}`,
   "const bound to new C() with its own annotation": `class C { #x = 1; y = 2; m() {} }\nconst c: C = new C();\n${keysOf("c")}`,
 };
 
@@ -126,6 +127,14 @@ const NOT_SIMPLE: Record<string, string> = {
   "options bag: Object.assign(this, opts) (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: Partial<C>) { Object.assign(this, opts); } }\n${sortedKeysOf("new C({ m: () => 2 })")}`,
   "options bag through a const (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: Partial<C>) { Object.assign(this, opts); } }\nconst c = new C({ m: () => 2 });\n${sortedKeysOf("c")}`,
   "copy loop: this[k] = opts[k] (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: any) { for (const key in opts) (this as any)[key] = opts[key]; } }\n${sortedKeysOf("new C({ m: 3 })")}`,
+  // Index signatures whose values may be anything, and Object/Reflect
+  // writers reached other than as a direct call (review round 6).
+  "merge helper over Record<string, any> (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction merge(t: Record<string, any>, s: Record<string, any>): void { for (const k in s) t[k] = s[k]; }\nmerge(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "merge(this, opts) in a constructor (sorted)": `function merge(t: Record<string, any>, s: Record<string, any>): void { for (const k in s) t[k] = s[k]; }\nclass C { a = 1; m(): number { return 1; } constructor(opts: Record<string, any>) { merge(this, opts); } }\n${sortedKeysOf("new C({ m: 3 })")}`,
+  "merge helper over an any index signature (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction merge(t: { [k: string]: any }, s: { [k: string]: any }): void { for (const k in s) t[k] = s[k]; }\nmerge(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "this through a Record<string, any> const (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: Record<string, any>) { const self: Record<string, any> = this; for (const k in opts) self[k] = opts[k]; } }\n${sortedKeysOf("new C({ m: 3 })")}`,
+  "globalThis.Object.assign (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nglobalThis.Object.assign(p, src);\n${sortedKeysOf("p")}`,
+  "Object element-access assign (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nObject["assign"](p, src);\n${sortedKeysOf("p")}`,
   // \`new K()\` proves the class only when K names the class itself.
   "new of a typeof-annotated const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: typeof P = Q;\n${sortedKeysOf("new D()")}`,
   "new of a constructor-type const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: new () => P = Q;\n${sortedKeysOf("new D()")}`,
@@ -134,12 +143,33 @@ const NOT_SIMPLE: Record<string, string> = {
   "unassigned base declare under a derived field": `class B { declare x: number; }\nclass D extends B { y = 2; x = 1; }\n${keysOf("new D()")}`,
 };
 
+// Object/Reflect writers reached through an alias, `.call` or `Reflect.apply`
+// (review round 6). On wasi these programs trap on the base too (pre-existing,
+// outside #7156), so they run on gc and standalone.
+const WRITER_ALIASES: Record<string, string> = {
+  "Object.assign through a const alias (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst assign = Object.assign;\nassign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "Object.assign destructured from Object (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst { assign } = Object;\nassign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "Object through a const alias (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst O = Object;\nconst src = { m: () => 2 };\nO.assign(p, src);\n${sortedKeysOf("p")}`,
+  "Object.assign.call (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nObject.assign.call(null, p, src);\n${sortedKeysOf("p")}`,
+  "Reflect.apply(Object.assign, …) (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nReflect.apply(Object.assign, null, [p, src]);\n${sortedKeysOf("p")}`,
+  "Object.defineProperty.call (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nObject.defineProperty.call(null, p, "m", { value: 2, enumerable: true });\n${sortedKeysOf("p")}`,
+  "typed polyfill alias (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst assign: (t: any, ...s: any[]) => any = Object.assign;\nassign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "alias used in a constructor (sorted)": `const assign = Object.assign;\nclass C { a = 1; m(): number { return 1; } constructor(opts: any) { assign(this, opts); } }\n${sortedKeysOf("new C({ m: 3 })")}`,
+};
+
 describe("#7156 static for-in unroll lists only own enumerable keys, in order", () => {
   for (const [label, body] of Object.entries(CASES)) {
     it(label, () => expectSameOnLanes(body));
   }
   for (const [label, body] of Object.entries(NOT_SIMPLE)) {
     it(`not simple: ${label}`, () => expectSameOnLanes(body));
+  }
+  for (const [label, body] of Object.entries(WRITER_ALIASES)) {
+    it(`not simple: ${label} (gc, standalone)`, () =>
+      expectSameOnLanes(
+        body,
+        LANES.filter((l) => l.lane !== "wasi"),
+      ));
   }
   // Reading the value back through the key. On wasi `o[k]` over a WasmGC
   // struct reads `undefined` for a plain object literal too (pre-existing,

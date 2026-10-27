@@ -113,8 +113,19 @@ property list, so no new raw checker call in `src/codegen/`).
   `__proto__` write, and its target is `this` or may be a class instance
   (`any`, `unknown`, `object`, `{}`, a type parameter, a class, interface or
   object type, or a union holding one), every class chain keeps the checker's
-  list. Arrays, tuples, typed arrays and index-signature-only types
-  (`Record<string, T>`) are exempt, so `arr[i] = …` does not trigger it. This
+  list. Arrays, tuples, typed arrays and index-signature-only types whose
+  values are not `any`/`unknown` (`Record<string, number>`) are exempt, so
+  `arr[i] = …` and counters do not trigger it; `Record<string, any>` is NOT
+  exempt, because a class instance converts to it implicitly (review round 6:
+  `merge(t: Record<string, any>, s)` / `merge(this, opts)`).
+- Any `Object` (`assign`, `defineProperty`, `defineProperties`,
+  `setPrototypeOf`) or `Reflect` (`set`, `defineProperty`, `setPrototypeOf`)
+  writer that is not a direct, analysable call also triggers it: an alias
+  (`const assign = Object.assign`, `const { assign } = Object`, a typed
+  polyfill), `.call` / `.apply` / `Reflect.apply(Object.assign, …)`, an
+  element access `Object["assign"]`, or such a member on an `any` receiver.
+  `Object` / `Reflect` are recognised by their checker type, so `const O =
+  Object` and `globalThis.Object` are analysed like `Object`. This
   covers the options bag (`Object.assign(this, opts)`) and the copy loop
   (`for (k in src) this[k] = src[k]`). Then the keys are the own
   fields — parameter properties, then fields, base class first, a redeclared
@@ -133,7 +144,7 @@ property list, so no new raw checker call in `src/codegen/`).
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (105 of 123 sampled lane/program compiles byte-identical, including all
+  (96 of 114 sampled lane/program compiles byte-identical, including all
   playground examples and `benchmarks/suites/*.ts`, every not-simple class
   program, every non-provable class receiver and every globally-poisoned
   program; the 18 that differ are provable simple-class / spread programs).

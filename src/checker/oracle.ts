@@ -738,8 +738,42 @@ function mayBeInstanceType(checker: ts.TypeChecker, t: ts.Type, depth = 0): bool
   const c = checker as ts.TypeChecker & { isArrayType?(t: ts.Type): boolean; isTupleType?(t: ts.Type): boolean };
   if (c.isArrayType?.(t) || c.isTupleType?.(t)) return false;
   if (t.symbol && TYPED_ARRAY_NAMES.has(t.symbol.name)) return false;
-  const indexOnly = t.getProperties().length === 0 && (t.getStringIndexType() || t.getNumberIndexType());
-  return !indexOnly;
+  // An index-signature-only type is exempt only when its values cannot be
+  // anything: a class instance converts to `Record<string, any>` implicitly.
+  const indexTypes = [t.getStringIndexType(), t.getNumberIndexType()].filter((x): x is ts.Type => !!x);
+  if (t.getProperties().length > 0 || indexTypes.length === 0) return true;
+  return indexTypes.some((x) => isAnyOrUnknown(x));
+}
+
+/** (#7156) Is this type `any` / `unknown`, or a union or intersection holding one? */
+function isAnyOrUnknown(t: ts.Type): boolean {
+  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
+  return t.isUnionOrIntersection() && t.types.some(isAnyOrUnknown);
+}
+
+/** (#7156) Members of `Object` / `Reflect` that write keys or change a prototype. */
+const OBJECT_WRITERS = new Set(["assign", "defineProperty", "defineProperties", "setPrototypeOf"]);
+const REFLECT_WRITERS = new Set(["set", "defineProperty", "setPrototypeOf"]);
+
+/**
+ * (#7156) Is this expression the `Object` constructor or the `Reflect`
+ * namespace — by its checker type, so `globalThis.Object` and `const O =
+ * Object` are seen — or a value whose type is unknown (`any`)?
+ */
+function writerOwnerOf(checker: ts.TypeChecker, expr: ts.Expression): "Object" | "Reflect" | "any" | undefined {
+  const x = unwrapExpr(expr);
+  if (ts.isIdentifier(x) && (x.text === "Object" || x.text === "Reflect")) return x.text;
+  const t = checker.getTypeAtLocation(x);
+  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return "any";
+  const name = t.symbol?.name;
+  return name === "ObjectConstructor" ? "Object" : name === "Reflect" ? "Reflect" : undefined;
+}
+
+/** (#7156) Is `name` a key-writing member of this owner? */
+function isWriterMember(owner: "Object" | "Reflect" | "any" | undefined, name: string): boolean {
+  if (owner === "Object") return OBJECT_WRITERS.has(name);
+  if (owner === "Reflect") return REFLECT_WRITERS.has(name);
+  return owner === "any" && (OBJECT_WRITERS.has(name) || REFLECT_WRITERS.has(name));
 }
 
 /**
@@ -807,14 +841,19 @@ function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
   const visitCall = (node: ts.CallExpression): void => {
     if (!ts.isPropertyAccessExpression(node.expression)) return;
     const recv = unwrapExpr(node.expression.expression);
-    const owner = ts.isIdentifier(recv) ? recv.text : undefined;
     const method = node.expression.name.text;
     const [a0, a1, a2] = node.arguments;
     if (method === "__defineGetter__" || method === "__defineSetter__") {
       addKey(a0 && keyOf(a0), recv);
       return;
     }
-    if (owner !== "Object" && owner !== "Reflect") return;
+    const owner = writerOwnerOf(checker, recv);
+    if (!isWriterMember(owner, method)) return;
+    // A receiver of unknown type (`O.assign(…)` with `O: any`) cannot be analysed.
+    if (owner === "any") {
+      scan.poisoned = true;
+      return;
+    }
     if (method === "defineProperty" || (owner === "Reflect" && method === "set")) addKey(a1 && keyOf(a1), a0);
     else if (method === "defineProperties") addObjectLiteralKeys(a1, a0);
     else if (method === "assign" && owner === "Object")
@@ -822,6 +861,35 @@ function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
         if (src) addObjectLiteralKeys(src, a0);
       }
     else if (method === "setPrototypeOf") poisonIfInstance(a0);
+  };
+  // A key-writing `Object`/`Reflect` member used other than as a direct call
+  // (`const assign = Object.assign`, `.call`/`.apply`, `Reflect.apply(…)`,
+  // `Object["assign"]`, `const { assign } = Object`) cannot be analysed.
+  const visitWriterReference = (node: ts.Node): void => {
+    if (scan.poisoned) return;
+    if (ts.isPropertyAccessExpression(node)) {
+      const isDirectCallee = ts.isCallExpression(node.parent) && node.parent.expression === node;
+      const name = node.name.text;
+      const named = OBJECT_WRITERS.has(name) || REFLECT_WRITERS.has(name);
+      if (named && !isDirectCallee && isWriterMember(writerOwnerOf(checker, node.expression), name)) {
+        scan.poisoned = true;
+      }
+    } else if (ts.isElementAccessExpression(node)) {
+      const owner = writerOwnerOf(checker, node.expression);
+      if (owner === "Object" || owner === "Reflect") {
+        scan.poisoned = true;
+      }
+    } else if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer) {
+      const owner = writerOwnerOf(checker, node.initializer);
+      if (owner === "Object" || owner === "Reflect") scan.poisoned = true;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isObjectLiteralExpression(unwrapExpr(node.left))
+    ) {
+      const owner = writerOwnerOf(checker, node.right);
+      if (owner === "Object" || owner === "Reflect") scan.poisoned = true;
+    }
   };
   const visit = (node: ts.Node): void => {
     if (
@@ -843,6 +911,7 @@ function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
     } else if (ts.isCallExpression(node)) {
       visitCall(node);
     }
+    visitWriterReference(node);
     ts.forEachChild(node, visit);
   };
   visit(sf);
