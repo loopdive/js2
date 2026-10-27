@@ -284,3 +284,65 @@ describe("#7154 any[] share sweep: escapes keep every alias on one vec", () => {
     }
   }
 });
+
+// Review round 8: the callee that actually runs decides. Only a concrete
+// function whose own parameter is `any[]` may receive the dynamic carrier;
+// a function-typed variable, an interface member, an overload set, `.call`
+// and a tagged template may run a typed implementation. Crossed with every
+// partner kind, with and without a second alias.
+const CALLEES: Record<string, (p: Partner) => { top: string; call: string }> = {
+  "concrete fn, any[] parameter": (p) => ({
+    top: `function takeAny(a: any[]): void { a.push(${p.pushed}); }`,
+    call: "takeAny(xs); ",
+  }),
+  "concrete fn, typed parameter": (p) => ({
+    top: `function takeT(a: ${p.under}): void { a.push(${p.pushed}); }`,
+    call: "takeT(xs); ",
+  }),
+  "fn-typed variable": (p) => ({
+    top: "",
+    call: `const fv: (a: any[]) => void = (a: ${p.under}) => { a.push(${p.pushed}); }; fv(xs); `,
+  }),
+  "interface member": (p) => ({
+    top: `interface Taker { take(v: any[]): void } class Impl implements Taker { take(v: ${p.under}): void { v.push(${p.pushed}); } }`,
+    call: "const tk: Taker = new Impl(); tk.take(xs); ",
+  }),
+  overload: (p) => ({
+    top: `function over(a: any[]): void; function over(a: ${p.under}): void { a.push(${p.pushed}); }`,
+    call: "over(xs); ",
+  }),
+  ".call": (p) => ({
+    top: `function viaCall(a: ${p.under}): void { a.push(${p.pushed}); }`,
+    call: "viaCall.call(null, xs); ",
+  }),
+  "tagged template": (p) => ({
+    top: `function tagT(s: TemplateStringsArray, a: ${p.under}): string { a.push(${p.pushed}); return s.join(""); }`,
+    call: "tagT`a${xs}b`; ",
+  }),
+};
+
+// Rows wrong on main too (each fails there as well). A typed or bare-`any`
+// vec handed to a concrete `any[]` parameter is copied; a dynamic vec handed
+// to an unresolvable callee keeps the layout each member infers, as on main.
+function knownCalleeGap(calleeName: string, partnerName: string, alias: boolean): boolean {
+  if (calleeName === "concrete fn, typed parameter") return false;
+  if (calleeName === "concrete fn, any[] parameter") return TYPED_SOURCE.includes(partnerName);
+  if (partnerName === "fresh literal") return alias;
+  return DYNAMIC_SOURCE.includes(partnerName);
+}
+
+describe("#7154 any[] share sweep: the callee that runs decides", () => {
+  for (const [calleeName, callee] of Object.entries(CALLEES)) {
+    for (const [partnerName, partner] of Object.entries(PARTNERS)) {
+      for (const alias of [false, true]) {
+        const { top, call } = callee(partner);
+        const test = knownCalleeGap(calleeName, partnerName, alias) ? it.fails : it;
+        test(`${calleeName}, ${partnerName} partner${alias ? ", aliased" : ""}`, () =>
+          expectSameOnAllLanes(
+            escapeProgram(partner, () => call, alias),
+            `${partner.top ?? ""}\n${top}`,
+          ));
+      }
+    }
+  }
+});

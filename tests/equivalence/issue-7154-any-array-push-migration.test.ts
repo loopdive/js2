@@ -16,8 +16,11 @@ import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 // digest of the string and all lanes compare numbers.
 const ENC = `function enc(s: string): number { let h = s.length; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000003; return h; }\n`;
 
-async function expectSameOnAllLanes(body: string): Promise<void> {
-  const src = `${ENC}function value(): string { ${body} }\nexport function test(): number { return enc(value()); }`;
+// A body starting `@@top@@` puts `top` at module level.
+async function expectSameOnAllLanes(rawBody: string): Promise<void> {
+  const top = rawBody.startsWith("@@") ? rawBody.slice(2, rawBody.indexOf("@@", 2)) : "";
+  const body = top ? rawBody.slice(top.length + 4) : rawBody;
+  const src = `${ENC}${top}\nfunction value(): string { ${body} }\nexport function test(): number { return enc(value()); }`;
   const expected = evaluateAsJs(src).test!();
   for (const target of [undefined, "standalone", "wasi"] as const) {
     const lane = target ?? "gc";
@@ -242,6 +245,36 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
     [
       "typed escape: array-literal element (aliased)",
       `const xs: any[] = []; xs.push(1); const ys: any[] = xs; ys.push(4); const h: number[][] = [xs]; h[0].push(3); xs.push(2); return xs.join() + "/" + h[0].join();`,
+    ],
+    // Review round 8: a callee whose runtime parameter is typed, a tagged
+    // template and an element store into another array keep the group typed.
+    [
+      "r8 fnvar_typed_as_any_noalias",
+      `const xs: any[] = []; xs.push(1); const f: (a: any[]) => void = (a: number[]) => { a.push(9); }; f(xs); xs.push(2); return xs.join();`,
+    ],
+    [
+      "r8 fnvar_typed_as_any",
+      `const xs: any[] = []; xs.push(1); const ys: any[] = xs; const f: (a: any[]) => void = (a: number[]) => { a.push(9); }; f(xs); ys.push(2); return xs.join()+'/'+ys.join();`,
+    ],
+    [
+      "r8 iface_impl_typed",
+      `@@interface T { take(v: any[]): void } class D implements T { take(v: number[]): void { v.push(7); } }@@const xs: any[] = []; xs.push(1); const ys: any[] = xs; const t: T = new D(); t.take(xs); ys.push(2); return xs.join()+'/'+ys.join();`,
+    ],
+    [
+      "r8 overload_typed_impl",
+      `@@function add(a: any[]): void; function add(a: number[]): void { a.push(9); }@@const xs: any[] = []; xs.push(1); const ys: any[] = xs; add(xs); ys.push(2); return xs.join()+'/'+ys.join();`,
+    ],
+    [
+      "r8 call_apply",
+      `@@function add(a: number[]): void { a.push(9); }@@const xs: any[] = []; xs.push(1); const ys: any[] = xs; add.call(null, xs); ys.push(2); return xs.join()+'/'+ys.join();`,
+    ],
+    [
+      "r8 template_tagged_typed",
+      `@@function tag(s: TemplateStringsArray, a: number[]): string { a.push(9); return s.join(''); }@@const xs: any[] = []; xs.push(1); const ys: any[] = xs; tag\`a\${xs}b\`; ys.push(2); return xs.join()+'/'+ys.join();`,
+    ],
+    [
+      "r8 dyn_unshift",
+      `const xs: any[] = []; xs.push(1); const ys: any[] = xs; const dyn: any[] = [5]; dyn.unshift(xs); const t: number[] = dyn[0]; t.push(9); ys.push(2); return xs.join()+'/'+t.join();`,
     ],
   ];
   for (const [name, body] of rows) {
