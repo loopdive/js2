@@ -29,6 +29,28 @@ async function expectSameOnAllLanes(body: string, top: string): Promise<void> {
   }
 }
 
+// The full generator is ~750 rows (each compiled on three lanes, ~25 min
+// single-fork). By default a deterministic subset runs: every wrapper, escape
+// and callee kind with one typed and one dynamic partner in the form that
+// caught regressions (the second alias), plus one representative row per
+// known-gap (`it.fails`) family. `JS2WASM_FULL_SWEEP=1` runs every row.
+const FULL_SWEEP = process.env.JS2WASM_FULL_SWEEP === "1";
+const gapFamiliesSeen = new Set<string>();
+function selected(
+  gapFamily: string | undefined,
+  partnerName: string,
+  defaultPartners: readonly string[],
+  variant: boolean,
+): boolean {
+  if (FULL_SWEEP) return true;
+  if (gapFamily !== undefined) {
+    if (gapFamiliesSeen.has(gapFamily)) return false;
+    gapFamiliesSeen.add(gapFamily);
+    return true;
+  }
+  return variant && defaultPartners.includes(partnerName);
+}
+
 interface Partner {
   /** Module-level declarations. */
   readonly top?: string;
@@ -197,7 +219,14 @@ describe("#7154 any[] share sweep: every alias observes every push", () => {
   for (const [wrapperName, wrapper] of Object.entries(WRAPPERS)) {
     for (const [partnerName, partner] of Object.entries(PARTNERS)) {
       for (const form of ["init", "assign"] as const) {
-        const test = knownGap(wrapperName, partnerName, form) ? it.fails : it;
+        const gap = knownGap(wrapperName, partnerName, form);
+        const family = gap
+          ? wrapperName === "nested =" && partnerName === "unknown local"
+            ? "share:nested"
+            : "share:assign-any"
+          : undefined;
+        if (!selected(family, partnerName, ["number[]", "any[]"], form === "init")) continue;
+        const test = gap ? it.fails : it;
         test(`${form} via ${wrapperName} with a ${partnerName} partner`, () =>
           expectSameOnAllLanes(program(partner, wrapper, form), partner.top ?? ""));
       }
@@ -277,7 +306,13 @@ describe("#7154 any[] share sweep: escapes keep every alias on one vec", () => {
   for (const [escapeName, emitEscape] of Object.entries(ESCAPES)) {
     for (const [partnerName, partner] of Object.entries(PARTNERS)) {
       for (const alias of [false, true]) {
-        const test = knownEscapeGap(escapeName, partnerName, alias) ? it.fails : it;
+        const gap = knownEscapeGap(escapeName, partnerName, alias);
+        if (
+          !selected(gap ? `escape:${escapeName}` : undefined, partnerName, ["number[]", "fresh numeric literal"], alias)
+        ) {
+          continue;
+        }
+        const test = gap ? it.fails : it;
         test(`${escapeName} escape, ${partnerName} partner${alias ? ", aliased" : ""}`, () =>
           expectSameOnAllLanes(escapeProgram(partner, emitEscape, alias), partner.top ?? ""));
       }
@@ -336,7 +371,13 @@ describe("#7154 any[] share sweep: the callee that runs decides", () => {
     for (const [partnerName, partner] of Object.entries(PARTNERS)) {
       for (const alias of [false, true]) {
         const { top, call } = callee(partner);
-        const test = knownCalleeGap(calleeName, partnerName, alias) ? it.fails : it;
+        const gap = knownCalleeGap(calleeName, partnerName, alias);
+        if (
+          !selected(gap ? `callee:${calleeName}` : undefined, partnerName, ["number[]", "fresh numeric literal"], alias)
+        ) {
+          continue;
+        }
+        const test = gap ? it.fails : it;
         test(`${calleeName}, ${partnerName} partner${alias ? ", aliased" : ""}`, () =>
           expectSameOnAllLanes(
             escapeProgram(partner, () => call, alias),

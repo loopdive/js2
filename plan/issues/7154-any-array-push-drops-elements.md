@@ -120,7 +120,8 @@ native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
 cycle on a literal-initialised array too
 (`tests/equivalence/issue-7147-nested-array-join.test.ts`), and
 `tests/equivalence/issue-7154-any-array-share-sweep.test.ts` generates 754
-rows: wrapper x partner-kind x init/assign, escape x partner-kind x
+rows (a deterministic 70-row subset by default, every row with
+`JS2WASM_FULL_SWEEP=1`): wrapper x partner-kind x init/assign, escape x partner-kind x
 with/without a second alias, and callee-kind x partner-kind x alias
 (known gaps as `it.fails`).
 
