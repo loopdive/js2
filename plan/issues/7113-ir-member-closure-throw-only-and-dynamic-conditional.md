@@ -511,3 +511,73 @@ reads, `switch` on the carrier (refused, not lowered), the wasi direct-call
 plan (class P), `(void 0 as any) == null` (#7144 N2), and the shadowed
 `let undefined` legacy miscompile
 ([#7175](7175-shadowed-undefined-compare-legacy-wrong.md)).
+
+## Round 12 — result (Opus, 2026-10-27)
+
+This round answers the round-11 review's REQUEST CHANGES (review 5660511343). The branch merges
+origin/main `09d958aa03`; there were no conflicts.
+
+**New rules.** All of them live in the shared closure walk (`select-planned-closure-operands.ts`),
+and their predicates live in `analysis/operand-admissibility.ts`.
+
+- **A — blocking, fixed.**
+  - `carrierMemberReadAdmissible` refuses `.length` on the carrier on a lane without the new
+    `native-dynamic-member-read` capability. The capability is true on standalone, and native gc
+    projects as standalone, so wasi is the lane that refuses.
+  - It also refuses every element read on the carrier, on every lane. The IR element read does not
+    throw on a `null` receiver, so `m[k]` with `m = null` returns a value.
+  - `carrierMethodCallAdmissible` refuses a method call on the carrier for the same reason.
+    `m.g()` on `null` or on an array answers a value instead of throwing.
+  - These refusals apply only in the shapes this PR newly plans: a closure that mints a joined
+    carrier, or a throw-only body (`isNewShape`). Main's existing claims keep their behaviour.
+    Refusing `.length` everywhere on wasi measurably lost main claims that were right where legacy
+    is wrong (`whileLen`, `lenPlus`, `lenTimes`, `m.length` on `null` / `undefined`).
+  - The root bugs are filed as [#7177](7177-wasi-ir-dynamic-member-read-undefined.md).
+- **D — fixed.** `carrierHelperCall` refuses `String(<carrier>)` on lanes without
+  `prepared-dynamic-helper-abi` (standalone and native gc). Like A, this applies in new shapes
+  only, so main's `var t = String(m)` claim stays.
+- **Class P — fixed.** A direct call to a module function from a planned closure is refused on
+  wasi, through the new capability `planned-closure-direct-call`. This turns main's 8 wasi
+  post-claim errors and the PR's 7 into select refusals.
+- **C — fixed.** The walk treats `undefined` as the global carrier only when no top-level module
+  binding shadows it (`moduleDeclares`) and the selector's scope check agrees.
+- **G — fixed.** The #7175 title no longer says "Native gc".
+- **E — asymmetry kept.** `storeAdmissible`, `switchDiscriminantAdmissible` and
+  `dynamicCallArgumentAdmissible` stay selector-only. The from-ast sites they mirror are
+  fall-through ends of multi-arm dispatchers: "property assignment … not in slice 4",
+  "switch disc must lower to i32/f64", and the widening-sink demote. They are not single-site
+  predicates, so a mirror there would be a redundant pre-check.
+- **F — noted, not narrowed.** The from-ast join arm (`tryLowerDynamicConditionalValue`) still
+  accepts any dynamic-typed binding, while the selector admits only the closure's dynamic
+  parameters. This is harmless today: every wider shape is refused at select, and bytes are
+  identical outside planned closures. It is a latent widening that a future selector route
+  should narrow.
+
+**Probes.** I reran every p7, p9–p24, `6927-adv1/2`, `r2-probe` and round-11 row, plus the
+reviewer's `r11rev-cases1…8`.
+
+- Each closure was called with 10 inputs: `2, 0, "s", "", undefined, null, true`, an object,
+  `[1, 2]` and `"10"`. The gc lane ran on the real `src/runtime.ts`, not on import stubs.
+- That covers 1,762 rows × standalone, wasi and gc = 5,286 row-lanes, against origin/main
+  `09d958aa03`.
+- One row, `p18:doWhileNull`, hangs in node itself (`do {} while (k)` with a truthy `k`) and is
+  excluded.
+
+| Measure vs main | Result |
+| --- | --- |
+| Lost claims | **0** |
+| New post-claim errors | **0** (171 of main's are gone) |
+| New compile failures | 0 |
+| Newly claimed row-lanes | 1,498 |
+| Newly claimed and differing from node | 65 + 8, all wasi, all the #7178 class (ToPrimitive of an array). 65 give exactly legacy's value. In the 8 (`r + r`, `r + s`, `r == 1`) legacy throws or gives another wrong value. |
+| Claimed by both and differing from node | 33 row-lanes, same value on main |
+
+One more row, `c8:minLenV` on standalone and gc, is a harness artifact. Head throws the correct
+TypeError; the probe returns the error object, which it cannot print.
+
+**Bytes:** unoptimized output is identical on 111 playground and equivalence units, on native
+gc, standalone, wasi and fast.
+
+**Tests:** `tests/issue-7106-member-closure-shapes.test.ts` runs all three lanes, executed, with
+array and string inputs. It covers `.length` on wasi, element reads, a method call and `.length`
+in a throw-only body, `String(r)`, a direct call on wasi, and a shadowed `undefined`.
