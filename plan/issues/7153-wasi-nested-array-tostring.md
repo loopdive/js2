@@ -1,10 +1,11 @@
 ---
 id: 7153
 title: "WASI: nested arrays still stringify as [object Object] — the WASI __to_primitive vec arm never reserves the array ToString driver"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-27
+completed: 2026-10-27
 priority: medium
 horizon: s
 feasibility: medium
@@ -15,6 +16,12 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7147]
+loc-budget-allow:
+  # 2026-10-27: one `vecReduce` line that admits WASI to the existing vec arm of __to_primitive
+  - src/codegen/object-runtime.ts
+func-budget-allow:
+  # 2026-10-27: same single `vecReduce` line, inside the __to_primitive block
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 ---
 
 # #7153 — WASI nested-array ToString

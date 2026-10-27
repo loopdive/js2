@@ -4230,8 +4230,9 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // and fill it in post-processing. `$__vec_base` is the shared supertype with
     // `length` at field 0 (#2186) — one `ref.test` detects every element kind.
     const arrayLikeReduce = reserveArgumentsLengthBrand(ctx) !== undefined;
-    const vecBaseTypeIdx = arrayLikeReduce ? getOrRegisterVecBaseType(ctx) : -1;
-    const arrayToPrimIdx = arrayLikeReduce ? reserveArrayToPrimitiveString(ctx) : -1;
+    const vecReduce = arrayLikeReduce || ctx.wasi === true; // (#7153) WASI: the vec arm alone, no arguments/class arms
+    const vecBaseTypeIdx = vecReduce ? getOrRegisterVecBaseType(ctx) : -1;
+    const arrayToPrimIdx = vecReduce ? reserveArrayToPrimitiveString(ctx) : -1;
     // (#6651 E3) …and the OWN-property OrdinaryToPrimitive step in front of it:
     // §7.1.1 step 2 (`@@toPrimitive`) and §7.1.1.1's valueOf/toString cascade
     // never ran for a vec carrier, so an own method on an Array or a TypedArray
@@ -4320,13 +4321,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       error: ctx.errorStructTypeIdx,
     };
     const array =
-      arrayLikeReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
+      vecReduce && vecBaseTypeIdx >= 0 && arrayToPrimIdx >= 0
         ? {
             vecBaseTypeIdx,
             arrayToPrimIdx,
             vecOwnToPrimIdx,
             classToPrimIdx,
-            arguments: captureArgumentsToPrimitiveBindings(ctx, stringExtern),
+            arguments: arrayLikeReduce ? captureArgumentsToPrimitiveBindings(ctx, stringExtern) : undefined,
           }
         : undefined;
     // This lookup/reservation occurs AFTER the selected arguments literals.
