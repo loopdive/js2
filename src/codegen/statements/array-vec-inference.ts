@@ -69,20 +69,6 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   };
 
   function visit(node: ts.Node) {
-    // (#7154) The binding shares its vec with another binding (`cur = b`,
-    // `const alias = arr`): a pinned slot whose representation differs from
-    // the other binding's converts by COPYING, so a later push on one is lost
-    // on the other. Keep the dynamic carrier both share instead.
-    if (ts.isIdentifier(node) && node.text === varName && node !== decl.name) {
-      const partners = sharePartnersOf(node);
-      if (
-        partners.length > 0 &&
-        ctx.oracle.variableDeclarationOf(node) === decl &&
-        partners.every((partner) => partnerIsDynamic(ctx, partner))
-      ) {
-        sharesVec = true;
-      }
-    }
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -145,17 +131,16 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
 
   const secondaryStores: ts.Expression[] = [];
   const seedLiterals: ts.Expression[] = [];
-  let sharesVec =
-    decl.initializer !== undefined &&
-    !isFreshArrayExpression(decl.initializer) &&
-    partnerIsDynamic(ctx, decl.initializer);
   visit(scope);
   if (!inferredElemType && !sawDynamicElementWrite) return null;
-  // Only a share between two `any` / `unknown` element sides needs it (both
-  // resolve to the dynamic carrier). A typed `T[]` side pins its typed vec and
-  // an `any[]` partner of it infers the same vec from the same stores, as
-  // before #7154, so forcing one side generic would split the layout.
-  if (sharesVec && declaredElementIsDynamic(ctx, decl)) sawDynamicElementWrite = true;
+  // (#7154) The binding shares its vec with other places (`cur = b`,
+  // `const alias = arr`): a pinned slot whose representation differs from the
+  // other place's converts by COPYING, so a later push on one is lost on the
+  // other. When the whole share group is `any` / `unknown` element bindings
+  // and array literals, they all take the dynamic carrier. Any typed member
+  // (a `T[]`, a call returning one, a bare `any` value) keeps every member on
+  // the layout it infers, as before #7154.
+  if (shareGroupIsDynamic(ctx, decl)) sawDynamicElementWrite = true;
   // (#7154) A non-empty literal initializer seeds elements of its own kind:
   // `const a: any[] = [1]; a.push([2])` must not pin a vec-of-vec slot that
   // coerces the seeded `1` to null. Holes and spreads are not single typed
@@ -194,12 +179,13 @@ function declaredElementIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclarat
 }
 
 /**
- * (#7154) A static type whose array value lives in the dynamic carrier: `any`,
- * `unknown`, or an array of those. `null` / `undefined` union members are
- * already dropped by the oracle, so `any[] | undefined` counts.
+ * (#7154) A static type whose array value lives in the dynamic carrier: an
+ * array of `any` / `unknown` (or a union of those; `null` / `undefined`
+ * members are already dropped by the oracle, so `any[] | undefined` counts).
+ * A bare `any` / `unknown` value is NOT: at run time it usually holds a typed
+ * vec, which the dynamic carrier would copy.
  */
 function factIsDynamicArray(fact: TypeFact): boolean {
-  if (fact.kind === "any" || fact.kind === "unknown") return true;
   if (fact.kind === "array") return fact.element.kind === "any" || fact.element.kind === "unknown";
   if (fact.kind === "union") return fact.parts.length > 0 && fact.parts.every(factIsDynamicArray);
   return false;
@@ -220,10 +206,18 @@ function skipValueWrappers(node: ts.Node): ts.Node {
   return inner;
 }
 
-/** (#7154) An expression that yields a vec no other binding can name yet. */
+/**
+ * (#7154) An expression that yields a vec no other binding can name yet: an
+ * array literal. A call or `new` may return an existing vec, so it is a share
+ * partner classified by its static result type.
+ */
 function isFreshArrayExpression(expression: ts.Expression): boolean {
-  const inner = skipValueWrappers(expression);
-  return ts.isArrayLiteralExpression(inner) || ts.isCallExpression(inner) || ts.isNewExpression(inner);
+  return ts.isArrayLiteralExpression(skipValueWrappers(expression));
+}
+
+/** `x as T` / `<T>x`: the value is classified by `T`. */
+function isTypeAssertion(node: ts.Node): node is ts.AsExpression | ts.TypeAssertion {
+  return ts.isAsExpression(node) || ts.isTypeAssertionExpression(node);
 }
 
 /**
@@ -232,13 +226,16 @@ function isFreshArrayExpression(expression: ts.Expression): boolean {
  * that is not a fresh array), seen through value wrappers, `,`, nested `=`,
  * `?:` branches and `||` / `??` / `&&` operands that pass the value on.
  */
-function sharePartnersOf(identifier: ts.Identifier): (ts.Expression | ts.BindingName)[] {
+function sharePartnersOf(ctx: CodegenContext, identifier: ts.Identifier): (ts.Expression | ts.BindingName)[] {
   const partners: (ts.Expression | ts.BindingName)[] = [];
   let use: ts.Node = identifier;
   let passedThrough = false;
   for (;;) {
     const parent = use.parent;
     if (skipValueWrappers(parent) !== parent && (parent as { expression?: ts.Node }).expression === use) {
+      // `xs as number[]` / `xs as any` is a typed value to the other side
+      // (`partnerLeavesAreDynamic`), so it is no share from this side either.
+      if (isTypeAssertion(parent) && !factIsDynamicArray(ctx.oracle.typeFactOf(parent))) return [];
       use = parent;
       continue;
     }
@@ -276,29 +273,84 @@ function sharePartnersOf(identifier: ts.Identifier): (ts.Expression | ts.Binding
 }
 
 /**
- * (#7154) The share partner holds the dynamic carrier: every value it can
- * yield (through wrappers, `,` / `=` right sides, `?:` branches and `||` /
- * `??` / `&&` operands) is a fresh array or has a static `any` / `unknown`
- * element type. Any typed leaf keeps the typed layout it shares.
+ * (#7154) Calls `leafIsDynamic` for every value the share partner can yield,
+ * through parens, `!`, `satisfies`, `,` / `&&` right sides, `=` / `||` / `??`
+ * operands and `?:` branches; `x as T` / `<T>x` is typed unless `T` is an
+ * `any` / `unknown` array. True when every leaf is dynamic.
  */
-function partnerIsDynamic(ctx: CodegenContext, partner: ts.Expression | ts.BindingName): boolean {
-  const inner = skipValueWrappers(partner);
-  if (ts.isConditionalExpression(inner)) {
-    return partnerIsDynamic(ctx, inner.whenTrue) && partnerIsDynamic(ctx, inner.whenFalse);
+function partnerLeavesAreDynamic(
+  ctx: CodegenContext,
+  partner: ts.Node,
+  leafIsDynamic: (leaf: ts.Node) => boolean,
+): boolean {
+  const recurse = (node: ts.Node): boolean => partnerLeavesAreDynamic(ctx, node, leafIsDynamic);
+  if (isTypeAssertion(partner)) {
+    return factIsDynamicArray(ctx.oracle.typeFactOf(partner)) && recurse(partner.expression);
   }
-  if (ts.isBinaryExpression(inner)) {
-    const op = inner.operatorToken.kind;
-    if (op === ts.SyntaxKind.CommaToken || op === ts.SyntaxKind.AmpersandAmpersandToken) {
-      return partnerIsDynamic(ctx, inner.right);
-    }
+  if (ts.isParenthesizedExpression(partner) || ts.isNonNullExpression(partner) || ts.isSatisfiesExpression(partner)) {
+    return recurse(partner.expression);
+  }
+  if (ts.isConditionalExpression(partner)) return recurse(partner.whenTrue) && recurse(partner.whenFalse);
+  if (ts.isBinaryExpression(partner)) {
+    const op = partner.operatorToken.kind;
+    if (op === ts.SyntaxKind.CommaToken || op === ts.SyntaxKind.AmpersandAmpersandToken) return recurse(partner.right);
     if (
       op === ts.SyntaxKind.EqualsToken ||
       op === ts.SyntaxKind.BarBarToken ||
       op === ts.SyntaxKind.QuestionQuestionToken
     ) {
-      return partnerIsDynamic(ctx, inner.left) && partnerIsDynamic(ctx, inner.right);
+      return recurse(partner.left) && recurse(partner.right);
     }
   }
-  if (ts.isArrayLiteralExpression(inner) || ts.isCallExpression(inner) || ts.isNewExpression(inner)) return true;
-  return factIsDynamicArray(ctx.oracle.typeFactOf(inner));
+  return leafIsDynamic(partner);
+}
+
+/**
+ * (#7154) The binding's share group needs the dynamic carrier: it shares with
+ * at least one other place, and every member reachable through shares is an
+ * `any` / `unknown` element binding, an array literal, or a value whose
+ * static type is an `any` / `unknown` array (a call by its return type).
+ */
+function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  const seen = new Set<ts.VariableDeclaration>([decl]);
+  const queue = [decl];
+  let shared = false;
+  const leafIsDynamic = (leaf: ts.Node): boolean => {
+    if (ts.isArrayLiteralExpression(leaf)) return true;
+    const member = ts.isIdentifier(leaf) ? ctx.oracle.variableDeclarationOf(leaf) : undefined;
+    if (member) {
+      if (!seen.has(member)) {
+        seen.add(member);
+        queue.push(member);
+      }
+      return declaredElementIsDynamic(ctx, member);
+    }
+    return factIsDynamicArray(ctx.oracle.typeFactOf(leaf));
+  };
+  for (let member = queue.pop(); member; member = queue.pop()) {
+    if (!declaredElementIsDynamic(ctx, member) || !ts.isIdentifier(member.name)) return false;
+    const partners: ts.Node[] = [];
+    if (member.initializer && !isFreshArrayExpression(member.initializer)) partners.push(member.initializer);
+    const name = member.name;
+    const current = member;
+    const visitUses = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && node.text === name.text && node !== name) {
+        if (ctx.oracle.variableDeclarationOf(node) === current) partners.push(...sharePartnersOf(ctx, node));
+      }
+      forEachChild(node, visitUses);
+    };
+    visitUses(enclosingScope(member));
+    for (const partner of partners) {
+      shared = true;
+      if (!partnerLeavesAreDynamic(ctx, partner, leafIsDynamic)) return false;
+    }
+  }
+  return shared;
+}
+
+/** The function body or source file that holds every use of a local binding. */
+function enclosingScope(decl: ts.VariableDeclaration): ts.Node {
+  let scope: ts.Node = decl;
+  while (scope.parent && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
+  return scope;
 }
