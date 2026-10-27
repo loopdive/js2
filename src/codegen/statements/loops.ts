@@ -2606,6 +2606,8 @@ function compileForOfArrayEntries(
       fctx.body.push({ op: "local.get", index: iLocal });
       fctx.body.push({ op: elemReadOp, typeIdx: loopArrTypeIdx });
     }
+    // (#7164) entries() reads every index: a hole yields `undefined`, never `$Hole`.
+    if (ctx.usesArrayHoles && readElemType.kind === "externref") emitHoleToUndefined(ctx, fctx);
     const valLocalType = getLocalType(fctx, valLocal!);
     if (valLocalType && !valTypesMatch(readElemType, valLocalType)) {
       coerceType(ctx, fctx, readElemType, valLocalType);

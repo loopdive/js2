@@ -7,7 +7,7 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { resolveWasmType } from "../index.js";
 import { getOrRegisterHoleyArrayType, getOrRegisterVecType } from "../registry/types.js";
-import { shareGroupIsDynamic, skipValueWrappers } from "./array-share-group.js";
+import { growingLengthStoreCarrier, shareGroupIsDynamic, skipValueWrappers } from "./array-share-group.js";
 export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
   if (ctx.holeyArrayDeclarations.has(decl)) {
@@ -33,7 +33,6 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   let inferredElemWasm: ValType | null = null;
   let mixedElementCarrier = false;
   let sawDynamicElementWrite = false;
-  let sawGrowingLengthStore = false;
 
   // (#2806) A write whose value type is purely `undefined` / `void` / `null`
   // must NOT pin the array's element kind to a numeric (i32) vec. The canonical
@@ -89,11 +88,6 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
     ) {
       const writeDecl = ctx.oracle.variableDeclarationOf(node.left.expression);
       if (writeDecl === decl) recordWriteType(node.right);
-    }
-
-    // (#7164) `arr.length = n` can GROW the array, and growth creates holes.
-    if (isGrowingLengthStore(node, varName) && ctx.oracle.variableDeclarationOf(lengthStoreReceiver(node)) === decl) {
-      sawGrowingLengthStore = true;
     }
 
     // arr.push(value)
@@ -166,12 +160,15 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
     else recordWriteType(value);
   }
 
-  // (#7164) Only the dynamic carrier's `$Hole` and the f64 carrier's marker
-  // represent a hole; any other typed vec would expose the default slots a
-  // growing length store leaves as present elements (`null` / `0`). Like a hole
-  // in a seed literal, that forces the dynamic carrier. A literal `0` (clearing)
-  // cannot grow and keeps the inferred kind.
-  if (sawGrowingLengthStore && (inferredElemWasm as ValType | null)?.kind !== "f64") sawDynamicElementWrite = true;
+  // (#7164) A growing `length` store creates holes. Only the dynamic carrier's
+  // `$Hole` and the f64 carrier's marker represent one; any other typed vec
+  // would expose its default slots (`null` / `0`) as present elements. The
+  // decision is the share group's, never this member's alone: a typed alias
+  // would otherwise hold a copy (see `growingLengthStoreCarrier`).
+  const growCarrier = growingLengthStoreCarrier(ctx, decl);
+  if (growCarrier === "group" || (growCarrier === "alone" && (inferredElemWasm as ValType | null)?.kind !== "f64")) {
+    sawDynamicElementWrite = true;
+  }
 
   // Heterogeneous queue/scratch arrays must preserve every JS value. ReactDOM's
   // concurrentQueues stores [fiber, queue, update, lane] in one initially-empty
@@ -184,31 +181,4 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
       : elemWasm.kind;
   const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
   return { kind: "ref_null", typeIdx: vecTypeIdx };
-}
-
-/** The `arr` of a `arr.length` store matched by {@link isGrowingLengthStore}. */
-function lengthStoreReceiver(node: ts.Node): ts.Identifier {
-  const target = ts.isBinaryExpression(node) ? node.left : (node as ts.PrefixUnaryExpression).operand;
-  return (target as ts.PropertyAccessExpression).expression as ts.Identifier;
-}
-
-/** `name.length = n` (n not the literal `0`), `name.length += n`, `name.length++` / `++name.length`. */
-function isGrowingLengthStore(node: ts.Node, name: string): boolean {
-  const isLengthOf = (target: ts.Expression): boolean =>
-    ts.isPropertyAccessExpression(target) &&
-    target.name.text === "length" &&
-    ts.isIdentifier(target.expression) &&
-    target.expression.text === name;
-  if (ts.isBinaryExpression(node)) {
-    const op = node.operatorToken.kind;
-    if (op === ts.SyntaxKind.EqualsToken) {
-      const value = skipValueWrappers(node.right);
-      return isLengthOf(node.left) && !(ts.isNumericLiteral(value) && Number(value.text) === 0);
-    }
-    return op === ts.SyntaxKind.PlusEqualsToken && isLengthOf(node.left);
-  }
-  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
-    return node.operator === ts.SyntaxKind.PlusPlusToken && isLengthOf(node.operand);
-  }
-  return false;
 }

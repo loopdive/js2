@@ -31,7 +31,7 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { staticHostPropertyKeyInstrs } from "./host-property-key.js";
-import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { emitHoleSentinel, holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
 import { holeFilledArrayNewInstrs } from "./array/array-length-holes.js"; // (#6771 S3)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
@@ -6574,6 +6574,11 @@ export function compileArrayLiteral(
         elemCoerce = collectInstrs(fctx, () => {
           coerceType(ctx, fctx, srcRead, dstStore);
         });
+      }
+      // (#7164) Spread reads every index (§7.4 iteration over a CreateArrayIterator),
+      // so a hole yields a present `undefined`, never the `$Hole` marker.
+      if (srcRead?.kind === "externref" && ctx.usesArrayHoles) {
+        elemCoerce = [...holeToUndefinedInstrs(ctx, fctx), ...elemCoerce];
       }
 
       // loop: while readIdx < srcVec.length

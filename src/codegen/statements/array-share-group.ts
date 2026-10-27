@@ -270,7 +270,7 @@ function elementReadIsSafe(read: ts.Node): boolean {
  * `=`, `?:` branches, `||` / `??` / `&&` operands and receiver-returning
  * methods. Every other use is `typed`; unrecognised never means dynamic.
  */
-function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: boolean): UseVerdict {
+function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: boolean, reads = false): UseVerdict {
   const partners: ts.Node[] = [];
   const safe = (extra?: Partial<UseVerdict>): UseVerdict =>
     partners.length === 0 && !extra ? SAFE_USE : { typed: false, partners, ...extra };
@@ -313,6 +313,7 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
       }
     }
     if (isInspectingUse(use, parent)) return safe();
+    if (reads && isPureReadUse(use, parent, container)) return safe();
     if (ts.isVariableDeclaration(parent)) {
       if (parent.initializer !== use || !ts.isIdentifier(parent.name)) return TYPED_USE;
       partners.push(parent.name);
@@ -356,7 +357,14 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
   }
 }
 
-const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, boolean>>();
+/** (#7164) A share group's facts: `shared`, `dynamic` as in {@link shareGroupIsDynamic}; `grows` = a member's growing `length` store. */
+interface GroupVerdict {
+  readonly shared: boolean;
+  readonly dynamic: boolean;
+  readonly grows: boolean;
+}
+const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
+const growVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, GroupVerdict>>();
 const scopeIdentifiers = new WeakMap<ts.Node, Map<string, ts.Identifier[]>>();
 
 /** Every identifier in `scope`, by name; one walk per scope. */
@@ -404,10 +412,42 @@ function usesOf(ctx: CodegenContext, member: ts.VariableDeclaration, name: ts.Id
  * for every member.
  */
 export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
-  let verdicts = groupVerdicts.get(ctx.oracle);
+  const verdict = groupVerdict(ctx, decl, false);
+  return verdict.shared && verdict.dynamic;
+}
+
+/**
+ * (#7164) A growing `x.length = n` store on any member of the binding's share
+ * group creates holes, which only the dynamic carrier represents. Switching
+ * one member alone would split the group (a typed alias then holds a COPY and
+ * loses the other's pushes), so the answer is for the whole group:
+ *
+ * - `group`: the group shares and every member, use and endpoint admits the
+ *   dynamic carrier — every member takes it;
+ * - `alone`: the binding shares with nothing and every use is recognised —
+ *   only it takes the dynamic carrier (the caller keeps an f64 vec, which has
+ *   its own hole marker);
+ * - `undefined`: no growing store, or a use that may reach a typed place —
+ *   every member keeps the layout it infers.
+ *
+ * Uses are classified as for {@link shareGroupIsDynamic}, plus the pure reads
+ * of {@link isPureReadUse}, which cannot leak the vec to another layout.
+ */
+export function growingLengthStoreCarrier(
+  ctx: CodegenContext,
+  decl: ts.VariableDeclaration,
+): "group" | "alone" | undefined {
+  const verdict = groupVerdict(ctx, decl, true);
+  if (!verdict.grows || !verdict.dynamic) return undefined;
+  return verdict.shared ? "group" : "alone";
+}
+
+function groupVerdict(ctx: CodegenContext, decl: ts.VariableDeclaration, reads: boolean): GroupVerdict {
+  const store = reads ? growVerdicts : groupVerdicts;
+  let verdicts = store.get(ctx.oracle);
   if (!verdicts) {
     verdicts = new WeakMap();
-    groupVerdicts.set(ctx.oracle, verdicts);
+    store.set(ctx.oracle, verdicts);
   }
   const cached = verdicts.get(decl);
   if (cached !== undefined) return cached;
@@ -418,6 +458,7 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
   let shared = false;
   let dynamic = true;
   let container = false;
+  let grows = false;
   const join = (member: ts.VariableDeclaration): void => {
     if (!seen.has(member)) {
       seen.add(member);
@@ -443,7 +484,8 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
     if (member.initializer && !isFreshArrayExpression(member.initializer)) partners.push(member.initializer);
     for (const id of uses) {
       memberUses.push(id);
-      const verdict = classifyUse(ctx, id, false);
+      if (reads && isGrowingLengthStore(id)) grows = true;
+      const verdict = classifyUse(ctx, id, false, reads);
       if (verdict.typed) dynamic = false;
       if (verdict.escapesDynamic) shared = true;
       if (verdict.storedInto) {
@@ -466,11 +508,55 @@ export function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclar
   // A member stored into another: every member's vec may now be read back as
   // an element, so re-check every use under the container rules.
   if (dynamic && container) {
-    for (const id of memberUses) if (classifyUse(ctx, id, true).typed) dynamic = false;
+    for (const id of memberUses) if (classifyUse(ctx, id, true, reads).typed) dynamic = false;
   }
-  const result = shared && dynamic;
+  const result: GroupVerdict = { shared, dynamic, grows };
   for (const member of seen) verdicts.set(member, result);
   return result;
+}
+
+/**
+ * (#7164) `xs.length = n` with `n` not the literal `0` (a clear cannot grow).
+ * Compound stores (`+=`, `++`) are not counted: the static store fills holes
+ * only for a plain assignment.
+ */
+function isGrowingLengthStore(id: ts.Identifier): boolean {
+  const access = id.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== id || access.name.text !== "length") return false;
+  const store = access.parent;
+  if (
+    !ts.isBinaryExpression(store) ||
+    store.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    store.left !== access
+  ) {
+    return false;
+  }
+  const value = skipValueWrappers(store.right);
+  return !(ts.isNumericLiteral(value) && Number(value.text) === 0);
+}
+
+/** Global functions that only read an array argument. */
+const PURE_READ_GLOBALS = new Set(["JSON.stringify", "Object.keys", "Object.getOwnPropertyNames", "Array.isArray"]);
+
+/**
+ * (#7164) Reads that cannot hand the vec to another layout: `k in xs`, an
+ * argument of `String` / `JSON.stringify` / `Object.keys` /
+ * `Object.getOwnPropertyNames` / `Array.isArray`, and (outside a container
+ * group, whose elements are member vecs) `[...xs]` / `f(...xs)`, which copy
+ * element values.
+ */
+function isPureReadUse(use: ts.Node, parent: ts.Node, container: boolean): boolean {
+  if (ts.isBinaryExpression(parent))
+    return parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === use;
+  if (ts.isSpreadElement(parent)) return !container;
+  if (!ts.isCallExpression(parent) || !parent.arguments.includes(use as ts.Expression)) return false;
+  const callee = skipValueWrappers(parent.expression);
+  if (ts.isIdentifier(callee)) return callee.text === "String";
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    PURE_READ_GLOBALS.has(`${callee.expression.text}.${callee.name.text}`)
+  );
 }
 
 function isExported(decl: ts.VariableDeclaration): boolean {
