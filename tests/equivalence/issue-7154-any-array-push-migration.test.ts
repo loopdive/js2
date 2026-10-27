@@ -180,6 +180,28 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
       "any[] from a fresh-only conditional",
       `function cond(k: number): boolean { return k > 0; } const c = cond(1); const xs: any[] = c ? [1] : []; xs.push([2]); xs.push("s"); return xs.join();`,
     ],
+    // Review round 6: a bare `any` value and a call result are typed members
+    // of a share group unless their static type is an `any` / `unknown` array.
+    [
+      "any parameter initialises an any[]",
+      `function f(p: any): string { const xs: any[] = p; xs.push(2); return xs.join(); } const n: number[] = [1]; return f(n) + "/" + n.join();`,
+    ],
+    [
+      "any parameter asserted to number[]",
+      `function f(p: any): string { const xs: any[] = p as number[]; xs.push(2); return xs.join(); } const n: number[] = [1]; return f(n) + "/" + n.join();`,
+    ],
+    [
+      "aliased typed call result",
+      `const N: number[] = [1]; function get(): number[] { return N; } const xs: any[] = get(); const ys: any[] = xs; ys.push(2); xs.push(3); return xs.join() + "/" + ys.join() + "/" + N.join();`,
+    ],
+    // #7181: an any[] call result followed by a push of a different kind.
+    ["#7181 reverse()", `const a: any[] = [1]; const b = a.reverse(); b.push("x"); return a.join() + "|" + b.join();`],
+    ["#7181 slice()", `const a: any[] = [1]; const b = a.slice(); b.push("x"); return a.join() + "|" + b.join();`],
+    ["#7181 concat()", `const a: any[] = [1]; const b = a.concat([2]); b.push("x"); return a.join() + "|" + b.join();`],
+    [
+      "#7181 user function returning any[]",
+      `function mk(): any[] { const m: any[] = [1]; return m; } const b = mk(); b.push("x"); b.push([2]); return b.join();`,
+    ],
   ];
   for (const [name, body] of rows) {
     it(name, () => expectSameOnAllLanes(body));

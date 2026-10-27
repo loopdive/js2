@@ -77,35 +77,31 @@ literal's `1` was coerced to a null element on the declaration store. Fix
 - `unshift`, `fill` and `splice` insert arguments count as stores too, but
   only constrain a kind that a push / index store already pinned, so a binding
   without those keeps its checker-typed slot;
-- a binding whose declared element type is `any` / `unknown` and that shares
-  its vec with another binding (`cur = b`, `const root = cur`, `o.f = xs`, or
-  an initializer that is not a literal / call / `new`, e.g. an identifier,
-  `c ? [] : [1]`, `x || []`) takes the dynamic carrier, because differing slot
-  types converted by copying and lost later pushes (the depth-100 chain).
-  Both sides must be dynamic: the partner binding, field or element must
-  also have an `any` / `unknown` element type. Typed `T[]` bindings are exempt
-  (review round 2): they and their aliases already pin the same typed vec,
-  and forcing one side generic broke `const ys = xs` aliasing and boxed swap /
-  `cur = next` buffers. A mixed `any[]` <-> `T[]` share (review round 3:
-  `const ys: number[] = xs`, `o.f = xs`, `q.items = xs`, either direction)
-  keeps the typed layout both sides infer, as before this fix. Partners are
-  classified leaf by leaf (review rounds 4 and 5): value wrappers (parens,
-  `as`, `<T>`, `!`, `satisfies`) are stripped, `,` / `=` / `&&` follow their
-  value operand, `?:` / `||` / `??` recurse into both sides; fresh leaves
-  (array literal, call, `new`) are dynamic and every other leaf uses the
-  oracle's static type, dynamic only for an `any` / `unknown` element
-  (`any[] | undefined` included). A typed leaf anywhere keeps the typed
-  layout. The same shapes are followed upward from each use of the binding.
+- share groups (review rounds 2-6): a binding shares its vec with another
+  place through `x = arr`, `const x = arr`, `o.f = arr`, `arr = <expr>` or a
+  non-literal initializer, seen through value wrappers (parens, `!`,
+  `satisfies`; `as T` / `<T>` classified by `T`), `,` / nested `=`, `?:`
+  branches and `||` / `??` / `&&` operands. Starting from the binding, every
+  member reachable through shares is collected (initializers and use sites,
+  both directions). The group takes the dynamic carrier only when every
+  member is an `any` / `unknown` element binding, an array literal, or a
+  value whose static type is an `any` / `unknown` array (`any[] | undefined`
+  included; a call by its return type). Any typed member — a `T[]` binding or
+  field, a call returning `T[]`, a bare `any` / `unknown` value (it usually
+  holds a typed vec at run time), `x as number[]` — keeps every member on the
+  layout it infers, as before this fix, because differing slot types convert
+  by COPYING and lose pushes. Typed swap / `cur = next` buffers stay unboxed.
+  This also fixes #7181 (`reverse()` / `slice()` / `concat()` results).
 - array literals behind value wrappers and literals assigned later
   (`xs = [1]`) seed elements like the initializer.
 
 `concat` returns a new array and needed no change. Test:
-`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (45 rows, gc
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (52 rows, gc
 native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
 cycle on a literal-initialised array too
 (`tests/equivalence/issue-7147-nested-array-join.test.ts`), and
-`tests/equivalence/issue-7154-any-array-share-sweep.test.ts` generates 110
-wrapper x partner-kind x init/assign rows.
+`tests/equivalence/issue-7154-any-array-share-sweep.test.ts` generates 288
+wrapper x partner-kind x init/assign rows (38 known gaps as `it.fails`).
 
 Left out (wrong on main and on this fix, not worse):
 
@@ -113,8 +109,6 @@ Left out (wrong on main and on this fix, not worse):
   on all lanes (the spread seeds the dynamic carrier, the value is still off).
 - wasi `[1, , 3]` + `push(4)` (review report; tracked with the wasi hole
   family in #7180).
-- `const b = a.reverse(); b.push("x")` and `a.slice()` + push trap on all
-  lanes: a call initializer is treated as fresh — #7181.
 - An `any[]` passed to a function that pushes a different element kind
   (`function f(a: any[]) { a.push([9]); }`): the callee's stores are not seen
   by the caller's inference.
@@ -122,9 +116,17 @@ Left out (wrong on main and on this fix, not worse):
   and `any[][]` aliases then pushed: wrong on all lanes.
 - `Map<string, any[]>` + `m.get(k)!.push(..)`: invalid Wasm.
 - A three-way chain `any[]` -> `any[]` -> `number[]`
-  (`const b: any[] = a; ...; const c: number[] = b; c.push(3)`): the typed
-  `c` copies the generic vec, so pushes through `c` are lost (main trapped
-  with an illegal cast).
+  (`const b: any[] = a; ...; const c: number[] = b; c.push(3)`) traps with
+  `illegal cast`, as on main.
 - An `any[]` whose own stores mix kinds before it is assigned a typed array
   (`xs.push(0); xs = n` with `n: string[]`): no single layout fits both, so
   later pushes through `xs` are lost (main is wrong the same way).
+- Assigning an unasserted `any` value that holds a typed vec to a pinned
+  `any[]` slot (`xs.push(2); xs = o` with `o: any`): `illegal cast` (main
+  too). `xs = (ys = o as any[])` with `o: unknown` and a store-less `ys`: `ys`
+  keeps the default dynamic layout while `xs` is typed (main too). Both are
+  `it.fails` rows in the sweep.
+- Shares through destructuring assignment (`[xs] = [n]`), object / array
+  literal fields, call arguments and `return` are not followed; generic
+  `<T>(x: T[])` aliasing, `get(): any[]` returning a `number[]`, tagged
+  templates and tuples are wrong on main too.

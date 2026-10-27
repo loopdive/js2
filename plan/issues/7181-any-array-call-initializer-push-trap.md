@@ -1,10 +1,11 @@
 ---
 id: 7181
 title: "any[] binding initialised from reverse()/slice() traps after a push of a different element kind"
-status: ready
+status: done
 sprint: Backlog
 created: 2026-10-27
 updated: 2026-10-27
+completed: 2026-10-27
 priority: medium
 horizon: s
 feasibility: medium
@@ -50,3 +51,16 @@ vec-sharing rule): keep the dynamic carrier. State the byte delta; typed
 - An equivalence test under `tests/equivalence/` covers `reverse()`, `slice()`,
   `concat()` and a user function returning an array, each followed by a push
   of a different element kind.
+
+## Resolution (2026-10-27)
+
+Fixed in the #7154 PR (review round 6). A call or `new` initializer is no
+longer treated as a fresh array: it is a member of the binding's share group
+classified by its static result type. `a.reverse()` / `a.slice()` /
+`a.concat()` / a user function on an `any[]` return `any[]`, so the binding
+takes the dynamic carrier and the different-kind push no longer traps; a
+call returning a typed `T[]` keeps the typed layout. Typed `T[]` bindings are
+unchanged (bytes identical). Tests:
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (rows
+"#7181 reverse()", "#7181 slice()", "#7181 concat()", "#7181 user function
+returning any[]"), gc native-first, standalone and wasi vs node.
