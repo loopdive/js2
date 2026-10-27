@@ -202,6 +202,47 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
       "#7181 user function returning any[]",
       `function mk(): any[] { const m: any[] = [1]; return m; } const b = mk(); b.push("x"); b.push([2]); return b.join();`,
     ],
+    // Review round 7: a typed escape keeps the whole share group typed.
+    [
+      "typed escape: number[] call argument",
+      `function add(a: number[]): void { a.push(9); } const xs: any[] = []; xs.push(1); add(xs); return xs.join();`,
+    ],
+    [
+      "typed escape: number[] call argument (aliased)",
+      `function add(a: number[]): void { a.push(9); } const xs: any[] = []; xs.push(1); const ys: any[] = xs; ys.push(4); add(xs); return xs.join();`,
+    ],
+    [
+      "typed escape: arrow parameter",
+      `const xs: any[] = []; xs.push(1); const f = (a: number[]) => { a.push(5); }; f(xs); xs.push(2); return xs.join();`,
+    ],
+    [
+      "typed escape: arrow parameter (aliased)",
+      `const xs: any[] = []; xs.push(1); const ys: any[] = xs; ys.push(4); const f = (a: number[]) => { a.push(5); }; f(xs); xs.push(2); return xs.join();`,
+    ],
+    [
+      "typed escape: class method argument",
+      `class K { a: number[] = []; take(v: number[]): void { this.a = v; v.push(7); } } const xs: any[] = []; xs.push(1); const k = new K(); k.take(xs); xs.push(2); return xs.join() + "/" + k.a.join();`,
+    ],
+    [
+      "typed escape: class method argument (aliased)",
+      `class K { a: number[] = []; take(v: number[]): void { this.a = v; v.push(7); } } const xs: any[] = []; xs.push(1); const ys: any[] = xs; ys.push(4); const k = new K(); k.take(xs); xs.push(2); return xs.join() + "/" + k.a.join();`,
+    ],
+    [
+      "typed escape: object field",
+      `const xs: any[] = []; xs.push(1); const h: { a: number[] } = { a: xs }; xs.push(2); h.a.push(3); return xs.join() + "/" + h.a.join();`,
+    ],
+    [
+      "typed escape: object field (aliased)",
+      `const xs: any[] = []; xs.push(1); const ys: any[] = xs; ys.push(4); const h: { a: number[] } = { a: xs }; xs.push(2); h.a.push(3); return xs.join() + "/" + h.a.join();`,
+    ],
+    [
+      "typed escape: array-literal element",
+      `const xs: any[] = []; xs.push(1); const h: number[][] = [xs]; h[0].push(3); xs.push(2); return xs.join() + "/" + h[0].join();`,
+    ],
+    [
+      "typed escape: array-literal element (aliased)",
+      `const xs: any[] = []; xs.push(1); const ys: any[] = xs; ys.push(4); const h: number[][] = [xs]; h[0].push(3); xs.push(2); return xs.join() + "/" + h[0].join();`,
+    ],
   ];
   for (const [name, body] of rows) {
     it(name, () => expectSameOnAllLanes(body));

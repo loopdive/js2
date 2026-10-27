@@ -64,3 +64,8 @@ unchanged (bytes identical). Tests:
 `tests/equivalence/issue-7154-any-array-push-migration.test.ts` (rows
 "#7181 reverse()", "#7181 slice()", "#7181 concat()", "#7181 user function
 returning any[]"), gc native-first, standalone and wasi vs node.
+
+Left out: `const b: any[] = n.slice(); b.push("x")` with `n: number[]` still
+traps on all lanes. `slice()` returns `number[]`, a typed share member, so `b`
+keeps the string vec its push infers and the number elements do not convert
+(main traps the same way).
