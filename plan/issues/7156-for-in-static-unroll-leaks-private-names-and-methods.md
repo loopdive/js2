@@ -98,10 +98,25 @@ property list, so no new raw checker call in `src/codegen/`).
   checker property is explained by those members, no constructor `return`s a
   value, and no method/accessor name of the chain is written anywhere in the
   compilation (review round 4: `this.m = this.m.bind(this)`, `p.m = …`,
-  `x["m"] op= …`, `++`/`--`, `Object.defineProperty`/`Reflect.defineProperty`
-  with a literal key, literal keys of `Object.defineProperties` /
-  `Object.assign` sources). That scan is syntactic, by name, over every source
-  file of the compilation (`ctx.callableSourceFiles`), and over-approximates. Then the keys are the own
+  `x["m"] op= …`, `++`/`--`, destructuring-assignment and `for (x.m of/in …)`
+  targets, `Object.defineProperty`/`Reflect.defineProperty`/`Reflect.set`/
+  `__defineGetter__`/`__defineSetter__` with a literal key, literal keys of
+  `Object.defineProperties` / `Object.assign` sources; a `const k = "m"` key
+  counts as `"m"`). That scan is syntactic, by name, over every source file of
+  the compilation (`ctx.callableSourceFiles`), and over-approximates
+  (`p.m ||= …`, a setter write, an unrelated `o.m = 1` also count).
+- Global fallback (review round 5): if the compilation has a write whose key
+  or source is not static — `x[k] = …` / compound / `++` / destructuring with a
+  non-literal `k`, `defineProperty`/`Reflect.set`/`Reflect.defineProperty` with
+  a non-literal key, `Object.assign`/`Object.defineProperties` with a source
+  that is not a spread-free object literal — or any `setPrototypeOf` /
+  `__proto__` write, and its target is `this` or may be a class instance
+  (`any`, `unknown`, `object`, `{}`, a type parameter, a class, interface or
+  object type, or a union holding one), every class chain keeps the checker's
+  list. Arrays, tuples, typed arrays and index-signature-only types
+  (`Record<string, T>`) are exempt, so `arr[i] = …` does not trigger it. This
+  covers the options bag (`Object.assign(this, opts)`) and the copy loop
+  (`for (k in src) this[k] = src[k]`). Then the keys are the own
   fields — parameter properties, then fields, base class first, a redeclared
   field keeping the base position — and names come from the checker's
   symbols, so `["k1"] = 1` / `[K] = 1` keep their position. Integer-index keys
@@ -118,10 +133,10 @@ property list, so no new raw checker call in `src/codegen/`).
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (114 of 132 sampled lane/program compiles byte-identical, including all
+  (105 of 123 sampled lane/program compiles byte-identical, including all
   playground examples and `benchmarks/suites/*.ts`, every not-simple class
-  program and every non-provable class receiver; the 18 that differ are
-  provable simple-class / spread programs).
+  program, every non-provable class receiver and every globally-poisoned
+  program; the 18 that differ are provable simple-class / spread programs).
 
 Tests: `tests/equivalence/issue-7156-for-in-class-instance.test.ts` (gc
 native-first, standalone, wasi vs node).
@@ -137,9 +152,11 @@ Left out:
   `y` (pinned in the test; #4138 tracks polymorphic receivers).
 - Integer-like keys in object literals (`{ b: 1, 1: 2 }`) are not reordered
   ascending; unchanged.
-- A method made own by a write the scan cannot see by name (`x[k] = …` with a
-  non-literal `k`, `Object.defineProperty(x, k, …)` with a non-literal key, a
-  destructuring-assignment target) is still dropped for a provable receiver.
+- Private `#x` names are still listed when a chain falls back to the
+  checker's list (base does the same); dropping them was skipped to keep those
+  programs byte-identical to the base.
+- A poisoned or over-approximated program loses the improvement entirely
+  (e.g. one `this[k] = …` anywhere turns it off for every class).
 - `Object.defineProperty(c, "zz", …)` adding a NEW key is not seen (static
   unroll); wrong on base too.
 - `Object.keys` static paths were not moved onto the new query (they already

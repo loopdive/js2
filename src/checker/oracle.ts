@@ -177,8 +177,10 @@ export interface TypeOracle {
    * statics are dropped. An object literal with a spread is ordered as the
    * literal builds it (`{...a, z}` is `a`'s keys, then `z`). Everything else
    * keeps the checker's property list and order. `sourceFiles` is the whole
-   * compilation (default: the receiver's file): a method name assigned anywhere
-   * in it may be an own property, so its chain keeps the checker's list.
+   * compilation (default: the receiver's file): a method name written anywhere
+   * in it may be an own property, so its chain keeps the checker's list, and a
+   * write with a non-static key or source to a possible instance makes every
+   * class chain keep it.
    * `undefined` when this backend cannot answer.
    */
   forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined;
@@ -426,21 +428,25 @@ export class TsCheckerOracle implements TypeOracle {
   forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined {
     try {
       const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [expr.getSourceFile()];
-      const assigned = new Set<string>();
-      for (const sf of files) for (const name of assignedPropertyNamesOf(sf)) assigned.add(name);
-      return this.forInKeysOfExpr(expr, 0, assigned);
+      const writes: WriteScan = { names: new Set(), poisoned: false };
+      for (const sf of files) {
+        const scan = writeScanOf(this.checker, sf);
+        for (const name of scan.names) writes.names.add(name);
+        writes.poisoned ||= scan.poisoned;
+      }
+      return this.forInKeysOfExpr(expr, 0, writes);
     } catch {
       return undefined;
     }
   }
 
-  private forInKeysOfExpr(expr: ts.Expression, depth: number, assigned: ReadonlySet<string>): readonly string[] {
+  private forInKeysOfExpr(expr: ts.Expression, depth: number, writes: WriteScan): readonly string[] {
     let e = expr;
     while (ts.isParenthesizedExpression(e)) e = e.expression;
     const typeKeys = (): readonly string[] => {
       const type = this.checker.getTypeAtLocation(expr);
       const provable = this.isProvableNewInstance(e, type.getNonNullableType());
-      return forInKeysOfType(this.checker, type, provable, assigned);
+      return forInKeysOfType(this.checker, type, provable && !writes.poisoned, writes.names);
     };
     if (depth > 8) return typeKeys();
     const literal = ts.isIdentifier(e) ? this.constInitializerOf(e) : e;
@@ -454,7 +460,7 @@ export class TsCheckerOracle implements TypeOracle {
     const keys: string[] = [];
     for (const prop of literal.properties) {
       const names = ts.isSpreadAssignment(prop)
-        ? this.forInKeysOfExpr(prop.expression, depth + 1, assigned)
+        ? this.forInKeysOfExpr(prop.expression, depth + 1, writes)
         : [staticMemberName(prop.name)];
       for (const name of names) {
         if (name === undefined) return typeKeys();
@@ -675,40 +681,147 @@ function returnsAValue(body: ts.Node): boolean {
   return ts.forEachChild(body, visit) ?? false;
 }
 
-const assignedNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+/** (#7156) What a compilation may write to objects, as far as for-in keys go. */
+interface WriteScan {
+  /** Property names that may be written (literal keys, over-approximated). */
+  names: Set<string>;
+  /**
+   * A write whose key or source is not statically known (`this[k] = …`,
+   * `Object.assign(this, opts)`, `setPrototypeOf`) to a target that may be a
+   * class instance. Any method could then be an own property, so every class
+   * chain keeps the checker's key list.
+   */
+  poisoned: boolean;
+}
+
+const writeScanCache = new WeakMap<ts.TypeChecker, WeakMap<ts.SourceFile, WriteScan>>();
+
+const unwrapExpr = (x: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(x) ||
+  ts.isAsExpression(x) ||
+  ts.isNonNullExpression(x) ||
+  ts.isTypeAssertionExpression(x) ||
+  ts.isSatisfiesExpression(x)
+    ? unwrapExpr(x.expression)
+    : x;
+
+const TYPED_ARRAY_NAMES = new Set([
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+]);
 
 /**
- * (#7156) Every property name a source file may write, syntactically and
- * over-approximated: the target of an assignment, compound assignment or
- * `++`/`--` (`x.m = …`, `x["m"] += …`), a literal key passed to
- * `Object.defineProperty` / `Reflect.defineProperty`, and the literal keys of
- * the descriptor map of `Object.defineProperties` or of any object-literal
- * source of `Object.assign`. Private names are not property keys and are
- * skipped; non-literal computed keys (`x[k] = …`) are not tracked.
+ * (#7156) May a value of this type be a class instance whose keys an unknown
+ * write could change? Exempt only what certainly is not: primitives, arrays,
+ * tuples, typed arrays, and types that are nothing but an index signature
+ * (`Record<string, T>`). Everything else — `any`, `unknown`, `object`, `{}`,
+ * type parameters, class/interface/anonymous object types, unions holding one
+ * — counts.
  */
-function assignedPropertyNamesOf(sf: ts.SourceFile): ReadonlySet<string> {
-  const cached = assignedNamesCache.get(sf);
+function mayBeInstanceType(checker: ts.TypeChecker, t: ts.Type, depth = 0): boolean {
+  if (depth > 8) return true;
+  const f = t.flags;
+  if (f & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.NonPrimitive | ts.TypeFlags.TypeParameter)) {
+    return true;
+  }
+  if (t.isUnionOrIntersection()) return t.types.some((p) => mayBeInstanceType(checker, p, depth + 1));
+  if (!(f & ts.TypeFlags.Object)) return false;
+  const c = checker as ts.TypeChecker & { isArrayType?(t: ts.Type): boolean; isTupleType?(t: ts.Type): boolean };
+  if (c.isArrayType?.(t) || c.isTupleType?.(t)) return false;
+  if (t.symbol && TYPED_ARRAY_NAMES.has(t.symbol.name)) return false;
+  const indexOnly = t.getProperties().length === 0 && (t.getStringIndexType() || t.getNumberIndexType());
+  return !indexOnly;
+}
+
+/**
+ * (#7156) Scan a source file for writes that can make a method name an own
+ * property. Collects every literal key written — assignment, compound
+ * assignment and `++`/`--` targets, destructuring-assignment and
+ * `for (x.m of/in …)` targets, `Object.defineProperty`/`Reflect.defineProperty`
+ * /`Reflect.set`/`__defineGetter__`/`__defineSetter__` literal keys, and the
+ * literal keys of `Object.defineProperties`/`Object.assign` sources; a `const
+ * k = "m"` key counts as `"m"`. Any such write whose key or source is not
+ * static, and any prototype change, poisons the scan when its target may be a
+ * class instance (`mayBeInstanceType`, or `this`). Private names are skipped.
+ */
+function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
+  let perChecker = writeScanCache.get(checker);
+  if (!perChecker) writeScanCache.set(checker, (perChecker = new WeakMap()));
+  const cached = perChecker.get(sf);
   if (cached) return cached;
-  const names = new Set<string>();
-  const addTarget = (target: ts.Expression): void => {
-    let t = target;
-    while (ts.isParenthesizedExpression(t)) t = t.expression;
-    if (ts.isPropertyAccessExpression(t) && !ts.isPrivateIdentifier(t.name)) names.add(t.name.text);
-    else if (ts.isElementAccessExpression(t)) {
-      const arg = t.argumentExpression;
-      if (ts.isStringLiteralLike(arg) || ts.isNumericLiteral(arg)) names.add(arg.text);
+  const scan: WriteScan = { names: new Set(), poisoned: false };
+  const keyOf = (e: ts.Expression): string | undefined => {
+    const k = unwrapExpr(e);
+    if (ts.isStringLiteralLike(k)) return k.text;
+    if (ts.isNumericLiteral(k)) return String(Number(k.text));
+    const t = checker.getTypeAtLocation(k);
+    return t.isStringLiteral() ? t.value : t.isNumberLiteral() ? String(t.value) : undefined;
+  };
+  const poisonIfInstance = (target: ts.Expression | undefined): void => {
+    if (scan.poisoned || !target) return;
+    const x = unwrapExpr(target);
+    if (x.kind === ts.SyntaxKind.ThisKeyword || mayBeInstanceType(checker, checker.getTypeAtLocation(x))) {
+      scan.poisoned = true;
     }
   };
-  const addLiteralKeys = (arg: ts.Expression | undefined): void => {
-    if (!arg || !ts.isObjectLiteralExpression(arg)) return;
-    for (const prop of arg.properties) {
-      const name = prop.name;
-      if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)))
-        names.add(name.text);
-      else if (name && ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
-        names.add(name.expression.text);
-      }
+  const addKey = (key: string | undefined, target: ts.Expression | undefined): void => {
+    if (key === undefined || key === "__proto__") poisonIfInstance(target);
+    else scan.names.add(key);
+  };
+  const addObjectLiteralKeys = (src: ts.Expression | undefined, target: ts.Expression | undefined): void => {
+    const lit = src && unwrapExpr(src);
+    if (!lit || !ts.isObjectLiteralExpression(lit)) {
+      poisonIfInstance(target);
+      return;
     }
+    for (const prop of lit.properties) {
+      if (ts.isSpreadAssignment(prop) || !prop.name) poisonIfInstance(target);
+      else if (ts.isComputedPropertyName(prop.name)) addKey(keyOf(prop.name.expression), target);
+      else if (!ts.isPrivateIdentifier(prop.name)) addKey(staticMemberKey(prop.name), target);
+    }
+  };
+  const addTarget = (target: ts.Expression): void => {
+    const t = unwrapExpr(target);
+    if (ts.isPropertyAccessExpression(t)) {
+      if (!ts.isPrivateIdentifier(t.name)) addKey(t.name.text, t.expression);
+    } else if (ts.isElementAccessExpression(t)) {
+      addKey(keyOf(t.argumentExpression), t.expression);
+    } else if (ts.isObjectLiteralExpression(t)) {
+      for (const prop of t.properties) {
+        if (ts.isPropertyAssignment(prop)) addTarget(stripDefault(prop.initializer));
+        else if (ts.isSpreadAssignment(prop)) addTarget(prop.expression);
+      }
+    } else if (ts.isArrayLiteralExpression(t)) {
+      for (const el of t.elements) addTarget(ts.isSpreadElement(el) ? el.expression : stripDefault(el));
+    }
+  };
+  const visitCall = (node: ts.CallExpression): void => {
+    if (!ts.isPropertyAccessExpression(node.expression)) return;
+    const recv = unwrapExpr(node.expression.expression);
+    const owner = ts.isIdentifier(recv) ? recv.text : undefined;
+    const method = node.expression.name.text;
+    const [a0, a1, a2] = node.arguments;
+    if (method === "__defineGetter__" || method === "__defineSetter__") {
+      addKey(a0 && keyOf(a0), recv);
+      return;
+    }
+    if (owner !== "Object" && owner !== "Reflect") return;
+    if (method === "defineProperty" || (owner === "Reflect" && method === "set")) addKey(a1 && keyOf(a1), a0);
+    else if (method === "defineProperties") addObjectLiteralKeys(a1, a0);
+    else if (method === "assign" && owner === "Object")
+      for (const src of [a1, a2, ...node.arguments.slice(3)]) {
+        if (src) addObjectLiteralKeys(src, a0);
+      }
+    else if (method === "setPrototypeOf") poisonIfInstance(a0);
   };
   const visit = (node: ts.Node): void => {
     if (
@@ -722,19 +835,30 @@ function assignedPropertyNamesOf(sf: ts.SourceFile): ReadonlySet<string> {
       (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
     ) {
       addTarget(node.operand);
-    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-      const method = node.expression.name.text;
-      const key = node.arguments[1];
-      if (method === "defineProperty" && key && (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key))) {
-        names.add(key.text);
-      } else if (method === "defineProperties") addLiteralKeys(key);
-      else if (method === "assign") for (const arg of node.arguments.slice(1)) addLiteralKeys(arg);
+    } else if (
+      (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    ) {
+      addTarget(node.initializer);
+    } else if (ts.isCallExpression(node)) {
+      visitCall(node);
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  assignedNamesCache.set(sf, names);
-  return names;
+  perChecker.set(sf, scan);
+  return scan;
+}
+
+/** (#7156) `x = dflt` inside a destructuring pattern targets `x`. */
+function stripDefault(e: ts.Expression): ts.Expression {
+  return ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.EqualsToken ? e.left : e;
+}
+
+/** (#7156) A plain, string or numeric member name's key. */
+function staticMemberKey(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  return ts.isNumericLiteral(name) ? String(Number(name.text)) : undefined;
 }
 
 /** (#7156) A canonical array-index key: "0".."4294967294", no leading zeros. */
@@ -807,7 +931,7 @@ function simpleMemberKind(checker: ts.TypeChecker, member: ts.ClassElement): "fi
  * understands, no name is a field in one class and a method/accessor in
  * another (a base field under a derived getter is still own at runtime), and no
  * method/accessor name is a property-assignment target anywhere in the
- * compilation (`assignedPropertyNamesOf`).
+ * compilation (`writeScanOf`).
  */
 function simpleChainFieldDeclarations(
   checker: ts.TypeChecker,

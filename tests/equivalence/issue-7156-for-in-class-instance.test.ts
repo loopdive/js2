@@ -75,6 +75,9 @@ const CASES: Record<string, string> = {
   "new (C)()": `class C { #x = 1; y = 2; m() {} }\n${keysOf("new (C)()")}`,
   "new through an un-annotated const alias": `class C { #x = 1; y = 2; m() {} }\nconst D = C;\n${keysOf("new D()")}`,
   "new of a class expression": `const C = class { #x = 1; y = 2; m() {} };\n${keysOf("new C()")}`,
+  // Writes that cannot reach a class instance do not count: an array index
+  // loop and a `Record<string, number>` write leave the improvement on.
+  "array and Record writes in the same program": `class C { #x = 1; y = 2; m() {} }\nconst arr: number[] = [0, 0];\nfor (let i = 0; i < arr.length; i++) arr[i] = i;\nconst rec: Record<string, number> = {};\nconst rk = "m" + "";\nrec[rk] = 1;\n${keysOf("new C()")}`,
   "const bound to new C() with its own annotation": `class C { #x = 1; y = 2; m() {} }\nconst c: C = new C();\n${keysOf("c")}`,
 };
 
@@ -107,6 +110,22 @@ const NOT_SIMPLE: Record<string, string> = {
   "method assigned in a subclass constructor (sorted)": `class P { a = 1; m(): number { return 1; } }\nclass Q extends P { constructor() { super(); this.m = () => 2; } }\n${sortedKeysOf("new Q()")}`,
   "method defined by Object.defineProperty (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nObject.defineProperty(p, "m", { value: 2, enumerable: true });\n${sortedKeysOf("p")}`,
   "method written by Object.assign (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nObject.assign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  // Writes whose key or source is not static (review round 5): any method may
+  // then be own, so every class chain keeps the checker's list.
+  "const string key (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst key = "m";\n(p as any)[key] = () => 2;\n${sortedKeysOf("p")}`,
+  "let key (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nlet key = "m";\n(p as any)[key] = () => 2;\n${sortedKeysOf("p")}`,
+  "for-of key loop (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfor (const key of ["m"]) (p as any)[key] = () => 2;\n${sortedKeysOf("p")}`,
+  "object destructuring target (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\n({ m: p.m } = { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "array destructuring target (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\n[p.m] = [() => 2];\n${sortedKeysOf("p")}`,
+  "for-of target (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfor (p.m of [() => 2]) {}\n${sortedKeysOf("p")}`,
+  "Object.assign with a variable source (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nObject.assign(p, src);\n${sortedKeysOf("p")}`,
+  "Object.assign with a spread source (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nObject.assign(p, { ...src });\n${sortedKeysOf("p")}`,
+  "defineProperty with a const key (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst key = "m";\nObject.defineProperty(p, key, { value: 2, enumerable: true });\n${sortedKeysOf("p")}`,
+  "Reflect.set with a literal key (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nReflect.set(p, "m", () => 2);\n${sortedKeysOf("p")}`,
+  "Object.setPrototypeOf (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nObject.setPrototypeOf(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "options bag: Object.assign(this, opts) (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: Partial<C>) { Object.assign(this, opts); } }\n${sortedKeysOf("new C({ m: () => 2 })")}`,
+  "options bag through a const (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: Partial<C>) { Object.assign(this, opts); } }\nconst c = new C({ m: () => 2 });\n${sortedKeysOf("c")}`,
+  "copy loop: this[k] = opts[k] (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: any) { for (const key in opts) (this as any)[key] = opts[key]; } }\n${sortedKeysOf("new C({ m: 3 })")}`,
   // \`new K()\` proves the class only when K names the class itself.
   "new of a typeof-annotated const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: typeof P = Q;\n${sortedKeysOf("new D()")}`,
   "new of a constructor-type const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: new () => P = Q;\n${sortedKeysOf("new D()")}`,
