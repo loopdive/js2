@@ -77,18 +77,26 @@ Fix: the static unroll now takes its key list from a new oracle query,
 backend answers `undefined` and the unroll falls back to the checker's raw
 property list, so no new raw checker call in `src/codegen/`).
 
-- A class instance keeps only own fields: parameter properties, then fields,
-  base class first (a redeclared field keeps the base position). Private
-  names, methods, accessors, statics and `declare`/`abstract` fields are
-  dropped.
+- A class instance drops only what is certainly not an own property: private
+  names, methods, accessors (including auto-`accessor`) and statics. `declare`
+  and interface-merged fields stay, because a constructor or base class often
+  assigns them (review round 1, PR #6940).
+- Order, base class first: per class, parameter properties, then fields, then
+  `declare` fields (they get the property only when the constructor body
+  assigns them, after the fields). A field a derived class redeclares,
+  `declare` included, keeps the base position; an `abstract` field takes the
+  implementing subclass's position. Keys no class declares (interface-merged,
+  JS constructor assignments) follow in the checker's order. Names come from
+  the checker's symbols, so a computed key (`["k1"] = 1`, `[K] = 1`) keeps its
+  declaration position.
 - An object literal with a spread (directly, or through a `const`) is ordered
   as it is built, left to right. Deviation from plan step 3: instead of
   falling through to the dynamic `$Object` for-in, the unroll keeps the static
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (60 of 72 sampled lane/program compiles byte-identical; the 12 that differ
-  are the for-in-over-class / spread programs).
+  (63 of 78 sampled lane/program compiles byte-identical; the 15 that differ
+  are for-in-over-class / spread programs).
 
 Tests: `tests/equivalence/issue-7156-for-in-class-instance.test.ts` (gc
 native-first, standalone, wasi vs node).
@@ -101,3 +109,10 @@ Left out:
 - Integer-like keys (`{ b: 1, 1: 2 }`) are not reordered ascending; unchanged.
 - `Object.keys` static paths were not moved onto the new query (they already
   print `y` for the issue's class).
+- Pre-existing on base and head, unchanged (review round 1 NITs): integer-like
+  keys in a spread literal; a spread whose source has an optional key that is
+  absent at runtime (`x?`) or a spread parameter, which use the declared order
+  and set rather than the runtime one; keys added later or `delete`d (the
+  unroll is static); a mixin's added field; `{...arr, z}` lists every
+  `Array.prototype` member; on wasi, interface/union/`this` receivers and
+  `{...anyValue}` / `{..."ab"}` read empty or wrong.

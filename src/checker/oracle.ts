@@ -171,10 +171,10 @@ export interface TypeOracle {
   /**
    * (#7156) The string keys a `for (k in <expr>)` over a CLOSED static shape
    * enumerates, in enumeration order — the key list the static for-in unroll
-   * emits. A class instance yields only its own public instance fields
-   * (constructor parameter properties, then fields, base class first); private
-   * names, methods, accessors, statics and `declare` fields are not own
-   * enumerable properties. An object literal with a spread is ordered as the
+   * emits. A class instance drops only what is certainly not an own property
+   * (private names, methods, accessors, statics) and orders the rest as the
+   * constructors define them (parameter properties, fields, then `declare`
+   * fields; base class first). An object literal with a spread is ordered as the
    * literal builds it (`{...a, z}` is `a`'s keys, then `z`). `undefined` when
    * this backend cannot answer.
    */
@@ -614,24 +614,21 @@ function staticMemberName(name: ts.Node | undefined): string | undefined {
 }
 
 /**
- * (#7156) Does this declaration create an own enumerable property on an
- * instance? A field (not static, not a private name, not `declare`/`abstract`),
- * a constructor parameter property, or a JS `this.x = …` assignment. Methods,
- * accessors and interface members live elsewhere or nowhere at runtime.
+ * (#7156) Is this declaration CERTAINLY not an own property of an instance? A
+ * method or accessor (it lives on the prototype), a static or auto-`accessor`
+ * member, or a `#private` name (never a property key). Everything else — a
+ * field, a `declare` field, a parameter property, an interface-merged member,
+ * a JS `this.x = …` — may well be assigned at runtime, so it is kept.
  */
-function isOwnFieldDeclaration(decl: ts.Declaration): boolean {
-  if (ts.isPropertyDeclaration(decl)) {
-    if (ts.isPrivateIdentifier(decl.name)) return false;
-    const mods = ts.getModifiers(decl) ?? [];
-    return !mods.some(
-      (m) =>
-        m.kind === ts.SyntaxKind.StaticKeyword ||
-        m.kind === ts.SyntaxKind.DeclareKeyword ||
-        m.kind === ts.SyntaxKind.AbstractKeyword,
-    );
-  }
-  if (ts.isParameter(decl)) return ts.isParameterPropertyDeclaration(decl, decl.parent);
-  return ts.isBinaryExpression(decl) || ts.isPropertyAccessExpression(decl);
+function isCertainlyNotOwn(decl: ts.Declaration): boolean {
+  if (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
+    return true;
+  const name = (decl as { name?: ts.Node }).name;
+  if (name && ts.isPrivateIdentifier(name)) return true;
+  if (!ts.isPropertyDeclaration(decl)) return false;
+  return (ts.getModifiers(decl) ?? []).some(
+    (m) => m.kind === ts.SyntaxKind.StaticKeyword || m.kind === ts.SyntaxKind.AccessorKeyword,
+  );
 }
 
 /** (#7156) The class (interface) type behind a class-instance type, else undefined. */
@@ -641,52 +638,64 @@ function classTargetOf(t: ts.Type): ts.InterfaceType | undefined {
   return ((target as ts.ObjectType).objectFlags ?? 0) & ts.ObjectFlags.Class ? (target as ts.InterfaceType) : undefined;
 }
 
-/** (#7156) The class declaration behind a class-instance type, else undefined. */
-function classDeclarationOfInstance(t: ts.Type): ts.ClassLikeDeclaration | undefined {
-  return classTargetOf(t)?.symbol?.declarations?.find(ts.isClassLike);
-}
-
-/** (#7156) Own-field names a class declares, in the order its constructor defines them. */
-function classOwnFieldNames(decl: ts.ClassLikeDeclaration): string[] {
-  const names: string[] = [];
+/**
+ * (#7156) A class's own-property declarations in the order its constructor
+ * defines them: parameter properties, then initialised/defined fields, then
+ * `declare` fields (no define semantics — they gain the property only when the
+ * constructor body assigns them, after the fields).
+ */
+function classFieldDeclarationsInOrder(decl: ts.ClassLikeDeclaration): ts.Declaration[] {
+  const params: ts.Declaration[] = [];
   const ctor = decl.members.find((m): m is ts.ConstructorDeclaration => ts.isConstructorDeclaration(m) && !!m.body);
   for (const param of ctor?.parameters ?? []) {
-    if (ts.isParameterPropertyDeclaration(param, ctor!)) {
-      const name = staticMemberName(param.name);
-      if (name !== undefined) names.push(name);
-    }
+    if (ts.isParameterPropertyDeclaration(param, ctor!)) params.push(param);
   }
+  const fields: ts.Declaration[] = [];
+  const declared: ts.Declaration[] = [];
   for (const member of decl.members) {
-    if (!ts.isPropertyDeclaration(member) || !isOwnFieldDeclaration(member)) continue;
-    const name = staticMemberName(member.name);
-    if (name !== undefined) names.push(name);
+    if (!ts.isPropertyDeclaration(member)) continue;
+    const mods = ts.getModifiers(member) ?? [];
+    // An `abstract` field defines nothing here; the subclass that implements it
+    // places it.
+    if (mods.some((m) => m.kind === ts.SyntaxKind.AbstractKeyword)) continue;
+    (mods.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword) ? declared : fields).push(member);
   }
-  return names;
+  return [...params, ...fields, ...declared];
 }
 
 /**
- * (#7156) Static for-in keys of a checker type. A class instance enumerates its
- * own fields, base class first (a base constructor runs before the derived
- * class defines its fields, and a redeclared field keeps the base position).
- * Any other type keeps the checker's property order.
+ * (#7156) Static for-in keys of a checker type. A class instance enumerates
+ * every property that may be own (see `isCertainlyNotOwn`), base class first
+ * (a base constructor runs before the derived class defines its fields, so a
+ * field a derived class redeclares — `declare` included — keeps the base
+ * position). Names come from the checker's symbols, so a computed literal key
+ * (`["k1"] = 1`) keeps its declaration position. A key no class declares (an
+ * interface-merged member, a JS constructor assignment) follows, in the
+ * checker's order. Any other type keeps the checker's property order.
  */
 function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type): readonly string[] {
   const t = type.getNonNullableType();
   const props = t.getProperties();
-  const classDecl = classDeclarationOfInstance(t);
-  if (!classDecl) return props.map((p) => p.name);
-  const own = props.filter((p) => (p.declarations ?? []).some(isOwnFieldDeclaration)).map((p) => p.name);
+  if (!classTargetOf(t)) return props.map((p) => p.name);
+  const own = props
+    .filter((p) => !(p.declarations?.length && p.declarations.every(isCertainlyNotOwn)))
+    .map((p) => p.name);
+  // Walk the class chain derived → base, mapping each member declaration to its
+  // checker name (computed keys resolved) and collecting each class's order.
+  const nameOfDecl = new Map<ts.Declaration, string>();
   const chain: ts.ClassLikeDeclaration[] = [];
   for (let cur: ts.Type | undefined = t; cur && chain.length < 32; ) {
     const target = classTargetOf(cur);
     const decl = target?.symbol?.declarations?.find(ts.isClassLike);
     if (!target || !decl) break;
+    for (const p of cur.getProperties()) for (const d of p.declarations ?? []) nameOfDecl.set(d, p.name);
     chain.unshift(decl);
     cur = checker.getBaseTypes(target)[0];
   }
   const ordered: string[] = [];
-  for (const name of chain.flatMap(classOwnFieldNames)) {
-    if (own.includes(name) && !ordered.includes(name)) ordered.push(name);
+  for (const decl of chain.flatMap(classFieldDeclarationsInOrder)) {
+    const name = nameOfDecl.get(decl);
+    if (name !== undefined && own.includes(name) && !ordered.includes(name)) ordered.push(name);
   }
   for (const name of own) if (!ordered.includes(name)) ordered.push(name);
   return ordered;

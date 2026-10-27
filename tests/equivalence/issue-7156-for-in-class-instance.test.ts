@@ -48,7 +48,18 @@ const CASES: Record<string, string> = {
   "getter-only class enumerates nothing": `class G { get a() { return 1; } }\nfunction run(): string { let s = "n"; for (const k in new G()) s += k; return s; }`,
   "static field and method": `class S { static s = 1; t = 2; static f() {} }\n${keysOf("new S()")}`,
   "parameter properties before fields": `class P { c = 1; constructor(public a: number, b: number) {} d = 2; }\n${keysOf("new P(1, 2)")}`,
-  "declare field is not own": `class Q { declare q: number; x!: number; r = 1; }\n${keysOf("new Q()")}`,
+  // `declare` and interface-merged fields are own once assigned (constructor
+  // or base class), so they must stay; a derived `declare` keeps the base position.
+  "declare field assigned in the constructor": `class C { declare a: number; b = 2; constructor() { this.a = 1; } }\n${keysOf("new C()")}`,
+  "declare field assigned (sorted)": `class C { declare a: number; b = 2; constructor() { this.a = 1; } }\nfunction run(): string { const keys: string[] = []; for (const k in new C()) keys.push(k); return keys.sort().join(); }`,
+  "interface-merged field assigned in the constructor": `interface C { extra: number }\nclass C { a = 1; constructor() { this.extra = 7; } }\n${keysOf("new C()")}`,
+  "derived declare over a base field": `class B { y = 1; z = 2; }\nclass D extends B { declare y: number; w = 3; }\nfunction run(): string { let n = 0; for (const k in new D()) n++; return String(n); }`,
+  "derived declare over a base field (order)": `class B { y = 1; z = 2; }\nclass D extends B { declare y: number; w = 3; }\n${keysOf("new D()")}`,
+  "derived declare over a base parameter property": `class B { constructor(public p: number) {} }\nclass D extends B { declare p: number; q = 1; constructor() { super(1); } }\n${keysOf("new D()")}`,
+  "definite-assignment field": `class Q { x!: number; r = 1; }\n${keysOf("new Q()")}`,
+  "computed string-literal key keeps its position": `class C { ["k1"] = 1; a = 2; }\n${keysOf("new C()")}`,
+  "abstract field placed by the subclass": `abstract class A { abstract a: number; q = 1; }\nclass B extends A { a = 2; }\n${keysOf("new B()")}`,
+  "auto-accessor is not own": `class C { accessor a = 1; b = 2; }\n${keysOf("new C()")}`,
   "generic class with accessor": `class G<T> { v: T; constructor(v: T) { this.v = v; } get g() { return 1; } }\n${keysOf("new G<number>(1)")}`,
   "spread then own key": `const a = { x: 1, y: 2 };\n${keysOf("{ ...a, z: 3 }")}`,
   "own key, spread, redefined key": `const a = { x: 1, y: 2 };\n${keysOf("{ z: 0, ...a, x: 5, w: 1 }")}`,
@@ -67,6 +78,11 @@ describe("#7156 static for-in unroll lists only own enumerable keys, in order", 
   it("values read through the key (gc, standalone)", () =>
     expectSameOnLanes(
       `class C { #x = 1; y = 2; z = 3; m() {} }\nfunction run(): string { const c = new C(); let s = ""; for (const k in c) s += k + "=" + (c as any)[k] + ";"; return s; }`,
+      LANES.filter((l) => l.lane !== "wasi"),
+    ));
+  it("declare field assigned in the constructor, values summed (gc, standalone)", () =>
+    expectSameOnLanes(
+      `class C { declare a: number; b = 2; constructor() { this.a = 40; } }\nfunction run(): string { const c = new C(); let n = 0; for (const k in c) n += (c as any)[k]; return String(n); }`,
       LANES.filter((l) => l.lane !== "wasi"),
     ));
 });
