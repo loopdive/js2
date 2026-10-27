@@ -47,6 +47,21 @@ import { HOLE_F64_BITS } from "./value-tags.js";
 import { holeSentinelInstrs } from "./array-holes.js";
 
 /**
+ * - `both`: fill `[min(oldLen, newLen), cap)` — the store has no pending
+ *   element write (defineProperty, the dynamic `__extern_set` arm).
+ * - `shrink-only`: fill `[newLen, cap)` only when the length moves down.
+ * - `length-store` (#7164): the static `arr.length = n` store. f64 carriers
+ *   keep `shrink-only`; an externref carrier also GROWS — the backing is
+ *   reallocated to `newLen` (same 16M allocation guard as the defineProperty
+ *   and `__extern_set` paths) so the vec keeps `length <= cap`, and the new
+ *   slots get `$Hole`, not the `null` that `array.new_default` / an earlier
+ *   capacity grow left there. A JS element write bumps `length` itself, so the
+ *   `arr[len] = v; arr.length = len + 1` append shape stores an unchanged
+ *   length and fills nothing it wrote.
+ */
+export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store";
+
+/**
  * Emit, for every admitted vec type, a guarded fill of
  * `[min(oldLen, newLen), array.len(data))` with the absence marker.
  *
@@ -59,7 +74,7 @@ export function emitVecLengthHoleFill(
   fctx: FunctionContext,
   vecLocal: number,
   newLenLocal: number,
-  mode: "shrink-only" | "both" = "both",
+  mode: VecLengthHoleFillMode = "both",
   // (#6482 r7) Also fill EXTERNREF-backed carriers with the `$Hole` singleton.
   //
   // Opt-in, and only sound when `ctx.usesArrayHoles` is already true: `$Hole`
@@ -92,7 +107,7 @@ export function buildVecLengthHoleFill(
   local: (name: string, type: ValType) => number,
   vecLocal: number,
   newLenLocal: number,
-  mode: "shrink-only" | "both",
+  mode: VecLengthHoleFillMode,
   includeExternref: boolean,
   finalized: boolean,
 ): Instr[] {
@@ -162,9 +177,15 @@ export function buildVecLengthHoleFill(
         then: [],
       },
     ];
+    const carrierMode = mode === "length-store" ? (isExternrefCarrier ? "both" : "shrink-only") : mode;
+    const growBacking: Instr[] =
+      mode === "length-store" && isExternrefCarrier
+        ? lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx)
+        : [];
     const then: Instr[] =
-      mode === "both"
+      carrierMode === "both"
         ? [
+            ...growBacking,
             // start = min(oldLen, newLen)
             { op: "local.get", index: vecLocal },
             { op: "ref.cast", typeIdx: vecTypeIdx },
@@ -204,4 +225,69 @@ export function buildVecLengthHoleFill(
     body.push({ op: "if", blockType: { kind: "empty" }, then });
   }
   return body;
+}
+
+/**
+ * (#7164) `cap < newLen <= 16M` → reallocate the backing to `newLen`, copying
+ * the old capacity. The new tail is default-filled here and marked by the fill
+ * that follows; huge lengths keep the #4491 length/capacity split (slots past
+ * the backing read as absent).
+ */
+function lengthStoreGrowInstrs(
+  local: (name: string, type: ValType) => number,
+  vecLocal: number,
+  newLenLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+): Instr[] {
+  const dataLocal = local(`__vlhf_gdata_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const capLocal = local(`__vlhf_gcap_${vecTypeIdx}`, { kind: "i32" });
+  const newDataLocal = local(`__vlhf_gnew_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  return [
+    { op: "local.get", index: vecLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [{ op: "local.get", index: dataLocal }, { op: "array.len" }],
+    },
+    { op: "local.tee", index: capLocal },
+    { op: "local.get", index: newLenLocal },
+    { op: "i32.lt_u" },
+    { op: "local.get", index: newLenLocal },
+    { op: "i32.const", value: 16777216 },
+    { op: "i32.le_u" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: newLenLocal },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: newDataLocal },
+        { op: "local.get", index: capLocal },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: newDataLocal },
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: dataLocal },
+            { op: "i32.const", value: 0 },
+            { op: "local.get", index: capLocal },
+            { op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx },
+          ],
+        },
+        { op: "local.get", index: vecLocal },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "local.get", index: newDataLocal },
+        { op: "ref.as_non_null" },
+        { op: "struct.set", typeIdx: vecTypeIdx, fieldIdx: 1 },
+      ],
+    },
+  ];
 }

@@ -4928,7 +4928,7 @@ function compilePropertyAssignment(
         const savedBody = fctx.body;
         fctx.body = [];
         try {
-          emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "shrink-only", true);
+          emitVecLengthHoleFill(ctx, fctx, vecTmp, newLenTmp, "length-store", true); // (#7164) grow → $Hole
           selectedStore = [...fctx.body, ...lengthStore];
         } finally {
           fctx.body = savedBody;
