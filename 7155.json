@@ -1,11 +1,10 @@
 {
   "id": "7155",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-c",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-10-25T18:20:05Z",
-  "updated_at": "2026-10-25T18:20:05Z",
-  "write_id": "4409-snar4hhf",
-  "pr_scan": "off"
+  "assignee": "ttraenkler/c-impl-7155",
+  "requested_by": "ttraenkler/c-impl-7155",
+  "status": "in-progress",
+  "branch": "issue-7155-object-spread-of-array",
+  "claimed_at": "2026-10-27T07:24:36Z",
+  "updated_at": "2026-10-27T07:24:36Z",
+  "write_id": "4961-zd8v9100"
 }
