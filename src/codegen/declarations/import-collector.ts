@@ -458,6 +458,8 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
         } else {
           needed.add("externref");
         }
+        // (#7157) The host-free sink renders a bigint argument with the exact formatter.
+        if (hostFreeEnvironment(ctx)) registerBigIntToStringDemand(ctx, state.primitiveNeeded, isBigIntType(argType));
       }
     }
   }
