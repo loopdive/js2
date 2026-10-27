@@ -135,6 +135,14 @@ const NOT_SIMPLE: Record<string, string> = {
   "this through a Record<string, any> const (sorted)": `class C { a = 1; m(): number { return 1; } constructor(opts: Record<string, any>) { const self: Record<string, any> = this; for (const k in opts) self[k] = opts[k]; } }\n${sortedKeysOf("new C({ m: 3 })")}`,
   "globalThis.Object.assign (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nglobalThis.Object.assign(p, src);\n${sortedKeysOf("p")}`,
   "Object element-access assign (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst src = { m: () => 2 };\nObject["assign"](p, src);\n${sortedKeysOf("p")}`,
+  // Code run from a string, and index signatures whose values can be methods
+  // (review round 7).
+  "eval of a string (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\n(globalThis as any).pp = p;\neval("pp.m = 5");\n${sortedKeysOf("p")}`,
+  "new Function of a string (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nnew Function("o", "o.m = 5")(p);\n${sortedKeysOf("p")}`,
+  "bindAll over Record<string, Function> with a cast (sorted)": `function bindAll(o: Record<string, Function>, names: string[]): void { for (const n of names) o[n] = o[n].bind(o); }\nclass C { a = 1; m(): number { return this.a; } constructor() { bindAll(this as any, ["m"]); } }\n${sortedKeysOf("new C()")}`,
+  "Record<string, number | Function> helper with a cast (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction put(o: Record<string, number | Function>, k: string, v: Function): void { o[k] = v; }\nput(p as any, "m", () => 2);\n${sortedKeysOf("p")}`,
+  "Record<string, V> generic helper with a cast (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction put<V>(o: Record<string, V>, k: string, v: V): void { o[k] = v; }\nput(p as any, "m", () => 2);\n${sortedKeysOf("p")}`,
+  "Record<string, object> helper with a cast (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction put(o: Record<string, object>, k: string, v: object): void { o[k] = v; }\nput(p as any, "m", () => 2);\n${sortedKeysOf("p")}`,
   // \`new K()\` proves the class only when K names the class itself.
   "new of a typeof-annotated const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: typeof P = Q;\n${sortedKeysOf("new D()")}`,
   "new of a constructor-type const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: new () => P = Q;\n${sortedKeysOf("new D()")}`,
@@ -147,6 +155,8 @@ const NOT_SIMPLE: Record<string, string> = {
 // (review round 6). On wasi these programs trap on the base too (pre-existing,
 // outside #7156), so they run on gc and standalone.
 const WRITER_ALIASES: Record<string, string> = {
+  "assign destructured from an ObjectConstructor parameter (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction f({ assign }: ObjectConstructor, src: any): void { assign(p, src); }\nf(Object, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  "Function called on a string (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst f = Function("o", "k", "o[k] = 5");\nf(p, "m");\n${sortedKeysOf("p")}`,
   "Object.assign through a const alias (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst assign = Object.assign;\nassign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
   "Object.assign destructured from Object (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst { assign } = Object;\nassign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
   "Object through a const alias (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nconst O = Object;\nconst src = { m: () => 2 };\nO.assign(p, src);\n${sortedKeysOf("p")}`,
@@ -189,6 +199,15 @@ describe("#7156 static for-in unroll lists only own enumerable keys, in order", 
     expectSameOnLanes(
       `class C { a = 1; m(): number { return 1; } constructor() { return { z: 1 } as any; } }\n${keysOf("new C()")}`,
       LANES.filter((l) => l.lane !== "wasi"),
+    ));
+  // Known limitation (review round 7): a cast instance passed as
+  // \`Record<string, number>\` and given a number in a method slot. The
+  // primitive-valued index signature is exempt, so \`m\` is dropped (node: "a,m").
+  it("cast instance written through Record<string, number> (pinned)", () =>
+    expectSameOnLanes(
+      `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nfunction put(o: Record<string, number>, k: string, v: number): void { o[k] = v; }\nput(p as any, "m", 5);\n${sortedKeysOf("p")}`,
+      LANES,
+      "a",
     ));
   it("values read through the key (gc, standalone)", () =>
     expectSameOnLanes(

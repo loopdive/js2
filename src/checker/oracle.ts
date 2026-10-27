@@ -742,13 +742,26 @@ function mayBeInstanceType(checker: ts.TypeChecker, t: ts.Type, depth = 0): bool
   // anything: a class instance converts to `Record<string, any>` implicitly.
   const indexTypes = [t.getStringIndexType(), t.getNumberIndexType()].filter((x): x is ts.Type => !!x);
   if (t.getProperties().length > 0 || indexTypes.length === 0) return true;
-  return indexTypes.some((x) => isAnyOrUnknown(x));
+  return !indexTypes.every(isPrimitiveValueType);
 }
 
-/** (#7156) Is this type `any` / `unknown`, or a union or intersection holding one? */
-function isAnyOrUnknown(t: ts.Type): boolean {
-  if (t.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return true;
-  return t.isUnionOrIntersection() && t.types.some(isAnyOrUnknown);
+/**
+ * (#7156) Can a value of this type never be a method? Primitives and their
+ * literals (number, string, boolean, bigint, symbol, null, undefined), or a
+ * union made only of them. A cast instance passed as `Record<string, Function>`
+ * / `Record<string, object>` / `Record<string, V>` can have methods written.
+ */
+function isPrimitiveValueType(t: ts.Type): boolean {
+  if (t.isUnion()) return t.types.every(isPrimitiveValueType);
+  const primitive =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.ESSymbolLike |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Undefined;
+  return (t.flags & primitive) !== 0;
 }
 
 /** (#7156) Members of `Object` / `Reflect` that write keys or change a prototype. */
@@ -882,6 +895,14 @@ function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
     } else if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer) {
       const owner = writerOwnerOf(checker, node.initializer);
       if (owner === "Object" || owner === "Reflect") scan.poisoned = true;
+    } else if (ts.isParameter(node) && ts.isObjectBindingPattern(node.name)) {
+      // `function f({ assign }: ObjectConstructor)`: destructured from the parameter's type.
+      const t = checker.getTypeAtLocation(node.name);
+      const name = t.symbol?.name;
+      if (name === "ObjectConstructor" || name === "Reflect") scan.poisoned = true;
+    } else if (ts.isWithStatement(node)) {
+      // A sloppy-mode `with (o) { m = 5 }` writes `o.m` through a bare name.
+      scan.poisoned = true;
     } else if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
@@ -890,6 +911,19 @@ function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
       const owner = writerOwnerOf(checker, node.right);
       if (owner === "Object" || owner === "Reflect") scan.poisoned = true;
     }
+  };
+  // Code run from a string (`eval(…)`, `new Function(…)`) can write any key and
+  // cannot be scanned: a VALUE reference to the global `eval` / `Function`
+  // (not a local of that name, not a type annotation) falls back globally.
+  const visitCodeFromString = (id: ts.Identifier): void => {
+    if (scan.poisoned) return;
+    for (let p: ts.Node | undefined = id.parent, i = 0; p && i < 8; p = p.parent, i++) {
+      if (ts.isTypeNode(p) || ts.isHeritageClause(p)) return;
+      if (ts.isStatement(p)) break;
+    }
+    const sym = checker.getSymbolAtLocation(id);
+    const decls = sym?.declarations ?? [];
+    if (decls.every((d) => d.getSourceFile().isDeclarationFile)) scan.poisoned = true;
   };
   const visit = (node: ts.Node): void => {
     if (
@@ -912,6 +946,7 @@ function writeScanOf(checker: ts.TypeChecker, sf: ts.SourceFile): WriteScan {
       visitCall(node);
     }
     visitWriterReference(node);
+    if (ts.isIdentifier(node) && (node.text === "eval" || node.text === "Function")) visitCodeFromString(node);
     ts.forEachChild(node, visit);
   };
   visit(sf);

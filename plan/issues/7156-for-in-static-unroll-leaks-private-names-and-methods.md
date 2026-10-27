@@ -114,10 +114,18 @@ property list, so no new raw checker call in `src/codegen/`).
   (`any`, `unknown`, `object`, `{}`, a type parameter, a class, interface or
   object type, or a union holding one), every class chain keeps the checker's
   list. Arrays, tuples, typed arrays and index-signature-only types whose
-  values are not `any`/`unknown` (`Record<string, number>`) are exempt, so
-  `arr[i] = …` and counters do not trigger it; `Record<string, any>` is NOT
-  exempt, because a class instance converts to it implicitly (review round 6:
-  `merge(t: Record<string, any>, s)` / `merge(this, opts)`).
+  values are all primitive (number, string, boolean, bigint, symbol, null,
+  undefined, their literals, or unions of only those — `Record<string,
+  number>`) are exempt, so `arr[i] = …` and counters do not trigger it.
+  `Record<string, any>` (a class instance converts to it implicitly — review
+  round 6: `merge(t: Record<string, any>, s)` / `merge(this, opts)`) and
+  `Record<string, Function | object | V>` (a cast instance, e.g. a bindAll
+  helper — review round 7) are NOT exempt.
+- Code run from a string also triggers it: a value reference to the global
+  `eval` or `Function` (resolved through the checker, so a local named `eval`
+  or a `Function` type annotation does not count), as do a `with` statement
+  and an `ObjectConstructor`/`Reflect`-typed destructured parameter
+  (`function f({ assign }: ObjectConstructor)`).
 - Any `Object` (`assign`, `defineProperty`, `defineProperties`,
   `setPrototypeOf`) or `Reflect` (`set`, `defineProperty`, `setPrototypeOf`)
   writer that is not a direct, analysable call also triggers it: an alias
@@ -144,7 +152,7 @@ property list, so no new raw checker call in `src/codegen/`).
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (96 of 114 sampled lane/program compiles byte-identical, including all
+  (87 of 105 sampled lane/program compiles byte-identical, including all
   playground examples and `benchmarks/suites/*.ts`, every not-simple class
   program, every non-provable class receiver and every globally-poisoned
   program; the 18 that differ are provable simple-class / spread programs).
@@ -163,6 +171,11 @@ Left out:
   `y` (pinned in the test; #4138 tracks polymorphic receivers).
 - Integer-like keys in object literals (`{ b: 1, 1: 2 }`) are not reordered
   ascending; unchanged.
+- Known limitation (review round 7, pinned in the test): a class instance
+  cast to `Record<string, number>` (`put(p as any, "m", 5)`) and given a
+  number in a method slot keeps the improvement, so `m` is dropped (node and
+  base: `a,m`). Primitive-valued index signatures stay exempt so ordinary
+  counters keep the fix.
 - Private `#x` names are still listed when a chain falls back to the
   checker's list (base does the same); dropping them was skipped to keep those
   programs byte-identical to the base.
