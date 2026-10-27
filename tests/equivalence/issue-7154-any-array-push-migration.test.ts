@@ -65,6 +65,49 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
       `const a: number[] = [1, 2]; a.push(3); a[3] = 4.5; return a.join() + "|" + a.length;`,
     ],
     ["any[] with only numeric stores", `const a: any[] = [1, 2]; a.push(3); a.unshift(0); return a.join();`],
+    // Review round 2: sharing a vec between bindings keeps ONE layout. A typed
+    // `T[]` and its alias pin the same typed vec (unboxed, no copy); only an
+    // `any` / `unknown` element binding takes the dynamic carrier.
+    [
+      "number[] alias binding",
+      `const xs: number[] = []; xs.push(1); const ys = xs; ys.push(2); return xs.length + ":" + xs.join() + ":" + ys.join();`,
+    ],
+    ["string[] alias binding", `const xs: string[] = []; xs.push("a"); const ys = xs; ys.push("b"); return xs.join();`],
+    [
+      "annotated number[] alias binding",
+      `const xs: number[] = []; xs.push(1); const ys: number[] = xs; ys.push(2); return xs.join();`,
+    ],
+    [
+      "number[] alias via object field",
+      `const o: { f: number[] } = { f: [] }; const xs: number[] = []; xs.push(1); o.f = xs; o.f.push(2); return xs.join() + "|" + o.f.join();`,
+    ],
+    [
+      "number[] alias via class field",
+      `class Q { items: number[] = []; } const q = new Q(); const xs: number[] = []; xs.push(1); q.items = xs; q.items.push(2); return xs.join();`,
+    ],
+    [
+      "struct P[] alias binding",
+      `type P = { x: number }; const xs: P[] = []; xs.push({ x: 1 }); const ys = xs; ys.push({ x: 2 }); return String(xs.length) + ys[1].x;`,
+    ],
+    [
+      "swap buffers",
+      `let a: number[] = [], b: number[] = []; for (let i = 0; i < 5; i++) a.push(i); ` +
+        `for (let r = 0; r < 3; r++) { b.length = 0; for (let i = 0; i < a.length; i++) b.push(a[i] + 1); const t = a; a = b; b = t; } ` +
+        `return a.join() + "|" + b.join();`,
+    ],
+    [
+      "cur = next then sort",
+      `let cur: number[] = [3, 1, 2]; for (let r = 0; r < 3; r++) { const next: number[] = []; for (const x of cur) next.push(x * 2 - r); cur = next; } ` +
+        `cur.sort((p, q) => p - q); return cur.join();`,
+    ],
+    [
+      "any[] b = a reassignment",
+      `let a: any[] = [1]; let b: any[] = []; b.push("x"); b = a; b.push([2]); return a.join() + "|" + b.join();`,
+    ],
+    [
+      "any[] alias via object field",
+      `const o: { f: any[] } = { f: [] }; const xs: any[] = [1]; xs.push("s"); o.f = xs; o.f.push([2]); return xs.join() + "|" + o.f.join();`,
+    ],
   ];
   for (const [name, body] of rows) {
     it(name, () => expectSameOnAllLanes(body));

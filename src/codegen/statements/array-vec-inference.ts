@@ -130,7 +130,11 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   let sharesVec = decl.initializer !== undefined && !isFreshArrayExpression(decl.initializer);
   visit(scope);
   if (!inferredElemType && !sawDynamicElementWrite) return null;
-  if (sharesVec) sawDynamicElementWrite = true;
+  // Only an `any` / `unknown` element binding needs it: its partners resolve to
+  // the dynamic carrier too, while a typed `T[]` binding and its partners pin
+  // the same typed vec, so sharing already keeps one layout (and the unboxed
+  // fast path).
+  if (sharesVec && declaredElementIsDynamic(ctx, decl)) sawDynamicElementWrite = true;
   // (#7154) A non-empty literal initializer seeds elements of its own kind:
   // `const a: any[] = [1]; a.push([2])` must not pin a vec-of-vec slot that
   // coerces the seeded `1` to null. Holes and spreads are not single typed
@@ -157,6 +161,12 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
       : elemWasm.kind;
   const vecTypeIdx = getOrRegisterVecType(ctx, elemKey, elemWasm);
   return { kind: "ref_null", typeIdx: vecTypeIdx };
+}
+
+/** (#7154) The binding's declared element type is `any` or `unknown`. */
+function declaredElementIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  const fact = ctx.oracle.typeFactOf(decl.name);
+  return fact.kind === "array" && (fact.element.kind === "any" || fact.element.kind === "unknown");
 }
 
 /** (#7154) An expression that yields a vec no other binding can name yet. */

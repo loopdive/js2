@@ -46,8 +46,15 @@ describe("#7147 native join stringifies nested arrays via Array.prototype.toStri
     ['+ ""', `return [1, [2]] + "";`],
     ["[].toString() and [[]].join()", `return [].toString() + "|" + [[]].join() + "|";`],
     ["flat().join", `return [1, [2, [3, [4]]]].flat().join(",");`],
-    // (#7154) The cycle is built on a literal-initialised `any[]`.
-    ["cyclic array", `const a: any[] = [1, 2]; a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`],
+    [
+      "cyclic array",
+      `const a: any[] = []; a.push(1); a.push(2); a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`,
+    ],
+    // (#7154) The same cycle built on a literal-initialised `any[]`.
+    [
+      "cyclic array on a literal",
+      `const a: any[] = [1, 2]; a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`,
+    ],
     [
       "mutual cycle",
       "const a: any[] = []; const b: any[] = []; a.push(1); b.push(a); b.push(2); a.push(b); " +
