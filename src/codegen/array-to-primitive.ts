@@ -45,8 +45,9 @@ export const ARRAY_TO_PRIMITIVE_STRING = "__array_to_primitive_string";
  * Reserve the `__array_to_primitive_string(externref arr) -> externref`
  * placeholder and return its funcIdx. Body is a bare `unreachable` until
  * `fillArrayToPrimitive` patches it (after `__extern_length`/`__extern_get_idx`
- * are registered). Idempotent. Standalone only — the JS-host lane reduces arrays
- * via the host `__extern_toString` import, so this driver is never reached there.
+ * are registered). Idempotent. Standalone and WASI (#7153) — the JS-host lane
+ * reduces arrays via the host `__extern_toString` import, so this driver is
+ * never reached there.
  */
 export function reserveArrayToPrimitiveString(ctx: CodegenContext): number {
   const existing = ctx.funcMap.get(ARRAY_TO_PRIMITIVE_STRING);
