@@ -1,7 +1,7 @@
 {
   "generated": "2026-10-27",
   "threshold": 1500,
-  "totalCeiling": 1045336,
+  "totalCeiling": 1045471,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4426,
@@ -53,7 +53,7 @@
     "src/codegen/ir-prepared-free-functions.ts": 2312,
     "src/codegen/iterator-native.ts": 6555,
     "src/codegen/json-codec-native.ts": 4588,
-    "src/codegen/literals.ts": 6790,
+    "src/codegen/literals.ts": 6793,
     "src/codegen/map-runtime.ts": 3123,
     "src/codegen/multi-prepared-program.ts": 2557,
     "src/codegen/native-regex.ts": 4381,
@@ -62,7 +62,7 @@
     "src/codegen/numeric-property-analysis.ts": 1727,
     "src/codegen/object-ops.ts": 5568,
     "src/codegen/object-runtime-descriptors.ts": 2948,
-    "src/codegen/object-runtime-enumeration.ts": 1634,
+    "src/codegen/object-runtime-enumeration.ts": 1636,
     "src/codegen/object-runtime-proxy.ts": 2728,
     "src/codegen/object-runtime.ts": 12268,
     "src/codegen/program-abi-session.ts": 3585,
