@@ -220,55 +220,130 @@ function isTypeAssertion(node: ts.Node): node is ts.AsExpression | ts.TypeAssert
   return ts.isAsExpression(node) || ts.isTypeAssertionExpression(node);
 }
 
+/** (#7154) How one use of a share-group member treats the member's vec. */
+interface UseVerdict {
+  /** The vec reaches a place this pass cannot prove holds the dynamic carrier. */
+  readonly typed: boolean;
+  /** Places the vec is copied to or from (other side of `=` / a declaration). */
+  readonly partners: readonly ts.Node[];
+}
+
+const SAFE_USE: UseVerdict = { typed: false, partners: [] };
+const TYPED_USE: UseVerdict = { typed: true, partners: [] };
+
 /**
- * (#7154) Every other place this use of an array binding copies the reference
- * to or from: `other = arr`, `const other = arr`, `arr = other` (a right side
- * that is not a fresh array), seen through value wrappers, `,`, nested `=`,
- * `?:` branches and `||` / `??` / `&&` operands that pass the value on.
+ * (#7154) Classifies one use of an array binding. Positively recognised uses
+ * are safe: a member access / element access / `for-of` / `for-in` receiver,
+ * a truthiness or comparison operand, a stringification, a discarded value,
+ * an argument stored into an `any` / `unknown` array (`dyn.push(xs)`), an
+ * escape (call argument, `return`, object property, array element) whose
+ * contextual type is an `any` / `unknown` array, and shares (`other = xs`,
+ * `const other = xs`, `xs = other`), seen through value wrappers, `,`,
+ * nested `=`, `?:` branches and `||` / `??` / `&&` operands. Every other use
+ * — a typed or bare-`any` escape, spread, destructuring, a type assertion to
+ * a non-dynamic type, anything unrecognised — is `typed`: the group keeps the
+ * layout it infers, as before #7154. Unrecognised never means dynamic.
  */
-function sharePartnersOf(ctx: CodegenContext, identifier: ts.Identifier): (ts.Expression | ts.BindingName)[] {
-  const partners: (ts.Expression | ts.BindingName)[] = [];
+function classifyUse(ctx: CodegenContext, identifier: ts.Identifier): UseVerdict {
+  const partners: ts.Node[] = [];
+  const safe = (): UseVerdict => (partners.length === 0 ? SAFE_USE : { typed: false, partners });
+  const escapeVerdict = (value: ts.Node): UseVerdict => {
+    const fact = ts.isExpression(value) ? ctx.oracle.contextualFactOf(value) : undefined;
+    return fact && factIsDynamicArray(fact) ? safe() : TYPED_USE;
+  };
   let use: ts.Node = identifier;
   let passedThrough = false;
   for (;;) {
     const parent = use.parent;
+    if (!parent) return TYPED_USE;
     if (skipValueWrappers(parent) !== parent && (parent as { expression?: ts.Node }).expression === use) {
-      // `xs as number[]` / `xs as any` is a typed value to the other side
-      // (`partnerLeavesAreDynamic`), so it is no share from this side either.
-      if (isTypeAssertion(parent) && !factIsDynamicArray(ctx.oracle.typeFactOf(parent))) return [];
+      if (isTypeAssertion(parent) && !factIsDynamicArray(ctx.oracle.typeFactOf(parent))) return TYPED_USE;
       use = parent;
       continue;
     }
-    if (ts.isVariableDeclaration(parent)) {
-      if (parent.initializer === use) partners.push(parent.name);
-      return partners;
-    }
-    if (ts.isConditionalExpression(parent) && (parent.whenTrue === use || parent.whenFalse === use)) {
+    if (ts.isConditionalExpression(parent)) {
+      if (parent.condition === use) return safe();
       use = parent;
       passedThrough = true;
       continue;
     }
-    if (!ts.isBinaryExpression(parent)) return partners;
-    const op = parent.operatorToken.kind;
-    const passes =
-      parent.right === use ||
-      (parent.left === use && (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken));
-    if (op === ts.SyntaxKind.EqualsToken && parent.left === use) {
-      if (!passedThrough && !isFreshArrayExpression(parent.right)) partners.push(parent.right);
-      return partners;
+    if (ts.isBinaryExpression(parent)) {
+      const op = parent.operatorToken.kind;
+      switch (op) {
+        case ts.SyntaxKind.EqualsToken:
+          if (parent.left === use) {
+            if (passedThrough) return TYPED_USE;
+            if (!isFreshArrayExpression(parent.right)) partners.push(parent.right);
+            return safe();
+          }
+          partners.push(parent.left);
+          break;
+        case ts.SyntaxKind.CommaToken:
+          if (parent.left === use) return safe();
+          break;
+        case ts.SyntaxKind.AmpersandAmpersandToken:
+          if (parent.left === use) return safe();
+          break;
+        case ts.SyntaxKind.BarBarToken:
+        case ts.SyntaxKind.QuestionQuestionToken:
+          break;
+        case ts.SyntaxKind.EqualsEqualsEqualsToken:
+        case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+        case ts.SyntaxKind.EqualsEqualsToken:
+        case ts.SyntaxKind.ExclamationEqualsToken:
+          return safe();
+        case ts.SyntaxKind.InstanceOfKeyword:
+          return parent.left === use ? safe() : TYPED_USE;
+        default:
+          return TYPED_USE;
+      }
+      use = parent;
+      passedThrough = true;
+      continue;
     }
-    if (!passes) return partners;
-    if (op === ts.SyntaxKind.EqualsToken) partners.push(parent.left);
-    else if (
-      op !== ts.SyntaxKind.CommaToken &&
-      op !== ts.SyntaxKind.BarBarToken &&
-      op !== ts.SyntaxKind.QuestionQuestionToken &&
-      op !== ts.SyntaxKind.AmpersandAmpersandToken
+    if (ts.isVariableDeclaration(parent)) {
+      if (parent.initializer !== use || !ts.isIdentifier(parent.name)) return TYPED_USE;
+      partners.push(parent.name);
+      return safe();
+    }
+    if (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) {
+      return parent.expression === use ? safe() : TYPED_USE;
+    }
+    if (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) {
+      return parent.expression === use ? safe() : TYPED_USE;
+    }
+    if (
+      ts.isTypeOfExpression(parent) ||
+      ts.isVoidExpression(parent) ||
+      ts.isTemplateSpan(parent) ||
+      ts.isExpressionStatement(parent) ||
+      ts.isTypeQueryNode(parent) ||
+      (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) ||
+      ((ts.isIfStatement(parent) || ts.isWhileStatement(parent) || ts.isDoStatement(parent)) &&
+        parent.expression === use)
     ) {
-      return partners;
+      return safe();
     }
-    use = parent;
-    passedThrough = true;
+    if (
+      (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+      parent.arguments?.includes(use as ts.Expression)
+    ) {
+      const callee = parent.expression;
+      // Stored into (or compared against) an `any` / `unknown` array's elements.
+      if (ts.isPropertyAccessExpression(callee) && factIsDynamicArray(ctx.oracle.typeFactOf(callee.expression))) {
+        return safe();
+      }
+      return escapeVerdict(use);
+    }
+    if (
+      (ts.isReturnStatement(parent) && parent.expression === use) ||
+      (ts.isArrowFunction(parent) && parent.body === use) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === use) ||
+      ts.isArrayLiteralExpression(parent)
+    ) {
+      return escapeVerdict(use);
+    }
+    return TYPED_USE;
   }
 }
 
@@ -305,16 +380,51 @@ function partnerLeavesAreDynamic(
   return leafIsDynamic(partner);
 }
 
+const groupVerdicts = new WeakMap<object, WeakMap<ts.VariableDeclaration, boolean>>();
+const scopeIdentifiers = new WeakMap<ts.Node, Map<string, ts.Identifier[]>>();
+
+/** Every identifier in `scope`, by name; one walk per scope. */
+function identifiersNamed(scope: ts.Node, name: string): readonly ts.Identifier[] {
+  let byName = scopeIdentifiers.get(scope);
+  if (!byName) {
+    const index = new Map<string, ts.Identifier[]>();
+    const walk = (node: ts.Node): void => {
+      if (ts.isIdentifier(node)) {
+        const list = index.get(node.text);
+        if (list) list.push(node);
+        else index.set(node.text, [node]);
+      }
+      forEachChild(node, walk);
+    };
+    walk(scope);
+    scopeIdentifiers.set(scope, index);
+    byName = index;
+  }
+  return byName.get(name) ?? [];
+}
+
 /**
- * (#7154) The binding's share group needs the dynamic carrier: it shares with
- * at least one other place, and every member reachable through shares is an
- * `any` / `unknown` element binding, an array literal, or a value whose
- * static type is an `any` / `unknown` array (a call by its return type).
+ * (#7154) The binding's share group needs the dynamic carrier. The group is
+ * every binding reachable through shares (initializers and use sites, both
+ * directions). It goes dynamic only when it shares at all, every member is an
+ * `any` / `unknown` element local, every use of every member is positively
+ * recognised by `classifyUse`, and every other share endpoint is an array
+ * literal or has a static `any` / `unknown` array type. The verdict is
+ * computed once per group and memoised for every member.
  */
 function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  let verdicts = groupVerdicts.get(ctx.oracle);
+  if (!verdicts) {
+    verdicts = new WeakMap();
+    groupVerdicts.set(ctx.oracle, verdicts);
+  }
+  const cached = verdicts.get(decl);
+  if (cached !== undefined) return cached;
+
   const seen = new Set<ts.VariableDeclaration>([decl]);
   const queue = [decl];
   let shared = false;
+  let dynamic = true;
   const leafIsDynamic = (leaf: ts.Node): boolean => {
     if (ts.isArrayLiteralExpression(leaf)) return true;
     const member = ts.isIdentifier(leaf) ? ctx.oracle.variableDeclarationOf(leaf) : undefined;
@@ -323,32 +433,50 @@ function shareGroupIsDynamic(ctx: CodegenContext, decl: ts.VariableDeclaration):
         seen.add(member);
         queue.push(member);
       }
-      return declaredElementIsDynamic(ctx, member);
+      return true; // judged as a member when it is dequeued
     }
     return factIsDynamicArray(ctx.oracle.typeFactOf(leaf));
   };
   for (let member = queue.pop(); member; member = queue.pop()) {
-    if (!declaredElementIsDynamic(ctx, member) || !ts.isIdentifier(member.name)) return false;
+    const name = member.name;
+    if (!ts.isIdentifier(name) || !declaredElementIsDynamic(ctx, member) || isExported(member)) {
+      dynamic = false;
+      continue;
+    }
     const partners: ts.Node[] = [];
     if (member.initializer && !isFreshArrayExpression(member.initializer)) partners.push(member.initializer);
-    const name = member.name;
-    const current = member;
-    const visitUses = (node: ts.Node): void => {
-      if (ts.isIdentifier(node) && node.text === name.text && node !== name) {
-        if (ctx.oracle.variableDeclarationOf(node) === current) partners.push(...sharePartnersOf(ctx, node));
+    for (const id of identifiersNamed(enclosingScope(member), name.text)) {
+      if (id === name) continue;
+      const target = ctx.oracle.variableDeclarationOf(id);
+      if (target !== member) {
+        // `{ xs }` resolves to the property, not the binding: unclassified.
+        if (target === undefined && ts.isShorthandPropertyAssignment(id.parent)) dynamic = false;
+        continue;
       }
-      forEachChild(node, visitUses);
-    };
-    visitUses(enclosingScope(member));
+      const verdict = classifyUse(ctx, id);
+      if (verdict.typed) dynamic = false;
+      partners.push(...verdict.partners);
+    }
     for (const partner of partners) {
       shared = true;
-      if (!partnerLeavesAreDynamic(ctx, partner, leafIsDynamic)) return false;
+      if (!partnerLeavesAreDynamic(ctx, partner, leafIsDynamic)) dynamic = false;
     }
   }
-  return shared;
+  const result = shared && dynamic;
+  for (const member of seen) verdicts.set(member, result);
+  return result;
 }
 
-/** The function body or source file that holds every use of a local binding. */
+function isExported(decl: ts.VariableDeclaration): boolean {
+  const statement = decl.parent?.parent;
+  return (
+    statement !== undefined &&
+    ts.isVariableStatement(statement) &&
+    (statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false)
+  );
+}
+
+/** The function or source file that holds every use of a local binding. */
 function enclosingScope(decl: ts.VariableDeclaration): ts.Node {
   let scope: ts.Node = decl;
   while (scope.parent && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
