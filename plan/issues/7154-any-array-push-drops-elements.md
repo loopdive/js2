@@ -88,16 +88,24 @@ literal's `1` was coerced to a null element on the declaration store. Fix
   and forcing one side generic broke `const ys = xs` aliasing and boxed swap /
   `cur = next` buffers. A mixed `any[]` <-> `T[]` share (review round 3:
   `const ys: number[] = xs`, `o.f = xs`, `q.items = xs`, either direction)
-  keeps the typed layout both sides infer, as before this fix. A
-  conditional / `||` / `??` initializer or assignment is checked leaf by leaf
-  (review round 4): a typed leaf (`n || []`, `c ? n : m`, `n ?? []`) keeps the
-  typed layout; only fresh leaves (`c ? [1] : []`) or `any` leaves go dynamic.
+  keeps the typed layout both sides infer, as before this fix. Partners are
+  classified leaf by leaf (review rounds 4 and 5): value wrappers (parens,
+  `as`, `<T>`, `!`, `satisfies`) are stripped, `,` / `=` / `&&` follow their
+  value operand, `?:` / `||` / `??` recurse into both sides; fresh leaves
+  (array literal, call, `new`) are dynamic and every other leaf uses the
+  oracle's static type, dynamic only for an `any` / `unknown` element
+  (`any[] | undefined` included). A typed leaf anywhere keeps the typed
+  layout. The same shapes are followed upward from each use of the binding.
+- array literals behind value wrappers and literals assigned later
+  (`xs = [1]`) seed elements like the initializer.
 
 `concat` returns a new array and needed no change. Test:
 `tests/equivalence/issue-7154-any-array-push-migration.test.ts` (45 rows, gc
 native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
 cycle on a literal-initialised array too
-(`tests/equivalence/issue-7147-nested-array-join.test.ts`).
+(`tests/equivalence/issue-7147-nested-array-join.test.ts`), and
+`tests/equivalence/issue-7154-any-array-share-sweep.test.ts` generates 110
+wrapper x partner-kind x init/assign rows.
 
 Left out (wrong on main and on this fix, not worse):
 
@@ -117,3 +125,6 @@ Left out (wrong on main and on this fix, not worse):
   (`const b: any[] = a; ...; const c: number[] = b; c.push(3)`): the typed
   `c` copies the generic vec, so pushes through `c` are lost (main trapped
   with an illegal cast).
+- An `any[]` whose own stores mix kinds before it is assigned a typed array
+  (`xs.push(0); xs = n` with `n: string[]`): no single layout fits both, so
+  later pushes through `xs` are lost (main is wrong the same way).
