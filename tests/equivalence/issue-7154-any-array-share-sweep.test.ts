@@ -254,14 +254,22 @@ const TYPED_SOURCE = [
   "any parameter",
   "call returning number[]",
 ];
+// (round 8) Escapes into an object field, an array element, a method
+// argument or a `return` are not recognised even when their static target is
+// `any[]` (the target that runs may be typed), so those groups keep the
+// layout each member infers, as on main.
+const DYNAMIC_SOURCE = ["any[]", "any[] | undefined", "call returning any[]"];
 const KNOWN_ESCAPE_GAPS: Record<string, readonly string[]> = {
   "any[] call argument": TYPED_SOURCE,
-  "object field": ["any local", "unknown local", "any parameter"],
-  return: ["call returning number[]"],
+  "object field": ["any local", "unknown local", "any parameter", ...DYNAMIC_SOURCE],
+  "array element": DYNAMIC_SOURCE,
+  "method argument": DYNAMIC_SOURCE,
+  return: ["call returning number[]", ...DYNAMIC_SOURCE],
   shorthand: ["any[]", "any[] | undefined", "any local", "unknown local", "any parameter", "call returning any[]"],
 };
+const ALIASED_FRESH_GAPS = new Set(["shorthand", "object field", "array element", "method argument", "return"]);
 function knownEscapeGap(escapeName: string, partnerName: string, alias: boolean): boolean {
-  if (escapeName === "shorthand" && partnerName === "fresh literal") return alias;
+  if (partnerName === "fresh literal") return alias && ALIASED_FRESH_GAPS.has(escapeName);
   return KNOWN_ESCAPE_GAPS[escapeName]?.includes(partnerName) ?? false;
 }
 
