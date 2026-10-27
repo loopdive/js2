@@ -108,6 +108,36 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
       "any[] alias via object field",
       `const o: { f: any[] } = { f: [] }; const xs: any[] = [1]; xs.push("s"); o.f = xs; o.f.push([2]); return xs.join() + "|" + o.f.join();`,
     ],
+    // Review round 3: an `any[]` that shares its vec with a typed `T[]` keeps
+    // the typed layout both sides agree on (as before #7154).
+    [
+      "any[] aliased by a number[] binding",
+      `const xs: any[] = []; xs.push(1); const ys: number[] = xs; ys.push(2); return xs.join() + "|" + ys.join();`,
+    ],
+    [
+      "any[] assigned to a let number[]",
+      `const xs: any[] = []; xs.push(1); let ys: number[] = [0]; ys = xs; ys.push(2); return xs.join() + "|" + ys.join();`,
+    ],
+    [
+      "any[] stored in a number[] object field",
+      `const o: { f: number[] } = { f: [] }; const xs: any[] = []; xs.push(1); o.f = xs; o.f.push(2); return xs.join() + "|" + o.f.join();`,
+    ],
+    [
+      "any[] stored in a number[] class field",
+      `class Q { items: number[] = []; } const q = new Q(); const xs: any[] = []; xs.push(1); q.items = xs; q.items.push(2); return xs.join() + "|" + q.items.join();`,
+    ],
+    [
+      "literal any[] aliased by a number[] binding",
+      `const xs: any[] = [1]; xs.push(2); const ys: number[] = xs; ys.push(3); return xs.join() + "|" + ys.join();`,
+    ],
+    [
+      "any[] aliased by a string[] binding",
+      `const xs: any[] = []; xs.push("a"); const ys: string[] = xs; ys.push("b"); return xs.join() + "|" + ys.join();`,
+    ],
+    [
+      "string[] aliased by an any[] binding",
+      `const xs: string[] = []; xs.push("a"); const ys: any[] = xs; ys.push("b"); return xs.join() + "|" + ys.join();`,
+    ],
   ];
   for (const [name, body] of rows) {
     it(name, () => expectSameOnAllLanes(body));

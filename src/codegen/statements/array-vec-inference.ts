@@ -72,8 +72,11 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
     // `const alias = arr`): a pinned slot whose representation differs from
     // the other binding's converts by COPYING, so a later push on one is lost
     // on the other. Keep the dynamic carrier both share instead.
-    if (ts.isIdentifier(node) && node.text === varName && node !== decl.name && identifierSharesVec(node)) {
-      if (ctx.oracle.variableDeclarationOf(node) === decl) sharesVec = true;
+    if (ts.isIdentifier(node) && node.text === varName && node !== decl.name) {
+      const partner = sharePartnerOf(node);
+      if (partner && ctx.oracle.variableDeclarationOf(node) === decl && partnerIsDynamic(ctx, partner)) {
+        sharesVec = true;
+      }
     }
     // arr[i] = value
     if (
@@ -127,13 +130,16 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   }
 
   const secondaryStores: ts.Expression[] = [];
-  let sharesVec = decl.initializer !== undefined && !isFreshArrayExpression(decl.initializer);
+  let sharesVec =
+    decl.initializer !== undefined &&
+    !isFreshArrayExpression(decl.initializer) &&
+    partnerIsDynamic(ctx, decl.initializer);
   visit(scope);
   if (!inferredElemType && !sawDynamicElementWrite) return null;
-  // Only an `any` / `unknown` element binding needs it: its partners resolve to
-  // the dynamic carrier too, while a typed `T[]` binding and its partners pin
-  // the same typed vec, so sharing already keeps one layout (and the unboxed
-  // fast path).
+  // Only a share between two `any` / `unknown` element sides needs it (both
+  // resolve to the dynamic carrier). A typed `T[]` side pins its typed vec and
+  // an `any[]` partner of it infers the same vec from the same stores, as
+  // before #7154, so forcing one side generic would split the layout.
   if (sharesVec && declaredElementIsDynamic(ctx, decl)) sawDynamicElementWrite = true;
   // (#7154) A non-empty literal initializer seeds elements of its own kind:
   // `const a: any[] = [1]; a.push([2])` must not pin a vec-of-vec slot that
@@ -179,11 +185,11 @@ function isFreshArrayExpression(expression: ts.Expression): boolean {
 }
 
 /**
- * (#7154) True when this use of an array binding copies the reference to or
- * from another binding: `other = arr`, `const other = arr`, or `arr = other`
- * with a right side that is not a fresh array.
+ * (#7154) The other side when this use of an array binding copies the
+ * reference to or from another place: `other = arr`, `const other = arr`, or
+ * `arr = other` with a right side that is not a fresh array.
  */
-function identifierSharesVec(identifier: ts.Identifier): boolean {
+function sharePartnerOf(identifier: ts.Identifier): ts.Expression | ts.BindingName | undefined {
   let use: ts.Node = identifier;
   while (
     ts.isParenthesizedExpression(use.parent) ||
@@ -193,8 +199,26 @@ function identifierSharesVec(identifier: ts.Identifier): boolean {
     use = use.parent;
   }
   const parent = use.parent;
-  if (ts.isVariableDeclaration(parent)) return parent.initializer === use;
-  if (!ts.isBinaryExpression(parent) || parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false;
-  if (parent.right === use) return true;
-  return parent.left === use && !isFreshArrayExpression(parent.right);
+  if (ts.isVariableDeclaration(parent)) return parent.initializer === use ? parent.name : undefined;
+  if (!ts.isBinaryExpression(parent) || parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+  if (parent.right === use) return parent.left;
+  return parent.left === use && !isFreshArrayExpression(parent.right) ? parent.right : undefined;
+}
+
+/**
+ * (#7154) The share partner also holds the dynamic carrier: a binding, field
+ * or element whose declared element type is `any` / `unknown`. Any other
+ * non-fresh expression (`c ? [] : [1]`, `x || []`) has no single binding to
+ * agree with, so it keeps the dynamic carrier.
+ */
+function partnerIsDynamic(ctx: CodegenContext, partner: ts.Expression | ts.BindingName): boolean {
+  let inner: ts.Node = partner;
+  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isNonNullExpression(inner)) {
+    inner = inner.expression;
+  }
+  if (!ts.isIdentifier(inner) && !ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner)) {
+    return true;
+  }
+  const fact = ctx.oracle.typeFactOf(inner);
+  return fact.kind === "array" && (fact.element.kind === "any" || fact.element.kind === "unknown");
 }
