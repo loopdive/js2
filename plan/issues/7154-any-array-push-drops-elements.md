@@ -82,12 +82,16 @@ literal's `1` was coerced to a null element on the declaration store. Fix
   an initializer that is not a literal / call / `new`, e.g. an identifier,
   `c ? [] : [1]`, `x || []`) takes the dynamic carrier, because differing slot
   types converted by copying and lost later pushes (the depth-100 chain).
-  Typed `T[]` bindings are exempt (review round 2): they and their aliases
-  already pin the same typed vec, and forcing one side generic broke
-  `const ys = xs` aliasing and boxed swap / `cur = next` buffers.
+  Both sides must be dynamic: the partner binding, field or element must
+  also have an `any` / `unknown` element type. Typed `T[]` bindings are exempt
+  (review round 2): they and their aliases already pin the same typed vec,
+  and forcing one side generic broke `const ys = xs` aliasing and boxed swap /
+  `cur = next` buffers. A mixed `any[]` <-> `T[]` share (review round 3:
+  `const ys: number[] = xs`, `o.f = xs`, `q.items = xs`, either direction)
+  keeps the typed layout both sides infer, as before this fix.
 
 `concat` returns a new array and needed no change. Test:
-`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (28 rows, gc
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (35 rows, gc
 native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
 cycle on a literal-initialised array too
 (`tests/equivalence/issue-7147-nested-array-join.test.ts`).
@@ -100,3 +104,9 @@ Left out (wrong on main and on this fix, not worse):
   family in #7180).
 - `const b = a.reverse(); b.push("x")` and `a.slice()` + push trap on all
   lanes: a call initializer is treated as fresh — #7181.
+- An `any[]` passed to a function that pushes a different element kind
+  (`function f(a: any[]) { a.push([9]); }`): the callee's stores are not seen
+  by the caller's inference.
+- `(string | number)[]` aliases with pushes of the other kind on one side,
+  and `any[][]` aliases then pushed: wrong on all lanes.
+- `Map<string, any[]>` + `m.get(k)!.push(..)`: invalid Wasm.
