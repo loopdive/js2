@@ -176,10 +176,12 @@ export interface TypeOracle {
    * first, integer-index keys ahead); private names, methods, accessors and
    * statics are dropped. An object literal with a spread is ordered as the
    * literal builds it (`{...a, z}` is `a`'s keys, then `z`). Everything else
-   * keeps the checker's property list and order. `undefined` when this backend
-   * cannot answer.
+   * keeps the checker's property list and order. `sourceFiles` is the whole
+   * compilation (default: the receiver's file): a method name assigned anywhere
+   * in it may be an own property, so its chain keeps the checker's list.
+   * `undefined` when this backend cannot answer.
    */
-  forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined;
+  forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined;
 }
 
 /** Builtins with first-class compiler handling (mirrors type-mapper's set —
@@ -421,19 +423,25 @@ export class TsCheckerOracle implements TypeOracle {
     return this.variableDeclarationOf(id)?.initializer;
   }
 
-  forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined {
+  forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined {
     try {
-      return this.forInKeysOfExpr(expr, 0);
+      const files = sourceFiles && sourceFiles.length > 0 ? sourceFiles : [expr.getSourceFile()];
+      const assigned = new Set<string>();
+      for (const sf of files) for (const name of assignedPropertyNamesOf(sf)) assigned.add(name);
+      return this.forInKeysOfExpr(expr, 0, assigned);
     } catch {
       return undefined;
     }
   }
 
-  private forInKeysOfExpr(expr: ts.Expression, depth: number): readonly string[] {
+  private forInKeysOfExpr(expr: ts.Expression, depth: number, assigned: ReadonlySet<string>): readonly string[] {
     let e = expr;
     while (ts.isParenthesizedExpression(e)) e = e.expression;
-    const typeKeys = (): readonly string[] =>
-      forInKeysOfType(this.checker, this.checker.getTypeAtLocation(expr), this.isProvableNewInstance(e));
+    const typeKeys = (): readonly string[] => {
+      const type = this.checker.getTypeAtLocation(expr);
+      const provable = this.isProvableNewInstance(e, type.getNonNullableType());
+      return forInKeysOfType(this.checker, type, provable, assigned);
+    };
     if (depth > 8) return typeKeys();
     const literal = ts.isIdentifier(e) ? this.constInitializerOf(e) : e;
     if (!literal || !ts.isObjectLiteralExpression(literal) || !literal.properties.some(ts.isSpreadAssignment)) {
@@ -446,7 +454,7 @@ export class TsCheckerOracle implements TypeOracle {
     const keys: string[] = [];
     for (const prop of literal.properties) {
       const names = ts.isSpreadAssignment(prop)
-        ? this.forInKeysOfExpr(prop.expression, depth + 1)
+        ? this.forInKeysOfExpr(prop.expression, depth + 1, assigned)
         : [staticMemberName(prop.name)];
       for (const name of names) {
         if (name === undefined) return typeKeys();
@@ -460,20 +468,44 @@ export class TsCheckerOracle implements TypeOracle {
 
   /**
    * (#7156) Is this receiver provably an object built by its class's own
-   * constructor? A `new C(…)` expression, or a `const` bound to one with no
-   * type annotation or an annotation of exactly the constructed type. A
-   * class-TYPED value proves nothing: TypeScript accepts an object literal, or
-   * a subclass instance that turns a method into a field, for a class type.
+   * constructor? A `new X(…)` whose callee resolves to the class itself, or a
+   * `const` bound to one with no type annotation or an annotation of exactly
+   * the constructed type. A class-TYPED value proves nothing: TypeScript
+   * accepts an object literal, or a subclass that turns a method into a field,
+   * for a class type — and so does a constructor-typed `K: typeof C`.
    */
-  private isProvableNewInstance(e: ts.Expression): boolean {
+  private isProvableNewInstance(e: ts.Expression, type: ts.Type): boolean {
     const unwrap = (x: ts.Expression): ts.Expression => (ts.isParenthesizedExpression(x) ? unwrap(x.expression) : x);
-    if (ts.isNewExpression(e)) return true;
+    if (ts.isNewExpression(e)) return this.newCalleeIsClassOf(e, type);
     if (!ts.isIdentifier(e)) return false;
     const init = this.constInitializerOf(e);
-    if (!init || !ts.isNewExpression(unwrap(init))) return false;
+    const created = init && unwrap(init);
+    if (!created || !ts.isNewExpression(created) || !this.newCalleeIsClassOf(created, type)) return false;
     const decl = this.variableDeclarationOf(e);
     if (!decl) return false;
     return !decl.type || this.checker.getTypeAtLocation(decl.type) === this.checker.getTypeAtLocation(init);
+  }
+
+  /**
+   * (#7156) Does `new X(…)` name the class of `type` directly? `X` is followed
+   * through parentheses and un-annotated `const X = C` aliases to a class
+   * declaration or class expression, which must be the instance type's own.
+   */
+  private newCalleeIsClassOf(expr: ts.NewExpression, type: ts.Type): boolean {
+    const classDecls = classTargetOf(type)?.symbol?.declarations ?? [];
+    let callee: ts.Expression = expr.expression;
+    for (let hops = 0; hops < 8; hops++) {
+      while (ts.isParenthesizedExpression(callee)) callee = callee.expression;
+      if (ts.isClassExpression(callee)) return classDecls.includes(callee);
+      if (!ts.isIdentifier(callee)) return false;
+      const decl = this.valueDeclarationOf(callee);
+      if (decl && ts.isClassDeclaration(decl)) return classDecls.includes(decl);
+      if (!decl || !ts.isVariableDeclaration(decl) || decl.type) return false;
+      const init = this.constInitializerOf(callee);
+      if (!init) return false;
+      callee = init;
+    }
+    return false;
   }
 
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
@@ -633,6 +665,78 @@ function staticMemberName(name: ts.Node | undefined): string | undefined {
   return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
 }
 
+/** (#7156) Does this function body `return` an expression (nested functions excluded)? */
+function returnsAValue(body: ts.Node): boolean {
+  const visit = (node: ts.Node): boolean => {
+    if (ts.isReturnStatement(node)) return node.expression !== undefined;
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+    return ts.forEachChild(node, visit) ?? false;
+  };
+  return ts.forEachChild(body, visit) ?? false;
+}
+
+const assignedNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/**
+ * (#7156) Every property name a source file may write, syntactically and
+ * over-approximated: the target of an assignment, compound assignment or
+ * `++`/`--` (`x.m = …`, `x["m"] += …`), a literal key passed to
+ * `Object.defineProperty` / `Reflect.defineProperty`, and the literal keys of
+ * the descriptor map of `Object.defineProperties` or of any object-literal
+ * source of `Object.assign`. Private names are not property keys and are
+ * skipped; non-literal computed keys (`x[k] = …`) are not tracked.
+ */
+function assignedPropertyNamesOf(sf: ts.SourceFile): ReadonlySet<string> {
+  const cached = assignedNamesCache.get(sf);
+  if (cached) return cached;
+  const names = new Set<string>();
+  const addTarget = (target: ts.Expression): void => {
+    let t = target;
+    while (ts.isParenthesizedExpression(t)) t = t.expression;
+    if (ts.isPropertyAccessExpression(t) && !ts.isPrivateIdentifier(t.name)) names.add(t.name.text);
+    else if (ts.isElementAccessExpression(t)) {
+      const arg = t.argumentExpression;
+      if (ts.isStringLiteralLike(arg) || ts.isNumericLiteral(arg)) names.add(arg.text);
+    }
+  };
+  const addLiteralKeys = (arg: ts.Expression | undefined): void => {
+    if (!arg || !ts.isObjectLiteralExpression(arg)) return;
+    for (const prop of arg.properties) {
+      const name = prop.name;
+      if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)))
+        names.add(name.text);
+      else if (name && ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
+        names.add(name.expression.text);
+      }
+    }
+  };
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      addTarget(node.left);
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      addTarget(node.operand);
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const method = node.expression.name.text;
+      const key = node.arguments[1];
+      if (method === "defineProperty" && key && (ts.isStringLiteralLike(key) || ts.isNumericLiteral(key))) {
+        names.add(key.text);
+      } else if (method === "defineProperties") addLiteralKeys(key);
+      else if (method === "assign") for (const arg of node.arguments.slice(1)) addLiteralKeys(arg);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  assignedNamesCache.set(sf, names);
+  return names;
+}
+
 /** (#7156) A canonical array-index key: "0".."4294967294", no leading zeros. */
 function isArrayIndexKey(key: string): boolean {
   const n = Number(key);
@@ -700,10 +804,16 @@ function simpleMemberKind(checker: ts.TypeChecker, member: ts.ClassElement): "fi
  * chain is not simple. Simple means: every class is a plain class declaration
  * (no interface/namespace merge), the chain ends at no base (not a builtin,
  * mixin or other non-class), every member is one `simpleMemberKind`
- * understands, and no name is a field in one class and a method/accessor in
- * another (a base field under a derived getter is still own at runtime).
+ * understands, no name is a field in one class and a method/accessor in
+ * another (a base field under a derived getter is still own at runtime), and no
+ * method/accessor name is a property-assignment target anywhere in the
+ * compilation (`assignedPropertyNamesOf`).
  */
-function simpleChainFieldDeclarations(checker: ts.TypeChecker, t: ts.Type): ts.Declaration[] | undefined {
+function simpleChainFieldDeclarations(
+  checker: ts.TypeChecker,
+  t: ts.Type,
+  assigned: ReadonlySet<string>,
+): ts.Declaration[] | undefined {
   const perClass: ts.Declaration[][] = [];
   const kindOf = new Map<string, "field" | "other">();
   let cur: ts.Type | undefined = t;
@@ -719,11 +829,16 @@ function simpleChainFieldDeclarations(checker: ts.TypeChecker, t: ts.Type): ts.D
       if (kind === undefined) return undefined;
       if (kind === "static") continue;
       if (ts.isConstructorDeclaration(member) && member.body) {
+        // `return <object>` from a constructor replaces the instance.
+        if (returnsAValue(member.body)) return undefined;
         for (const param of member.parameters) if (ts.isParameterPropertyDeclaration(param, member)) params.push(param);
       }
       if (kind === "field") fields.push(member);
       if (!member.name || ts.isConstructorDeclaration(member)) continue;
       const key = simpleMemberKey(checker, member.name)!;
+      // A method/accessor name that is assigned anywhere (`this.m = this.m.bind(this)`,
+      // `p.m = …`, `Object.defineProperty(_, "m", …)`) may be an own property.
+      if (kind === "other" && assigned.has(key)) return undefined;
       if (kindOf.get(key) !== undefined && kindOf.get(key) !== kind) return undefined;
       kindOf.set(key, kind);
     }
@@ -751,12 +866,17 @@ function simpleChainFieldDeclarations(checker: ts.TypeChecker, t: ts.Type): ts.D
  * understood, keeps the checker's property list and order, exactly as before
  * #7156.
  */
-function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type, provableInstance: boolean): readonly string[] {
+function forInKeysOfType(
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  provableInstance: boolean,
+  assigned: ReadonlySet<string>,
+): readonly string[] {
   const t = type.getNonNullableType();
   const props = t.getProperties();
   const checkerKeys = props.map((p) => p.name);
   if (!provableInstance || !classTargetOf(t)) return checkerKeys;
-  const fieldDecls = simpleChainFieldDeclarations(checker, t);
+  const fieldDecls = simpleChainFieldDeclarations(checker, t, assigned);
   if (!fieldDecls) return checkerKeys;
   const fieldDeclSet = new Set<ts.Declaration>(fieldDecls);
   // Every checker property must be fully explained by the chain's members: a

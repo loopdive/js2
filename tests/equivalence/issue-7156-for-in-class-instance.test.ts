@@ -72,6 +72,9 @@ const CASES: Record<string, string> = {
   "mixed integer and string keys": `class C { b = 1; 2 = 2; a = 3; 1 = 4; "01" = 5; }\n${keysOf("new C()")}`,
   // A const bound to \`new C()\` is provably that class's instance.
   "const bound to new C()": `class C { #x = 1; y = 2; m() {} }\nconst c = new C();\n${keysOf("c")}`,
+  "new (C)()": `class C { #x = 1; y = 2; m() {} }\n${keysOf("new (C)()")}`,
+  "new through an un-annotated const alias": `class C { #x = 1; y = 2; m() {} }\nconst D = C;\n${keysOf("new D()")}`,
+  "new of a class expression": `const C = class { #x = 1; y = 2; m() {} };\n${keysOf("new C()")}`,
   "const bound to new C() with its own annotation": `class C { #x = 1; y = 2; m() {} }\nconst c: C = new C();\n${keysOf("c")}`,
 };
 
@@ -97,6 +100,18 @@ const NOT_SIMPLE: Record<string, string> = {
   "object literal in a class-annotated const (sorted)": `class P { x = 0; m(): number { return 1; } }\nconst p: P = { x: 1, m() { return 2; } };\n${sortedKeysOf("p")}`,
   "object literal passed to a class-typed parameter": `class P { x = 0; m(): number { return 1; } }\nfunction f(p: P): string { const keys: string[] = []; for (const k in p) keys.push(k); return keys.join(); }\nfunction run(): string { return f({ x: 1, m() { return 2; } }); }`,
   "subclass instance through a base-typed parameter (sorted)": `class B { m() { return 1; } a = 1; }\nclass D extends B { m = () => 2; }\nfunction f(b: B): string { const keys: string[] = []; for (const k in b) keys.push(k); return keys.sort().join(); }\nfunction run(): string { return f(new D()); }`,
+  // A method name that is also assigned is an own property (review round 4).
+  "method bound in the constructor": `class P { a = 1; m(): number { return this.a; } constructor() { this.m = this.m.bind(this); } }\n${keysOf("new P()")}`,
+  "method bound in the constructor, through a const (sorted)": `class P { a = 1; m(): number { return this.a; } constructor() { this.m = this.m.bind(this); } }\nconst p = new P();\n${sortedKeysOf("p")}`,
+  "method assigned outside the class (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\np.m = () => 2;\n${sortedKeysOf("p")}`,
+  "method assigned in a subclass constructor (sorted)": `class P { a = 1; m(): number { return 1; } }\nclass Q extends P { constructor() { super(); this.m = () => 2; } }\n${sortedKeysOf("new Q()")}`,
+  "method defined by Object.defineProperty (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nObject.defineProperty(p, "m", { value: 2, enumerable: true });\n${sortedKeysOf("p")}`,
+  "method written by Object.assign (sorted)": `class P { a = 1; m(): number { return 1; } }\nconst p = new P();\nObject.assign(p, { m: () => 2 });\n${sortedKeysOf("p")}`,
+  // \`new K()\` proves the class only when K names the class itself.
+  "new of a typeof-annotated const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: typeof P = Q;\n${sortedKeysOf("new D()")}`,
+  "new of a constructor-type const (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nconst D: new () => P = Q;\n${sortedKeysOf("new D()")}`,
+  "new of a typeof parameter (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nfunction f(K: typeof P): string { const keys: string[] = []; for (const k in new K()) keys.push(k); return keys.sort().join(); }\nfunction run(): string { return f(Q); }`,
+  "const bound to new of a typeof parameter (sorted)": `class P { m(): number { return 1; } a = 1; }\nclass Q extends P { m = () => 2; }\nfunction f(K: typeof P): string { const o = new K(); const keys: string[] = []; for (const k in o) keys.push(k); return keys.sort().join(); }\nfunction run(): string { return f(Q); }`,
   "unassigned base declare under a derived field": `class B { declare x: number; }\nclass D extends B { y = 2; x = 1; }\n${keysOf("new D()")}`,
 };
 
@@ -117,6 +132,14 @@ describe("#7156 static for-in unroll lists only own enumerable keys, in order", 
       `class C { y = 2; m() {} }\nfunction f(c: C): string { const keys: string[] = []; for (const k in c) keys.push(k); return keys.join(); }\nfunction run(): string { return f(new C()); }`,
       LANES,
       "y,m",
+    ));
+  // A constructor that returns an object replaces the instance, so `new C()`
+  // proves nothing; the chain keeps the old list. On wasi the dynamic result
+  // reads wrong on the base too (pre-existing), so that lane is left out.
+  it("not simple: constructor returns another object (gc, standalone)", () =>
+    expectSameOnLanes(
+      `class C { a = 1; m(): number { return 1; } constructor() { return { z: 1 } as any; } }\n${keysOf("new C()")}`,
+      LANES.filter((l) => l.lane !== "wasi"),
     ));
   it("values read through the key (gc, standalone)", () =>
     expectSameOnLanes(

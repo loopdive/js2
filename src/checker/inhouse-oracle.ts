@@ -144,7 +144,7 @@ export class InHouseOracle implements TypeOracle {
   }
 
   /** (#7156) Needs the checker's property list; this backend cannot answer. */
-  forInStaticKeysOf(_expr: ts.Expression): readonly string[] | undefined {
+  forInStaticKeysOf(_expr: ts.Expression, _sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined {
     return undefined;
   }
 

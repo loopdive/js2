@@ -340,11 +340,11 @@ export class DifferentialOracle implements TypeOracle {
     return this.compare("variableDeclarationOf", id, (o) => o.variableDeclarationOf(id), describeOptionalNode);
   }
 
-  forInStaticKeysOf(expr: ts.Expression): readonly string[] | undefined {
+  forInStaticKeysOf(expr: ts.Expression, sourceFiles?: readonly ts.SourceFile[]): readonly string[] | undefined {
     return this.compare(
       "forInStaticKeysOf",
       expr,
-      (o) => o.forInStaticKeysOf(expr),
+      (o) => o.forInStaticKeysOf(expr, sourceFiles),
       (v) => (v ? v.join(",") : "undefined"),
     );
   }

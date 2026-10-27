@@ -84,12 +84,14 @@ export function emitForInStaticUnroll(
   // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
   // runtime still unrolls one static shape, and closed structs remain
   // non-enumerable through the dynamic runtime — both stay open in #4138.
-  // (#7156) The key list comes from the oracle: a class instance yields only
-  // its own public fields (no `#x`, methods, accessors or statics), base class
-  // first, and a spread literal is ordered as it is built. A backend that
-  // cannot answer falls back to the checker's raw property list.
+  // (#7156) The key list comes from the oracle: a provable `new C()` of a
+  // simple class chain yields only its own fields (no `#x`, methods,
+  // accessors or statics), base class first and integer keys ahead; a spread
+  // literal is ordered as it is built. The whole compilation is passed so a
+  // method name assigned anywhere keeps the old list. Every other receiver,
+  // and a backend that cannot answer, gets the checker's raw property list.
   const keys =
-    ctx.oracle.forInStaticKeysOf(stmt.expression) ??
+    ctx.oracle.forInStaticKeysOf(stmt.expression, ctx.callableSourceFiles) ??
     ctx.checker
       .getTypeAtLocation(stmt.expression)
       .getNonNullableType()

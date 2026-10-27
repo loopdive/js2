@@ -78,8 +78,12 @@ backend answers `undefined` and the unroll falls back to the checker's raw
 property list, so no new raw checker call in `src/codegen/`).
 
 - A class receiver gets the new key list only when it is PROVABLY built by
-  that class (review round 3): a `new C(…)` expression, or a `const` bound to
-  one with no annotation or an annotation of exactly the constructed type. A
+  that class (review rounds 3–4): a `new X(…)` whose callee `X` — through
+  parentheses and un-annotated `const X = C` aliases — is the class
+  declaration or class expression itself, or a `const` bound to such a `new`
+  with no annotation or an annotation of exactly the constructed type. A
+  constructor-typed `X` (`const D: typeof P = Q`, `K: typeof P`) proves
+  nothing. A
   class-TYPED value proves nothing — TypeScript accepts an object literal, or a
   subclass that turns a method into a field — so parameters, `let`,
   properties, annotated consts with a literal initializer and call results
@@ -90,8 +94,14 @@ property list, so no new raw checker call in `src/codegen/`).
   mixin or other non-class), and every member a plain field, parameter
   property, method, accessor, auto-`accessor`, static member or `#private`
   name, with a literal (or string-literal-typed `const`) computed key at most;
-  no name is a field in one class and a method/accessor in another, and every
-  checker property is explained by those members. Then the keys are the own
+  no name is a field in one class and a method/accessor in another, every
+  checker property is explained by those members, no constructor `return`s a
+  value, and no method/accessor name of the chain is written anywhere in the
+  compilation (review round 4: `this.m = this.m.bind(this)`, `p.m = …`,
+  `x["m"] op= …`, `++`/`--`, `Object.defineProperty`/`Reflect.defineProperty`
+  with a literal key, literal keys of `Object.defineProperties` /
+  `Object.assign` sources). That scan is syntactic, by name, over every source
+  file of the compilation (`ctx.callableSourceFiles`), and over-approximates. Then the keys are the own
   fields — parameter properties, then fields, base class first, a redeclared
   field keeping the base position — and names come from the checker's
   symbols, so `["k1"] = 1` / `[K] = 1` keep their position. Integer-index keys
@@ -108,9 +118,10 @@ property list, so no new raw checker call in `src/codegen/`).
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (99 of 114 sampled lane/program compiles byte-identical, including every
-  not-simple class program and every non-provable class receiver; the 15 that
-  differ are provable simple-class / spread programs).
+  (114 of 132 sampled lane/program compiles byte-identical, including all
+  playground examples and `benchmarks/suites/*.ts`, every not-simple class
+  program and every non-provable class receiver; the 18 that differ are
+  provable simple-class / spread programs).
 
 Tests: `tests/equivalence/issue-7156-for-in-class-instance.test.ts` (gc
 native-first, standalone, wasi vs node).
@@ -126,6 +137,11 @@ Left out:
   `y` (pinned in the test; #4138 tracks polymorphic receivers).
 - Integer-like keys in object literals (`{ b: 1, 1: 2 }`) are not reordered
   ascending; unchanged.
+- A method made own by a write the scan cannot see by name (`x[k] = …` with a
+  non-literal `k`, `Object.defineProperty(x, k, …)` with a non-literal key, a
+  destructuring-assignment target) is still dropped for a provable receiver.
+- `Object.defineProperty(c, "zz", …)` adding a NEW key is not seen (static
+  unroll); wrong on base too.
 - `Object.keys` static paths were not moved onto the new query (they already
   print `y` for the issue's class).
 - Not-simple class chains keep the old order and key set, which can still
