@@ -14,6 +14,7 @@ import { type CodegenContext, type FunctionContext, hostFreeEnvironment } from "
 import { ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { addFuncType, ensureWasiWriteAnyStringHelper } from "../index.js";
 import {
+  emitScalarToNativeString,
   emitStandaloneStdoutAppendValue,
   ensureNativeStringBoundaryBridge,
   ensureNativeStringExternBridge,
@@ -81,7 +82,9 @@ function compileConsoleCall(
       // The per-arg render (ValType dispatch + `__any_to_string`) lives in
       // native-strings.ts, the coercion-engine-sanctioned owner of that helper,
       // so this call site holds no hand-rolled coercion vocabulary (#2108 gate).
-      emitStandaloneStdoutAppendValue(ctx, fctx, compileExpression(ctx, fctx, arg));
+      const argType = compileExpression(ctx, fctx, arg);
+      const isBoolean = argType !== null && argType.kind === "i32" && ctx.oracle.isBooleanProducing(arg);
+      emitStandaloneStdoutAppendValue(ctx, fctx, argType, isBoolean);
     }
     appendLiteral("\n");
     return VOID_RESULT;
@@ -3007,6 +3010,19 @@ function emitWasiValueToStdout(
   if (exprType === VOID_RESULT || exprType === null) {
     // void expression, nothing to write — drop already handled
     return;
+  }
+
+  // (#7157) A boolean prints "true"/"false" and a number prints what `String(n)`
+  // gives (fractions included): render to a native string and write that.
+  const isBoolean =
+    exprType.kind === "i32" && (exprType.boolean === true || ctx.oracle.isBooleanProducing(node as ts.Expression));
+  if ((exprType.kind === "f64" || isBoolean) && ctx.nativeStrTypeIdx >= 0) {
+    if (emitScalarToNativeString(ctx, fctx, exprType, isBoolean)) {
+      const writeAnyIdx = ensureWasiWriteAnyStringHelper(ctx, useStderr);
+      if (writeAnyIdx >= 0) fctx.body.push({ op: "call", funcIdx: writeAnyIdx });
+      else fctx.body.push({ op: "drop" });
+      return;
+    }
   }
 
   if (exprType.kind === "f64") {

@@ -24,7 +24,7 @@ const c = new Counter();
 c.increment();
 c.increment();
 c.increment();
-console.log(String(c.value));
+console.log(c.value);
 console.log(JSON.stringify(c));`;
 
 const PROGRAMS: Record<string, string> = {
@@ -37,7 +37,7 @@ const PROGRAMS: Record<string, string> = {
   "as a property": `class C { #x = 1 }\nconsole.log(JSON.stringify({ a: new C(), b: 2 }));`,
   "toJSON reads the private field": `class C { #x = 7; toJSON() { return { x: this.#x }; } }\nconsole.log(JSON.stringify(new C()));`,
   "private-only base, public subclass": `class A { #a = 1 }\nclass B extends A { b = 2 }\nconsole.log(JSON.stringify(new B()) + " " + JSON.stringify(new A()));`,
-  "Object.keys stays empty": `class C { #x = 1 }\nconsole.log(String(Object.keys(new C()).length));`,
+  "Object.keys stays empty": `class C { #x = 1 }\nconsole.log(Object.keys(new C()).length);`,
   "spread of a private-only instance": `class C { #x = 1 }\nconsole.log(JSON.stringify({ ...new C(), z: 1 }));`,
 };
 
