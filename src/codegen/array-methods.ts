@@ -28,6 +28,7 @@ import { f64JoinSentinelArm } from "./vec-f64-hole-gap.js"; // (#4491 T8)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4638) concat absent-tail marker
 import {
   buildJoinBoxedElementToString,
+  stringJoinElement,
   CLOSURE_ARRAY_METHODS,
   isAnyStringSubtype,
   nativeJoinProbeExpr,
@@ -115,7 +116,7 @@ import {
 } from "./array-callback-dyn-invoke.js"; // (#6690)
 import { allocJoinFoldLocals, emitStringJoinFold, hostStringRepr, nativeStringRepr } from "./builtin-scaffold.js";
 import { ensureTimsortHelper } from "./timsort.js";
-import { prepareExternVecDefaultSortCompare } from "./array/array-sort-value.js";
+import { prepareExternVecDefaultSortCompare, stringVecSortCompare } from "./array/array-sort-value.js";
 import { emitStableMergeSort } from "./merge-sort.js"; // (#3902) shared stable O(n log n) sort skeleton
 import {
   buildVecFromExternMaterializer,
@@ -5818,8 +5819,7 @@ function compileArrayJoinNative(
       { op: "ref.cast", typeIdx: anyStrTypeIdx },
     );
   } else {
-    // String element: a (ref null $NativeString) — non-null cast up to $AnyString.
-    elemToStr.push({ op: "ref.as_non_null" });
+    elemToStr.push(...stringJoinElement(ctx, fctx, propAccess.expression, elemType, repr.resultType)); // (#7165)
   }
 
   fctx.body.push({ op: "i32.const", value: 0 });
@@ -9189,7 +9189,7 @@ function compileArrayDefaultToStringSort(
     getOp,
     dataLocal: dataTmp,
     lenLocal: lenTmp,
-    buildCompareGtZero: externCompare ?? compareGtZero,
+    buildCompareGtZero: externCompare ?? stringVecSortCompare(ctx, fctx, propAccess, elemType, compareGtZero),
   });
 
   fctx.body.push({ op: "local.get", index: vecTmp });
