@@ -1,10 +1,10 @@
 ---
 id: 7175
-title: "Native gc: a shadowed `let undefined` compares as the undefined value in the legacy path"
+title: "A shadowed `let undefined` compares as the undefined value in the legacy path"
 status: ready
 sprint: Backlog
 created: 2026-10-26
-updated: 2026-10-26
+updated: 2026-10-27
 priority: low
 horizon: s
 feasibility: medium
@@ -16,7 +16,7 @@ goal: correctness
 related: [7144]
 ---
 
-# #7175 — Native gc: a shadowed `let undefined` compares as the undefined value in the legacy path
+# #7175 — A shadowed `let undefined` compares as the undefined value in the legacy path
 
 Found in the round-3 review of PR #6927 (#7144), NIT 2. The bug is already on main, and the base and head bytes are identical.
 
@@ -35,7 +35,7 @@ Results on gc native-first (legacy path):
 | `f(5)` | 1 | 2 |
 | `f(void 0)` | 2 | 1 |
 
-The probe printed `21` where node prints `12`. The legacy compiler treats the identifier `undefined` as the undefined value even when a local binding shadows it.
+The probe printed `21` where node prints `12`. (2026-10-27, #6834 round-11 review G) The same miscompile reproduces on standalone and wasi; base and head bytes are identical there too. The legacy compiler treats the identifier `undefined` as the undefined value even when a local binding shadows it.
 
 The IR path is correct here. `isUndefinedCompareOperand` checks `cx.scope` before treating `undefined` as the undefined value.
 
