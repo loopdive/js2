@@ -77,13 +77,26 @@ literal's `1` was coerced to a null element on the declaration store. Fix
 - `unshift`, `fill` and `splice` insert arguments count as stores too, but
   only constrain a kind that a push / index store already pinned, so a binding
   without those keeps its checker-typed slot;
-- a binding that shares its vec with another binding (`cur = b`,
-  `const root = cur`, or an initializer that is not a fresh array) takes the
-  dynamic carrier, because differing slot types converted by copying and lost
-  later pushes (the depth-100 chain).
+- a binding whose declared element type is `any` / `unknown` and that shares
+  its vec with another binding (`cur = b`, `const root = cur`, `o.f = xs`, or
+  an initializer that is not a literal / call / `new`, e.g. an identifier,
+  `c ? [] : [1]`, `x || []`) takes the dynamic carrier, because differing slot
+  types converted by copying and lost later pushes (the depth-100 chain).
+  Typed `T[]` bindings are exempt (review round 2): they and their aliases
+  already pin the same typed vec, and forcing one side generic broke
+  `const ys = xs` aliasing and boxed swap / `cur = next` buffers.
 
 `concat` returns a new array and needed no change. Test:
-`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (18 rows, gc
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (28 rows, gc
 native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
-cycle on a literal-initialised array
+cycle on a literal-initialised array too
 (`tests/equivalence/issue-7147-nested-array-join.test.ts`).
+
+Left out (wrong on main and on this fix, not worse):
+
+- `const s: any[] = ["a"]; const a: any[] = [0, ...s]; a.push([1])`: wrong
+  on all lanes (the spread seeds the dynamic carrier, the value is still off).
+- wasi `[1, , 3]` + `push(4)` (review report; tracked with the wasi hole
+  family in #7180).
+- `const b = a.reverse(); b.push("x")` and `a.slice()` + push trap on all
+  lanes: a call initializer is treated as fresh — #7181.
