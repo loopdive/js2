@@ -77,41 +77,52 @@ literal's `1` was coerced to a null element on the declaration store. Fix
 - `unshift`, `fill` and `splice` insert arguments count as stores too, but
   only constrain a kind that a push / index store already pinned, so a binding
   without those keeps its checker-typed slot;
-- share groups (review rounds 2-7): a binding shares its vec with another
-  place through `x = arr`, `const x = arr`, `o.f = arr`, `arr = <expr>` or a
-  non-literal initializer, seen through value wrappers (parens, `!`,
-  `satisfies`; `as T` / `<T>` classified by `T`), `,` / nested `=`, `?:`
-  branches and `||` / `??` / `&&` operands. Starting from the binding, every
-  member reachable through shares is collected. The group takes the dynamic
-  carrier only when (1) it shares at all (another binding, or an escape into
-  an `any` / `unknown` array parameter / field / return), (2) every member is
-  an `any` / `unknown` element local that is not exported, (3) every other
-  share endpoint is an array literal or has a static `any` / `unknown` array
-  type (a call by its return type), and (4) every use of every member is
-  positively recognised (round 7): a member / element access / `for-of` /
-  `for-in` receiver, a truthiness or comparison operand, a stringification, a
-  discarded value, an argument stored into an `any` / `unknown` array
-  (`dyn.push(xs)`), an escape whose contextual type is an `any` / `unknown`
-  array, or a share. Any other use — a typed or bare-`any` escape (call or
-  method argument, object field, array element, `return`, shorthand
-  property), spread, destructuring, an assertion to a non-dynamic type,
-  anything unrecognised — keeps every member on the layout it infers, as on
-  main, because differing slot types convert by COPYING and lose pushes. The
-  verdict is computed once per group and memoised for every member; each
-  scope's identifiers are indexed in one walk (400 aliases: ~4-6 s, as on
-  main). Typed swap / `cur = next` buffers stay unboxed. This also fixes #7181
-  (`reverse()` / `slice()` / `concat()` results).
+- share groups (review rounds 2-8, `src/codegen/statements/array-share-group.ts`):
+  a binding shares its vec with another place through `x = arr`,
+  `const x = arr`, `arr = <expr>` or a non-literal initializer, seen through
+  value wrappers (parens, `!`, `satisfies`; `as T` / `<T>` classified by
+  `T`), `,` / nested `=`, `?:` branches, `||` / `??` / `&&` operands and
+  receiver-returning methods (`xs.reverse()` / `sort` / `fill` /
+  `copyWithin` is `xs`). Starting from the binding, every member reachable
+  through shares and element stores is collected. The group takes the
+  dynamic carrier only when (1) it shares at all, (2) every member is a
+  non-exported `any` / `unknown` element local, (3) every other share
+  endpoint holds the dynamic carrier: an array literal, a parameter declared
+  `any[]` / `unknown[]`, `new Array` / `Array.from` / `Array.of`, a new-array
+  method on an `any[]`, or a call to a concrete function declaring an
+  `any[]` return, and (4) every use of every member is positively
+  recognised: a receiver (member / element access, `for-of`, `for-in`), an
+  inspection (truthiness, comparison, `typeof`, an UNTAGGED template span, a
+  discarded value), a pure-read argument (`includes` / `indexOf` /
+  `lastIndexOf`), a store into another group binding through `push` /
+  `unshift` / `fill` / `splice` (that binding becomes a container and every
+  member's uses are re-checked: only `push` / `unshift` / `length` / `join` /
+  `toString` / pure reads and inspected element reads), an argument to a
+  CONCRETE function (a function declaration without overloads, or an
+  unannotated const arrow / function expression) whose own parameter is
+  declared `any[]` / `unknown[]`, or a share. Everything else — function-typed
+  variables, interface / class members, overloads, `.call` / `.apply` /
+  `.bind`, tagged templates, object fields, array elements, `return`,
+  shorthand properties, spread, destructuring, assertions to a non-dynamic
+  type, anything unrecognised — keeps every member on the layout it infers,
+  as on main, because differing slot types convert by COPYING and lose
+  pushes. Unrecognised never means dynamic. The verdict is computed once per
+  group and memoised for every member; each scope's identifiers are indexed
+  in one walk (400 aliases compile as fast as on main). Typed swap /
+  `cur = next` buffers stay unboxed. This also fixes #7181 (`reverse()` /
+  `slice()` / `concat()` results).
 - array literals behind value wrappers and literals assigned later
   (`xs = [1]`) seed elements like the initializer.
 
 `concat` returns a new array and needed no change. Test:
-`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (62 rows plus a 200-alias compile-time budget, gc
+`tests/equivalence/issue-7154-any-array-push-migration.test.ts` (69 rows plus a 200-alias compile-time budget, gc
 native-first, standalone, wasi vs node); the #7147 cyclic row now builds its
 cycle on a literal-initialised array too
 (`tests/equivalence/issue-7147-nested-array-join.test.ts`), and
-`tests/equivalence/issue-7154-any-array-share-sweep.test.ts` generates 572
-rows: wrapper x partner-kind x init/assign, and escape x partner-kind x
-with/without a second alias (known gaps as `it.fails`).
+`tests/equivalence/issue-7154-any-array-share-sweep.test.ts` generates 754
+rows: wrapper x partner-kind x init/assign, escape x partner-kind x
+with/without a second alias, and callee-kind x partner-kind x alias
+(known gaps as `it.fails`).
 
 Left out (wrong on main and on this fix, not worse):
 
@@ -136,10 +147,13 @@ Left out (wrong on main and on this fix, not worse):
   too). `xs = (ys = o as any[])` with `o: unknown` and a store-less `ys`: `ys`
   keeps the default dynamic layout while `xs` is typed (main too). Both are
   `it.fails` rows in the sweep.
-- Escape rows marked `it.fails` in the sweep (wrong on main too): an any[]
-  whose vec is typed or held by a bare `any` passed to an `any[]` parameter,
-  an `any`-valued vec stored in a typed object field, a typed call result
-  returned through a typed getter, and shorthand properties `{ xs }`.
+- Escape and callee rows marked `it.fails` in the sweep (wrong on main too):
+  an any[] whose vec is typed or held by a bare `any` passed to an `any[]`
+  parameter; an `any`-valued vec stored in a typed object field; a typed call
+  result returned through a typed getter; shorthand properties `{ xs }`; and
+  (round 8) a dynamic group escaping through an object field, array element,
+  method argument, `return`, function-typed variable, interface member,
+  overload, `.call` or tagged template (these keep main's layout).
 - wasi: a vec stored in a field of a function-local `interface` traps with
   `illegal cast` (gc and standalone are fine; main is the same).
 - Shares through destructuring assignment (`[xs] = [n]`) are not followed, so
