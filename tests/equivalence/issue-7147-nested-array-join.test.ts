@@ -46,11 +46,14 @@ describe("#7147 native join stringifies nested arrays via Array.prototype.toStri
     ['+ ""', `return [1, [2]] + "";`],
     ["[].toString() and [[]].join()", `return [].toString() + "|" + [[]].join() + "|";`],
     ["flat().join", `return [1, [2, [3, [4]]]].flat().join(",");`],
-    // Arrays are filled by `push`: a literal-initialised `any[]` that later
-    // receives an array drops its earlier elements, a separate gap.
     [
       "cyclic array",
       `const a: any[] = []; a.push(1); a.push(2); a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`,
+    ],
+    // (#7154) The same cycle built on a literal-initialised `any[]`.
+    [
+      "cyclic array on a literal",
+      `const a: any[] = [1, 2]; a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`,
     ],
     [
       "mutual cycle",
