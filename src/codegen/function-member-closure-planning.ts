@@ -255,7 +255,11 @@ function planMemberClosure(
   // parameter declaration joins and canonical physical ABI are checked below;
   // no declaration identity is invented from the registry-free signature fact.
   const oracleSignature = ctx.oracle.signatureOf(expression);
-  const returnsVoid = oracleSignature?.returns.kind === "void";
+  // A throw-only body (`Test262Error.thrower = function (message) { throw … }`)
+  // has the oracle return `never`, reported unresolvable; legacy still
+  // registers it with no physical result, and the void body proof refuses
+  // any `return <value>`.
+  const returnsVoid = oracleSignature?.returns.kind === "void" || oracleSignature?.returns.kind === "unresolvable";
   if (
     !oracleSignature ||
     oracleSignature.declaredArity !== expression.parameters.length ||

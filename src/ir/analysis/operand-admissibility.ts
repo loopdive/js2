@@ -328,3 +328,158 @@ export function slotWriteVerdict(slot: OperandFamily, value: OperandFamily): Slo
     ? "admissible"
     : "representation-refined";
 }
+
+/**
+ * (#7113) The family of a conditional arm the dynamic join (`m ? m : ''`)
+ * takes as written, read syntactically by the selector and by from-ast alike:
+ * a primitive literal (`number` / `string` / `boolean`) or a value `void x`
+ * (`undefined`). `null` = not such an arm (the other arm must then be the
+ * dynamic one, or the conditional is not the join).
+ */
+export function conditionalJoinArmFamily(arm: ts.Expression): OperandFamily | null {
+  let e = arm;
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return "string";
+  if (ts.isNumericLiteral(e)) return "number";
+  if (e.kind === ts.SyntaxKind.TrueKeyword || e.kind === ts.SyntaxKind.FalseKeyword) return "boolean";
+  return ts.isVoidExpression(e) ? "undefined" : null;
+}
+
+/**
+ * (#7113) The family a conditional VALUE joins its two arms on. Equal
+ * families join as themselves. A dynamic arm joins a boxable arm
+ * ({@link boxableIntoDynamic}) on the carrier: from-ast boxes the concrete arm
+ * inside its own branch. A value `void x` arm joins the carrier too — but as
+ * the carrier's real `undefined` (`dyn.undefined`), never as its f64 NaN
+ * sentinel, which would be observed as a number. Anything else has no join.
+ */
+export function conditionalJoinFamily(whenTrue: OperandFamily, whenFalse: OperandFamily): OperandFamily {
+  if (whenTrue === whenFalse) return whenTrue;
+  if (whenTrue !== "dynamic" && whenFalse !== "dynamic") return "unknown";
+  const other = whenTrue === "dynamic" ? whenFalse : whenTrue;
+  return boxableIntoDynamic(other) || other === "undefined" ? "dynamic" : "unknown";
+}
+
+/**
+ * (#7113) `lowerThrowStatement`: a thrown value is coerced to externref, which
+ * every reference-shaped family has (a class / object instance, an externref,
+ * the carrier, a string). An f64 or i32 value — a number, a boolean, a value
+ * `void x` — has no box there ("throw val not in slice 9"); the
+ * number-boundary projection, where a lane configures it, is the lowering's
+ * own earlier arm. An `unknown` family is refused like every other predicate.
+ */
+export function throwOperandAdmissible(family: OperandFamily): boolean {
+  return (
+    family !== "number" && family !== "boolean" && family !== "int32" && family !== "undefined" && family !== "unknown"
+  );
+}
+
+/**
+ * (#7113) The operators whose lowering over the boxed-any carrier calls a
+ * dynamic-runtime helper that a prepared component (a planned member closure
+ * inside `<module-init>`) must bind by Program ABI identity: a loose `==` /
+ * `!=` with a carrier operand (an `undefined` / `null` operand has its own
+ * fold) and `in` on a carrier receiver. A lane without that binding
+ * (`prepared-dynamic-helper-abi`) withdraws them at preparation, after the
+ * claim, so the selector refuses them there instead.
+ */
+export function carrierHelperOperator(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
+  if (op === ts.SyntaxKind.InKeyword) return right === "dynamic";
+  const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+  return loose && (left === "dynamic" || right === "dynamic");
+}
+
+/**
+ * (#7113, #7177) A member READ on the boxed-any carrier (`r.length`, `r[i]`,
+ * `r.x`; `property` is `null` for an element read). An element read never
+ * throws on a `null` / `undefined` receiver (`m[k]` with `m === null` answers
+ * a value), and WASI's dynamic read has no string or vec receiver arm, so its
+ * `.length` / `[i]` answer `undefined`. A named OWN property other than
+ * `length` reads correctly on every lane; an inherited one (`r.push`,
+ * `r.charAt`, `r.constructor`) answers `undefined` on every lane — the same
+ * wrong value legacy gives, so it is not refused here (#7177).
+ * `nativeMemberRead` is the lane's `native-dynamic-member-read` capability.
+ */
+export function carrierMemberReadAdmissible(
+  receiver: OperandFamily,
+  property: string | null,
+  nativeMemberRead: boolean,
+): boolean {
+  if (receiver !== "dynamic") return true;
+  if (property === null) return false;
+  return nativeMemberRead || property !== "length";
+}
+
+/**
+ * (#7113, #7178) A loose `==` / `!=` with a carrier operand. WASI's loose
+ * equality ToPrimitives an object / array carrier by an illegal cast and
+ * traps (`r == 1` with `r = [1, 2]`); only a string other side takes the
+ * string arm. `nativeLooseEquality` is the lane's
+ * `native-dynamic-loose-equality` capability.
+ */
+export function carrierLooseEqualityAdmissible(
+  op: ts.SyntaxKind,
+  left: OperandFamily,
+  right: OperandFamily,
+  nativeLooseEquality: boolean,
+): boolean {
+  if (nativeLooseEquality) return true;
+  if (op !== ts.SyntaxKind.EqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return true;
+  if (left !== "dynamic" && right !== "dynamic") return true;
+  return (left === "dynamic" ? right : left) === "string";
+}
+
+/**
+ * (#7113, #7177) A method call `v.m(…)` on the boxed-any carrier: the IR
+ * dynamic method call answers a value when `v` is `null` / `undefined` or has
+ * no callable `m`, where JS throws a TypeError (`m.g()` on `null` or on an
+ * array, standalone and WASI alike).
+ */
+export function carrierMethodCallAdmissible(receiver: OperandFamily): boolean {
+  return receiver !== "dynamic";
+}
+
+/**
+ * (#7113) `String(v)` over the carrier calls a dynamic-runtime helper that a
+ * prepared component binds by Program ABI identity, like
+ * {@link carrierHelperOperator}: standalone and native gc withdraw it at
+ * preparation (`late-preparation-unsupported`).
+ */
+export function carrierHelperCall(callee: string, argument: OperandFamily): boolean {
+  return callee === "String" && argument === "dynamic";
+}
+
+/**
+ * (#7113) A property or element store `recv.p = v` / `recv[i] = v`: from-ast
+ * has no store on the boxed-any carrier (`lowerPropertyAssignment` ends in
+ * "property assignment on dynamic is not in slice 4", `lowerElementStore`
+ * demotes every non-vec receiver), and an element store into a `vec<f64>`
+ * takes only a value that coerces to f64 (an f64, an i32) — a string, the
+ * carrier or a reference is `element-store-unsupported`. Stores into other
+ * receivers keep their own lowerings and are not judged here.
+ */
+export function storeAdmissible(receiver: OperandFamily, value: OperandFamily, element: boolean): boolean {
+  if (receiver === "dynamic") return false;
+  if (!element || receiver !== "vec<number>") return true;
+  return value === "number" || value === "int32";
+}
+
+/**
+ * (#7113) `lowerSwitch` needs an f64 / i32 discriminant (or a string one it
+ * dispatches by index): the boxed-any carrier is "switch disc must lower to
+ * i32/f64". Other discriminants keep their own checks.
+ */
+export function switchDiscriminantAdmissible(discriminant: OperandFamily): boolean {
+  return discriminant !== "dynamic";
+}
+
+/**
+ * (#7113) An argument of a call THROUGH the boxed-any carrier (a dynamic
+ * parameter called as a function, a method of a carrier value): every
+ * argument crosses into the carrier's any-typed parameter list, where a vec
+ * has no representation ("array literal flows into a widening/heterogeneous
+ * sink"). Other families keep their existing argument lowering.
+ */
+export function dynamicCallArgumentAdmissible(argument: OperandFamily): boolean {
+  return argument !== "vec<number>" && argument !== "vec<other>";
+}
