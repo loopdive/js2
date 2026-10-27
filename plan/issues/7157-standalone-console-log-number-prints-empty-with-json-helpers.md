@@ -117,9 +117,10 @@ shift was involved.
   multi-argument calls join with one space as before, now with the numbers.
 - The import collector registers `bigint_toString` for a bigint console
   argument on host-free targets.
-- WASI (`emitWasiValueToStdout`): f64 and boolean arguments use the same
-  conversion and `__wasi_write_any_string`; WASI printed booleans as `1`/`0` and
-  truncated fractions (`1.5` → `1`). Non-boolean i32 keeps `__wasi_write_i32`.
+- WASI (`emitWasiValueToStdout`) printed booleans as `1`/`0` and truncated
+  fractions (`1.5` → `1`). A boolean now writes the `"true"`/`"false"` data
+  segment; an f64 uses the same `String(n)` conversion and
+  `__wasi_write_any_string`. Non-boolean i32 keeps `__wasi_write_i32`.
 - No new host imports; gc output unchanged.
 
 **Tests.** `tests/equivalence/issue-7157-standalone-console-number.test.ts`:
@@ -130,7 +131,10 @@ multi-argument joins, untyped arithmetic, int32 values, bigint, on standalone
 validates and runs — that lane exports no stdout readout), WASI (output vs V8),
 and gc native-first for the single-argument programs. The `String(n)`
 workaround in `tests/issue-7149-json-stringify-private-fields-only-instance.test.ts`
-is removed.
+is removed. Tests that pinned the old behaviour are updated:
+`tests/issue-5094-ir-host-free-boolean-console.test.ts` (the legacy control now
+prints the booleans), `tests/wasi-target.test.ts` and `tests/issue-1493.test.ts`
+(the WASI helper names).
 
 **Left out.**
 
@@ -144,6 +148,7 @@ is removed.
   bigint arithmetic issue, not a console one.
 - `#7148`'s test keeps its `String(...)` calls: dropping them would make its
   multi-argument lines split on the gc lane (first item above).
-- WASI bytes: a module that prints an f64 number or a boolean now links the
-  native string helpers and number formatter (+17 to +41 KB unoptimized on the
-  sampled programs that were not already linking them).
+- WASI bytes: a module that prints an f64 number now links the native string
+  helpers and number formatter (+17 to +41 KB unoptimized on the sampled
+  programs that were not already linking them). Standalone grows by the
+  formatter (+16.6 KB) only when nothing else linked it.
