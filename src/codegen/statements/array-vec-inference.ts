@@ -206,15 +206,32 @@ function sharePartnerOf(identifier: ts.Identifier): ts.Expression | ts.BindingNa
 }
 
 /**
- * (#7154) The share partner also holds the dynamic carrier: a binding, field
- * or element whose declared element type is `any` / `unknown`. Any other
- * non-fresh expression (`c ? [] : [1]`, `x || []`) has no single binding to
- * agree with, so it keeps the dynamic carrier.
+ * (#7154) The share partner also holds the dynamic carrier: every binding,
+ * field or element it can yield has an `any` / `unknown` element type. Fresh
+ * and other leaves (`c ? [] : [1]`, `x || []`) name no binding to agree with.
  */
 function partnerIsDynamic(ctx: CodegenContext, partner: ts.Expression | ts.BindingName): boolean {
   let inner: ts.Node = partner;
-  while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isNonNullExpression(inner)) {
+  while (
+    ts.isParenthesizedExpression(inner) ||
+    ts.isAsExpression(inner) ||
+    ts.isNonNullExpression(inner) ||
+    ts.isSatisfiesExpression(inner)
+  ) {
     inner = inner.expression;
+  }
+  // `c ? n : []`, `n || []` and `n ?? []` may yield either operand, so a typed
+  // leaf anywhere keeps the typed layout it shares. `x && n` yields an array
+  // only from `n` (an array is truthy).
+  if (ts.isConditionalExpression(inner)) {
+    return partnerIsDynamic(ctx, inner.whenTrue) && partnerIsDynamic(ctx, inner.whenFalse);
+  }
+  if (ts.isBinaryExpression(inner)) {
+    const op = inner.operatorToken.kind;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken) return partnerIsDynamic(ctx, inner.right);
+    if (op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken) {
+      return partnerIsDynamic(ctx, inner.left) && partnerIsDynamic(ctx, inner.right);
+    }
   }
   if (!ts.isIdentifier(inner) && !ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner)) {
     return true;

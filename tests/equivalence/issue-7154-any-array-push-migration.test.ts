@@ -138,6 +138,44 @@ describe("#7154 any[] literal keeps its seeded elements when later stores change
       "string[] aliased by an any[] binding",
       `const xs: string[] = []; xs.push("a"); const ys: any[] = xs; ys.push("b"); return xs.join() + "|" + ys.join();`,
     ],
+    // Review round 4: a conditional / `||` / `??` initializer that can yield a
+    // typed `T[]` keeps that typed layout.
+    [
+      "any[] from n || [] (number[] partner)",
+      `const n: number[] = []; n.push(1); const xs: any[] = n || []; xs.push(2); return xs.join() + "|" + n.join();`,
+    ],
+    [
+      "any[] from c ? n : [] (number[] partner)",
+      `function cond(k: number): boolean { return k > 0; } const c = cond(1); const n: number[] = []; n.push(1); const xs: any[] = c ? n : []; xs.push(2); return xs.join() + "|" + n.join();`,
+    ],
+    [
+      "any[] assigned n || [] (number[] partner)",
+      `const n: number[] = []; n.push(1); let xs: any[] = []; xs = n || []; xs.push(2); return xs.join() + "|" + n.join();`,
+    ],
+    [
+      "any[] from c ? n : m (number[] partners)",
+      `function cond(k: number): boolean { return k > 0; } const c = cond(1); const n: number[] = []; n.push(1); const m: number[] = []; const xs: any[] = c ? n : m; xs.push(2); return xs.join() + "|" + n.join() + "|" + m.join();`,
+    ],
+    [
+      "any[] from n || [] (string[] partner)",
+      `const n: string[] = []; n.push("a"); const xs: any[] = n || []; xs.push("b"); return xs.join() + "|" + n.join();`,
+    ],
+    [
+      "any[] from c ? n : [] (string[] partner)",
+      `function cond(k: number): boolean { return k > 0; } const c = cond(1); const n: string[] = []; n.push("a"); const xs: any[] = c ? n : []; xs.push("b"); return xs.join() + "|" + n.join();`,
+    ],
+    [
+      "any[] assigned n || [] (string[] partner)",
+      `const n: string[] = []; n.push("a"); let xs: any[] = []; xs = n || []; xs.push("b"); return xs.join() + "|" + n.join();`,
+    ],
+    [
+      "any[] from c ? n : m (string[] partners)",
+      `function cond(k: number): boolean { return k > 0; } const c = cond(1); const n: string[] = []; n.push("a"); const m: string[] = []; const xs: any[] = c ? n : m; xs.push("b"); return xs.join() + "|" + n.join() + "|" + m.join();`,
+    ],
+    [
+      "any[] from n ?? [] (number[] partner)",
+      `const n: number[] = []; n.push(1); const xs: any[] = n ?? []; xs.push(2); return xs.join() + "|" + n.join();`,
+    ],
   ];
   for (const [name, body] of rows) {
     it(name, () => expectSameOnAllLanes(body));
