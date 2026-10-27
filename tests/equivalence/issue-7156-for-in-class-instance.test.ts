@@ -40,6 +40,9 @@ async function expectSameOnLanes(body: string, lanes: readonly (typeof LANES)[nu
 const keysOf = (expr: string): string =>
   `function run(): string { const keys: string[] = []; for (const k in ${expr}) keys.push(k); return keys.join(); }`;
 
+const sortedKeysOf = (expr: string): string =>
+  `function run(): string { const keys: string[] = []; for (const k in ${expr}) keys.push(k); return keys.sort().join(); }`;
+
 const CASES: Record<string, string> = {
   "private name, field, method": `class C { #x = 1; y = 2; m() {} }\n${keysOf("new C()")}`,
   "subclass: base fields first": `class C { #x = 1; y = 2; m() {} }\nclass D extends C { w = 3; n() {} }\n${keysOf("new D()")}`,
@@ -48,17 +51,8 @@ const CASES: Record<string, string> = {
   "getter-only class enumerates nothing": `class G { get a() { return 1; } }\nfunction run(): string { let s = "n"; for (const k in new G()) s += k; return s; }`,
   "static field and method": `class S { static s = 1; t = 2; static f() {} }\n${keysOf("new S()")}`,
   "parameter properties before fields": `class P { c = 1; constructor(public a: number, b: number) {} d = 2; }\n${keysOf("new P(1, 2)")}`,
-  // `declare` and interface-merged fields are own once assigned (constructor
-  // or base class), so they must stay; a derived `declare` keeps the base position.
-  "declare field assigned in the constructor": `class C { declare a: number; b = 2; constructor() { this.a = 1; } }\n${keysOf("new C()")}`,
-  "declare field assigned (sorted)": `class C { declare a: number; b = 2; constructor() { this.a = 1; } }\nfunction run(): string { const keys: string[] = []; for (const k in new C()) keys.push(k); return keys.sort().join(); }`,
-  "interface-merged field assigned in the constructor": `interface C { extra: number }\nclass C { a = 1; constructor() { this.extra = 7; } }\n${keysOf("new C()")}`,
-  "derived declare over a base field": `class B { y = 1; z = 2; }\nclass D extends B { declare y: number; w = 3; }\nfunction run(): string { let n = 0; for (const k in new D()) n++; return String(n); }`,
-  "derived declare over a base field (order)": `class B { y = 1; z = 2; }\nclass D extends B { declare y: number; w = 3; }\n${keysOf("new D()")}`,
-  "derived declare over a base parameter property": `class B { constructor(public p: number) {} }\nclass D extends B { declare p: number; q = 1; constructor() { super(1); } }\n${keysOf("new D()")}`,
   "definite-assignment field": `class Q { x!: number; r = 1; }\n${keysOf("new Q()")}`,
   "computed string-literal key keeps its position": `class C { ["k1"] = 1; a = 2; }\n${keysOf("new C()")}`,
-  "abstract field placed by the subclass": `abstract class A { abstract a: number; q = 1; }\nclass B extends A { a = 2; }\n${keysOf("new B()")}`,
   "auto-accessor is not own": `class C { accessor a = 1; b = 2; }\n${keysOf("new C()")}`,
   "generic class with accessor": `class G<T> { v: T; constructor(v: T) { this.v = v; } get g() { return 1; } }\n${keysOf("new G<number>(1)")}`,
   "spread then own key": `const a = { x: 1, y: 2 };\n${keysOf("{ ...a, z: 3 }")}`,
@@ -68,9 +62,31 @@ const CASES: Record<string, string> = {
   "plain literal order unchanged": keysOf("{ b: 1, a: 2 }"),
 };
 
+// Not a SIMPLE class chain (a `declare`/`abstract` field, an interface merge, or
+// a name that is a field in one class and a method/accessor in another): the
+// unroll keeps the checker's key list and order, exactly as before #7156, so
+// these programs compile byte-identically to the base. Where that order differs
+// from node's, the row compares the sorted key set.
+const NOT_SIMPLE: Record<string, string> = {
+  "declare field assigned in the constructor (sorted)": `class C { declare a: number; b = 2; constructor() { this.a = 1; } }\n${sortedKeysOf("new C()")}`,
+  "interface-merged field assigned in the constructor (sorted)": `interface C { extra: number }\nclass C { a = 1; constructor() { this.extra = 7; } }\n${sortedKeysOf("new C()")}`,
+  "derived declare over a base field": `class B { y = 1; z = 2; }\nclass D extends B { declare y: number; w = 3; }\nfunction run(): string { let n = 0; for (const k in new D()) n++; return String(n); }`,
+  "derived declare over a base field (sorted)": `class B { y = 1; z = 2; }\nclass D extends B { declare y: number; w = 3; }\n${sortedKeysOf("new D()")}`,
+  "derived declare over a base parameter property": `class B { constructor(public p: number) {} }\nclass D extends B { declare p: number; q = 1; constructor() { super(1); } }\n${keysOf("new D()")}`,
+  "abstract field placed by the subclass (sorted)": `abstract class A { abstract a: number; q = 1; }\nclass B extends A { a = 2; }\n${sortedKeysOf("new B()")}`,
+  "base field under a derived method": `class B { m = () => 1; a = 1; }\nclass D extends B { m() { return 2; } }\n${keysOf("new D()")}`,
+  "base field under a derived getter": `class B { x = 1; a = 2; }\nclass D extends B { get x() { return 5; } }\n${keysOf("new D()")}`,
+  "base field under a derived getter (count)": `class B { x = 1; a = 2; }\nclass D extends B { get x() { return 5; } }\nfunction run(): string { let n = 0; for (const k in new D()) n++; return String(n); }`,
+  "base method under a derived field (sorted)": `class B { m() { return 1; } a = 1; }\nclass D extends B { m = () => 2; }\n${sortedKeysOf("new D()")}`,
+  "unassigned base declare under a derived field": `class B { declare x: number; }\nclass D extends B { y = 2; x = 1; }\n${keysOf("new D()")}`,
+};
+
 describe("#7156 static for-in unroll lists only own enumerable keys, in order", () => {
   for (const [label, body] of Object.entries(CASES)) {
     it(label, () => expectSameOnLanes(body));
+  }
+  for (const [label, body] of Object.entries(NOT_SIMPLE)) {
+    it(`not simple: ${label}`, () => expectSameOnLanes(body));
   }
   // Reading the value back through the key. On wasi `o[k]` over a WasmGC
   // struct reads `undefined` for a plain object literal too (pre-existing,

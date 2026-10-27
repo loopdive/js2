@@ -77,26 +77,31 @@ Fix: the static unroll now takes its key list from a new oracle query,
 backend answers `undefined` and the unroll falls back to the checker's raw
 property list, so no new raw checker call in `src/codegen/`).
 
-- A class instance drops only what is certainly not an own property: private
-  names, methods, accessors (including auto-`accessor`) and statics. `declare`
-  and interface-merged fields stay, because a constructor or base class often
-  assigns them (review round 1, PR #6940).
-- Order, base class first: per class, parameter properties, then fields, then
-  `declare` fields (they get the property only when the constructor body
-  assigns them, after the fields). A field a derived class redeclares,
-  `declare` included, keeps the base position; an `abstract` field takes the
-  implementing subclass's position. Keys no class declares (interface-merged,
-  JS constructor assignments) follow in the checker's order. Names come from
-  the checker's symbols, so a computed key (`["k1"] = 1`, `[K] = 1`) keeps its
-  declaration position.
+- A class instance gets the new key list only when its whole class chain is
+  SIMPLE (review rounds 1–2, PR #6940): one plain class declaration per level
+  (no interface/namespace merge), a chain that ends at no base (not a builtin,
+  mixin or other non-class), and every member a plain field, parameter
+  property, method, accessor, auto-`accessor`, static member or `#private`
+  name, with a literal (or string-literal-typed `const`) computed key at most;
+  no name is a field in one class and a method/accessor in another, and every
+  checker property is explained by those members. Then the keys are the own
+  fields — parameter properties, then fields, base class first, a redeclared
+  field keeping the base position — and names come from the checker's
+  symbols, so `["k1"] = 1` / `[K] = 1` keep their position.
+- Any class chain that is not simple (a `declare` or `abstract` field, an
+  interface merge, a base field under a derived method/getter or the reverse,
+  a JS `this.x = …` assignment, an `Error` base, …) keeps exactly the checker's
+  key list and order, as before #7156; those programs compile byte-identically
+  to the base. So no class receiver is worse than before.
 - An object literal with a spread (directly, or through a `const`) is ordered
   as it is built, left to right. Deviation from plan step 3: instead of
   falling through to the dynamic `$Object` for-in, the unroll keeps the static
   path with the correct order — same bytes, only the key order changes. The
   AST order is used only when it names exactly the checker's key set.
 - Every other receiver keeps the checker's order, so its bytes are unchanged
-  (63 of 78 sampled lane/program compiles byte-identical; the 15 that differ
-  are for-in-over-class / spread programs).
+  (87 of 99 sampled lane/program compiles byte-identical, including all 8
+  not-simple class programs; the 12 that differ are simple-class / spread
+  programs).
 
 Tests: `tests/equivalence/issue-7156-for-in-class-instance.test.ts` (gc
 native-first, standalone, wasi vs node).
@@ -109,6 +114,13 @@ Left out:
 - Integer-like keys (`{ b: 1, 1: 2 }`) are not reordered ascending; unchanged.
 - `Object.keys` static paths were not moved onto the new query (they already
   print `y` for the issue's class).
+- Not-simple class chains keep the old order and key set, which can still
+  differ from node: a `declare` field (listed even when never assigned, and in
+  checker order), interface-merged members (listed even when never assigned),
+  an `abstract` field, a base field shadowed by a derived method/getter or a
+  base method by a derived field (key set right, order the checker's), a JS
+  method that assigns `this.z`, a `Symbol`-keyed computed field (leaks as
+  `__@s@NNN`), non-literal computed keys (`let K`, template keys) missing.
 - Pre-existing on base and head, unchanged (review round 1 NITs): integer-like
   keys in a spread literal; a spread whose source has an optional key that is
   absent at runtime (`x?`) or a spread parameter, which use the declared order

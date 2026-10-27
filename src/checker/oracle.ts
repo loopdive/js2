@@ -613,24 +613,6 @@ function staticMemberName(name: ts.Node | undefined): string | undefined {
   return name && (ts.isIdentifier(name) || ts.isStringLiteral(name)) ? name.text : undefined;
 }
 
-/**
- * (#7156) Is this declaration CERTAINLY not an own property of an instance? A
- * method or accessor (it lives on the prototype), a static or auto-`accessor`
- * member, or a `#private` name (never a property key). Everything else — a
- * field, a `declare` field, a parameter property, an interface-merged member,
- * a JS `this.x = …` — may well be assigned at runtime, so it is kept.
- */
-function isCertainlyNotOwn(decl: ts.Declaration): boolean {
-  if (ts.isMethodDeclaration(decl) || ts.isGetAccessorDeclaration(decl) || ts.isSetAccessorDeclaration(decl))
-    return true;
-  const name = (decl as { name?: ts.Node }).name;
-  if (name && ts.isPrivateIdentifier(name)) return true;
-  if (!ts.isPropertyDeclaration(decl)) return false;
-  return (ts.getModifiers(decl) ?? []).some(
-    (m) => m.kind === ts.SyntaxKind.StaticKeyword || m.kind === ts.SyntaxKind.AccessorKeyword,
-  );
-}
-
 /** (#7156) The class (interface) type behind a class-instance type, else undefined. */
 function classTargetOf(t: ts.Type): ts.InterfaceType | undefined {
   const objectFlags = (t as ts.ObjectType).objectFlags ?? 0;
@@ -638,66 +620,144 @@ function classTargetOf(t: ts.Type): ts.InterfaceType | undefined {
   return ((target as ts.ObjectType).objectFlags ?? 0) & ts.ObjectFlags.Class ? (target as ts.InterfaceType) : undefined;
 }
 
+const hasModifier = (node: ts.Node, kind: ts.SyntaxKind): boolean =>
+  ts.canHaveModifiers(node) && (ts.getModifiers(node) ?? []).some((m) => m.kind === kind);
+
 /**
- * (#7156) A class's own-property declarations in the order its constructor
- * defines them: parameter properties, then initialised/defined fields, then
- * `declare` fields (no define semantics — they gain the property only when the
- * constructor body assigns them, after the fields).
+ * (#7156) The property key a member name denotes, when it is fully understood:
+ * a plain, string or numeric name, a `#private` name, or a computed key that is
+ * a string/numeric literal or an identifier whose type is a string literal
+ * (`const K = "k"`). `undefined` for anything else.
  */
-function classFieldDeclarationsInOrder(decl: ts.ClassLikeDeclaration): ts.Declaration[] {
-  const params: ts.Declaration[] = [];
-  const ctor = decl.members.find((m): m is ts.ConstructorDeclaration => ts.isConstructorDeclaration(m) && !!m.body);
-  for (const param of ctor?.parameters ?? []) {
-    if (ts.isParameterPropertyDeclaration(param, ctor!)) params.push(param);
-  }
-  const fields: ts.Declaration[] = [];
-  const declared: ts.Declaration[] = [];
-  for (const member of decl.members) {
-    if (!ts.isPropertyDeclaration(member)) continue;
-    const mods = ts.getModifiers(member) ?? [];
-    // An `abstract` field defines nothing here; the subclass that implements it
-    // places it.
-    if (mods.some((m) => m.kind === ts.SyntaxKind.AbstractKeyword)) continue;
-    (mods.some((m) => m.kind === ts.SyntaxKind.DeclareKeyword) ? declared : fields).push(member);
-  }
-  return [...params, ...fields, ...declared];
+function simpleMemberKey(checker: ts.TypeChecker, name: ts.PropertyName | ts.BindingName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return String(Number(name.text));
+  if (!ts.isComputedPropertyName(name)) return undefined;
+  const e = name.expression;
+  if (ts.isStringLiteralLike(e)) return e.text;
+  if (ts.isNumericLiteral(e)) return String(Number(e.text));
+  if (!ts.isIdentifier(e)) return undefined;
+  const t = checker.getTypeAtLocation(e);
+  return t.isStringLiteral() ? t.value : undefined;
 }
 
 /**
- * (#7156) Static for-in keys of a checker type. A class instance enumerates
- * every property that may be own (see `isCertainlyNotOwn`), base class first
- * (a base constructor runs before the derived class defines its fields, so a
- * field a derived class redeclares — `declare` included — keeps the base
- * position). Names come from the checker's symbols, so a computed literal key
- * (`["k1"] = 1`) keeps its declaration position. A key no class declares (an
- * interface-merged member, a JS constructor assignment) follows, in the
- * checker's order. Any other type keeps the checker's property order.
+ * (#7156) The member kinds a SIMPLE class may declare, classified as an
+ * own-property `"field"` (a plain field or a parameter property), a
+ * prototype-or-nothing `"other"` (method, accessor, auto-`accessor`, `#private`
+ * member), or `undefined` when the member is not understood (`declare` or
+ * `abstract` fields, non-literal computed keys).
+ */
+function simpleMemberKind(checker: ts.TypeChecker, member: ts.ClassElement): "field" | "other" | "static" | undefined {
+  if (hasModifier(member, ts.SyntaxKind.StaticKeyword) || ts.isClassStaticBlockDeclaration(member)) return "static";
+  if (
+    ts.isConstructorDeclaration(member) ||
+    ts.isSemicolonClassElement(member) ||
+    ts.isIndexSignatureDeclaration(member)
+  ) {
+    return "other";
+  }
+  if (member.name && simpleMemberKey(checker, member.name) === undefined) return undefined;
+  if (member.name && ts.isPrivateIdentifier(member.name)) return "other";
+  if (ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
+    return "other";
+  }
+  if (!ts.isPropertyDeclaration(member)) return undefined;
+  if (hasModifier(member, ts.SyntaxKind.DeclareKeyword) || hasModifier(member, ts.SyntaxKind.AbstractKeyword))
+    return undefined;
+  return hasModifier(member, ts.SyntaxKind.AccessorKeyword) ? "other" : "field";
+}
+
+/**
+ * (#7156) The own-field declarations of a SIMPLE class chain, base class first,
+ * each class's parameter properties before its fields — or `undefined` when the
+ * chain is not simple. Simple means: every class is a plain class declaration
+ * (no interface/namespace merge), the chain ends at no base (not a builtin,
+ * mixin or other non-class), every member is one `simpleMemberKind`
+ * understands, and no name is a field in one class and a method/accessor in
+ * another (a base field under a derived getter is still own at runtime).
+ */
+function simpleChainFieldDeclarations(checker: ts.TypeChecker, t: ts.Type): ts.Declaration[] | undefined {
+  const perClass: ts.Declaration[][] = [];
+  const kindOf = new Map<string, "field" | "other">();
+  let cur: ts.Type | undefined = t;
+  for (let depth = 0; cur; depth++) {
+    const target = classTargetOf(cur);
+    const decls = target?.symbol?.declarations ?? [];
+    const decl = decls[0];
+    if (!target || depth >= 32 || decls.length !== 1 || !decl || !ts.isClassLike(decl)) return undefined;
+    const fields: ts.Declaration[] = [];
+    const params: ts.Declaration[] = [];
+    for (const member of decl.members) {
+      const kind = simpleMemberKind(checker, member);
+      if (kind === undefined) return undefined;
+      if (kind === "static") continue;
+      if (ts.isConstructorDeclaration(member) && member.body) {
+        for (const param of member.parameters) if (ts.isParameterPropertyDeclaration(param, member)) params.push(param);
+      }
+      if (kind === "field") fields.push(member);
+      if (!member.name || ts.isConstructorDeclaration(member)) continue;
+      const key = simpleMemberKey(checker, member.name)!;
+      if (kindOf.get(key) !== undefined && kindOf.get(key) !== kind) return undefined;
+      kindOf.set(key, kind);
+    }
+    for (const param of params as ts.ParameterDeclaration[]) {
+      const key = simpleMemberKey(checker, param.name);
+      if (key === undefined) return undefined;
+      if (kindOf.get(key) === "other") return undefined;
+      kindOf.set(key, "field");
+    }
+    perClass.unshift([...params, ...fields]);
+    cur = checker.getBaseTypes(target)[0];
+  }
+  return perClass.flat();
+}
+
+/**
+ * (#7156) Static for-in keys of a checker type. A class instance whose whole
+ * chain is simple (`simpleChainFieldDeclarations`) enumerates exactly its own
+ * fields — parameter properties, then fields, base class first, a redeclared
+ * field keeping the base position; methods, accessors, statics and `#private`
+ * names are dropped, and names come from the checker's symbols so computed
+ * literal keys keep their place. ANY other type, or a class chain with a member
+ * that is not understood, keeps the checker's property list and order, exactly
+ * as before #7156.
  */
 function forInKeysOfType(checker: ts.TypeChecker, type: ts.Type): readonly string[] {
   const t = type.getNonNullableType();
   const props = t.getProperties();
-  if (!classTargetOf(t)) return props.map((p) => p.name);
-  const own = props
-    .filter((p) => !(p.declarations?.length && p.declarations.every(isCertainlyNotOwn)))
-    .map((p) => p.name);
-  // Walk the class chain derived → base, mapping each member declaration to its
-  // checker name (computed keys resolved) and collecting each class's order.
+  const checkerKeys = props.map((p) => p.name);
+  if (!classTargetOf(t)) return checkerKeys;
+  const fieldDecls = simpleChainFieldDeclarations(checker, t);
+  if (!fieldDecls) return checkerKeys;
+  const fieldDeclSet = new Set<ts.Declaration>(fieldDecls);
+  // Every checker property must be fully explained by the chain's members: a
+  // field (kept) or a member that is not own (dropped). Anything else — a JS
+  // `this.x = …` assignment, a lib member — keeps the checker's list.
   const nameOfDecl = new Map<ts.Declaration, string>();
-  const chain: ts.ClassLikeDeclaration[] = [];
-  for (let cur: ts.Type | undefined = t; cur && chain.length < 32; ) {
+  for (const p of props) {
+    for (const d of p.declarations ?? []) nameOfDecl.set(d, p.name);
+  }
+  for (let cur: ts.Type | undefined = t; cur; ) {
     const target = classTargetOf(cur);
-    const decl = target?.symbol?.declarations?.find(ts.isClassLike);
-    if (!target || !decl) break;
+    if (!target) break;
     for (const p of cur.getProperties()) for (const d of p.declarations ?? []) nameOfDecl.set(d, p.name);
-    chain.unshift(decl);
     cur = checker.getBaseTypes(target)[0];
   }
   const ordered: string[] = [];
-  for (const decl of chain.flatMap(classFieldDeclarationsInOrder)) {
-    const name = nameOfDecl.get(decl);
-    if (name !== undefined && own.includes(name) && !ordered.includes(name)) ordered.push(name);
+  for (const d of fieldDecls) {
+    const name = nameOfDecl.get(d);
+    if (name === undefined || name.startsWith("__@")) return checkerKeys;
+    if (!ordered.includes(name)) ordered.push(name);
   }
-  for (const name of own) if (!ordered.includes(name)) ordered.push(name);
+  for (const p of props) {
+    const decls = p.declarations ?? [];
+    if (decls.length === 0) return checkerKeys;
+    const isField = decls.some((d) => fieldDeclSet.has(d));
+    if (isField !== ordered.includes(p.name)) return checkerKeys;
+    if (!isField && !decls.every((d) => ts.isClassElement(d) || ts.isParameter(d))) return checkerKeys;
+  }
+  if (!ordered.every((name) => checkerKeys.includes(name))) return checkerKeys;
   return ordered;
 }
 
