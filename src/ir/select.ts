@@ -764,7 +764,9 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "host-dynamic-method-call"
       | "native-own-property-descriptor"
       | "native-number-conversion"
-      | "prepared-dynamic-helper-abi",
+      | "prepared-dynamic-helper-abi"
+      | "native-dynamic-member-read"
+      | "planned-closure-direct-call",
   ) => boolean;
   /**
    * #3787 exact global String-constructor identity. This is separate from the
@@ -7175,6 +7177,10 @@ function isPhase1ClosureLiteral(
     declaredFamily: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
     preparedDynamicHelpers:
       currentSelectionOptions?.supportsBackendCapability?.("prepared-dynamic-helper-abi") === true,
+    nativeDynamicMemberRead:
+      currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-member-read") === true,
+    directCalls: currentSelectionOptions?.supportsBackendCapability?.("planned-closure-direct-call") === true,
+    isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
   });
   return refusal === null || capabilityNo("operand-coercion-unsupported", refusal.arm, refusal.node);
 }

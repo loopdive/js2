@@ -22,7 +22,10 @@ import type { IrDeclaredPrimitiveExpressionFamily } from "./module-bindings.js";
 import {
   additiveOperandsProvable,
   binaryOperandsAdmissible,
+  carrierHelperCall,
   carrierHelperOperator,
+  carrierMethodCallAdmissible,
+  carrierMemberReadAdmissible,
   compoundWriteAdmissible,
   conditionalJoinFamily,
   dynamicCallArgumentAdmissible,
@@ -53,6 +56,12 @@ export interface PlannedClosureFamilySources {
   readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
   /** (#7113) The lane binds the carrier's loose-equality / `in` helpers in a prepared component. */
   readonly preparedDynamicHelpers?: boolean;
+  /** (#7113, #7177) The lane's dynamic member read handles string and vec receivers. */
+  readonly nativeDynamicMemberRead?: boolean;
+  /** (#7113) The lane plans a direct call to a module function from a planned closure. */
+  readonly directCalls?: boolean;
+  /** (#7113) `undefined` here is the global (no module or enclosing binding shadows it). */
+  readonly isGlobalUndefined?: (expr: ts.Expression) => boolean;
 }
 
 /** The refused operator / write; selection reports it as `operand-coercion-unsupported`. */
@@ -95,6 +104,30 @@ function nullIsComparedOperand(node: ts.Node): boolean {
   const parent = node.parent;
   if (!ts.isBinaryExpression(parent) || !isEqualityOperator(parent.operatorToken.kind)) return false;
   return parent.left === node || parent.right === node;
+}
+
+/**
+ * (#7113) Does the module declare `name` at top level — as a function only,
+ * or (`functionsOnly` false) as any binding (function, class, variable,
+ * import)? Syntactic: the module scope is what shadows a global.
+ */
+function moduleDeclares(file: ts.SourceFile, name: string, functionsOnly: boolean): boolean {
+  return file.statements.some((statement) => {
+    if (ts.isFunctionDeclaration(statement)) return statement.name?.text === name;
+    if (functionsOnly) return false;
+    if (ts.isClassDeclaration(statement)) return statement.name?.text === name;
+    if (ts.isVariableStatement(statement)) {
+      return statement.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name);
+    }
+    const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+    if (clause === undefined) return false;
+    if (clause.name?.text === name) return true;
+    const bindings = clause.namedBindings;
+    if (bindings === undefined) return false;
+    return ts.isNamespaceImport(bindings)
+      ? bindings.name.text === name
+      : bindings.elements.some((element) => element.name.text === name);
+  });
 }
 
 /** Is `comma` the `for` incrementor, or one of its clauses? */
@@ -225,6 +258,8 @@ export function plannedClosureOperandRefusal(
     forEachChild(node, collect);
   };
   if (fn.body) collect(fn.body);
+  const isGlobalUndefined = (expr: ts.Expression): boolean =>
+    !moduleDeclares(fn.getSourceFile(), "undefined", false) && sources.isGlobalUndefined?.(expr) !== false;
   const parameterNames = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
   const isClosureSlot = (name: string): boolean => locals.has(name) || parameterNames.has(name);
 
@@ -267,7 +302,9 @@ export function plannedClosureOperandRefusal(
     if (ts.isIdentifier(expr) && isClosureSlot(expr.text)) return slotProof(expr.text);
     // (#7113) The unshadowed global `undefined` lowers to the carrier's
     // `dyn.undefined` on the host-free lanes that mint a plan.
-    if (ts.isIdentifier(expr) && expr.text === "undefined") return { family: "dynamic", additive: "unprovable" };
+    if (ts.isIdentifier(expr) && expr.text === "undefined" && isGlobalUndefined(expr)) {
+      return { family: "dynamic", additive: "unprovable" };
+    }
     if (ts.isArrayLiteralExpression(expr)) {
       const numeric = expr.elements.every((element) => operandProof(element).family === "number");
       return { family: numeric ? "vec<number>" : "vec<other>", additive: "unprovable" };
@@ -432,15 +469,85 @@ export function plannedClosureOperandRefusal(
       : { arm: "closure-binary-operands", node: expr };
   };
 
-  // (#7113) A call through the carrier boxes every argument.
+  // (#7113, #7177) A shape main never planned — a closure that mints a joined
+  // carrier (`var r = m ? m : 1`) or a throw-only body (the void plan of an
+  // oracle-`never` return). The carrier reads / calls with a known IR bug are
+  // kept out of these new claims; the closures main already claims keep their
+  // behaviour until #7177 lands.
+  let newShape: boolean | undefined;
+  const isNewShape = (): boolean => {
+    if (newShape !== undefined) return newShape;
+    const body = fn.body;
+    const walk = (node: ts.Node, hit: (n: ts.Node) => boolean): boolean =>
+      !(node !== fn && ts.isFunctionLike(node)) && (hit(node) || forEachChild(node, (c) => walk(c, hit)) === true);
+    const mintsJoin = body !== undefined && walk(body, (n) => ts.isConditionalExpression(n) && joinsOnCarrier(n));
+    const statements = body !== undefined && ts.isBlock(body) ? body.statements : undefined;
+    const throwOnly =
+      statements !== undefined &&
+      statements.length > 0 &&
+      ts.isThrowStatement(statements[statements.length - 1]!) &&
+      !walk(body!, ts.isReturnStatement);
+    newShape = mintsJoin || throwOnly;
+    return newShape;
+  };
+
+  // (#7113) A call through the carrier boxes every argument; `String(carrier)`
+  // and a direct call to a module function need lane support.
   const callRefusal = (expr: ts.CallExpression): PlannedClosureOperandRefusal | null => {
     const callee = unwrapParens(expr.expression);
+    if (
+      ts.isPropertyAccessExpression(callee) &&
+      !carrierMethodCallAdmissible(operandProof(callee.expression).family) &&
+      isNewShape()
+    ) {
+      return { arm: "closure-carrier-method-call", node: expr };
+    }
+    if (ts.isIdentifier(callee) && !isClosureSlot(callee.text)) {
+      const first = expr.arguments[0];
+      if (
+        !sources.preparedDynamicHelpers &&
+        first &&
+        carrierHelperCall(callee.text, operandProof(first).family) &&
+        isNewShape()
+      ) {
+        return { arm: "closure-carrier-helper-call", node: expr };
+      }
+      if (!sources.directCalls && moduleDeclares(fn.getSourceFile(), callee.text, true)) {
+        return { arm: "closure-direct-call", node: expr };
+      }
+    }
     const throughCarrier = ts.isPropertyAccessExpression(callee)
       ? operandProof(callee.expression).family === "dynamic"
       : ts.isIdentifier(callee) && parameterNames.has(callee.text) && slotProof(callee.text).family === "dynamic";
     if (!throughCarrier) return null;
     const argument = expr.arguments.find((arg) => !dynamicCallArgumentAdmissible(operandProof(arg).family));
     return argument === undefined ? null : { arm: "closure-dynamic-call-argument", node: argument };
+  };
+
+  // (#7113, #7177) A member / element read of the carrier (not a store
+  // target, an update operand or a method callee — those have their own arms),
+  // judged in a new shape only (`isNewShape`).
+  const memberReadRefusal = (
+    expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  ): PlannedClosureOperandRefusal | null => {
+    let child: ts.Node = expr;
+    while (ts.isParenthesizedExpression(child.parent)) child = child.parent;
+    const parent = child.parent;
+    if (ts.isCallExpression(parent) && parent.expression === child) return null;
+    if (ts.isBinaryExpression(parent) && parent.left === child && isAssignmentOperator(parent.operatorToken.kind)) {
+      return null;
+    }
+    if (ts.isDeleteExpression(parent)) return null;
+    if (
+      (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      return null;
+    }
+    const property = ts.isPropertyAccessExpression(expr) ? expr.name.text : null;
+    const receiver = operandProof(expr.expression).family;
+    if (carrierMemberReadAdmissible(receiver, property, sources.nativeDynamicMemberRead === true)) return null;
+    return isNewShape() ? { arm: "closure-carrier-member-read", node: expr } : null;
   };
 
   const updateRefusal = (
@@ -471,7 +578,9 @@ export function plannedClosureOperandRefusal(
     if (refusal !== null || (node !== fn && ts.isFunctionLike(node))) return;
     if (ts.isBinaryExpression(node)) refusal = binaryRefusal(node);
     else if (ts.isCallExpression(node)) refusal = callRefusal(node);
-    else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) refusal = updateRefusal(node);
+    else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      refusal = memberReadRefusal(node);
+    } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) refusal = updateRefusal(node);
     else if (node.kind === ts.SyntaxKind.NullKeyword && !nullIsComparedOperand(node)) {
       refusal = nullValueAdmissible(nullConsumerFamily(node)) ? null : { arm: "closure-null-value", node };
     } else if (ts.isVoidExpression(node) && !voidValueConsumerAdmissible(node, isClosureSlot, joinsOnCarrier)) {

@@ -390,6 +390,45 @@ export function carrierHelperOperator(op: ts.SyntaxKind, left: OperandFamily, ri
 }
 
 /**
+ * (#7113, #7177) A member READ on the boxed-any carrier (`r.length`, `r[i]`,
+ * `r.x`; `property` is `null` for an element read). An element read never
+ * throws on a `null` / `undefined` receiver (`m[k]` with `m === null` answers
+ * a value), and WASI's dynamic read has no string or vec receiver arm, so its
+ * `.length` / `[i]` answer `undefined`. A named property other than `length`
+ * reads correctly on every lane. `nativeMemberRead` is the lane's
+ * `native-dynamic-member-read` capability.
+ */
+export function carrierMemberReadAdmissible(
+  receiver: OperandFamily,
+  property: string | null,
+  nativeMemberRead: boolean,
+): boolean {
+  if (receiver !== "dynamic") return true;
+  if (property === null) return false;
+  return nativeMemberRead || property !== "length";
+}
+
+/**
+ * (#7113, #7177) A method call `v.m(…)` on the boxed-any carrier: the IR
+ * dynamic method call answers a value when `v` is `null` / `undefined` or has
+ * no callable `m`, where JS throws a TypeError (`m.g()` on `null` or on an
+ * array, standalone and WASI alike).
+ */
+export function carrierMethodCallAdmissible(receiver: OperandFamily): boolean {
+  return receiver !== "dynamic";
+}
+
+/**
+ * (#7113) `String(v)` over the carrier calls a dynamic-runtime helper that a
+ * prepared component binds by Program ABI identity, like
+ * {@link carrierHelperOperator}: standalone and native gc withdraw it at
+ * preparation (`late-preparation-unsupported`).
+ */
+export function carrierHelperCall(callee: string, argument: OperandFamily): boolean {
+  return callee === "String" && argument === "dynamic";
+}
+
+/**
  * (#7113) A property or element store `recv.p = v` / `recv[i] = v`: from-ast
  * has no store on the boxed-any carrier (`lowerPropertyAssignment` ends in
  * "property assignment on dynamic is not in slice 4", `lowerElementStore`

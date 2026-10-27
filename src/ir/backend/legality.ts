@@ -34,7 +34,9 @@ export type IrBackendTargetCapability =
   | "host-dynamic-method-call"
   | "native-own-property-descriptor"
   | "native-number-conversion"
-  | "prepared-dynamic-helper-abi";
+  | "prepared-dynamic-helper-abi"
+  | "native-dynamic-member-read"
+  | "planned-closure-direct-call";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -141,6 +143,16 @@ export function supportsIrBackendTargetCapability(
       // methods only and answers `undefined` for primitive / vec / Map / …
       // receivers, where legacy dispatches by brand.
       return profile.backend === "wasmgc" && profile.allowHostImports;
+    case "native-dynamic-member-read":
+    // (#7113, #7177) A property / element read on the boxed-any carrier in
+    // a planned member closure. WASI's IR read has no string or vec
+    // receiver arm and answers `undefined` (`.length`, `[i]`), so only the
+    // standalone regime (native gc projects as standalone) is admitted.
+    case "planned-closure-direct-call":
+      // (#7113) A direct call to a module function from a planned member
+      // closure: WASI mints no AST-site call plan for it and withdraws
+      // ("direct call … has no exact AST-site plan").
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
     case "prepared-dynamic-helper-abi":
       // (#7113) A planned member closure inside a prepared `<module-init>`
       // component binds the carrier's loose-equality / `in` helpers by

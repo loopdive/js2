@@ -16,8 +16,10 @@
 // predicates (`operand-coercion-unsupported`); the representation rules that
 // carry no operand family stay shape refusals (`body-shape-rejected`).
 
+import { WASI } from "node:wasi";
 import { describe, expect, it } from "vitest";
 import { compile, type CompileResult } from "../src/index.js";
+import { buildImports, instantiateWasm, wrapCompiledExports } from "../src/runtime.js";
 
 const OPTIONS = {
   target: "standalone",
@@ -644,4 +646,150 @@ export function run() { var n = 0; ${calls} return n; }`;
     },
     60_000,
   );
+
+  // (#7113 round 12) Every lane, executed, with array and string inputs.
+  type Lane = "standalone" | "wasi" | "gc";
+  const ALL_LANES: readonly Lane[] = ["standalone", "wasi", "gc"];
+
+  async function runOnLane(result: CompileResult, lane: Lane): Promise<number> {
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    if (lane === "gc") {
+      const runtime = buildImports(result.imports ?? [], undefined, result.stringPool);
+      const { instance } = await instantiateWasm(
+        result.binary,
+        runtime.env,
+        runtime.string_constants,
+        runtime.string_constants16,
+      );
+      runtime.setInstance?.(instance);
+      (instance.exports.__module_init as (() => void) | undefined)?.();
+      const exports = wrapCompiledExports(result, instance) as { run: () => number };
+      return exports.run();
+    }
+    const wasi = lane === "wasi" ? new WASI({ version: "preview1", args: [], env: {} }) : undefined;
+    const module = await WebAssembly.compile(result.binary);
+    const instance = await WebAssembly.instantiate(module, (wasi?.getImportObject() ?? {}) as WebAssembly.Imports);
+    if (wasi) {
+      try {
+        wasi.initialize(instance);
+      } catch {
+        // A module without `_initialize` needs no WASI start-up.
+      }
+    }
+    (instance.exports.__module_init as (() => void) | undefined)?.();
+    return (instance.exports.run as () => number)();
+  }
+
+  function initRow(result: CompileResult) {
+    const rows = (result.irOutcomes ?? []).filter((entry) => entry.displayName === "<module-init>");
+    expect(rows).toHaveLength(1);
+    expect((result.irPostClaimErrors ?? []).filter((error) => error.func !== "run")).toEqual([]);
+    return rows[0]!;
+  }
+
+  const ENCODE = `(typeof e === "number" ? e : typeof e === "string" ? 100 + e.length : e === undefined ? -3 : -2)`;
+  const program = (body: string, inputs: readonly string[], pre = "") =>
+    `${pre}/** @returns {number} */ function subject() { return 0; }
+subject.f = function (m, k) { if (k === 9) return; ${body} };
+export function run() { var n = 0; ${inputs
+      .map((args) => `try { subject.f(${args}); n = n * 31 + 7; } catch (e) { n = n * 31 + ${ENCODE}; }`)
+      .join(" ")} return n; }`;
+
+  const ARRAYS = [`[1, 2], 0`, `[7, 8, 9], 0`, `0, 0`];
+  const STRINGS = [`"ab", 0`, `"xyz", 0`, `0, 0`];
+
+  it("reads `.length` of the joined carrier on standalone and gc, and falls back to legacy on wasi (#7177)", async () => {
+    for (const inputs of [ARRAYS, STRINGS]) {
+      const source = program(`var r = m ? m : 1; throw r.length;`, inputs);
+      for (const lane of ALL_LANES) {
+        const result = await compile(source, { ...OPTIONS, target: lane });
+        const row = initRow(result);
+        if (lane === "wasi") {
+          expect(row).toMatchObject({ irBodyEmitted: false, stage: "select", code: "operand-coercion-unsupported" });
+          // Legacy wasi reads a string's `.length` wrong as well (#7177); arrays agree with node.
+          if (inputs === ARRAYS) expect(await runOnLane(result, lane)).toBe(node(source));
+        } else {
+          expect(row).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
+          expect(await runOnLane(result, lane)).toBe(node(source));
+        }
+      }
+    }
+  }, 90_000);
+
+  it.each([
+    ["of the joined carrier", `var r = m ? m : 1; throw r[1];`, [...ARRAYS, ...STRINGS]],
+    // `m[k]` on a null receiver must throw; the IR element read answers a value.
+    [
+      "of the parameter beside a joined carrier",
+      `var r = m ? m : 1; var t = m[k]; throw r;`,
+      [`null, 0`, `[1, 2], 0`, `"ab", 1`],
+    ],
+  ])(
+    "refuses an element read %s at select on every lane",
+    async (_name, body, inputs) => {
+      const source = program(body, inputs);
+      for (const lane of ALL_LANES) {
+        const result = await compile(source, { ...OPTIONS, target: lane });
+        expect(initRow(result)).toMatchObject({
+          irBodyEmitted: false,
+          stage: "select",
+          code: "operand-coercion-unsupported",
+        });
+        if (lane !== "wasi") expect(await runOnLane(result, lane)).toBe(node(source));
+      }
+    },
+    90_000,
+  );
+
+  it("keeps carrier method calls and wasi `.length` out of a throw-only closure", async () => {
+    // A throw-only body is a shape this PR newly plans (#7177): `m.g()` on null must throw (legacy
+    // answers an array wrong too, so that input is left to #7177).
+    const call = program(`if (m.g() === null) throw "n"; throw m;`, [
+      `null, 0`,
+      `{ g: function () { return 1; } }, 0`,
+    ]).replace("if (k === 9) return; ", "");
+    const length = program(`throw m.length;`, [...ARRAYS, ...STRINGS]).replace("if (k === 9) return; ", "");
+    for (const lane of ALL_LANES) {
+      const refused = await compile(call, { ...OPTIONS, target: lane });
+      expect(initRow(refused)).toMatchObject({ irBodyEmitted: false, stage: "select" });
+      if (lane !== "wasi") expect(await runOnLane(refused, lane)).toBe(node(call));
+      const read = await compile(length, { ...OPTIONS, target: lane });
+      expect(initRow(read).irBodyEmitted).toBe(lane !== "wasi");
+      if (lane !== "wasi") expect(await runOnLane(read, lane)).toBe(node(length));
+    }
+  }, 90_000);
+
+  it("refuses `String(<carrier>)` at select on standalone and gc", async () => {
+    const source = program(`var r = m ? m : 1; throw String(r);`, [...ARRAYS, ...STRINGS]);
+    for (const lane of ["standalone", "gc"] as const) {
+      const result = await compile(source, { ...OPTIONS, target: lane });
+      expect(initRow(result)).toMatchObject({
+        irBodyEmitted: false,
+        stage: "select",
+        code: "operand-coercion-unsupported",
+      });
+      expect(await runOnLane(result, lane)).toBe(node(source));
+    }
+  }, 60_000);
+
+  it("refuses a direct call to a module function on wasi only", async () => {
+    const source = program(`var r = m ? m : 1; subject(); throw r;`, [...ARRAYS, ...STRINGS]);
+    for (const lane of ALL_LANES) {
+      const result = await compile(source, { ...OPTIONS, target: lane });
+      expect(initRow(result).irBodyEmitted).toBe(lane !== "wasi");
+      expect(await runOnLane(result, lane)).toBe(node(source));
+    }
+  }, 60_000);
+
+  it("does not read a module-shadowed `undefined` as the global", async () => {
+    const source = program(
+      `var r = m ? m : 1; r += undefined; throw r;`,
+      ARRAYS,
+      `function undefined() { return 1; }\n`,
+    );
+    for (const lane of ALL_LANES) {
+      const result = await compile(source, { ...OPTIONS, target: lane });
+      expect(initRow(result)).toMatchObject({ irBodyEmitted: false, stage: "select" });
+    }
+  }, 60_000);
 });

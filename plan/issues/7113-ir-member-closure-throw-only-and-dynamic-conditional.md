@@ -4,7 +4,7 @@ title: "IR: throw-only member closures (void plan) and dynamic-arm conditional v
 status: in-review
 sprint: current
 created: 2026-10-21
-updated: 2026-10-26
+updated: 2026-10-27
 priority: high
 horizon: s
 feasibility: hard
@@ -28,8 +28,13 @@ assignee: "ttraenkler/session-d"
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/select.ts
+# 2026-10-27 (#7113 round 12): the shared closure walk takes the wasi
+# member-read, `String(carrier)`, direct-call and shadowed-`undefined` arms
+# (review findings A, C, D, class P); they need the walk's own operand proofs,
+# so they stay inside `plannedClosureOperandRefusal` (337 lines).
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 ---
 
 # IR: throw-only member closures, dynamic-arm conditionals
