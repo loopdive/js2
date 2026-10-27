@@ -13,9 +13,11 @@
  * The arm tests the same `$__vec_base` predicate the `__object_keys` /
  * `__object_keys_forin` vec arm uses, then for `i` in `0 … length-1` asks the
  * `HasProperty` chokepoint `__extern_has_idx` (holes and deleted indices answer
- * false and are skipped), and copies `Set(to, ToString(i), Get(from, i), true)`
- * through `__extern_set_strict` — the write the `$Object` arm uses, so the
- * #7148 key order (integer keys ascending first) is the target's own.
+ * false and are skipped), and copies `Set(to, i, Get(from, i), true)` through
+ * `__extern_set_strict` — the write the `$Object` arm uses; its ToPropertyKey
+ * yields the canonical `"i"`, so the #7148 key order (integer keys ascending
+ * first) is the target's own. Holes are skipped only where `__extern_has_idx`
+ * models them (gc native-first / standalone; wasi's lacks the hole arms).
  *
  * Emitted inside `__object_assign`'s per-source loop, whose local layout is
  * {@link ASSIGN_LOCALS}; it reuses the closed-struct arm's scratch locals
@@ -23,7 +25,25 @@
  * re-initializes them. Returns `[]` (byte-inert) when a dependency is absent.
  */
 import type { Instr } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+
+function isArrayFact(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const kind = ctx.oracle.typeFactOf(expr).kind;
+  return kind === "array" || kind === "tuple";
+}
+
+/**
+ * `Object.assign(<non-array>, …, <array>, …)`: lib.es2015 types the result
+ * `T & U[]`, so an unannotated binding would take an array slot, but the call
+ * returns the (non-array) target. `call` is the ambient `Object.assign` call.
+ */
+export function objectAssignArraySourceLies(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  if (!(ctx.standalone || ctx.wasi)) return false;
+  const [target, ...sources] = call.arguments;
+  if (target === undefined || ts.isSpreadElement(target) || isArrayFact(ctx, target)) return false;
+  return sources.some((arg) => !ts.isSpreadElement(arg) && isArrayFact(ctx, arg));
+}
 
 /** `__object_assign`'s locals: 0=target, 6=srcAny, 12=srcExt, 14/15/16=closed-struct scratch. */
 const ASSIGN_LOCALS = { target: 0, sourceAny: 6, source: 12, count: 14, index: 15, key: 16 } as const;
@@ -31,13 +51,13 @@ const ASSIGN_LOCALS = { target: 0, sourceAny: 6, source: 12, count: 14, index: 1
 export function arrayAssignSourceInstrs(ctx: CodegenContext, vecBaseTypeIdx: number): Instr[] {
   const hasIdxIdx = ctx.funcMap.get("__extern_has_idx");
   const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
-  const numToStringIdx = ctx.funcMap.get("number_toString");
+  const boxNumberIdx = ctx.funcMap.get("__box_number");
   const strictSetIdx = ctx.funcMap.get("__extern_set_strict");
   if (
     vecBaseTypeIdx < 0 ||
     hasIdxIdx === undefined ||
     getIdxIdx === undefined ||
-    numToStringIdx === undefined ||
+    boxNumberIdx === undefined ||
     strictSetIdx === undefined
   ) {
     return [];
@@ -77,10 +97,10 @@ export function arrayAssignSourceInstrs(ctx: CodegenContext, vecBaseTypeIdx: num
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
-                    // key = ToString(i)
+                    // key = i; `__extern_set_strict`'s ToPropertyKey makes it "i"
                     { op: "local.get", index: index },
                     { op: "f64.convert_i32_s" },
-                    { op: "call", funcIdx: numToStringIdx },
+                    { op: "call", funcIdx: boxNumberIdx },
                     { op: "local.set", index: key },
                     // Set(to, key, Get(from, i), true)
                     { op: "local.get", index: target },
