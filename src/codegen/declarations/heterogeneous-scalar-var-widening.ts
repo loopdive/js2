@@ -224,7 +224,8 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
  * (#4495) {@link moduleGlobalIsDynamicButStaticallyPrimitive}, plus its
  * function-local twin: a local the mixed-assignment analysis demoted to an
  * externref slot keeps its initializer's checker type just the same, so a
- * static `typeof x` fold would report that type forever.
+ * static `typeof x` fold would report that type forever. A local a closure
+ * writes lives in a ref cell; its slot is the cell's value type.
  */
 export function slotIsDynamicButStaticallyPrimitive(
   ctx: CodegenContext,
@@ -232,7 +233,10 @@ export function slotIsDynamicButStaticallyPrimitive(
   id: ts.Identifier,
 ): boolean {
   const localIdx = fctx.mixedAssignmentCarrierVars?.has(id.text) ? fctx.localMap.get(id.text) : undefined;
-  if (localIdx !== undefined && getLocalType(fctx, localIdx)?.kind === "externref") return true;
+  if (localIdx !== undefined) {
+    const slotType = fctx.boxedCaptures?.get(id.text)?.valType ?? getLocalType(fctx, localIdx);
+    if (slotType?.kind === "externref") return true;
+  }
   return moduleGlobalIsDynamicButStaticallyPrimitive(ctx, id);
 }
 
