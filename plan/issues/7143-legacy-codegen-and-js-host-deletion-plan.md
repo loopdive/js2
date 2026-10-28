@@ -363,3 +363,21 @@ exit 1. The unchanged tree passes with exit 0.
 post-merge sync (`baseline-summary-sync.yml`). The PR-path gate does not read
 it, so only `--all` can go stale. Wiring `--update-on-decrease` into that sync
 is a one-line follow-up for whoever owns it.
+
+**Refinement (2026-10-28): tokens match whole words.** The first cut matched
+`ctx.wasi` / `ctx.standalone` as substrings, so a provider-state field read
+(`ctx.wasiFdWriteIdx`, `ctx.standaloneGlobalThisImport`) counted as an arm. On
+main `f3b5b1a00f` that is 95 `ctx.wasi…` and 46 `ctx.standalone…` field lines:
+
+| token | substring | whole word |
+| --- | --- | --- |
+| `ctx.standalone` | 1,685 | 1,639 |
+| `!ctx.standalone` | 590 | 584 |
+| `ctx.wasi` | 953 | 858 |
+
+The over-match failed #7136's native console helper, which selects its sink by
+the registered `fd_write` provider rather than by `ctx.wasi`. That is the
+capability form #6708 asks for, and it was being punished, which pushes
+authors toward dodging the regex. The committed baseline keeps the substring
+counts; `--all` only reports decreases against it, so it cannot false-fail.
+Re-measure with `node scripts/check-standalone-arms.mjs --all`.
