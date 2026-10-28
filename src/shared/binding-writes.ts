@@ -16,7 +16,7 @@
  *   A string-initialised binding written by `[x] = [f()]` kept its native-string
  *   slot, whose coercion answers `null` for a non-string by design, and the
  *   next `'' + x` trapped. The oracle half of that answer is
- *   `identifierWriteTag` in `checker/oracle.ts`.
+ *   `identifierWriteFact` / `identifierWriteTag` in `checker/oracle.ts`.
  *
  * Both questions are answered by {@link identifierWritesOf}, so the scans
  * cannot disagree on what a write is. Pure AST: no checker, no CodegenContext —

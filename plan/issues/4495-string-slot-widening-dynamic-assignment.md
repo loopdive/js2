@@ -17,13 +17,12 @@ goal: standalone
 related: [4206, 4205, 4500]
 architect_spec: required
 loc-budget-allow:
-  # 2026-10-28 (#4495): +7 lines. Route 2 of the numeric-local proof
-  # (collectNumericFlowFacts) must see destructuring-assignment targets, or it
-  # "proves" `let a: number | null = 5; [a = 99] = [null]` numeric from the
-  # default alone and narrows the slot to f64 (measured: `a === null` → false).
-  # The branch must live in that walk; the write enumeration itself is in the
-  # new src/shared/identifier-writes.ts.
-  - src/codegen/numeric-property-analysis.ts
+  # 2026-10-28 (#4495 review round 1): +1 line — the import of the new
+  # src/codegen/destructuring-source-literal.ts. The two call sites are
+  # one-for-one line swaps; every line of logic lives in the new module. (The
+  # earlier +7 grant for numeric-property-analysis.ts is gone: that file now
+  # shrinks by 20 lines, its private write walk replaced by the shared one.)
+  - src/codegen/literals.ts
 ---
 
 # Standalone: dynamic value assigned into a native-string slot becomes NULL
@@ -317,6 +316,10 @@ rows, each a different mechanism and all outside slot typing — see
 
 ### What changed
 
+> Superseded in part by *Review round 1* below: `identifier-writes.ts` was
+> merged into `src/shared/binding-writes.ts`, and `numeric-property-analysis.ts`
+> now takes every store from that shared enumerator instead of a private branch.
+
 - **`src/shared/identifier-writes.ts` (new)** — `identifierWritesOf(node)`: every
   store one AST node performs into a bare identifier (plain and logical
   assignment, array/object destructuring assignment, for-of targets, `++`/`--`,
@@ -429,7 +432,7 @@ pass `--allow-unscanned`. Each is a separate mechanism:
    initializer. Same root for a call argument (`g(r)` with
    `function g(a){ return '' + a }` answers `"null"`) and for a function's
    inferred return type (`return r` → string result). 4/4 cells, both lanes.
-2. **Destructuring-assignment RHS object literal typed from the pattern.**
+2. **(Fixed in review round 1, finding 6.)** **Destructuring-assignment RHS object literal typed from the pattern.**
    `({ a: r } = { a: id(1) })` (or `{ a: 5 }`) stores `undefined`: the RHS
    literal is compiled against the pattern's contextual type `{ a: string }`,
    so the value is lost before it reaches the (now correctly widened) slot.
@@ -443,3 +446,279 @@ pass `--allow-unscanned`. Each is a separate mechanism:
 
 Also seen, pre-existing and identical on base: `[a = 99] = [null]` fires the
 default (array-pattern default treats `null` as `undefined`).
+
+## Review round 1 (opus, 2026-10-28)
+
+Fresh-context adversarial review of `b7701d9c83` (PR #6954, review comment
+6474478996): REQUEST CHANGES — 2 blocking findings, 5 nits. Every finding was
+reproduced before it was fixed, with node as the oracle, on standalone and gc,
+at module scope and in a function (`.tmp/probe.mts`). Base = `b6250f09f8`
+(`origin/main`), first head = `b7701d9c83`. A cell is one (scope × lane).
+
+| # | finding | outcome |
+|---|---|---|
+| 1 | a rest target splits an array local (BLOCKING regression) | fixed |
+| 2 | two write enumerators that disagree (BLOCKING) | fixed — one enumerator |
+| 3 | a nested pattern's default hides its non-literal source | fixed |
+| 4 | annotated function locals over-widened | fixed — an annotation covers every write TypeScript checked |
+| 5 | `typeof` / equality / closure-return stale types, captured locals | `typeof` fixed; equality and closure return are residuals |
+| 6 | a literal RHS loses its value silently | fixed — the literal is lowered against its own type |
+| 7 | optional fields + `!`, two `stripParens`, call-site `++`/`--` filter | fixed |
+
+### 1 — a rest target splits an array local (fixed)
+
+Two halves, both needed:
+
+- **Analysis.** A rest element is write kind `rest`, tag `object`: it always
+  stores a fresh Array or Object. `var y = [9]; if (c) [...y] = [1, 2]` keeps
+  its vec slot again, as on base.
+- **Codegen** (`expressions/assignment.ts`). The rest-identifier store now
+  resolves exactly like an element target: the binding's own local or module
+  global, coerced on store. The old code allocated a second, vec-typed `$y`
+  whenever the slot was `externref` and redirected the name (#962/#971), so
+  every read after a conditional or looped rest write saw the dead original.
+  At module scope it never looked up the module global at all and wrote a
+  fresh `__module_init` local — a base bug the first head inherited.
+
+| shape (`fn` / `mod`, both lanes) | base | first head | now |
+|---|---|---|---|
+| `var y = [9]; if (id(false)) [...y] = [1, 2]; y.length` | ok / trap | trap / trap | ok / ok |
+| looped rest into `var y = [9, 9]` | ok / wrong | wrong / wrong | ok / ok |
+| `var y; if (id(false)) [...y] = [1, 2]; typeof y` | wrong / wrong | wrong / wrong | ok / ok |
+| `var y = 's'; [...y] = [1, 2]; typeof y` | wrong / wrong | wrong / ok | ok / ok |
+| `var y = 's'; [...y] = [1, 2]; '' + y` | trap / ok | ok / ok | ok / ok |
+
+One shape moves the other way, and it is residual A below:
+`var y = 's'; [...y] = [1, 2]; y.length` was right on the first head in every
+cell and on base at module scope, and traps now in every cell. Those answers
+came from the shadow local itself — straight-line code read the fresh vec
+local. The store now lands in the binding's own, correctly widened slot, and
+`y.length` reads it through the stale checker type `string` and traps,
+exactly as `var y = 's'; y = id([1, 2]); y.length` traps in every cell on all
+three trees. Loud, not silent; the shadow local is what made the conditional
+and looped rows above wrong.
+
+### 2 — one write enumerator (fixed)
+
+`src/shared/identifier-writes.ts` is gone. `src/shared/binding-writes.ts` is
+the single enumerator, and both questions are projections of it:
+
+- `identifierWritesOf(node, { updates? })` names every store one node
+  performs, with what it stores: plain / logical / compound assignment (`+=`
+  as the `value` of the assignment itself, since the oracle answers its result
+  type; the numeric forms as `numeric`), destructuring (assignment AND binding
+  patterns), `++`/`--`, for-in heads (`key`, always a string), for-of heads
+  (`element`), through parentheses and TS wrappers (`as`, `!`, `satisfies`,
+  `<T>x`), and a `var` declarator with an initializer (a re-declaration is a
+  write; a caller that knows a binding's own declarator skips it).
+- `isLexicalBindingWrite` keeps its climb to the root write node and answers
+  `identifierWritesOf(root).some((w) => w.target === id)`;
+  `varDeclaratorWrittenNames` is the declarator projection.
+- `numeric-property-analysis.ts` lost its private branches and
+  `ALWAYS_NUMERIC_COMPOUND` (now the shared `isNumericCompoundAssignment`):
+  every non-declarator store comes from the enumerator. Its for-in/for-of
+  pattern heads now define their targets, so the reviewer's
+  `var a = 5; for ([a] of id([['x']])) {}` reads `typeof a === 'string'` in a
+  function (was `'number'`, value NaN). Net −20 lines in that file.
+- The module analysis passes `{ updates: false }` instead of filtering
+  `++`/`--` at its call site, and skips a declarator's own store.
+
+**Parity.** Old vs new `isLexicalBindingWrite` and `varDeclaratorWrittenNames`
+over every identifier / declaration of the source files in `src/`,
+`scripts/`, `tests/equivalence/`, the playground examples, and test262
+`language/`, `annexB/`, `built-ins/`, `staging/`, `harness/` (53,000 files,
+3.24 M identifiers, 319 k declarations; `.tmp/parity.mts`): **0** declarator
+differences and **4** identifier differences, all in the early-error syntax
+tests `language/statements/for/S12.6.3_A8*.js`, where
+`for (…; {index++; index*2;})` parses as `{index}++` and the old climb called
+that a write of `index`. `tests/binding-writes.test.ts` pins per-shape answers
+and the projections over nine shape families.
+
+The reviewer's examples now: `var n = 1; n += 'x'` → `'' + n` and `typeof n`
+right on 4/4 cells (4/4 wrong before); `var r = 'r'; var r = id(1)` right on
+4/4 (the function cells trapped); `var r = 1; for (var r in {a: 1}) {}`
+right on 4/4 (function cells wrong); `(r) = id(1)` at module scope right (it
+trapped on base). The module-scope for-in and for-of-pattern cells stay wrong,
+as on base, for a lowering reason — residual B.
+
+### 3 — a nested pattern's default (fixed)
+
+A nested pattern with a default now collects from its source element AND from
+its default. `var a = id([[1]]); [[r] = ['z']] = a; '' + r` is right on 4/4
+cells (trapped on base and first head); the default-taken twin stays right.
+
+### 4 — an annotation covers every write TypeScript checked (fixed, narrower than proposed)
+
+For a declaration with an explicit TypeScript annotation,
+`bindingHasMixedAssignmentCarrier` now counts every write whose value
+TypeScript checked against that annotation as storing the declared
+(initializer's) tag — the module analysis's rationale: a violation is user
+error under diagnostics-off compilation. A value typed `any` / `unknown` is
+unchecked and keeps its own verdict. The #2917 struct-identity check
+(`crossesUntypedObjectReturns`) is about representation, not type, and still
+runs. The new `identifierWriteFact` (`checker/oracle.ts`) names the fact of
+the value a write stores; `identifierWriteTag` is now its tag plus the three
+kinds whose tag needs no fact.
+
+| program (standalone) | base | first head | now |
+|---|---|---|---|
+| `let x: number = 0; let vals: number[][] = [[7]]; [[x]] = vals; return x` | 32,872 B | 91,919 B | **32,872 B**, sha-identical |
+| `let a: number \| null = 5; [a = 99] = [null]; return a === null ? 0 : (a as number)` (`issue-1550-dstr-init-skipped` #6) | 32,535 B | 92,093 B | **32,535 B**, sha-identical |
+| its object twin `({ a = 99 } = { a: null })` (#7) | 54,931 B | 92,630 B | **54,931 B**, sha-identical |
+
+**Why not the module analysis's whole rule** (skip every annotated
+declaration), as proposed: measured, it regresses. An `any` value is not
+checked against an annotation, so an annotated local assigned one must keep
+its carrier. With the whole rule, `tests/equivalence/issue-7154-any-array-share-sweep.test.ts`
+under `JS2WASM_FULL_SWEEP=1` fell from 754/754 (base) to 750/754:
+`let ys: any[] = []; const xs: any[] = (ys = o)` with `o: any` holding a
+typed vec stopped aliasing (four "init via nested =" rows, ok → wrong). A
+`let r: string` local assigned `id(1)` would null the value — this issue's
+own bug. With the checked-writes rule the sweep is 754/754 again and its test file
+is back to main's version. `tests/issue-4495.test.ts`
+pins both sides — the f64 slot, and `ys` still aliasing `o`.
+
+The first round's note on `[a = 99] = [null]` still holds: the slot stays
+externref (a nullable primitive), and route 2 sees the `null` through the
+shared enumerator.
+
+### 5 — stale types for captured locals (partly fixed)
+
+- **`typeof`, fixed.** A local a closure writes lives in a ref cell, so
+  `slotIsDynamicButStaticallyPrimitive` now reads the cell's value type, not
+  the local's. `var r = '5'; var g = () => { r -= 1 }; g(); typeof r` is
+  `'number'` on 4/4 cells (function cells wrong on base and first head).
+- **Equality, residual.** `var r = 'r'; [r] = [id(1)]; r == 1` traps with an
+  illegal cast on 4/4 cells on all three trees. A missing guard is not the
+  cause: even at module scope, where the #4264 guard exists, it lowers to
+  `__str_to_number(r) == 1` — the string-vs-number route, chosen from the
+  stale checker type `string` before that guard is consulted. Residual A.
+- **Closure return, residual.** `function () { return r }` over a captured
+  widened local still returns the checker's `string` (function cells wrong on
+  all three trees); the module twin is right since the first head. The fix
+  needs a declaration-keyed carrier verdict reachable from another function's
+  codegen. Residual A.
+
+### 6 — a literal RHS keeps its value (fixed)
+
+The value was lost before it reached the slot: a literal a destructuring
+pattern receives is contextually typed by the PATTERN, so `[r] = [1]` built a
+`[string]` tuple and stored `null` for the `1`. New
+`src/codegen/destructuring-source-literal.ts`: `literalContextualType` is the
+contextual type the array and object literal lowerers start from, and for
+such a source it answers none, so they fall back to the literal's own type.
+`literals.ts` changes by one import plus two one-for-one line swaps (and loses
+two raw `ctx.checker` calls). Kept narrow:
+
+- one decision per source tree, so the levels of a nested literal agree on
+  their struct types;
+- `null`/`undefined` values and pattern holes never count, so the `undefined`
+  sentinel a default relies on (#801 / #1024) keeps its contextual lowering;
+- a level the context lowers as a vec keeps it — a pattern with a rest
+  (`[r, ...rest] = [1, 2, 3]`): the literal's own type is a full-length tuple
+  and the rest lowering reads only a vec. (A first cut without this rule broke
+  `tests/equivalence/issue-6992-outer-write-shapes` "array rest target".)
+
+Right on 4/4 cells each, where base trapped and the first head answered
+`"null"`: `[r] = [1]`, `[[r]] = [[1]]`, `[, r] = ['a', 1]`,
+`[{ a: r }] = [{ a: 1 }]`, `({ r } = { r: 'a', r: 1 })`, `({ a: r } = { a: 1 })`
+and `({ a: r } = { a: id(1) })` (the first round's residual 2). Also right
+now, wrong on base: the cross-type swap `var a = 'x', b = 1; [a, b] = [b, a]`,
+`var b = true; [b] = ['s']` and `var n = 0; ({ n } = { n: 'q' })`. A pattern
+with a rest keeps its context and stays right (`[r, ...rest] = [1, 2, 3]`,
+`[, ...r] = [1, 2, 3]`).
+
+### 7 — quality (fixed)
+
+`IdentifierWrite` is a discriminated union (`value` / `element` / `property`
+/ `numeric` / `key` / `rest` / `unknown`), so no `write.expr!` remains;
+`mixed-assignment-carrier.ts` imports the one `stripParens`; the `++`/`--`
+exclusion is the `updates: false` option.
+
+### Validation (all run by me, 2026-10-28, same box)
+
+- **Tests.** `tests/issue-4495.test.ts` 180/180 (110 new: every row above, both
+  lanes × both scopes, plus the annotated-slot and aliasing check); `tests/binding-writes.test.ts`
+  35/35.
+- **Equivalence files** touching destructuring, closures, compound / logical
+  assignment, for-in/for-of and `typeof` (44 files, on the earlier cut of
+  finding 4): 528/532; the 4 failures are all listed in
+  `scripts/equivalence-baseline.json`. The gate below covers every file on
+  the final tree.
+- **Neighbouring suites** (48 files: #1024, #1719, #2917, #3364, #3366, #3765,
+  #3961, #4121, #4122, #4131, #4204, #4206, #4208, #4428, #4491, #4616, #4707,
+  #5269), final tree: 30 failures — the identical set on base.
+- **Equivalence gate**, `SHARD=k/8` for k = 1…8, final tree: all eight exit 0
+  — 2,455 passing, 20 failing, every failure in the baseline, no new
+  regression. Two baseline failures pass (`reflect-api` Reflect.construct,
+  `delete-sentinel` string property), as in the first round; not ratcheted
+  here (main owns the baseline). An earlier run, with the whole-rule cut of
+  finding 4, failed shard 5 on the #7154 row described there.
+- **Byte identity**, base vs now, every template program in
+  `tests/equivalence/*.test.ts` (as `.ts`, and as `.js` when annotation-free)
+  plus `website/playground/examples/**/*.ts`, on both lanes: **3,484 / 3,486**
+  binaries identical (the first head differed on 14). The two that differ are
+  one program, `iterator-protocol-custom.test.ts` #1, gc and standalone
+  (+34 B each): `let s = 0; for (const v of anyIterator) s += v` — `$s` is now
+  `externref`, exactly what base already emits for the spelled-out
+  `s = s + v` (132,861 B, same size). `s += v` with a string `v` stores a
+  string, which an f64 slot cannot hold. The closure-capture and loop-boxing
+  callers are byte-identical by construction (parity above).
+- **String-heavy bench** (untyped `.js` loop exercising `||=`, `&&=`, swaps,
+  `++`, `-=`, `+=`, string `+=`, for-of over strings, for-in): byte-identical
+  sha on base / first head / now, both lanes (standalone `51aea3d691563195`
+  56,511 B; gc `ccdb3c8fe0877cc9` 106,853 B), so runtime is identical.
+- **Scoped test262 A/B** (in-process `runTest262File`, base vs now, same
+  test262 checkout, no runtime-eval provider in either arm), 1,824 files:
+  `language/expressions/{assignment, compound-assignment, logical-assignment,
+  postfix-increment, prefix-decrement}`, `language/statements/{for-in,
+  for-of, variable}` (for-of `dstr/` without its generator / async variants).
+  Both lanes, both arms: **1,694 pass / 114 fail / 16 CE**, **0** status
+  flips, identical per bucket. The only error-text differences (43 rows per
+  lane) are the eval-provider path each arm reports as missing. The arms ran
+  on the tree before finding 4's second cut; that cut reads only
+  TypeScript annotations, which these JavaScript files do not have.
+- **Gates** (each run bare, `LOC_GATE_BASE` = the `origin/main` sha): LOC
+  budget, function budget, coercion sites, oracle ratchet, dead exports,
+  import cycles, compiler-boundaries inventory, IR layering and IR fallbacks
+  — all exit 0. The only LOC growth needing a grant is `literals.ts` +1 (the
+  import), granted in this file's frontmatter; the oracle ratchet nets
+  `ctx.checker` −1.
+
+### Residuals — not fixed here, still unfiled
+
+As in the first round, no ids were allocated (`claim-issue.mjs --allocate`
+needs the open-PR scan); each is a separate mechanism.
+
+- **A. Stale checker type on reads of a widened binding** (the first round's
+  residual 1, wider now): property reads (`y.length` after a rest write into a
+  string-initialised binding — the one shape that moved from ok to trap),
+  loose equality (`r == 1` → `__str_to_number(r)`, illegal cast on every tree),
+  a closure's inferred return over a captured widened local, call arguments
+  and initializers.
+- **B. Module-scope lowering defects, identical on base.** A for-in identifier
+  head at module scope stores the key into a function-local `$k` in
+  `__module_init` (`forInIdentifierHeadLocal`, `statements/loops.ts`), never
+  into the module global — whose slot now correctly widens (`__mod_k`
+  f64 → externref). A for-of pattern head at module scope does the same
+  (`(local $a externref)` in `__module_init`, `__mod_a` widened).
+- **C. A pattern default is lowered against the pattern's element type**:
+  `var r = 'r'; [r = 5] = []; '' + r` is wrong on base and now alike.
+- **D. TS wrapper targets lose the store**: `r! = id(1)` and
+  `[r as any] = [id(1)]` widen the slot now, but the assignment lowering
+  drops the value (wrong on base and now alike).
+- **E. Pre-existing destructuring defects, identical on base.** A rest from a
+  tuple source (`[[s], ...q] = [[1], 2]`) leaves `q` unassigned
+  ("Rest on tuples is not supported" in `compileArrayDestructuringAssignment`).
+  The first round's `[a = 99] = [null]` note: my probe of it (`.ts`,
+  `skipSemanticDiagnostics`, `deferTopLevelInit`, `a === null ? 1 : 2`) still
+  answers the default on all three trees, while the equivalence spelling
+  (issue-1550 #6) passes everywhere — a harness-option difference, not traced.
+
+### Follow-ups (not done here)
+
+Two more private write walkers remain outside the shared enumerator:
+`src/ir/dynamic-local-widening.ts` (#3795 — deliberately narrow, and it only
+ever widens, so a missed write cannot make it unsound) and
+`src/ir/const-binding-writes.ts#bodyWritesIdentifier` (#7014). Folding either
+changes IR claim decisions, so it needs its own byte-identity check.
