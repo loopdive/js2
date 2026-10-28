@@ -265,7 +265,10 @@ import {
   irClosureSignatureFromFunctionTypeNode,
   peelAssignmentChain,
   IR_MATH_METHOD_TABLE,
+  admittedEmptyLiteralIsOpenCarrier,
 } from "./select.js";
+import { openCarrierDefinePlan } from "./empty-object-literal.js";
+import { emitNewPlainObject, emitOpenCarrierDefine } from "./open-object-carrier.js";
 import {
   makeIrDeclaredPrimitiveExpressionClassifier,
   makeIrPrimitiveExpressionClassifier,
@@ -6621,13 +6624,18 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerObjectLiteral(expr, cx));
   // #4471 — an empty literal is admitted only when the selector proved it
-  // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
+  // INERT (`empty-object-literal.ts`), and lowers to a zero-field
   // `object.new`. The property loop below is already a no-op at zero
   // properties, so the empty case needs no arm of its own: it falls through to
   // `emitObjectNew({ fields: [] }, [])`, which the WasmGC/linear resolvers both
   // register as an ordinary (fieldless) struct. `lowerOrdinaryToPrimitive-
   // ObjectLiteral` returns null for a zero-property literal, so the
   // valueOf/toString path is not entered.
+  // (#7128 S1) A referenced empty literal is instead the selector's open
+  // carrier: legacy's raw-externref `$Object`, which the U2 read arm serves.
+  if (expr.properties.length === 0 && admittedEmptyLiteralIsOpenCarrier(expr)) {
+    return emitNewPlainObject(cx.builder, irVal({ kind: "externref" }));
+  }
   if (
     expr.properties.some((property) => ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property))
   ) {
@@ -6837,12 +6845,7 @@ function lowerOrdinaryToPrimitiveObjectLiteral(expr: ts.ObjectLiteralExpression,
   if (hasFunctionExpression && hasMethodDeclaration) return null;
 
   if (hasFunctionExpression) {
-    const objectType: IrType = { kind: "extern", className: "Object" };
-    const object = cx.builder.emitCall(irRuntimeFuncRef("__new_plain_object"), [], objectType);
-    if (object === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: __new_plain_object produced no value in ${cx.funcName}`);
-    }
+    const object = emitNewPlainObject(cx.builder, { kind: "extern", className: "Object" });
     for (const property of properties) {
       const key = cx.builder.emitCoerceToExternref(cx.builder.emitStringConst(property.name));
       const closure = lowerClosureExpression(property.initializer, cx);
@@ -9239,6 +9242,80 @@ function tryLowerNativeMapMethodCall(
 }
 
 /**
+ * ES5 Object.defineProperty — an exact ambient static call. The host lane
+ * routes it through the same full ToPropertyDescriptor helper as legacy
+ * codegen. Keeping the target symbolic means import indices remain
+ * allocator-owned, while `coerce.to_externref` preserves one
+ * representation-neutral IR shape for structural target/key/descriptor values.
+ * (#7128 S1) A lane without the host helper is the native one, where the
+ * selector admits only a U1 define on an open carrier.
+ */
+function lowerObjectDefinePropertyCall(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
+  if (expr.arguments.length !== 3 || expr.arguments.some(ts.isSpreadElement)) {
+    throw new IrUnsupportedError(
+      "method-call-unsupported",
+      "build",
+      `ir/from-ast: Object.defineProperty call shape not supported (${cx.funcName})`,
+    );
+  }
+  const target = cx.resolver?.objectDefinePropertyTarget?.();
+  if (!target) return lowerOpenCarrierDefineProperty(expr, cx);
+  const args = expr.arguments.map((arg, index) => {
+    const value = lowerExpr(arg, cx, irVal({ kind: "externref" }));
+    const type = cx.builder.typeOf(value);
+    const val = asVal(type);
+    const hostExternCarrier =
+      type.kind === "extern" ||
+      val?.kind === "externref" ||
+      (index === 1 && type.kind === "string" && cx.resolver?.stringIsExternref?.() !== false);
+    if (!hostExternCarrier) {
+      throw new IrUnsupportedError(
+        "operand-coercion-unsupported",
+        "build",
+        `ir/from-ast: Object.defineProperty arg ${index} is not host-extern-backed: ${describeIrType(type)} (${cx.funcName})`,
+      );
+    }
+    return cx.builder.emitCoerceToExternref(value);
+  });
+  const result = cx.builder.emitCall(target, args, irVal({ kind: "externref" }));
+  if (result === null) {
+    // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+    throw new Error(`ir/from-ast: Object.defineProperty helper produced no result (${cx.funcName})`);
+  }
+  return result;
+}
+
+/**
+ * #7128 S1 — a selector-certified U1 define on an open-carrier `$Object`:
+ * each descriptor field value is boxed into its dynamic carrier, the rest is
+ * `emitOpenCarrierDefine`.
+ */
+function lowerOpenCarrierDefineProperty(expr: ts.CallExpression, cx: LowerCtx): IrValueId {
+  const plan = openCarrierDefinePlan(expr);
+  const object = lowerExpr(expr.arguments[0]!, cx, irVal({ kind: "externref" }));
+  if (plan === null || asVal(cx.builder.typeOf(object))?.kind !== "externref") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: Object.defineProperty is not a certified open-carrier define (${cx.funcName})`,
+    );
+  }
+  const fields = plan.fields.map(({ name, initializer }) => {
+    const value = lowerExpr(initializer, cx, IR_F64);
+    const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), initializer, cx);
+    if (boxed === null) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "build",
+        `ir/from-ast: descriptor field "${name}" has no dynamic box (${cx.funcName})`,
+      );
+    }
+    return { name, value: boxed };
+  });
+  return emitOpenCarrierDefine(cx.builder, object, plan.key, fields);
+}
+
+/**
  * (#4461) Lower the one native-`$Map` producer: `new Map()` / `new Map<K, V>()`
  * initializing a module binding whose storage is the native struct. The
  * selector admits exactly this shape (`isExactModuleMapGenericInitializer` +
@@ -9421,11 +9498,6 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     }
   }
 
-  // ES5 Object.defineProperty — route an exact ambient static call through
-  // the same full ToPropertyDescriptor helper as legacy codegen. Keeping the
-  // target symbolic means import indices remain allocator-owned, while
-  // `coerce.to_externref` preserves one representation-neutral IR shape for
-  // structural target/key/descriptor values in the host lane.
   if (
     receiverIdentifier?.text === "Object" &&
     methodName === "defineProperty" &&
@@ -9433,44 +9505,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
     cx.scope.get("Object") === undefined &&
     cx.resolver?.isAmbientBinding?.(receiverIdentifier) !== false
   ) {
-    if (expr.arguments.length !== 3 || expr.arguments.some(ts.isSpreadElement)) {
-      throw new IrUnsupportedError(
-        "method-call-unsupported",
-        "build",
-        `ir/from-ast: Object.defineProperty call shape not supported (${cx.funcName})`,
-      );
-    }
-    const target = cx.resolver?.objectDefinePropertyTarget?.();
-    if (!target) {
-      throw new IrUnsupportedError(
-        "method-call-unsupported",
-        "build",
-        `ir/from-ast: Object.defineProperty provider unavailable (${cx.funcName})`,
-      );
-    }
-    const args = expr.arguments.map((arg, index) => {
-      const value = lowerExpr(arg, cx, irVal({ kind: "externref" }));
-      const type = cx.builder.typeOf(value);
-      const val = asVal(type);
-      const hostExternCarrier =
-        type.kind === "extern" ||
-        val?.kind === "externref" ||
-        (index === 1 && type.kind === "string" && cx.resolver?.stringIsExternref?.() !== false);
-      if (!hostExternCarrier) {
-        throw new IrUnsupportedError(
-          "operand-coercion-unsupported",
-          "build",
-          `ir/from-ast: Object.defineProperty arg ${index} is not host-extern-backed: ${describeIrType(type)} (${cx.funcName})`,
-        );
-      }
-      return cx.builder.emitCoerceToExternref(value);
-    });
-    const result = cx.builder.emitCall(target, args, irVal({ kind: "externref" }));
-    if (result === null) {
-      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-      throw new Error(`ir/from-ast: Object.defineProperty helper produced no result (${cx.funcName})`);
-    }
-    return result;
+    return lowerObjectDefinePropertyCall(expr, cx);
   }
 
   // #3787 — exact ambient String.fromCharCode(...). Intercept before receiver

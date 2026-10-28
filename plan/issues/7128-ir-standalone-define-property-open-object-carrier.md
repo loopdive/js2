@@ -14,6 +14,23 @@ task_type: implementation
 area: ir
 goal: ir-full-coverage
 parent: 7106
+# 2026-10-28 (S1): the open-carrier logic lives in its own modules
+# (src/ir/empty-object-literal.ts, src/ir/open-object-carrier.ts,
+# src/codegen/ir-open-object-binding.ts). What remains in the god-files is the
+# hook each needs: from-ast's define arm extracted into its own function plus the
+# from-ast half of the U1 lowering (it needs lowerExpr / boxConcreteToDynamic),
+# the selection option at the production planning site, and two-line hooks in
+# the selector's subject reset, move-only gate and scan.
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  - src/ir/select.ts::whyNotIrClaimable
+  - src/ir/select.ts::dynamicUsesAreMoveOnly
+  - src/ir/select.ts::scanExprInner
+  - src/codegen/index.ts::planIrOverlay
+import-cycles-allow:
+  - largestSccSize: 725 # 2026-10-28 (#7128 S1): src/codegen/ir-open-object-binding.ts asks legacy's var-slot typing (statements/variables.ts) and is read by codegen/index.ts, so it joins the SCC exactly as its sibling ir-dynamic-construct.ts does
 ---
 
 # #7128 — IR: standalone `Object.defineProperty` via an open-object carrier

@@ -78,6 +78,12 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
+import {
+  emptyObjectLiteralBinding,
+  isOpenCarrierUse,
+  openCarrierDefinePlan,
+  type EmptyObjectLiteralBinding,
+} from "./empty-object-literal.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -103,6 +109,7 @@ import {
   functionObjectMemberCallIsBuildable,
   superMethodCallIsBuildable,
   uniformLiteralReturnKind,
+  propertyAccessIsWriteTarget,
 } from "./select-expression-structure.js";
 
 export {
@@ -737,6 +744,11 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * `dyn.instanceof` reproduces? Absent → never.
    */
   readonly dynamicInstanceOfAtLegacyParity?: (site: ts.BinaryExpression) => boolean;
+  /**
+   * (#7128 S1) Does legacy keep this `var <id> = {}` an open `$Object` — an
+   * externref slot with no widened struct? Absent → no open-carrier literal.
+   */
+  readonly isOpenObjectBinding?: (decl: ts.VariableDeclaration) => boolean;
   /**
    * #3529 P1/P4 structural target-capability seam. P1 stays independent of
    * backend/legality.ts; P4 wires its exported capability predicate here.
@@ -1707,6 +1719,11 @@ let currentFnReturnsString = false;
 // the boxed-any carrier, never a callback-boundary parameter carrier, so a
 // member read off one is safe in equality even in a value-used function.
 let currentCatchBoundNames = new Set<string>();
+// (#7128 S1) Bindings of the current subject's admitted open-carrier empty
+// literals. Every same-text reference in the subject is a U1 define or a U2
+// read, so the define arm admits by text; the move-only scan treats the binding
+// like a catch binding.
+let currentOpenCarrierNames = new Set<string>();
 /** Mirrors `IR_DYNAMIC_CONSTRUCT_MAX_ARITY` (`codegen/ir-dynamic-construct.ts`): the fixed-arity driver family. */
 const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = 8;
 // #2949 S5.P follow-up — dynamic member reads used by equality require the
@@ -2088,6 +2105,7 @@ function whyNotIrClaimable(
   const dynNames = new Set<string>();
   currentDynamicParamNames = new Set<string>();
   currentCatchBoundNames = new Set<string>();
+  currentOpenCarrierNames = new Set<string>();
   // Method bodies and constructor bodies see `this` as an implicit local;
   // mark it so a `return this;` / `this.field` reference passes the
   // identifier-in-scope check at Phase-1 expression position.
@@ -2248,6 +2266,7 @@ function whyNotIrClaimable(
   // Generators with dynamic params stay rejected — the generator prologue /
   // yield machinery has no dynamic arm yet.
   // -------------------------------------------------------------------------
+  for (const name of currentOpenCarrierNames) dynNames.add(name); // (#7128 S1)
   if (dynNames.size > 0 && isGenerator) return "param-type-not-resolvable";
   if (
     dynNames.size > 0 ||
@@ -2982,7 +3001,12 @@ function dynamicMemberEqualityOperandIsBuildable(candidate: ts.Expression): bool
   // (#7106 S1c) `err.name === 'TypeError'` on a catch binding: the receiver is
   // the thrown carrier itself, so the callback-boundary carrier concern below
   // does not apply whatever the function's value uses are.
-  if (isMember && ts.isIdentifier(candidate.expression) && currentCatchBoundNames.has(candidate.expression.text)) {
+  // (#7128 S1) An open-carrier binding is a fresh `$Object`, never a carrier either.
+  if (
+    isMember &&
+    ts.isIdentifier(candidate.expression) &&
+    (currentCatchBoundNames.has(candidate.expression.text) || currentOpenCarrierNames.has(candidate.expression.text))
+  ) {
     return true;
   }
   return (
@@ -3323,6 +3347,8 @@ function dynamicUsesAreMoveOnly(
       return true;
     }
     if (ts.isCallExpression(e)) {
+      // (#7128 S1) A U1 define: literal key and descriptor, result dropped.
+      if (isOpenCarrierDefine(e)) return !expectDyn;
       // (#7106 S1b) `JSON.stringify(<dynamic>)` → `dyn.json_stringify`: a
       // concrete string result; a concrete operand is boxed first.
       const jsonStringifyArg = dynNames.has("JSON") ? null : ambientJsonStringifyCall(e);
@@ -9870,19 +9896,6 @@ function enclosingProjectionOwner(node: ts.Node): ts.Node | undefined {
   return undefined;
 }
 
-function propertyAccessIsWriteTarget(expression: ts.PropertyAccessExpression): boolean {
-  const parent = expression.parent;
-  return (
-    (ts.isBinaryExpression(parent) &&
-      parent.left === expression &&
-      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
-    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) && parent.operand === expression) ||
-    (ts.isDeleteExpression(parent) && parent.expression === expression) ||
-    ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && parent.initializer === expression)
-  );
-}
-
 function objectBindingPatternReadsOnlyOwnMethods(
   pattern: ts.ObjectBindingPattern,
   ownMethodNames: ReadonlySet<string>,
@@ -11626,13 +11639,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
       // symbolic host-helper operation, not an instance method on a value
       // named `Object`. Reject shadowed bindings and host-free targets before
       // walking the three ordinary Phase-1 arguments.
-      if (
-        ts.isIdentifier(expr.expression.expression) &&
-        expr.expression.expression.text === "Object" &&
-        expr.expression.name.text === "defineProperty" &&
-        selectorSeesAmbientBinding(expr.expression.expression) &&
-        !scope.has("Object")
-      ) {
+      if (isAmbientObjectDefineProperty(expr) && !scope.has("Object")) {
+        if (isOpenCarrierDefine(expr)) return true;
         if (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") === false) {
           return capabilityNo("call-resolution-unsupported", "expr-object-define-property-target", expr);
         }
@@ -12241,9 +12249,14 @@ function isPhase1ObjectLiteral(
 ): boolean {
   // #4471 — an empty literal lowers to a ZERO-FIELD object shape, which is a
   // legal struct but can serve NO field access, so only an INERT one is
-  // claimable. See `isInertEmptyObjectLiteral` for the measured boundary.
+  // claimable; #7128 S1 adds the open carrier. See `empty-object-literal.ts`.
   if (expr.properties.length === 0) {
-    return isInertEmptyObjectLiteral(expr) ? true : shapeNo("objectlit-empty", expr);
+    const owner = enclosingProjectionOwner(expr);
+    const binding = emptyObjectLiteralBinding(expr, owner);
+    if (binding !== undefined && (binding.references.length === 0 || isOpenCarrierBinding(binding, owner))) {
+      return true;
+    }
+    return shapeNo("objectlit-empty", expr);
   }
 
   // Function-valued data properties still have no general closed-object IR
@@ -12336,67 +12349,53 @@ function isPhase1ObjectLiteral(
   return true;
 }
 
+/** (#7128 S1) An admitted empty literal with references is an open carrier; an inert one has none. */
+export function admittedEmptyLiteralIsOpenCarrier(expr: ts.ObjectLiteralExpression): boolean {
+  return (emptyObjectLiteralBinding(expr, enclosingProjectionOwner(expr))?.references.length ?? 0) > 0;
+}
+
 /**
- * #4471 — is this empty object literal INERT, i.e. can its zero-field value
- * provably never reach a position that a zero-field shape cannot serve?
- *
- * A fieldless `object.new` is itself fine (measured 2026-08-15: it registers as
- * an ordinary struct, emits, instantiates, and matches legacy). The constraint
- * is downstream. The measured failing uses are property read/write (incl.
- * through an `as any` escape), flow into a `dynamic` (`any`) parameter,
- * `typeof`, array-literal element, conditional-expression test, and a `{}`
- * return TypeNode (which `IrType.object` cannot express at all). Five of those
- * six fail IDENTICALLY for the already-claimed non-empty literal, so they are
- * not empty-specific — but claiming them would still turn clean `unsupported`
- * rejects into gated post-claim `invariant` demotions, hard errors under the
- * IR-only policy. Hence a narrow arm.
- *
- * The literal must initialize a plain, UN-ANNOTATED local binding. An
- * annotation is disqualifying on its own: `any` / `object` / `{}` each pick a
- * different legacy representation for `{}` (an open `$Object` externref built
- * by `__new_plain_object`, or a struct WIDENED with the fields a later expando
- * write adds — see `compileWidenedEmptyObject` in codegen/literals.ts), none of
- * which is a closed fieldless struct. Those shapes are rejected by other gates
- * today; requiring the un-annotated form keeps this arm from depending on that.
- *
- * The binding must then be UNREFERENCED. That rule is the measured one, not a
- * conservative guess at one: the 2026-08-15 battery tried to admit a whitelist
- * of "obviously inert" reference forms and every candidate leaked. `if (o)`
- * lowered and matched legacy, but `if (o) {…} else {…}` demoted with
- * "if condition must be bool" — the IR has no `ToBoolean` for a ref, so the
- * no-else form only worked incidentally. The conditional expression `o ? a : b`
- * demoted too. Truthiness is therefore not a safe category, and neither is an
- * alias (`const p = o`), whose own uses this arm does not track. With no
- * reference form surviving measurement, the honest rule is zero references.
- *
- * Identifier matching is deliberately by TEXT, not by symbol: a same-named
- * property key or shadowed binding elsewhere in the function counts as a
- * reference and rejects the literal. That over-approximates, which is the safe
- * direction — it can only refuse to claim.
+ * #7128 S1 — admit an open-carrier binding (`empty-object-literal.ts`) of the
+ * current subject's own body when legacy keeps it open too
+ * (`isOpenObjectBinding`): were legacy to widen it into a struct, an IR unit
+ * and a legacy unit sharing it would see different stores. The admitted
+ * binding is recorded for the define arm and the move-only scan.
  */
-function isInertEmptyObjectLiteral(expr: ts.ObjectLiteralExpression): boolean {
-  const decl = expr.parent;
-  if (decl === undefined || !ts.isVariableDeclaration(decl)) return false;
-  if (decl.initializer !== expr) return false;
-  if (decl.type !== undefined) return false;
-  if (!ts.isIdentifier(decl.name)) return false;
-  const owner = enclosingProjectionOwner(expr);
-  if (owner === undefined) return false;
-  const name = decl.name.text;
-  let referenced = false;
-  const visit = (node: ts.Node): void => {
-    if (referenced) return;
-    if (ts.isIdentifier(node) && node.text === name) {
-      // The declaration's own name is the binding site, not a reference.
-      if (node !== decl.name) referenced = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  // Walk the WHOLE owner, nested functions included — a capture of the binding
-  // by an inner closure is a reference this arm must see.
-  ts.forEachChild(owner, visit);
-  return !referenced;
+function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node | undefined): boolean {
+  const isOpenObjectBinding = currentSelectionOptions?.isOpenObjectBinding;
+  if (
+    isOpenObjectBinding === undefined ||
+    owner !== currentSelectionSubject ||
+    !binding.references.every((reference) => isOpenCarrierUse(reference, isAmbientObjectDefineProperty)) ||
+    !isOpenObjectBinding(binding.decl)
+  ) {
+    return false;
+  }
+  currentOpenCarrierNames.add(binding.name.text);
+  return true;
+}
+
+/** (#7128 S1) A U1 define on an admitted open-carrier binding, in the current subject's own body. */
+function isOpenCarrierDefine(call: ts.CallExpression): boolean {
+  const target = call.arguments[0];
+  return (
+    target !== undefined &&
+    ts.isIdentifier(target) &&
+    currentOpenCarrierNames.has(target.text) &&
+    enclosingProjectionOwner(call) === currentSelectionSubject
+  );
+}
+
+/** `Object.defineProperty(…)` on the ambient `Object`. */
+function isAmbientObjectDefineProperty(call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Object" &&
+    callee.name.text === "defineProperty" &&
+    selectorSeesAmbientBinding(callee.expression)
+  );
 }
 
 /**
@@ -12913,12 +12912,10 @@ export function buildLocalCallGraph(
             return;
           }
           if (
-            ts.isIdentifier(node.expression.expression) &&
-            node.expression.expression.text === "Object" &&
-            node.expression.name.text === "defineProperty" &&
-            selectorSeesAmbientBinding(node.expression.expression) &&
-            currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false &&
-            node.arguments.length === 3
+            isAmbientObjectDefineProperty(node) &&
+            node.arguments.length === 3 &&
+            (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false ||
+              (currentSelectionOptions?.isOpenObjectBinding !== undefined && !!openCarrierDefinePlan(node)))
           ) {
             for (const a of node.arguments) visit(a);
             return;
