@@ -16,7 +16,6 @@ import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { localGlobalIdx } from "../registry/imports.js";
 
 /** Array methods that return their receiver: the result is the same vec. */
 const RECEIVER_RETURNING = new Set(["sort", "reverse", "fill", "copyWithin"]);
@@ -80,7 +79,8 @@ export function aliasedModuleGlobalVecType(
   // registration will be.
   const globalIdx = ctx.moduleGlobals.get(sourceDecl.name.text);
   let type: ValType | undefined;
-  if (globalIdx !== undefined) type = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
+  // Absolute → defined-global index inline: `registry/imports.ts` would join the import-cycle SCC.
+  if (globalIdx !== undefined) type = ctx.mod.globals[globalIdx - ctx.numImportGlobals]?.type;
   else if (sourceDecl.initializer && ts.isArrayLiteralExpression(sourceDecl.initializer) && !typingSources.has(decl)) {
     typingSources.add(decl);
     try {
