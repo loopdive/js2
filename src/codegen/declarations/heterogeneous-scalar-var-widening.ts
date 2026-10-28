@@ -241,6 +241,17 @@ export function slotIsDynamicButStaticallyPrimitive(
 }
 
 /**
+ * The checker type a member read should dispatch on. A binding widened to
+ * externref by a reaching write of another type holds values its initializer's
+ * type no longer describes, so it reads as `any` and takes the dynamic arms.
+ */
+export function memberReceiverStaticType(ctx: CodegenContext, fctx: FunctionContext, receiver: ts.Expression): ts.Type {
+  return ts.isIdentifier(receiver) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, receiver)
+    ? ctx.checker.getAnyType()
+    : ctx.checker.getTypeAtLocation(receiver);
+}
+
+/**
  * Keep a closure's result ABI aligned with a module binding whose storage was
  * widened after heterogeneous assignment. The checker still infers the
  * binding's initializer type, so a getter such as `function () { return x; }`

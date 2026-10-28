@@ -23,6 +23,10 @@ loc-budget-allow:
   # earlier +7 grant for numeric-property-analysis.ts is gone: that file now
   # shrinks by 20 lines, its private write walk replaced by the shared one.)
   - src/codegen/literals.ts
+  # 2026-10-28 (#4495 review round 2 prep): +1 line, the import of
+  # memberReceiverStaticType. The receiver-type line is a one-for-one swap; the
+  # logic lives beside its stale-type guard in heterogeneous-scalar-var-widening.ts.
+  - src/codegen/property-access.ts
 ---
 
 # Standalone: dynamic value assigned into a native-string slot becomes NULL
@@ -691,9 +695,8 @@ As in the first round, no ids were allocated (`claim-issue.mjs --allocate`
 needs the open-PR scan); each is a separate mechanism.
 
 - **A. Stale checker type on reads of a widened binding** (the first round's
-  residual 1, wider now): property reads (`y.length` after a rest write into a
-  string-initialised binding — the one shape that moved from ok to trap),
-  loose equality (`r == 1` → `__str_to_number(r)`, illegal cast on every tree),
+  residual 1, wider now): element reads (`y[1]` after a rest write into a
+  string-initialised binding; traps on main too), loose equality (`r == 1` → `__str_to_number(r)`, illegal cast on every tree),
   a closure's inferred return over a captured widened local, call arguments
   and initializers.
 - **B. Module-scope lowering defects, identical on base.** A for-in identifier
@@ -722,3 +725,27 @@ Two more private write walkers remain outside the shared enumerator:
 ever widens, so a missed write cannot make it unsound) and
 `src/ir/const-binding-writes.ts#bodyWritesIdentifier` (#7014). Folding either
 changes IR claim decisions, so it needs its own byte-identity check.
+
+## Regression fix before round 2 (opus, 2026-10-28)
+
+The round-1 fixes made `var y = 's'; [...y] = [1, 2]; y.length` trap on all
+four cells (main: right at module scope only, by reading the never-written
+string). Cause: `compilePropertyAccess` dispatched on the checker type of the
+receiver (`string`), so the string `.length` arm coerced the widened externref
+slot to a native string, got `null` for the array, and read its length.
+
+Fix: `memberReceiverStaticType` (in `heterogeneous-scalar-var-widening.ts`,
+beside the `slotIsDynamicButStaticallyPrimitive` guard the `typeof` fix uses)
+answers `any` for a receiver identifier whose slot is widened, so every member
+read takes the dynamic arms. `compilePropertyAccess` swaps one line for it.
+
+| `var y='s'; [...y]=[1,2]` then | main | round-1 head | now |
+| --- | --- | --- | --- |
+| `y.length`, module | 2 | trap | 2 |
+| `y.length`, function | trap | trap | 2 |
+| `y[1]`, both scopes | trap | trap | trap (residual A) |
+
+Both lanes identical. Playground corpus: 26/26 binaries byte-identical to the
+round-1 head. `tests/issue-4495.test.ts` 184/184 (one new case, four cells),
+`tests/binding-writes.test.ts` 35/35; every gate exits 0 against
+`origin/main`.

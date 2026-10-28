@@ -145,6 +145,9 @@ describe("#4495 review 1 — a rest target stores into the binding's own slot", 
     `var y = 's'; [...y] = [1, 2]; chk(typeof y, 'object'); chk('' + y, '1,2');`,
   );
   bothLanesBothScopes("guarded rest into a string local", `var y = 's'; if (id(false)) [...y] = [1]; chk(y, 's');`);
+  // A member read dispatches on the widened slot, not the initializer's type.
+  // (An element read `y[1]` still takes the stale string arm: residual A, as on main.)
+  bothLanesBothScopes("member read after rest into a string local", `var y = 's'; [...y] = [1, 2]; chk(y.length, 2);`);
 });
 
 describe("#4495 review 1 — a nested pattern's default does not hide its source", () => {
