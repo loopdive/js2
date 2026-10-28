@@ -1,9 +1,10 @@
 ---
 id: 7143
 title: "Deletion plan: retire the legacy (direct AST→Wasm) twins kind by kind as the IR arm is promoted, and delete the JS-host-mode-specific code once nothing consumes it"
-status: ready
+status: in-progress
 created: 2026-10-25
-updated: 2026-10-25
+updated: 2026-10-28
+assignee: ttraenkler/opus-7143-b0
 priority: high
 horizon: xl
 feasibility: hard
