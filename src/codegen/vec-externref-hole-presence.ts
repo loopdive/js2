@@ -195,23 +195,3 @@ export function fillSparseHoleHasIdxArms(ctx: CodegenContext): void {
   fillExternrefHoleHasIdxArms(ctx);
   fillExternrefHoleGetIdxArms(ctx);
 }
-
-/**
- * (#7164) `[externref] → [externref]` for a dynamic element READ: the `$Hole`
- * marker reads as `miss()` (the caller's absent-index result — `undefined`, or
- * the prototype-chain consult), any other value passes through. `scratch` is
- * an externref local the caller owns. Callers gate on the module having minted
- * `$Hole`, so this never mints a type at finalize.
- */
-export function externHoleToMiss(ctx: CodegenContext, scratch: number, miss: () => Instr[]): Instr[] {
-  return [
-    { op: "local.tee", index: scratch },
-    ...holeTestInstrs(ctx),
-    {
-      op: "if",
-      blockType: { kind: "val", type: { kind: "externref" } },
-      then: miss(),
-      else: [{ op: "local.get", index: scratch }],
-    },
-  ];
-}

@@ -2,11 +2,13 @@
 //
 // #7164 — `g.length = n` on an externref (`any[]`) vec grew the length field
 // only, so the new indices exposed the backing array's default `null` slots:
-// `1 in g` was true, `g[1]` read `null`, for-in / Object.keys listed them and
-// comparator-less `sort()` moved them first. Growth now reallocates the backing
-// (up to the 16M guard) and fills the new slots with the `$Hole` marker, the
-// representation the elision literal and the shrink fill already use; spread
-// and `entries()` read a hole as `undefined`.
+// `g[1]` read `null` and comparator-less `sort()` moved them first (or trapped).
+// Growth now reallocates the backing (up to the 16M guard) and fills the new
+// slots with the canonical `undefined`. It deliberately does NOT write the
+// `$Hole` marker: three review rounds found readers that passed the marker to
+// user code, and `undefined` cannot leak by construction. The cost is that a
+// grown index is a present `undefined` (`in` true, callbacks visit it) — the
+// holes themselves are #7170, and those rows are `it.fails` with that owner.
 //
 // The carrier choice belongs to the binding's whole share group (#7154): the
 // GUARDS below alias the grown array through a typed parameter, field, alias
@@ -66,9 +68,16 @@ const WASI: readonly Lane[] = ["wasi"];
 // Known gaps: program → reads → lanes, with the issue that owns the rows.
 const GROWTH = "grow|zeroGrow|growBig";
 const GAPS: { program: string; reads: string[]; lanes: readonly Lane[]; owner: string }[] = [
-  // `hasOwnProperty` and `map` do not recognise `$Hole` on an externref vec (#7170).
-  { program: GROWTH, reads: ["hasOwnProperty"], lanes: NATIVE, owner: "#7170" },
-  { program: GROWTH, reads: ["map"], lanes: ALL, owner: "#7170" },
+  // (#7164 r4) A grown index holds the canonical `undefined`, so it is an own,
+  // present element: `in` / hasOwnProperty / for-in / Object.keys / forEach /
+  // map see it. Holes are #7170. Same answers as origin/main, which held `null`.
+  {
+    program: GROWTH,
+    reads: ["in", "hasOwnProperty", "forIn", "objectKeys", "forEach", "map"],
+    lanes: NATIVE,
+    owner: "#7170 (grown index is a present undefined)",
+  },
+  { program: GROWTH, reads: ["map", "forEach"], lanes: WASI, owner: "#7170 (grown index is a present undefined)" },
   // wasi: `in` and for-in report holes as present (#7171).
   { program: GROWTH, reads: ["in", "forIn"], lanes: WASI, owner: "#7171" },
   // wasi: Object.keys / hasOwnProperty on an `any[]` are wrong even when it is dense (untracked).
@@ -198,9 +207,9 @@ describe("#7164 share-group guards", () => {
   }
 });
 
-// (#7164 r3) Reader audit: every reader of an externref vec's elements after
-// a grow, on one module per lane. A hole must read as `undefined` (or be
-// skipped where the spec skips it), never as the internal `$Hole` marker.
+// (#7164 r3/r4) Reader audit: every reader of an externref vec's elements
+// after a grow, on one module per lane. A grown slot reads as `undefined`;
+// readers that the spec makes skip a hole are the #7170 rows.
 const READER_PRELUDE = `
 function f3(a: any, b: any, c: any): string { return String(a) + String(b) + String(c) + (b === undefined); }
 function restIn(...r: any[]): string { let s = ""; for (let i = 0; i < r.length; i++) s += (i in r) + "=" + String(r[i]) + ","; return s; }
@@ -250,10 +259,16 @@ const READERS: Record<string, string> = {
 const READER_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
   // wasi: `in` reports holes as present (#7171).
   restParam: { lanes: WASI, owner: "#7171" },
-  concat: { lanes: WASI, owner: "#7171" },
-  slice: { lanes: WASI, owner: "#7171" },
-  spliceResult: { lanes: WASI, owner: "#7171" },
-  indexOfIncludes: { lanes: WASI, owner: "#7171" },
+  // (#7164 r4) The grown index is a present `undefined` (#7170): copies keep it
+  // own, `indexOf` finds it, callbacks visit it. `someEvery` was right on
+  // origin/main only because its slot held `null` (`v === undefined` false).
+  concat: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
+  slice: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
+  spliceResult: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
+  indexOfIncludes: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
+  filter: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
+  reduce: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
+  someEvery: { lanes: ALL, owner: "#7170 (grown index is a present undefined)" },
   // wasi: `super(...r)` from a rest-param constructor loses the first argument (same on origin/main; untracked).
   superSpread: { lanes: WASI, owner: "wasi-super-spread" },
   // `Array.from(anyVec)` traps "illegal cast" even when dense (same on origin/main; untracked).
@@ -291,5 +306,151 @@ describe("#7164 readers after growth", () => {
         });
       }
     });
+  }
+});
+
+// (#7164 r4) GENERATED leak sweep. Every array-producing method and every call
+// form is applied to a grown array; each result array is summarised per index
+// as presence (`P` own / `H` absent) plus value class (`u` undefined, `O` a
+// non-null object, `v` anything else). A grown slot must never surface as an
+// object where node has `undefined` (the internal marker). That check has no
+// `it.fails` escape. Full agreement with node (presence included) may be a
+// known gap with its owner.
+const SWEEP_PRELUDE = `
+function sum(r: any[]): string { let s = r.length + ":"; for (let i = 0; i < r.length; i++) { const v = r[i]; s += (i in r ? "P" : "H") + (v === undefined ? "u" : typeof v === "object" && v !== null ? "O" : "v"); } return s; }
+function fd(...r: any[]): any[] { return r; }
+function fdLead(a: any, ...r: any[]): any[] { return r; }
+function f3(a: any, b: any, c: any): any[] { return [a, b, c]; }
+const fArrow = (...r: any[]): any[] => r;
+const fExpr = function (...r: any[]): any[] { return r; };
+class KR { m(...r: any[]): any[] { return r; } static s(...r: any[]): any[] { return r; } p(a: any, b: any, c: any): any[] { return [a, b, c]; } }
+class CR { r: any[]; constructor(...r: any[]) { this.r = r; } }
+class DR extends CR { constructor(...r: any[]) { super(...r); } }
+class CP { r: any[]; constructor(a: any, b: any, c: any) { this.r = [a, b, c]; } }
+const objM = { m(...r: any[]): any[] { return r; } };
+`;
+const SWEEP_GROW = `const g: any[] = []; g.push("y"); g.length = 3;`;
+const SWEEP: Record<string, string> = {
+  self: `g`,
+  map: `g.map((x: any) => x)`,
+  filter: `g.filter(() => true)`,
+  slice: `g.slice()`,
+  concat: `g.concat([])`,
+  flat: `g.flat()`,
+  flatMap: `g.flatMap((x: any) => [x])`,
+  toReversed: `g.toReversed()`,
+  toSorted: `g.toSorted()`,
+  toSpliced: `g.toSpliced(0, 0)`,
+  with: `g.with(0, "w")`,
+  splice: `g.splice(0)`,
+  arrayFrom: `Array.from(g)`,
+  arrayOf: `Array.of(...g)`,
+  entries: `[...g.entries()].map((e: any) => e[1])`,
+  values: `[...g.values()]`,
+  spread: `[...g]`,
+  spreadLead: `[0, ...g]`,
+  forEachCollect: `(() => { const o: any[] = []; g.forEach((v: any) => { o.push(v); }); return o; })()`,
+  forOfCollect: `(() => { const o: any[] = []; for (const v of g) o.push(v); return o; })()`,
+  reduceCollect: `g.reduce((o: any[], v: any) => { o.push(v); return o; }, [] as any[])`,
+  indexRead: `[g[0], g[1], g[2]]`,
+  dynamicRead: `(() => { const a: any = g; const o: any[] = []; for (let i = 0; i < 3; i++) o.push(a[i]); return o; })()`,
+  restDecl: `fd(...g)`,
+  restLead: `fdLead(0, ...g)`,
+  restArrow: `fArrow(...g)`,
+  restExpr: `fExpr(...g)`,
+  restMethod: `new KR().m(...g)`,
+  restStatic: `KR.s(...g)`,
+  restObjMethod: `objM.m(...g)`,
+  restClosure: `(() => { const c = "c"; const f = (...r: any[]): any[] => (c ? r : r); return f(...g); })()`,
+  restNew: `new CR(...g).r`,
+  restSuper: `new DR(...g).r`,
+  apply: `(fd as any).apply(null, g)`,
+  positionalDecl: `f3(...g)`,
+  positionalMethod: `new KR().p(...g)`,
+  positionalNew: `new CP(...g).r`,
+};
+// Rows where head differs from node with no marker leak. Measured head vs
+// origin/main: none of them was right on origin/main. Growth fills the new
+// slots with the canonical `undefined`, so a grown index is present (#7170).
+const presence = (lanes: readonly Lane[]) => ({ lanes, owner: "#7170 (grown index is a present undefined)" });
+const SWEEP_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
+  // gc/standalone: the grown index is own (`in` true) where node has a hole.
+  self: presence(ALL),
+  map: presence(ALL),
+  filter: presence(ALL),
+  slice: presence(ALL),
+  concat: presence(ALL),
+  flat: presence(ALL),
+  flatMap: presence(ALL),
+  splice: presence(ALL),
+  forEachCollect: presence(ALL),
+  reduceCollect: presence(ALL),
+  // Same failure on origin/main (untracked): traps, compile errors, `null` reads.
+  toSorted: { lanes: ALL, owner: "toSorted-any-vec-trap" },
+  arrayFrom: { lanes: ALL, owner: "array-from-any-vec-trap" },
+  restObjMethod: { lanes: ALL, owner: "object-literal-method-rest-invalid-wasm" },
+  restSuper: { lanes: ALL, owner: "super-spread-rest-empty" },
+  dynamicRead: { lanes: ALL, owner: "dynamic-index-read-null" },
+  apply: { lanes: ALL, owner: "apply-reads-null" },
+  // wasi: `i in r` is false even for a present index (#7171), so every other row differs there.
+  toReversed: { lanes: WASI, owner: "#7171" },
+  toSpliced: { lanes: WASI, owner: "#7171" },
+  with: { lanes: WASI, owner: "#7171" },
+  arrayOf: { lanes: WASI, owner: "wasi-array-of-host-import" },
+  entries: { lanes: WASI, owner: "#7171" },
+  values: { lanes: WASI, owner: "#7171" },
+  spread: { lanes: WASI, owner: "#7171" },
+  spreadLead: { lanes: WASI, owner: "#7171" },
+  forOfCollect: { lanes: WASI, owner: "#7171" },
+  indexRead: { lanes: WASI, owner: "#7171" },
+  restDecl: { lanes: WASI, owner: "#7171" },
+  restLead: { lanes: WASI, owner: "#7171" },
+  restArrow: { lanes: WASI, owner: "#7171" },
+  restExpr: { lanes: WASI, owner: "#7171" },
+  restMethod: { lanes: WASI, owner: "#7171" },
+  restStatic: { lanes: WASI, owner: "#7171" },
+  restClosure: { lanes: WASI, owner: "#7171" },
+  restNew: { lanes: WASI, owner: "#7171" },
+  positionalDecl: { lanes: WASI, owner: "#7171" },
+  positionalMethod: { lanes: WASI, owner: "#7171" },
+  positionalNew: { lanes: WASI, owner: "#7171" },
+};
+
+describe("#7164 generated leak sweep", () => {
+  for (const [name, expr] of Object.entries(SWEEP)) {
+    const src = `${ENC}${SWEEP_PRELUDE}\nexport function test(): number { ${SWEEP_GROW} return enc(sum(${expr})); }\nexport function leak(): number { ${SWEEP_GROW} const r: any[] = ${expr}; for (let i = 0; i < r.length; i++) { const v = r[i]; if (typeof v === "object" && v !== null && String(v) === "[object Object]") return 1; } return 0; }`;
+    for (const { lane, options } of LANES) {
+      describe(`${name} / ${lane}`, () => {
+        let exports: Record<string, unknown> | undefined;
+        let failure = "";
+        beforeAll(async () => {
+          const result = await compile(src, { fileName: "probe.ts", ...options });
+          if (!result.success) {
+            failure = result.errors.map((e) => e.message).join("\n");
+            return;
+          }
+          try {
+            exports = (await instantiateWithRuntime(result)).exports as Record<string, unknown>;
+          } catch (e) {
+            failure = String(e);
+          }
+        }, 120_000);
+        it("no marker leaks", () => {
+          if (exports === undefined) return; // a compile/instantiate failure cannot leak; the node row reports it
+          let leaked: unknown;
+          try {
+            leaked = (exports.leak as () => unknown)();
+          } catch {
+            return; // a trap is not a leak; the node row reports it
+          }
+          expect(leaked, `${name}/${lane}`).toBe(0);
+        });
+        const gap = SWEEP_GAPS[name]?.lanes.includes(lane) ? SWEEP_GAPS[name]!.owner : undefined;
+        (gap !== undefined ? it.fails : it)(`matches node${gap !== undefined ? ` (known gap: ${gap})` : ""}`, () => {
+          expect(failure, `${name}/${lane}`).toBe("");
+          expect((exports!.test as () => unknown)(), `${name}/${lane}`).toBe(evaluateAsJs(src).test!());
+        });
+      });
+    }
   }
 });

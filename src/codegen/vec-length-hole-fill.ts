@@ -45,19 +45,23 @@ import { allocLocal } from "./context/locals.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { HOLE_F64_BITS } from "./value-tags.js";
 import { holeSentinelInstrs } from "./array-holes.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 
 /**
  * - `both`: fill `[min(oldLen, newLen), cap)` — the store has no pending
  *   element write (defineProperty, the dynamic `__extern_set` arm).
  * - `shrink-only`: fill `[newLen, cap)` only when the length moves down.
- * - `length-store` (#7164): the static `arr.length = n` store. f64 carriers
- *   keep `shrink-only`; an externref carrier also GROWS — the backing is
- *   reallocated to `newLen` (same 16M allocation guard as the defineProperty
- *   and `__extern_set` paths) so the vec keeps `length <= cap`, and the new
- *   slots get `$Hole`, not the `null` that `array.new_default` / an earlier
- *   capacity grow left there. A JS element write bumps `length` itself, so the
- *   `arr[len] = v; arr.length = len + 1` append shape stores an unchanged
- *   length and fills nothing it wrote.
+ * - `length-store` (#7164): the static `arr.length = n` store. Every carrier
+ *   keeps the `shrink-only` fill. An externref carrier also GROWS: the backing
+ *   is reallocated to `newLen` (same 16M allocation guard as the
+ *   defineProperty and `__extern_set` paths) so the vec keeps
+ *   `length <= cap`, and `[oldLen, cap)` is filled with the canonical
+ *   `undefined` — not `$Hole`, which every element reader would have to map,
+ *   and not the `null` that `array.new_default` / an earlier capacity grow
+ *   left there. The new indices therefore read as present `undefined` (`in`
+ *   answers true: a documented #7170 gap). A JS element write bumps `length`
+ *   itself, so the `arr[len] = v; arr.length = len + 1` append shape stores an
+ *   unchanged length and fills nothing it wrote.
  */
 export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store";
 
@@ -143,7 +147,7 @@ export function buildVecLengthHoleFill(
       kind: "ref_null",
       typeIdx: arrTypeIdx,
     });
-    const fillBody: Instr[] = [
+    const fillWith = (marker: Instr[]): Instr[] => [
       // data — a null backing has nothing to fill
       { op: "local.get", index: vecLocal },
       { op: "ref.cast", typeIdx: vecTypeIdx },
@@ -165,7 +169,7 @@ export function buildVecLengthHoleFill(
             then: [
               { op: "local.get", index: dataLocal },
               { op: "local.get", index: startLocal },
-              ...markerInstrs,
+              ...marker,
               { op: "local.get", index: dataLocal },
               { op: "array.len" },
               { op: "local.get", index: startLocal },
@@ -177,15 +181,25 @@ export function buildVecLengthHoleFill(
         then: [],
       },
     ];
-    const carrierMode = mode === "length-store" ? (isExternrefCarrier ? "both" : "shrink-only") : mode;
-    const growBacking: Instr[] =
+    const fillBody = fillWith(markerInstrs);
+    const carrierMode = mode === "length-store" ? "shrink-only" : mode;
+    // (#7164) The static store's externref GROW: realloc, then `undefined` in the new slots.
+    const growArm: Instr[] =
       mode === "length-store" && isExternrefCarrier
-        ? lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx)
+        ? [
+            ...lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx),
+            { op: "local.get", index: vecLocal },
+            { op: "ref.cast", typeIdx: vecTypeIdx },
+            { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+            { op: "local.tee", index: startLocal },
+            { op: "local.get", index: newLenLocal },
+            { op: "i32.lt_u" },
+            { op: "if", blockType: { kind: "empty" }, then: fillWith(canonicalUndefinedExternInstrs(ctx)) },
+          ]
         : [];
     const then: Instr[] =
       carrierMode === "both"
         ? [
-            ...growBacking,
             // start = min(oldLen, newLen)
             { op: "local.get", index: vecLocal },
             { op: "ref.cast", typeIdx: vecTypeIdx },
@@ -219,6 +233,7 @@ export function buildVecLengthHoleFill(
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: newLenLocal }, { op: "local.set", index: startLocal }, ...fillBody],
             },
+            ...growArm,
           ];
     body.push({ op: "local.get", index: vecLocal });
     body.push({ op: "ref.test", typeIdx: vecTypeIdx });

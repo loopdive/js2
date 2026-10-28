@@ -542,13 +542,24 @@ const PURE_READ_GLOBALS = new Set(["JSON.stringify", "Object.keys", "Object.getO
  * (#7164) Reads that cannot hand the vec to another layout: `k in xs`, an
  * argument of `String` / `JSON.stringify` / `Object.keys` /
  * `Object.getOwnPropertyNames` / `Array.isArray`, and (outside a container
- * group, whose elements are member vecs) `[...xs]` / `f(...xs)`, which copy
- * element values.
+ * group, whose elements are member vecs) `[...xs]`, which copies element
+ * values, or a spread into a library call (`Array.of(...xs)`). A user
+ * `f(...xs)` is not one: a rest parameter receives `xs` itself.
  */
 function isPureReadUse(ctx: CodegenContext, use: ts.Node, parent: ts.Node, container: boolean): boolean {
   if (ts.isBinaryExpression(parent))
     return parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === use;
-  if (ts.isSpreadElement(parent)) return !container;
+  // `[...xs]` copies; `f(...xs)` may hand xs itself to a rest parameter (aliased).
+  if (ts.isSpreadElement(parent)) {
+    if (container) return false;
+    const site = parent.parent;
+    if (ts.isArrayLiteralExpression(site)) return true;
+    // `Array.of(...xs)` / `Math.max(...xs)`: a library callee only reads the arguments.
+    if (!ts.isCallExpression(site) && !ts.isNewExpression(site)) return false;
+    const callee = skipValueWrappers(site.expression);
+    const root = ts.isPropertyAccessExpression(callee) ? callee.expression : callee;
+    return ts.isIdentifier(root) && isLibGlobal(ctx, root);
+  }
   if (!ts.isCallExpression(parent) || !parent.arguments.includes(use as ts.Expression)) return false;
   const callee = skipValueWrappers(parent.expression);
   if (ts.isIdentifier(callee)) return callee.text === "String" && isLibGlobal(ctx, callee);

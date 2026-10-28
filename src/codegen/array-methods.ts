@@ -3338,7 +3338,7 @@ function compileNativeArrayIterator(
     fctx.body.push({ op: getOp, typeIdx: srcArrTypeIdx });
     if (srcElemType.kind !== "externref") {
       coerceType(ctx, fctx, srcElemType, { kind: "externref" });
-    } else if (ctx.usesArrayHoles) emitHoleToUndefined(ctx, fctx); // (#7164) the iterator reads every index
+    }
   };
 
   // Build the element value to box into the canonical externref slot.
