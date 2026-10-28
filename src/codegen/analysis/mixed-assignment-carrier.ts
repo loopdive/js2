@@ -9,7 +9,7 @@
  * boxed externref carrier.
  */
 import { ts, forEachChild } from "../../ts-api.js";
-import { jsTagOfFact, type JsTag } from "../../checker/oracle.js";
+import { identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
@@ -17,7 +17,7 @@ import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
 import { readEnv } from "../../env.js";
-import { identifierWriteTag, identifierWritesOf, type IdentifierWrite } from "../../ir/identifier-writes.js";
+import { identifierWritesOf, type IdentifierWrite } from "../../shared/identifier-writes.js";
 
 function stripParens(expr: ts.Expression): ts.Expression {
   while (ts.isParenthesizedExpression(expr)) expr = expr.expression;

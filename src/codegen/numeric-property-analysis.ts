@@ -108,7 +108,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { readEnv } from "../env.js";
-import { identifierWritesOf } from "../ir/identifier-writes.js";
+import { identifierWritesOf } from "../shared/identifier-writes.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {

@@ -22,7 +22,7 @@ loc-budget-allow:
   # "proves" `let a: number | null = 5; [a = 99] = [null]` numeric from the
   # default alone and narrows the slot to f64 (measured: `a === null` → false).
   # The branch must live in that walk; the write enumeration itself is in the
-  # new src/ir/identifier-writes.ts.
+  # new src/shared/identifier-writes.ts.
   - src/codegen/numeric-property-analysis.ts
 ---
 
@@ -317,14 +317,19 @@ rows, each a different mechanism and all outside slot typing — see
 
 ### What changed
 
-- **`src/ir/identifier-writes.ts` (new)** — `identifierWritesOf(node)`: every
+- **`src/shared/identifier-writes.ts` (new)** — `identifierWritesOf(node)`: every
   store one AST node performs into a bare identifier (plain and logical
   assignment, array/object destructuring assignment, for-of targets, `++`/`--`,
   numeric compound assignment), paired with WHAT is stored: the named value
   (a literal source element / property, a default), an element / property of a
   non-literal source, a ToNumeric write-back, or unknown.
-  `identifierWriteTag(oracle, write, initialTag)` answers the JS tag through
-  `ctx.oracle` only (`staticJsTypeOf`, `typeFactOf`, `propertyFactOf`) — no new
+  It is pure syntax and sits in `src/shared` beside `binding-writes.ts`, so
+  `src/ir` and `src/codegen` share it without a new codegen<->ir import edge
+  (the import-cycles ratchet rejected it under `src/ir`: codegen->ir 301 -> 303,
+  ir->checker 8 -> 9).
+  `identifierWriteTag(oracle, write, initialTag)` lives in `checker/oracle.ts`
+  beside `jsTagOfFact`, which both callers already import, and answers the JS
+  tag through `ctx.oracle` only (`staticJsTypeOf`, `typeFactOf`, `propertyFactOf`) — no new
   checker query. Both analyses consume it, so they cannot disagree on what a
   write stores.
 - **`mixed-assignment-carrier.ts`** (function locals) and

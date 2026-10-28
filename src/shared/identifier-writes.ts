@@ -3,7 +3,7 @@
  * (#4495) Every store a single AST node performs into a bare identifier.
  *
  * Both definition-side slot-widening analyses — module bindings
- * (`heterogeneous-module-bindings.ts`) and function locals
+ * (`ir/heterogeneous-module-bindings.ts`) and function locals
  * (`codegen/analysis/mixed-assignment-carrier.ts`) — decide a binding's Wasm
  * slot from "the initializer, unless some reaching write stores a value of
  * another JS type". Both used to recognise a write only as `x = v` (plus the
@@ -13,12 +13,12 @@
  * non-string value by design (type-coercion.ts — a generic ToString there would
  * corrupt sentinels), so the next `'' + x` trapped in `__str_concat`.
  *
- * {@link identifierWritesOf} is pure syntax — it names WHAT is stored.
- * {@link identifierWriteTag} then asks the oracle the same question both
- * analyses already ask of a plain assignment's RHS, so the two cannot disagree
- * on what a write stores.
+ * {@link identifierWritesOf} is pure syntax — it names WHAT is stored, and sits
+ * in `src/shared` beside `binding-writes.ts` so `src/ir` and `src/codegen` share
+ * it without a codegen<->ir import edge. The oracle's half, the JS tag a write
+ * stores, is `identifierWriteTag` in `checker/oracle.ts`, so the two analyses
+ * cannot disagree on it.
  */
-import { jsTagOfFact, type JsTag, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
 
 /** One store into an identifier binding. */
@@ -43,35 +43,6 @@ export interface IdentifierWrite {
 /** What a destructuring target receives, before its target is known. */
 type WriteSource = Omit<IdentifierWrite, "target">;
 const UNKNOWN: WriteSource = { kind: "unknown" };
-
-/**
- * The JS tag `write` stores into a binding initialised with a value of
- * `initialTag`: the oracle's answer for a named value or an iterated array /
- * string element, `mixed` when nothing names it, and for a ToNumeric
- * write-back the initializer's own numeric tag (`x++` keeps a number a number
- * and a bigint a bigint, but turns a string or a boolean into a number).
- */
-export function identifierWriteTag(
-  oracle: Pick<TypeOracle, "staticJsTypeOf" | "typeFactOf" | "propertyFactOf">,
-  write: IdentifierWrite,
-  initialTag: JsTag,
-): JsTag | "mixed" {
-  switch (write.kind) {
-    case "value":
-      return oracle.staticJsTypeOf(write.expr!);
-    case "numeric":
-      return initialTag === "bigint" ? "bigint" : "number";
-    case "unknown":
-      return "mixed";
-    case "element": {
-      const iterated = oracle.typeFactOf(write.expr!);
-      if (iterated.kind === "string") return "string";
-      return (iterated.kind === "array" && jsTagOfFact(iterated.element)) || "mixed";
-    }
-    case "property":
-      return jsTagOfFact(oracle.propertyFactOf(write.expr!, write.key!)) ?? "mixed";
-  }
-}
 
 /** Operators that store their right operand (conditionally, for the logical forms). */
 const STORING_ASSIGNMENTS: ReadonlySet<ts.SyntaxKind> = new Set<ts.SyntaxKind>([

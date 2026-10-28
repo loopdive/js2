@@ -14,9 +14,9 @@
  * usable by both checker and in-house oracle lanes without importing codegen
  * into IR.
  */
-import { TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
+import { identifierWriteTag, TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
-import { identifierWriteTag, identifierWritesOf, type IdentifierWrite } from "./identifier-writes.js";
+import { identifierWritesOf, type IdentifierWrite } from "../shared/identifier-writes.js";
 
 type HeterogeneousBindingOracle = Pick<
   TypeOracle,
