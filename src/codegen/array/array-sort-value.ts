@@ -24,6 +24,7 @@
  * fixed slot reads `null` for an omitted comparator, which must be undefined,
  * while an explicit `null` must throw. Gated on the native regime.
  */
+import type { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { allocLocal } from "../context/locals.js";
@@ -31,6 +32,7 @@ import { canonicalUndefinedExternInstrs, undefinedSingletonActive } from "../any
 import { emitArrayProtoHofReceiverGuard, emitVariadicArgsUnpack } from "../array-reduce-proto-value.js";
 import { prepareArrayLikeToString } from "../array-like-native.js";
 import { holeTestInstrs } from "../array-holes.js";
+import { stringVecElementIsNullable } from "../array-join-element.js";
 import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
@@ -531,4 +533,36 @@ export function prepareExternVecDefaultSortCompare(
       ...(holeTest.length === 0 ? valued : undefinedLastGreater(isHole, right, left, valued)),
     ];
   };
+}
+
+/**
+ * (#7165) The comparator-less `SortCompare(left, right) > 0` for a
+ * `(string | undefined)[]` vec (a nullable `$AnyString` element ref, where a
+ * null element is `undefined` — or a hole, which sorts after it and is equally
+ * null in this storage): null sorts last (§23.1.3.30.2 steps 1–4) before
+ * `defined`'s non-null cast can trap. A JS `null` cannot be told apart in this
+ * storage and also sorts last (a `(string | null)[]` vec holds externref
+ * elements and takes `prepareExternVecDefaultSortCompare` instead). Returns
+ * `defined` itself — byte for byte — when strings are not native or the
+ * receiver's (`propAccess.expression`) element type admits neither undefined
+ * nor null.
+ */
+export function stringVecSortCompare(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  elemType: ValType,
+  defined: (pushLeft: Instr[], pushRight: Instr[]) => Instr[],
+): (pushLeft: Instr[], pushRight: Instr[]) => Instr[] {
+  if (!ctx.nativeStrings || !stringVecElementIsNullable(ctx, propAccess.expression, elemType)) return defined;
+  const left = allocLocal(fctx, `__nsort_l_${fctx.locals.length}`, elemType);
+  const right = allocLocal(fctx, `__nsort_r_${fctx.locals.length}`, elemType);
+  const isNull = (value: Instr[]): Instr[] => [...value, { op: "ref.is_null" }];
+  return (pushLeft, pushRight) => [
+    ...pushLeft,
+    set(left),
+    ...pushRight,
+    set(right),
+    ...undefinedLastGreater(isNull, right, left, defined([get(left)], [get(right)])),
+  ];
 }
