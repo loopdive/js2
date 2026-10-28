@@ -5844,6 +5844,10 @@ function compileArrayJoinNative(
     elementToLocaleStringTail(ctx, anyStrTypeIdx, localizedArm),
   );
   const joinBoundsCheckedElemToStr: Instr[] = [
+    // (#7164) An element's toString can replace the backing (push / grow): re-read it.
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataTmp },
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
     { op: "array.len" },
@@ -6097,6 +6101,10 @@ function compileArrayJoin(
   // slots (`[1,2,3]; a.length=6; a.join(",")` === "1,2,3,,,"). No-op for dense
   // arrays (backing ≥ length ⇒ the guard is always true).
   const joinBoundsCheckedElemToStr: Instr[] = [
+    // (#7164) An element's toString can replace the backing (push / grow): re-read it.
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: dataTmp },
     { op: "local.get", index: foldLocals.iTmp },
     { op: "local.get", index: dataTmp },
     { op: "array.len" },
@@ -6760,6 +6768,8 @@ interface ArrayLoopLocals {
   logicalLenTmp: number;
   iTmp: number;
   getOp: "array.get_u" | "array.get_s" | "array.get";
+  /** (#7164) The receiver's vec type: the loop re-reads `data` from it each iteration. */
+  vecTypeIdx?: number;
 }
 
 /** Substitute closure parameter reads with the HOF loop's concrete operands. */
@@ -6867,7 +6877,7 @@ function setupArrayLoop(
   fctx.body.push({ op: "local.set", index: iTmp });
 
   const getOp = elemType.kind === "i8" ? "array.get_u" : elemType.kind === "i16" ? "array.get_s" : "array.get";
-  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp };
+  return { vecTmp, recvExternTmp, dataTmp, lenTmp, logicalLenTmp, iTmp, getOp, vecTypeIdx };
 }
 
 /**
@@ -7405,6 +7415,12 @@ function gateHoleFlag(
 
 /**
  * Build the standard loop-exit check: if (i >= len) br 1.
+ *
+ * (#7164) A callback can replace the receiver's backing array (`push` or a
+ * `length =` grow past the capacity reallocates it), so each iteration
+ * re-reads `data` from the vec; reading the array loaded before the loop
+ * would miss every write the callback makes after the reallocation. A backing
+ * now shorter than `i` holds no further own elements, so the loop ends.
  */
 function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
   return [
@@ -7412,6 +7428,24 @@ function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
     { op: "local.get", index: loop.lenTmp },
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
+    ...reloadLoopData(loop, [
+      { op: "local.get", index: loop.iTmp },
+      { op: "local.get", index: loop.dataTmp },
+      { op: "array.len" },
+      { op: "i32.ge_u" },
+      { op: "br_if", depth: 1 },
+    ]),
+  ];
+}
+
+/** (#7164) `data = vec.data`, then `after`; nothing when the loop has no vec type. */
+function reloadLoopData(loop: ArrayLoopLocals, after: Instr[]): Instr[] {
+  if (loop.vecTypeIdx === undefined) return [];
+  return [
+    { op: "local.get", index: loop.vecTmp },
+    { op: "struct.get", typeIdx: loop.vecTypeIdx, fieldIdx: 1 },
+    { op: "local.set", index: loop.dataTmp },
+    ...after,
   ];
 }
 
@@ -8081,6 +8115,7 @@ function compileArrayReduceRight(
     logicalLenTmp,
     iTmp,
     getOp,
+    vecTypeIdx,
   };
 
   // Compile initial value or use the last present element as the default seed.
@@ -8215,11 +8250,8 @@ function compileArrayReduceRight(
   const holeGate = shouldHoleSkip(ctx, elemType);
   // Loop: while (i >= 0) { acc = cb(acc, data[i], i, arr); i--; }
   const loopBody: Instr[] = [
-    // Exit check: if (i < 0) break
-    { op: "local.get", index: iTmp },
-    { op: "i32.const", value: 0 },
-    { op: "i32.lt_s" },
-    { op: "br_if", depth: 1 },
+    // Exit check: if (i < 0) break; (#7164) re-reads `data` as the other HOF loops do.
+    ...loopExitCheckReverse(loop),
     // Callback
     ...(holeGate
       ? ([
@@ -8505,13 +8537,38 @@ function setupArrayLoopReverse(
   return loop;
 }
 
-/** Reverse loop-exit check: if (i < 0) br 1. */
+/**
+ * Reverse loop-exit check: if (i < 0) br 1. (#7164) Re-reads `data` as
+ * {@link loopExitCheck} does; indices past a now-shorter backing are skipped by
+ * clamping `i` to its last slot.
+ */
 function loopExitCheckReverse(loop: ArrayLoopLocals): Instr[] {
-  return [
+  const exit: Instr[] = [
     { op: "local.get", index: loop.iTmp },
     { op: "i32.const", value: 0 },
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
+  ];
+  return [
+    ...exit,
+    ...reloadLoopData(loop, [
+      { op: "local.get", index: loop.iTmp },
+      { op: "local.get", index: loop.dataTmp },
+      { op: "array.len" },
+      { op: "i32.ge_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: loop.dataTmp },
+          { op: "array.len" },
+          { op: "i32.const", value: 1 },
+          { op: "i32.sub" },
+          { op: "local.set", index: loop.iTmp },
+        ],
+      },
+      ...exit.map((instr) => ({ ...instr })),
+    ]),
   ];
 }
 

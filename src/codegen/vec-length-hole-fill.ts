@@ -194,7 +194,19 @@ export function buildVecLengthHoleFill(
             { op: "local.tee", index: startLocal },
             { op: "local.get", index: newLenLocal },
             { op: "i32.lt_u" },
-            { op: "if", blockType: { kind: "empty" }, then: fillWith(canonicalUndefinedExternInstrs(ctx)) },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: growFillInstrs(
+                vecLocal,
+                vecTypeIdx,
+                arrTypeIdx,
+                dataLocal,
+                startLocal,
+                newLenLocal,
+                canonicalUndefinedExternInstrs(ctx),
+              ),
+            },
           ]
         : [];
     const then: Instr[] =
@@ -243,10 +255,56 @@ export function buildVecLengthHoleFill(
 }
 
 /**
- * (#7164) `cap < newLen <= 16M` → reallocate the backing to `newLen`, copying
- * the old capacity. The new tail is default-filled here and marked by the fill
- * that follows; huge lengths keep the #4491 length/capacity split (slots past
- * the backing read as absent).
+ * (#7164) Fill `[start, min(newLen, array.len(data)))` with `marker`. Only the
+ * slots the grow exposes: a one-step grow in a loop must not refill the whole
+ * spare capacity each time (that made `length = i + 1` loops quadratic).
+ */
+function growFillInstrs(
+  vecLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  dataLocal: number,
+  startLocal: number,
+  newLenLocal: number,
+  marker: Instr[],
+): Instr[] {
+  return [
+    { op: "local.get", index: vecLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "local.get", index: dataLocal },
+        { op: "local.get", index: startLocal },
+        ...marker,
+        // count = min(newLen, array.len(data)) - start  (start < newLen here)
+        { op: "local.get", index: newLenLocal },
+        { op: "local.get", index: dataLocal },
+        { op: "array.len" },
+        { op: "local.get", index: newLenLocal },
+        { op: "local.get", index: dataLocal },
+        { op: "array.len" },
+        { op: "i32.lt_u" },
+        { op: "select" },
+        { op: "local.get", index: startLocal },
+        { op: "i32.sub" },
+        { op: "array.fill", typeIdx: arrTypeIdx },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#7164) `cap < newLen <= 16M` → reallocate the backing to
+ * `min(max(newLen, 2 * cap), 16M)`, copying the old capacity (amortised O(1)
+ * per one-step grow). Only the exposed slots are filled after this; huge
+ * lengths keep the #4491 length/capacity split (slots past the backing read
+ * as absent).
  */
 function lengthStoreGrowInstrs(
   local: (name: string, type: ValType) => number,
@@ -258,6 +316,7 @@ function lengthStoreGrowInstrs(
   const dataLocal = local(`__vlhf_gdata_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
   const capLocal = local(`__vlhf_gcap_${vecTypeIdx}`, { kind: "i32" });
   const newDataLocal = local(`__vlhf_gnew_${vecTypeIdx}`, { kind: "ref_null", typeIdx: arrTypeIdx });
+  const newCapLocal = local(`__vlhf_gncap_${vecTypeIdx}`, { kind: "i32" });
   return [
     { op: "local.get", index: vecLocal },
     { op: "ref.cast", typeIdx: vecTypeIdx },
@@ -281,7 +340,23 @@ function lengthStoreGrowInstrs(
       op: "if",
       blockType: { kind: "empty" },
       then: [
+        // newCap = min(max(newLen, 2 * cap), 16M); newLen <= 16M, so newCap >= newLen.
+        { op: "local.get", index: capLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" },
         { op: "local.get", index: newLenLocal },
+        { op: "local.get", index: capLocal },
+        { op: "i32.const", value: 1 },
+        { op: "i32.shl" },
+        { op: "local.get", index: newLenLocal },
+        { op: "i32.gt_u" },
+        { op: "select" },
+        { op: "local.tee", index: newCapLocal },
+        { op: "i32.const", value: 16777216 },
+        { op: "local.get", index: newCapLocal },
+        { op: "i32.const", value: 16777216 },
+        { op: "i32.lt_u" },
+        { op: "select" },
         { op: "array.new_default", typeIdx: arrTypeIdx },
         { op: "local.set", index: newDataLocal },
         { op: "local.get", index: capLocal },

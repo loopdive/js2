@@ -19,10 +19,22 @@ related: [7151, 7154, 7165]
 # 2026-10-28 (#7164 r4): `[0, ...anyArr]` must pick the externref carrier
 # (the grown array now lives in it), decided in compileArrayLiteral's existing
 # dynamic-element predicate (literals.ts +2).
+# 2026-10-28 (#7164 r5): the callback-method loops re-read the receiver's
+# backing array each iteration (`loopExitCheck` / `loopExitCheckReverse`,
+# reduceRight, both join folds) so a callback that grows the array (push or
+# `length =`) is seen — array-methods.ts owns those loops. `arr.length++` /
+# `--` / `+=` / `-=` route through the shared static length store
+# (array-length-update.ts) from their existing entry points
+# (unary-updates.ts compileMemberIncDec, operator-assignment.ts) — one guarded
+# call each.
 loc-budget-allow:
   - src/codegen/literals.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/expressions/unary-updates.ts
 func-budget-allow:
   - src/codegen/literals.ts::compileArrayLiteral
+  - src/codegen/expressions/unary-updates.ts::compileMemberIncDec
 ---
 
 # #7164 — `g.length = 3` on an externref vec creates null elements
@@ -51,157 +63,175 @@ Acceptance: node's output for all programs; no trap in `join` after `sort`; host
 
 ## Resolution (2026-10-28)
 
-Test: `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`, run
-on gc native-first, standalone and wasi against node; 573/573. It covers:
+**Test.** `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`
+runs gc native-first, standalone and wasi against node: 579/579.
 
-- 6 programs × 12 reads;
-- 10 share-group guards;
-- 35 readers after a grow;
-- a generated leak sweep: 37 array-producing methods and call forms × 3
-  lanes. Each case has a "no marker leaks" row with no `it.fails` escape and a
-  "matches node" row.
+| Block | Size |
+|---|---|
+| Programs × reads | 6 × 12 |
+| Share-group and length-update guards | 14 |
+| Readers after a grow | 35 |
+| Generated "matches node" sweep | 37 array-producing methods and call forms |
+| Generated marker-leak detector | 37 cases × 7 grow setups |
+| Callbacks that grow the array | 14 methods × {`length =`, `push`} |
 
-**Shipped design (r4): grown slots hold the canonical `undefined`, not
-`$Hole`.**
+The 7 grow setups are:
 
-- Rounds 1–3 filled them with the `$Hole` marker and patched readers one by
-  one. Each review then found more readers that passed the marker to user
-  code:
-  - call spread (r2);
-  - rest parameters of every non-declaration callee, `toReversed`, `with`
-    and `toSpliced` (r3);
-  - a wasi `null` regression from the r3 `__extern_get_idx` patch.
-- Per the stop rule, r4 switched designs: `undefined` cannot leak by
-  construction. The r2/r3 reader patches are reverted, so those paths are
-  byte-identical to `origin/main` again:
-  - spread literal, `entries()` for-of, call/rest spread, spread arg list,
-    array iterator, `__extern_get_idx`.
-- The cost: a grown index is a present `undefined`, not a hole. `in`,
-  `hasOwnProperty`, for-in, `Object.keys` and callback-visiting methods see
-  it — the same answers as `origin/main`, whose slot held `null`. Real holes
-  stay with #7170, and wasi `in` with #7171.
+- growing within capacity;
+- growing past capacity (reallocation);
+- shrinking, then `length++`, `++length`, `+= 2` or `= n`;
+- clearing, then `+= 3`.
 
-**Diagnosis (verified on `origin/main` 2b0565cb14):**
+**Design: grown slots hold the canonical `undefined`, not `$Hole`.** Rounds
+1–3 filled grown slots with the `$Hole` marker and patched readers one at a
+time. Each review then found another reader that handed the marker to user
+code. Round 4 switched to `undefined`, which cannot leak by construction, and
+reverted the reader patches.
 
-1. **The length store never filled a grow.** The static `arr.length = n`
-   store writes only the length field, and the hole fill ran only on shrink.
-   A grow exposed the backing's default `null`s, and nothing was reallocated
-   past the capacity.
-2. **A non-escaping `any[]` lost its carrier.** `inferArrayVecType` (#7154)
-   re-types a non-escaping, string-only `const g: any[] = []` as a typed string
-   vec. Its slots read `null`, and `sort()` traps on them.
+The cost: a grown index is a present `undefined`, not a hole. `in`,
+`hasOwnProperty`, for-in, `Object.keys` and the callback methods see it — the
+same answers as `origin/main`, whose slot held `null`. Real holes are #7170;
+wasi `in` is #7171.
 
-**Fix:**
+**Diagnosis (verified on `origin/main` 2b0565cb14).**
 
-- **`vec-length-hole-fill.ts`: new `length-store` mode for the static store.**
-  - Every carrier keeps the shrink fill (`$Hole`, as on `origin/main`).
-  - An externref carrier also grows. When `cap < newLen <= 16M`, the backing
-    is reallocated to `newLen`. Then `[oldLen, cap)` is filled with
-    `canonicalUndefinedExternInstrs`.
-  - The append shape `arr[len] = v; arr.length = len + 1` stores an unchanged
-    length, so it fills nothing.
-- **`array-share-group.ts` / `array-vec-inference.ts`: the carrier is chosen
-  for the whole share group, never one alias alone (r2).**
-  - `growingLengthStoreCarrier` records growing `x.length = n` stores (n not
-    the literal `0`) and accepts pure reads:
+1. **The static `arr.length = n` store never filled a grow.** It writes only
+   the length field, and its fill ran only on shrink. A grow exposed the
+   backing's default `null`s, and nothing was reallocated past the capacity.
+2. **The update forms bypassed that store.** `length++` / `--` went through
+   the dynamic `__extern_set` arm, which fills a grow with `$Hole` and is
+   quadratic in a loop (40k one-step grows took 4.1 s). `length += k` /
+   `-= k` wrote field 0 directly, with no fill at all.
+3. **A non-escaping `any[]` lost its carrier.** `inferArrayVecType` (#7154)
+   re-types a string-only `const g: any[] = []` as a typed string vec. Its
+   slots read `null`, and `sort()` traps.
+4. **Callback loops read a stale backing.** The callback-method loops read the
+   backing array they loaded before the loop. A callback that grows the array
+   by `push` (on `origin/main`) or by `length =` (once growth reallocates)
+   writes into a new backing the loop never sees.
+
+**Fix.**
+
+- **`array-length-update.ts` (new): one static length store for every form.**
+  - `emitArrayLengthStore` handles `arr.length = n`, and
+    `tryCompileArrayLengthUpdate` handles `++` / `--` (prefix and postfix) and
+    `+= k` / `-= k` with a numeric `k`.
+  - Every form is ToUint32-validated (RangeError) and goes through the same
+    fill.
+  - A store of the literal `0` emits no grow code: it is byte-identical to
+    `origin/main`'s shrink.
+- **`vec-length-hole-fill.ts`: new `length-store` mode.**
+  - A shrink marks the dropped slots `$Hole`, as on `origin/main`.
+  - A grow of an externref carrier reallocates when `cap < newLen <= 16M`, to
+    `min(max(newLen, 2·cap), 16M)`. The doubling keeps a one-step grow loop
+    amortised O(1).
+  - The grow then fills only `[oldLen, min(newLen, cap))` with the canonical
+    `undefined`.
+- **`array-methods.ts`: callback loops re-read the backing every iteration.**
+  - This covers `loopExitCheck` / `loopExitCheckReverse`, reduceRight and both
+    join folds.
+  - A backing that is now shorter than the index ends the loop, or clamps it
+    in reverse loops.
+  - This also fixes the pre-existing `push` trigger.
+- **`array-share-group.ts` / `array-vec-inference.ts`: the whole share group
+  decides the carrier.**
+  - A growing `x.length = n` switches the group to the dynamic carrier only
+    as a whole. An unshared binding switches alone, unless its vec is f64.
+  - Pure reads do not count as uses that block the switch:
     - `in`;
-    - spread outside container groups;
-    - the lib globals `String`, `JSON.stringify`, `Object.keys`,
-      `Object.getOwnPropertyNames` and `Array.isArray`. Since r3 these resolve
-      to ambient library declarations, so a shadowing `String` does not count.
-  - A sharing group switches to the dynamic carrier only as a whole. An
-    unshared binding switches alone, unless its vec is f64. Anything else keeps
-    `origin/main`'s layout.
-  - Compound length stores are not counted.
-- **`literals.ts`: `[0, ...anyArr]` takes the externref carrier** instead of
-  f64, so `'y'` is no longer coerced to `NaN`.
+    - `[...xs]` and spread into a library call;
+    - `String`, `JSON.stringify`, `Object.keys`,
+      `Object.getOwnPropertyNames` and `Array.isArray`, matched by resolved
+      lib symbol.
+  - A user call `f(...xs)` is not a pure read: a rest parameter receives `xs`
+    itself.
+- **`literals.ts`: `[0, ...anyArr]` takes the externref carrier**, so `'y'` is
+  no longer coerced to `NaN`.
+  - This also changes some programs that never grow an array.
+  - `export function t(a: any[]) { const b = [0, ...a]; return b.length; }`
+    shrinks from 104,770 B to 41,162 B on gc and from 93,617 B to 32,758 B on
+    standalone; wasi is 52,318 B → 52,169 B (review r4 measurement).
+  - Results are unchanged.
 
-No host imports and no new raw checker calls.
+No host imports and no new raw checker calls. The new module is classified in
+`scripts/compiler-boundaries.json`.
 
-**Generated sweep result.** 0 marker leaks on all lanes. Against
-`origin/main`, 0 regressions across all 37 cases. "Matches node" compares the
-full per-index presence and value summary:
+**Timings** (one-step grow loop, n = 40,000, unoptimized). Before = merge base;
+after = this branch.
 
-| Lane | Matches node |
-|---|---|
-| gc, standalone | `toReversed`, `toSpliced`, `with`, `Array.of`, `entries`, `values`, `[...g]`, `[0, ...g]`, for-of, index read, rest via declaration / arrow / function expression / method / static / closure / `new` / leading argument, positional spread into a declaration / method / `new` |
-| wasi | none: wasi `in` is false even for present indices (#7171) |
+| Loop | gc before → after | standalone before → after | wasi before → after |
+|---|---|---|---|
+| `g.length = i + 1; g[i] = 'v'` | 1.9 → 1.2 ms | 9.1 → 1.4 ms | 1.0 → 2.0 ms |
+| `g.length = g.length + 1` | 0.9 → 1.2 ms | 0.5 → 1.0 ms | 1.4 → 3.8 ms |
+| `g.length++` | **4,100 → 0.5 ms** | **3,971 → 0.5 ms** | wrong result (1) → 1.5 ms |
 
-The remaining "matches node" rows are `it.fails`, and none was right on
-`origin/main`:
+The round-4 head took 4,655 ms on the first loop.
 
-- grown index present (#7170): `self`, `map`, `filter`, `slice`, `concat`,
-  `flat`, `flatMap`, `splice`, forEach and reduce collection;
-- traps or compile errors (untracked): `toSorted`, `Array.from`, the
-  object-literal method rest, the `super` rest;
-- dynamic reads through `any` and `apply` read `null` (untracked).
+**Results against `origin/main`.**
 
-**Rows that changed against `origin/main` without a leak.** Measured over the
-107 main and reader rows on 3 lanes, head vs base. One row was right on base
-and is wrong on head:
+- **Test rows** (144 rows × 3 lanes): 78 improved, 2 regressed. Both
+  regressions are `g.some(v => v === undefined)` / `every`, explained below.
+- **Review probe sets** r1–r4 (A–O, 511 programs × 3 lanes): 0 regressions.
+- **#6937 share-group sets:** identical results. Their bytes differ, because
+  every callback loop now re-reads the backing.
 
-- `g.some(v => v === undefined)` / `every(v => v !== undefined)` on gc and
-  standalone. Base answered correctly only because its slot held `null`.
-- The read itself is fixed: `g[1] === undefined` is now true.
-- The row is `it.fails` under #7170, since skipping a hole needs real holes.
+**The one known regression.** `g.some(v => v === undefined)` /
+`every(v => v !== undefined)` on gc and standalone. `origin/main` got this
+right only because its slot held `null`. Skipping the slot needs real holes,
+so it is an `it.fails` row under #7170.
 
-**Now correct after `length` growth:**
+**Left out.** Each of these is an `it.fails` row with its owner, unless noted.
 
-| Lane | Reads |
-|---|---|
-| gc, standalone | `String(g[i])` / `g[i] === undefined` (was `"null"`), `sort` (no trap, `undefined` last), `join`, `JSON.stringify`, template / `String(g)`, spread / call spread / rest via every call form, `toReversed` / `with` / `toSpliced`, iterators, destructuring defaults |
-| wasi | element read, `join`, `JSON.stringify`, `sort`, template |
-
-**Left out.** The test carries each of these as an `it.fails` row with its
-owner.
-
-- **#7170 (holes):** a grown index is a present `undefined`. Affected:
-  - `in`, `hasOwnProperty`, for-in, `Object.keys`, `Object.values`;
-  - forEach / map / filter / reduce / some / every visit it;
-  - `indexOf` finds it;
-  - copies (`slice`, `concat`, `splice`, `flat`) keep it own.
-
-  The `delete` and `new Array(n)` rows are also #7170 (`delete` additionally
-  #7169).
-- **#7171 (wasi `in`):** every wasi presence row.
-- **Untracked, same as `origin/main`:**
+- **#7170 (holes):** a grown index is present. `in`, `hasOwnProperty`,
+  for-in (`012` where node has `0`), `Object.keys` / `values`, callbacks,
+  `indexOf`, and copies (`slice`, `concat`, `splice`, `flat`, `flatMap`) all
+  see it. The `delete` and `new Array(n)` rows are also #7170.
+- **#7171 (wasi):** `in` is false even for present indices.
+- **#7169:** `delete` followed by `sort`.
+- **Number-holding arrays are not covered.** An f64 carrier (`number[]`, or a
+  number-only `any[]`) grows with the backing's `0`s: `g.length = 6;
+  String(g[4])` reads `0` (node `undefined`), and `sort()` gives
+  `0|0|0|1|2|3`. This is the same on `origin/main`. The f64 hole marker
+  exists, but filling it on grow is not done here.
+- **Untracked, identical on `origin/main`:**
   - `toSorted` and `Array.from(anyVec)` trap;
   - an object-literal method with a rest parameter emits invalid wasm;
-  - `super(...r)` forwards nothing;
+  - `super(...r)` from a rest constructor forwards nothing;
   - `apply` and dynamic reads through `any` read `null`;
   - `push(...g)` pushes one element;
   - wasi `Array.of(...g)` needs a host import;
-  - wasi `Object.keys` / `hasOwnProperty` on a dense `any[]` are wrong;
+  - wasi `Object.keys` / `hasOwnProperty` are wrong on a dense `any[]`;
   - typed-vec groups (declared `string[]` / `boolean[]`, typed aliases) keep
-    the `null` fill and their out-of-bounds trap past capacity;
-  - compound length stores on typed vecs fail to compile;
-  - a class field read through an `any[]` gives `NaN`.
-- **Pre-existing marker leaks from other `$Hole` writers.** The shrink fill,
-  `defineProperty(length)` and the dynamic `(g as any).length = n` path still
-  write `$Hole`, exactly as on `origin/main`. So shrink-then-grow without a
-  static grow, spread after a shrink, and so on behave as there.
+    the `null` fill and trap out of bounds past capacity;
+  - a comparator's writes survive `sort` (node writes the sorted copy back
+    over them);
+  - a class field read through an `any[]` gives `NaN`;
+  - `const o = { a: g }; o.a.push('z')` leaves `g.length` at 1 (the field
+    holds a copy);
+  - `function grow(a: any[]) { a.length = 5 }` does not change the caller's
+    array;
+  - a `...r: string[]` rest parameter aliases the caller's array;
+  - `g.length = 4294967295; g[5]` traps out of bounds;
+  - after a `defineProperty` or dynamic `(g as any).length` shrink, the
+    dropped value comes back;
+  - those two dynamic paths, and the shrink fill, still write `$Hole` as on
+    `origin/main`.
 
-**Bytes.** Unoptimized builds, base `origin/main` 2b0565cb14 vs head, 1,979
-programs per lane:
+**Bytes** (unoptimized, base 2b0565cb14 vs head). Corpus: 1,707 programs per
+lane — 13 playground examples, 4 benchmark suites and 1,690 sources extracted
+from `tests/equivalence`.
 
-- 13 playground examples
-- 1,690 sources extracted from `tests/equivalence`
-- 276 review and sweep probes
+| Lane | Playground | Benchmark suites | Equivalence sources | Total |
+|---|---|---|---|---|
+| gc | 0 changed | 3 changed, +117 B | 37 changed, +740 B | +857 B |
+| standalone | 0 changed | 3 changed, +117 B | 37 changed, +740 B | +857 B |
+| wasi | 0 changed | 3 changed, +168 B | 34 changed, +691 B | +859 B |
 
-| Lane | Changed | Total delta | Playground | Equivalence sources | Probes |
-|---|---|---|---|---|---|
-| gc | 254 | +80,113 B | 0 | 3 (+414 B) | 251 (+79,699 B) |
-| standalone | 254 | +75,562 B | 0 | 3 (+423 B) | 251 (+75,139 B) |
-| wasi | 253 | +59,934 B | 0 | 3 (+429 B) | 250 (+59,505 B) |
+Where the bytes go:
 
-- The three changed equivalence sources are the `array-push-pop` length-store
-  programs.
-- Every probe has a growing `length` store. Most of their delta comes from the
-  `any[]` carrier switch (typed string vec → externref vec), not from the
-  fill.
-- The r3 `__extern_get_idx` arm is gone, so the +20 B in modules that use holes
-  without growing an array is gone too.
-
-The #6937 share-group probe sets (`cases13`, `sweepdef`, `cases11`: 220
-programs × 3 lanes) produce byte-identical output with identical results on
-head and base.
+- Each callback loop now reloads its backing on every iteration, adding about
+  +20–28 B per loop. Almost all of the changes are this.
+- A `length` store is byte-identical to `origin/main` in two cases: the value
+  is the literal `0`, or the receiver compiles to a typed (non-externref) vec.
+  Grow code is emitted only for the externref carrier. This covers the
+  `array-push-pop` `number[]` length stores.

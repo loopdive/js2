@@ -148,7 +148,7 @@ for (const program of Object.keys(PROGRAMS)) {
 }
 
 // (#7164 r2) Share-group guards: every alias must observe every store.
-const GUARDS: Record<string, { pre?: string; body: string; gap?: string }> = {
+const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap?: string }> = {
   paramTypedStr: {
     pre: "function f(a: string[]): void { a.push('p'); }",
     body: "const xs: any[] = []; xs.push('a'); xs.length = 3; f(xs); xs.push('c'); return xs.length+':'+JSON.stringify(xs);",
@@ -186,15 +186,31 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string }> = {
     // Traps (null dereference) exactly as on origin/main: the typed string vec meets a `string[]` callee.
     gap: "typed-vec-shadowed-string-trap",
   },
+  // (#7164 r5) `++` / `--` / `+=` / `-=` share the static length store.
+  spreadAfterShrinkInc: {
+    body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length++; const s = [...g]; return s.length + ':' + (1 in s) + ':' + JSON.stringify(Object.keys(s));",
+    wasiGap: "#7171",
+  },
+  toReversedAfterShrinkInc: {
+    body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length++; g.length++; const t = g.toReversed(); let p = ''; for (let i = 0; i < t.length; i++) p += (i in t) ? 'P' : 'H'; return p + String(t[0]);",
+    wasiGap: "#7171",
+  },
+  lengthUpdateValues: {
+    body: "const g: any[] = []; g.push('y'); const a = g.length++; const b = ++g.length; const c = (g.length += 2); const d = (g.length -= 1); const e = g.length--; return [a, b, c, d, e, g.length, String(g[1])].join(',');",
+  },
+  lengthUpdateRangeError: {
+    body: "const g: any[] = []; g.push('y'); try { g.length -= 5; return 'no'; } catch (e) { return (e instanceof RangeError) + ':' + g.length; }",
+  },
   spreadShrinkGrow: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length = 3; const s = [...g]; return s.length+':'+(1 in s)+':'+String(s[1]);",
   },
 };
 
 describe("#7164 share-group guards", () => {
-  for (const [name, { pre, body, gap }] of Object.entries(GUARDS)) {
+  for (const [name, { pre, body, gap: allGap, wasiGap }] of Object.entries(GUARDS)) {
     const src = `${ENC}${pre ?? ""}\nfunction value(): string { ${body} }\nexport function test(): number { return enc(value()); }`;
     for (const { lane, options } of LANES) {
+      const gap = allGap ?? (lane === "wasi" ? wasiGap : undefined);
       const test = gap !== undefined ? it.fails : it;
       test(`${name} / ${lane}${gap !== undefined ? ` (known gap: ${gap})` : ""}`, async () => {
         const expected = evaluateAsJs(src).test!();
@@ -416,41 +432,180 @@ const SWEEP_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
   positionalNew: { lanes: WASI, owner: "#7171" },
 };
 
-describe("#7164 generated leak sweep", () => {
+describe("#7164 generated sweep: matches node", () => {
   for (const [name, expr] of Object.entries(SWEEP)) {
-    const src = `${ENC}${SWEEP_PRELUDE}\nexport function test(): number { ${SWEEP_GROW} return enc(sum(${expr})); }\nexport function leak(): number { ${SWEEP_GROW} const r: any[] = ${expr}; for (let i = 0; i < r.length; i++) { const v = r[i]; if (typeof v === "object" && v !== null && String(v) === "[object Object]") return 1; } return 0; }`;
+    const src = `${ENC}${SWEEP_PRELUDE}\nexport function test(): number { ${SWEEP_GROW} return enc(sum(${expr})); }`;
     for (const { lane, options } of LANES) {
-      describe(`${name} / ${lane}`, () => {
-        let exports: Record<string, unknown> | undefined;
-        let failure = "";
-        beforeAll(async () => {
+      const gap = SWEEP_GAPS[name]?.lanes.includes(lane) ? SWEEP_GAPS[name]!.owner : undefined;
+      (gap !== undefined ? it.fails : it)(
+        `${name} / ${lane}${gap !== undefined ? ` (known gap: ${gap})` : ""}`,
+        async () => {
           const result = await compile(src, { fileName: "probe.ts", ...options });
-          if (!result.success) {
-            failure = result.errors.map((e) => e.message).join("\n");
+          expect(result.success, `${name}/${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
+          const exports = (await instantiateWithRuntime(result)).exports as Record<string, unknown>;
+          expect((exports.test as () => unknown)(), `${name}/${lane}`).toBe(evaluateAsJs(src).test!());
+        },
+        120_000,
+      );
+    }
+  }
+});
+
+// (#7164 r5) Marker-leak detector. `$Hole` reads back as `undefined` through
+// `r[i]`, so a leak shows as an index node reports PRESENT that head reports
+// absent: `i in r` false, or skipped by `forEach`. Each result index is
+// summarised as presence (P/H), forEach visit (V/S) and value class (u
+// undefined / O object / v other). A leak is node P → head H, node V → head
+// S, or node u → head O. Present-where-node-has-a-hole (H → P) is the accepted
+// #7170 gap, so this row has no `it.fails` escape. On wasi `i in r` is false
+// even for dense arrays (#7171), so only the visit and value columns count
+// there. Setups cover every grow form and the reallocation path.
+const LEAK_SETUPS: Record<string, string> = {
+  growWithinCapacity: `const g: any[] = []; g.push("y"); g.length = 3;`,
+  growReallocates: `const g: any[] = []; g.push("y"); g.push("x"); g.push("w"); g.push("v"); g.length = 9;`,
+  shrinkThenPostfixInc: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 1; g.length++; g.length++;`,
+  shrinkThenPrefixInc: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 1; ++g.length; ++g.length;`,
+  shrinkThenPlusEq: `const g: any[] = []; g.push("y"); g.push("z"); g.push("w"); g.length = 1; g.length += 2;`,
+  shrinkThenAssign: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 0; g.length = 3;`,
+  clearThenGrow: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 0; g.length += 3;`,
+};
+const LEAK_SUMMARY = `
+function leakSum(r: any[]): string {
+  const seen: number[] = []; for (let i = 0; i < r.length; i++) seen.push(0);
+  r.forEach((v: any, i: number) => { seen[i] = 1; });
+  let s = "";
+  for (let i = 0; i < r.length; i++) { const v = r[i]; s += (i in r ? "P" : "H") + (seen[i] === 1 ? "V" : "S") + (v === undefined ? "u" : typeof v === "object" && v !== null ? "O" : "v"); }
+  return s;
+}`;
+function leakFns(setup: string, cases: readonly string[]): string {
+  return cases
+    .map(
+      (name) =>
+        `export function at_${name}(i: number): number { ${setup} const s = leakSum(${SWEEP[name]}); return i < 0 ? s.length : s.charCodeAt(i); }`,
+    )
+    .join("\n");
+}
+function readSummary(fn: (i: number) => number): string {
+  const n = fn(-1);
+  let s = "";
+  for (let i = 0; i < n; i++) s += String.fromCharCode(fn(i));
+  return s;
+}
+function leaksIn(node: string, head: string, lane: Lane): string[] {
+  const out: string[] = [];
+  for (let i = 0; i * 3 < node.length; i++) {
+    const [np, nv, nc] = node.slice(i * 3, i * 3 + 3);
+    const [hp, hv, hc] = head.slice(i * 3, i * 3 + 3);
+    if (lane !== "wasi" && np === "P" && hp === "H") out.push(`${i}: present → absent`);
+    if (nv === "V" && hv === "S") out.push(`${i}: visited → skipped`);
+    if (nc === "u" && hc === "O") out.push(`${i}: undefined → object`);
+  }
+  return out;
+}
+
+describe("#7164 generated sweep: no marker leaks", () => {
+  const cases = Object.keys(SWEEP);
+  for (const [setupName, setup] of Object.entries(LEAK_SETUPS)) {
+    const nodeSrc = `${SWEEP_PRELUDE}${LEAK_SUMMARY}\n${leakFns(setup, cases)}`;
+    for (const { lane, options } of LANES) {
+      describe(`${setupName} / ${lane}`, () => {
+        const perCase = new Map<string, ((i: number) => number) | string>();
+        beforeAll(async () => {
+          // One module per setup; a case that does not compile on this lane
+          // (known compile gaps) falls back to a module of its own.
+          const whole = await compile(nodeSrc, { fileName: "probe.ts", ...options });
+          if (whole.success) {
+            const exports = (await instantiateWithRuntime(whole)).exports as Record<string, unknown>;
+            for (const name of cases) perCase.set(name, exports[`at_${name}`] as (i: number) => number);
             return;
           }
-          try {
-            exports = (await instantiateWithRuntime(result)).exports as Record<string, unknown>;
-          } catch (e) {
-            failure = String(e);
+          for (const name of cases) {
+            const one = await compile(`${SWEEP_PRELUDE}${LEAK_SUMMARY}\n${leakFns(setup, [name])}`, {
+              fileName: "probe.ts",
+              ...options,
+            });
+            if (!one.success) {
+              perCase.set(name, one.errors[0]?.message ?? "compile error");
+              continue;
+            }
+            const exports = (await instantiateWithRuntime(one)).exports as Record<string, unknown>;
+            perCase.set(name, exports[`at_${name}`] as (i: number) => number);
           }
-        }, 120_000);
-        it("no marker leaks", () => {
-          if (exports === undefined) return; // a compile/instantiate failure cannot leak; the node row reports it
-          let leaked: unknown;
-          try {
-            leaked = (exports.leak as () => unknown)();
-          } catch {
-            return; // a trap is not a leak; the node row reports it
+        }, 600_000);
+        it("every case", () => {
+          const node = evaluateAsJs(nodeSrc);
+          const leaks: string[] = [];
+          for (const name of cases) {
+            const fn = perCase.get(name);
+            if (typeof fn !== "function") continue; // does not compile: cannot leak
+            let head: string;
+            try {
+              head = readSummary(fn);
+            } catch {
+              continue; // a trap is not a leak
+            }
+            const expected = readSummary(node[`at_${name}`] as (i: number) => number);
+            for (const leak of leaksIn(expected, head, lane))
+              leaks.push(`${name} ${leak} (node ${expected}, head ${head})`);
           }
-          expect(leaked, `${name}/${lane}`).toBe(0);
-        });
-        const gap = SWEEP_GAPS[name]?.lanes.includes(lane) ? SWEEP_GAPS[name]!.owner : undefined;
-        (gap !== undefined ? it.fails : it)(`matches node${gap !== undefined ? ` (known gap: ${gap})` : ""}`, () => {
-          expect(failure, `${name}/${lane}`).toBe("");
-          expect((exports!.test as () => unknown)(), `${name}/${lane}`).toBe(evaluateAsJs(src).test!());
+          expect(leaks).toEqual([]);
         });
       });
+    }
+  }
+});
+
+// (#7164 r5) A callback that grows the receiver — by `length =` (which can
+// now reallocate the backing) or by `push` (which always could) — must have
+// the loop see its later writes: the callback loops re-read the backing array
+// every iteration.
+const CB_GROW: Record<string, readonly [string, string]> = {
+  len: ["g.length = 6; g[1] = 'q';", "g.length = 6; g[0] = 'q';"],
+  push: [
+    "g.push(1); g.push(2); g.push(3); g.push(4); g.push(5); g[1] = 'q';",
+    "g.push(1); g.push(2); g.push(3); g.push(4); g.push(5); g[0] = 'q';",
+  ],
+};
+const CB_SETUP = "const g: any[] = []; g.push('y'); g.push('z');";
+const cbCases = (m: string, r: string): Record<string, string> => ({
+  map: `const t = g.map((v: any, i: number) => { if (i === 0) { ${m} } return String(v); }); return t.slice(0, 2).join('|');`,
+  forEach: `let s = ''; g.forEach((v: any, i: number) => { if (i === 0) { ${m} } if (i < 2) s += String(v) + ','; }); return s;`,
+  filter: `const t = g.filter((v: any, i: number) => { if (i === 0) { ${m} } return i < 2; }); return t.join('|');`,
+  reduce: `return g.reduce((a: string, v: any, i: number) => { if (i === 0) { ${m} } return i < 2 ? a + String(v) : a; }, '');`,
+  reduceRight: `return g.reduceRight((a: string, v: any, i: number) => { if (i === 1) { ${r} } return i < 2 ? a + String(v) : a; }, '');`,
+  find: `return String(g.find((v: any, i: number) => { if (i === 0) { ${m} } return i === 1; }));`,
+  findIndex: `return String(g.findIndex((v: any, i: number) => { if (i === 0) { ${m} } return v === 'q'; }));`,
+  findLast: `return String(g.findLast((v: any, i: number) => { if (i === 1) { ${r} } return i === 0; }));`,
+  findLastIndex: `return String(g.findLastIndex((v: any, i: number) => { if (i === 1) { ${r} } return v === 'q'; }));`,
+  some: `let s = ''; g.some((v: any, i: number) => { if (i === 0) { ${m} } if (i < 2) s += String(v); return i >= 1; }); return s;`,
+  every: `let s = ''; g.every((v: any, i: number) => { if (i === 0) { ${m} } s += String(v); return i < 1; }); return s;`,
+  flatMap: `const t = g.flatMap((v: any, i: number) => { if (i === 0) { ${m} } return [String(v)]; }); return t.slice(0, 2).join('|');`,
+  sort: `let once = true; g.sort((a: any, b: any) => { if (once) { once = false; ${m} } return 0; }); return g.slice(0, 2).join('|') + g.length;`,
+  join: `const o = { toString(): string { ${m} return 'o'; } }; g[0] = o; return g.join('|').slice(0, 5);`,
+});
+// Same answer on origin/main (untracked): node sorts a copy and writes it
+// back over the comparator's writes; the in-place sort keeps them.
+const CB_GAPS: Record<string, { lanes: readonly Lane[]; owner: string }> = {
+  sort: { lanes: ALL, owner: "sort-comparator-mutation" },
+};
+
+describe("#7164 callbacks that grow the array", () => {
+  for (const [form, [m, r]] of Object.entries(CB_GROW)) {
+    for (const [method, body] of Object.entries(cbCases(m, r))) {
+      const src = `${ENC}function value(): string { ${CB_SETUP} ${body} }\nexport function test(): number { return enc(value()); }`;
+      for (const { lane, options } of LANES) {
+        const gap = CB_GAPS[method]?.lanes.includes(lane) ? CB_GAPS[method]!.owner : undefined;
+        (gap !== undefined ? it.fails : it)(
+          `${method} / grow by ${form} / ${lane}${gap ? ` (known gap: ${gap})` : ""}`,
+          async () => {
+            const result = await compile(src, { fileName: "probe.ts", ...options });
+            expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
+            const exports = (await instantiateWithRuntime(result)).exports as Record<string, unknown>;
+            expect((exports.test as () => unknown)(), `${method}/${form}/${lane}`).toBe(evaluateAsJs(src).test!());
+          },
+          120_000,
+        );
+      }
     }
   }
 });
