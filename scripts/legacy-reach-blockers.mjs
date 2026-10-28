@@ -37,7 +37,7 @@ const DECLARATION = new Set([
   ts.SyntaxKind.InterfaceDeclaration,
 ]);
 
-const ARM_DETAIL = /^([\w-]+):([A-Z]\w*)(?: «(.*)»)?$/s;
+const ARM_DETAIL = /^([^\s:«]+):([A-Z]\w*)(?: «(.*)»)?$/s;
 
 /**
  * Stable bucket label of a demoted row: `<arm>:<SyntaxKind>` for selector arms,
@@ -95,8 +95,10 @@ const inStatementList = (node) =>
  * success, or `{ refused }` naming why the blocker cannot be peeled.
  */
 export function peelBlocker(source, sf, roots, row) {
+  if (!ARM_DETAIL.test(row.detail ?? "")) return { refused: `no-arm-${row.stage ?? "none"}` };
   const node = locate(roots, sf, row.detail);
-  if (!node) return { refused: ARM_DETAIL.test(row.detail ?? "") ? "not-located" : `stage-${row.stage ?? "none"}` };
+  // Elsewhere in the file: for a test262 <module-init>, the harness prefix.
+  if (!node) return { refused: locate(sf.statements, sf, row.detail) ? "outside-unit" : "not-located" };
   let stmt = node;
   while (stmt.parent && !(ts.isStatement(stmt) && inStatementList(stmt))) stmt = stmt.parent;
   if (!stmt.parent || ts.isSourceFile(stmt)) return { refused: "not-in-statement" };

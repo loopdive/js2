@@ -57,7 +57,7 @@ describe("#7143 legacy-reach blocker census", () => {
     const one = sf.statements[0] as import("typescript").FunctionDeclaration;
     const row = (detail: string) => ({ reason: "body-shape-rejected", stage: "select", detail });
     expect(peelBlocker(SOURCE, sf, [one], { reason: "body-shape-rejected", stage: "build", detail: "x" })).toEqual({
-      refused: "stage-build",
+      refused: "no-arm-build",
     });
     expect(peelBlocker(SOURCE, sf, [one], row("arm:VariableStatement «let x = a;»"))).toEqual({
       refused: "declaration:VariableStatement",
