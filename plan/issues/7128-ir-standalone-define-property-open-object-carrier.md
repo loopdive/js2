@@ -443,6 +443,15 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
 | Equivalence files touching defineProperty or objects (12 files) | All pass, exit 0: define-property-typeerror, empty-object-widening, numeric-key-object, object-create, object-define-property{,-accessors,-extended,-return}, object-keys, object-mutability, object-literal-getters-setters, object-to-primitive. |
 | Gate chain (`LOC_GATE_BASE=origin/main`) | All exit 0. LOC and func growth are granted above. `largestSccSize` 724→725 is granted: the new codegen query joins the SCC as its sibling `ir-dynamic-construct.ts` does. `check:ir-fallbacks` shows no unintended or post-claim increase. |
 
+Review round (PR #6957, 2026-10-28, base `origin/main` merged in):
+
+| Check | Result |
+| --- | --- |
+| PR test file + 14 `tests/equivalence/*{define-property,object}*` files | 15 files, 131/131 pass. The PR file has 44 tests: 14 claimed shapes = node, 24 refused shapes (incl. every review repro) on legacy with no post-claim error, plus the non-null, returned-read, annotated, module-init and gc cases. |
+| gc byte identity vs `origin/main` | 37/37 identical (13 playground examples + 24 hand-written programs, incl. every review repro). Standalone: the 9 allow-listed programs differ, the other 28 are identical. |
+| Standalone A/B, the 378 rows | base 371/7, head 371/7, 0 pass→fail, 0 status changes. |
+| Gate chain, `LOC_GATE_BASE=origin/main` | 11/11 exit 0, with one new grant: `ir->runtime: 10` (the catalog import). |
+
 Commands:
 
 ```bash
