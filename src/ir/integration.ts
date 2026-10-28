@@ -70,7 +70,7 @@ import {
   undefinedAnyValueInstrs,
   undefinedExternInstrs,
 } from "../codegen/any-helpers.js"; // (#2949) boxed-any carrier for IrType.dynamic; (#7104) dyn.undefined
-import { ensureDynMemberGet, ensureDynMemberSet } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
+import { ensureDynMemberGet, ensureDynMemberSet, ensureDynMemberSetSloppy } from "../codegen/dyn-read.js"; // (#3053 U1) / (#3795)
 import { ensureDateCivilHelper } from "../codegen/expressions/builtins.js";
 import {
   ensureIrDynamicRuntime,
@@ -79,20 +79,24 @@ import {
   type IrDynamicRuntimeNeed,
 } from "../codegen/dyn-ops.js";
 import { ensureLateImport, flushLateImportShifts } from "../codegen/shared.js"; // (#2949 S5.2) host __host_eq / __host_loose_eq registration; (#3143) flush the __extern_is_undefined batch pre-Phase-3
-import {
-  getOrRegisterPromiseType,
-  isStandalonePromiseActive,
-  createPromiseRejectionEmissionBindings,
-} from "../codegen/async-scheduler.js";
+import { getOrRegisterPromiseType, createPromiseRejectionEmissionBindings } from "../codegen/async-scheduler.js";
 import {
   addGeneratorImports,
   addForInImports,
-  addIteratorImports,
   addStringImports,
   addUnionImports, // (#2949 slice 3) host-mode dynamic op imports (__box_number/__typeof_* family)
   TYPED_ARRAY_NAMES,
   scriptVarSlotIsDynamicHome,
   scriptVarSlotIsSoleHome,
+  ensureIrDynamicDeleteHelper, // (#7106 propertyHelper) dynamic delete wrappers
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+  ensureIrDynamicInstanceOfHelper, // (#7106) generic dynamic instanceof wrapper
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfAtLegacyParity,
+  scriptVarSlotIsStringHome,
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
@@ -108,11 +112,24 @@ import {
   IR_PUBLISH_ARGC_HELPER,
 } from "../codegen/ir-arguments-length.js";
 import {
+  ensureIrCurrentThisHelper,
+  ensureIrGlobalObjectHelper,
   ensureIrDynamicConstructHelper,
+  ensureIrInstanceOfFunctionHelper,
+  IR_CURRENT_THIS_SLOPPY_HELPER,
+  IR_CURRENT_THIS_STRICT_HELPER,
+  IR_GLOBAL_OBJECT_HELPER,
   irDynamicConstructCalleeIsPlain,
   irDynamicConstructHelperName,
+  irFunctionThisStrictness,
+  irInstanceOfFunctionHelperName,
+  irSelfGuardedConstructorValue,
 } from "../codegen/ir-dynamic-construct.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
+import { builtinNamespaceConstantValue } from "../codegen/builtin-value-read.js"; // (#7106 module-init lever A)
+import { ensureIrNumberFromValueHelper } from "../codegen/helpers/ir-number-from-value.js"; // (#7106 module-init lever B)
+import { IR_NUMBER_FROM_VALUE_FEATURE, IR_NUMBER_FROM_VALUE_NATIVE_FN } from "./runtime/number-conversion-callable.js";
+import { prepareNumberConversionResolver } from "../frontend/builtins/prepare-number-conversion.js"; // (#7106 module-init lever B)
 import {
   ensureIrNativeMapAdapters,
   IR_NATIVE_MAP_GET_NUM_FN,
@@ -1124,11 +1141,7 @@ function integrationNumberBoundaryPolicy(ctx: IrProgramRuntimePolicyContext): Nu
   const hostNumberBoundary = !ctx.nativeStrings;
   return Object.freeze({
     box: hostNumberBoundary ? ("host" as const) : ("unsupported" as const),
-    unbox: hostNumberBoundary
-      ? ("host" as const)
-      : ctx.targetProfile.semanticProviders === "native-first"
-        ? ("native" as const)
-        : ("unsupported" as const),
+    unbox: hostNumberBoundary ? ("host" as const) : ("native" as const),
   });
 }
 
@@ -1305,8 +1318,7 @@ function integrationHostCallbackWrapPolicy(ctx: IrProgramRuntimePolicyContext): 
     ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    ctx.targetProfile.environment === "none"
   ) {
     return Object.freeze({ wrap: "native-dispatch" as const });
   }
@@ -2368,8 +2380,7 @@ export function compileIrPathFunctions(
     ctx.standalone &&
     !ctx.wasi &&
     ctx.nativeStrings &&
-    ctx.targetProfile.environment === "none" &&
-    ctx.targetProfile.semanticProviders === "native-first"
+    ctx.targetProfile.environment === "none"
       ? makeIrStandaloneDomCapabilityPlan(ctx.checker, sourceFile)
       : undefined;
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -2389,6 +2400,7 @@ export function compileIrPathFunctions(
     // selector admitted is written here through the same slot predicate.
     admitScriptVar: (declaration: ts.VariableDeclaration) => scriptVarSlotIsSoleHome(ctx, declaration),
     scriptVarDynamicHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
+    scriptVarStringHome: (declaration: ts.VariableDeclaration) => scriptVarSlotIsStringHome(ctx, declaration),
   };
   // Direct compatibility callers share this context; structural globals never fall back to declaration names.
   const compatibilityInventory = loweringPlans
@@ -2523,7 +2535,7 @@ export function compileIrPathFunctions(
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ctx.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ctx.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ctx.checker);
-  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker);
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ctx.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ctx.checker);
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const declarationsByName = collectIntegrationFunctionDeclarations(integrationSourceFiles);
@@ -2536,6 +2548,9 @@ export function compileIrPathFunctions(
     definedFunctionAt: (funcIdx) => definedFuncAt(ctx, funcIdx),
     fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
   });
+  // (#7106 module-init lever B) the overlay's plan when it planned this compile; built here otherwise.
+  const preparedNumberCall =
+    loweringPlans?.preparedNumberCall ?? irNumberConversionPlan(ctx.checker, sourceFile).preparedNumberCall;
   const selected =
     selection ??
     planIrCompilation(sourceFile, {
@@ -2552,7 +2567,11 @@ export function compileIrPathFunctions(
       isRegExpExpression,
       isAmbientStringBinding,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
+      functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       implicitParamUsesNumericVecAbi,
@@ -3176,6 +3195,7 @@ export function compileIrPathFunctions(
     standaloneDomCapability,
     loweringPlans?.fnctorParameterPreselection,
     loweringPlans?.fnctorParameterPreselectionIsCurrent,
+    preparedNumberCall,
   );
   // (#7001) The verifier's string-result rule needs the lane's string carrier.
   const verifyOptions = {
@@ -3244,10 +3264,12 @@ export function compileIrPathFunctions(
           );
         }
         const o = effectiveOverride(name);
+        const ambientThisStrict = irFunctionThisStrictness(ctx, stmt); // (#7106 S3c)
         const lowered = lowerFunctionAstToIr(stmt, {
           exported: hasExportModifier(stmt),
           funcName: name,
           ownerUnitId,
+          ...(ambientThisStrict === undefined ? {} : { ambientThisStrict }),
           directCalls: directCallsFor(stmt, ownerUnitId),
           fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
           fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
@@ -6892,6 +6914,7 @@ function makeFromAstResolver(
   standaloneDomCapability?: IrStandaloneDomCapabilityPlan,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
+  preparedNumberCall?: (call: ts.CallExpression) => boolean, // (#7106 module-init lever B)
 ): IrFromAstResolver {
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
@@ -6908,6 +6931,9 @@ function makeFromAstResolver(
       return irImportFuncRef("env", "__extern_eval");
     },
     isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+    ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+    // (#7106 module-init lever B) the selector admitted exactly this plan's calls.
+    ...(preparedNumberCall ? { preparedNumberCall } : {}),
     isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
     isHoleyArrayElementStore: (expr) => {
       if (!ts.isIdentifier(expr.expression)) return false;
@@ -6990,6 +7016,12 @@ function makeFromAstResolver(
     },
     dynamicCarrierIsExternref() {
       return !ctx.fast;
+    },
+    // (#7106) the selector's `dynamicInstanceOfAtLegacyParity`, asked again per site.
+    dynamicInstanceOfAtLegacyParity: (site: ts.BinaryExpression) => irDynamicInstanceOfAtLegacyParity(ctx, site),
+    // (#7106 propertyHelper) the wrapper a dynamic delete at this site calls.
+    dynamicDeleteSymbol(site: ts.DeleteExpression) {
+      return ctx.fast ? undefined : irDynamicDeleteHelperName(irDeleteSiteIsStrict(site));
     },
     fnctorNativeStringReplace(call: ts.CallExpression) {
       return (
@@ -7276,19 +7308,12 @@ function makeFromAstResolver(
     // supplies imports; standalone/WASI supplies the #2964 native object
     // runtime. Both variants snapshot keys and perform per-visit liveness.
     dynamicForInPlan() {
-      return ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
-        ? {
-            keys: "__object_keys_forin",
-            len: "__extern_length",
-            get: "__extern_get_idx",
-            has: "__extern_has",
-          }
-        : {
-            keys: "__for_in_keys",
-            len: "__for_in_len",
-            get: "__for_in_get",
-            has: "__for_in_has",
-          };
+      return {
+        keys: "__object_keys_forin",
+        len: "__extern_length",
+        get: "__extern_get_idx",
+        has: "__extern_has",
+      };
     },
     // (#2856 C2) TypedArray-view receiver detection for element STORES —
     // the same checker walk as the legacy `elementAccessTypedArrayName`
@@ -7318,6 +7343,10 @@ function makeFromAstResolver(
     isAmbientBinding(node: ts.Identifier): boolean {
       return moduleBindingResolver?.isAmbientBinding(node) === true;
     },
+    isLibOnlyBinding(node: ts.Identifier): boolean {
+      return moduleBindingResolver?.isLibOnlyBinding(node) === true;
+    },
+    builtinProtoCompanionSeeded: () => ctx.protoMemberDirty, // (#7127)
     isAmbientStringBinding,
     // (#2856) Variant selection for `console.<m>(arg)` — the SAME checker
     // predicates as the legacy `collectConsoleImports` registration scan
@@ -7524,12 +7553,12 @@ function resolveAndObserveCallableProvider(
     index = batchedConcatProviderIndex(ctx, prepared, 5);
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
     index = batchedConcatProviderIndex(ctx, prepared, parseIrStringConcatManyArity(symbol)!);
-  } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
+  } else if (ref.binding.kind === "runtime" && (symbol === "__new_ReferenceError" || symbol === "__new_TypeError")) {
     if (ctx.wasi || ctx.standalone) {
-      emitWasiErrorConstructor(ctx, "ReferenceError", 1);
-      index = ctx.funcMap.get("__new_ReferenceError");
+      emitWasiErrorConstructor(ctx, symbol === "__new_TypeError" ? "TypeError" : "ReferenceError", 1);
+      index = ctx.funcMap.get(symbol);
     } else {
-      index = ensureLateImport(ctx, "__new_ReferenceError", [{ kind: "externref" }], [{ kind: "externref" }]);
+      index = ensureLateImport(ctx, symbol, [{ kind: "externref" }], [{ kind: "externref" }]);
     }
   } else if (ref.binding.kind === "intrinsic" && symbol.startsWith(IR_VEC_ELEM_SET_PREFIX)) {
     const element = parseIrVectorRuntimeElement(symbol, IR_VEC_ELEM_SET_PREFIX);
@@ -7748,6 +7777,9 @@ function resolveAndObserveCallableProvider(
       ensureNativeStringHelpers(ctx);
       index = nativeStrHelperHandle(ctx, symbol);
     }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_FROM_VALUE_FEATURE) {
+    // (#7106 module-init lever B) pre-registered at finalize; the helper answers its own index.
+    index = ensureIrNumberFromValueHelper(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_STRING_FN) {
     index = ensureIrNumberToStringProvider(ctx, fuseNativeNumberFormatCarriers);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_NUMBER_TO_FIXED_FN) {
@@ -8232,7 +8264,7 @@ function makeResolver(
     // (#1373b C-1) Lane discriminator for the `await` lowering: native
     // `$Promise` carrier (wasi) → one-level unwrap; JS-host → identity.
     nativePromiseCarrierActive(): boolean {
-      return isStandalonePromiseActive(ctx);
+      return true;
     },
   };
   return resolver;
@@ -8693,31 +8725,17 @@ function preregisterIteratorSupport(
       legacyName: entry.ownerName,
     });
   }
-  if (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first") {
-    for (const owner of owners.values()) {
-      failures.set(owner.unitId, {
-        owner,
-        outcome: {
-          kind: "unsupported",
-          code: "late-preparation-unsupported",
-          stage: "resolve",
-          detail:
-            "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
-        },
-      });
-    }
-    return failures;
-  }
-  try {
-    if (readEnv("JS2WASM_TEST_INJECT_IR_ITERATOR_REGISTRATION_THROW") === "1") {
-      throw new Error("injected iterator registration failure");
-    }
-    addIteratorImports(ctx);
-  } catch (error) {
-    const failure = classifyIrFailure(error, "resolve");
-    for (const owner of owners.values()) {
-      failures.set(owner.unitId, { owner, outcome: failure });
-    }
+  for (const owner of owners.values()) {
+    failures.set(owner.unitId, {
+      owner,
+      outcome: {
+        kind: "unsupported",
+        code: "late-preparation-unsupported",
+        stage: "resolve",
+        detail:
+          "standalone/WASI generic iteration requires the JS-host iterator protocol; a pure-Wasm Iterator Record path is not available",
+      },
+    });
   }
   return failures;
 }
@@ -8933,6 +8951,10 @@ function isDynamicOp(instr: IrInstr): boolean {
   if (instr.kind === "dyn.construct") return true;
   if (instr.kind === "dyn.string_carrier") return true;
   if (instr.kind === "dyn.arguments_length") return true;
+  if (instr.kind === "dyn.current_this") return true;
+  if (instr.kind === "dyn.global_object") return true;
+  if (instr.kind === "dyn.instanceof_fn") return true;
+  if (instr.kind === "dyn.instanceof") return true;
   if (instr.kind === "dyn.publish_argc") return true;
   if (instr.kind === "dyn.own_property") return true;
   // #2949 S5.3 — dyn.to_number consumes the carrier and calls the canonical
@@ -9095,12 +9117,12 @@ function preregisterDynamicSupport(
   // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
   const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
   let usesFunctionPrototypeCall = false;
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
   let usesToNumber = false;
   let usesMemberGet = false;
   let usesMemberSet = false;
+  let usesSloppyMemberSet = false; // (#7106 S3c)
   // (#3143) A from-ast lowering can emit a DIRECT named call to a member of the
   // `addUnionImports` family (`__box_number` / `__unbox_number` / `__box_boolean`
   // / …) rather than a `box`/`unbox` IR instruction — e.g. `coerceToExpectedExtern`
@@ -9143,16 +9165,26 @@ function preregisterDynamicSupport(
   let usesDynJsonStringify = false;
   // (#7106 S1c) `dyn.object_tag` calls the standalone runtime classifier.
   let usesDynObjectTag = false;
+  // (#7106 module-init lever B) `js.number.from-value` calls the template-built provider.
+  let usesNumberFromValue = false;
   // (#7106 S3a) `dyn.construct` calls the per-arity construct driver wrapper.
   const dynConstructArities = new Set<number>();
   // (#7106 S1c) `dyn.string_carrier` calls the checked carrier-recovery wrapper.
   let usesDynStringCarrier = false;
   // (#7106 S1e) `dyn.arguments_length` calls the argc-protocol wrapper.
   let usesDynArgumentsLength = false;
+  // (#7106 S3c) `dyn.current_this` / `dyn.instanceof_fn` call receiver wrappers.
+  const currentThisStrictness = new Set<boolean>();
+  let usesDynGlobalObject = false;
+  const instanceOfFunctions = new Set<string>();
+  // (#7106) `dyn.instanceof` calls the generic runtime operator wrapper.
+  let usesDynInstanceOf = false;
   // (#7106 S1i) `dyn.publish_argc` calls the caller-side argc wrapper.
   let usesDynPublishArgc = false;
   // (#7106 S1g) `dyn.own_property` calls the lane's own-property providers.
   const ownPropertyTests = new Set<"hasOwnProperty" | "propertyIsEnumerable">();
+  // (#7106 propertyHelper) a dynamic delete calls its strictness's wrapper.
+  const dynDeleteStrictness = new Set<boolean>();
   // (#7106 propertyHelper) the stored `Object.getOwnPropertyDescriptor` alias.
   let usesOwnPropertyDescriptor = false;
   const primitiveWrapperConstructors = new Set<"Boolean" | "Number" | "String">();
@@ -9166,15 +9198,28 @@ function preregisterDynamicSupport(
           if (i.kind === "dyn.to_string") usesDynToString = true;
           if (i.kind === "dyn.json_stringify") usesDynJsonStringify = true;
           if (i.kind === "dyn.object_tag") usesDynObjectTag = true;
+          // (#7106 module-init lever B) `Number(v)` through its host-free provider.
+          if (
+            i.kind === "call" &&
+            i.target.binding.kind === "intrinsic" &&
+            i.target.binding.symbol === IR_NUMBER_FROM_VALUE_FEATURE
+          ) {
+            usesNumberFromValue = true;
+          }
           if (i.kind === "dyn.construct") dynConstructArities.add(i.args.length);
           if (i.kind === "dyn.string_carrier") usesDynStringCarrier = true;
           if (i.kind === "dyn.arguments_length") usesDynArgumentsLength = true;
+          if (i.kind === "dyn.current_this") currentThisStrictness.add(i.strict);
+          if (i.kind === "dyn.global_object") usesDynGlobalObject = true;
+          if (i.kind === "dyn.instanceof_fn") instanceOfFunctions.add(i.target.name);
+          if (i.kind === "dyn.instanceof") usesDynInstanceOf = true;
           if (i.kind === "dyn.publish_argc") usesDynPublishArgc = true;
           if (i.kind === "dyn.own_property") ownPropertyTests.add(i.test);
           if (usesDynEq(i)) usesEq = true;
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
           if (usesDynMemberSet(i)) usesMemberSet = true;
+          if (i.kind === "dyn.member_set" && i.sloppy === true) usesSloppyMemberSet = true;
           // (#3526 F1-S1, widened by F1-S2) The number and boolean boundaries
           // reach Phase 3 as semantic `intrinsic`s whose frozen providers carry
           // the SAME physical targets the old direct calls used. Provider
@@ -9237,6 +9282,10 @@ function preregisterDynamicSupport(
                 usesOwnPropertyDescriptor = true;
                 break;
               // (#4461) native `$Map` module-binding storage.
+              case IR_DYN_DELETE_STRICT_HELPER:
+              case IR_DYN_DELETE_SLOPPY_HELPER:
+                dynDeleteStrictness.add(symbol === IR_DYN_DELETE_STRICT_HELPER);
+                break;
               case IR_NATIVE_MAP_NEW_FN:
               case IR_NATIVE_MAP_GET_NUM_FN:
               case IR_NATIVE_MAP_SET_NUM_FN:
@@ -9266,14 +9315,7 @@ function preregisterDynamicSupport(
     }
   }
   if (usesOrdinaryToPrimitiveObjectRuntime) {
-    if (nativeSemanticProviders) {
-      ensureObjectRuntime(ctx);
-    } else {
-      ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
-      ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], []);
-      ensureLateImport(ctx, "__to_primitive", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-      flushLateImportShifts(ctx, null);
-    }
+    ensureObjectRuntime(ctx);
   }
   if (primitiveWrapperConstructors.size > 0) {
     // #4208 S4 — explicit runtime refs for the focused primitive-wrapper
@@ -9321,6 +9363,47 @@ function preregisterDynamicSupport(
     flushLateImportShifts(ctx, null);
     observeNativeRuntimeProvider(ctx, IR_ARGUMENTS_LENGTH_HELPER);
   }
+  if (usesDynGlobalObject && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    if (ensureIrGlobalObjectHelper(ctx) === undefined) {
+      throw new Error("ir/integration: dyn.global_object has no realm wrapper on this lane (#7106)");
+    }
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_GLOBAL_OBJECT_HELPER);
+  }
+  if ((currentThisStrictness.size > 0 || instanceOfFunctions.size > 0) && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106 S3c) legacy's receiver ladder and per-function chain walk, wrapped.
+    for (const strict of [...currentThisStrictness].sort()) {
+      if (ensureIrCurrentThisHelper(ctx, strict) === undefined) {
+        throw new Error("ir/integration: dyn.current_this has no receiver wrapper on this lane (#7106 S3c)");
+      }
+      observeNativeRuntimeProvider(ctx, strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER);
+    }
+    for (const functionName of [...instanceOfFunctions].sort()) {
+      if (ensureIrInstanceOfFunctionHelper(ctx, functionName) === undefined) {
+        throw new Error(`ir/integration: dyn.instanceof_fn has no chain-walk wrapper for ${functionName} (#7106 S3c)`);
+      }
+      observeNativeRuntimeProvider(ctx, irInstanceOfFunctionHelperName(functionName));
+    }
+    flushLateImportShifts(ctx, null);
+  }
+  if (usesDynInstanceOf && (ctx.standalone || ctx.wasi) && !ctx.fast) {
+    // (#7106) legacy's generic runtime instanceof and its throw guard, wrapped.
+    if (ensureIrDynamicInstanceOfHelper(ctx) === undefined) {
+      throw new Error("ir/integration: dyn.instanceof has no runtime operator on this lane (#7106)");
+    }
+    observeNativeRuntimeProvider(ctx, IR_DYN_INSTANCEOF_HELPER);
+    flushLateImportShifts(ctx, null);
+  }
+  if (dynDeleteStrictness.size > 0 && !ctx.fast) {
+    // (#7106 propertyHelper) legacy's generic externref delete arm, wrapped.
+    for (const strict of [...dynDeleteStrictness].sort()) {
+      if (ensureIrDynamicDeleteHelper(ctx, strict) === undefined) {
+        throw new Error("ir/integration: dynamic delete has no __delete_property provider on this lane (#7106)");
+      }
+      observeNativeRuntimeProvider(ctx, irDynamicDeleteHelperName(strict));
+    }
+    flushLateImportShifts(ctx, null);
+  }
   if (usesDynPublishArgc && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     if (ensureIrPublishArgcHelper(ctx) === undefined) {
       throw new Error("ir/integration: dyn.publish_argc has no argc-protocol wrapper on this lane (#7106 S1i)");
@@ -9362,6 +9445,15 @@ function preregisterDynamicSupport(
       observeNativeRuntimeProvider(ctx, irDynamicConstructHelperName(arity));
     }
     flushLateImportShifts(ctx, null);
+  }
+  if (usesNumberFromValue) {
+    // (#7106 module-init lever B) legacy's `Number(v)` emission over a template,
+    // registered now so no Phase-3 body drives a late-import index shift.
+    if (ensureIrNumberFromValueHelper(ctx) === undefined) {
+      throw new Error(`ir/integration: ${IR_NUMBER_FROM_VALUE_FEATURE} has no host-free provider on this lane (#7106)`);
+    }
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_NUMBER_FROM_VALUE_NATIVE_FN);
   }
   if (usesDynObjectTag && (ctx.standalone || ctx.wasi) && !ctx.fast) {
     ensureObjectProtoToStringRuntimeHelper(ctx);
@@ -9432,7 +9524,7 @@ function preregisterDynamicSupport(
     if (dynamicRuntimeNeeds.has("member-call"))
       observeIrFunctionObjectCallProviders((symbol) => observeNativeRuntimeProvider(ctx, symbol));
   }
-  if (usesFunctionMemberStrictSet && nativeSemanticProviders && !ctx.fast) {
+  if (usesFunctionMemberStrictSet && !ctx.fast) {
     ensureObjectRuntime(ctx);
     observeNativeRuntimeProvider(ctx, "__extern_set_strict");
   }
@@ -9460,17 +9552,8 @@ function preregisterDynamicSupport(
     // (#329/#2078), exactly like `addUnionImports` above. Both are idempotent;
     // only fired when a host module actually carries a dyn.eq.
     if (usesEq) {
-      if (nativeSemanticProviders) {
-        ensureExternStrictEqHelper(ctx);
-        ensureExternLooseEqHelper(ctx);
-      } else {
-        ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-        ensureLateImport(ctx, "__host_loose_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-        // Settle the batch before Phase 3 captures patch-slot and call-target
-        // indices. Leaving these two imports pending can shift the eventual IR
-        // replacement onto a sibling legacy slot.
-        flushLateImportShifts(ctx, null);
-      }
+      ensureExternStrictEqHelper(ctx);
+      ensureExternLooseEqHelper(ctx);
     }
   }
   // #3053 U1 — a `dyn.member_get` present in any IR body needs the unified
@@ -9487,23 +9570,16 @@ function preregisterDynamicSupport(
   // `dyn.member_get` in a claimed function today, so `usesMemberGet` is never
   // set in a production compile.
   if (usesMemberGet) {
-    if (nativeSemanticProviders) ensureObjectRuntime(ctx);
+    ensureObjectRuntime(ctx);
     ctx.usesDynMemberGet = true;
     ensureDynMemberGet(ctx);
   }
   if (usesMemberSet) {
-    if (nativeSemanticProviders) {
-      ensureObjectRuntime(ctx);
-    } else {
-      ensureLateImport(
-        ctx,
-        "__extern_set_strict",
-        [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-        [],
-      );
-      flushLateImportShifts(ctx, null);
-    }
+    ensureObjectRuntime(ctx);
     ensureDynMemberSet(ctx);
+    if (usesSloppyMemberSet && !ensureDynMemberSetSloppy(ctx)) {
+      throw new Error("ir/integration: a sloppy dyn.member_set has no __extern_set store on this lane (#7106 S3c)");
+    }
   }
 }
 
@@ -9537,7 +9613,6 @@ function preregisterDynamicSupport(
  *     plumbed through — a later producer slice.
  */
 export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | null {
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   if (ctx.fast) {
     ensureAnyValueType(ctx);
     const anyTypeIdx = ctx.anyValueTypeIdx;
@@ -9624,6 +9699,18 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error(
           "ir/integration: dyn.arguments_length is not lowerable on the fast $AnyValue carrier (#7106 S1e)",
         );
+      },
+      emitCurrentThis(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.current_this is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
+      },
+      emitGlobalObject(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.global_object is not lowerable on the fast $AnyValue carrier (#7106)");
+      },
+      emitInstanceOfFunction(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.instanceof_fn is not lowerable on the fast $AnyValue carrier (#7106 S3c)");
+      },
+      emitInstanceOf(): readonly Instr[] {
+        throw new Error("ir/integration: dyn.instanceof is not lowerable on the fast $AnyValue carrier (#7106)");
       },
       emitPublishArgc(): readonly Instr[] {
         throw new Error("ir/integration: dyn.publish_argc is not lowerable on the fast $AnyValue carrier (#7106 S1i)");
@@ -9723,7 +9810,12 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         ctx.usesDynMemberGet = true;
         return [callHelper("__dyn_member_get")];
       },
-      emitMemberSet(): readonly Instr[] {
+      emitMemberSet(sloppy: boolean): readonly Instr[] {
+        if (sloppy) {
+          throw new Error(
+            "ir/integration: a sloppy dyn.member_set is not lowerable on the fast $AnyValue carrier (#7106 S3c)",
+          );
+        }
         return [callHelper("__dyn_member_set")];
       },
     };
@@ -9796,6 +9888,34 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
         throw new Error("ir/integration: dyn.arguments_length needs the host-free argc protocol (#7106 S1e)");
       }
       return [{ op: "i32.const", value: formals } as Instr, callImport(IR_ARGUMENTS_LENGTH_HELPER)];
+    },
+    emitCurrentThis(strict: boolean): readonly Instr[] {
+      // (#7106 S3c) legacy's `__current_this` ladder, wrapped once per strictness.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.current_this needs the host-free receiver protocol (#7106 S3c)");
+      }
+      return [callImport(strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER)];
+    },
+    emitGlobalObject(): readonly Instr[] {
+      // (#7106) legacy's realm `globalThis` read, wrapped once.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.global_object needs the host-free realm (#7106)");
+      }
+      return [callImport(IR_GLOBAL_OBJECT_HELPER)];
+    },
+    emitInstanceOfFunction(functionName: string): readonly Instr[] {
+      // (#7106 S3c) carrier on the stack → legacy's per-function chain walk.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.instanceof_fn needs the host-free chain walk (#7106 S3c)");
+      }
+      return [callImport(irInstanceOfFunctionHelperName(functionName))];
+    },
+    emitInstanceOf(): readonly Instr[] {
+      // (#7106) value + target carriers on the stack → legacy's generic operator.
+      if (!ctx.standalone && !ctx.wasi) {
+        throw new Error("ir/integration: dyn.instanceof needs the host-free runtime operator (#7106)");
+      }
+      return [callImport(IR_DYN_INSTANCEOF_HELPER)];
     },
     emitPublishArgc(count: number): readonly Instr[] {
       // (#7106 S1i) legacy's `emitSetArgc` for an under-arity direct call, wrapped once.
@@ -9949,13 +10069,13 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
     emitStrictEq(negate: boolean): readonly Instr[] {
       // Compatibility semantics delegate to JS. Native-first semantics use the
       // externref classifier + AnyValue comparison helper even with a JS host.
-      const helper = nativeSemanticProviders ? "__extern_strict_eq" : "__host_eq";
+      const helper = "__extern_strict_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitLooseEq(negate: boolean): readonly Instr[] {
       // Compatibility semantics delegate to JS. Native-first classifies both
       // externref carriers and routes through the native `__any_eq` engine.
-      const helper = nativeSemanticProviders ? "__extern_loose_eq" : "__host_loose_eq";
+      const helper = "__extern_loose_eq";
       return negate ? [callImport(helper), { op: "i32.eqz" }] : [callImport(helper)];
     },
     emitMemberGet(): readonly Instr[] {
@@ -9971,8 +10091,8 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
       ctx.usesDynMemberGet = true;
       return [callImport("__dyn_member_get")];
     },
-    emitMemberSet(): readonly Instr[] {
-      return [callImport("__dyn_member_set")];
+    emitMemberSet(sloppy: boolean): readonly Instr[] {
+      return [callImport(sloppy ? "__dyn_member_set_sloppy" : "__dyn_member_set")];
     },
   };
 }
@@ -10639,4 +10759,30 @@ function observePreparedDynamicBoxHelpers(
     refs.push(ref);
   }
   return refs;
+}
+
+/**
+ * (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>`
+ * read folds to, from legacy's own tables (`builtin-value-read.ts`) — the one
+ * answer the selector option and the from-ast resolver share. Pure syntax:
+ * whether the identifier is the unshadowed ambient namespace is the caller's
+ * question (scope + the ambient predicate), as for every ambient arm.
+ */
+export function irAmbientNamespaceConstant(expr: ts.PropertyAccessExpression): number | undefined {
+  if (!ts.isIdentifier(expr.expression) || !ts.isIdentifier(expr.name)) return undefined;
+  return builtinNamespaceConstantValue(expr.expression.text, expr.name.text);
+}
+
+/**
+ * (#7106 module-init lever B) The source-bound `Number(v)` conversion plan,
+ * file-wide, for the selector option and the from-ast resolver alike: the
+ * plan's invalidation is file-wide, and a unit's calls are a subset of the
+ * file's, so one instance answers both planning sites exactly as
+ * `prepareSourceBuiltinResolvers` answers the IR program source.
+ */
+export function irNumberConversionPlan(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): ReturnType<typeof prepareNumberConversionResolver> {
+  return prepareNumberConversionResolver(checker, [sourceFile], [...sourceFile.statements]);
 }

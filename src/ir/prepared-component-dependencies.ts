@@ -580,6 +580,10 @@ function implicitSupportRequirement(
     case "dyn.object_tag":
     case "dyn.string_carrier":
     case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
+    case "dyn.instanceof_fn":
+    case "dyn.instanceof":
     case "dyn.publish_argc":
     case "dyn.own_property":
     case "dyn.construct":

@@ -176,7 +176,6 @@ describe("#3525 M2 prepared multi-source module-init", () => {
     vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY", "1");
     const options = {
       ...OPTIONS,
-      nativeStrings: false,
       target: "gc" as const,
       deferTopLevelInit: true,
     };

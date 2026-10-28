@@ -15,7 +15,7 @@ import { addUnionImportsViaRegistry } from "../shared.js";
 import { emitUndefinedExtern } from "../any-helpers.js";
 import { UNDEF_F64_BITS } from "../value-tags.js";
 import { ensureObjectRuntime, OBJECT_RUNTIME_HELPER_NAMES } from "../object-runtime.js";
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "../symbol-native.js";
+import { ensureSymbolCarrier } from "../symbol-native.js";
 // (#3100 S4) Native standalone iteration substrate: the four `__iterator*`
 // protocol ops, the bounded materializer `__array_from_iter_n`, and the
 // rest-slice `__extern_slice` all have Wasm-native DEFINED implementations.
@@ -443,11 +443,11 @@ export function ensureLateImport(
   // idempotent and registers every name in UNION_NATIVE_HELPER_NAMES, so a
   // single call resolves this lookup. These names are disjoint from the
   // #1472 object/property refusal family below.
-  if (ctx.targetProfile.semanticProviders === "native-first" && UNION_NATIVE_HELPER_NAMES.has(name)) {
+  if (UNION_NATIVE_HELPER_NAMES.has(name)) {
     addUnionImportsViaRegistry(ctx);
     return ctx.funcMap.get(name);
   }
-  if (ctx.targetProfile.semanticProviders === "native-first" && name.startsWith("__new_")) {
+  if (name.startsWith("__new_")) {
     const errorName = name.slice("__new_".length);
     if (isWasiErrorName(errorName)) {
       emitWasiErrorConstructor(ctx, errorName, paramTypes.length);
@@ -480,7 +480,7 @@ export function ensureLateImport(
   // ctx.standalone` routing of UNION_NATIVE_HELPER_NAMES above and the #2609
   // `__object_is` host-free (`ctx.standalone || ctx.wasi`) registration inside
   // ensureObjectRuntime.
-  if (ctx.targetProfile.semanticProviders === "native-first" && OBJECT_RUNTIME_HELPER_NAMES.has(name)) {
+  if (OBJECT_RUNTIME_HELPER_NAMES.has(name)) {
     ensureObjectRuntime(ctx);
     return ctx.funcMap.get(name);
   }
@@ -492,7 +492,7 @@ export function ensureLateImport(
   // the leak fix: before #2866, a standalone `o[sym] = v` / `symbol[]` read
   // reached the `addImport("env","__box_symbol")` fallthrough below and emitted
   // an `env::__box_symbol` import that failed at instantiation.
-  if (usesNativeSymbolProvider(ctx) && name === "__box_symbol") {
+  if (name === "__box_symbol") {
     ensureSymbolCarrier(ctx);
     return ctx.funcMap.get(name);
   }
@@ -559,8 +559,8 @@ export function ensureLateImport(
     // addUnionImportsAsNativeFuncs happened to run the reconcile in between —
     // on main the hole is hit by a native-CANDIDATE generator that captures an
     // outer local (candidate ⇒ the decl skips the `unionFound` trigger, so no
-    // union finalize reconcile; capture ⇒ sourceNeedsGeneratorHostImports still
-    // pulls the host gen-suite batch right after the raw `__make_callback`).
+    // union finalize reconcile; capture ⇒ the pre-#7010 pre-scan still pulled
+    // the host gen-suite batch right after the raw `__make_callback`).
     // Settling here puts every map/body on the current-numImportFuncs basis, so
     // recording `importsBefore` below is consistent and the #1903 re-base is
     // sound. No-op (added=0) unless a raw import actually landed since the last

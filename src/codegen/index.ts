@@ -6,6 +6,8 @@ import {
   ensureGlobalEnvironmentOperation,
 } from "./global-environment.js";
 import { irDynamicConstructCalleeIsPlain } from "./ir-dynamic-construct.js";
+import { irFunctionThisStrictness, irSelfGuardedConstructorValue } from "./ir-dynamic-construct.js"; // (#7106 S3c)
+import { irDynamicInstanceOfAtLegacyParity } from "./ir-dynamic-instanceof.js"; // (#7106) generic dynamic instanceof
 import { unshiftExternGetNativeStringReceiverArm } from "./object-model/extern-get-string-receiver.js"; // (#6875)
 import { unshiftExternGetPropertyKeyArm } from "./symbol-to-primitive-arms.js"; // (#6651 V10d)
 import { ts, forEachChild } from "../ts-api.js";
@@ -26,11 +28,11 @@ import {
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
 import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
+import { selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js"; // (#7106 S3c)
 import {
   collectIrFnctorArgumentProjectionsForPlanning,
   makeIrFnctorArgumentProjectionAuthority,
@@ -50,7 +52,6 @@ import {
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
-import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
 import { promoteTrampolineTailCalls, ensureFuncClosureSingletonAccessor } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { funnelRepeatedReturnTails } from "./helpers/return-tail-funnel.js";
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
@@ -63,7 +64,6 @@ import { finalizeModuleValueCaches } from "./module-value-caches.js"; // (#4150/
 import { fillLinkedRealmPropertyRead } from "./object-model/linked-realm-property-read.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
 import {
-  isBigIntType,
   isBooleanType,
   isExternalDeclaredClass,
   isHeterogeneousPrimitiveUnion,
@@ -85,7 +85,13 @@ import { emitWasmInt32Coercion } from "../ir/backend/wasm-int32-coercion.js";
 import { planCountedStringAppend, type IrCountedStringAppendPlan } from "../ir/analysis/counted-string-append.js";
 import { irSupportFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
 import { irModuleGlobalBindingId, irModuleTdzGlobalBindingId, irSupportGlobalRef } from "../ir/abi-bindings.js";
-import { compileIrPathFunctions, type IrIntegrationError, type IrIntegrationReport } from "../ir/integration.js";
+import {
+  compileIrPathFunctions,
+  irAmbientNamespaceConstant, // (#7106 module-init lever A)
+  irNumberConversionPlan, // (#7106 module-init lever B)
+  type IrIntegrationError,
+  type IrIntegrationReport,
+} from "../ir/integration.js";
 import {
   asVal,
   IR_CLASS_SHAPE_CELL,
@@ -230,6 +236,7 @@ import {
   planIrFunctionValueResolverState,
   prepareTopLevelFunctionValueTargetSupport,
 } from "./ir-imported-call-planning.js";
+import { parameterHasDynamicExternrefAbi } from "./declarations/ir-dynamic-parameter-abi.js";
 import { hasFullyAnnotatedScalarAbi } from "./ir-legacy-caller-abi.js";
 import {
   canPrepareHostDateSnapshotLoweringByIdentity,
@@ -314,6 +321,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { hostFreeEnvironment } from "./context/types.js";
 import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
@@ -325,7 +333,6 @@ import type {
   OptionalParamInfo,
   RestParamInfo,
 } from "./context/types.js";
-import type { NodeBuiltinImport } from "../import-resolver.js";
 import { ensureMapRuntimeTypes } from "./map-runtime.js";
 import { scanForNewTarget } from "./new-target.js"; // (#2023)
 import { scanForDynamicProto, fillDynamicProtoHelpers } from "./dynamic-proto.js"; // (#802)
@@ -2579,6 +2586,8 @@ export interface IrOverlayPlan {
   readonly fnctorNativeStringBoundaries?: ReadonlyMap<ts.CallExpression, IrFnctorNativeStringBoundaryPlan>;
   /** Revalidates the mutable ABI joins immediately before integration. */
   readonly fnctorParameterPreselectionIsCurrent?: () => boolean;
+  /** (#7106 module-init lever B) The one source-bound `Number(v)` plan of this compile. */
+  readonly preparedNumberCall: (call: ts.CallExpression) => boolean;
 }
 
 /**
@@ -3055,25 +3064,22 @@ function planIrOverlay(
             stableFnctorArrayPrototypeNames: ctx.fnctorEscapeGate?.stableArrayPrototypeNames,
             admitScriptVar: (declaration) => scriptVarSlotIsSoleHome(ctx, declaration),
             scriptVarDynamicHome: (declaration) => scriptVarSlotIsDynamicHome(ctx, declaration),
+            scriptVarStringHome: (declaration) => scriptVarSlotIsStringHome(ctx, declaration),
           },
           identityContext,
         );
   const classifyPrimitiveExpression = makeIrPrimitiveExpressionClassifier(ast.checker);
   const classifyDeclaredPrimitiveExpression = makeIrDeclaredPrimitiveExpressionClassifier(ast.checker);
   const isArrayExpression = makeIrArrayExpressionPredicate(ast.checker);
-  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker);
+  const numberConversion = irNumberConversionPlan(ast.checker, ast.sourceFile); // (#7106 module-init lever B)
+  const classifyArrayElementFamily = makeIrArrayElementFamilyClassifier(ast.checker, ctx.oracle);
   const isRegExpExpression = makeIrRegExpExpressionPredicate(ast.checker);
   const resolveAmbientClassCall =
     hostExternSurface && options.resolveModuleBindings !== false
       ? makeIrAmbientClassCallResolver(ast.checker)
       : undefined;
   const supportsHostPromiseDelay = jsHostExterns && !ctx.fast && !ctx.nativeStrings;
-  const supportsStandalonePromiseDelay =
-    ctx.standalone &&
-    ctx.nativeStrings &&
-    !ctx.wasi &&
-    !ctx.fast &&
-    ctx.targetProfile.semanticProviders === "native-first";
+  const supportsStandalonePromiseDelay = ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast;
   const resolvePromiseDelay =
     (supportsHostPromiseDelay || supportsStandalonePromiseDelay) && options.resolveModuleBindings !== false
       ? makeIrPromiseDelayResolver(ast.checker)
@@ -3176,9 +3182,7 @@ function planIrOverlay(
     let allPositionsAreExplicitNumbers = true;
     for (const parameter of declaration.parameters) {
       const explicitType = effectiveIrParamTypeNode(parameter);
-      // (#7106 item 1) A JSDoc position legacy registered as externref is a
-      // dynamic projection, not an annotation (the resolver below answers it).
-      if (explicitType && !(jsDocParamIsExternrefCandidate(parameter) && legacyParamSlotIsExternref(ctx, parameter))) {
+      if (explicitType && !parameterHasDynamicExternrefAbi(ctx, parameter, jsDocParamIsExternrefCandidate)) {
         if (explicitType.kind !== ts.SyntaxKind.NumberKeyword) allPositionsAreExplicitNumbers = false;
         continue;
       }
@@ -3236,6 +3240,7 @@ function planIrOverlay(
       ...(platformExternClass ? { platformExternClass, platformHostGlobal: isJsEnvironmentPlatformGlobalName } : {}),
       ...(standaloneDomCapability ? { standaloneDomCapability } : {}),
       dynMemberReadBuildable,
+      builtinProtoCompanionSeeded: ctx.protoMemberDirty, // (#7127)
       ...functionValueSelectionOptions(),
       dynamicRuntimeBuildable: !ctx.fast,
       // #2952 slice 5 — for-in currently owns only the non-fast dynamic
@@ -3246,11 +3251,13 @@ function planIrOverlay(
         const fact = ctx.oracle.typeFactOf(receiver);
         return fact.kind === "any" || fact.kind === "unknown";
       },
-      // #2952 slice 6c — reading the enumerated key in the body needs the
-      // head slot (an externref from the #2964 helpers) to BE the string
-      // carrier. That holds exactly when `resolveString()` yields externref,
-      // i.e. when native strings are off.
+      // Enumerated keys use the host string ABI; native `in` supplies boxing.
       forInHeadValueIsHostString: !ctx.nativeStrings,
+      // (#7106 propertyHelper) …and on a native-strings lane the same externref
+      // IS the non-fast dynamic carrier of the key string, so the head can be
+      // read as a dynamic value instead.
+      forInHeadValueIsDynamicCarrier: ctx.nativeStrings && !ctx.fast,
+      nativeDynamicInBuildable: !ctx.fast && (ctx.standalone || ctx.wasi) && hostFreeEnvironment(ctx),
       resolveHostGlobal: makeIrHostGlobalResolver(ast.checker),
       ...(calendarResolvers.hostVoidCallback ? { hostVoidCallbacks: calendarResolvers.hostVoidCallback } : {}),
       ...(resolveAmbientClassCall ? { ambientClassCalls: resolveAmbientClassCall } : {}),
@@ -3263,7 +3270,12 @@ function planIrOverlay(
       classifyArrayElementFamily,
       isRegExpExpression,
       isHoleyArrayConstructor: (expr) => ctx.holeyArrayConstructorNodes.has(expr),
+      ambientNamespaceConstant: irAmbientNamespaceConstant, // (#7106 module-init lever A)
+      preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
       dynamicConstructCalleeIsPlain: (callee) => irDynamicConstructCalleeIsPlain(ctx, callee),
+      functionThisStrictness: (fn) => irFunctionThisStrictness(ctx, fn), // (#7106 S3c)
+      selfGuardedConstructorValue: (ident) => irSelfGuardedConstructorValue(ctx, ident), // (#7106 S3c)
+      dynamicInstanceOfAtLegacyParity: (site) => irDynamicInstanceOfAtLegacyParity(ctx, site), // (#7106)
       isHoleyArrayFilterCall: (expr) => ctx.holeyArrayFilterCallNodes.has(expr),
       supportsHoleyArrayFilter: ctx.standalone,
       resolveImplicitParamType: (parameter) => resolveImplicitParamType(parameter)?.kind,
@@ -3616,6 +3628,7 @@ function planIrOverlay(
         }
       : {}),
     ...(fnctorParameterPreselectionIsCurrent ? { fnctorParameterPreselectionIsCurrent } : {}),
+    preparedNumberCall: numberConversion.preparedNumberCall, // (#7106 module-init lever B)
   };
 }
 
@@ -4223,6 +4236,19 @@ export function scriptVarSlotIsDynamicHome(ctx: CodegenContext, declaration: ts.
   return !ctx.fast && scriptVarHomeSlot(ctx, declaration)?.type.kind === "externref";
 }
 
+/**
+ * (#7125) The sole-home slot when legacy allocated it as the native-string
+ * carrier `(ref null $AnyString)` (`var data = "data"` on standalone). That is
+ * exactly the storage `resolveModuleBindingGlobal`'s `string` arm names, so the
+ * IR binds it as a `string` module binding. Host strings use `externref`,
+ * which is the dynamic home instead.
+ */
+export function scriptVarSlotIsStringHome(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return false;
+  const type = scriptVarHomeSlot(ctx, declaration)?.type;
+  return type?.kind === "ref_null" && type.typeIdx === ctx.anyStrTypeIdx;
+}
+
 function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclaration) {
   if (!ts.isIdentifier(declaration.name)) return undefined;
   const name = declaration.name.text;
@@ -4539,7 +4565,6 @@ function preparedExactLexicalModuleInit(
     (ctx.nativeStrings &&
       ctx.standalone &&
       !ctx.wasi &&
-      ctx.targetProfile.semanticProviders === "native-first" &&
       planning?.plan.invocation.target === "standalone" &&
       (planning.plan.invocation.kind === "wasm-start" || planning.plan.invocation.kind === "deferred-export")) ||
     // (#3523 R4 gap 3) The WASI lane. `nativeStrings` auto-enables for WASI, so
@@ -5451,7 +5476,13 @@ export function generateModule(
   // (#4235) The array + explicit `"single"` path tag. `generateMultiModule`
   // makes the identical call with the whole graph and `"multi"`; keeping the
   // two call shapes the same is what makes the parity testable.
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(ast.checker, [ast.sourceFile], ctx.standalone, "single");
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
+    ast.checker,
+    [ast.sourceFile],
+    ctx.standalone,
+    "single",
+    selfGuardedConstructorsLeaveFnctor(ctx),
+  );
   // (#3673) Names the source itself defines as function-valued members, so the
   // guarded native-string method lowering can tell a genuine `String.prototype`
   // call apart from a same-named USER method on an object receiver. Cheap
@@ -5900,14 +5931,7 @@ export function generateModule(
     noteRegexPropertySource(ctx, ast.sourceFile); // (#6677) link the \p{…} table only if spellable
     noteUntypedRegExpDemand(ctx, ast.sourceFile); // (#6651 B10)
 
-    if (
-      options?.experimentalIR &&
-      ctx.standalone &&
-      ctx.nativeStrings &&
-      !ctx.wasi &&
-      !ctx.fast &&
-      ctx.targetProfile.semanticProviders === "native-first"
-    ) {
+    if (options?.experimentalIR && ctx.standalone && ctx.nativeStrings && !ctx.wasi && !ctx.fast) {
       registerIrAsyncPromiseDelayResolver(ctx, makeIrPromiseDelayResolver(ast.checker));
     }
     prepareIdentityPreservingStructuralParams(ctx, [ast.sourceFile]);
@@ -7199,12 +7223,6 @@ export function generateModule(
     // provider build, before DCE so their exports keep the full dependency
     // closure alive and all type references are remapped together.
     emitSharedRuntimeProviderExports(ctx);
-
-    // (#5247) Re-point each host-facing function export at a wrapper that
-    // unwraps an escaping `__exn` payload. After every export is published,
-    // before dead-elim remaps the rewritten descriptors. No-op unless the
-    // module can throw and targets a JS host.
-    wrapHostFacingExportsForThrow(ctx);
 
     // Dead import and type elimination pass
     // (#4645) Every whole-module finalize pass below is named so a pathological
@@ -10819,7 +10837,13 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
   // why each pass is monotone-safe under that widening, and for the two hazards
   // it handles explicitly (import-alias symbol identity, and cross-module
   // fnctor NAME collisions, which are refused and COUNTED).
-  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(multiAst.checker, multiAst.sourceFiles, ctx.standalone, "multi");
+  ctx.fnctorEscapeGate = analyzeFnctorEscapeGate(
+    multiAst.checker,
+    multiAst.sourceFiles,
+    ctx.standalone,
+    "multi",
+    selfGuardedConstructorsLeaveFnctor(ctx),
+  );
   try {
     // M1A: construct the checker-owned callable graph exactly once, before
     // declaration/body emission can observe a partial program. All later
@@ -11945,10 +11969,6 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #2527 — same provider publication point as the single-source pipeline.
     profilePhase("emit-shared-runtime-provider-exports", () => emitSharedRuntimeProviderExports(ctx));
 
-    // (#5247) Same export-boundary throw unwrapping + placement as the
-    // single-source pipeline above.
-    profilePhase("wrap-host-facing-exports-for-throw", () => wrapHostFacingExportsForThrow(ctx));
-
     // Dead import and type elimination pass
     // (#4645) Module-scale marker, then main's phase names/signatures.
     reportModuleScale("before-finalize", mod);
@@ -12817,9 +12837,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
   // the existing i64 carrier until they have a native arbitrary-precision
   // implementation. Explicit native `i64` annotations returned above remain
   // i64 on every target.
-  if (usesHostBigIntCarrier(ctx) && isBigIntType(tsType)) {
-    return { kind: "externref" };
-  }
+
   const jsBodyArrayReturnOverride = ctx.jsBodyArrayReturnOverrides?.get(tsType);
   if (jsBodyArrayReturnOverride) return jsBodyArrayReturnOverride;
   // (#6774 S21) An accessor object literal is ALWAYS an open `$Object` at run
@@ -15441,6 +15459,20 @@ export { createCodegenContext } from "./context/create-context.js";
 export { reportError } from "./context/errors.js";
 export { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
 export { attachSourcePos, getSourcePos } from "./context/source-pos.js";
+// (#7106 propertyHelper) the IR's dynamic delete wrappers (ir/integration.ts).
+export {
+  ensureIrDynamicDeleteHelper,
+  IR_DYN_DELETE_SLOPPY_HELPER,
+  IR_DYN_DELETE_STRICT_HELPER,
+  irDeleteSiteIsStrict,
+  irDynamicDeleteHelperName,
+} from "./ir-dynamic-delete.js";
+// (#7106) the IR's generic dynamic instanceof wrapper (ir/integration.ts).
+export {
+  ensureIrDynamicInstanceOfHelper,
+  IR_DYN_INSTANCEOF_HELPER,
+  irDynamicInstanceOfAtLegacyParity,
+} from "./ir-dynamic-instanceof.js";
 // (#7106) GDI prologue replay for an IR-claimed <module-init> (ir/integration.ts).
 export {
   buildModuleInitPrologueCall,

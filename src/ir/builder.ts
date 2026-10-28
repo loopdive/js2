@@ -760,6 +760,59 @@ export class IrFunctionBuilder {
     return result;
   }
 
+  /** #7106 S3c — the ordinary function invocation's `this` binding; result dynamic. */
+  emitDynCurrentThis(strict: boolean): IrValueId {
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.current_this", strict, result, resultType });
+    return result;
+  }
+
+  /** #7106 — the realm's global object (`globalThis`); result dynamic. */
+  emitDynGlobalObject(): IrValueId {
+    const resultType = irDynamic();
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.global_object", result, resultType });
+    return result;
+  }
+
+  /** #7106 S3c — `value instanceof F` for a known top-level function constructor; result i32. */
+  emitDynInstanceOfFunction(value: IrValueId, target: IrFuncRef): IrValueId {
+    if (this.typeOf(value).kind !== "dynamic") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynInstanceOfFunction operand ${value} is not dynamic (#7106 S3c) (func ${this.id.name})`,
+      );
+    }
+    if (target.binding.kind !== "unit") {
+      throw new Error(
+        `IrFunctionBuilder: emitDynInstanceOfFunction target ${target.name} is not a source unit (#7106 S3c) (func ${this.id.name})`,
+      );
+    }
+    const resultType: IrType = irVal({ kind: "i32" });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.instanceof_fn", value, target, result, resultType });
+    return result;
+  }
+
+  /** #7106 — the generic `value instanceof target` over two dynamic carriers; result boolean i32. */
+  emitDynInstanceOf(value: IrValueId, target: IrValueId): IrValueId {
+    for (const operand of [value, target]) {
+      if (this.typeOf(operand).kind !== "dynamic") {
+        throw new Error(
+          `IrFunctionBuilder: emitDynInstanceOf operand ${operand} is not dynamic (#7106) (func ${this.id.name})`,
+        );
+      }
+    }
+    const resultType: IrType = irVal({ kind: "i32", boolean: true });
+    const result = this.allocator.fresh();
+    this.valueTypes.set(result, resultType);
+    this.pushInstr({ kind: "dyn.instanceof", value, target, result, resultType });
+    return result;
+  }
+
   /** #7106 S1c — checked native-string carrier recovery from a dynamic value; result string. */
   emitDynStringCarrier(value: IrValueId): IrValueId {
     if (this.typeOf(value).kind !== "dynamic") {
@@ -909,7 +962,7 @@ export class IrFunctionBuilder {
    * {@link emitDynMemberGet}. Receiver, key, and value must already use the
    * canonical dynamic carrier; conversion is explicit at the AST producer.
    */
-  emitDynMemberSet(recv: IrValueId, key: IrValueId, value: IrValueId): void {
+  emitDynMemberSet(recv: IrValueId, key: IrValueId, value: IrValueId, sloppy = false): void {
     for (const [label, v] of [
       ["recv", recv],
       ["key", key],
@@ -921,7 +974,15 @@ export class IrFunctionBuilder {
         );
       }
     }
-    this.pushInstr({ kind: "dyn.member_set", recv, key, value, result: null, resultType: null });
+    this.pushInstr({
+      kind: "dyn.member_set",
+      recv,
+      key,
+      value,
+      ...(sloppy ? { sloppy: true as const } : {}),
+      result: null,
+      resultType: null,
+    });
   }
 
   // --- object ops (#1169b) ------------------------------------------------

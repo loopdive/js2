@@ -1029,6 +1029,62 @@ function verifyInstrStructure(
       });
     }
   }
+  // #7106 S3c — dyn.current_this / dyn.global_object: no operands, result dynamic.
+  if (
+    (instr.kind === "dyn.current_this" || instr.kind === "dyn.global_object") &&
+    (instr.resultType === null || instr.resultType.kind !== "dynamic")
+  ) {
+    errors.push({
+      message: `${instr.kind} result must be a dynamic IrType, got ${instr.resultType?.kind ?? "null"} (#7106)`,
+      func: func.name,
+      block: block.id as number,
+    });
+  }
+  // #7106 S3c — dyn.instanceof_fn: operand dynamic, unit-bound target, result i32.
+  if (instr.kind === "dyn.instanceof_fn") {
+    const operandIr = operandIrType(func, block, instr.value, localDefs);
+    if (operandIr && operandIr.kind !== "dynamic") {
+      errors.push({
+        message: `dyn.instanceof_fn operand must be a dynamic IrType, got ${operandIr.kind} (#7106 S3c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.target.binding.kind !== "unit") {
+      errors.push({
+        message: `dyn.instanceof_fn target must be an exact source unit, got ${instr.target.binding.kind} (#7106 S3c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.instanceof_fn result must be an i32 IrType, got ${instr.resultType?.kind ?? "null"} (#7106 S3c)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  // #7106 — dyn.instanceof: both operands dynamic, result i32.
+  if (instr.kind === "dyn.instanceof") {
+    for (const operand of [instr.value, instr.target]) {
+      const operandIr = operandIrType(func, block, operand, localDefs);
+      if (operandIr && operandIr.kind !== "dynamic") {
+        errors.push({
+          message: `dyn.instanceof operand must be a dynamic IrType, got ${operandIr.kind} (#7106)`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (instr.resultType === null || asVal(instr.resultType)?.kind !== "i32") {
+      errors.push({
+        message: `dyn.instanceof result must be an i32 IrType, got ${instr.resultType?.kind ?? "null"} (#7106)`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
   // #7106 S1c — dyn.string_carrier: operand dynamic, result string.
   if (instr.kind === "dyn.string_carrier") {
     const operandIr = operandIrType(func, block, instr.value, localDefs);
@@ -1432,8 +1488,14 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "dyn.to_number":
       return [instr.value];
     case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
+    case "dyn.instanceof_fn":
+      return [instr.value];
     case "dyn.own_property":
       return [instr.receiver, instr.key];
     case "dyn.construct":
@@ -2030,6 +2092,18 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   },
   "dyn.arguments_length": {
     skip: "checked-elsewhere: no-operand + result-f64 rules in verifyInstrStructure (#7106 S1e)",
+  },
+  "dyn.current_this": {
+    skip: "checked-elsewhere: no-operand + result-dynamic rules in verifyInstrStructure (#7106 S3c)",
+  },
+  "dyn.global_object": {
+    skip: "checked-elsewhere: no-operand + result-dynamic rules in verifyInstrStructure (#7106)",
+  },
+  "dyn.instanceof_fn": {
+    skip: "checked-elsewhere: operand-dynamic + unit-target + result-i32 rules in verifyInstrStructure (#7106 S3c)",
+  },
+  "dyn.instanceof": {
+    skip: "checked-elsewhere: both-operands-dynamic + result-i32 rules in verifyInstrStructure (#7106)",
   },
   "dyn.publish_argc": {
     skip: "checked-elsewhere: no-operand + no-result rules in verifyInstrStructure (#7106 S1i)",

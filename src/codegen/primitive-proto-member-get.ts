@@ -91,7 +91,6 @@ import {
   moduleExtendsPrimitiveProtos,
   moduleExtendsSymbolProto,
 } from "./primitive-absent-property.js";
-import { usesNativeSymbolProvider } from "./symbol-native.js"; // (#6651 V10a)
 import { linkSymbolWrapperPrototype } from "./expressions/calls-guards.js"; // (#6651 V10a)
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
@@ -245,7 +244,6 @@ function tryEmitSymbolProtoMemberGet(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | undefined {
-  if (!usesNativeSymbolProvider(ctx)) return undefined;
   if (!moduleExtendsSymbolProto(expr.getSourceFile())) return undefined;
   const ext: ValType = { kind: "externref" };
   // Resolve every helper before the receiver is emitted (decline-before-emit).

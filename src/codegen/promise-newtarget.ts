@@ -14,13 +14,11 @@
  * so importing `resolvesToAmbientGlobal` back from there would be a cycle).
  */
 import { ts } from "../ts-api.js";
-import type { ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { resolvesToAmbientGlobal } from "./expressions/new-super.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
 
 /**
  * (#5143) True when `expr` is a literal the compiler can prove is BOTH
@@ -75,7 +73,7 @@ export function tryCompilePromiseCallWithoutNew(
   expr: ts.CallExpression,
 ): InnerResult | undefined {
   if (expr.questionDotToken) return undefined;
-  if (!isStandalonePromiseActive(ctx)) return undefined;
+
   const callee = expr.expression;
   let promiseId: ts.Identifier;
   if (ts.isIdentifier(callee)) {

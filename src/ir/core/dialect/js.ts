@@ -251,6 +251,61 @@ export interface IrInstrDynArgumentsLength extends IrInstrBase {
 }
 
 /**
+ * `dyn.current_this{strict}` — the `this` binding of an ordinary top-level
+ * function invocation (#7106 S3c): the receiver the caller installed
+ * (OrdinaryCallBindThis §10.2.1.2, a `[[Construct]]` or a method call), else
+ * the unbound answer, which depends on the function's own strictness — the
+ * global object for sloppy code, `undefined` for strict (§10.2.1.2 step 5).
+ * Reads the same receiver protocol legacy's `this` ladder reads, so both
+ * frontends see the same receiver. Result `dynamic`. No operands.
+ */
+export interface IrInstrDynCurrentThis extends IrInstrBase {
+  readonly kind: "dyn.current_this";
+  /** The function's code is strict (unbound `this` stays `undefined`). */
+  readonly strict: boolean;
+}
+
+/**
+ * `dyn.global_object` — the realm's global object (§9.3.1 [[GlobalObject]];
+ * the value of `globalThis`, §19.1.1) (#7106). The SAME object legacy's
+ * `emitNativeGlobalThisObject` yields, so an IR read of an ambient global
+ * (`TypeError`, `Object`) through it sees the realm's own bindings. Result
+ * `dynamic`. No operands.
+ */
+export interface IrInstrDynGlobalObject extends IrInstrBase {
+  readonly kind: "dyn.global_object";
+}
+
+/**
+ * `dyn.instanceof_fn{value, target}` — `value instanceof F` (§13.10.2) where F
+ * is a known top-level function constructor of this module (#7106 S3c):
+ * OrdinaryHasInstance (§7.3.20) walks `value`'s prototype chain for
+ * `F.prototype`, read through the SAME per-function prototype object legacy's
+ * `instanceof F` and `new F()` use. `value` is `dynamic`; result `i32` (0/1).
+ */
+export interface IrInstrDynInstanceOfFunction extends IrInstrBase {
+  readonly kind: "dyn.instanceof_fn";
+  readonly value: IrValueId;
+  /** The constructor function's exact unit identity. */
+  readonly target: IrFuncRef;
+}
+
+/**
+ * `dyn.instanceof{value, target}` — the generic `value instanceof target`
+ * (§13.10.2 InstanceofOperator, §7.3.20 OrdinaryHasInstance) over two dynamic
+ * carriers whose right operand is a runtime value (#7106). It is the SAME
+ * runtime operator legacy's generic `instanceof` uses, so the answer for a given
+ * pair of values is legacy's, and a target the runtime classifies as not
+ * callable throws the TypeError legacy throws. Both operands `dynamic`; result
+ * `i32` (boolean).
+ */
+export interface IrInstrDynInstanceOf extends IrInstrBase {
+  readonly kind: "dyn.instanceof";
+  readonly value: IrValueId;
+  readonly target: IrValueId;
+}
+
+/**
  * `dyn.publish_argc{count}` — the caller half of the same count protocol
  * (#7106 S1i): publishes the number of arguments actually passed at a direct
  * call whose callee reads its own `arguments` (§10.4.4.6: "length" is the
@@ -392,6 +447,11 @@ export interface IrInstrDynMemberSet extends IrInstrBase {
   readonly key: IrValueId;
   /** The assigned value carrier (`dynamic`). */
   readonly value: IrValueId;
+  /**
+   * (#7106 S3c) Sloppy-mode PutValue (§6.2.5.6 step 6.d): a failed `[[Set]]`
+   * is ignored instead of throwing — legacy's `__extern_set`. Absent → strict.
+   */
+  readonly sloppy?: true;
 }
 
 /**

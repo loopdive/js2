@@ -9,6 +9,14 @@ import { collectNativeStringValueDemands, type NativeStringValueDemands } from "
 import { freezePreparedIrValue, preparedIrDataMismatch } from "./data.js";
 import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./prepared-contracts.js";
 
+import {
+  indexNativeValueDefinitions,
+  nativeValueBufferSelected,
+  type NativeValueRepresentation,
+  nativeValueOriginal,
+  type NativeValueOccurrence as Definition,
+} from "./native-value-definitions.js";
+
 export interface NativeObjectAccessUse {
   readonly occurrence: number;
   readonly semanticOccurrence: number;
@@ -42,10 +50,6 @@ export interface NativeObjectAccessRequirements {
   readonly gaps: readonly { readonly occurrence: number; readonly unitId: IrUnitId; readonly detail: string }[];
   readonly completionScope: "ordinary-object-read-prerequisite";
 }
-interface Definition {
-  readonly instruction: IrInstr;
-  readonly occurrence: number;
-}
 interface Issued {
   readonly demands: NativeStringValueDemands;
   readonly sourceSnapshot: unknown;
@@ -59,14 +63,7 @@ function same(left: unknown, right: unknown, detail: string): void {
   if (preparedIrDataMismatch(left, right) !== undefined) fail(detail);
 }
 function original(value: IrValueId, definitions: ReadonlyMap<IrValueId, Definition>): Definition | undefined {
-  const seen = new Set<IrValueId>();
-  for (;;) {
-    if (seen.has(value)) fail("cyclic representation-only SSA alias");
-    seen.add(value);
-    const row = definitions.get(value);
-    if (row?.instruction.kind !== "coerce.to_externref") return row;
-    value = row.instruction.value;
-  }
+  return nativeValueOriginal(value, definitions, () => fail("cyclic representation-only SSA alias"));
 }
 function createFeature(row: Definition | undefined): OrdinaryObjectRuntimeFeature | undefined {
   if (row?.instruction.kind !== "call") return undefined;
@@ -84,15 +81,19 @@ function mask(call: IrInstrCall, definitions: ReadonlyMap<IrValueId, Definition>
   return Number.isInteger(value) && value >= 0 && value <= 1023 ? value : undefined;
 }
 
-function definitionsFor(demands: NativeStringValueDemands, unitId: IrUnitId, view: "program" | "projection") {
-  const definitions = new Map<IrValueId, Definition>();
-  for (const [occurrence, row] of demands.occurrences.entries()) {
-    const buffer = demands.buffers[row.bufferIndex]!;
-    if (buffer.ownerUnitId !== unitId || buffer.view !== view || row.instruction.result === null) continue;
-    if (definitions.has(row.instruction.result)) fail("ambiguous prepared SSA definition");
-    definitions.set(row.instruction.result, { occurrence, instruction: row.instruction });
-  }
-  return definitions;
+function definitionsFor(
+  demands: NativeStringValueDemands,
+  unitId: IrUnitId,
+  view: "program" | "projection",
+  representation: NativeValueRepresentation = "execution",
+) {
+  return indexNativeValueDefinitions(
+    demands,
+    unitId,
+    view,
+    () => fail("ambiguous prepared SSA definition"),
+    representation,
+  ).definitions;
 }
 
 function descriptorHalfIdentity(
@@ -115,47 +116,78 @@ function descriptorHalfIdentity(
   };
 }
 
-/** Projection may not erase, duplicate or reorder an actual semantic property operation. */
+function operationRows(
+  demands: NativeStringValueDemands,
+  unitId: IrUnitId,
+  view: "program" | "projection",
+  representation: NativeValueRepresentation,
+) {
+  return demands.occurrences.flatMap((row, occurrence) => {
+    const buffer = demands.buffers[row.bufferIndex]!;
+    if (
+      buffer.ownerUnitId !== unitId ||
+      buffer.view !== view ||
+      row.instruction.kind !== "call" ||
+      !nativeValueBufferSelected(demands, buffer, representation)
+    )
+      return [];
+    const declaration = irOrdinaryObjectCallableDeclaration(row.instruction.target);
+    const region = {
+      root: { ...buffer.root, kind: buffer.root.kind === "async-runtime" ? "async-plan" : buffer.root.kind },
+      path: buffer.path,
+    };
+    return declaration ? [{ occurrence, call: row.instruction, feature: declaration.feature, region }] : [];
+  });
+}
+
+function pairOperations(
+  demands: NativeStringValueDemands,
+  semantic: ReturnType<typeof operationRows>,
+  projected: ReturnType<typeof operationRows>,
+  semanticDefs: ReadonlyMap<IrValueId, Definition>,
+  projectedDefs: ReadonlyMap<IrValueId, Definition>,
+): readonly (readonly [number, number])[] {
+  if (semantic.length !== projected.length) fail("semantic/projection property operation population differs");
+  return projected.map((row, index) => {
+    const original = semantic[index]!;
+    if (row.feature !== original.feature) fail("semantic/projection property operation order differs");
+    same(row.region, original.region, "property operation region changed across projection");
+    same(row.call.target.binding, original.call.target.binding, "property binding changed across projection");
+    same(row.call.site, original.call.site, "property source site changed across projection");
+    if (row.feature.startsWith("js.object.define-")) {
+      const originalMask = mask(original.call, semanticDefs),
+        projectedMask = mask(row.call, projectedDefs);
+      if (originalMask !== projectedMask) fail("descriptor presence/attribute mask changed across projection");
+      if (row.feature === "js.object.define-accessor" && originalMask !== undefined) {
+        for (const [bit, argument] of [
+          [256, 2],
+          [512, 3],
+        ] as const) {
+          if (!(originalMask & bit)) continue;
+          same(
+            descriptorHalfIdentity(demands, original.call.args[argument]!, semanticDefs),
+            descriptorHalfIdentity(demands, row.call.args[argument]!, projectedDefs),
+            "descriptor callable allocation changed across projection",
+          );
+        }
+      }
+    }
+    return [row.occurrence, original.occurrence] as const;
+  });
+}
+
+/** Authenticate the retained semantic plan and its execution separately against the original. */
 function pairedOperations(demands: NativeStringValueDemands): ReadonlyMap<number, number> {
   const result = new Map<number, number>();
   for (const owner of demands.owners) {
-    const semanticDefs = definitionsFor(demands, owner.unitId, "program");
-    const projectedDefs = definitionsFor(demands, owner.unitId, "projection");
-    const rows = (view: "program" | "projection") =>
-      demands.occurrences.flatMap((row, occurrence) => {
-        const buffer = demands.buffers[row.bufferIndex]!;
-        if (buffer.ownerUnitId !== owner.unitId || buffer.view !== view || row.instruction.kind !== "call") return [];
-        const declaration = irOrdinaryObjectCallableDeclaration(row.instruction.target);
-        return declaration ? [{ occurrence, call: row.instruction, feature: declaration.feature }] : [];
-      });
-    const semantic = rows("program"),
-      projected = rows("projection");
-    if (semantic.length !== projected.length) fail("semantic/projection property operation population differs");
-    projected.forEach((row, index) => {
-      const original = semantic[index]!;
-      if (row.feature !== original.feature) fail("semantic/projection property operation order differs");
-      same(row.call.target.binding, original.call.target.binding, "property binding changed across projection");
-      same(row.call.site, original.call.site, "property source site changed across projection");
-      if (row.feature.startsWith("js.object.define-")) {
-        const originalMask = mask(original.call, semanticDefs),
-          projectedMask = mask(row.call, projectedDefs);
-        if (originalMask !== projectedMask) fail("descriptor presence/attribute mask changed across projection");
-        if (row.feature === "js.object.define-accessor" && originalMask !== undefined) {
-          for (const [bit, argument] of [
-            [256, 2],
-            [512, 3],
-          ] as const) {
-            if (!(originalMask & bit)) continue;
-            same(
-              descriptorHalfIdentity(demands, original.call.args[argument]!, semanticDefs),
-              descriptorHalfIdentity(demands, row.call.args[argument]!, projectedDefs),
-              "descriptor callable allocation changed across projection",
-            );
-          }
-        }
-      }
-      result.set(row.occurrence, original.occurrence);
-    });
+    const semanticDefs = definitionsFor(demands, owner.unitId, "program", "semantic");
+    const semantic = operationRows(demands, owner.unitId, "program", "semantic");
+    for (const representation of ["semantic", "execution"] as const) {
+      const projectedDefs = definitionsFor(demands, owner.unitId, "projection", representation);
+      const projected = operationRows(demands, owner.unitId, "projection", representation);
+      const pairs = pairOperations(demands, semantic, projected, semanticDefs, projectedDefs);
+      if (representation === "execution") for (const [current, original] of pairs) result.set(current, original);
+    }
   }
   return result;
 }
@@ -185,7 +217,12 @@ function getterAllocation(
   same(site.site.type, instruction.resultType, "getter registry/occurrence type differs");
   const aliases = demands.occurrences.filter((candidate) => {
     const buffer = demands.buffers[candidate.bufferIndex]!;
-    return buffer.view === "projection" && buffer.ownerUnitId === ownerUnitId && candidate.instruction === instruction;
+    return (
+      buffer.view === "projection" &&
+      buffer.ownerUnitId === ownerUnitId &&
+      nativeValueBufferSelected(demands, buffer) &&
+      candidate.instruction === instruction
+    );
   });
   if (aliases.length !== 1) fail("getter allocation occurrence is not unique in its selected owner");
   return {
@@ -216,7 +253,7 @@ function calculate(demands: NativeStringValueDemands) {
   for (const [occurrence, row] of demands.occurrences.entries()) {
     const buffer = demands.buffers[row.bufferIndex]!,
       call = row.instruction;
-    if (buffer.view !== "projection" || call.kind !== "call") continue;
+    if (buffer.view !== "projection" || call.kind !== "call" || !nativeValueBufferSelected(demands, buffer)) continue;
     const declaration = irOrdinaryObjectCallableDeclaration(call.target);
     if (!declaration) continue;
     const feature = declaration.feature as OrdinaryObjectRuntimeFeature,

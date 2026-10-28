@@ -1,17 +1,17 @@
 {
-  "generated": "2026-10-21",
+  "generated": "2026-10-25",
   "populationRule": "A kind is in scope iff it is the `readonly kind` discriminant of a top-level `export interface` that is an arm of the `IrInstr` or `IrTerminator` union in src/ir/nodes.ts. Excluded: the symbolic-reference types IrFuncRef/IrGlobalRef/IrTypeRef (kinds func/global/type) and every inline union member of a payload type. See scripts/check-ir-kind-neutrality.mjs.",
   "ratchet": {
     "unresolved": 3,
     "jsInCore": 0
   },
   "counts": {
-    "total": 95,
+    "total": 99,
     "neutral": 55,
-    "js": 37,
+    "js": 41,
     "unresolved": 3,
     "core": 58,
-    "dialect": 37,
+    "dialect": 41,
     "jsInCore": 0,
     "residuals": 8
   },
@@ -188,12 +188,40 @@
       "why": "ECMAScript EvaluateNew (§13.3.5.1) of a constructor VALUE on a boxed-any carrier, through the ordinary-[[Construct]] driver shared with legacy.",
       "evidence": ["src/ir/core/dialect/js.ts#f6c79febcad4"]
     },
+    "dyn.current_this": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynCurrentThis",
+      "why": "ECMAScript OrdinaryCallBindThis (§10.2.1.2) for an ordinary function: the installed receiver, else the global object (sloppy) or undefined (strict), read through the receiver protocol shared with legacy.",
+      "evidence": ["src/ir/core/dialect/js.ts#0e3d03a6445a"]
+    },
     "dyn.eq": {
       "verdict": "js",
       "where": "dialect",
       "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynEq",
       "why": "ECMAScript abstract/strict equality over dynamically-tagged values (§7.2.13/§7.2.15).",
       "evidence": ["src/ir/core/dialect/js.ts#2b4f27412292"]
+    },
+    "dyn.global_object": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynGlobalObject",
+      "why": "The ECMAScript realm's global object (§9.3.1 [[GlobalObject]], the value of globalThis §19.1.1), the same object legacy's native globalThis read yields.",
+      "evidence": ["src/ir/core/dialect/js.ts#c902bcb2268e"]
+    },
+    "dyn.instanceof": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynInstanceOf",
+      "why": "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) over two dynamic values, the same runtime operator legacy's generic instanceof uses.",
+      "evidence": ["src/ir/core/dialect/js.ts#183a5e6ae944"]
+    },
+    "dyn.instanceof_fn": {
+      "verdict": "js",
+      "where": "dialect",
+      "declaredAt": "src/ir/core/dialect/js.ts#IrInstrDynInstanceOfFunction",
+      "why": "ECMAScript InstanceofOperator / OrdinaryHasInstance (§13.10.2, §7.3.20) against a known function constructor's prototype object, shared with legacy's per-function prototype.",
+      "evidence": ["src/ir/core/dialect/js.ts#4b68b091dee9"]
     },
     "dyn.json_stringify": {
       "verdict": "js",

@@ -57,7 +57,6 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { isGlobalBuiltinIdentifier } from "./expressions/calls.js";
 import { compileExpression } from "./shared.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { emitNativeBigIntFormat } from "./bigint-format-native.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -285,7 +284,6 @@ export function tryCompileWideBigIntExpression(
   expr: ts.Expression,
   expectedType: ValType | undefined,
 ): ValType | undefined {
-  if (usesHostBigIntCarrier(ctx)) return undefined;
   return tryFoldBigIntConstant(ctx, fctx, expr, expectedType) ?? tryCompileUnsignedRead(ctx, fctx, expr, expectedType);
 }
 
@@ -416,7 +414,7 @@ function ensureBigIntFromU64(ctx: CodegenContext, types: { wide: number; limbs: 
  * carrier is then on the stack); false leaves the body untouched.
  */
 export function emitBigIntCarrierNegate(ctx: CodegenContext, fctx: FunctionContext, operandType: ValType): boolean {
-  if (operandType.kind !== "externref" || usesHostBigIntCarrier(ctx)) return false;
+  if (operandType.kind !== "externref") return false;
   const negIdx = ensureBigIntCarrierNeg(ctx);
   if (negIdx === undefined) return false;
   fctx.body.push({ op: "call", funcIdx: negIdx });

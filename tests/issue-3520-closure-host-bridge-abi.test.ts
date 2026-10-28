@@ -168,7 +168,7 @@ function trackedModule(source = ZERO_ARITY_SOURCE) {
   return generateModule(ast, {
     experimentalIR: true,
     trackIrOutcomes: true,
-    semanticProviders: "host-assisted",
+    hostBridge: "always",
   });
 }
 
@@ -216,7 +216,7 @@ function generateWithCapturedRegistry(
     result = generateModule(ast, {
       experimentalIR: true,
       trackIrOutcomes: true,
-      semanticProviders: "host-assisted",
+      hostBridge: "always",
     });
   } finally {
     observe.mockRestore();
@@ -270,6 +270,7 @@ async function compileHostFreePairs(
 
 async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof compile>>): Promise<{
   readonly exports: Record<string, unknown>;
+  readonly instance: WebAssembly.Instance;
   readonly result: Awaited<ReturnType<typeof compile>>;
 }> {
   const result =
@@ -278,7 +279,7 @@ async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof co
           fileName: "issue-3520-closure-host-runtime.ts",
           experimentalIR: true,
           trackIrOutcomes: true,
-          semanticProviders: "host-assisted",
+          hostBridge: "always",
         })
       : sourceOrResult;
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
@@ -290,7 +291,7 @@ async function instantiate(sourceOrResult: string | Awaited<ReturnType<typeof co
   imports.env.hostTick = (value: number) => value;
   const { instance } = await WebAssembly.instantiate(result.binary, imports);
   imports.setInstance?.(instance);
-  return { exports: instance.exports as Record<string, unknown>, result };
+  return { exports: instance.exports as Record<string, unknown>, instance, result };
 }
 
 describe("#3520 C31 closure host bridge Program ABI ownership", () => {
@@ -348,7 +349,6 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const compiled = await compile(CONSTRUCTIBLE_CLOSURE_SOURCE, {
         fileName: `issue-3520-closure-ctor-${label}.ts`,
         experimentalIR: true,
-        semanticProviders: "host-assisted",
         ...options,
       });
       const { exports: rawExports } = await instantiate(compiled);
@@ -439,7 +439,6 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const compiled = await compile(CLOSURE_COLLISION_SOURCE, {
         fileName: `issue-3520-closure-collisions-${label}.ts`,
         experimentalIR: true,
-        semanticProviders: "host-assisted",
         ...options,
       });
       const { exports: rawExports } = await instantiate(compiled);
@@ -638,7 +637,6 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     const baseOptions = {
       fileName: "issue-3520-closure-host-byte-parity.ts",
       experimentalIR: true,
-      semanticProviders: "host-assisted",
     } as const;
     const untracked = await compile(ZERO_ARITY_SOURCE, baseOptions);
     const tracked = await compile(ZERO_ARITY_SOURCE, { ...baseOptions, trackIrOutcomes: true });
@@ -665,12 +663,12 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       const tracked = generateModule(trackedAst, {
         experimentalIR: true,
         trackIrOutcomes: true,
-        semanticProviders: "host-assisted",
+        hostBridge: "always",
       });
       const untracked = generateModule(untrackedAst, {
         experimentalIR: true,
         trackIrOutcomes: false,
-        semanticProviders: "host-assisted",
+        hostBridge: "always",
       });
       const trackedErrors = hardErrors(tracked);
       const untrackedErrors = hardErrors(untracked);
@@ -848,7 +846,7 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
         return Promise.resolve(40).then(addTwo);
       }
     `;
-    const { exports } = await instantiate(source);
+    const { exports, result } = await instantiate(source);
 
     expect((exports.__vec_len as (value: unknown) => number)(null)).toBe(801);
     expect((exports.$v0 as (value: unknown) => number)(null)).toBe(802);
@@ -863,7 +861,11 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     expect(exports["$cm$"]).toBeInstanceOf(WebAssembly.Global);
     expect(exports["$ct$"]).toBeInstanceOf(WebAssembly.Table);
 
-    await expect((exports.runPromise as () => Promise<number>)()).resolves.toBe(42);
+    const boundary = wrapExports(exports as WebAssembly.Exports, {
+      signatures: result.exportSignatures,
+      boundaryPolicies: result.exportBoundaryPolicies,
+    });
+    await expect((boundary.runPromise as () => Promise<number>)()).resolves.toBe(42);
 
     const wrapped = wrapExports(exports as WebAssembly.Exports);
     expect(wrapped.getAddTwo()(40)).toBe(42);
@@ -888,15 +890,11 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
     // helpers. Measured on the forged names alone — no bridge family at all.
     expect(bridgeEntries(trackedModule(forgedNames))).toEqual([]);
 
-    // The fixture's `class Empty { ping() {} }` is a second, unrelated fact:
-    // its instance ESCAPES to the host (`makeEmpty`), and a method value
-    // reaching the host genuinely needs the method-dispatcher family. So the
-    // full fixture legitimately carries all 13 bridges — this row used to
-    // assert `[]` over the whole module and therefore went red on main the
-    // moment an escaping instance started requiring them, while the forged
-    // names it exists to guard were never the cause. The control below is what
-    // keeps the anti-vacuity: a field-only class emits none.
-    expect(bridgeEntries(trackedModule(source))).toHaveLength(REQUIRED_BRIDGES.length);
+    // #6979 keeps JS machinery at the explicit module boundary. Merely
+    // exporting a native class instance no longer reintroduces the retired
+    // host-semantic closure family, regardless of whether the class has a
+    // method or only data fields.
+    expect(bridgeEntries(trackedModule(source))).toEqual([]);
     expect(
       bridgeEntries(
         trackedModule(`${forgedNames}
@@ -906,38 +904,21 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       ),
     ).toEqual([]);
 
-    // (#6419) OWNERSHIP, not absence. The three forged names keep their PUBLIC
-    // labels and answer the USER's values; the bridge the escaping instance
-    // needs is minted beside them under the `$cf$` alias and the reserved
-    // `__\0js2_closure_host_bridge*` family. Asserting the compiler family is
-    // absent only held while the fixture happened not to need a bridge.
-    const { exports } = await instantiate(source);
+    const { exports, instance: wasmInstance, result } = await instantiate(source);
     expect((exports.__is_closure as (value: unknown) => number)(null)).toBe(1);
     expect((exports.__call_fn_0 as (value: unknown) => number)(null)).toBe(709);
     expect((exports.$cf as () => number)()).toBe(704);
-    expect(exports["$cf$"]).toBeTypeOf("function");
-    expect(exports["__\0js2_closure_host_bridge"]).toBeDefined();
-    expect(exports["__\0js2_closure_host_bridge_marker"]).toBeDefined();
+    expect(exports["$cf$"]).toBeUndefined();
+    expect(exports["__\0js2_closure_host_bridge"]).toBeUndefined();
+    expect(exports["__\0js2_closure_host_bridge_marker"]).toBeUndefined();
 
-    // …and the control that keeps the ownership claim honest: with no escaping
-    // method instance the forged names are ALL there is, so the compiler mints
-    // no alias and no marker at all.
-    const closureFree = await instantiate(forgedNames);
-    expect((closureFree.exports.$cf as () => number)()).toBe(704);
-    expect(closureFree.exports["$cf$"]).toBeUndefined();
-    expect(closureFree.exports["__\0js2_closure_host_bridge"]).toBeUndefined();
-    expect(closureFree.exports["__\0js2_closure_host_bridge_marker"]).toBeUndefined();
-
-    // (#6419 → #6441, fixed) With a compiler closure family present, the
-    // module's own user-declared `__is_closure` answers `1` unconditionally
-    // for *its own* callers, but the boundary consults the compiler's
-    // authenticated classifier (via `_hostBridgeExportView`), which answers
-    // `0` for the escaping `Empty` instance — so `wrapExports` must marshal it
-    // to an object, not wrap it as a callable function.
-    const wrapped = wrapExports(exports as WebAssembly.Exports);
-    const instance = wrapped.makeEmpty();
-    expect(instance).toEqual({});
-    expect(instance).not.toBeTypeOf("function");
+    const wrapped = wrapExports(wasmInstance, {
+      signatures: result.exportSignatures,
+      boundaryPolicies: result.exportBoundaryPolicies,
+    });
+    const boundaryObject = wrapped.makeEmpty();
+    expect(boundaryObject).toEqual({});
+    expect(boundaryObject).not.toBeTypeOf("function");
   });
 
   it("fails closed for malformed marker, manifest, binding, and physical helper metadata", async () => {
@@ -955,16 +936,24 @@ describe("#3520 C31 closure host bridge Program ABI ownership", () => {
       export function getIdentity(): any { return identity; }
       export function makeBoxed(): Boxed { return new Boxed(); }
     `;
-    const { exports } = await instantiate(source);
+    const { exports, instance, result } = await instantiate(source);
     expect(exports["$cf$"]).toBeTypeOf("function");
     expect(exports["$cm$"]).toBeInstanceOf(WebAssembly.Global);
     expect(exports["$ct$"]).toBeInstanceOf(WebAssembly.Table);
     expect(exports["$cu$"]).toBeInstanceOf(WebAssembly.Table);
-    expect(wrapExports(exports as WebAssembly.Exports).makeBoxed()).toMatchObject({ value: 7 });
+    expect(
+      wrapExports(instance, {
+        signatures: result.exportSignatures,
+        boundaryPolicies: result.exportBoundaryPolicies,
+      }).makeBoxed(),
+    ).toMatchObject({ value: 7 });
 
     const clone = (): Record<string, unknown> => Object.assign(Object.create(null), exports);
     const assertBoxedObject = (tampered: Record<string, unknown>): void => {
-      const value = wrapExports(tampered as WebAssembly.Exports).makeBoxed();
+      const value = wrapExports(tampered as WebAssembly.Exports, {
+        signatures: result.exportSignatures,
+        boundaryPolicies: result.exportBoundaryPolicies,
+      }).makeBoxed();
       expect(value).toMatchObject({ value: 7 });
       expect(value).not.toBeTypeOf("function");
     };

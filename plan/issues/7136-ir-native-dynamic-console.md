@@ -15,8 +15,8 @@ goal: ir-full-coverage
 parent: 7106
 assignee: "ttraenkler/codex-session-b"
 import-cycles-allow:
-  - largestSccSize: 726 # 2026-10-22 (#7136): the extracted native console provider joins the existing engine SCC.
-  - ir->codegen: 80 # 2026-10-22 (#7136): integration binds the single extracted provider; no new codegen->IR edge.
+  - largestSccSize: 725 # 2026-10-28 (#7136): restated on main b6250f09f8 (724 there). The extracted native console provider joins the existing engine SCC (+1).
+  - ir->codegen: 82 # 2026-10-28 (#7136): restated on main b6250f09f8 (81 there; was 79 at the 10-22 base). Integration still binds only the single extracted provider (+1); no new codegen->IR edge.
 loc-budget-allow:
   # 2026-10-22: +1 import, shared five-method demand contract.
   - src/codegen/wasi.ts
@@ -159,3 +159,16 @@ passes with i32 inference enabled (68 controls, two known-open witnesses).
 Current-main LOC/function, flat-directory, IR-layering and import-cycle gates
 pass with only the exact dated grants above; inventory remains valid and
 architecture incomplete. Fresh-context adversarial review remains pending.
+
+## Takeover integration, 2026-10-28
+
+Main `b6250f09f8` merged in (584 commits since `efa58fece8`). The only textual
+conflict was the `from-ast.ts` import block: this branch's
+`console-lowering.js` import and main's new `native-in.js` import are
+independent, so both are kept. The cycle grants are restated against the new
+base, where main itself had already moved (largest SCC 724, `ir->codegen` 81);
+this change still adds exactly the one provider file to the SCC and the one
+`integration.ts` → `helpers/ir-native-console.ts` edge. The PR's own two test
+files pass 84/84; the six console-touching equivalence files pass 92/92. The two
+#4462 rows and three #5386 gc rows that fail here fail identically on
+`b6250f09f8`.

@@ -378,6 +378,34 @@ export interface IrDynamicLowering {
    */
   emitArgumentsLength(formals: number): readonly Instr[];
   /**
+   * (#7106 S3c) Nothing on the stack → the ordinary function invocation's
+   * `this` as the carrier: legacy's `__current_this` ladder (the installed
+   * receiver, else the global object for sloppy code / `undefined` for strict),
+   * wrapped once per strictness (`__ir_current_this_{sloppy,strict}`). Throws
+   * where the `native-current-this` capability does not hold.
+   */
+  emitCurrentThis(strict: boolean): readonly Instr[];
+  /**
+   * (#7106) Nothing on the stack → the realm's global object as the carrier
+   * (legacy's `globalThis` read), wrapped once per module
+   * (`__ir_global_object`). Same `native-current-this` lanes.
+   */
+  emitGlobalObject(): readonly Instr[];
+  /**
+   * (#7106 S3c) Carrier on the stack → i32 `value instanceof F` for the
+   * top-level function constructor legacy names `functionName`: the chain walk
+   * against legacy's per-function prototype object, wrapped once per function
+   * (`__ir_instanceof_fn_<F>`). Throws where the `native-current-this`
+   * capability does not hold.
+   */
+  emitInstanceOfFunction(functionName: string): readonly Instr[];
+  /**
+   * (#7106) Value and target carriers on the stack → i32 `value instanceof
+   * target`: legacy's generic runtime operator and its not-callable throw guard,
+   * wrapped once per module (`__ir_dyn_instanceof`). Host-free lanes only.
+   */
+  emitInstanceOf(): readonly Instr[];
+  /**
    * (#7106 S1i) Nothing on the stack → nothing: publish a direct call site's
    * actual argument count to `__argc` (legacy's `emitSetArgc`), wrapped once
    * per module (`__ir_publish_argc`). Same `native-arguments-length` lanes.
@@ -514,8 +542,10 @@ export interface IrDynamicLowering {
    * the canonical `__dyn_member_set` helper, which preserves receiver/key/value
    * evaluation order and delegates to the existing strict object-runtime
    * setter. Assignment-as-value is intentionally not represented.
+   * (#7106 S3c) `sloppy` selects `__dyn_member_set_sloppy`, which ignores a
+   * failed `[[Set]]` exactly as legacy's sloppy `__extern_set` store does.
    */
-  emitMemberSet(): readonly Instr[];
+  emitMemberSet(sloppy: boolean): readonly Instr[];
 }
 
 /**

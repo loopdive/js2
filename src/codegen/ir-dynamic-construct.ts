@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 /**
- * (#7106 S3a) The host-free lane's `dyn.construct` support: one wrapper per
+ * (#7106 S3a/S3c) The host-free lane's `dyn.construct` support: one wrapper per
  * arity, `__ir_dyn_construct_<N>(callee, a0 … aN-1) -> externref`, whose body
  * is EXACTLY the sequence `tryCompileNativeConstructFromValue`
  * (`expressions/new-super.ts`) emits inline after it has evaluated a dynamic
@@ -25,9 +25,8 @@ import { allocLocal } from "./context/locals.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { flushLateImportShifts } from "./shared.js";
-import { ensureLateImport } from "./expressions/late-imports.js";
-import { addFuncType, getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { emitUndefined, ensureLateImport } from "./expressions/late-imports.js";
+import { getOrRegisterTaCtorType, taCtorIdentityTestInstrs } from "./registry/types.js";
 import { MAX_NATIVE_CONSTRUCT_ARITY, reserveNativeConstructDriver } from "./native-construct.js";
 import { reserveBuiltinCollectionDynConstruct } from "./builtin-collection-dyn-construct.js";
 import {
@@ -46,6 +45,14 @@ import { isRuntimeEvalCallableResultExpression } from "./expressions/runtime-eva
 import { funcConstructorForCallee } from "./fnctor-ctor-decl.js";
 import { resolvesToGlobalFunctionAlias } from "./expressions/eval-inline.js";
 import { resolvesToNonConstructableValue } from "./expressions/non-constructable.js";
+import { buildExplicitNullThisElseArm, explicitNullReceiverLane } from "./explicit-null-receiver.js";
+import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
+import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
+import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
+import { isSelfGuardedConstructor, selfGuardedConstructorsLeaveFnctor } from "./helpers/self-guarded-constructor.js";
+import { isStrictFunction } from "./helpers/is-strict-function.js";
+import { emitGlobalObjectAsThis } from "./helpers/sloppy-this-global.js";
+import { helperFunctionContext, publishHelperFunction } from "./helpers/ir-helper-function.js";
 
 /** The largest arity `dyn.construct` admits: the fixed-arity driver family. */
 export const IR_DYNAMIC_CONSTRUCT_MAX_ARITY = MAX_NATIVE_CONSTRUCT_ARITY;
@@ -86,22 +93,14 @@ export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: numbe
   if (existing !== undefined) return existing;
 
   const externref: ValType = { kind: "externref" };
-  const helper: FunctionContext = {
+  const helper = helperFunctionContext(
     name,
-    params: [
+    [
       { name: "callee", type: externref },
       ...Array.from({ length: arity }, (_, i) => ({ name: `arg${i}`, type: externref })),
     ],
-    locals: [],
-    localMap: new Map(),
-    returnType: externref,
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-  };
+    externref,
+  );
 
   // The arming prelude of `tryCompileNativeConstructFromValue`, same order.
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
@@ -172,19 +171,147 @@ export function ensureIrDynamicConstructHelper(ctx: CodegenContext, arity: numbe
     helper.body.push(...nativeDriverCall);
   }
 
-  const typeIdx = addFuncType(
-    ctx,
-    helper.params.map((p) => p.type),
-    [externref],
+  return publishHelperFunction(ctx, helper);
+}
+
+// ---------------------------------------------------------------------------
+// (#7106 S3c) The self-guarded constructor (test262's `Test262Error`:
+// `if (!(this instanceof F)) return new F(m)`) as an IR-owned function. Its
+// `new F(…)` sites use the wrapper above with F's function value; these two
+// wrappers, each built from legacy's own emitters, give the IR the same
+// receiver and the same prototype object legacy sees:
+//
+//  - `__ir_current_this_{sloppy,strict}() -> externref` — `compileThisKeyword`'s
+//    `__current_this` rung: the installed receiver (the #4203 explicit-null
+//    marker answered per strictness), else the unbound answer — the global
+//    object for sloppy code, `undefined` for strict (§10.2.1.2 step 5).
+//  - `__ir_instanceof_fn_<F>(externref) -> i32` — `tryEmitNativeUserCtorInstanceOf`'s
+//    chain walk, `__isPrototypeOf(F.prototype, value)`, against the SAME
+//    lazily-materialised per-function prototype global `new F()` links to.
+// ---------------------------------------------------------------------------
+
+export const IR_CURRENT_THIS_SLOPPY_HELPER = "__ir_current_this_sloppy";
+export const IR_CURRENT_THIS_STRICT_HELPER = "__ir_current_this_strict";
+const IR_INSTANCEOF_FN_PREFIX = "__ir_instanceof_fn_";
+
+export function irInstanceOfFunctionHelperName(functionName: string): string {
+  return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
+}
+
+/** Collect what `emit` pushes into a detached sequence. */
+function captureReceiverSequence(helper: FunctionContext, emit: () => void): Instr[] {
+  const outer = helper.body;
+  const captured: Instr[] = [];
+  helper.body = captured;
+  emit();
+  helper.body = outer;
+  return captured;
+}
+
+/**
+ * Reserve (once per strictness) the `this` wrapper `dyn.current_this` calls.
+ * Returns the function index, or undefined off the host-free lanes.
+ */
+export function ensureIrCurrentThisHelper(ctx: CodegenContext, strict: boolean): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const name = strict ? IR_CURRENT_THIS_STRICT_HELPER : IR_CURRENT_THIS_SLOPPY_HELPER;
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+
+  const externref: ValType = { kind: "externref" };
+  const helper = helperFunctionContext(name, [], externref);
+  const thisGlobal = ensureCurrentThisGlobal(ctx);
+  const receiver = allocLocal(helper, "__receiver", externref);
+  // `emitUnboundThis` / `emitExplicitNullThis`, with the strictness decided by
+  // the IR-owned function rather than by an AST position.
+  const unbound = captureReceiverSequence(helper, () =>
+    strict ? emitUndefined(ctx, helper) : emitGlobalObjectAsThis(ctx, helper),
   );
-  const funcIdx = mintDefinedFunc(ctx);
-  ctx.funcMap.set(name, funcIdx);
-  pushDefinedFunc(ctx, funcIdx, {
-    name,
-    typeIdx,
-    locals: helper.locals,
-    body: helper.body,
-    exported: false,
-  });
-  return funcIdx;
+  const explicitNull = captureReceiverSequence(helper, () =>
+    strict ? helper.body.push({ op: "ref.null.extern" }) : emitGlobalObjectAsThis(ctx, helper),
+  );
+  const yieldReceiver: Instr[] = [{ op: "local.get", index: receiver }];
+  // The marker can only arrive where legacy installs it; testing for it in a
+  // module that never does is dead code, never a different answer.
+  const installed = explicitNullReceiverLane(ctx)
+    ? (buildExplicitNullThisElseArm(ctx, receiver, explicitNull) ?? yieldReceiver)
+    : yieldReceiver;
+  helper.body.push(
+    { op: "global.get", index: thisGlobal },
+    { op: "local.tee", index: receiver },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "val", type: externref }, then: unbound, else: installed },
+  );
+  flushLateImportShifts(ctx, null);
+  return publishHelperFunction(ctx, helper);
+}
+
+export const IR_GLOBAL_OBJECT_HELPER = "__ir_global_object";
+
+/**
+ * (#7106) Reserve the realm-global-object wrapper `dyn.global_object` calls:
+ * legacy's own `globalThis` read (`emitGlobalObjectAsThis`, the sloppy-`this`
+ * fallback), so an IR read of an ambient global sees the realm's bindings.
+ */
+export function ensureIrGlobalObjectHelper(ctx: CodegenContext): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const existing = ctx.funcMap.get(IR_GLOBAL_OBJECT_HELPER);
+  if (existing !== undefined) return existing;
+  const externref: ValType = { kind: "externref" };
+  const helper = helperFunctionContext(IR_GLOBAL_OBJECT_HELPER, [], externref);
+  emitGlobalObjectAsThis(ctx, helper);
+  flushLateImportShifts(ctx, null);
+  return publishHelperFunction(ctx, helper);
+}
+
+/**
+ * Reserve (once per function) the `value instanceof F` wrapper
+ * `dyn.instanceof_fn` calls. Returns the function index, or undefined when the
+ * chain walk is unavailable on this lane.
+ */
+export function ensureIrInstanceOfFunctionHelper(ctx: CodegenContext, functionName: string): number | undefined {
+  if (!noJsHost(ctx)) return undefined;
+  const name = irInstanceOfFunctionHelperName(functionName);
+  const existing = ctx.funcMap.get(name);
+  if (existing !== undefined) return existing;
+  // The selector admits only constructors that never get the bespoke fnctor
+  // struct (`isSelfGuardedConstructor`), so legacy's `ref.test` arm is absent
+  // by construction.
+  if (ctx.structMap.has(`__fnctor_${functionName}`)) {
+    throw new Error(`ir/function-receiver: ${functionName} has a fnctor struct; instanceof would miss it (#7106 S3c)`);
+  }
+  const externref: ValType = { kind: "externref" };
+  const isProtoOf = ensureLateImport(ctx, "__isPrototypeOf", [externref, externref], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, null);
+  if (isProtoOf === undefined) return undefined;
+  const helper = helperFunctionContext(name, [{ name: "value", type: externref }], { kind: "i32" });
+  if (!emitFnctorProtoGet(ctx, helper, functionName)) return undefined;
+  helper.body.push(
+    { op: "local.get", index: 0 },
+    { op: "call", funcIdx: ctx.funcMap.get("__isPrototypeOf") ?? isProtoOf },
+  );
+  flushLateImportShifts(ctx, null);
+  return publishHelperFunction(ctx, helper);
+}
+
+/**
+ * Selector/lowering predicate: may the IR read `this` inside `fn`, and with
+ * which strictness? `undefined` = not on this lane / not this shape.
+ */
+export function irFunctionThisStrictness(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean | undefined {
+  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return undefined;
+  if (!isSelfGuardedConstructor(fn)) return undefined;
+  return isStrictFunction(fn, ctx.inferModuleStrictArguments);
+}
+
+/**
+ * Is `ident` (a `new` callee or an `instanceof` right operand) a self-guarded
+ * constructor the IR may use as a value — the declaration legacy keeps out of
+ * the fnctor machinery, never reassigned, never a generator?
+ */
+export function irSelfGuardedConstructorValue(ctx: CodegenContext, ident: ts.Identifier): boolean {
+  if (!selfGuardedConstructorsLeaveFnctor(ctx) || ctx.fast) return false;
+  const decl = ctx.oracle.valueDeclarationOf(ident);
+  if (decl === undefined || !isSelfGuardedConstructor(decl) || decl.asteriskToken !== undefined) return false;
+  return !identifierIsWrittenTo(ident.getSourceFile(), ident.text);
 }
