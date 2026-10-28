@@ -1,10 +1,11 @@
 ---
 id: 7128
 title: "IR: standalone Object.defineProperty(o, k, d) via an open-object ($Object) carrier for escaping object literals"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-10-22
-updated: 2026-10-22
+updated: 2026-10-28
+assignee: ttraenkler/opus-7128-s1
 priority: high
 horizon: m
 feasibility: hard
