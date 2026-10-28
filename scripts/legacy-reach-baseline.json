@@ -1,0 +1,4730 @@
+{
+  "schema": "js2-legacy-reach-v1",
+  "command": "pnpm run measure:legacy-reach -- --update",
+  "corpus": {
+    "entries": 1880,
+    "families": {
+      "playground": 13,
+      "cutover": 0,
+      "equivalence": 1514,
+      "test262": 353
+    },
+    "digest": "sha256:f1d03db07036676164007d2fbcf4731bf8786a80a913f2f23ebcb87b5c4d9d90"
+  },
+  "targets": {
+    "standalone": {
+      "units": 4232,
+      "demoted": 2042,
+      "synthetic": 1,
+      "unmatched": 0,
+      "compileFailures": 30,
+      "reasons": {
+        "array-method-unsupported": 45,
+        "array-representation-unsupported": 5,
+        "async-function": 16,
+        "async-generator": 1,
+        "body-shape-rejected": 1160,
+        "call-arity-unsupported": 6,
+        "call-graph-closure": 71,
+        "call-resolution-unsupported": 18,
+        "class-member-unsupported": 141,
+        "class-method": 22,
+        "class-projection-unsupported": 19,
+        "compound-assign-unsupported": 1,
+        "constructor-arity-unsupported": 2,
+        "constructor-resolution-unsupported": 24,
+        "date-constructor-unsupported": 28,
+        "destructuring-param-complex": 6,
+        "element-access-unsupported": 6,
+        "error-constructor-unsupported": 18,
+        "external-call": 49,
+        "function-invocation-method-unsupported": 19,
+        "host-surface-unavailable": 31,
+        "imported-call-planning-unsupported": 2,
+        "ir-patched-over-legacy": 78,
+        "late-preparation-unsupported": 5,
+        "logical-value-unsupported": 33,
+        "method-call-unsupported": 9,
+        "nullish-value-unsupported": 18,
+        "operand-coercion-unsupported": 65,
+        "param-shape-rejected": 16,
+        "param-type-not-resolvable": 23,
+        "primitive-method-unsupported": 3,
+        "property-write-unsupported": 3,
+        "regexp-constructor-unsupported": 8,
+        "return-type-not-resolvable": 12,
+        "static-class-initialization": 3,
+        "string-evidence-unsupported": 10,
+        "string-method-unsupported": 47,
+        "template-substitution-unsupported": 2,
+        "throw-value-unsupported": 1,
+        "type-resolution-unsupported": 14,
+        "void-call-expression": 2
+      },
+      "kinds": {
+        "AmpersandAmpersandEqualsToken": {
+          "units": 3,
+          "demoted": 3,
+          "reasons": {
+            "body-shape-rejected": 3
+          }
+        },
+        "AmpersandAmpersandToken": {
+          "units": 39,
+          "demoted": 34,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "class-member-unsupported": 8,
+            "logical-value-unsupported": 18,
+            "param-shape-rejected": 1
+          }
+        },
+        "AmpersandEqualsToken": {
+          "units": 2,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 2
+          }
+        },
+        "AmpersandToken": {
+          "units": 16,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "host-surface-unavailable": 2,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "AnyKeyword": {
+          "units": 246,
+          "demoted": 244,
+          "reasons": {
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 161,
+            "call-graph-closure": 2,
+            "class-member-unsupported": 2,
+            "class-method": 1,
+            "compound-assign-unsupported": 1,
+            "constructor-resolution-unsupported": 2,
+            "external-call": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 27,
+            "logical-value-unsupported": 2,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 14,
+            "param-type-not-resolvable": 20,
+            "return-type-not-resolvable": 3
+          }
+        },
+        "ArrayBindingPattern": {
+          "units": 86,
+          "demoted": 82,
+          "reasons": {
+            "array-representation-unsupported": 2,
+            "body-shape-rejected": 51,
+            "class-member-unsupported": 17,
+            "destructuring-param-complex": 4,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 6
+          }
+        },
+        "ArrayLiteralExpression": {
+          "units": 452,
+          "demoted": 368,
+          "reasons": {
+            "array-method-unsupported": 43,
+            "array-representation-unsupported": 5,
+            "async-function": 3,
+            "body-shape-rejected": 280,
+            "call-graph-closure": 7,
+            "class-member-unsupported": 9,
+            "class-projection-unsupported": 2,
+            "function-invocation-method-unsupported": 6,
+            "ir-patched-over-legacy": 1,
+            "operand-coercion-unsupported": 6,
+            "param-shape-rejected": 1,
+            "property-write-unsupported": 3,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "ArrayType": {
+          "units": 232,
+          "demoted": 160,
+          "reasons": {
+            "array-method-unsupported": 32,
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 97,
+            "call-graph-closure": 1,
+            "constructor-resolution-unsupported": 2,
+            "destructuring-param-complex": 4,
+            "external-call": 3,
+            "ir-patched-over-legacy": 2,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 7,
+            "property-write-unsupported": 3,
+            "return-type-not-resolvable": 1,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "ArrowFunction": {
+          "units": 130,
+          "demoted": 126,
+          "reasons": {
+            "array-method-unsupported": 7,
+            "body-shape-rejected": 100,
+            "class-member-unsupported": 16,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 1
+          }
+        },
+        "AsExpression": {
+          "units": 138,
+          "demoted": 134,
+          "reasons": {
+            "array-method-unsupported": 8,
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 81,
+            "class-member-unsupported": 1,
+            "compound-assign-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "external-call": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 5,
+            "logical-value-unsupported": 7,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 14,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 5
+          }
+        },
+        "AsteriskAsteriskEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "AsteriskAsteriskToken": {
+          "units": 23,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 2,
+            "class-member-unsupported": 4,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "AsteriskEqualsToken": {
+          "units": 9,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "nullish-value-unsupported": 1,
+            "param-type-not-resolvable": 1
+          }
+        },
+        "AsteriskToken": {
+          "units": 269,
+          "demoted": 209,
+          "reasons": {
+            "array-method-unsupported": 5,
+            "array-representation-unsupported": 1,
+            "async-generator": 1,
+            "body-shape-rejected": 137,
+            "call-graph-closure": 5,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 22,
+            "class-method": 2,
+            "constructor-resolution-unsupported": 1,
+            "date-constructor-unsupported": 2,
+            "function-invocation-method-unsupported": 1,
+            "host-surface-unavailable": 8,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 1,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 6,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 1,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 2
+          }
+        },
+        "AsyncKeyword": {
+          "units": 77,
+          "demoted": 73,
+          "reasons": {
+            "async-function": 16,
+            "async-generator": 1,
+            "body-shape-rejected": 28,
+            "call-graph-closure": 8,
+            "class-member-unsupported": 19,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "AwaitExpression": {
+          "units": 21,
+          "demoted": 17,
+          "reasons": {
+            "async-function": 13,
+            "body-shape-rejected": 4
+          }
+        },
+        "AwaitKeyword": {
+          "units": 3,
+          "demoted": 3,
+          "reasons": {
+            "async-function": 3
+          }
+        },
+        "BarBarEqualsToken": {
+          "units": 5,
+          "demoted": 5,
+          "reasons": {
+            "body-shape-rejected": 5
+          }
+        },
+        "BarBarToken": {
+          "units": 30,
+          "demoted": 29,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "class-member-unsupported": 8,
+            "logical-value-unsupported": 16
+          }
+        },
+        "BarEqualsToken": {
+          "units": 11,
+          "demoted": 11,
+          "reasons": {
+            "body-shape-rejected": 3,
+            "class-member-unsupported": 8
+          }
+        },
+        "BarToken": {
+          "units": 12,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "BigIntKeyword": {
+          "units": 33,
+          "demoted": 33,
+          "reasons": {
+            "body-shape-rejected": 33
+          }
+        },
+        "BigIntLiteral": {
+          "units": 45,
+          "demoted": 45,
+          "reasons": {
+            "body-shape-rejected": 44,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "BinaryExpression": {
+          "units": 1582,
+          "demoted": 1140,
+          "reasons": {
+            "array-method-unsupported": 24,
+            "array-representation-unsupported": 2,
+            "async-function": 8,
+            "body-shape-rejected": 730,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 18,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 58,
+            "class-method": 4,
+            "class-projection-unsupported": 11,
+            "compound-assign-unsupported": 1,
+            "constructor-resolution-unsupported": 13,
+            "date-constructor-unsupported": 5,
+            "destructuring-param-complex": 5,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 12,
+            "external-call": 12,
+            "function-invocation-method-unsupported": 6,
+            "host-surface-unavailable": 20,
+            "ir-patched-over-legacy": 25,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 1,
+            "nullish-value-unsupported": 13,
+            "operand-coercion-unsupported": 58,
+            "param-shape-rejected": 8,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 2,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 2,
+            "return-type-not-resolvable": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 10,
+            "type-resolution-unsupported": 3,
+            "void-call-expression": 2
+          }
+        },
+        "BindingElement": {
+          "units": 137,
+          "demoted": 126,
+          "reasons": {
+            "array-representation-unsupported": 2,
+            "async-function": 1,
+            "body-shape-rejected": 84,
+            "class-member-unsupported": 19,
+            "destructuring-param-complex": 6,
+            "ir-patched-over-legacy": 6,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 6
+          }
+        },
+        "Block": {
+          "units": 2627,
+          "demoted": 1909,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 16,
+            "async-generator": 1,
+            "body-shape-rejected": 1039,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 70,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 141,
+            "class-method": 22,
+            "class-projection-unsupported": 14,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 31,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 77,
+            "late-preparation-unsupported": 5,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 12,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "BooleanKeyword": {
+          "units": 41,
+          "demoted": 36,
+          "reasons": {
+            "array-method-unsupported": 6,
+            "body-shape-rejected": 17,
+            "call-resolution-unsupported": 1,
+            "external-call": 5,
+            "logical-value-unsupported": 4,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 2
+          }
+        },
+        "BreakStatement": {
+          "units": 44,
+          "demoted": 19,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 11,
+            "call-arity-unsupported": 2,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 1,
+            "string-evidence-unsupported": 2
+          }
+        },
+        "CallExpression": {
+          "units": 1295,
+          "demoted": 1074,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 1,
+            "async-function": 11,
+            "body-shape-rejected": 642,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 49,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 43,
+            "class-projection-unsupported": 6,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 13,
+            "date-constructor-unsupported": 28,
+            "error-constructor-unsupported": 1,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 31,
+            "ir-patched-over-legacy": 22,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 4,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 2,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 1,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "static-class-initialization": 3,
+            "string-method-unsupported": 47,
+            "type-resolution-unsupported": 1,
+            "void-call-expression": 2
+          }
+        },
+        "CaretEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "CaretToken": {
+          "units": 6,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "CaseBlock": {
+          "units": 15,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "CaseClause": {
+          "units": 15,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "CatchClause": {
+          "units": 79,
+          "demoted": 72,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 45,
+            "call-graph-closure": 4,
+            "error-constructor-unsupported": 16,
+            "ir-patched-over-legacy": 1,
+            "param-type-not-resolvable": 4,
+            "throw-value-unsupported": 1
+          }
+        },
+        "ClassDeclaration": {
+          "units": 69,
+          "demoted": 12,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "class-projection-unsupported": 6,
+            "late-preparation-unsupported": 1
+          }
+        },
+        "ClassExpression": {
+          "units": 39,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 36,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 1
+          }
+        },
+        "ColonToken": {
+          "units": 353,
+          "demoted": 292,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 134,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 2,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 7,
+            "host-surface-unavailable": 11,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 6,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 32,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 14
+          }
+        },
+        "CommaToken": {
+          "units": 10,
+          "demoted": 10,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 8,
+            "param-shape-rejected": 1
+          }
+        },
+        "ComputedPropertyName": {
+          "units": 136,
+          "demoted": 129,
+          "reasons": {
+            "body-shape-rejected": 38,
+            "class-member-unsupported": 77,
+            "class-method": 14
+          }
+        },
+        "ConditionalExpression": {
+          "units": 353,
+          "demoted": 292,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 134,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 2,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 7,
+            "host-surface-unavailable": 11,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 6,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 32,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 14
+          }
+        },
+        "Constructor": {
+          "units": 70,
+          "demoted": 10,
+          "reasons": {
+            "body-shape-rejected": 3,
+            "class-projection-unsupported": 7
+          }
+        },
+        "ContinueStatement": {
+          "units": 16,
+          "demoted": 12,
+          "reasons": {
+            "body-shape-rejected": 3,
+            "operand-coercion-unsupported": 3,
+            "string-evidence-unsupported": 6
+          }
+        },
+        "Decorator": {
+          "units": 3,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "DefaultClause": {
+          "units": 11,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "DeleteExpression": {
+          "units": 24,
+          "demoted": 24,
+          "reasons": {
+            "body-shape-rejected": 24
+          }
+        },
+        "DoStatement": {
+          "units": 9,
+          "demoted": 5,
+          "reasons": {
+            "body-shape-rejected": 4,
+            "string-evidence-unsupported": 1
+          }
+        },
+        "DotDotDotToken": {
+          "units": 38,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 16,
+            "class-member-unsupported": 10,
+            "class-projection-unsupported": 2,
+            "destructuring-param-complex": 3,
+            "param-shape-rejected": 7
+          }
+        },
+        "ElementAccessExpression": {
+          "units": 274,
+          "demoted": 219,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 163,
+            "call-graph-closure": 2,
+            "call-resolution-unsupported": 1,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 6,
+            "destructuring-param-complex": 1,
+            "element-access-unsupported": 6,
+            "external-call": 1,
+            "ir-patched-over-legacy": 5,
+            "param-type-not-resolvable": 8,
+            "property-write-unsupported": 1,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 1,
+            "type-resolution-unsupported": 5
+          }
+        },
+        "EmptyStatement": {
+          "units": 35,
+          "demoted": 35,
+          "reasons": {
+            "body-shape-rejected": 35
+          }
+        },
+        "EqualsEqualsEqualsToken": {
+          "units": 185,
+          "demoted": 148,
+          "reasons": {
+            "array-method-unsupported": 5,
+            "async-function": 1,
+            "body-shape-rejected": 95,
+            "call-graph-closure": 3,
+            "call-resolution-unsupported": 1,
+            "constructor-resolution-unsupported": 1,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 2,
+            "error-constructor-unsupported": 2,
+            "external-call": 6,
+            "function-invocation-method-unsupported": 4,
+            "ir-patched-over-legacy": 4,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 4,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 8,
+            "string-evidence-unsupported": 1,
+            "string-method-unsupported": 5,
+            "void-call-expression": 1
+          }
+        },
+        "EqualsEqualsToken": {
+          "units": 45,
+          "demoted": 41,
+          "reasons": {
+            "body-shape-rejected": 20,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 18
+          }
+        },
+        "EqualsGreaterThanToken": {
+          "units": 130,
+          "demoted": 126,
+          "reasons": {
+            "array-method-unsupported": 7,
+            "body-shape-rejected": 100,
+            "class-member-unsupported": 16,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 1
+          }
+        },
+        "EqualsToken": {
+          "units": 563,
+          "demoted": 399,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 304,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 4,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 20,
+            "class-method": 3,
+            "class-projection-unsupported": 9,
+            "constructor-resolution-unsupported": 6,
+            "error-constructor-unsupported": 9,
+            "host-surface-unavailable": 12,
+            "ir-patched-over-legacy": 7,
+            "logical-value-unsupported": 1,
+            "nullish-value-unsupported": 1,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 11,
+            "property-write-unsupported": 3
+          }
+        },
+        "ExclamationEqualsEqualsToken": {
+          "units": 104,
+          "demoted": 94,
+          "reasons": {
+            "body-shape-rejected": 76,
+            "call-graph-closure": 1,
+            "class-projection-unsupported": 1,
+            "external-call": 4,
+            "ir-patched-over-legacy": 2,
+            "logical-value-unsupported": 2,
+            "nullish-value-unsupported": 1,
+            "regexp-constructor-unsupported": 2,
+            "string-evidence-unsupported": 2,
+            "string-method-unsupported": 2,
+            "void-call-expression": 1
+          }
+        },
+        "ExclamationEqualsToken": {
+          "units": 15,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 5
+          }
+        },
+        "ExportDeclaration": {
+          "units": 2,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 2
+          }
+        },
+        "ExportKeyword": {
+          "units": 1639,
+          "demoted": 1204,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 4,
+            "async-function": 3,
+            "body-shape-rejected": 645,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 40,
+            "call-resolution-unsupported": 17,
+            "class-member-unsupported": 9,
+            "class-projection-unsupported": 6,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 16,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 31,
+            "ir-patched-over-legacy": 40,
+            "logical-value-unsupported": 29,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-type-not-resolvable": 16,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "void-call-expression": 2
+          }
+        },
+        "ExportSpecifier": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "ExpressionStatement": {
+          "units": 1118,
+          "demoted": 881,
+          "reasons": {
+            "array-method-unsupported": 14,
+            "async-function": 9,
+            "body-shape-rejected": 682,
+            "call-arity-unsupported": 3,
+            "call-graph-closure": 17,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 25,
+            "class-method": 4,
+            "class-projection-unsupported": 12,
+            "compound-assign-unsupported": 1,
+            "constructor-resolution-unsupported": 6,
+            "error-constructor-unsupported": 12,
+            "host-surface-unavailable": 31,
+            "ir-patched-over-legacy": 11,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 1,
+            "method-call-unsupported": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 15,
+            "property-write-unsupported": 3,
+            "static-class-initialization": 3,
+            "string-evidence-unsupported": 10
+          }
+        },
+        "ExpressionWithTypeArguments": {
+          "units": 14,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 1
+          }
+        },
+        "FalseKeyword": {
+          "units": 111,
+          "demoted": 99,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 79,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 1,
+            "call-resolution-unsupported": 3,
+            "class-member-unsupported": 2,
+            "class-projection-unsupported": 1,
+            "constructor-resolution-unsupported": 1,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 4,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 2
+          }
+        },
+        "ForInStatement": {
+          "units": 6,
+          "demoted": 6,
+          "reasons": {
+            "body-shape-rejected": 6
+          }
+        },
+        "ForOfStatement": {
+          "units": 138,
+          "demoted": 129,
+          "reasons": {
+            "async-function": 3,
+            "body-shape-rejected": 124,
+            "call-graph-closure": 1,
+            "host-surface-unavailable": 1
+          }
+        },
+        "ForStatement": {
+          "units": 123,
+          "demoted": 63,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 37,
+            "call-arity-unsupported": 2,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 1,
+            "error-constructor-unsupported": 2,
+            "host-surface-unavailable": 4,
+            "ir-patched-over-legacy": 1,
+            "operand-coercion-unsupported": 4,
+            "string-evidence-unsupported": 8
+          }
+        },
+        "FunctionDeclaration": {
+          "units": 1972,
+          "demoted": 1440,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 16,
+            "async-generator": 1,
+            "body-shape-rejected": 737,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 70,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 9,
+            "class-projection-unsupported": 6,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 31,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 77,
+            "late-preparation-unsupported": 2,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 10,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "FunctionExpression": {
+          "units": 203,
+          "demoted": 203,
+          "reasons": {
+            "array-method-unsupported": 6,
+            "body-shape-rejected": 180,
+            "call-resolution-unsupported": 2,
+            "class-member-unsupported": 12,
+            "param-shape-rejected": 1,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "FunctionType": {
+          "units": 27,
+          "demoted": 26,
+          "reasons": {
+            "body-shape-rejected": 15,
+            "call-graph-closure": 8,
+            "ir-patched-over-legacy": 1,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "GetAccessor": {
+          "units": 119,
+          "demoted": 111,
+          "reasons": {
+            "body-shape-rejected": 48,
+            "class-member-unsupported": 56,
+            "class-method": 7
+          }
+        },
+        "GreaterThanEqualsToken": {
+          "units": 25,
+          "demoted": 16,
+          "reasons": {
+            "body-shape-rejected": 14,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "GreaterThanGreaterThanEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "GreaterThanGreaterThanGreaterThanEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "GreaterThanGreaterThanGreaterThanToken": {
+          "units": 2,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "GreaterThanGreaterThanToken": {
+          "units": 4,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "GreaterThanToken": {
+          "units": 62,
+          "demoted": 35,
+          "reasons": {
+            "array-method-unsupported": 3,
+            "body-shape-rejected": 23,
+            "call-graph-closure": 1,
+            "error-constructor-unsupported": 2,
+            "operand-coercion-unsupported": 4,
+            "string-evidence-unsupported": 2
+          }
+        },
+        "HeritageClause": {
+          "units": 14,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 1
+          }
+        },
+        "Identifier": {
+          "units": 2814,
+          "demoted": 2021,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 16,
+            "async-generator": 1,
+            "body-shape-rejected": 1157,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 71,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 126,
+            "class-method": 19,
+            "class-projection-unsupported": 19,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 31,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 78,
+            "late-preparation-unsupported": 5,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 65,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 12,
+            "static-class-initialization": 3,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "IfStatement": {
+          "units": 244,
+          "demoted": 187,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 154,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 1,
+            "error-constructor-unsupported": 3,
+            "ir-patched-over-legacy": 3,
+            "logical-value-unsupported": 3,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 4,
+            "string-evidence-unsupported": 8,
+            "void-call-expression": 2
+          }
+        },
+        "ImportClause": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "ImportDeclaration": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "ImportSpecifier": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "InKeyword": {
+          "units": 15,
+          "demoted": 15,
+          "reasons": {
+            "body-shape-rejected": 15
+          }
+        },
+        "InstanceOfKeyword": {
+          "units": 26,
+          "demoted": 24,
+          "reasons": {
+            "body-shape-rejected": 23,
+            "call-graph-closure": 1
+          }
+        },
+        "InterfaceDeclaration": {
+          "units": 12,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "LabeledStatement": {
+          "units": 6,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 2,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "LessThanEqualsToken": {
+          "units": 42,
+          "demoted": 28,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "call-resolution-unsupported": 3,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 1
+          }
+        },
+        "LessThanLessThanEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "LessThanLessThanToken": {
+          "units": 3,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "LessThanToken": {
+          "units": 139,
+          "demoted": 71,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 41,
+            "call-graph-closure": 1,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 1,
+            "error-constructor-unsupported": 2,
+            "host-surface-unavailable": 4,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 7,
+            "string-evidence-unsupported": 9
+          }
+        },
+        "LiteralType": {
+          "units": 45,
+          "demoted": 44,
+          "reasons": {
+            "body-shape-rejected": 32,
+            "class-projection-unsupported": 6,
+            "destructuring-param-complex": 2,
+            "param-shape-rejected": 1,
+            "return-type-not-resolvable": 3
+          }
+        },
+        "MetaProperty": {
+          "units": 4,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "MethodDeclaration": {
+          "units": 241,
+          "demoted": 124,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 62,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 36,
+            "class-method": 11,
+            "class-projection-unsupported": 1,
+            "constructor-resolution-unsupported": 3,
+            "late-preparation-unsupported": 3,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "MinusEqualsToken": {
+          "units": 8,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 2,
+            "compound-assign-unsupported": 1,
+            "param-type-not-resolvable": 1
+          }
+        },
+        "MinusToken": {
+          "units": 55,
+          "demoted": 31,
+          "reasons": {
+            "array-method-unsupported": 3,
+            "body-shape-rejected": 12,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 4,
+            "external-call": 1,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 3,
+            "param-shape-rejected": 1
+          }
+        },
+        "NamedExports": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "NamedImports": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "NewExpression": {
+          "units": 423,
+          "demoted": 367,
+          "reasons": {
+            "body-shape-rejected": 209,
+            "call-graph-closure": 2,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 9,
+            "class-method": 1,
+            "class-projection-unsupported": 6,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 18,
+            "host-surface-unavailable": 19,
+            "ir-patched-over-legacy": 9,
+            "method-call-unsupported": 1,
+            "operand-coercion-unsupported": 20,
+            "regexp-constructor-unsupported": 2,
+            "return-type-not-resolvable": 1,
+            "static-class-initialization": 1
+          }
+        },
+        "NoSubstitutionTemplateLiteral": {
+          "units": 11,
+          "demoted": 10,
+          "reasons": {
+            "body-shape-rejected": 10
+          }
+        },
+        "NonNullExpression": {
+          "units": 22,
+          "demoted": 21,
+          "reasons": {
+            "array-method-unsupported": 3,
+            "body-shape-rejected": 7,
+            "call-graph-closure": 3,
+            "class-projection-unsupported": 2,
+            "host-surface-unavailable": 3,
+            "ir-patched-over-legacy": 1,
+            "string-method-unsupported": 2
+          }
+        },
+        "NullKeyword": {
+          "units": 157,
+          "demoted": 151,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 95,
+            "call-graph-closure": 2,
+            "class-member-unsupported": 5,
+            "class-projection-unsupported": 8,
+            "destructuring-param-complex": 2,
+            "function-invocation-method-unsupported": 9,
+            "logical-value-unsupported": 2,
+            "nullish-value-unsupported": 17,
+            "operand-coercion-unsupported": 2,
+            "param-shape-rejected": 1,
+            "regexp-constructor-unsupported": 2,
+            "return-type-not-resolvable": 3,
+            "string-method-unsupported": 2
+          }
+        },
+        "NumberKeyword": {
+          "units": 1865,
+          "demoted": 1193,
+          "reasons": {
+            "array-method-unsupported": 35,
+            "array-representation-unsupported": 4,
+            "async-function": 4,
+            "body-shape-rejected": 635,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 56,
+            "call-resolution-unsupported": 17,
+            "class-member-unsupported": 11,
+            "class-method": 12,
+            "class-projection-unsupported": 12,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 21,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 12,
+            "host-surface-unavailable": 23,
+            "ir-patched-over-legacy": 51,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 26,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 17,
+            "operand-coercion-unsupported": 59,
+            "param-shape-rejected": 15,
+            "param-type-not-resolvable": 10,
+            "primitive-method-unsupported": 2,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 5,
+            "string-evidence-unsupported": 3,
+            "string-method-unsupported": 27,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 8,
+            "void-call-expression": 2
+          }
+        },
+        "NumericLiteral": {
+          "units": 1987,
+          "demoted": 1488,
+          "reasons": {
+            "array-method-unsupported": 43,
+            "array-representation-unsupported": 4,
+            "async-function": 8,
+            "body-shape-rejected": 872,
+            "call-arity-unsupported": 4,
+            "call-graph-closure": 47,
+            "call-resolution-unsupported": 15,
+            "class-member-unsupported": 108,
+            "class-method": 7,
+            "class-projection-unsupported": 14,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 1,
+            "constructor-resolution-unsupported": 21,
+            "date-constructor-unsupported": 17,
+            "destructuring-param-complex": 4,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 17,
+            "external-call": 34,
+            "function-invocation-method-unsupported": 16,
+            "host-surface-unavailable": 23,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 37,
+            "late-preparation-unsupported": 2,
+            "logical-value-unsupported": 28,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 11,
+            "operand-coercion-unsupported": 52,
+            "param-shape-rejected": 9,
+            "param-type-not-resolvable": 16,
+            "primitive-method-unsupported": 2,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 4,
+            "string-evidence-unsupported": 9,
+            "string-method-unsupported": 28,
+            "template-substitution-unsupported": 1,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 5,
+            "void-call-expression": 2
+          }
+        },
+        "ObjectBindingPattern": {
+          "units": 66,
+          "demoted": 59,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 42,
+            "class-member-unsupported": 8,
+            "destructuring-param-complex": 2,
+            "ir-patched-over-legacy": 6
+          }
+        },
+        "ObjectKeyword": {
+          "units": 12,
+          "demoted": 12,
+          "reasons": {
+            "host-surface-unavailable": 11,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "ObjectLiteralExpression": {
+          "units": 406,
+          "demoted": 389,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 5,
+            "body-shape-rejected": 326,
+            "call-arity-unsupported": 1,
+            "call-graph-closure": 5,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 8,
+            "element-access-unsupported": 3,
+            "function-invocation-method-unsupported": 1,
+            "host-surface-unavailable": 11,
+            "ir-patched-over-legacy": 10,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "OmittedExpression": {
+          "units": 16,
+          "demoted": 16,
+          "reasons": {
+            "body-shape-rejected": 14,
+            "class-member-unsupported": 2
+          }
+        },
+        "Parameter": {
+          "units": 608,
+          "demoted": 407,
+          "reasons": {
+            "array-method-unsupported": 12,
+            "async-function": 2,
+            "body-shape-rejected": 182,
+            "call-graph-closure": 15,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 66,
+            "class-method": 8,
+            "class-projection-unsupported": 5,
+            "constructor-resolution-unsupported": 3,
+            "destructuring-param-complex": 6,
+            "error-constructor-unsupported": 1,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 29,
+            "logical-value-unsupported": 4,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "return-type-not-resolvable": 4,
+            "string-evidence-unsupported": 1,
+            "type-resolution-unsupported": 14
+          }
+        },
+        "ParenthesizedExpression": {
+          "units": 367,
+          "demoted": 314,
+          "reasons": {
+            "array-method-unsupported": 5,
+            "async-function": 1,
+            "body-shape-rejected": 213,
+            "compound-assign-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "error-constructor-unsupported": 3,
+            "external-call": 1,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 6,
+            "logical-value-unsupported": 23,
+            "nullish-value-unsupported": 12,
+            "operand-coercion-unsupported": 33,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 3,
+            "primitive-method-unsupported": 1,
+            "string-method-unsupported": 6
+          }
+        },
+        "ParenthesizedType": {
+          "units": 19,
+          "demoted": 19,
+          "reasons": {
+            "body-shape-rejected": 17,
+            "destructuring-param-complex": 1,
+            "param-shape-rejected": 1
+          }
+        },
+        "PercentEqualsToken": {
+          "units": 4,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "PercentToken": {
+          "units": 23,
+          "demoted": 6,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 2,
+            "error-constructor-unsupported": 1,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "PlusEqualsToken": {
+          "units": 248,
+          "demoted": 198,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 3,
+            "body-shape-rejected": 164,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 5,
+            "class-projection-unsupported": 3,
+            "error-constructor-unsupported": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 3,
+            "operand-coercion-unsupported": 5,
+            "param-type-not-resolvable": 1,
+            "string-evidence-unsupported": 10
+          }
+        },
+        "PlusToken": {
+          "units": 613,
+          "demoted": 438,
+          "reasons": {
+            "array-method-unsupported": 19,
+            "array-representation-unsupported": 2,
+            "async-function": 5,
+            "body-shape-rejected": 287,
+            "call-graph-closure": 10,
+            "call-resolution-unsupported": 7,
+            "class-member-unsupported": 22,
+            "class-method": 1,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 3,
+            "destructuring-param-complex": 3,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 8,
+            "external-call": 1,
+            "function-invocation-method-unsupported": 1,
+            "host-surface-unavailable": 16,
+            "ir-patched-over-legacy": 6,
+            "logical-value-unsupported": 2,
+            "method-call-unsupported": 1,
+            "operand-coercion-unsupported": 11,
+            "param-shape-rejected": 5,
+            "param-type-not-resolvable": 5,
+            "primitive-method-unsupported": 2,
+            "string-method-unsupported": 8,
+            "type-resolution-unsupported": 3
+          }
+        },
+        "PostfixUnaryExpression": {
+          "units": 154,
+          "demoted": 87,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 67,
+            "class-method": 1,
+            "constructor-resolution-unsupported": 1,
+            "error-constructor-unsupported": 2,
+            "host-surface-unavailable": 4,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 4,
+            "string-evidence-unsupported": 4
+          }
+        },
+        "PrefixUnaryExpression": {
+          "units": 172,
+          "demoted": 113,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 82,
+            "call-graph-closure": 1,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 2,
+            "error-constructor-unsupported": 4,
+            "external-call": 5,
+            "ir-patched-over-legacy": 4,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 6,
+            "param-type-not-resolvable": 2,
+            "string-method-unsupported": 1
+          }
+        },
+        "PrivateIdentifier": {
+          "units": 97,
+          "demoted": 49,
+          "reasons": {
+            "body-shape-rejected": 10,
+            "class-member-unsupported": 28,
+            "class-method": 8,
+            "class-projection-unsupported": 1,
+            "late-preparation-unsupported": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "PrivateKeyword": {
+          "units": 1,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "PropertyAccessExpression": {
+          "units": 1344,
+          "demoted": 999,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "async-function": 9,
+            "body-shape-rejected": 630,
+            "call-graph-closure": 10,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 45,
+            "class-method": 16,
+            "class-projection-unsupported": 12,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 17,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 2,
+            "external-call": 7,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 30,
+            "ir-patched-over-legacy": 15,
+            "late-preparation-unsupported": 2,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 1,
+            "param-shape-rejected": 4,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 3,
+            "string-method-unsupported": 47,
+            "type-resolution-unsupported": 7
+          }
+        },
+        "PropertyAssignment": {
+          "units": 291,
+          "demoted": 274,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 2,
+            "body-shape-rejected": 236,
+            "call-arity-unsupported": 1,
+            "call-graph-closure": 5,
+            "call-resolution-unsupported": 8,
+            "class-projection-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "element-access-unsupported": 3,
+            "ir-patched-over-legacy": 10,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "PropertyDeclaration": {
+          "units": 70,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 6,
+            "class-projection-unsupported": 6,
+            "late-preparation-unsupported": 1
+          }
+        },
+        "PropertySignature": {
+          "units": 50,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 27,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "ir-patched-over-legacy": 6,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "QuestionDotToken": {
+          "units": 13,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 13
+          }
+        },
+        "QuestionQuestionEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "QuestionQuestionToken": {
+          "units": 21,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 13,
+            "class-member-unsupported": 8
+          }
+        },
+        "QuestionToken": {
+          "units": 361,
+          "demoted": 300,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 141,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 3,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 7,
+            "host-surface-unavailable": 11,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 6,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 32,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 14
+          }
+        },
+        "RegularExpressionLiteral": {
+          "units": 21,
+          "demoted": 21,
+          "reasons": {
+            "array-method-unsupported": 2,
+            "body-shape-rejected": 4,
+            "regexp-constructor-unsupported": 6,
+            "string-method-unsupported": 9
+          }
+        },
+        "ReturnStatement": {
+          "units": 2195,
+          "demoted": 1574,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 12,
+            "body-shape-rejected": 777,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 66,
+            "call-resolution-unsupported": 17,
+            "class-member-unsupported": 110,
+            "class-method": 17,
+            "class-projection-unsupported": 7,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 17,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 24,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 71,
+            "late-preparation-unsupported": 3,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 20,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 11,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "SatisfiesExpression": {
+          "units": 6,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "SetAccessor": {
+          "units": 77,
+          "demoted": 72,
+          "reasons": {
+            "body-shape-rejected": 28,
+            "class-member-unsupported": 40,
+            "class-method": 4
+          }
+        },
+        "ShorthandPropertyAssignment": {
+          "units": 6,
+          "demoted": 6,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 5
+          }
+        },
+        "SlashEqualsToken": {
+          "units": 3,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "param-type-not-resolvable": 1
+          }
+        },
+        "SlashToken": {
+          "units": 28,
+          "demoted": 14,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "class-member-unsupported": 4,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "SpreadAssignment": {
+          "units": 9,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 8,
+            "class-projection-unsupported": 1
+          }
+        },
+        "SpreadElement": {
+          "units": 69,
+          "demoted": 59,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 57
+          }
+        },
+        "StaticKeyword": {
+          "units": 108,
+          "demoted": 102,
+          "reasons": {
+            "body-shape-rejected": 28,
+            "class-member-unsupported": 63,
+            "class-method": 9,
+            "late-preparation-unsupported": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "StringKeyword": {
+          "units": 320,
+          "demoted": 234,
+          "reasons": {
+            "array-method-unsupported": 8,
+            "async-function": 2,
+            "body-shape-rejected": 106,
+            "call-graph-closure": 3,
+            "call-resolution-unsupported": 1,
+            "class-member-unsupported": 2,
+            "class-method": 4,
+            "constructor-resolution-unsupported": 6,
+            "external-call": 10,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 5,
+            "logical-value-unsupported": 5,
+            "method-call-unsupported": 2,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 18,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 1,
+            "primitive-method-unsupported": 1,
+            "return-type-not-resolvable": 1,
+            "string-evidence-unsupported": 9,
+            "string-method-unsupported": 39,
+            "template-substitution-unsupported": 2,
+            "type-resolution-unsupported": 5
+          }
+        },
+        "StringLiteral": {
+          "units": 773,
+          "demoted": 665,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "async-function": 3,
+            "body-shape-rejected": 423,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 3,
+            "call-resolution-unsupported": 14,
+            "class-member-unsupported": 12,
+            "class-method": 8,
+            "class-projection-unsupported": 3,
+            "constructor-resolution-unsupported": 2,
+            "date-constructor-unsupported": 1,
+            "element-access-unsupported": 4,
+            "error-constructor-unsupported": 18,
+            "external-call": 16,
+            "host-surface-unavailable": 12,
+            "ir-patched-over-legacy": 7,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 6,
+            "method-call-unsupported": 9,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 30,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 10,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "static-class-initialization": 2,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47
+          }
+        },
+        "SuperKeyword": {
+          "units": 35,
+          "demoted": 19,
+          "reasons": {
+            "body-shape-rejected": 14,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 3,
+            "late-preparation-unsupported": 1
+          }
+        },
+        "SwitchStatement": {
+          "units": 15,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "SymbolKeyword": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "TaggedTemplateExpression": {
+          "units": 22,
+          "demoted": 22,
+          "reasons": {
+            "body-shape-rejected": 22
+          }
+        },
+        "TemplateExpression": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "TemplateHead": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "TemplateMiddle": {
+          "units": 9,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 7
+          }
+        },
+        "TemplateSpan": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "TemplateTail": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "ThisKeyword": {
+          "units": 233,
+          "demoted": 93,
+          "reasons": {
+            "body-shape-rejected": 49,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 18,
+            "class-method": 14,
+            "class-projection-unsupported": 5,
+            "late-preparation-unsupported": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "ThrowStatement": {
+          "units": 138,
+          "demoted": 137,
+          "reasons": {
+            "body-shape-rejected": 113,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "class-method": 1,
+            "error-constructor-unsupported": 18,
+            "ir-patched-over-legacy": 2,
+            "throw-value-unsupported": 1
+          }
+        },
+        "TrueKeyword": {
+          "units": 145,
+          "demoted": 127,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 104,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 1,
+            "call-resolution-unsupported": 2,
+            "constructor-resolution-unsupported": 3,
+            "error-constructor-unsupported": 1,
+            "ir-patched-over-legacy": 3,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 6,
+            "primitive-method-unsupported": 2,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "TryStatement": {
+          "units": 88,
+          "demoted": 79,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 51,
+            "call-graph-closure": 5,
+            "error-constructor-unsupported": 16,
+            "ir-patched-over-legacy": 1,
+            "param-type-not-resolvable": 4,
+            "throw-value-unsupported": 1
+          }
+        },
+        "TupleType": {
+          "units": 7,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 7
+          }
+        },
+        "TypeAssertionExpression": {
+          "units": 8,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "TypeLiteral": {
+          "units": 38,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 27,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "ir-patched-over-legacy": 6,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "TypeOfExpression": {
+          "units": 72,
+          "demoted": 60,
+          "reasons": {
+            "body-shape-rejected": 45,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 1,
+            "date-constructor-unsupported": 1,
+            "external-call": 3,
+            "ir-patched-over-legacy": 5,
+            "param-type-not-resolvable": 4
+          }
+        },
+        "TypeReference": {
+          "units": 153,
+          "demoted": 141,
+          "reasons": {
+            "async-function": 6,
+            "body-shape-rejected": 82,
+            "call-graph-closure": 14,
+            "call-resolution-unsupported": 6,
+            "class-member-unsupported": 2,
+            "class-projection-unsupported": 6,
+            "constructor-resolution-unsupported": 2,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 3,
+            "param-shape-rejected": 2,
+            "return-type-not-resolvable": 3,
+            "type-resolution-unsupported": 14
+          }
+        },
+        "UndefinedKeyword": {
+          "units": 13,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 13
+          }
+        },
+        "UnionType": {
+          "units": 52,
+          "demoted": 51,
+          "reasons": {
+            "body-shape-rejected": 38,
+            "class-projection-unsupported": 6,
+            "destructuring-param-complex": 2,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 1,
+            "return-type-not-resolvable": 3
+          }
+        },
+        "UnknownKeyword": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "VariableDeclaration": {
+          "units": 1593,
+          "demoted": 1281,
+          "reasons": {
+            "array-method-unsupported": 39,
+            "array-representation-unsupported": 2,
+            "async-function": 10,
+            "body-shape-rejected": 931,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 22,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 8,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 22,
+            "date-constructor-unsupported": 10,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 15,
+            "external-call": 15,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 31,
+            "ir-patched-over-legacy": 19,
+            "logical-value-unsupported": 12,
+            "method-call-unsupported": 3,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 44,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 25,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1
+          }
+        },
+        "VariableDeclarationList": {
+          "units": 1573,
+          "demoted": 1263,
+          "reasons": {
+            "array-method-unsupported": 39,
+            "array-representation-unsupported": 2,
+            "async-function": 9,
+            "body-shape-rejected": 924,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 18,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 8,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 22,
+            "date-constructor-unsupported": 10,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 11,
+            "external-call": 15,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 31,
+            "ir-patched-over-legacy": 18,
+            "logical-value-unsupported": 12,
+            "method-call-unsupported": 3,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 44,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 25,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "VariableStatement": {
+          "units": 1565,
+          "demoted": 1255,
+          "reasons": {
+            "array-method-unsupported": 39,
+            "array-representation-unsupported": 2,
+            "async-function": 8,
+            "body-shape-rejected": 917,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 18,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 8,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 22,
+            "date-constructor-unsupported": 10,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 11,
+            "external-call": 15,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 31,
+            "ir-patched-over-legacy": 18,
+            "logical-value-unsupported": 12,
+            "method-call-unsupported": 3,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 44,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 25,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "VoidExpression": {
+          "units": 8,
+          "demoted": 6,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "nullish-value-unsupported": 1
+          }
+        },
+        "VoidKeyword": {
+          "units": 62,
+          "demoted": 29,
+          "reasons": {
+            "body-shape-rejected": 13,
+            "call-graph-closure": 5,
+            "error-constructor-unsupported": 1,
+            "host-surface-unavailable": 7,
+            "ir-patched-over-legacy": 1,
+            "param-type-not-resolvable": 2
+          }
+        },
+        "WhileStatement": {
+          "units": 26,
+          "demoted": 12,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "call-graph-closure": 1,
+            "class-projection-unsupported": 1,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "nullish-value-unsupported": 1
+          }
+        },
+        "WithStatement": {
+          "units": 9,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 9
+          }
+        },
+        "YieldExpression": {
+          "units": 75,
+          "demoted": 75,
+          "reasons": {
+            "body-shape-rejected": 68,
+            "call-graph-closure": 3,
+            "class-member-unsupported": 4
+          }
+        }
+      }
+    },
+    "gc": {
+      "units": 4232,
+      "demoted": 2050,
+      "synthetic": 1,
+      "unmatched": 0,
+      "compileFailures": 30,
+      "reasons": {
+        "array-method-unsupported": 45,
+        "array-representation-unsupported": 5,
+        "async-function": 19,
+        "async-generator": 1,
+        "body-shape-rejected": 1166,
+        "call-arity-unsupported": 6,
+        "call-graph-closure": 85,
+        "call-resolution-unsupported": 18,
+        "class-member-unsupported": 141,
+        "class-method": 22,
+        "class-projection-unsupported": 19,
+        "compound-assign-unsupported": 1,
+        "constructor-arity-unsupported": 2,
+        "constructor-resolution-unsupported": 24,
+        "date-constructor-unsupported": 29,
+        "destructuring-param-complex": 6,
+        "element-access-unsupported": 6,
+        "error-constructor-unsupported": 18,
+        "external-call": 49,
+        "function-invocation-method-unsupported": 19,
+        "host-surface-unavailable": 25,
+        "imported-call-planning-unsupported": 2,
+        "ir-patched-over-legacy": 69,
+        "late-preparation-unsupported": 5,
+        "logical-value-unsupported": 33,
+        "method-call-unsupported": 8,
+        "nullish-value-unsupported": 18,
+        "operand-coercion-unsupported": 65,
+        "param-shape-rejected": 16,
+        "param-type-not-resolvable": 23,
+        "primitive-method-unsupported": 3,
+        "property-write-unsupported": 3,
+        "regexp-constructor-unsupported": 8,
+        "return-type-not-resolvable": 12,
+        "static-class-initialization": 3,
+        "string-evidence-unsupported": 10,
+        "string-method-unsupported": 47,
+        "template-substitution-unsupported": 2,
+        "throw-value-unsupported": 1,
+        "type-resolution-unsupported": 14,
+        "void-call-expression": 2
+      },
+      "kinds": {
+        "AmpersandAmpersandEqualsToken": {
+          "units": 3,
+          "demoted": 3,
+          "reasons": {
+            "body-shape-rejected": 3
+          }
+        },
+        "AmpersandAmpersandToken": {
+          "units": 39,
+          "demoted": 36,
+          "reasons": {
+            "body-shape-rejected": 9,
+            "class-member-unsupported": 8,
+            "logical-value-unsupported": 18,
+            "param-shape-rejected": 1
+          }
+        },
+        "AmpersandEqualsToken": {
+          "units": 2,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 2
+          }
+        },
+        "AmpersandToken": {
+          "units": 16,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "AnyKeyword": {
+          "units": 246,
+          "demoted": 244,
+          "reasons": {
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 161,
+            "call-graph-closure": 11,
+            "class-member-unsupported": 2,
+            "class-method": 1,
+            "compound-assign-unsupported": 1,
+            "constructor-resolution-unsupported": 2,
+            "external-call": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 18,
+            "logical-value-unsupported": 2,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 14,
+            "param-type-not-resolvable": 20,
+            "return-type-not-resolvable": 3
+          }
+        },
+        "ArrayBindingPattern": {
+          "units": 86,
+          "demoted": 82,
+          "reasons": {
+            "array-representation-unsupported": 2,
+            "body-shape-rejected": 51,
+            "class-member-unsupported": 17,
+            "destructuring-param-complex": 4,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 6
+          }
+        },
+        "ArrayLiteralExpression": {
+          "units": 452,
+          "demoted": 372,
+          "reasons": {
+            "array-method-unsupported": 43,
+            "array-representation-unsupported": 5,
+            "async-function": 3,
+            "body-shape-rejected": 281,
+            "call-graph-closure": 7,
+            "class-member-unsupported": 9,
+            "class-projection-unsupported": 2,
+            "function-invocation-method-unsupported": 6,
+            "host-surface-unavailable": 3,
+            "ir-patched-over-legacy": 1,
+            "operand-coercion-unsupported": 6,
+            "param-shape-rejected": 1,
+            "property-write-unsupported": 3,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "ArrayType": {
+          "units": 232,
+          "demoted": 162,
+          "reasons": {
+            "array-method-unsupported": 32,
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 97,
+            "call-graph-closure": 3,
+            "constructor-resolution-unsupported": 2,
+            "destructuring-param-complex": 4,
+            "external-call": 3,
+            "ir-patched-over-legacy": 2,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 7,
+            "property-write-unsupported": 3,
+            "return-type-not-resolvable": 1,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "ArrowFunction": {
+          "units": 130,
+          "demoted": 128,
+          "reasons": {
+            "array-method-unsupported": 7,
+            "body-shape-rejected": 101,
+            "class-member-unsupported": 16,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 2
+          }
+        },
+        "AsExpression": {
+          "units": 138,
+          "demoted": 134,
+          "reasons": {
+            "array-method-unsupported": 8,
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 81,
+            "class-member-unsupported": 1,
+            "compound-assign-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "external-call": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 5,
+            "logical-value-unsupported": 7,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 14,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 5
+          }
+        },
+        "AsteriskAsteriskEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "AsteriskAsteriskToken": {
+          "units": 23,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 2,
+            "class-member-unsupported": 4,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "AsteriskEqualsToken": {
+          "units": 9,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "nullish-value-unsupported": 1,
+            "param-type-not-resolvable": 1
+          }
+        },
+        "AsteriskToken": {
+          "units": 269,
+          "demoted": 208,
+          "reasons": {
+            "array-method-unsupported": 5,
+            "array-representation-unsupported": 1,
+            "async-generator": 1,
+            "body-shape-rejected": 137,
+            "call-graph-closure": 6,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 22,
+            "class-method": 2,
+            "constructor-resolution-unsupported": 1,
+            "date-constructor-unsupported": 2,
+            "function-invocation-method-unsupported": 1,
+            "host-surface-unavailable": 6,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 1,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 6,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 1,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 2
+          }
+        },
+        "AsyncKeyword": {
+          "units": 77,
+          "demoted": 77,
+          "reasons": {
+            "async-function": 19,
+            "async-generator": 1,
+            "body-shape-rejected": 25,
+            "call-graph-closure": 11,
+            "class-member-unsupported": 19,
+            "host-surface-unavailable": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "AwaitExpression": {
+          "units": 21,
+          "demoted": 21,
+          "reasons": {
+            "async-function": 16,
+            "body-shape-rejected": 1,
+            "call-graph-closure": 3,
+            "host-surface-unavailable": 1
+          }
+        },
+        "AwaitKeyword": {
+          "units": 3,
+          "demoted": 3,
+          "reasons": {
+            "async-function": 3
+          }
+        },
+        "BarBarEqualsToken": {
+          "units": 5,
+          "demoted": 5,
+          "reasons": {
+            "body-shape-rejected": 5
+          }
+        },
+        "BarBarToken": {
+          "units": 30,
+          "demoted": 29,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "class-member-unsupported": 8,
+            "logical-value-unsupported": 16
+          }
+        },
+        "BarEqualsToken": {
+          "units": 11,
+          "demoted": 11,
+          "reasons": {
+            "body-shape-rejected": 3,
+            "class-member-unsupported": 8
+          }
+        },
+        "BarToken": {
+          "units": 12,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "BigIntKeyword": {
+          "units": 33,
+          "demoted": 33,
+          "reasons": {
+            "body-shape-rejected": 33
+          }
+        },
+        "BigIntLiteral": {
+          "units": 45,
+          "demoted": 45,
+          "reasons": {
+            "body-shape-rejected": 44,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "BinaryExpression": {
+          "units": 1582,
+          "demoted": 1147,
+          "reasons": {
+            "array-method-unsupported": 24,
+            "array-representation-unsupported": 2,
+            "async-function": 8,
+            "body-shape-rejected": 739,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 24,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 58,
+            "class-method": 4,
+            "class-projection-unsupported": 11,
+            "compound-assign-unsupported": 1,
+            "constructor-resolution-unsupported": 13,
+            "date-constructor-unsupported": 5,
+            "destructuring-param-complex": 5,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 12,
+            "external-call": 12,
+            "function-invocation-method-unsupported": 6,
+            "host-surface-unavailable": 12,
+            "ir-patched-over-legacy": 25,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 1,
+            "nullish-value-unsupported": 13,
+            "operand-coercion-unsupported": 58,
+            "param-shape-rejected": 8,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 2,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 2,
+            "return-type-not-resolvable": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 10,
+            "type-resolution-unsupported": 3,
+            "void-call-expression": 2
+          }
+        },
+        "BindingElement": {
+          "units": 137,
+          "demoted": 126,
+          "reasons": {
+            "array-representation-unsupported": 2,
+            "async-function": 1,
+            "body-shape-rejected": 84,
+            "class-member-unsupported": 19,
+            "destructuring-param-complex": 6,
+            "ir-patched-over-legacy": 6,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 6
+          }
+        },
+        "Block": {
+          "units": 2627,
+          "demoted": 1916,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 19,
+            "async-generator": 1,
+            "body-shape-rejected": 1045,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 85,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 141,
+            "class-method": 22,
+            "class-projection-unsupported": 14,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 24,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 68,
+            "late-preparation-unsupported": 5,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 12,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "BooleanKeyword": {
+          "units": 41,
+          "demoted": 36,
+          "reasons": {
+            "array-method-unsupported": 6,
+            "body-shape-rejected": 17,
+            "call-resolution-unsupported": 1,
+            "external-call": 5,
+            "logical-value-unsupported": 4,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 2
+          }
+        },
+        "BreakStatement": {
+          "units": 44,
+          "demoted": 19,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 11,
+            "call-arity-unsupported": 2,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 1,
+            "string-evidence-unsupported": 2
+          }
+        },
+        "CallExpression": {
+          "units": 1295,
+          "demoted": 1082,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 1,
+            "async-function": 14,
+            "body-shape-rejected": 648,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 54,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 43,
+            "class-projection-unsupported": 6,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 13,
+            "date-constructor-unsupported": 29,
+            "error-constructor-unsupported": 1,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 25,
+            "ir-patched-over-legacy": 22,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 4,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 2,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 1,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "static-class-initialization": 3,
+            "string-method-unsupported": 47,
+            "type-resolution-unsupported": 1,
+            "void-call-expression": 2
+          }
+        },
+        "CaretEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "CaretToken": {
+          "units": 6,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "CaseBlock": {
+          "units": 15,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "CaseClause": {
+          "units": 15,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "CatchClause": {
+          "units": 79,
+          "demoted": 72,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 45,
+            "call-graph-closure": 4,
+            "error-constructor-unsupported": 16,
+            "ir-patched-over-legacy": 1,
+            "param-type-not-resolvable": 4,
+            "throw-value-unsupported": 1
+          }
+        },
+        "ClassDeclaration": {
+          "units": 69,
+          "demoted": 12,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "class-projection-unsupported": 6,
+            "late-preparation-unsupported": 1
+          }
+        },
+        "ClassExpression": {
+          "units": 39,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 36,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 1
+          }
+        },
+        "ColonToken": {
+          "units": 353,
+          "demoted": 294,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 135,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 2,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 7,
+            "host-surface-unavailable": 12,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 6,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 32,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 14
+          }
+        },
+        "CommaToken": {
+          "units": 10,
+          "demoted": 10,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 8,
+            "param-shape-rejected": 1
+          }
+        },
+        "ComputedPropertyName": {
+          "units": 136,
+          "demoted": 129,
+          "reasons": {
+            "body-shape-rejected": 38,
+            "class-member-unsupported": 77,
+            "class-method": 14
+          }
+        },
+        "ConditionalExpression": {
+          "units": 353,
+          "demoted": 294,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 135,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 2,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 7,
+            "host-surface-unavailable": 12,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 6,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 32,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 14
+          }
+        },
+        "Constructor": {
+          "units": 70,
+          "demoted": 10,
+          "reasons": {
+            "body-shape-rejected": 3,
+            "class-projection-unsupported": 7
+          }
+        },
+        "ContinueStatement": {
+          "units": 16,
+          "demoted": 12,
+          "reasons": {
+            "body-shape-rejected": 3,
+            "operand-coercion-unsupported": 3,
+            "string-evidence-unsupported": 6
+          }
+        },
+        "Decorator": {
+          "units": 3,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "DefaultClause": {
+          "units": 11,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "DeleteExpression": {
+          "units": 24,
+          "demoted": 24,
+          "reasons": {
+            "body-shape-rejected": 24
+          }
+        },
+        "DoStatement": {
+          "units": 9,
+          "demoted": 5,
+          "reasons": {
+            "body-shape-rejected": 4,
+            "string-evidence-unsupported": 1
+          }
+        },
+        "DotDotDotToken": {
+          "units": 38,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 16,
+            "class-member-unsupported": 10,
+            "class-projection-unsupported": 2,
+            "destructuring-param-complex": 3,
+            "param-shape-rejected": 7
+          }
+        },
+        "ElementAccessExpression": {
+          "units": 274,
+          "demoted": 222,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 163,
+            "call-graph-closure": 4,
+            "call-resolution-unsupported": 1,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 6,
+            "destructuring-param-complex": 1,
+            "element-access-unsupported": 6,
+            "external-call": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 5,
+            "param-type-not-resolvable": 8,
+            "property-write-unsupported": 1,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 1,
+            "type-resolution-unsupported": 5
+          }
+        },
+        "EmptyStatement": {
+          "units": 35,
+          "demoted": 35,
+          "reasons": {
+            "body-shape-rejected": 35
+          }
+        },
+        "EqualsEqualsEqualsToken": {
+          "units": 185,
+          "demoted": 150,
+          "reasons": {
+            "array-method-unsupported": 5,
+            "async-function": 1,
+            "body-shape-rejected": 97,
+            "call-graph-closure": 3,
+            "call-resolution-unsupported": 1,
+            "constructor-resolution-unsupported": 1,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 2,
+            "error-constructor-unsupported": 2,
+            "external-call": 6,
+            "function-invocation-method-unsupported": 4,
+            "ir-patched-over-legacy": 4,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 4,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 8,
+            "string-evidence-unsupported": 1,
+            "string-method-unsupported": 5,
+            "void-call-expression": 1
+          }
+        },
+        "EqualsEqualsToken": {
+          "units": 45,
+          "demoted": 41,
+          "reasons": {
+            "body-shape-rejected": 20,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 18
+          }
+        },
+        "EqualsGreaterThanToken": {
+          "units": 130,
+          "demoted": 128,
+          "reasons": {
+            "array-method-unsupported": 7,
+            "body-shape-rejected": 101,
+            "class-member-unsupported": 16,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 2
+          }
+        },
+        "EqualsToken": {
+          "units": 563,
+          "demoted": 403,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 313,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 20,
+            "class-method": 3,
+            "class-projection-unsupported": 9,
+            "constructor-resolution-unsupported": 6,
+            "error-constructor-unsupported": 9,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 7,
+            "logical-value-unsupported": 1,
+            "nullish-value-unsupported": 1,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 11,
+            "property-write-unsupported": 3
+          }
+        },
+        "ExclamationEqualsEqualsToken": {
+          "units": 104,
+          "demoted": 96,
+          "reasons": {
+            "body-shape-rejected": 78,
+            "call-graph-closure": 1,
+            "class-projection-unsupported": 1,
+            "external-call": 4,
+            "ir-patched-over-legacy": 2,
+            "logical-value-unsupported": 2,
+            "nullish-value-unsupported": 1,
+            "regexp-constructor-unsupported": 2,
+            "string-evidence-unsupported": 2,
+            "string-method-unsupported": 2,
+            "void-call-expression": 1
+          }
+        },
+        "ExclamationEqualsToken": {
+          "units": 15,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 5
+          }
+        },
+        "ExportDeclaration": {
+          "units": 2,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 2
+          }
+        },
+        "ExportKeyword": {
+          "units": 1639,
+          "demoted": 1204,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 4,
+            "async-function": 3,
+            "body-shape-rejected": 652,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 41,
+            "call-resolution-unsupported": 17,
+            "class-member-unsupported": 9,
+            "class-projection-unsupported": 6,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 16,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 24,
+            "ir-patched-over-legacy": 40,
+            "logical-value-unsupported": 29,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-type-not-resolvable": 16,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "void-call-expression": 2
+          }
+        },
+        "ExportSpecifier": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "ExpressionStatement": {
+          "units": 1118,
+          "demoted": 887,
+          "reasons": {
+            "array-method-unsupported": 14,
+            "async-function": 12,
+            "body-shape-rejected": 688,
+            "call-arity-unsupported": 3,
+            "call-graph-closure": 21,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 25,
+            "class-method": 4,
+            "class-projection-unsupported": 12,
+            "compound-assign-unsupported": 1,
+            "constructor-resolution-unsupported": 6,
+            "error-constructor-unsupported": 12,
+            "host-surface-unavailable": 25,
+            "ir-patched-over-legacy": 11,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 15,
+            "property-write-unsupported": 3,
+            "static-class-initialization": 3,
+            "string-evidence-unsupported": 10
+          }
+        },
+        "ExpressionWithTypeArguments": {
+          "units": 14,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 1
+          }
+        },
+        "FalseKeyword": {
+          "units": 111,
+          "demoted": 99,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 79,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 1,
+            "call-resolution-unsupported": 3,
+            "class-member-unsupported": 2,
+            "class-projection-unsupported": 1,
+            "constructor-resolution-unsupported": 1,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 4,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 2
+          }
+        },
+        "ForInStatement": {
+          "units": 6,
+          "demoted": 6,
+          "reasons": {
+            "body-shape-rejected": 6
+          }
+        },
+        "ForOfStatement": {
+          "units": 138,
+          "demoted": 129,
+          "reasons": {
+            "async-function": 3,
+            "body-shape-rejected": 124,
+            "call-graph-closure": 1,
+            "host-surface-unavailable": 1
+          }
+        },
+        "ForStatement": {
+          "units": 123,
+          "demoted": 65,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 40,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 2,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 1,
+            "error-constructor-unsupported": 2,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 1,
+            "operand-coercion-unsupported": 4,
+            "string-evidence-unsupported": 8
+          }
+        },
+        "FunctionDeclaration": {
+          "units": 1972,
+          "demoted": 1447,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 19,
+            "async-generator": 1,
+            "body-shape-rejected": 743,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 85,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 9,
+            "class-projection-unsupported": 6,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 24,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 68,
+            "late-preparation-unsupported": 2,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 10,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "FunctionExpression": {
+          "units": 203,
+          "demoted": 203,
+          "reasons": {
+            "array-method-unsupported": 6,
+            "body-shape-rejected": 180,
+            "call-resolution-unsupported": 2,
+            "class-member-unsupported": 12,
+            "param-shape-rejected": 1,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "FunctionType": {
+          "units": 27,
+          "demoted": 26,
+          "reasons": {
+            "body-shape-rejected": 14,
+            "call-graph-closure": 8,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 1,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "GetAccessor": {
+          "units": 119,
+          "demoted": 111,
+          "reasons": {
+            "body-shape-rejected": 48,
+            "class-member-unsupported": 56,
+            "class-method": 7
+          }
+        },
+        "GreaterThanEqualsToken": {
+          "units": 25,
+          "demoted": 17,
+          "reasons": {
+            "body-shape-rejected": 15,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "GreaterThanGreaterThanEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "GreaterThanGreaterThanGreaterThanEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "GreaterThanGreaterThanGreaterThanToken": {
+          "units": 2,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "GreaterThanGreaterThanToken": {
+          "units": 4,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "GreaterThanToken": {
+          "units": 62,
+          "demoted": 38,
+          "reasons": {
+            "array-method-unsupported": 3,
+            "body-shape-rejected": 25,
+            "call-graph-closure": 2,
+            "error-constructor-unsupported": 2,
+            "operand-coercion-unsupported": 4,
+            "string-evidence-unsupported": 2
+          }
+        },
+        "HeritageClause": {
+          "units": 14,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 1
+          }
+        },
+        "Identifier": {
+          "units": 2814,
+          "demoted": 2029,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 19,
+            "async-generator": 1,
+            "body-shape-rejected": 1163,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 85,
+            "call-resolution-unsupported": 18,
+            "class-member-unsupported": 126,
+            "class-method": 19,
+            "class-projection-unsupported": 19,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 29,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 25,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 69,
+            "late-preparation-unsupported": 5,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 65,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 12,
+            "static-class-initialization": 3,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "IfStatement": {
+          "units": 244,
+          "demoted": 191,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 157,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 2,
+            "error-constructor-unsupported": 3,
+            "ir-patched-over-legacy": 3,
+            "logical-value-unsupported": 3,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 4,
+            "string-evidence-unsupported": 8,
+            "void-call-expression": 2
+          }
+        },
+        "ImportClause": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "ImportDeclaration": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "ImportSpecifier": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "InKeyword": {
+          "units": 15,
+          "demoted": 15,
+          "reasons": {
+            "body-shape-rejected": 15
+          }
+        },
+        "InstanceOfKeyword": {
+          "units": 26,
+          "demoted": 25,
+          "reasons": {
+            "body-shape-rejected": 23,
+            "call-graph-closure": 1,
+            "host-surface-unavailable": 1
+          }
+        },
+        "InterfaceDeclaration": {
+          "units": 12,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "LabeledStatement": {
+          "units": 6,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 2,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "LessThanEqualsToken": {
+          "units": 42,
+          "demoted": 29,
+          "reasons": {
+            "body-shape-rejected": 20,
+            "call-resolution-unsupported": 3,
+            "operand-coercion-unsupported": 5,
+            "param-shape-rejected": 1
+          }
+        },
+        "LessThanLessThanEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "LessThanLessThanToken": {
+          "units": 3,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "operand-coercion-unsupported": 1
+          }
+        },
+        "LessThanToken": {
+          "units": 139,
+          "demoted": 74,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 44,
+            "call-graph-closure": 4,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 1,
+            "error-constructor-unsupported": 2,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 7,
+            "string-evidence-unsupported": 9
+          }
+        },
+        "LiteralType": {
+          "units": 45,
+          "demoted": 45,
+          "reasons": {
+            "body-shape-rejected": 32,
+            "class-projection-unsupported": 6,
+            "date-constructor-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "param-shape-rejected": 1,
+            "return-type-not-resolvable": 3
+          }
+        },
+        "MetaProperty": {
+          "units": 4,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "MethodDeclaration": {
+          "units": 241,
+          "demoted": 124,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 62,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 36,
+            "class-method": 11,
+            "class-projection-unsupported": 1,
+            "constructor-resolution-unsupported": 3,
+            "late-preparation-unsupported": 3,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "MinusEqualsToken": {
+          "units": 8,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 2,
+            "compound-assign-unsupported": 1,
+            "param-type-not-resolvable": 1
+          }
+        },
+        "MinusToken": {
+          "units": 55,
+          "demoted": 36,
+          "reasons": {
+            "array-method-unsupported": 3,
+            "body-shape-rejected": 14,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 4,
+            "external-call": 1,
+            "host-surface-unavailable": 3,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 3,
+            "param-shape-rejected": 1
+          }
+        },
+        "NamedExports": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "NamedImports": {
+          "units": 8,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "NewExpression": {
+          "units": 423,
+          "demoted": 370,
+          "reasons": {
+            "body-shape-rejected": 210,
+            "call-graph-closure": 2,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 9,
+            "class-method": 1,
+            "class-projection-unsupported": 6,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 29,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 18,
+            "host-surface-unavailable": 21,
+            "ir-patched-over-legacy": 9,
+            "operand-coercion-unsupported": 20,
+            "regexp-constructor-unsupported": 2,
+            "return-type-not-resolvable": 1,
+            "static-class-initialization": 1
+          }
+        },
+        "NoSubstitutionTemplateLiteral": {
+          "units": 11,
+          "demoted": 10,
+          "reasons": {
+            "body-shape-rejected": 10
+          }
+        },
+        "NonNullExpression": {
+          "units": 22,
+          "demoted": 21,
+          "reasons": {
+            "array-method-unsupported": 3,
+            "body-shape-rejected": 7,
+            "call-graph-closure": 3,
+            "class-projection-unsupported": 2,
+            "host-surface-unavailable": 3,
+            "ir-patched-over-legacy": 1,
+            "string-method-unsupported": 2
+          }
+        },
+        "NullKeyword": {
+          "units": 157,
+          "demoted": 154,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 3,
+            "body-shape-rejected": 94,
+            "call-graph-closure": 2,
+            "class-member-unsupported": 5,
+            "class-projection-unsupported": 8,
+            "date-constructor-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "function-invocation-method-unsupported": 9,
+            "logical-value-unsupported": 2,
+            "nullish-value-unsupported": 17,
+            "operand-coercion-unsupported": 2,
+            "param-shape-rejected": 1,
+            "regexp-constructor-unsupported": 2,
+            "return-type-not-resolvable": 3,
+            "string-method-unsupported": 2
+          }
+        },
+        "NumberKeyword": {
+          "units": 1865,
+          "demoted": 1193,
+          "reasons": {
+            "array-method-unsupported": 35,
+            "array-representation-unsupported": 4,
+            "async-function": 4,
+            "body-shape-rejected": 634,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 66,
+            "call-resolution-unsupported": 17,
+            "class-member-unsupported": 11,
+            "class-method": 12,
+            "class-projection-unsupported": 12,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 21,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 18,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 12,
+            "host-surface-unavailable": 21,
+            "ir-patched-over-legacy": 45,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 26,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 17,
+            "operand-coercion-unsupported": 59,
+            "param-shape-rejected": 15,
+            "param-type-not-resolvable": 10,
+            "primitive-method-unsupported": 2,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 5,
+            "string-evidence-unsupported": 3,
+            "string-method-unsupported": 27,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 8,
+            "void-call-expression": 2
+          }
+        },
+        "NumericLiteral": {
+          "units": 1987,
+          "demoted": 1495,
+          "reasons": {
+            "array-method-unsupported": 43,
+            "array-representation-unsupported": 4,
+            "async-function": 8,
+            "body-shape-rejected": 874,
+            "call-arity-unsupported": 4,
+            "call-graph-closure": 56,
+            "call-resolution-unsupported": 15,
+            "class-member-unsupported": 108,
+            "class-method": 7,
+            "class-projection-unsupported": 14,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 1,
+            "constructor-resolution-unsupported": 21,
+            "date-constructor-unsupported": 18,
+            "destructuring-param-complex": 4,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 17,
+            "external-call": 34,
+            "function-invocation-method-unsupported": 16,
+            "host-surface-unavailable": 25,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 31,
+            "late-preparation-unsupported": 2,
+            "logical-value-unsupported": 28,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 11,
+            "operand-coercion-unsupported": 52,
+            "param-shape-rejected": 9,
+            "param-type-not-resolvable": 16,
+            "primitive-method-unsupported": 2,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 4,
+            "string-evidence-unsupported": 9,
+            "string-method-unsupported": 28,
+            "template-substitution-unsupported": 1,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 5,
+            "void-call-expression": 2
+          }
+        },
+        "ObjectBindingPattern": {
+          "units": 66,
+          "demoted": 59,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 42,
+            "class-member-unsupported": 8,
+            "destructuring-param-complex": 2,
+            "ir-patched-over-legacy": 6
+          }
+        },
+        "ObjectKeyword": {
+          "units": 12,
+          "demoted": 12,
+          "reasons": {
+            "host-surface-unavailable": 11,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "ObjectLiteralExpression": {
+          "units": 406,
+          "demoted": 389,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 5,
+            "body-shape-rejected": 326,
+            "call-arity-unsupported": 1,
+            "call-graph-closure": 5,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 8,
+            "element-access-unsupported": 3,
+            "function-invocation-method-unsupported": 1,
+            "host-surface-unavailable": 11,
+            "ir-patched-over-legacy": 10,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "OmittedExpression": {
+          "units": 16,
+          "demoted": 16,
+          "reasons": {
+            "body-shape-rejected": 14,
+            "class-member-unsupported": 2
+          }
+        },
+        "Parameter": {
+          "units": 608,
+          "demoted": 412,
+          "reasons": {
+            "array-method-unsupported": 12,
+            "async-function": 2,
+            "body-shape-rejected": 181,
+            "call-graph-closure": 30,
+            "call-resolution-unsupported": 12,
+            "class-member-unsupported": 66,
+            "class-method": 8,
+            "class-projection-unsupported": 5,
+            "constructor-resolution-unsupported": 3,
+            "destructuring-param-complex": 6,
+            "error-constructor-unsupported": 1,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 20,
+            "logical-value-unsupported": 4,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 23,
+            "return-type-not-resolvable": 4,
+            "string-evidence-unsupported": 1,
+            "type-resolution-unsupported": 14
+          }
+        },
+        "ParenthesizedExpression": {
+          "units": 367,
+          "demoted": 316,
+          "reasons": {
+            "array-method-unsupported": 5,
+            "async-function": 1,
+            "body-shape-rejected": 214,
+            "call-graph-closure": 1,
+            "compound-assign-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "error-constructor-unsupported": 3,
+            "external-call": 1,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 6,
+            "logical-value-unsupported": 23,
+            "nullish-value-unsupported": 12,
+            "operand-coercion-unsupported": 33,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 3,
+            "primitive-method-unsupported": 1,
+            "string-method-unsupported": 6
+          }
+        },
+        "ParenthesizedType": {
+          "units": 19,
+          "demoted": 19,
+          "reasons": {
+            "body-shape-rejected": 17,
+            "destructuring-param-complex": 1,
+            "param-shape-rejected": 1
+          }
+        },
+        "PercentEqualsToken": {
+          "units": 4,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "PercentToken": {
+          "units": 23,
+          "demoted": 7,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 3,
+            "error-constructor-unsupported": 1,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "PlusEqualsToken": {
+          "units": 248,
+          "demoted": 198,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 3,
+            "body-shape-rejected": 164,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 5,
+            "class-projection-unsupported": 3,
+            "error-constructor-unsupported": 1,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 3,
+            "operand-coercion-unsupported": 5,
+            "param-type-not-resolvable": 1,
+            "string-evidence-unsupported": 10
+          }
+        },
+        "PlusToken": {
+          "units": 613,
+          "demoted": 444,
+          "reasons": {
+            "array-method-unsupported": 19,
+            "array-representation-unsupported": 2,
+            "async-function": 5,
+            "body-shape-rejected": 296,
+            "call-graph-closure": 12,
+            "call-resolution-unsupported": 7,
+            "class-member-unsupported": 22,
+            "class-method": 1,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 3,
+            "destructuring-param-complex": 3,
+            "element-access-unsupported": 3,
+            "error-constructor-unsupported": 8,
+            "external-call": 1,
+            "function-invocation-method-unsupported": 1,
+            "host-surface-unavailable": 11,
+            "ir-patched-over-legacy": 6,
+            "logical-value-unsupported": 2,
+            "method-call-unsupported": 1,
+            "operand-coercion-unsupported": 11,
+            "param-shape-rejected": 5,
+            "param-type-not-resolvable": 5,
+            "primitive-method-unsupported": 2,
+            "string-method-unsupported": 8,
+            "type-resolution-unsupported": 3
+          }
+        },
+        "PostfixUnaryExpression": {
+          "units": 154,
+          "demoted": 89,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 70,
+            "call-graph-closure": 2,
+            "class-method": 1,
+            "constructor-resolution-unsupported": 1,
+            "error-constructor-unsupported": 2,
+            "host-surface-unavailable": 1,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 4,
+            "string-evidence-unsupported": 4
+          }
+        },
+        "PrefixUnaryExpression": {
+          "units": 172,
+          "demoted": 116,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "array-representation-unsupported": 1,
+            "body-shape-rejected": 83,
+            "call-graph-closure": 2,
+            "class-projection-unsupported": 2,
+            "constructor-resolution-unsupported": 2,
+            "date-constructor-unsupported": 1,
+            "error-constructor-unsupported": 4,
+            "external-call": 5,
+            "ir-patched-over-legacy": 4,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 6,
+            "param-type-not-resolvable": 2,
+            "string-method-unsupported": 1
+          }
+        },
+        "PrivateIdentifier": {
+          "units": 97,
+          "demoted": 49,
+          "reasons": {
+            "body-shape-rejected": 10,
+            "class-member-unsupported": 28,
+            "class-method": 8,
+            "class-projection-unsupported": 1,
+            "late-preparation-unsupported": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "PrivateKeyword": {
+          "units": 1,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "PropertyAccessExpression": {
+          "units": 1344,
+          "demoted": 1005,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "async-function": 12,
+            "body-shape-rejected": 636,
+            "call-graph-closure": 13,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 45,
+            "class-method": 16,
+            "class-projection-unsupported": 12,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 17,
+            "date-constructor-unsupported": 29,
+            "destructuring-param-complex": 2,
+            "external-call": 7,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 24,
+            "ir-patched-over-legacy": 15,
+            "late-preparation-unsupported": 2,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 1,
+            "param-shape-rejected": 4,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 3,
+            "string-method-unsupported": 47,
+            "type-resolution-unsupported": 7
+          }
+        },
+        "PropertyAssignment": {
+          "units": 291,
+          "demoted": 274,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 2,
+            "body-shape-rejected": 236,
+            "call-arity-unsupported": 1,
+            "call-graph-closure": 5,
+            "call-resolution-unsupported": 8,
+            "class-projection-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "element-access-unsupported": 3,
+            "ir-patched-over-legacy": 10,
+            "return-type-not-resolvable": 2
+          }
+        },
+        "PropertyDeclaration": {
+          "units": 70,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 6,
+            "class-projection-unsupported": 6,
+            "late-preparation-unsupported": 1
+          }
+        },
+        "PropertySignature": {
+          "units": 50,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 27,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "ir-patched-over-legacy": 6,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "QuestionDotToken": {
+          "units": 13,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 13
+          }
+        },
+        "QuestionQuestionEqualsToken": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "QuestionQuestionToken": {
+          "units": 21,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 13,
+            "class-member-unsupported": 8
+          }
+        },
+        "QuestionToken": {
+          "units": 361,
+          "demoted": 302,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "body-shape-rejected": 142,
+            "call-graph-closure": 9,
+            "call-resolution-unsupported": 4,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 5,
+            "date-constructor-unsupported": 2,
+            "destructuring-param-complex": 3,
+            "external-call": 35,
+            "function-invocation-method-unsupported": 7,
+            "host-surface-unavailable": 12,
+            "ir-patched-over-legacy": 4,
+            "method-call-unsupported": 6,
+            "nullish-value-unsupported": 6,
+            "operand-coercion-unsupported": 32,
+            "param-shape-rejected": 1,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "string-method-unsupported": 14
+          }
+        },
+        "RegularExpressionLiteral": {
+          "units": 21,
+          "demoted": 21,
+          "reasons": {
+            "array-method-unsupported": 2,
+            "body-shape-rejected": 4,
+            "regexp-constructor-unsupported": 6,
+            "string-method-unsupported": 9
+          }
+        },
+        "ReturnStatement": {
+          "units": 2195,
+          "demoted": 1575,
+          "reasons": {
+            "array-method-unsupported": 45,
+            "array-representation-unsupported": 5,
+            "async-function": 12,
+            "body-shape-rejected": 778,
+            "call-arity-unsupported": 6,
+            "call-graph-closure": 80,
+            "call-resolution-unsupported": 17,
+            "class-member-unsupported": 110,
+            "class-method": 17,
+            "class-projection-unsupported": 7,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 24,
+            "date-constructor-unsupported": 28,
+            "destructuring-param-complex": 6,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 17,
+            "external-call": 49,
+            "function-invocation-method-unsupported": 19,
+            "host-surface-unavailable": 20,
+            "imported-call-planning-unsupported": 2,
+            "ir-patched-over-legacy": 62,
+            "late-preparation-unsupported": 3,
+            "logical-value-unsupported": 33,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 18,
+            "operand-coercion-unsupported": 63,
+            "param-shape-rejected": 16,
+            "param-type-not-resolvable": 20,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 11,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1,
+            "type-resolution-unsupported": 14,
+            "void-call-expression": 2
+          }
+        },
+        "SatisfiesExpression": {
+          "units": 6,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "SetAccessor": {
+          "units": 77,
+          "demoted": 72,
+          "reasons": {
+            "body-shape-rejected": 28,
+            "class-member-unsupported": 40,
+            "class-method": 4
+          }
+        },
+        "ShorthandPropertyAssignment": {
+          "units": 6,
+          "demoted": 6,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 5
+          }
+        },
+        "SlashEqualsToken": {
+          "units": 3,
+          "demoted": 2,
+          "reasons": {
+            "body-shape-rejected": 1,
+            "param-type-not-resolvable": 1
+          }
+        },
+        "SlashToken": {
+          "units": 28,
+          "demoted": 14,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "class-member-unsupported": 4,
+            "ir-patched-over-legacy": 1,
+            "nullish-value-unsupported": 2,
+            "operand-coercion-unsupported": 2
+          }
+        },
+        "SpreadAssignment": {
+          "units": 9,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 8,
+            "class-projection-unsupported": 1
+          }
+        },
+        "SpreadElement": {
+          "units": 69,
+          "demoted": 59,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "async-function": 1,
+            "body-shape-rejected": 57
+          }
+        },
+        "StaticKeyword": {
+          "units": 108,
+          "demoted": 102,
+          "reasons": {
+            "body-shape-rejected": 28,
+            "class-member-unsupported": 63,
+            "class-method": 9,
+            "late-preparation-unsupported": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "StringKeyword": {
+          "units": 320,
+          "demoted": 235,
+          "reasons": {
+            "array-method-unsupported": 8,
+            "async-function": 2,
+            "body-shape-rejected": 105,
+            "call-graph-closure": 6,
+            "call-resolution-unsupported": 1,
+            "class-member-unsupported": 2,
+            "class-method": 4,
+            "constructor-resolution-unsupported": 6,
+            "external-call": 10,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 4,
+            "logical-value-unsupported": 5,
+            "method-call-unsupported": 2,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 18,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 1,
+            "primitive-method-unsupported": 1,
+            "return-type-not-resolvable": 1,
+            "string-evidence-unsupported": 9,
+            "string-method-unsupported": 39,
+            "template-substitution-unsupported": 2,
+            "type-resolution-unsupported": 5
+          }
+        },
+        "StringLiteral": {
+          "units": 773,
+          "demoted": 667,
+          "reasons": {
+            "array-method-unsupported": 9,
+            "async-function": 6,
+            "body-shape-rejected": 429,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 3,
+            "call-resolution-unsupported": 14,
+            "class-member-unsupported": 12,
+            "class-method": 8,
+            "class-projection-unsupported": 3,
+            "constructor-resolution-unsupported": 2,
+            "date-constructor-unsupported": 1,
+            "element-access-unsupported": 4,
+            "error-constructor-unsupported": 18,
+            "external-call": 16,
+            "host-surface-unavailable": 6,
+            "ir-patched-over-legacy": 7,
+            "late-preparation-unsupported": 1,
+            "logical-value-unsupported": 6,
+            "method-call-unsupported": 8,
+            "nullish-value-unsupported": 1,
+            "operand-coercion-unsupported": 30,
+            "param-shape-rejected": 2,
+            "param-type-not-resolvable": 10,
+            "primitive-method-unsupported": 1,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 1,
+            "static-class-initialization": 2,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 47
+          }
+        },
+        "SuperKeyword": {
+          "units": 35,
+          "demoted": 19,
+          "reasons": {
+            "body-shape-rejected": 14,
+            "class-member-unsupported": 1,
+            "class-projection-unsupported": 3,
+            "late-preparation-unsupported": 1
+          }
+        },
+        "SwitchStatement": {
+          "units": 15,
+          "demoted": 4,
+          "reasons": {
+            "body-shape-rejected": 4
+          }
+        },
+        "SymbolKeyword": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "TaggedTemplateExpression": {
+          "units": 22,
+          "demoted": 22,
+          "reasons": {
+            "body-shape-rejected": 22
+          }
+        },
+        "TemplateExpression": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "TemplateHead": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "TemplateMiddle": {
+          "units": 9,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 7
+          }
+        },
+        "TemplateSpan": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "TemplateTail": {
+          "units": 29,
+          "demoted": 21,
+          "reasons": {
+            "body-shape-rejected": 19,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "ThisKeyword": {
+          "units": 233,
+          "demoted": 93,
+          "reasons": {
+            "body-shape-rejected": 49,
+            "call-resolution-unsupported": 5,
+            "class-member-unsupported": 18,
+            "class-method": 14,
+            "class-projection-unsupported": 5,
+            "late-preparation-unsupported": 1,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "ThrowStatement": {
+          "units": 138,
+          "demoted": 137,
+          "reasons": {
+            "body-shape-rejected": 113,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "class-method": 1,
+            "error-constructor-unsupported": 18,
+            "ir-patched-over-legacy": 2,
+            "throw-value-unsupported": 1
+          }
+        },
+        "TrueKeyword": {
+          "units": 145,
+          "demoted": 127,
+          "reasons": {
+            "array-method-unsupported": 1,
+            "body-shape-rejected": 104,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 1,
+            "call-resolution-unsupported": 2,
+            "constructor-resolution-unsupported": 3,
+            "error-constructor-unsupported": 1,
+            "ir-patched-over-legacy": 3,
+            "logical-value-unsupported": 1,
+            "operand-coercion-unsupported": 6,
+            "primitive-method-unsupported": 2,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "TryStatement": {
+          "units": 88,
+          "demoted": 79,
+          "reasons": {
+            "async-function": 1,
+            "body-shape-rejected": 51,
+            "call-graph-closure": 5,
+            "error-constructor-unsupported": 16,
+            "ir-patched-over-legacy": 1,
+            "param-type-not-resolvable": 4,
+            "throw-value-unsupported": 1
+          }
+        },
+        "TupleType": {
+          "units": 7,
+          "demoted": 7,
+          "reasons": {
+            "body-shape-rejected": 7
+          }
+        },
+        "TypeAssertionExpression": {
+          "units": 8,
+          "demoted": 0,
+          "reasons": {}
+        },
+        "TypeLiteral": {
+          "units": 38,
+          "demoted": 38,
+          "reasons": {
+            "body-shape-rejected": 27,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "ir-patched-over-legacy": 6,
+            "return-type-not-resolvable": 1
+          }
+        },
+        "TypeOfExpression": {
+          "units": 72,
+          "demoted": 60,
+          "reasons": {
+            "body-shape-rejected": 45,
+            "call-graph-closure": 1,
+            "class-member-unsupported": 1,
+            "constructor-resolution-unsupported": 1,
+            "date-constructor-unsupported": 1,
+            "external-call": 3,
+            "ir-patched-over-legacy": 4,
+            "param-type-not-resolvable": 4
+          }
+        },
+        "TypeReference": {
+          "units": 153,
+          "demoted": 147,
+          "reasons": {
+            "async-function": 9,
+            "body-shape-rejected": 78,
+            "call-graph-closure": 19,
+            "call-resolution-unsupported": 6,
+            "class-member-unsupported": 2,
+            "class-projection-unsupported": 6,
+            "constructor-resolution-unsupported": 2,
+            "date-constructor-unsupported": 1,
+            "host-surface-unavailable": 2,
+            "ir-patched-over-legacy": 3,
+            "param-shape-rejected": 2,
+            "return-type-not-resolvable": 3,
+            "type-resolution-unsupported": 14
+          }
+        },
+        "UndefinedKeyword": {
+          "units": 13,
+          "demoted": 13,
+          "reasons": {
+            "body-shape-rejected": 13
+          }
+        },
+        "UnionType": {
+          "units": 52,
+          "demoted": 52,
+          "reasons": {
+            "body-shape-rejected": 38,
+            "class-projection-unsupported": 6,
+            "date-constructor-unsupported": 1,
+            "destructuring-param-complex": 2,
+            "param-shape-rejected": 1,
+            "param-type-not-resolvable": 1,
+            "return-type-not-resolvable": 3
+          }
+        },
+        "UnknownKeyword": {
+          "units": 1,
+          "demoted": 1,
+          "reasons": {
+            "body-shape-rejected": 1
+          }
+        },
+        "VariableDeclaration": {
+          "units": 1593,
+          "demoted": 1288,
+          "reasons": {
+            "array-method-unsupported": 39,
+            "array-representation-unsupported": 2,
+            "async-function": 10,
+            "body-shape-rejected": 940,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 27,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 8,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 22,
+            "date-constructor-unsupported": 11,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 15,
+            "external-call": 15,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 24,
+            "ir-patched-over-legacy": 19,
+            "logical-value-unsupported": 12,
+            "method-call-unsupported": 2,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 44,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 25,
+            "template-substitution-unsupported": 2,
+            "throw-value-unsupported": 1
+          }
+        },
+        "VariableDeclarationList": {
+          "units": 1573,
+          "demoted": 1270,
+          "reasons": {
+            "array-method-unsupported": 39,
+            "array-representation-unsupported": 2,
+            "async-function": 9,
+            "body-shape-rejected": 933,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 23,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 8,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 22,
+            "date-constructor-unsupported": 11,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 11,
+            "external-call": 15,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 24,
+            "ir-patched-over-legacy": 18,
+            "logical-value-unsupported": 12,
+            "method-call-unsupported": 2,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 44,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 25,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "VariableStatement": {
+          "units": 1565,
+          "demoted": 1262,
+          "reasons": {
+            "array-method-unsupported": 39,
+            "array-representation-unsupported": 2,
+            "async-function": 8,
+            "body-shape-rejected": 926,
+            "call-arity-unsupported": 2,
+            "call-graph-closure": 23,
+            "call-resolution-unsupported": 13,
+            "class-member-unsupported": 7,
+            "class-projection-unsupported": 8,
+            "compound-assign-unsupported": 1,
+            "constructor-arity-unsupported": 2,
+            "constructor-resolution-unsupported": 22,
+            "date-constructor-unsupported": 11,
+            "element-access-unsupported": 6,
+            "error-constructor-unsupported": 11,
+            "external-call": 15,
+            "function-invocation-method-unsupported": 2,
+            "host-surface-unavailable": 24,
+            "ir-patched-over-legacy": 18,
+            "logical-value-unsupported": 12,
+            "method-call-unsupported": 2,
+            "nullish-value-unsupported": 4,
+            "operand-coercion-unsupported": 44,
+            "param-type-not-resolvable": 6,
+            "primitive-method-unsupported": 3,
+            "property-write-unsupported": 3,
+            "regexp-constructor-unsupported": 8,
+            "return-type-not-resolvable": 2,
+            "static-class-initialization": 1,
+            "string-evidence-unsupported": 10,
+            "string-method-unsupported": 25,
+            "template-substitution-unsupported": 2
+          }
+        },
+        "VoidExpression": {
+          "units": 8,
+          "demoted": 6,
+          "reasons": {
+            "body-shape-rejected": 5,
+            "nullish-value-unsupported": 1
+          }
+        },
+        "VoidKeyword": {
+          "units": 62,
+          "demoted": 36,
+          "reasons": {
+            "async-function": 3,
+            "body-shape-rejected": 19,
+            "call-graph-closure": 6,
+            "error-constructor-unsupported": 1,
+            "host-surface-unavailable": 4,
+            "ir-patched-over-legacy": 1,
+            "param-type-not-resolvable": 2
+          }
+        },
+        "WhileStatement": {
+          "units": 26,
+          "demoted": 12,
+          "reasons": {
+            "body-shape-rejected": 7,
+            "call-graph-closure": 1,
+            "class-projection-unsupported": 1,
+            "ir-patched-over-legacy": 1,
+            "logical-value-unsupported": 1,
+            "nullish-value-unsupported": 1
+          }
+        },
+        "WithStatement": {
+          "units": 9,
+          "demoted": 9,
+          "reasons": {
+            "body-shape-rejected": 9
+          }
+        },
+        "YieldExpression": {
+          "units": 75,
+          "demoted": 75,
+          "reasons": {
+            "body-shape-rejected": 68,
+            "call-graph-closure": 3,
+            "class-member-unsupported": 4
+          }
+        }
+      }
+    }
+  }
+}
