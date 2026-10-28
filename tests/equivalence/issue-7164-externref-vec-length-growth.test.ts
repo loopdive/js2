@@ -22,6 +22,17 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
+import { readFileSync } from "node:fs";
+import {
+  LEAK_SETUPS,
+  LEAK_SUMMARY,
+  leaksIn,
+  leakFns,
+  SWEEP,
+  SWEEP_PRELUDE,
+  sweepRows,
+  sweepSource,
+} from "./issue-7164-length-update-sweep-cases.js";
 
 const ENC = `function enc(s: string): number { let h = s.length; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000003; return h; }\n`;
 
@@ -197,9 +208,54 @@ const GUARDS: Record<string, { pre?: string; body: string; gap?: string; wasiGap
   },
   lengthUpdateValues: {
     body: "const g: any[] = []; g.push('y'); const a = g.length++; const b = ++g.length; const c = (g.length += 2); const d = (g.length -= 1); const e = g.length--; return [a, b, c, d, e, g.length, String(g[1])].join(',');",
+    gap: "same as origin/main 2b0565cb14: update forms on a string-only any[] (#7154 string vec) emit invalid wasm",
   },
   lengthUpdateRangeError: {
     body: "const g: any[] = []; g.push('y'); try { g.length -= 5; return 'no'; } catch (e) { return (e instanceof RangeError) + ':' + g.length; }",
+    gap: "same as origin/main 2b0565cb14: update forms on a string-only any[] (#7154 string vec) emit invalid wasm",
+  },
+  // (#7164 r6) A possibly non-writable length / non-configurable element keeps
+  // the update forms on their old, descriptor-aware route (TypeError as before).
+  nonWritableMinusEq: {
+    body: "const g: any[] = ['a', 'b']; Object.defineProperty(g, 'length', { writable: false }); try { g.length -= 1; return 'no:' + g.length; } catch (e) { return (e instanceof TypeError) + ':' + g.length; }",
+    wasiGap: "same as origin/main 2b0565cb14: wasi reads a non-writable length as undefined",
+  },
+  nonConfigurableElementDec: {
+    body: "const g: any[] = ['a', 'b']; Object.defineProperty(g, 1, { value: 'b', configurable: false }); try { g.length--; return 'no:' + g.length; } catch (e) { return (e instanceof TypeError) + ':' + g.length; }",
+    wasiGap: "wasi-nonconfigurable-length-store",
+  },
+  // `find` / `findLast` with no match return `undefined`, also on a mixed `any[]`.
+  findNotFoundIsUndefined: {
+    body: "const g: any[] = []; g.push('a'); g.length = 3; const h: any[] = ['a', 1]; return String(g.find((x: any) => x === 'zz') === undefined) + String(g.findLast((x: any) => x === 'zz') === undefined) + String(h.find(() => false) === undefined) + String(h.findLast(() => false) === undefined);",
+  },
+  // Update forms with no plain `length =` in the module, on every element kind.
+  incOnlyAny: {
+    body: "const g: any[] = ['a', 'b']; g.length++; return String(g[2]) + ':' + g.length;",
+    wasiGap: "same as origin/main 2b0565cb14: wasi length++ on a dense any[] is lost",
+  },
+  incOnlyMixed: {
+    body: "const g: any[] = []; g.push('a'); g.push(1); g.length++; return String(g[2]) + ':' + g.length + ':' + [...g].length;",
+    wasiGap: "same as origin/main 2b0565cb14: wasi length++ on a dense any[] is lost",
+  },
+  pushPopIncSpread: {
+    pre: "function fd(...r: any[]): any[] { return r; }",
+    body: "const g: any[] = []; g.push('y'); g.push('z'); g.pop(); g.length++; return String(fd(...g)[1]) + ':' + g.length;",
+    gap: "same as origin/main 2b0565cb14: pop() then length++ resurrects the popped value (wasi: length++ is lost)",
+  },
+  chainPreInc: {
+    body: "const o = { p: { arr: ['a'] as any[] } }; const v = ++o.p.arr.length; return v + ':' + o.p.arr.length;",
+    wasiGap: "same as origin/main 2b0565cb14: wasi ++o.p.arr.length reads NaN",
+  },
+  // (#7164 r6) `+=` on a binding #7164 moved to the externref carrier takes the
+  // static store (origin/main emits invalid wasm here).
+  plusEqSwitched: {
+    body: "const g: any[] = []; g.push('y'); g.length = 2; g.length += 2; return String(g[3]) + ':' + g.length;",
+  },
+  // (#7164 r6) A `fromIndex` whose `valueOf` grows the array past capacity
+  // reallocates the backing; indexOf / includes must scan the new one.
+  fromIndexGrowsBacking: {
+    body: "const g: any[] = []; g.push('a'); g.push('b'); g.length = 2; const fi: any = { valueOf(): number { g.length = 40; g[1] = 'Q'; return 0; } }; const fj: any = { valueOf(): number { g.length = 90; g[3] = 'R'; return 0; } }; return String(g.indexOf('Q', fi)) + ':' + g.includes('R', fj);",
+    wasiGap: "same as origin/main 2b0565cb14: wasi indexOf / includes miss a value written by fromIndex's valueOf",
   },
   spreadShrinkGrow: {
     body: "const g: any[] = []; g.push('y'); g.push('z'); g.length = 1; g.length = 3; const s = [...g]; return s.length+':'+(1 in s)+':'+String(s[1]);",
@@ -332,59 +388,7 @@ describe("#7164 readers after growth", () => {
 // object where node has `undefined` (the internal marker). That check has no
 // `it.fails` escape. Full agreement with node (presence included) may be a
 // known gap with its owner.
-const SWEEP_PRELUDE = `
-function sum(r: any[]): string { let s = r.length + ":"; for (let i = 0; i < r.length; i++) { const v = r[i]; s += (i in r ? "P" : "H") + (v === undefined ? "u" : typeof v === "object" && v !== null ? "O" : "v"); } return s; }
-function fd(...r: any[]): any[] { return r; }
-function fdLead(a: any, ...r: any[]): any[] { return r; }
-function f3(a: any, b: any, c: any): any[] { return [a, b, c]; }
-const fArrow = (...r: any[]): any[] => r;
-const fExpr = function (...r: any[]): any[] { return r; };
-class KR { m(...r: any[]): any[] { return r; } static s(...r: any[]): any[] { return r; } p(a: any, b: any, c: any): any[] { return [a, b, c]; } }
-class CR { r: any[]; constructor(...r: any[]) { this.r = r; } }
-class DR extends CR { constructor(...r: any[]) { super(...r); } }
-class CP { r: any[]; constructor(a: any, b: any, c: any) { this.r = [a, b, c]; } }
-const objM = { m(...r: any[]): any[] { return r; } };
-`;
 const SWEEP_GROW = `const g: any[] = []; g.push("y"); g.length = 3;`;
-const SWEEP: Record<string, string> = {
-  self: `g`,
-  map: `g.map((x: any) => x)`,
-  filter: `g.filter(() => true)`,
-  slice: `g.slice()`,
-  concat: `g.concat([])`,
-  flat: `g.flat()`,
-  flatMap: `g.flatMap((x: any) => [x])`,
-  toReversed: `g.toReversed()`,
-  toSorted: `g.toSorted()`,
-  toSpliced: `g.toSpliced(0, 0)`,
-  with: `g.with(0, "w")`,
-  splice: `g.splice(0)`,
-  arrayFrom: `Array.from(g)`,
-  arrayOf: `Array.of(...g)`,
-  entries: `[...g.entries()].map((e: any) => e[1])`,
-  values: `[...g.values()]`,
-  spread: `[...g]`,
-  spreadLead: `[0, ...g]`,
-  forEachCollect: `(() => { const o: any[] = []; g.forEach((v: any) => { o.push(v); }); return o; })()`,
-  forOfCollect: `(() => { const o: any[] = []; for (const v of g) o.push(v); return o; })()`,
-  reduceCollect: `g.reduce((o: any[], v: any) => { o.push(v); return o; }, [] as any[])`,
-  indexRead: `[g[0], g[1], g[2]]`,
-  dynamicRead: `(() => { const a: any = g; const o: any[] = []; for (let i = 0; i < 3; i++) o.push(a[i]); return o; })()`,
-  restDecl: `fd(...g)`,
-  restLead: `fdLead(0, ...g)`,
-  restArrow: `fArrow(...g)`,
-  restExpr: `fExpr(...g)`,
-  restMethod: `new KR().m(...g)`,
-  restStatic: `KR.s(...g)`,
-  restObjMethod: `objM.m(...g)`,
-  restClosure: `(() => { const c = "c"; const f = (...r: any[]): any[] => (c ? r : r); return f(...g); })()`,
-  restNew: `new CR(...g).r`,
-  restSuper: `new DR(...g).r`,
-  apply: `(fd as any).apply(null, g)`,
-  positionalDecl: `f3(...g)`,
-  positionalMethod: `new KR().p(...g)`,
-  positionalNew: `new CP(...g).r`,
-};
 // Rows where head differs from node with no marker leak. Measured head vs
 // origin/main: none of them was right on origin/main. Growth fills the new
 // slots with the canonical `undefined`, so a grown index is present (#7170).
@@ -451,56 +455,32 @@ describe("#7164 generated sweep: matches node", () => {
   }
 });
 
-// (#7164 r5) Marker-leak detector. `$Hole` reads back as `undefined` through
+// (#7164 r5/r6) Marker-leak detector. `$Hole` reads back as `undefined` through
 // `r[i]`, so a leak shows as an index node reports PRESENT that head reports
 // absent: `i in r` false, or skipped by `forEach`. Each result index is
 // summarised as presence (P/H), forEach visit (V/S) and value class (u
-// undefined / O object / v other). A leak is node P → head H, node V → head
-// S, or node u → head O. Present-where-node-has-a-hole (H → P) is the accepted
-// #7170 gap, so this row has no `it.fails` escape. On wasi `i in r` is false
-// even for dense arrays (#7171), so only the visit and value columns count
-// there. Setups cover every grow form and the reallocation path.
-const LEAK_SETUPS: Record<string, string> = {
-  growWithinCapacity: `const g: any[] = []; g.push("y"); g.length = 3;`,
-  growReallocates: `const g: any[] = []; g.push("y"); g.push("x"); g.push("w"); g.push("v"); g.length = 9;`,
-  shrinkThenPostfixInc: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 1; g.length++; g.length++;`,
-  shrinkThenPrefixInc: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 1; ++g.length; ++g.length;`,
-  shrinkThenPlusEq: `const g: any[] = []; g.push("y"); g.push("z"); g.push("w"); g.length = 1; g.length += 2;`,
-  shrinkThenAssign: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 0; g.length = 3;`,
-  clearThenGrow: `const g: any[] = []; g.push("y"); g.push("z"); g.length = 0; g.length += 3;`,
-};
-const LEAK_SUMMARY = `
-function leakSum(r: any[]): string {
-  const seen: number[] = []; for (let i = 0; i < r.length; i++) seen.push(0);
-  r.forEach((v: any, i: number) => { seen[i] = 1; });
-  let s = "";
-  for (let i = 0; i < r.length; i++) { const v = r[i]; s += (i in r ? "P" : "H") + (seen[i] === 1 ? "V" : "S") + (v === undefined ? "u" : typeof v === "object" && v !== null ? "O" : "v"); }
-  return s;
-}`;
-function leakFns(setup: string, cases: readonly string[]): string {
-  return cases
-    .map(
-      (name) =>
-        `export function at_${name}(i: number): number { ${setup} const s = leakSum(${SWEEP[name]}); return i < 0 ? s.length : s.charCodeAt(i); }`,
-    )
-    .join("\n");
-}
+// undefined / n null / O object / v other). A leak is node P → head H, node V
+// → head S, or node u → head anything but u — so a `null` fill where node has
+// `undefined` is a leak. Present-where-node-has-a-hole (H → P) is the accepted
+// #7170 gap. On wasi `i in r` is false even for dense arrays (#7171), so only
+// the visit and value columns count there. Setups cover every grow form and
+// the reallocation path.
+//
+// r6: the detector is relative to origin/main. issue-7164-leak-base.json lists,
+// per setup/case/lane, the leaks this branch still shares with origin/main at
+// the same index and of the same kind (recorded by running the same modules on
+// both trees; a leak head has that base lacks was never recorded, because the
+// recorder refuses it). Any other leak fails. A cell #7164 fixed is not in the
+// list, so regressing it — e.g. filling `null` again — fails.
+const LEAK_BASE = JSON.parse(readFileSync(new URL("./issue-7164-leak-base.json", import.meta.url), "utf8")) as Record<
+  string,
+  Partial<Record<Lane, string[]>>
+>;
 function readSummary(fn: (i: number) => number): string {
   const n = fn(-1);
   let s = "";
   for (let i = 0; i < n; i++) s += String.fromCharCode(fn(i));
   return s;
-}
-function leaksIn(node: string, head: string, lane: Lane): string[] {
-  const out: string[] = [];
-  for (let i = 0; i * 3 < node.length; i++) {
-    const [np, nv, nc] = node.slice(i * 3, i * 3 + 3);
-    const [hp, hv, hc] = head.slice(i * 3, i * 3 + 3);
-    if (lane !== "wasi" && np === "P" && hp === "H") out.push(`${i}: present → absent`);
-    if (nv === "V" && hv === "S") out.push(`${i}: visited → skipped`);
-    if (nc === "u" && hc === "O") out.push(`${i}: undefined → object`);
-  }
-  return out;
 }
 
 describe("#7164 generated sweep: no marker leaks", () => {
@@ -511,26 +491,27 @@ describe("#7164 generated sweep: no marker leaks", () => {
       describe(`${setupName} / ${lane}`, () => {
         const perCase = new Map<string, ((i: number) => number) | string>();
         beforeAll(async () => {
-          // One module per setup; a case that does not compile on this lane
-          // (known compile gaps) falls back to a module of its own.
-          const whole = await compile(nodeSrc, { fileName: "probe.ts", ...options });
-          if (whole.success) {
-            const exports = (await instantiateWithRuntime(whole)).exports as Record<string, unknown>;
-            for (const name of cases) perCase.set(name, exports[`at_${name}`] as (i: number) => number);
-            return;
-          }
-          for (const name of cases) {
-            const one = await compile(`${SWEEP_PRELUDE}${LEAK_SUMMARY}\n${leakFns(setup, [name])}`, {
+          // One module per setup; when it does not compile on this lane (known
+          // compile gaps), bisect so the failing cases are found in a few compiles.
+          const build = async (names: readonly string[]): Promise<void> => {
+            const result = await compile(`${SWEEP_PRELUDE}${LEAK_SUMMARY}\n${leakFns(setup, names)}`, {
               fileName: "probe.ts",
               ...options,
             });
-            if (!one.success) {
-              perCase.set(name, one.errors[0]?.message ?? "compile error");
-              continue;
+            if (result.success) {
+              const exports = (await instantiateWithRuntime(result)).exports as Record<string, unknown>;
+              for (const name of names) perCase.set(name, exports[`at_${name}`] as (i: number) => number);
+            } else if (names.length === 1) {
+              perCase.set(names[0]!, result.errors[0]?.message ?? "compile error");
+            } else {
+              const mid = names.length >> 1;
+              await build(names.slice(0, mid));
+              await build(names.slice(mid));
             }
-            const exports = (await instantiateWithRuntime(one)).exports as Record<string, unknown>;
-            perCase.set(name, exports[`at_${name}`] as (i: number) => number);
-          }
+          };
+          // `restObjMethod` emits invalid wasm on every lane (as on origin/main): its own module.
+          await build(cases.filter((name) => name !== "restObjMethod"));
+          await build(["restObjMethod"]);
         }, 600_000);
         it("every case", () => {
           const node = evaluateAsJs(nodeSrc);
@@ -545,8 +526,9 @@ describe("#7164 generated sweep: no marker leaks", () => {
               continue; // a trap is not a leak
             }
             const expected = readSummary(node[`at_${name}`] as (i: number) => number);
+            const shared = new Set(LEAK_BASE[`${setupName}/${name}`]?.[lane] ?? []);
             for (const leak of leaksIn(expected, head, lane))
-              leaks.push(`${name} ${leak} (node ${expected}, head ${head})`);
+              if (!shared.has(leak)) leaks.push(`${name} ${leak} (node ${expected}, head ${head})`);
           }
           expect(leaks).toEqual([]);
         });
@@ -606,6 +588,50 @@ describe("#7164 callbacks that grow the array", () => {
           120_000,
         );
       }
+    }
+  }
+});
+
+// (#7164 r6) Generated length-update sweep: every form (`= n`, `++`, `--`,
+// prefix forms, `+= k`, `-= k`) × element type × setup (with and without a
+// plain `length =` elsewhere; after push / pop / shrink) × receiver (local,
+// parameter, property chain) × lane. It asserts "never worse than
+// origin/main": where origin/main matched node, head must match node; where
+// origin/main was wrong, head must not trap or fail to compile. The recorded
+// origin/main outcomes (rows that did not match node) are in
+// issue-7164-length-update-sweep-base.json. By default every 23rd row runs
+// (44 rows, covering every form × element pair); JS2WASM_FULL_SWEEP=1 runs all
+// 1,008 rows.
+const SWEEP_BASE = JSON.parse(
+  readFileSync(new URL("./issue-7164-length-update-sweep-base.json", import.meta.url), "utf8"),
+) as Record<string, Partial<Record<Lane, "wrong" | "trap">>>;
+const FULL_LENGTH_SWEEP = process.env.JS2WASM_FULL_SWEEP === "1";
+
+describe("#7164 length-update sweep: never worse than origin/main", () => {
+  const rows = sweepRows().filter((_, i) => FULL_LENGTH_SWEEP || i % 23 === 0);
+  for (const row of rows) {
+    const src = `${sweepSource(row.form, row.element, row.setup, row.eqElsewhere, row.receiver)}\nexport function at(i: number): number { const s = value(); return i < 0 ? s.length : s.charCodeAt(i); }`;
+    for (const { lane, options } of LANES) {
+      it(`${row.key} / ${lane}`, async () => {
+        const read = (at: (i: number) => number): string => {
+          const n = at(-1);
+          let out = "";
+          for (let i = 0; i < n; i++) out += String.fromCharCode(at(i));
+          return out;
+        };
+        const node = read(evaluateAsJs(src).at as (i: number) => number);
+        let head: string;
+        try {
+          const result = await compile(src, { fileName: "probe.ts", ...options });
+          if (!result.success) head = `CE ${result.errors[0]?.message}`;
+          else head = read((await instantiateWithRuntime(result)).exports.at as (i: number) => number);
+        } catch (e) {
+          head = `TRAP ${String(e)}`;
+        }
+        const base = SWEEP_BASE[row.key]?.[lane] ?? "ok";
+        if (base === "ok") expect(head, `${row.key}/${lane}`).toBe(node);
+        else if (base === "wrong") expect(head, `${row.key}/${lane}`).not.toMatch(/^(TRAP|CE) /);
+      }, 120_000);
     }
   }
 });

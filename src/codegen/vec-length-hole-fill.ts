@@ -58,12 +58,14 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
  *   `length <= cap`, and `[oldLen, cap)` is filled with the canonical
  *   `undefined` — not `$Hole`, which every element reader would have to map,
  *   and not the `null` that `array.new_default` / an earlier capacity grow
- *   left there. The new indices therefore read as present `undefined` (`in`
+ *   left there (`length-store-keep`, for a vec that was this carrier before
+ *   #7164: only never-written `null` slots, so an earlier shrink's `$Hole`
+ *   stays a hole). The new indices therefore read as present `undefined` (`in`
  *   answers true: a documented #7170 gap). A JS element write bumps `length`
  *   itself, so the `arr[len] = v; arr.length = len + 1` append shape stores an
  *   unchanged length and fills nothing it wrote.
  */
-export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store";
+export type VecLengthHoleFillMode = "shrink-only" | "both" | "length-store" | "length-store-keep";
 
 /**
  * Emit, for every admitted vec type, a guarded fill of
@@ -182,10 +184,11 @@ export function buildVecLengthHoleFill(
       },
     ];
     const fillBody = fillWith(markerInstrs);
-    const carrierMode = mode === "length-store" ? "shrink-only" : mode;
+    const growing = mode === "length-store" || mode === "length-store-keep";
+    const carrierMode = growing ? "shrink-only" : mode;
     // (#7164) The static store's externref GROW: realloc, then `undefined` in the new slots.
     const growArm: Instr[] =
-      mode === "length-store" && isExternrefCarrier
+      growing && isExternrefCarrier
         ? [
             ...lengthStoreGrowInstrs(local, vecLocal, newLenLocal, vecTypeIdx, arrTypeIdx),
             { op: "local.get", index: vecLocal },
@@ -197,7 +200,7 @@ export function buildVecLengthHoleFill(
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: growFillInstrs(
+              then: (mode === "length-store-keep" ? growKeepFillInstrs : growFillInstrs)(
                 vecLocal,
                 vecTypeIdx,
                 arrTypeIdx,
@@ -294,6 +297,79 @@ function growFillInstrs(
         { op: "local.get", index: startLocal },
         { op: "i32.sub" },
         { op: "array.fill", typeIdx: arrTypeIdx },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#7164) `length-store-keep`: in `[start, min(newLen, array.len(data)))`
+ * replace only never-written slots (the `null` that `array.new_default` left)
+ * with `marker`. A `$Hole` an earlier shrink wrote stays a hole — the vec was
+ * this carrier before #7164 too, and that hole is what it reported then.
+ * `start` is consumed as the cursor.
+ */
+function growKeepFillInstrs(
+  vecLocal: number,
+  vecTypeIdx: number,
+  arrTypeIdx: number,
+  dataLocal: number,
+  startLocal: number,
+  newLenLocal: number,
+  marker: Instr[],
+): Instr[] {
+  return [
+    { op: "local.get", index: vecLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                // while (start < newLen && start < array.len(data))
+                { op: "local.get", index: startLocal },
+                { op: "local.get", index: newLenLocal },
+                { op: "i32.ge_u" },
+                { op: "local.get", index: startLocal },
+                { op: "local.get", index: dataLocal },
+                { op: "array.len" },
+                { op: "i32.ge_u" },
+                { op: "i32.or" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: dataLocal },
+                { op: "local.get", index: startLocal },
+                { op: "array.get", typeIdx: arrTypeIdx },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: dataLocal },
+                    { op: "local.get", index: startLocal },
+                    ...marker,
+                    { op: "array.set", typeIdx: arrTypeIdx },
+                  ],
+                },
+                { op: "local.get", index: startLocal },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: startLocal },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
       ],
     },
   ];

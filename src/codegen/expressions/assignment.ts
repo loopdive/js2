@@ -5,7 +5,6 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import { receiverIsRealmGlobalObject } from "../helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
 import { tryEmitRealmGlobalElementWrite } from "../realm-global-element-write.js"; // (#4491 T4) its bracket twin
-import { emitArrayLengthStore } from "../array-length-update.js"; // (#7164) the shared static length store
 import { isBooleanType, isExternalDeclaredClass, isStringType } from "../../checker/type-mapper.js";
 import { isReparentObservablePrimitiveWrite } from "../object-model/native-proto-reparent.js"; // (#6651 V11)
 import { integrityVarKey } from "../widened-var-key.js";
@@ -19,7 +18,7 @@ import {
   emitEarlyStrictArrayWrite,
 } from "./destructuring-unresolved.js";
 import { emitBoundsCheckedArrayGet, resolveArrayInfo } from "../array-methods.js";
-import { emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3
+import { emitArrayLengthStore, emitArraySetLengthValidation } from "../array-length-define.js"; // (#4222) §10.4.2.4 step 3; (#7164) shared store
 import { emitArraySetLengthCoercionEffects, emitArraySetLengthNumber } from "../array/array-set-length-coercion.js"; // (#6771 S10a)
 import { emitHoleToUndefined, holeSentinelInstrs } from "../array-holes.js";
 import { emitF64GapFillInstrs } from "../vec-f64-hole-gap.js"; // (#4491 T8)

@@ -90,7 +90,12 @@ import {
 } from "./shared.js";
 import { emitIncludesSearchValue, emitIndexOfAbsentSearchValue } from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
-import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
+import {
+  canonicalUndefinedExternInstrs,
+  ensureExternSameValueZeroHelper,
+  ensureExternStrictEqHelper,
+  undefinedExternInstrs,
+} from "./any-helpers.js";
 import {
   ensureNativeStringHelpers,
   nativeStringLiteralInstrs,
@@ -3550,6 +3555,34 @@ function compileArrayAt(
  * arr.indexOf(val) -> loop through array, return index (as f64) or -1.
  * Receiver is a vec struct; extract data and length from it.
  */
+/**
+ * (#7164) A `fromIndex` whose `valueOf` grows the array can reallocate an
+ * externref vec's backing (`length =` past capacity, or `push`). The scan reads
+ * elements live (Get at each index), so re-read the backing after `fromIndex`
+ * and clamp the scan to it; `len` stays the value read before (§23.1.3.14 step 2).
+ */
+function reloadSearchBacking(
+  vecTmp: number,
+  vecTypeIdx: number,
+  dataTmp: number,
+  lenTmp: number,
+  effLenTmp: number,
+): Instr[] {
+  return [
+    { op: "local.get", index: vecTmp },
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: dataTmp },
+    { op: "array.len" },
+    { op: "local.get", index: lenTmp },
+    { op: "local.get", index: dataTmp },
+    { op: "array.len" },
+    { op: "local.get", index: lenTmp },
+    { op: "i32.lt_s" },
+    { op: "select" },
+    { op: "local.set", index: effLenTmp },
+  ];
+}
+
 function compileArrayIndexOf(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3668,6 +3701,8 @@ function compileArrayIndexOf(
     });
     fctx.body.push({ op: "local.get", index: fromTmp });
     fctx.body.push({ op: "local.set", index: iTmp });
+    if (elemType.kind === "externref")
+      fctx.body.push(...reloadSearchBacking(vecTmp, vecTypeIdx, dataTmp, lenTmp, effLenTmp));
     const guarded = fctx.body.splice(guardStart);
     fctx.body.push({ op: "local.get", index: lenTmp });
     fctx.body.push({
@@ -3871,6 +3906,8 @@ function compileArrayIncludes(
     fctx.body.push({ op: "i32.const", value: 0 });
   }
   fctx.body.push({ op: "local.set", index: iTmp });
+  if (callExpr.arguments.length >= 2 && elemType.kind === "externref")
+    fctx.body.push(...reloadSearchBacking(vecTmp, vecTypeIdx, dataTmp, lenTmp, effLenTmp));
 
   // (#2648) View-name-driven signedness for the packed i8/i16 element load.
   const getOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, propAccess.expression));
@@ -7417,10 +7454,13 @@ function gateHoleFlag(
  * Build the standard loop-exit check: if (i >= len) br 1.
  *
  * (#7164) A callback can replace the receiver's backing array (`push` or a
- * `length =` grow past the capacity reallocates it), so each iteration
- * re-reads `data` from the vec; reading the array loaded before the loop
- * would miss every write the callback makes after the reallocation. A backing
- * now shorter than `i` holds no further own elements, so the loop ends.
+ * `length =` grow past the capacity reallocates it), so each iteration adopts
+ * the vec's current backing when it still covers `i`; reading only the array
+ * loaded before the loop would miss every write the callback makes after the
+ * reallocation. A backing that no longer covers `i` is not adopted: the loop
+ * keeps reading the earlier one exactly as before #7164, so no iteration ends
+ * early (find / findIndex must still visit every index up to the original
+ * length).
  */
 function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
   return [
@@ -7428,24 +7468,38 @@ function loopExitCheck(loop: ArrayLoopLocals): Instr[] {
     { op: "local.get", index: loop.lenTmp },
     { op: "i32.ge_s" },
     { op: "br_if", depth: 1 },
-    ...reloadLoopData(loop, [
-      { op: "local.get", index: loop.iTmp },
-      { op: "local.get", index: loop.dataTmp },
-      { op: "array.len" },
-      { op: "i32.ge_u" },
-      { op: "br_if", depth: 1 },
-    ]),
+    ...reloadLoopData(loop),
   ];
 }
 
-/** (#7164) `data = vec.data`, then `after`; nothing when the loop has no vec type. */
-function reloadLoopData(loop: ArrayLoopLocals, after: Instr[]): Instr[] {
-  if (loop.vecTypeIdx === undefined) return [];
-  return [
+/**
+ * (#7164) `if (vec.data !== data && i < array.len(vec.data)) data = vec.data`;
+ * nothing when the loop has no vec type. The identity test keeps the common
+ * (unchanged backing) path to one field read and a compare.
+ */
+function reloadLoopData(loop: ArrayLoopLocals): Instr[] {
+  const vecTypeIdx = loop.vecTypeIdx;
+  if (vecTypeIdx === undefined) return [];
+  const current = (): Instr[] => [
     { op: "local.get", index: loop.vecTmp },
-    { op: "struct.get", typeIdx: loop.vecTypeIdx, fieldIdx: 1 },
-    { op: "local.set", index: loop.dataTmp },
-    ...after,
+    { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+  ];
+  return [
+    ...current(),
+    { op: "local.get", index: loop.dataTmp },
+    { op: "ref.eq" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: loop.iTmp },
+        ...current(),
+        { op: "array.len" },
+        { op: "i32.lt_u" },
+        { op: "if", blockType: { kind: "empty" }, then: [...current(), { op: "local.set", index: loop.dataTmp }] },
+      ],
+    },
   ];
 }
 
@@ -8394,7 +8448,8 @@ function compileArrayFind(
   if (refElemResType) {
     fctx.body.push({ op: "ref.null", typeIdx: refElemResType.typeIdx });
   } else if (elemIsExternref) {
-    fctx.body.push({ op: "ref.null.extern" });
+    // (#7164) "Not found" is `undefined`, not the null externref (`=== undefined` held false).
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {
@@ -8537,38 +8592,14 @@ function setupArrayLoopReverse(
   return loop;
 }
 
-/**
- * Reverse loop-exit check: if (i < 0) br 1. (#7164) Re-reads `data` as
- * {@link loopExitCheck} does; indices past a now-shorter backing are skipped by
- * clamping `i` to its last slot.
- */
+/** Reverse loop-exit check: if (i < 0) br 1. (#7164) Then adopts a reallocated backing as {@link loopExitCheck} does. */
 function loopExitCheckReverse(loop: ArrayLoopLocals): Instr[] {
-  const exit: Instr[] = [
+  return [
     { op: "local.get", index: loop.iTmp },
     { op: "i32.const", value: 0 },
     { op: "i32.lt_s" },
     { op: "br_if", depth: 1 },
-  ];
-  return [
-    ...exit,
-    ...reloadLoopData(loop, [
-      { op: "local.get", index: loop.iTmp },
-      { op: "local.get", index: loop.dataTmp },
-      { op: "array.len" },
-      { op: "i32.ge_s" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [
-          { op: "local.get", index: loop.dataTmp },
-          { op: "array.len" },
-          { op: "i32.const", value: 1 },
-          { op: "i32.sub" },
-          { op: "local.set", index: loop.iTmp },
-        ],
-      },
-      ...exit.map((instr) => ({ ...instr })),
-    ]),
+    ...reloadLoopData(loop),
   ];
 }
 
@@ -8646,7 +8677,7 @@ function compileArrayFindLast(
   if (refElemResType) {
     fctx.body.push({ op: "ref.null", typeIdx: refElemResType.typeIdx });
   } else if (elemIsExternref) {
-    fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx)); // (#7164) not found → `undefined`
   } else if (ctx.fast) {
     fctx.body.push({ op: "i32.const", value: 0 });
   } else {

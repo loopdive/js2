@@ -7,7 +7,7 @@
  * behaviour-preserving leaf move. This module owns the `x op= y` lowering; plain
  * `=` assignment and destructuring stay in assignment.ts.
  */
-import { tryCompileArrayLengthUpdate } from "../array-length-update.js"; // (#7164)
+import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts, forEachChild } from "../../ts-api.js";
 import { isBooleanType, isStringType } from "../../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";

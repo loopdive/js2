@@ -7,7 +7,12 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { resolveWasmType } from "../index.js";
 import { getOrRegisterHoleyArrayType, getOrRegisterVecType } from "../registry/types.js";
-import { growingLengthStoreCarrier, shareGroupIsDynamic, skipValueWrappers } from "./array-share-group.js";
+import {
+  growingLengthStoreCarrier,
+  noteGrowthSwitchedBinding,
+  shareGroupIsDynamic,
+  skipValueWrappers,
+} from "./array-share-group.js";
 export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclaration): ValType | null {
   if (!ts.isIdentifier(decl.name)) return null;
   if (ctx.holeyArrayDeclarations.has(decl)) {
@@ -167,6 +172,7 @@ export function inferArrayVecType(ctx: CodegenContext, decl: ts.VariableDeclarat
   // would otherwise hold a copy (see `growingLengthStoreCarrier`).
   const growCarrier = growingLengthStoreCarrier(ctx, decl);
   if (growCarrier === "group" || (growCarrier === "alone" && (inferredElemWasm as ValType | null)?.kind !== "f64")) {
+    if (!mixedElementCarrier && !sawDynamicElementWrite) noteGrowthSwitchedBinding(ctx, decl);
     sawDynamicElementWrite = true;
   }
 

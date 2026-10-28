@@ -7,7 +7,7 @@
  * element access (`arr[i]--`). The non-update prefix unary operators
  * (`+`, `-`, `!`, `~`) live in ./unary.ts.
  */
-import { tryCompileArrayLengthUpdate } from "../array-length-update.js"; // (#7164)
+import { tryCompileArrayLengthUpdate } from "../array-length-define.js"; // (#7164)
 import { ts } from "../../ts-api.js";
 import { tryEmitUnresolvableUpdateThrow } from "../update-unresolvable-ref.js";
 import type { Instr, ValType } from "../../ir/types.js";

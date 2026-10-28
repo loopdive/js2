@@ -438,7 +438,7 @@ export function growingLengthStoreCarrier(
   decl: ts.VariableDeclaration,
 ): "group" | "alone" | undefined {
   const verdict = groupVerdict(ctx, decl, true);
-  if (!verdict.grows || !verdict.dynamic) return undefined;
+  if (!verdict.grows || !verdict.dynamic || lengthUpdateMayMeetFrozenArray(ctx)) return undefined;
   return verdict.shared ? "group" : "alone";
 }
 
@@ -591,4 +591,87 @@ function enclosingScope(decl: ts.VariableDeclaration): ts.Node {
   let scope: ts.Node = decl;
   while (scope.parent && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) scope = scope.parent;
   return scope;
+}
+
+/**
+ * (#7164) Bindings whose carrier `growingLengthStoreCarrier` switched from a
+ * typed vec to the dynamic one. On `origin/main` they held a typed vec (no
+ * `$Hole`), so their length stores fill a grow with `undefined` and their
+ * `++` / `--` / `+=` / `-=` share that store; a vec that was the dynamic
+ * carrier anyway keeps its old length-update behaviour.
+ */
+const growthSwitched = new WeakMap<object, WeakSet<ts.VariableDeclaration>>();
+
+export function noteGrowthSwitchedBinding(ctx: CodegenContext, decl: ts.VariableDeclaration): void {
+  let set = growthSwitched.get(ctx);
+  if (!set) {
+    set = new WeakSet();
+    growthSwitched.set(ctx, set);
+  }
+  set.add(decl);
+}
+
+/** `expr` names a binding {@link noteGrowthSwitchedBinding} recorded. */
+export function isGrowthSwitchedReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const inner = skipValueWrappers(expr);
+  if (!ts.isIdentifier(inner)) return false;
+  const decl = ctx.oracle.variableDeclarationOf(inner);
+  return decl !== undefined && (growthSwitched.get(ctx)?.has(decl) ?? false);
+}
+
+/** Names that can make an array's `length` non-writable or an element non-configurable. */
+const FREEZING_NAMES = new Set(["defineProperty", "defineProperties", "freeze", "seal", "preventExtensions"]);
+const lengthUpdateRoots = new WeakMap<object, ts.Node[]>();
+const frozenArrayRisk = new WeakMap<object, { roots: number; risky: boolean }>();
+
+/** (#7164) Called by the `scanForArrayHoles` pre-scan for every root it walks. */
+export function noteLengthUpdateRoot(ctx: CodegenContext, root: ts.Node): void {
+  const roots = lengthUpdateRoots.get(ctx) ?? [];
+  roots.push(root);
+  lengthUpdateRoots.set(ctx, roots);
+}
+
+/**
+ * Could the program make an array's `length` non-writable or an element
+ * non-configurable? Any mention of `defineProperty` / `defineProperties` /
+ * `freeze` / `seal` / `preventExtensions` (or no recorded roots) answers yes:
+ * no binding switches carrier for a growing length store, and `arr.length++`
+ * keeps its old, descriptor-aware route.
+ */
+export function lengthUpdateMayMeetFrozenArray(ctx: CodegenContext): boolean {
+  const roots = lengthUpdateRoots.get(ctx);
+  if (roots === undefined) return true; // not scanned yet: assume the worst, cache nothing
+  const cached = frozenArrayRisk.get(ctx);
+  if (cached !== undefined && cached.roots === roots.length) return cached.risky;
+  let risky = false;
+  const visit = (node: ts.Node): void => {
+    if (risky) return;
+    if (ts.isIdentifier(node) && FREEZING_NAMES.has(node.text)) risky = true;
+    else ts.forEachChild(node, visit);
+  };
+  for (const root of roots) visit(root);
+  frozenArrayRisk.set(ctx, { roots: roots.length, risky });
+  return risky;
+}
+
+/** (#7164) `x.length++` / `--` (prefix or postfix) / `+= k` / `-= k`: the pre-scan arms hole-aware reads for these as for `x.length = n`. */
+function isLengthUpdate(node: ts.Node): boolean {
+  let target: ts.Node | undefined;
+  if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+    if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+      target = node.operand;
+  } else if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
+      node.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken)
+  ) {
+    target = node.left;
+  }
+  while (target && ts.isParenthesizedExpression(target)) target = target.expression;
+  return target !== undefined && ts.isPropertyAccessExpression(target) && target.name.text === "length";
+}
+
+/** (#7164) Pre-scan hook: a length update arms hole-aware reads, as `x.length = n` does. */
+export function armForLengthUpdate(ctx: CodegenContext, node: ts.Node): void {
+  if (!ctx.usesArrayHoles && isLengthUpdate(node)) ctx.usesArrayHoles = true;
 }
