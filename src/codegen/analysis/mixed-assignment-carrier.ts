@@ -9,7 +9,7 @@
  * boxed externref carrier.
  */
 import { ts, forEachChild } from "../../ts-api.js";
-import { identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
+import { identifierWriteFact, identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
@@ -271,6 +271,19 @@ function nullableSingleObjectAssignment(ctx: CodegenContext, value: ts.Expressio
 }
 
 /**
+ * (#4495) An explicit TypeScript annotation is the slot contract for every
+ * write TypeScript checked against it — a violation is user error under
+ * diagnostics-off compilation, the module-binding analysis's rule. A value
+ * typed `any` / `unknown` is unchecked and keeps its own verdict: an annotated
+ * `xs: any[]` must stay on the carrier to alias it (#7154), and a `string`
+ * slot would null it (this issue).
+ */
+function storesUncheckedValue(ctx: CodegenContext, write: IdentifierWrite): boolean {
+  const kind = identifierWriteFact(ctx.oracle, write)?.kind;
+  return kind === "any" || kind === "unknown";
+}
+
+/**
  * Decide whether the initialized binding must use a carrier that can represent
  * assignments from more than one JavaScript domain. The scope index preserves
  * exact declaration identity; only oracle-unresolved targets inside a `with`
@@ -295,11 +308,6 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   // without this the slot keeps the initializer's narrow representation
   // (`var f = 123` → f64) and the write-back is unrepresentable.
   if (initialDomain !== "function" && bindingHasAnnexBExistingVarUpdate(decl)) return true;
-  // (#4495) An explicit TypeScript annotation is the representation contract —
-  // the module-binding analysis's rule (heterogeneous-module-bindings.ts). A
-  // write that violates it is user error under diagnostics-off compilation;
-  // widening for it would put a typed local on the boxed carrier.
-  if (decl.type !== undefined) return false;
   let mixed = false;
 
   // (#4122) `"mixed"` is the oracle's answer for UNRESOLVABLE, not for "proven
@@ -337,6 +345,7 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
         ? resolvedFacts[resolvedIndex++]!
         : unresolvedWithFacts[unresolvedIndex++]!;
     if (fact.target === decl.name) continue;
+    if (decl.type !== undefined && !storesUncheckedValue(ctx, fact.write)) continue;
     const value = fact.write.kind === "value" ? fact.write.expr : undefined;
     const rawTag = identifierWriteTag(ctx.oracle, fact.write, initialTag);
     const assignedTag =

@@ -1252,35 +1252,54 @@ export function jsTagOfFact(fact: TypeFact): JsTag | undefined {
 }
 
 /**
+ * (#4495) The fact for the value `write` stores, when the oracle can name it:
+ * a named value, a property, or an element iterated from an array, a string or
+ * an `any` / `unknown` source. Undefined for a ToNumeric write-back, a for-in
+ * key, a rest element and a value the syntax does not name.
+ */
+export function identifierWriteFact(
+  oracle: Pick<TypeOracle, "typeFactOf" | "propertyFactOf">,
+  write: IdentifierWrite,
+): TypeFact | undefined {
+  switch (write.kind) {
+    case "value":
+      return oracle.typeFactOf(write.expr);
+    case "property":
+      return oracle.propertyFactOf(write.object, write.key);
+    case "element": {
+      const iterated = oracle.typeFactOf(write.iterable);
+      if (iterated.kind === "array") return iterated.element;
+      const iteratesItself = iterated.kind === "string" || iterated.kind === "any" || iterated.kind === "unknown";
+      return iteratesItself ? iterated : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
  * (#4495) The JS tag `write` stores into a binding initialised with a value of
- * `initialTag`: the oracle's answer for a named value, a property or an
- * iterated array / string element; a string for a for-in key and an object for
- * a rest element; `mixed` when nothing names it; and for a ToNumeric
- * write-back the initializer's own numeric tag (`x++` keeps a number a number
- * and a bigint a bigint, but turns a string or a boolean into a number).
+ * `initialTag`: the tag of {@link identifierWriteFact}; a string for a for-in
+ * key and an object for a rest element; `mixed` when nothing names it; and for
+ * a ToNumeric write-back the initializer's own numeric tag (`x++` keeps a
+ * number a number and a bigint a bigint, but turns a string or a boolean into
+ * a number).
  */
 export function identifierWriteTag(
-  oracle: Pick<TypeOracle, "staticJsTypeOf" | "typeFactOf" | "propertyFactOf">,
+  oracle: Pick<TypeOracle, "typeFactOf" | "propertyFactOf">,
   write: IdentifierWrite,
   initialTag: JsTag,
 ): JsTag | "mixed" {
   switch (write.kind) {
-    case "value":
-      return oracle.staticJsTypeOf(write.expr);
     case "numeric":
       return initialTag === "bigint" ? "bigint" : "number";
     case "key":
       return "string";
     case "rest":
       return "object";
-    case "unknown":
-      return "mixed";
-    case "element": {
-      const iterated = oracle.typeFactOf(write.iterable);
-      if (iterated.kind === "string") return "string";
-      return (iterated.kind === "array" && jsTagOfFact(iterated.element)) || "mixed";
+    default: {
+      const fact = identifierWriteFact(oracle, write);
+      return (fact && jsTagOfFact(fact)) ?? "mixed";
     }
-    case "property":
-      return jsTagOfFact(oracle.propertyFactOf(write.object, write.key)) ?? "mixed";
   }
 }

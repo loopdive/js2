@@ -33,8 +33,7 @@ async function expectSameOnAllLanes(body: string, top: string): Promise<void> {
 // single-fork). By default a deterministic subset runs: every wrapper, escape
 // and callee kind with one typed and one dynamic partner in the form that
 // caught regressions (the second alias), plus one representative row per
-// row family (each known-gap `it.fails` family, and the share family #4495
-// fixed). `JS2WASM_FULL_SWEEP=1` runs every row.
+// known-gap (`it.fails`) family. `JS2WASM_FULL_SWEEP=1` runs every row.
 const FULL_SWEEP = process.env.JS2WASM_FULL_SWEEP === "1";
 const gapFamiliesSeen = new Set<string>();
 function selected(
@@ -203,36 +202,31 @@ function program(partner: Partner, wrapper: (p: Partner) => string, form: "init"
   return PRELUDE + partner.setup + core + `${partner.after}r += "|" + ys.join(); return r;`;
 }
 
-// Row families that run one representative row by default (every row under
-// `JS2WASM_FULL_SWEEP=1`).
+// Rows that are wrong on main too (not regressions; listed under "Left out"
+// in #7154). `it.fails` keeps them visible: a fix flips them and fails here.
 // - Assigning an `any` value that holds a typed vec to a pinned `any[]` slot
-//   without a type assertion. It cast the value to the slot's vec type
-//   (`illegal cast`) until #4495 review round 1: the mixed-assignment analysis
-//   demoted the annotated `xs: any[]` to the boxed carrier; an annotation is now
-//   the slot contract for a function local, as for a module binding.
+//   without a type assertion casts it to the slot's vec type: `illegal cast`.
 // - `xs = (ys = o as any[])` with `o: unknown`: `ys` has no stores of its own,
 //   so it keeps the default dynamic layout while `xs` is typed, and copies.
-//   Wrong on main too (listed under "Left out" in #7154). The nested `=` over
-//   an `any` value of the first family (`xs = (ys = o)`) copies the same way:
-//   before #4495 it trapped on the cast first. `it.fails` keeps both visible,
-//   and a fix flips them and fails here.
 const ANY_VALUE_PARTNERS = new Set(["any local", "any property", "any optional chain", "any parameter"]);
 const ASSERTING_WRAPPERS = new Set(["as", "<T>", "as runtime type"]);
-const KNOWN_GAP_FAMILIES = new Set(["share:nested", "share:nested-any"]);
-function rowFamily(wrapperName: string, partnerName: string, form: "init" | "assign"): string | undefined {
-  if (wrapperName === "nested =" && partnerName === "unknown local") return "share:nested";
-  if (form !== "assign" || !ANY_VALUE_PARTNERS.has(partnerName) || ASSERTING_WRAPPERS.has(wrapperName))
-    return undefined;
-  return wrapperName === "nested =" ? "share:nested-any" : "share:assign-any";
+function knownGap(wrapperName: string, partnerName: string, form: "init" | "assign"): boolean {
+  if (form === "assign" && ANY_VALUE_PARTNERS.has(partnerName) && !ASSERTING_WRAPPERS.has(wrapperName)) return true;
+  return wrapperName === "nested =" && partnerName === "unknown local";
 }
 
 describe("#7154 any[] share sweep: every alias observes every push", () => {
   for (const [wrapperName, wrapper] of Object.entries(WRAPPERS)) {
     for (const [partnerName, partner] of Object.entries(PARTNERS)) {
       for (const form of ["init", "assign"] as const) {
-        const family = rowFamily(wrapperName, partnerName, form);
+        const gap = knownGap(wrapperName, partnerName, form);
+        const family = gap
+          ? wrapperName === "nested =" && partnerName === "unknown local"
+            ? "share:nested"
+            : "share:assign-any"
+          : undefined;
         if (!selected(family, partnerName, ["number[]", "any[]"], form === "init")) continue;
-        const test = family !== undefined && KNOWN_GAP_FAMILIES.has(family) ? it.fails : it;
+        const test = gap ? it.fails : it;
         test(`${form} via ${wrapperName} with a ${partnerName} partner`, () =>
           expectSameOnAllLanes(program(partner, wrapper, form), partner.top ?? ""));
       }
