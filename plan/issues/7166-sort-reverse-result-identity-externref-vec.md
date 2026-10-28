@@ -95,23 +95,41 @@ main's slot:
 - every reference to the name in the scope (the file, or the enclosing
   function including its closures) resolves through `ctx.oracle` to this
   declaration;
-- every reference is one of these uses:
-  - an element read or write;
+- no reference can run before the declaration initialises the binding:
+  - for a local alias, no reference is written before the declaration and none
+    sits in a nested function declaration (hoisted);
+  - for a module alias, no reference (in a function or not) is written before
+    it;
+- every reference is one of these uses (narrowed in round 4):
+  - an element read;
+  - a plain element store `r[i] = v`; a compound store (`r[i] += v`), `++` /
+    `--`, `delete`, and an element that is a destructuring or `for…of` target
+    (`[r[0], r[1]] = …`, `for (r[0] of …)`) all decline;
   - `.length`;
-  - a method that keeps the vec in (`push`, `pop`, `join`, `indexOf`, …);
-  - a callback method whose callback cannot see the array (`map`, `filter`, …
-    with at most `(element, index)` parameters);
-  - a receiver-returning call whose own result is used the same way;
+  - a callback-free method that keeps the vec in (`push`, `pop`, `shift`,
+    `unshift`, `splice`, `slice`, `concat`, `indexOf`, `lastIndexOf`,
+    `includes`, `join`, `toString`, `at`), with no spread argument;
+  - `sort()` / `reverse()` / `fill` / `copyWithin` whose own result is used the
+    same way; `sort` and `reverse` only without arguments;
   - `===` / `!==` / `==` / `!=`;
   - `for…of`;
-  - a spread into an array literal or a call;
   - a discarded expression statement.
 
 Any other use declines. That covers an assignment, an argument, a return, an
-array or object literal, a `?:` / `||` operand, a destructuring, and a
-redeclaration. A local alias also requires the source declaration to be the
-only binding of its name in the function, because the name-keyed `localMap`
-is used to find it.
+array or object literal, a `?:` / `||` operand, a destructuring, a
+redeclaration, and the uses round 3 found broken on an externref vec:
+
+- **Every callback method** (`map`, `filter`, `forEach`, `reduce`, …) and a
+  comparator `sort(cmp)`: the callback is compiled against the checker's
+  element type while it receives externref elements.
+- **Every spread**: a rest parameter receives the vec itself, and a spread
+  into an array literal loses mixed element kinds (`typeof c[1]`).
+- **Compound element stores and for-of element targets**, found by the
+  extended sweep: wrong answer / invalid wasm on a module alias.
+
+A local alias also requires the source declaration to be the only binding of
+its name in the function, because the name-keyed `localMap` is used to find
+it.
 
 **`typeof` of an externref element (round 2).** The element of such a vec has
 the checker type `string | number` (`$AnyValue`) but compiles to an externref.
@@ -126,55 +144,68 @@ called from `src/codegen/typeof-delete.ts`). An externref that already holds an
 
 **Tests.**
 
-- `tests/equivalence/issue-7166-sort-reverse-identity.test.ts`: 328 asserted
-  rows plus 36 skipped sweep rows. Every row runs on gc native-first,
-  standalone and wasi against node.
-- The sweep cases come from `tests/equivalence/issue-7166-alias-sweep.ts`.
+- `tests/equivalence/issue-7166-sort-reverse-identity.test.ts`: 337 asserted
+  rows plus 31 skipped sweep rows, each run on gc native-first, standalone and
+  wasi against node.
+- Sweep generator: `tests/equivalence/issue-7166-alias-sweep.ts`.
+- Rows that fail identically on main:
+  `tests/equivalence/issue-7166-alias-sweep-known.ts`.
 
 Coverage:
 
-- **Receiver-returning methods.** sort, sort(cmp), reverse, fill, copyWithin,
-  the plain alias and `a.sort().reverse()`. Receivers: module-level and
-  function-local evolving arrays (for…in, push, mixed), `any[]` (literal and
-  empty), `number[]` and `string[]`.
-- **Element operations.** `typeof r[i]`, `typeof r[i] === "…"`,
-  `switch (typeof r[i])`, `typeof` in a loop, `r[0] + 1`, `r[0].length` and
-  `r[0] === "b"`. These run on the source and on aliases, module and local,
-  with mixed, string and number elements.
-- **Reassigned aliases.** `let` / `var` `r = keys` followed by `r = other` or
-  `r = mk()`, module and local.
-- **Review round-2 repros.** An alias escaping into `const t = r`, `[r]`, a
-  return, `?:`, `{ v: r }` and `f(r)`. A local `let` alias written in a
-  closure. A `var r` redeclared by an array pattern, by an object pattern, and
-  by a pattern in a block.
-- **Generated use-form sweep.** 28 uses (safe uses and escapes) × module /
-  local × `const` / `let` × 3 sources × 3 initializers = 954 programs with
-  `JS2WASM_FULL_SWEEP=1`. The default run is a 106-program slice.
+- **Receiver-returning methods:** sort, sort(cmp), reverse, fill, copyWithin,
+  the plain alias and `a.sort().reverse()`, over evolving, `any[]`, `number[]`
+  and `string[]` receivers, module and local.
+- **typeof and element operations,** on the source and on aliases.
+- **Reassigned aliases.**
+- **Review round 2 repros:** escapes, a closure write, and destructuring
+  redeclarations.
+- **Review round 3 repros:**
+  - must match node: call spread into a rest parameter, `map(x => x)` and a
+    comparator sort on a mixed alias;
+  - must compile to valid wasm (main is also wrong or traps): the destructuring
+    swap, a numeric comparator sort, TDZ reads, a closure declared before the
+    alias.
+- **Generated use-form sweep.** 51 uses × module / local × `const` / `let` ×
+  4 element kinds (string, number, mixed, for…in) × 3 initializers = 2,328
+  programs with `JS2WASM_FULL_SWEEP=1`; the default run is a 100-program
+  subset. The uses are:
+  - the safe uses;
+  - every callback method with a callback that uses its element;
+  - comparator sorts;
+  - call spreads with and without a rest parameter;
+  - element destructuring targets (a swap, an object pattern, a `for…of`
+    target);
+  - compound element stores;
+  - TDZ and hoisted-function reads;
+  - every escape and rewrite.
 
-Full sweep, head vs main a54cd9fb8a, all three lanes:
+Full sweep, head vs main a54cd9fb8a, all three lanes (a compile failure counts
+as worse):
 
 | result | rows |
 |---|---|
-| same and correct | 534 |
-| fixed | 180 |
-| worse | 0 |
-| wrong on both | 240 |
+| same and correct | 1,620 |
+| fixed | 240 |
+| worse | **0** |
+| identical wrong answer on both | 468 (listed in the known file, skipped) |
+| different wrong answer | 0 |
 
-The 240 rows that are wrong on both are skipped by a rule in the test that
-matches them exactly:
+**Review probe sets, head vs base:** 0 worse in all 18 sets.
 
-- escapes of a module or mixed-element alias, which decline to main's
-  copy-on-flow;
-- a typed `other` written into a mixed alias;
-- wasi's spread-call `Math.max`.
+- Round 3 sets: attack, extra, scope, ts, cb, src.
+- Round 1–2 sets: alias, cases, cases2, cases3, cases11, cases13, sweepdef,
+  het, typeof, extra, extra2, extra3.
+- Two rows give a different wrong answer: `js_{mod,loc}_elem_method_sort`
+  (main traps with "illegal cast", head returns a wrong value).
 
-**Bytes (unoptimized, base a54cd9fb8a vs head, round 3).** The corpus is the
-13 playground examples plus 2,652 distinct equivalence-suite programs, recorded
-from the gate run, each compiled on gc, standalone and wasi.
+**Bytes (unoptimized, base a54cd9fb8a vs head, round 4).** The corpus is the
+13 playground examples plus the 2,661 distinct equivalence-suite programs
+recorded from the gate run, each compiled on gc, standalone and wasi:
 
-- Every playground example is identical on all three lanes.
-- 2,485 equivalence programs are identical on all three lanes.
-- The 167 that differ are all programs from the #7166 test file.
+- every playground example is identical on all three lanes;
+- 2,544 equivalence programs are identical on all three lanes;
+- the 117 that differ are all programs from the #7166 test file.
 
 **Left out.**
 
@@ -183,4 +214,8 @@ from the gate run, each compiled on gc, standalone and wasi.
   - `(2).length` on a number element is not `undefined`.
   - wasi reads `a[0].length` through a module-level source as `undefined`.
   - Passing the alias to a `string[]` parameter still copies.
+- Callback methods, comparator sorts, spreads and compound element stores on an
+  alias now decline to main's behaviour (a copied slot) instead of sharing the
+  vec.
+- Multi-file programs are not covered by the sweep.
 - The Linear backend (`src/codegen-linear/`) was not examined.

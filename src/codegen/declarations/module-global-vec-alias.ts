@@ -90,7 +90,7 @@ export function aliasedModuleGlobalVecType(
     }
   }
   if (!type || type.kind !== "ref_null" || !isExternrefElementVec(ctx, type.typeIdx)) return undefined;
-  return aliasUsesAreSafe(ctx, decl, decl.getSourceFile()) ? type : undefined;
+  return aliasUsesAreSafe(ctx, decl, decl.getSourceFile(), false) ? type : undefined;
 }
 
 /** Array methods whose result is never the receiver and that take no callback. */
@@ -109,21 +109,6 @@ const NON_ESCAPING_METHODS = new Set([
   "toString",
   "at",
 ]);
-/** Callback methods: safe while every callback sees only `(element, index)`, never the array. */
-const CALLBACK_METHODS = new Set([
-  "map",
-  "filter",
-  "forEach",
-  "some",
-  "every",
-  "find",
-  "findIndex",
-  "findLast",
-  "findLastIndex",
-  "reduce",
-  "reduceRight",
-]);
-
 /**
  * (#7166) The alias may share the source's externref-vec slot only when the
  * vec can never reach a place typed from the checker's `T[]`, which would
@@ -131,11 +116,15 @@ const CALLBACK_METHODS = new Set([
  * `?:` branch, a reassignment). So this is an allow-list: the binding has one
  * declaration, the file has no `eval` / `with`, and every reference in
  * `scope` resolves (through the oracle) to `decl` and is a recognised use —
- * an element read or write, `.length`, a method that keeps the vec in (a
- * receiver-returning one only while its own result is used the same way), an
- * equality comparison, a `for…of`, or a spread. Anything else declines.
+ * an element read, a plain element store (`r[i] = v`, `r[i] += v`, never a
+ * destructuring target), `.length`, a callback-free method that keeps the vec
+ * in (`sort()` / `reverse()` only without a comparator, and only while their
+ * own result is used the same way), an equality comparison, or a `for…of`.
+ * Callback methods and spreads decline: a callback is compiled against the
+ * checker's element type, a spread into an array literal loses mixed element
+ * kinds, and a rest parameter receives the vec itself. Anything else declines.
  */
-function aliasUsesAreSafe(ctx: CodegenContext, decl: ts.VariableDeclaration, scope: ts.Node): boolean {
+function aliasUsesAreSafe(ctx: CodegenContext, decl: ts.VariableDeclaration, scope: ts.Node, local: boolean): boolean {
   if (!ts.isIdentifier(decl.name) || ctx.oracle.declarationsOf(decl.name).length !== 1) return false;
   const sourceFile = decl.getSourceFile();
   if (fileHasDynamicScope(sourceFile)) return false;
@@ -145,7 +134,8 @@ function aliasUsesAreSafe(ctx: CodegenContext, decl: ts.VariableDeclaration, sco
     if (!safe) return;
     if (ts.isIdentifier(node) && node.text === name && node !== decl.name && isReference(node)) {
       const target = ctx.oracle.variableDeclarationOf(node);
-      if (target === undefined ? true : target === decl && !isSafeUse(node)) safe = false;
+      if (target === undefined) safe = false;
+      else if (target === decl && (!isSafeUse(node) || mayRunBeforeDeclaration(node, decl, local))) safe = false;
     }
     ts.forEachChild(node, visit);
   };
@@ -180,10 +170,8 @@ function isSafeUse(node: ts.Expression): boolean {
   let use: ts.Expression = node;
   while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
   const parent = use.parent;
-  if (ts.isElementAccessExpression(parent)) return parent.expression === use;
+  if (ts.isElementAccessExpression(parent)) return parent.expression === use && elementUseIsSafe(parent);
   if (ts.isForOfStatement(parent)) return parent.expression === use;
-  if (ts.isSpreadElement(parent))
-    return ts.isArrayLiteralExpression(parent.parent) || ts.isCallExpression(parent.parent);
   if (ts.isExpressionStatement(parent)) return true;
   if (ts.isBinaryExpression(parent)) {
     const op = parent.operatorToken.kind;
@@ -198,18 +186,74 @@ function isSafeUse(node: ts.Expression): boolean {
   const method = parent.name.text;
   const call = parent.parent;
   if (!ts.isCallExpression(call) || call.expression !== parent) return method === "length";
-  if (RECEIVER_RETURNING.has(method)) return isSafeUse(call);
-  if (NON_ESCAPING_METHODS.has(method)) return true;
-  return CALLBACK_METHODS.has(method) && call.arguments.length >= 1 && callbackSeesNoArray(call.arguments[0]!);
+  if (RECEIVER_RETURNING.has(method)) {
+    // A comparator is a callback: `sort(cmp)` / `reverse()` with arguments declines.
+    if ((method === "sort" || method === "reverse") && call.arguments.length > 0) return false;
+    return isSafeUse(call);
+  }
+  return NON_ESCAPING_METHODS.has(method) && !call.arguments.some(ts.isSpreadElement);
 }
 
-function callbackSeesNoArray(callback: ts.Expression): boolean {
-  if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) return false;
-  // `reduce` passes (acc, element, index, array): the array is the fourth.
-  const call = callback.parent as ts.CallExpression;
-  const method = (call.expression as ts.PropertyAccessExpression).name.text;
-  const limit = method === "reduce" || method === "reduceRight" ? 3 : 2;
-  return callback.parameters.length <= limit && !callback.parameters.some((p) => p.dotDotDotToken);
+/**
+ * An element access on the alias: a read, or a plain `r[i] = v` store. A
+ * compound store (`r[i] += v`), `++` / `--`, `delete`, and any destructuring
+ * or `for…in` / `for…of` target decline: they mis-handle an externref element.
+ */
+function elementUseIsSafe(access: ts.ElementAccessExpression): boolean {
+  if (isDestructuringTarget(access)) return false;
+  let node: ts.Node = access;
+  while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+  const parent = node.parent;
+  if (ts.isBinaryExpression(parent) && parent.left === node) {
+    return parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+  }
+  if (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) {
+    return parent.operator !== ts.SyntaxKind.PlusPlusToken && parent.operator !== ts.SyntaxKind.MinusMinusToken;
+  }
+  return !ts.isDeleteExpression(parent);
+}
+
+/** `node` sits inside a destructuring-assignment pattern (`[r[0], r[1]] = …`, `for ([r[0]] of …)`). */
+function isDestructuringTarget(node: ts.Node): boolean {
+  let inner = node;
+  let parent = inner.parent;
+  while (
+    ts.isArrayLiteralExpression(parent) ||
+    ts.isObjectLiteralExpression(parent) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent) ||
+    ts.isParenthesizedExpression(parent) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === inner) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.left === inner &&
+      inner !== node &&
+      (ts.isArrayLiteralExpression(parent.parent) || ts.isObjectLiteralExpression(parent.parent)))
+  ) {
+    inner = parent;
+    parent = inner.parent;
+  }
+  if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === inner) return true;
+  if (inner === node) return false;
+  if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+    return parent.left === inner;
+  return (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === inner;
+}
+
+/**
+ * A reference that can run before the declaration initialises the binding:
+ * one written before it (in a function too: `function early() { return r; }`
+ * called first), or, for a local, one inside a nested function declaration,
+ * which is hoisted.
+ */
+function mayRunBeforeDeclaration(ref: ts.Node, decl: ts.VariableDeclaration, local: boolean): boolean {
+  if (ref.getStart() < decl.getEnd()) return true;
+  if (!local) return false;
+  const scope = enclosingFunction(decl);
+  for (let n: ts.Node | undefined = ref.parent; n && n !== scope; n = n.parent) {
+    if (ts.isFunctionDeclaration(n)) return true;
+  }
+  return false;
 }
 
 function fileHasDynamicScope(sourceFile: ts.SourceFile): boolean {
@@ -266,7 +310,7 @@ export function aliasedLocalVecType(
   const index = fctx.localMap.get(source.text);
   const type = index === undefined ? undefined : getLocalType(fctx, index);
   if (!type || type.kind !== "ref_null" || !isExternrefElementVec(ctx, type.typeIdx)) return undefined;
-  return aliasUsesAreSafe(ctx, decl, enclosingFunction(decl)) ? type : undefined;
+  return aliasUsesAreSafe(ctx, decl, enclosingFunction(decl), true) ? type : undefined;
 }
 
 function isOnlyBindingOfName(fn: ts.Node, binding: ts.VariableDeclaration): boolean {

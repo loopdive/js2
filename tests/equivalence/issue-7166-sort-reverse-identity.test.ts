@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 import { aliasSweepCases } from "./issue-7166-alias-sweep.js";
+import { SWEEP_SAME_AS_MAIN } from "./issue-7166-alias-sweep-known.js";
 
 const LANES = [
   { lane: "gc", options: {} },
@@ -19,10 +20,9 @@ const LANES = [
   { lane: "wasi", options: { target: "wasi" } },
 ] as const;
 
-async function expectSameOnAllLanes(src: string, fileName: string, skipWasi = false): Promise<void> {
+async function expectSameOnAllLanes(src: string, fileName: string): Promise<void> {
   const expected = evaluateAsJs(src).test!();
   for (const { lane, options } of LANES) {
-    if (skipWasi && lane === "wasi") continue;
     const result = await compile(src, { fileName, ...options });
     expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
     const instance = await instantiateWithRuntime(result);
@@ -218,33 +218,72 @@ describe("#7166 an alias that escapes or is rewritten keeps main's behaviour", (
   });
 });
 
+// Review repros (PR #6947 round 3): uses the allow-list must not admit on an
+// externref vec. Rows main answers correctly must match node; rows main also
+// gets wrong (or traps on) must at least compile to valid wasm and run.
+const R3_MATCH: [string, string][] = [
+  [
+    "module spread into a rest parameter",
+    `const keys = []; keys.push("a"); keys.push(1); keys.push("b");\nconst r = keys.sort();\nexport function test() { function f(...xs) { xs.push("z"); return xs.length; } return enc(String(f(...r)) + r.length + keys.length); }`,
+  ],
+  [
+    "local spread into a rest parameter",
+    `export function test() { const a = []; a.push("b"); a.push("a"); const r = a; function f(...xs) { xs.push("z"); return xs.length; } return enc(String(f(...r)) + a.length); }`,
+  ],
+  [
+    "module map identity on a mixed alias",
+    `const keys = []; keys.push("b"); keys.push(1);\nconst r = keys;\nexport function test() { return enc(r.map((x) => x).join()); }`,
+  ],
+  [
+    "module map identity on a sorted mixed alias",
+    `const keys = []; keys.push("b"); keys.push(1);\nconst r = keys.sort();\nexport function test() { const m = r.map((x) => x); return enc(String(m[0]) + String(m[1]) + m.length); }`,
+  ],
+  [
+    "module comparator sort on a mixed alias",
+    `const keys = []; keys.push("a"); keys.push(1); keys.push("b");\nconst r = keys.sort();\nexport function test() { r.sort((p, q) => (String(p) < String(q) ? -1 : 1)); return enc(keys.join()); }`,
+  ],
+];
+const R3_VALID: [string, string][] = [
+  [
+    "destructuring swap of alias elements",
+    `const keys = []; keys.push("a"); keys.push(1); keys.push("b");\nconst r = keys.sort();\nexport function test() { [r[0], r[2]] = [r[2], r[0]]; return enc(keys.join()); }`,
+  ],
+  [
+    "numeric comparator sort on a mixed alias",
+    `const keys = []; keys.push(3); keys.push(1); keys.push("2");\nconst r = keys;\nexport function test() { r.sort((p, q) => Number(p) - Number(q)); return enc(keys.join()); }`,
+  ],
+  [
+    "TDZ read of a sorted local alias",
+    `export function test() { const a = []; a.push("a"); a.push(1); a.push("b"); let t; try { t = r.length; } catch (e) { t = "tdz"; } const r = a.sort(); return enc(String(t) + r.length); }`,
+  ],
+  [
+    "TDZ read of a local alias",
+    `export function test() { const a = []; a.push("a"); a.push(1); a.push("b"); let t; try { t = r.length; } catch (e) { t = "tdz"; } const r = a; return enc(String(t) + r.length); }`,
+  ],
+  [
+    "closure declared before a local alias",
+    `export function test() { const a = []; a.push("a"); a.push(1); a.push("b"); const f = () => r.length; const r = a.sort(); return enc(String(f())); }`,
+  ],
+];
+describe("#7166 uses the alias rule must decline (round 3)", () => {
+  for (const [name, src] of R3_MATCH) it(name, () => expectSameOnAllLanes(`${ENC}${src}`, "probe.js"));
+  for (const [name, src] of R3_VALID) {
+    it(`${name} compiles to valid wasm`, async () => {
+      for (const { lane, options } of LANES) {
+        const result = await compile(`${ENC}${src}`, { fileName: "probe.js", ...options });
+        expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
+        expect(WebAssembly.validate(result.binary), lane).toBe(true);
+      }
+    });
+  }
+});
+
 // Generated use-form sweep (issue-7166-alias-sweep.ts). The default run is a
-// thinned slice; JS2WASM_FULL_SWEEP=1 runs every source × init. Measured on the
-// full sweep head vs main (a54cd9fb8a), 2026-10-28: 534 same, 180 fixed, 0
-// worse. The rows below fail IDENTICALLY on main and are skipped, not asserted:
-// an escaping alias declines to main's copy-on-flow, a typed `other` written
-// into a mixed alias copies on main too, and wasi's spread-call `Math.max` is a
-// separate gap.
-const ESCAPES_SAME_AS_MAIN = new Set([
-  "const t = r",
-  "[r]",
-  "{ v: r }",
-  "id(r)",
-  "return r",
-  "?: branch",
-  "|| operand",
-  "destructure",
-]);
-function sweepSameAsMain(name: string): "skip" | "no-wasi" | undefined {
-  const use = name.slice(name.indexOf(": ") + 2);
-  // A local string-element source keeps a typed slot, so its escapes are right.
-  if (ESCAPES_SAME_AS_MAIN.has(use) && (name.startsWith("module ") || name.includes(" mixed "))) return "skip";
-  if ((use === "r = other" || use === "destructuring write") && name.includes(" mixed ")) return "skip";
-  return use === "spread call" ? "no-wasi" : undefined;
-}
+// thinned slice (the mixed source, `a.sort()`); JS2WASM_FULL_SWEEP=1 runs all
+// 2,328 programs. Rows in SWEEP_SAME_AS_MAIN fail identically on main
+// (measured head vs base, see issue-7166-alias-sweep-known.ts) and are skipped.
 describe("#7166 alias use-form sweep", () => {
   for (const [name, src] of aliasSweepCases(process.env.JS2WASM_FULL_SWEEP === "1")) {
-    const known = sweepSameAsMain(name);
-    (known === "skip" ? it.skip : it)(name, () => expectSameOnAllLanes(src, "probe.js", known === "no-wasi"));
+    (SWEEP_SAME_AS_MAIN.has(name) ? it.skip : it)(name, () => expectSameOnAllLanes(src, "probe.js"));
   }
 });
