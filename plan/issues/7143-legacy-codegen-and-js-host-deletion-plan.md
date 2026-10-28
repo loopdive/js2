@@ -260,3 +260,66 @@ flips it to `ir-owned`.
   and A1 and the D3/D4 decisions.
 - Every slice PR body: the measurement it rests on (number + command), the gc
   byte-identity statement, and the gate exit codes run bare.
+
+## B0 — legacy-reach measurement (Opus, 2026-10-28)
+
+Landed: `scripts/measure-legacy-reach.mjs` (the tool, `pnpm run
+measure:legacy-reach -- …`), `scripts/legacy-reach-corpus.mjs` (corpus +
+vitest-body extractor), `scripts/legacy-reach-baseline.json` (written by
+`--update`), `tests/issue-7143-legacy-reach.test.ts` (pins the tool on
+`tests/fixtures/legacy-reach/`). Measured on `origin/main` = `df57a0e8e6`.
+
+**What it counts.** Every source is compiled with `experimentalIR: true,
+trackIrOutcomes: true` for `standalone` and `gc` (native-first). Each IR
+outcome row is a unit; it is joined to its AST (the function/class node at
+the row's line:column; for `<module-init>`, the top-level statements that
+are not function or class declarations). For kind X: `units` = rows whose
+unit lexically contains X, `demoted` = those with `legacyBodyEmitted`,
+`reasons` = demoted rows by unsupported code (`invariant:<code>` for
+invariants, `ir-patched-over-legacy` for rows where both bodies were
+emitted). Nested closures count toward the enclosing unit.
+
+**§1.3 reproduced** (`--corpus playground --target standalone`): 73 units, 14
+demoted — 12 `host-surface-unavailable`, 1 `call-graph-closure`, 1
+`body-shape-rejected`. Match. `PostfixUnaryExpression` 4 demoted units, ×4
+nodes (match). Not reproduced: `ReturnStatement` is 6 demoted units, not 5
+(5 `host-surface-unavailable` + `bcrd`, `call-graph-closure`).
+`StringLiteral` is 93 nodes in demoted units, not 79. §1.3 names no command
+for those two sub-counts.
+
+**Full corpus** (1,880 sources after de-duplication: playground 13,
+equivalence 1,514 extracted literals, test262 353 `language/` files the root
+tests cite; the 5 cutover-manifest sources are all playground duplicates):
+
+| target | units | demoted | top reasons | compile failures |
+| --- | --- | --- | --- | --- |
+| standalone | 4,232 | 2,042 | body-shape-rejected 1,160 · class-member-unsupported 141 · ir-patched-over-legacy 78 · call-graph-closure 71 | 30 |
+| gc | 4,232 | 2,050 | body-shape-rejected 1,166 · class-member-unsupported 141 · call-graph-closure 85 · ir-patched-over-legacy 69 | 30 |
+
+§3.5 rows 1–9 on standalone (units / demoted): ThrowStatement 138 / 137 ·
+WhileStatement 26 / 12 · RegularExpressionLiteral 21 / 21 · IfStatement
+244 / 187 · ConditionalExpression 353 / 292 · TypeOfExpression 72 / 60 ·
+DeleteExpression 24 / 24 · PostfixUnaryExpression 154 / 87 ·
+ReturnStatement 2,195 / 1,574. **No §3.5 kind is at zero on the full corpus.**
+The 13-example sample's "0 hits" for rows 1–7 does not hold once
+equivalence and test262 sources are in. Most demotes are whole-unit
+`body-shape-rejected`, so a twin's count falls only as the units around it
+are claimed.
+
+**Runtime**: 717.7 s and 737.6 s (two full runs, identical counts), 3 worker
+processes on a 4-core box with load average ~10 from other agents. That is
+under the 15-minute bar, with little margin on a loaded box.
+
+Caveats:
+- The test262 harness prefix is excluded: units at or above the assembly's
+  `bodyLineOffset`, and module-init statements above it. `negative` and
+  `flags: [module]` files are skipped.
+- The equivalence extractor takes literal first arguments of compile-helper
+  calls, plus a `const` that is initialised with a literal and passed by
+  name. Template literals with substitutions are skipped.
+- Some of the 30 compile failures are extractor false positives:
+  `array-push-reentrancy.test.ts` passes function bodies to a local `run`
+  wrapper. Failed compiles still contribute whatever outcome rows they
+  produced.
+- `--check` fails when the demoted count of any kind, or of a target's
+  total, grows. It is not wired into CI: a full run takes about 12 minutes.
