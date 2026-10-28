@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
-// #7143 slice A1 — the standalone-arm ratchet counts matching LINES per token
-// (the `rg -c` unit of the plan's §1.1 table), so a line with two reads of the
-// same flag counts once and `!ctx.standalone` also counts as `ctx.standalone`.
+// #7143 slice A1 — the standalone-arm ratchet counts matching LINES per token,
+// whole words only: a line with two reads of the same flag counts once,
+// `!ctx.standalone` also counts as `ctx.standalone`, and a prefix-sharing field
+// (`ctx.wasiFdWriteIdx`) is provider state, not an arm.
 import { describe, expect, it } from "vitest";
 import { countLines, TOKENS } from "../scripts/check-standalone-arms.mjs";
 
@@ -17,9 +18,10 @@ describe("#7143 A1 standalone-arm ratchet: countLines", () => {
       "if (!ctx.standalone) emitHost();",
       "if (noJsHost(ctx) || ctx.wasi) emitWasi();",
       "const unrelated = ctx.standaloneish;",
+      "if (ctx.wasiFdWriteIdx >= 0) emitFdWrite();",
     ].join("\n");
     expect(countLines(text)).toEqual({
-      "ctx.standalone": 3,
+      "ctx.standalone": 2,
       "!ctx.standalone": 1,
       "noJsHost(": 1,
       "ctx.wasi": 1,
