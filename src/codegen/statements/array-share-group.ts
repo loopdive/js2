@@ -313,7 +313,7 @@ function classifyUse(ctx: CodegenContext, identifier: ts.Identifier, container: 
       }
     }
     if (isInspectingUse(use, parent)) return safe();
-    if (reads && isPureReadUse(use, parent, container)) return safe();
+    if (reads && isPureReadUse(ctx, use, parent, container)) return safe();
     if (ts.isVariableDeclaration(parent)) {
       if (parent.initializer !== use || !ts.isIdentifier(parent.name)) return TYPED_USE;
       partners.push(parent.name);
@@ -545,18 +545,25 @@ const PURE_READ_GLOBALS = new Set(["JSON.stringify", "Object.keys", "Object.getO
  * group, whose elements are member vecs) `[...xs]` / `f(...xs)`, which copy
  * element values.
  */
-function isPureReadUse(use: ts.Node, parent: ts.Node, container: boolean): boolean {
+function isPureReadUse(ctx: CodegenContext, use: ts.Node, parent: ts.Node, container: boolean): boolean {
   if (ts.isBinaryExpression(parent))
     return parent.operatorToken.kind === ts.SyntaxKind.InKeyword && parent.right === use;
   if (ts.isSpreadElement(parent)) return !container;
   if (!ts.isCallExpression(parent) || !parent.arguments.includes(use as ts.Expression)) return false;
   const callee = skipValueWrappers(parent.expression);
-  if (ts.isIdentifier(callee)) return callee.text === "String";
+  if (ts.isIdentifier(callee)) return callee.text === "String" && isLibGlobal(ctx, callee);
   return (
     ts.isPropertyAccessExpression(callee) &&
     ts.isIdentifier(callee.expression) &&
-    PURE_READ_GLOBALS.has(`${callee.expression.text}.${callee.name.text}`)
+    PURE_READ_GLOBALS.has(`${callee.expression.text}.${callee.name.text}`) &&
+    isLibGlobal(ctx, callee.expression)
   );
+}
+
+/** Resolves only to ambient library declarations, not to a user binding that shadows the global. */
+function isLibGlobal(ctx: CodegenContext, id: ts.Identifier): boolean {
+  const decls = ctx.oracle.declarationsOf(id);
+  return decls.length > 0 && decls.every((decl) => decl.getSourceFile().isDeclarationFile);
 }
 
 function isExported(decl: ts.VariableDeclaration): boolean {

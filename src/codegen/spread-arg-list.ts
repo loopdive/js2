@@ -55,6 +55,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
+import { holeToUndefinedInstrs } from "./array-holes.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { noJsHost } from "./js-errors.js";
@@ -395,6 +396,8 @@ export function buildSpreadArgList(
               { op: "local.get", index: slot.dataLocal },
               { op: "local.get", index: idxLocal },
               { op: elemGetOp(slot.storageElem, undefined), typeIdx: slot.arrTypeIdx },
+              // (#7164) Spread iterates: a hole is a present `undefined`, never `$Hole`.
+              ...(ctx.usesArrayHoles && slot.storageElem.kind === "externref" ? holeToUndefinedInstrs(ctx, fctx) : []),
               ...coercionInstrs(ctx, unpackedElemType(slot.storageElem), storeType, fctx),
             ]
           : [

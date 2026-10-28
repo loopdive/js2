@@ -5316,7 +5316,9 @@ export function compileArrayLiteral(
     if (ts.isOmittedExpression(element)) return false;
     const value = ts.isSpreadElement(element) ? element.expression : element;
     const fact = ctx.oracle.typeFactOf(value);
-    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
+    // (#7164) `...anyArr` contributes `any` elements: `[0, ...g]` must not pick the f64 carrier.
+    const spreadAny = ts.isSpreadElement(element) && fact.kind === "array" && /^(any|unknown)$/.test(fact.element.kind);
+    return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function" || spreadAny;
   });
   // (#5269 R2-4) An element that is an object literal on the HOST-OBJECT path is
   // an open `$Object`, not a closed struct — but the first-element heuristic

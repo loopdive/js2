@@ -213,6 +213,7 @@ import {
 import { reserveArrayToPrimitiveString } from "./array-to-primitive.js";
 import { reserveVecOwnToPrimitive } from "./vec-own-to-primitive.js"; // (#6651 E3) own-method prefix to the vec arm
 import { excludeArgumentsArrayCarrier, holeTestInstrs } from "./array-holes.js";
+import { externHoleToMiss } from "./vec-externref-hole-presence.js"; // (#7164)
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { f64HolesActive, f64HoleTestInstrs } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 // (#2106 S1) function-level-only cycle with any-helpers.ts (which imports
@@ -7925,6 +7926,9 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
     f64HoleScratch = 2 + fn.locals.length;
     fn.locals.push({ name: "__f64hole_get_v", type: { kind: "f64" } });
   }
+  // (#7164) The externref carrier's `$Hole` reads through the same miss (a grown or shrunk `length` writes it).
+  const externHoleScratch = ctx.usesArrayHoles && ctx.holeTypeIdx !== undefined ? 2 + fn.locals.length : -1;
+  if (externHoleScratch >= 0) fn.locals.push({ name: "__extern_hole_get_v", type: { kind: "externref" } });
   const vecArms: Instr[] = [];
 
   // A non-global RegExp exec/match result is a nullable-native-string vec
@@ -8014,7 +8018,9 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
               else: [{ op: "local.get", index: f64HoleScratch }, ...readBox.boxOps],
             },
           ] satisfies Instr[])
-        : readBox.boxOps;
+        : elemType.kind === "externref" && externHoleScratch >= 0
+          ? externHoleToMiss(ctx, externHoleScratch, idxMiss)
+          : readBox.boxOps;
     vecArms.push(
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx },

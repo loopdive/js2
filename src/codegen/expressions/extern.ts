@@ -39,6 +39,8 @@ import {
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
 import { tupleStructFields } from "./spread-arguments-call.js";
+import { holeFreeVecCopyInstrs } from "./spread-elem-extern.js";
+import { holeToUndefinedInstrs } from "../array-holes.js";
 
 export function findExternInfoForMember(
   ctx: CodegenContext,
@@ -979,6 +981,7 @@ function compileSpreadCallArgs(
         const restType = paramTypes?.[paramOffset + restInfo.restIndex];
         const spreadType = compileExpression(ctx, fctx, restArg.expression, restType);
         if (spreadType && restType && !valTypesMatch(spreadType, restType)) coerceType(ctx, fctx, spreadType, restType);
+        if (spreadType && restType) emitRestHoleFreeCopy(ctx, fctx, restType);
       } else {
         // Single non-spread arg as rest — wrap in vec struct { 1, [val] }
         fctx.body.push({ op: "i32.const", value: 1 });
@@ -1132,6 +1135,9 @@ function compileSpreadCallArgs(
         fctx.body.push({ op: "local.get", index: dataLocal });
         fctx.body.push({ op: "i32.const", value: i });
         emitBoundsCheckedArrayGet(fctx, arrTypeIdx, spreadElemType);
+        // (#7164) Spread iterates: a hole binds `undefined`, never the `$Hole` marker.
+        if (ctx.usesArrayHoles && spreadElemType.kind === "externref")
+          fctx.body.push(...holeToUndefinedInstrs(ctx, fctx));
         // Coerce spread element to expected param type if they differ
         const expectedParamType = paramTypes[paramIdx];
         if (expectedParamType && !valTypesMatch(spreadElemType, expectedParamType)) {
@@ -1155,6 +1161,30 @@ function compileSpreadCallArgs(
   for (; paramIdx < paramTypes.length; paramIdx++) {
     pushDefaultValue(fctx, paramTypes[paramIdx]!, ctx);
   }
+}
+
+/**
+ * (#7164) `f(...xs)` into a rest parameter: in a module that can hold holes,
+ * pass a hole-free copy of an externref vec — the rest array is built from the
+ * iterated values, so a hole is a present `undefined` (and the callee no longer
+ * aliases the caller's array). Other modules and element kinds are unchanged.
+ */
+function emitRestHoleFreeCopy(ctx: CodegenContext, fctx: FunctionContext, restType: ValType): void {
+  if (!ctx.usesArrayHoles || (restType.kind !== "ref" && restType.kind !== "ref_null")) return;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, restType.typeIdx);
+  const arrDef = arrTypeIdx < 0 ? undefined : ctx.mod.types[arrTypeIdx];
+  if (arrDef?.kind !== "array" || arrDef.element.kind !== "externref") return;
+  const holeMap = holeToUndefinedInstrs(ctx, fctx);
+  const local = (name: string, type: ValType): number =>
+    allocLocal(fctx, `__rest_copy_${name}_${fctx.locals.length}`, type);
+  const locals = {
+    src: local("src", { kind: "ref_null", typeIdx: restType.typeIdx }),
+    len: local("len", { kind: "i32" }),
+    cap: local("cap", { kind: "i32" }),
+    i: local("i", { kind: "i32" }),
+    dst: local("dst", { kind: "ref_null", typeIdx: arrTypeIdx }),
+  };
+  fctx.body.push(...holeFreeVecCopyInstrs(restType.typeIdx, arrTypeIdx, locals, holeMap));
 }
 
 export {

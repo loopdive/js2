@@ -20,9 +20,14 @@ related: [7151, 7154, 7165]
 # grown hole as `undefined` — one guarded `holeToUndefinedInstrs` at the
 # existing element read in each (literals.ts +5, loops.ts +2). The read sites
 # live in these functions; a helper elsewhere would not shrink them.
+# 2026-10-28 (#7164 r3): the dynamic element read `__extern_get_idx` maps an
+# externref vec's `$Hole` to its existing index miss (object-runtime.ts +6, in
+# the carrier loop that owns the read); `[0, ...anyArr]` picks the externref
+# carrier (literals.ts +2 more).
 loc-budget-allow:
   - src/codegen/literals.ts
   - src/codegen/statements/loops.ts
+  - src/codegen/object-runtime.ts
 func-budget-allow:
   - src/codegen/literals.ts::compileArrayLiteral
 ---
@@ -53,9 +58,12 @@ Acceptance: node's output for all programs; no trap in `join` after `sort`; host
 
 ## Resolution (2026-10-27)
 
-Test: `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`. It runs
-6 programs × 12 reads on 3 lanes (gc native-first, standalone, wasi) against node,
-plus 9 share-group guards × 3 lanes. Result: 243/243.
+Test: `tests/equivalence/issue-7164-externref-vec-length-growth.test.ts`, run
+on 3 lanes (gc native-first, standalone, wasi) against node. Result: 351/351.
+
+- 6 programs × 12 reads.
+- 10 share-group guards.
+- r3: 35 readers after a grow (the audit below).
 
 **Diagnosis (verified on `origin/main` 2b0565cb14).** Two causes:
 
@@ -102,30 +110,81 @@ plus 9 share-group guards × 3 lanes. Result: 243/243.
   `[...g]` (`literals.ts`) and `for (const [i, v] of g.entries())`
   (`statements/loops.ts`) now map `$Hole` to `undefined` on externref vecs in
   hole-armed modules.
+- **r3: every element reader maps `$Hole` the same way.** A grown or shrunk
+  `length` writes `$Hole`, so any reader that passed the raw slot on handed the
+  callee the marker object.
+  - The shared helper is the existing `holeToUndefinedInstrs` (array-holes),
+    used at each read site.
+  - Call/`new`/method/`super` spread goes through `compileSpreadCallArgs`
+    (`expressions/extern.ts`).
+  - A rest parameter now receives a hole-free copy
+    (`holeFreeVecCopyInstrs`, `expressions/spread-elem-extern.ts`) instead of
+    aliasing the caller's vec.
+  - The shared spread arg-list builder (`spread-arg-list.ts`) covers
+    `Array.of(...g)`, `Math.max(...g)` and `push(...g)`.
+  - The array-iterator builder (`array-methods.ts`) covers
+    `[...g.entries()]` on wasi.
+  - The dynamic index read `__extern_get_idx` (`object-runtime.ts`, via
+    `externHoleToMiss` in `vec-externref-hole-presence.ts`) covers HOFs on an
+    `any` receiver, `(a as any)[i]` and the array → primitive join behind
+    `${g}` on wasi.
+  - `[0, ...anyArr]` now takes the externref carrier instead of f64
+    (`literals.ts`), so `'y'` is no longer coerced to `NaN`.
+- **r3: the pure-read whitelist resolves symbols, not spellings.** `String`,
+  `JSON`, `Object` and `Array` count only when every declaration is ambient
+  library code (`ctx.oracle.declarationsOf`). A user `function String(a:
+  string[])` is an ordinary typed call, so the group keeps base's layout and
+  base's behaviour (a trap, the same as on `origin/main`).
 
-No host imports and no new raw checker calls. Growth grants for `literals.ts`
-(+5) and `loops.ts` (+2) are in this file's frontmatter.
+No host imports and no new raw checker calls. The frontmatter has growth
+grants for `literals.ts`, `loops.ts` and `object-runtime.ts`, and a function
+grant for `compileArrayLiteral`.
+
+**Reader audit after `g.push('y'); g.length = 3`** (the `readers` rows of the
+test):
+
+| Reader | gc / standalone | wasi |
+|---|---|---|
+| `g[i]`, `typeof`, `==`, string concat of an element | ok | ok |
+| `join`, `toString`, `String(g)`, `"" + g`, `${g}` | ok | ok (`${g}` fixed in r3) |
+| `JSON.stringify`, `sort`, `forEach`, `filter`, `find*`, `findLast*`, `reduce*`, `some`/`every`, `at`, `pop`, `shift` | ok | ok |
+| `[...g]`, `[0, ...g, 9]` | fixed (r2/r3) | fixed |
+| `f(...g)`, `new C(...g)`, `o.m(...g)`, `Math.max(...g)`, `Array.of(...g)` | fixed (r3) | fixed, except `Array.of(...g)` traps (as on main) |
+| rest parameter `f(...r)` | fixed (r3) | `i in r` wrong (#7171) |
+| `super(...r)` | fixed (r3) | first argument lost (as on main) |
+| destructuring with defaults, array-pattern rest | ok | ok |
+| for-of, `values()` / `keys()` / `entries()` (spread and for-of) | ok | ok (entries fixed r3) |
+| `concat`, `slice`, `splice` result, `reverse`, `copyWithin`, `unshift` | ok | `in` wrong (#7171) |
+| `indexOf` / `includes` / `lastIndexOf` | ok | indexOf finds the hole (#7171) |
+| `map` | `1 in m` true (#7170) | same |
+| `Object.values` / `entries` / `assign` / `{...g}` | holes listed as `null` (as on main, #7170) | same |
+| `Array.from(g)` | traps "illegal cast", dense too (as on main) | same |
+| `h.apply(null, g)` | hole reads `null` (as on main) | same |
+| `(g as any).join("-")` | prints `undefined`/`null` elements verbatim, dense too (as on main) | same |
+
+No row passes the `$Hole` marker to user code on any lane.
 
 **Now correct after `length` growth:**
 
 | Lane | Reads |
 |---|---|
-| gc, standalone | index, `in`, for-in, `join`, `forEach` skip, `Object.keys`, `JSON.stringify`, spread, `entries()`, `sort` (holes last, no trap) |
-| wasi | index, `join`, `forEach`, `JSON.stringify`, spread, `entries()`, `sort` |
+| gc, standalone | index, `in`, for-in, `join`, `forEach` skip, `Object.keys`, `JSON.stringify`, spread, `entries()`, `sort` (holes last, no trap), every spread and iterator reader in the audit |
+| wasi | index, `join`, `forEach`, `JSON.stringify`, spread, `entries()`, `sort`, template / `String`, call spread |
 
 **Share-group guards** (all lanes): a typed `string[]` parameter called before
 or after the grow, a typed `string[]` field, a `number[][]` alias, the
-`let cur = a; …; cur = b` pattern, and `boolean[]` / class-typed aliases. Each
-matches node, as on `origin/main`.
+`let cur = a; …; cur = b` pattern, `boolean[]` / class-typed aliases, and a
+shadowing `String` (r3). Each matches `origin/main`.
 
 **Left out.** The test marks each of these rows `it.fails` with the issue that
 owns it, so a fix flips the row.
 
 Owned by other issues:
 
-- `hasOwnProperty` (gc/standalone) and `map` (all lanes) do not recognise
+- `hasOwnProperty` (gc/standalone), `map` and `Object.values` do not recognise
   `$Hole` on an externref vec: #7170.
-- wasi `in` and for-in report holes as present: #7171.
+- On wasi, `in`, for-in, `indexOf`, and `in` on `slice` / `concat` /
+  `splice` / rest results, report holes as present: #7171.
 - `delete g[i]` keeps the value in the slot, so `join` / `forEach` / `map` /
   spread / `entries` / `sort` see it: #7169 / #7170. wasi delete reads: #7171.
 - `new Array(3)` reads on gc native-first (`in`, `hasOwnProperty`, for-in,
@@ -136,35 +195,45 @@ Owned by other issues:
 Not tracked by an issue yet (behaviour is the same on `origin/main` unless
 noted):
 
+- These fail even on dense arrays:
+  - `Array.from(anyVec)` traps.
+  - `t.push(...g)` pushes one element.
+  - `apply` reads a hole as `null`.
+  - A join through an `any` receiver prints `undefined`/`null` elements.
+  - On wasi, `super(...r)` drops the first argument and `Array.of(...g)` traps.
 - wasi `Object.keys` / `hasOwnProperty` on an `any[]` are wrong even when the
   array is dense.
 - A group that stays on a typed vec still shows a grow as `null`s / `false`s.
-  - Covers declared `string[]` / `boolean[]` arrays and `any[]` arrays aliased
-    to a typed place.
+  - This covers declared `string[]` / `boolean[]` arrays, `any[]` arrays
+    aliased to a typed place, and the shadowed-`String` group.
   - Growing a typed string vec past its capacity traps "array element access
-    out of bounds". The `aliasTypedStr` guard row is marked `it.fails`.
+    out of bounds".
   - A declared `number[]` grow still answers `1 in a` true.
 - Compound length stores on a typed vec (`length += n`) still fail to compile.
-- Reading `p.v` through an `any[]` holding class instances gives `NaN`
-  (dynamic property read on a struct), even without a `length` store.
-  - A non-escaping `any[]` of class instances with a growing store now takes
-    that carrier. The review's `elem_ref_pushes` row gives a different wrong
-    answer than on `origin/main` (`NaN` sum instead of `1 in xs` true).
+- Reading `p.v` through an `any[]` holding class instances gives `NaN`, even
+  without a `length` store. The review's `elem_ref_pushes` row gives a
+  different wrong answer than on `origin/main`.
+- `Object.getOwnPropertyNames(g)` lists hole indices (`objkeys_isarray`;
+  different wrong answer than on `origin/main`): #7170 family.
 
-**Bytes.** Unoptimized; base `origin/main` 2b0565cb14 vs head. Corpus: 13
-playground examples, 1,703 sources extracted from `tests/equivalence/*.test.ts`,
-and the review's 85 length-store probes.
+**Bytes.** Unoptimized; base `origin/main` 2b0565cb14 vs head.
 
-- Playground examples: unchanged on every lane.
-- Equivalence sources: only the three `array-push-pop.test.ts` programs with a
-  `length` store changed (+84 B each, all lanes).
-- Review probes: 78 of 85 changed.
+Corpus (1,886 programs per lane):
 
-| Lane | Programs changed | Total delta |
-|---|---|---|
-| gc | 81 | +2,291 B |
-| standalone | 81 | +6,807 B |
-| wasi | 81 | +404 B |
+- 13 playground examples
+- 1,690 sources extracted from `tests/equivalence/*.test.ts`
+- 183 review and audit probes
+
+| Lane | Programs changed | Total delta | Playground | Equivalence sources | Probes |
+|---|---|---|---|---|---|
+| gc | 222 | +11,063 B | 1 (+20 B) | 48 (+1,152 B) | 173 (+9,891 B) |
+| standalone | 221 | +19,702 B | 0 | 48 (+1,151 B) | 173 (+18,551 B) |
+| wasi | 213 | +4,819 B | 1 (+22 B) | 40 (+1,064 B) | 172 (+3,733 B) |
+
+- The playground change is `js/algorithms.ts`.
+- The equivalence-source changes: the three `array-push-pop` length-store
+  programs (+84 B each), and about +20 B in hole-armed modules (mostly the
+  `defineProperty` tests). That +20 B is the `$Hole` arm in `__extern_get_idx`.
 
 The #6937 share-group probe sets (`cases13`, `sweepdef`, `cases11`: 220
 programs × 3 lanes) give byte-identical output and identical results on head
