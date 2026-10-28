@@ -2260,29 +2260,20 @@ function compileArrayDestructuringAssignment(
         // Dispatch on the rest target kind (mirrors the non-rest element
         // dispatch below). The collected vec lives in `tmpRestVec`.
         if (ts.isIdentifier(restTarget)) {
-          const restName = restTarget.text;
-          const durableModuleGlobalIdx = fctx.moduleInitChunk
-            ? currentSourceModuleGlobalIndex(ctx, restTarget)
-            : undefined;
-          let restLocalIdx = durableModuleGlobalIdx === undefined ? fctx.localMap.get(restName) : undefined;
-          if (restLocalIdx === undefined) {
-            if (durableModuleGlobalIdx === undefined) restLocalIdx = allocLocal(fctx, restName, resultType);
-          } else {
-            // If the rest local was pre-allocated as externref (e.g. var y;),
-            // allocate a fresh local with the correct vec type and redirect
-            // the name mapping. The old externref slot becomes dead.
-            // Cannot change type in-place: earlier __get_undefined() init
-            // targets externref and would cause illegal cast (#962, #971).
-            const existingSlotIdx = restLocalIdx - fctx.params.length;
-            if (existingSlotIdx >= 0) {
-              const slot = fctx.locals[existingSlotIdx];
-              if (slot && slot.type.kind === "externref") {
-                restLocalIdx = allocLocal(fctx, restName, resultType);
-              }
-            }
+          // (#4495) The same resolution as an element target below: the
+          // binding's own slot — local or module global — coerced on store.
+          // An externref slot (`var y;`, or one widened because the binding
+          // also holds a non-array) is stored into, never shadowed by a fresh
+          // vec local: a redirect made the original slot dead for every read
+          // after a conditional or looped rest write.
+          let restLocalIdx = fctx.localMap.get(restTarget.text);
+          const restGlobalIdx =
+            restLocalIdx === undefined ? currentSourceModuleGlobalIndex(ctx, restTarget) : undefined;
+          if (restLocalIdx === undefined && restGlobalIdx === undefined) {
+            restLocalIdx = allocLocal(fctx, restTarget.text, resultType);
           }
           fctx.body.push({ op: "local.get", index: tmpRestVec });
-          emitResolvedIdentifierWriteFromStack(ctx, fctx, restTarget, resultType, restLocalIdx, durableModuleGlobalIdx);
+          emitResolvedIdentifierWriteFromStack(ctx, fctx, restTarget, resultType, restLocalIdx, restGlobalIdx);
         } else if (ts.isObjectLiteralExpression(restTarget)) {
           // `[...{ 0: x, length }] = vals` — destructure the collected vec
           // through an object pattern using array-like semantics (#2757).
