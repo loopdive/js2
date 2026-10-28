@@ -108,6 +108,7 @@
  */
 import { forEachChild, ts } from "../ts-api.js";
 import { readEnv } from "../env.js";
+import { identifierWritesOf } from "../ir/identifier-writes.js";
 
 /** The host facts this analysis needs; kept tiny so it can run standalone. */
 export interface NumericPropertyAnalysisHost {
@@ -654,6 +655,12 @@ function collectNumericFlowFacts(
         else if (ALWAYS_NUMERIC_COMPOUND.has(op)) define(node, target, { forcedNumeric: true });
         else if (op === ts.SyntaxKind.PlusEqualsToken) define(node, target, { expr: node });
         else if (op >= ts.SyntaxKind.FirstAssignment && op <= ts.SyntaxKind.LastAssignment) define(node, target, {});
+      } else if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        // (#4495) A destructuring assignment defines every pattern target: with
+        // the paired literal element when there is one, else opaquely. Without
+        // this, `[a = 99] = [null]` contributed only its default `99`.
+        for (const w of identifierWritesOf(node))
+          define(node, w.target.text, w.kind === "value" ? { expr: w.expr! } : {});
       } else if (ts.isParameter(node) && isFunctionLikeWithBody(node.parent)) {
         const owner = functionBindingName(node.parent);
         const index = node.parent.parameters.indexOf(node);

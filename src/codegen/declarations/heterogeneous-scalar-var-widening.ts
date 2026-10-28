@@ -52,7 +52,8 @@ import {
   updateRetypesModuleIdentifier,
 } from "../../ir/update-retyped-bindings.js";
 import { ts } from "../../ts-api.js";
-import type { CodegenContext } from "../context/types.js";
+import { getLocalType } from "../context/locals.js";
+import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { localGlobalIdx } from "../registry/imports.js";
 import { reassignedFunctionBindingIsDynamic } from "./reassigned-function-binding-widening.js";
 
@@ -217,6 +218,22 @@ export function moduleGlobalIsDynamicButStaticallyPrimitive(ctx: CodegenContext,
   if (decl === undefined || !ts.isIdentifier(decl.name) || !isModuleScoped(decl)) return false;
   const tag = ctx.oracle.staticJsTypeOf(id);
   return tag !== "mixed" && HETEROGENEOUS_PRIMITIVE_SLOT_TAGS.has(tag);
+}
+
+/**
+ * (#4495) {@link moduleGlobalIsDynamicButStaticallyPrimitive}, plus its
+ * function-local twin: a local the mixed-assignment analysis demoted to an
+ * externref slot keeps its initializer's checker type just the same, so a
+ * static `typeof x` fold would report that type forever.
+ */
+export function slotIsDynamicButStaticallyPrimitive(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
+  const localIdx = fctx.mixedAssignmentCarrierVars?.has(id.text) ? fctx.localMap.get(id.text) : undefined;
+  if (localIdx !== undefined && getLocalType(fctx, localIdx)?.kind === "externref") return true;
+  return moduleGlobalIsDynamicButStaticallyPrimitive(ctx, id);
 }
 
 /**

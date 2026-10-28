@@ -1,19 +1,29 @@
 ---
 id: 4495
 title: "Standalone: a string-initialised JS local keeps a native-string slot and stores NULL when assigned a dynamic value"
-status: ready
+status: done
 sprint: current
 blocked_on: ""
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-10-28
+completed: 2026-10-28
+assignee: ttraenkler/opus-4495
 priority: high
 horizon: l
 feasibility: hard
 task_type: bug
 area: codegen
 goal: standalone
-related: [4206, 4205]
+related: [4206, 4205, 4500]
 architect_spec: required
+loc-budget-allow:
+  # 2026-10-28 (#4495): +7 lines. Route 2 of the numeric-local proof
+  # (collectNumericFlowFacts) must see destructuring-assignment targets, or it
+  # "proves" `let a: number | null = 5; [a = 99] = [null]` numeric from the
+  # default alone and narrows the slot to f64 (measured: `a === null` → false).
+  # The branch must live in that walk; the write enumeration itself is in the
+  # new src/ir/identifier-writes.ts.
+  - src/codegen/numeric-property-analysis.ts
 ---
 
 # Standalone: dynamic value assigned into a native-string slot becomes NULL
@@ -260,3 +270,171 @@ The issue's 4 criteria + the Step-4 arms. The expected test262 yield is the
 #4206 rows: 4 `result === undefined` rows plus whatever the 13 crash rows'
 underlying assertions do — re-measure, expect modest (~single digits) direct
 flips; the value is un-blocking #4206's cluster arithmetic, not a big number.
+
+## Implementation record (opus-4495, 2026-10-28)
+
+### Step 1 finding — the issue's repros were already fixed on main
+
+Re-measured on `df57a0e8e6` (main, 2026-10-28) before touching anything: all
+three crash repros **pass** on standalone and gc. A first-parent bisect from
+`907b84f903` (the plan commit, where the `id(1)` repro still traps with
+`dereferencing a null pointer`) lands on `0d87f21636` (merge of PR #4658), and
+the inner bisect on **`bbe50022de` — "fix(#4206): widen a primitive-pinned
+module slot on an unconstrainable RHS"** (2026-08-19). That commit is exactly
+this plan's Step 2 for the module-binding analysis
+(`src/ir/heterogeneous-module-bindings.ts`): a `mixed` RHS now widens a
+primitive-initialised module slot. The function-local analysis
+(`src/codegen/analysis/mixed-assignment-carrier.ts`) already widened on a plain
+`x = <mixed>` before that. `type-coercion.ts`'s `ref.null` arm is untouched by
+both.
+
+So the slot-decision sites are the two definition-side analyses above, and the
+plain `x = v` shape is closed. What was still open is the rest of Step 2:
+"some **reaching assignment**" — both analyses recognised a write only as
+`x = v` (plus `||=`/`&&=`/`??=` on the module side).
+
+### Residual matrix (`.tmp/probe2.mts`, script-mode `.js`, both lanes, top level + function local)
+
+Measured base = `df57a0e8e6`, branch = this PR. A cell is one (scope × lane);
+each row has 4 cells. "ok" means spec-correct.
+
+| shape (`var r = 'r'` unless noted) | base | branch |
+|---|---|---|
+| `r = id(1)` (the issue's repro), `let` twin, nested-fn / arrow write | 4/4 ok | 4/4 ok |
+| `[r] = [id(1)]` | 0/4 — null deref | **4/4** |
+| `var o = { r: id(3) }; ({ r } = o)` | 0/4 — null deref | **4/4** |
+| `r &&= id(1)` / `r ||= id(1)` (`r = ''`) | 2/4 each — fn traps | **4/4** |
+| `for (r of [id(1)]) {}` | 2/4 — fn traps | **4/4** |
+| `var r = '5'; r++` | 2/4 — fn leaves `'5'` | **4/4** |
+| `var r = '5'; r -= 1` | 0/4 — null deref | **4/4** |
+| `var r = true; r++` | 2/4 | **4/4** |
+| `typeof r` after `r = id(1)` / after `++r` | 2/4 — fn folds `"string"` | **4/4** |
+| controls: string-only reassignment, `String(id(1))`, numeric swap `[a,b]=[b,a]`, `for (w of ['p','q'])` | 4/4 | 4/4 |
+
+Total non-ok cells across the 34-row matrix (136 cells): **40 → 14**. The 14 left are four
+rows, each a different mechanism and all outside slot typing — see
+*Residuals* below.
+
+### What changed
+
+- **`src/ir/identifier-writes.ts` (new)** — `identifierWritesOf(node)`: every
+  store one AST node performs into a bare identifier (plain and logical
+  assignment, array/object destructuring assignment, for-of targets, `++`/`--`,
+  numeric compound assignment), paired with WHAT is stored: the named value
+  (a literal source element / property, a default), an element / property of a
+  non-literal source, a ToNumeric write-back, or unknown.
+  `identifierWriteTag(oracle, write, initialTag)` answers the JS tag through
+  `ctx.oracle` only (`staticJsTypeOf`, `typeFactOf`, `propertyFactOf`) — no new
+  checker query. Both analyses consume it, so they cannot disagree on what a
+  write stores.
+- **`mixed-assignment-carrier.ts`** (function locals) and
+  **`heterogeneous-module-bindings.ts`** (module bindings) index those writes
+  instead of `x = v` only. The module analysis leaves `++`/`--` to
+  `update-retyped-bindings.ts` (#4208 S2): counting them there too demoted the
+  IR-owned module init (6 red cases in `tests/issue-4208-update-to-number-ir`
+  until excluded).
+- **`typeof` on a widened function local** — `slotIsDynamicButStaticallyPrimitive`
+  (heterogeneous-scalar-var-widening.ts) adds the function-local twin of the
+  #4204 module guard; both `typeof` fold sites in `typeof-delete.ts` call it.
+- **`numeric-property-analysis.ts`** — route 2 of the numeric-local proof now
+  records destructuring-assignment targets. Without it, widening
+  `let a: number | null = 5; [a = 99] = [null]` handed the slot to the #4121
+  override, whose def-site proof saw only the default `99` and narrowed the
+  slot to **f64** — measured `a === null ? 1 : 2` → `2` (JS: `1`). Base kept
+  that slot externref only because the destructuring write was invisible.
+
+### Measurement protocol (all arms run by me, 2026-10-28, same box)
+
+**Arm 1 — repro gate.** The issue's three repros pass on standalone and gc on
+both base and branch (fixed upstream, see Step 1); pinned in
+`tests/issue-4495.test.ts` (70 cases: repros, the residual-matrix rows above
+on both lanes × both scopes, controls, and a precision ratchet asserting no
+local of a same-type-writes function is widened).
+
+**Arm 2 — widening-precision census** (`.tmp/census.mts`): every
+template-literal program in `tests/equivalence/*.test.ts` compiled as both `.ts`
+and `.js`, plus `website/playground/examples/**/*.ts`; 1,810 units compiled.
+Counting named locals of the unit's own functions plus `__mod_*` globals:
+
+| | slots | string slots | widened by branch |
+|---|---:|---:|---:|
+| all units | 2,033 | 126 | **2** (0.10 %) |
+| of which string slots | — | 126 | **0** (0.00 %) |
+
+The 2 are `f64 → externref` for a nested pattern under a non-literal source
+(`[[x]] = vals`, `vals: number[][]`) — its element type is not expressible as
+an expression, so it stays `unknown`. Well under the plan's 5 % stop line. Two
+earlier predicate versions failed this arm and were tightened: treating every
+non-literal destructuring source as `unknown` widened 14 `f64` slots
+(`[x, y, z] = vals` with `vals: number[]`), and `for (w of ['p','q'])` widened
+a string slot; both now read the element/property type from the oracle.
+
+**Arms 3 + 4 — scoped test262 A/B, standalone and gc.** In-process
+`runTest262File` driver, quickjs eval provider rebuilt per arm (compiler +
+runtime bundles rebuilt per arm), base = `df57a0e8e6` by file copy, branch =
+this PR. 2,163 files per arm per lane:
+
+| lane | arm | with | addition | types/string | logical-assignment | postfix-inc | prefix-inc | postfix-dec | prefix-dec | compound-assignment | assignment | for-of |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| standalone | base | 177/181 | 45/48 | 24/24 | 60/78 | 31/38 | 30/33 | 30/37 | 31/34 | 432/454 | 461/485 | 719/751 |
+| standalone | branch | 177/181 | 45/48 | 24/24 | 60/78 | 31/38 | 30/33 | 30/37 | 31/34 | 432/454 | 461/485 | 719/751 |
+| gc | base | 175/181 | 45/48 | 24/24 | 60/78 | 31/38 | 30/33 | 30/37 | 31/34 | 432/454 | 461/485 | 718/751 |
+| gc | branch | 175/181 | 45/48 | 24/24 | 60/78 | 31/38 | 30/33 | 30/37 | 31/34 | 432/454 | 461/485 | 718/751 |
+
+**Zero transitions in either direction on either lane, and zero changed error
+messages among the non-passing rows.** Totals: standalone 2,040 / 105 / 18 CE,
+gc 2,037 / 108 / 18 CE, identical per arm.
+
+Two corrections to this file's earlier numbers: the `with` baseline is no
+longer 113 / 55 / 13 — main is at **177 pass / 3 fail / 1 CE** standalone. None
+of the 4 non-passing `with` rows is a slot defect (two Proxy-env traps, one
+TypedArray-in-proto-chain, one #1387 CE). So the "4 `result === undefined`"
+and "13 `__str_concat`" rows this file attributed to #4495 have all already
+moved, and this PR has no direct test262 yield in the buckets measured. Its
+value is the 26 residual-matrix cells above.
+
+**Arm 5 — perf.** `.tmp/perf.mts`: an untyped `.js` 10⁶-iteration concat loop
+that also exercises every new write form with same-type values (`||=`, `&&=`,
+`[a, b] = [b, a]`, `k++`, `k -= 1`, `for (w of ['p','q'])`). The branch binary
+is **byte-identical** to base on both lanes (standalone sha `5a35a300f0cb3f40`,
+60,414 B; gc sha `0b5e586715486775`, 106,027 B), so the runtime is identical by
+construction. Medians of 3, same box: standalone 58.7 ms base / 58.5 ms
+branch; gc 75.5 / 64.4 ms (noise). An earlier branch version that typed for-of
+elements as `unknown` was +62 % bytes and +18 % time on this bench — that is
+what the arm caught, and why the element type now comes from the oracle.
+
+**Regression checks.** `tests/issue-4495.test.ts` 70/70. Neighbouring suites
+(3765, 4121 ×3, 4122, 4131 ×2, 4204, 4206 ×3, 4208 update-IR, 4428, 3364, 4491
+function-binding): 202/208 on branch, **the same 6 failures as on base**
+(4121 ×2, 4122 ×2, 4491 ×2 — pre-existing, not touched here).
+`node scripts/equivalence-gate.mjs` on the branch: exit 0, 2,447 passing,
+20 failing, no new regressions (2 baseline failures now pass —
+`delete-sentinel` and `reflect-api`; not ratcheted here, main owns the
+baseline).
+
+### Residuals — NOT fixed here, need their own issues
+
+Not filed: `claim-issue.mjs --allocate` refused (the open-PR id scan needs `gh`
+GraphQL, which is unavailable in this session) and the safe choice was not to
+pass `--allow-unscanned`. Each is a separate mechanism:
+
+1. **A widened binding's READS still carry the initializer's checker type.**
+   `var r = 'r'; r = id(1); var s = r; '' + s` traps: `s` takes its slot from
+   `r`'s stale type `string`, so the widening does not propagate through an
+   initializer. Same root for a call argument (`g(r)` with
+   `function g(a){ return '' + a }` answers `"null"`) and for a function's
+   inferred return type (`return r` → string result). 4/4 cells, both lanes.
+2. **Destructuring-assignment RHS object literal typed from the pattern.**
+   `({ a: r } = { a: id(1) })` (or `{ a: 5 }`) stores `undefined`: the RHS
+   literal is compiled against the pattern's contextual type `{ a: string }`,
+   so the value is lost before it reaches the (now correctly widened) slot.
+   The shorthand form from a variable source works. 4/4 cells.
+3. **`typeof x` before a function-local `var x = 'init'`** folds to
+   `"string"`; `readPrecedesVarInitializer` (typeof-delete.ts) is module-only.
+   2/4 cells (function scope).
+4. **`id(true)` returns a Number** — `function id(x){ return x }` called only
+   with a boolean: `typeof id(true) === 'number'`. Parameter/return inference,
+   no slot involved; the plan excludes params. 4/4 cells.
+
+Also seen, pre-existing and identical on base: `[a = 99] = [null]` fires the
+default (array-pattern default treats `null` as `undefined`).
