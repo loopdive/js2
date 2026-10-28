@@ -295,6 +295,11 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
   // without this the slot keeps the initializer's narrow representation
   // (`var f = 123` → f64) and the write-back is unrepresentable.
   if (initialDomain !== "function" && bindingHasAnnexBExistingVarUpdate(decl)) return true;
+  // (#4495) An explicit TypeScript annotation is the representation contract —
+  // the module-binding analysis's rule (heterogeneous-module-bindings.ts). A
+  // write that violates it is user error under diagnostics-off compilation;
+  // widening for it would put a typed local on the boxed carrier.
+  if (decl.type !== undefined) return false;
   let mixed = false;
 
   // (#4122) `"mixed"` is the oracle's answer for UNRESOLVABLE, not for "proven
