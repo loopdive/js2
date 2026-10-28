@@ -11758,14 +11758,6 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
-      "path": "src/shared/identifier-writes.ts",
-      "state": "unmigrated",
-      "layer": "mixed-needs-split",
-      "destination": "frontend-ts",
-      "owner": "3518-coordinator",
-      "nextBoundary": "TypeScript-AST write enumeration for slot widening; moves to the TS frontend with its two slot-analysis callers."
-    },
-    {
       "path": "src/ir/analysis/counted-string-append.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

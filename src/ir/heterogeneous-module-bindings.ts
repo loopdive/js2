@@ -16,7 +16,7 @@
  */
 import { identifierWriteTag, TsCheckerOracle, type JsTag, type TypeOracle } from "../checker/oracle.js";
 import { ts } from "../ts-api.js";
-import { identifierWritesOf, type IdentifierWrite } from "../shared/identifier-writes.js";
+import { identifierWritesOf, type IdentifierWrite } from "../shared/binding-writes.js";
 
 type HeterogeneousBindingOracle = Pick<
   TypeOracle,
@@ -68,7 +68,7 @@ function isModuleScoped(node: ts.Node): boolean {
 
 /** Whether `write` can outgrow the specialized slot selected for `declTag`. */
 function assignmentWidens(oracle: HeterogeneousBindingOracle, declTag: JsTag, write: IdentifierWrite): boolean {
-  if (write.kind === "value" && write.expr!.kind === ts.SyntaxKind.ThisKeyword) return true;
+  if (write.kind === "value" && write.expr.kind === ts.SyntaxKind.ThisKeyword) return true;
   // (#4495) Shared with the function-local analysis: what the write stores.
   const assignedTag = identifierWriteTag(oracle, write, declTag);
   // `mixed` is unconstrainable, not evidence that the value keeps declTag.
@@ -178,24 +178,24 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
   // (#4495) Every identifier store counts — plain and logical assignment (the
   // logical forms store conditionally, but "conditionally an object" is the
   // same representation question as "always an object" for a Wasm slot),
-  // destructuring, for-of targets and numeric compound assignment. `++`/`--`
-  // are left to update-retyped-bindings.ts (#4208 S2), whose IR-owned module
-  // init this analysis would otherwise demote.
+  // compound assignment, destructuring, for-in/for-of heads and `var`
+  // re-declarations. `++`/`--` are left to update-retyped-bindings.ts
+  // (#4208 S2), whose IR-owned module init this analysis would otherwise demote.
   const visit = (node: ts.Node): void => {
-    if (!ts.isPrefixUnaryExpression(node) && !ts.isPostfixUnaryExpression(node)) {
-      for (const write of identifierWritesOf(node)) recordWrite(write);
-    }
+    for (const write of identifierWritesOf(node, { updates: false })) recordWrite(write);
     ts.forEachChild(node, visit);
   };
   const recordWrite = (write: IdentifierWrite): void => {
     const target = write.target;
     if (widened.has(target.text)) return;
     const declaration = oracle.variableDeclarationOf(target);
+    // A declarator's own initializer is its slot's tag, not a later write.
+    if (declaration?.name === target) return;
     if (declaration !== undefined && declaration.getSourceFile() === sourceFile) {
       const declTag = initializerTagOf(declaration);
       if (declTag !== "none") {
         if (assignmentWidens(oracle, declTag, write)) widened.add(target.text);
-        const rhs = write.kind === "value" ? unwrapIdentifier(write.expr!) : undefined;
+        const rhs = write.kind === "value" ? unwrapIdentifier(write.expr) : undefined;
         if (rhs !== undefined) {
           const rhsDeclaration = oracle.variableDeclarationOf(rhs);
           if (

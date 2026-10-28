@@ -25,7 +25,7 @@
  * design (see the issue file, section D3). Unimplemented depth returns
  * `{ kind: "unresolvable" }` / `undefined` — never a guess.
  */
-import type { IdentifierWrite } from "../shared/identifier-writes.js";
+import type { IdentifierWrite } from "../shared/binding-writes.js";
 import { ts } from "../ts-api.js";
 import { symbolShadowsBuiltinGlobal } from "./builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
 
@@ -1252,9 +1252,10 @@ export function jsTagOfFact(fact: TypeFact): JsTag | undefined {
 }
 
 /**
- * The JS tag `write` stores into a binding initialised with a value of
- * `initialTag`: the oracle's answer for a named value or an iterated array /
- * string element, `mixed` when nothing names it, and for a ToNumeric
+ * (#4495) The JS tag `write` stores into a binding initialised with a value of
+ * `initialTag`: the oracle's answer for a named value, a property or an
+ * iterated array / string element; a string for a for-in key and an object for
+ * a rest element; `mixed` when nothing names it; and for a ToNumeric
  * write-back the initializer's own numeric tag (`x++` keeps a number a number
  * and a bigint a bigint, but turns a string or a boolean into a number).
  */
@@ -1265,17 +1266,21 @@ export function identifierWriteTag(
 ): JsTag | "mixed" {
   switch (write.kind) {
     case "value":
-      return oracle.staticJsTypeOf(write.expr!);
+      return oracle.staticJsTypeOf(write.expr);
     case "numeric":
       return initialTag === "bigint" ? "bigint" : "number";
+    case "key":
+      return "string";
+    case "rest":
+      return "object";
     case "unknown":
       return "mixed";
     case "element": {
-      const iterated = oracle.typeFactOf(write.expr!);
+      const iterated = oracle.typeFactOf(write.iterable);
       if (iterated.kind === "string") return "string";
       return (iterated.kind === "array" && jsTagOfFact(iterated.element)) || "mixed";
     }
     case "property":
-      return jsTagOfFact(oracle.propertyFactOf(write.expr!, write.key!)) ?? "mixed";
+      return jsTagOfFact(oracle.propertyFactOf(write.object, write.key)) ?? "mixed";
   }
 }

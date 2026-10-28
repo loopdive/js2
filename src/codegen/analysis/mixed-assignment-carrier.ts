@@ -17,12 +17,7 @@ import { getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { initializerMayProduceHostCallable } from "./host-callable-initializer.js";
 import { readEnv } from "../../env.js";
-import { identifierWritesOf, type IdentifierWrite } from "../../shared/identifier-writes.js";
-
-function stripParens(expr: ts.Expression): ts.Expression {
-  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
-  return expr;
-}
+import { identifierWritesOf, stripParens, type IdentifierWrite } from "../../shared/binding-writes.js";
 
 function containingScope(decl: ts.VariableDeclaration): ts.Node {
   for (let node: ts.Node | undefined = decl.parent; node; node = node.parent) {
@@ -89,8 +84,9 @@ function scopeCarrierFacts(ctx: CodegenContext, scope: ts.Node): ScopeCarrierFac
   };
   let order = 0;
   const visit = (node: ts.Node): void => {
-    // (#4495) Every identifier store — plain, logical, destructuring, for-of,
-    // `++`/`--` and numeric compound — not only `x = v`.
+    // (#4495) Every identifier store — plain, logical and compound
+    // assignment, destructuring, for-in/for-of heads, `++`/`--` and `var`
+    // re-declarations — not only `x = v`.
     for (const write of identifierWritesOf(node)) {
       const target = write.target;
       const resolved = ctx.oracle.variableDeclarationOf(target);
@@ -204,7 +200,7 @@ export function bindingMayReceiveHostCallable(ctx: CodegenContext, decl: ts.Vari
     (fact) =>
       fact.target !== decl.name &&
       fact.write.kind === "value" &&
-      initializerMayProduceHostCallable(ctx, fact.write.expr!),
+      initializerMayProduceHostCallable(ctx, fact.write.expr),
   );
 }
 
