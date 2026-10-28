@@ -15,12 +15,14 @@ import {
   IR_CONSOLE_STDERR_APPEND_FN,
 } from "../../shared/contracts/console-output.js";
 
-/** Both native targets have an observable output provider, with different sinks. */
+/**
+ * A host-free module has an observable console sink: standalone's stdout rope,
+ * or WASI's `fd_write` import (registered only for a WASI target). Selecting by
+ * the registered provider, not the target flag, keeps this one lowering for both.
+ */
 export function nativeConsoleOutputAvailable(ctx: CodegenContext): boolean {
   return (
-    hostFreeEnvironment(ctx) &&
-    ctx.nativeStrings &&
-    (standaloneConsoleSinkAvailable(ctx) || (ctx.wasi && ctx.wasiFdWriteIdx >= 0))
+    hostFreeEnvironment(ctx) && ctx.nativeStrings && (standaloneConsoleSinkAvailable(ctx) || ctx.wasiFdWriteIdx >= 0)
   );
 }
 
@@ -48,7 +50,7 @@ function ensureIrConsoleFormatValue(ctx: CodegenContext): number | null {
 /** Preserve standalone's rope and WASI's fd 1/2 routing through their existing providers. */
 function ensureIrNativeConsoleOutput(ctx: CodegenContext, stderr: boolean): number | null {
   if (!nativeConsoleOutputAvailable(ctx)) return null;
-  if (!ctx.wasi) return ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null;
+  if (ctx.wasiFdWriteIdx < 0) return ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null;
   const index = ensureWasiWriteAnyStringHelper(ctx, stderr);
   return index >= 0 ? index : null;
 }
