@@ -62,8 +62,11 @@ const CLAIMED: Record<string, string> = {
   "non-configurable redefine throws TypeError": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); try { Object.defineProperty(o, "x", { value: 2 }); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; } }`,
   "same-value redefine is allowed": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); Object.defineProperty(o, "x", { value: 1 }); return o.x === 1 ? 1 : 0; }`,
   "relational and arithmetic consumers": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return (o.x > 2 ? 1 : 0) + (o.x - 1 === 2 ? 2 : 0) + (o.x * 2 === 6 ? 4 : 0); }`,
-  "truthiness and loose equality": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); if (o.x) return o.x == 3 ? 1 : 0; return 0; }`,
+  "loose equality and division": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return (o.x == 3 ? 1 : 0) + (o.x / 3 === 1 ? 2 : 0) + (o.x % 2 === 1 ? 4 : 0); }`,
   "read flows into a local": `export function f() { var o = {}; ${DEFINE} var y = o.x; return y === 2010 ? 1 : 0; }`,
+  "a local initialized by a read, then tested": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); var y = o.x; if (y) return 1; return 0; }`,
+  "thrown read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); try { throw o.x; } catch (e) { return e === 3 ? 1 : 0; } }`,
+  "no define, every reference a read": `export function f() { var o = {}; var y = o.x; return o.y === undefined && y === undefined ? 1 : 0; }`,
 };
 
 const REFUSED: Record<string, string> = {
@@ -79,6 +82,18 @@ const REFUSED: Record<string, string> = {
   "element read": `export function f() { var o = {}; Object.defineProperty(o, 0, { value: 7 }); return o[0] === 7 ? 1 : 0; }`,
   "typeof of a read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); return typeof o.x === "number" ? 1 : 0; }`,
   "+ operand": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return o.x + 1 === 4 ? 1 : 0; }`,
+  // Review repros (PR #6957): each read shape the allow-list refuses.
+  "inherited method read tested by if": `export function f() { var o = {}; if (o.toString) return 1; return 0; }`,
+  "inherited method read tested by ?:": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); return o.hasOwnProperty ? 1 : 0; }`,
+  "inherited method read into a local": `export function f() { var o = {}; var t = o.valueOf; return t ? 1 : 0; }`,
+  "inherited method read compared": `export function f() { var o = {}; return o.toString !== undefined ? 1 : 0; }`,
+  "inherited constructor read": `export function f() { var o = {}; return o.constructor === Object ? 1 : 0; }`,
+  "own read tested by if": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); if (o.x) return o.x == 3 ? 1 : 0; return 0; }`,
+  "own read negated": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 0 }); return !o.x ? 1 : 0; }`,
+  "own read in &&": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return o.x && 1; }`,
+  "chained read throws TypeError": `export function f() { var o = {}; try { var t = o.x.y; return 1; } catch (e) { return e instanceof TypeError ? 2 : 3; } }`,
+  "optional chain on a read": `export function f() { var o = {}; return o.x?.y === undefined ? 1 : 0; }`,
+  "element read of a read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "ab" }); return o.x[0] === "a" ? 1 : 0; }`,
   "shadowed Object": `export function f() { var Object = { defineProperty: function (a, b, c) { return a; } }; var o = {}; Object.defineProperty(o, "x", { value: 1 }); return o.x === undefined ? 1 : 0; }`,
 };
 
@@ -107,6 +122,22 @@ describe("#7128 S1 — standalone open-carrier Object.defineProperty", () => {
 
   it("keeps an annotated binding on legacy", async () => {
     const source = `export function f() { var o: any = {}; ${DEFINE} return o.x === 2010 ? 1 : 0; }`;
+    const ir = await build(source, "standalone", true, "issue-7128.ts");
+    expect(ir.irPostClaimErrors ?? []).toEqual([]);
+    expect(irBodies(ir)).not.toContain("f");
+    expect(await run(ir.binary)).toBe(1);
+  });
+
+  it("claims a returned read (TS source: the .js return type does not resolve)", async () => {
+    const source = `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return o.x; }`;
+    const ir = await build(source, "standalone", true, "issue-7128.ts");
+    expect(ir.irPostClaimErrors ?? []).toEqual([]);
+    expect(irBodies(ir)).toContain("f");
+    expect(await run(ir.binary)).toBe(3);
+  });
+
+  it("keeps a non-null read on legacy", async () => {
+    const source = `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); return o.x! === 1 ? 1 : 0; }`;
     const ir = await build(source, "standalone", true, "issue-7128.ts");
     expect(ir.irPostClaimErrors ?? []).toEqual([]);
     expect(irBodies(ir)).not.toContain("f");

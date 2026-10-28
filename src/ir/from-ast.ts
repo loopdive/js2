@@ -6593,10 +6593,10 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
     return cx.builder.emitDynMemberGet(recv, key);
   }
   // (#7106 S1c) A raw externref receiver — the catch binding (`err.name`), a
-  // host handle — is the host carrier unboxed: box it into the canonical
-  // dynamic carrier (identity on the host strategy, `__any_from_extern` on
-  // gc) and take the same unified reader. Admitted by the selector only for
-  // catch bindings today (`currentCatchBoundNames`).
+  // #7128 open carrier, a host handle — is the host carrier unboxed: box it
+  // into the canonical dynamic carrier (identity on the host strategy,
+  // `__any_from_extern` on gc) and take the same unified reader. Admitted by
+  // the selector for catch bindings and open carriers only.
   if (asVal(recvType)?.kind === "externref" && cx.resolver?.stringIsExternref?.() !== true) {
     const boxedRecv = cx.builder.emitBox(recv, irDynamic());
     const key = cx.builder.emitBox(cx.builder.emitStringConst(propName), irDynamic(JS_TAG_IDS.String));

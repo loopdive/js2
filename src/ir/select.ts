@@ -78,12 +78,7 @@ import { stringBuilderForcedLegacy } from "./string-builder-shape.js";
 import { demoteOnLegacyCallerPolicy, jsHostExternsEnabled } from "./legacy-caller-policy.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
-import {
-  emptyObjectLiteralBinding,
-  isOpenCarrierUse,
-  openCarrierDefinePlan,
-  type EmptyObjectLiteralBinding,
-} from "./empty-object-literal.js";
+import { emptyObjectLiteralBinding, isOpenCarrierUse, type EmptyObjectLiteralBinding } from "./empty-object-literal.js";
 import { selectWithEnvironmentClosures } from "./with-environment.js";
 // (#1373b C-1) Pure-syntactic async helpers from the LEAF module (safe for
 // ir/* — async-static.ts imports only ts-api, so no codegen/index cycle).
@@ -12349,17 +12344,20 @@ function isPhase1ObjectLiteral(
   return true;
 }
 
-/** (#7128 S1) An admitted empty literal with references is an open carrier; an inert one has none. */
+/** (#7128 S1) Was this empty literal admitted as an open carrier (rather than as an inert one)? */
 export function admittedEmptyLiteralIsOpenCarrier(expr: ts.ObjectLiteralExpression): boolean {
-  return (emptyObjectLiteralBinding(expr, enclosingProjectionOwner(expr))?.references.length ?? 0) > 0;
+  return admittedOpenCarrierLiterals.has(expr);
 }
+
+const admittedOpenCarrierLiterals = new WeakSet<ts.ObjectLiteralExpression>();
 
 /**
  * #7128 S1 — admit an open-carrier binding (`empty-object-literal.ts`) of the
  * current subject's own body when legacy keeps it open too
  * (`isOpenObjectBinding`): were legacy to widen it into a struct, an IR unit
  * and a legacy unit sharing it would see different stores. The admitted
- * binding is recorded for the define arm and the move-only scan.
+ * binding is recorded for the define arm and the move-only scan, and its
+ * literal for the lowering.
  */
 function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node | undefined): boolean {
   const isOpenObjectBinding = currentSelectionOptions?.isOpenObjectBinding;
@@ -12372,6 +12370,7 @@ function isOpenCarrierBinding(binding: EmptyObjectLiteralBinding, owner: ts.Node
     return false;
   }
   currentOpenCarrierNames.add(binding.name.text);
+  admittedOpenCarrierLiterals.add(binding.literal);
   return true;
 }
 
@@ -12915,7 +12914,7 @@ export function buildLocalCallGraph(
             isAmbientObjectDefineProperty(node) &&
             node.arguments.length === 3 &&
             (currentSelectionOptions?.supportsBackendCapability?.("host-object-define-property") !== false ||
-              (currentSelectionOptions?.isOpenObjectBinding !== undefined && !!openCarrierDefinePlan(node)))
+              isOpenCarrierDefine(node))
           ) {
             for (const a of node.arguments) visit(a);
             return;

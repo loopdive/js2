@@ -31,6 +31,7 @@ func-budget-allow:
   - src/codegen/index.ts::planIrOverlay
 import-cycles-allow:
   - largestSccSize: 725 # 2026-10-28 (#7128 S1): src/codegen/declarations/ir-open-object-binding.ts asks legacy's var-slot typing (statements/variables.ts) and is read by codegen/index.ts, so it joins the SCC exactly as its sibling ir-dynamic-construct.ts does
+  - ir->runtime: 10 # 2026-10-28 (#7128 S1, review of PR #6957): src/ir/empty-object-literal.ts reads Object.prototype's own keys from runtime/contracts/native-realm-catalog.ts, the pure-data spec catalog ir/program/native-realm-requirements.ts already imports; the alternative is a second hand-written copy of that key list
 ---
 
 # #7128 — IR: standalone `Object.defineProperty` via an open-object carrier
@@ -346,6 +347,10 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
   - The binding then joins `dynNames`, as a catch binding does. So the
     move-only scan governs every consumer of `o.k`, and the define call scans
     as a concrete statement.
+  - On top of that scan, U2 admits only an allow-list of `o.k` consumers and
+    no key `Object.prototype` owns (item 5 below).
+  - The admitted literal is recorded once in a `WeakSet`, which the lowering
+    reads (`admittedEmptyLiteralIsOpenCarrier`); it is not re-derived.
 - **Lowering.**
   - `src/ir/open-object-carrier.ts` holds the emission.
   - from-ast's defineProperty arm is now its own function,
@@ -390,16 +395,35 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
      capability can tell gc from standalone.
    - The option is present only when `ctx.targetProfile.target ===
      "standalone" && !ctx.fast`.
+   - Review nit 6 (PR #6957) asked for a named capability instead. None
+     fits: every `IrBackendTargetCapability` is answered from that projected
+     profile, so a new one would switch the arm on for native-regime gc,
+     whose A/B has not run (gc output must stay byte-identical). The token
+     `ctx.standalone` is the native regime, which is true on gc as well. The
+     raw `CompileTargetProfile.target` is the only spelling that keeps gc
+     declining. When the gc lane gets its own A/B, the check becomes a
+     registry capability.
 5. **Narrower U1 and U2 than D1.**
    - U1 must be an expression statement, because a used result would alias
      the carrier.
-   - U2 refuses a `+` operand. The move-only scan admits `<dynamic> + v`, and
-     from-ast then demotes it ("operands not provably both-number or
-     both-string"). This gap predates S1: on main,
+   - U2 is an ALLOW-list of consumers (review findings 1–3, PR #6957):
+     `===`/`!==`/`==`/`!=`, relational `<`/`<=`/`>`/`>=`, `-`/`*`/`/`/`%`
+     operands, an identifier binding's initializer, `return` and `throw`.
+     Every other consumer keeps the function on legacy: ToBoolean (`if`,
+     `while`, `?:`, `!`, `&&`, `||`), member/element/non-null (`o.k.y` must
+     throw TypeError on undefined, `o.k?.y` threw under the IR), parentheses,
+     array/object-literal positions, spreads and every write target.
+   - U2 also refuses a key that `Object.prototype` owns (taken from
+     `NATIVE_REALM_CATALOG`). `__dyn_member_get` on the open `$Object`
+     answers undefined for an inherited key, so `var t = o.valueOf; t ? 1 : 0`
+     gave 0 under the IR (legacy and node: 1), even though a `var` initializer
+     is an allowed consumer.
+   - `+` is not on the allow-list. The move-only scan admits
+     `<dynamic> + v`, and from-ast then demotes it ("operands not provably
+     both-number or both-string"). This gap predates S1: on main,
      `function g(p) { return p.x + 1 === 4 ? 1 : 0; }` claims and then
-     demotes.
-   - U2 also refuses parenthesised reads, array/object-literal positions and
-     spreads, because each can be a destructuring target.
+     demotes. **No tracking issue exists for this gap yet**; it is named here
+     until one is filed.
    - Descriptor values are number, string and boolean literals only;
      `undefined` and `null` are deferred.
 6. **The admission is per subject.**

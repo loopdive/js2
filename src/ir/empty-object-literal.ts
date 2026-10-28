@@ -12,10 +12,11 @@
  *     later `o.k` can read; an IR `object.new` could serve neither.
  */
 
+import { NATIVE_REALM_CATALOG } from "../runtime/contracts/native-realm-catalog.js";
 import { ts } from "../ts-api.js";
-import { propertyAccessIsWriteTarget } from "./select-expression-structure.js";
 
 export interface EmptyObjectLiteralBinding {
+  readonly literal: ts.ObjectLiteralExpression;
   readonly decl: ts.VariableDeclaration;
   readonly name: ts.Identifier;
   readonly references: readonly ts.Identifier[];
@@ -67,7 +68,7 @@ export function emptyObjectLiteralBinding(
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(owner, visit);
-  return { decl, name, references };
+  return { literal: expr, decl, name, references };
 }
 
 /**
@@ -75,12 +76,10 @@ export function emptyObjectLiteralBinding(
  *
  *   - U1: the target of an `Object.defineProperty` STATEMENT (its result would
  *     alias the carrier) with an `openCarrierDefinePlan`;
- *   - U2: a named read `o.k` used as a value. Parentheses, array/object literal
- *     positions and spreads are refused with the write targets, as each can be
- *     a destructuring or assignment target `propertyAccessIsWriteTarget` does
- *     not see. A `+` operand is refused too: the move-only scan admits
- *     `<dynamic> + v`, which from-ast then demotes (the same post-claim gap a
- *     dynamic parameter has).
+ *   - U2: a named read `o.k` whose key `Object.prototype` does not own and
+ *     whose consumer is in `isProvenReadConsumer`. The IR reader
+ *     (`__dyn_member_get`) answers undefined for an inherited key, where legacy
+ *     and node see the `Object.prototype` method.
  *
  * Any other reference — a write, a method call, passing `o` on, an alias — keeps
  * the literal on legacy.
@@ -98,21 +97,55 @@ export function isOpenCarrierUse(
       openCarrierDefinePlan(parent) !== null
     );
   }
-  if (!ts.isPropertyAccessExpression(parent) || parent.expression !== reference) return false;
-  const consumer = parent.parent;
   return (
-    ts.isIdentifier(parent.name) &&
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === reference &&
     parent.questionDotToken === undefined &&
-    !propertyAccessIsWriteTarget(parent) &&
-    !((ts.isCallExpression(consumer) || ts.isNewExpression(consumer)) && consumer.expression === parent) &&
-    !ts.isTaggedTemplateExpression(consumer) &&
-    !ts.isTypeOfExpression(consumer) &&
-    !(ts.isBinaryExpression(consumer) && consumer.operatorToken.kind === ts.SyntaxKind.PlusToken) &&
-    !ts.isParenthesizedExpression(consumer) &&
-    !ts.isArrayLiteralExpression(consumer) &&
-    !ts.isPropertyAssignment(consumer) &&
-    !ts.isSpreadElement(consumer)
+    ts.isIdentifier(parent.name) &&
+    !OBJECT_PROTOTYPE_KEYS.has(parent.name.text) &&
+    isProvenReadConsumer(parent)
   );
+}
+
+/** The string keys `Object.prototype` owns (§20.1.3, Annex B.2.2 included). */
+const OBJECT_PROTOTYPE_KEYS: ReadonlySet<string> = new Set(
+  NATIVE_REALM_CATALOG.intrinsics
+    .find((intrinsic) => intrinsic.id === "%Object.prototype%")!
+    .properties.flatMap((property) => (property.key.kind === "string" ? [property.key.value] : [])),
+);
+
+/** Binary operators whose operand the U2 read is measured for: equality, relational, `- * / %`. */
+const PROVEN_READ_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+]);
+
+/**
+ * An ALLOW-list of the consumers a U2 read `o.k` is proven for: a
+ * `PROVEN_READ_OPERATORS` operand, an identifier binding's initializer, a
+ * `return` or a `throw`. Everything else is refused by default, the ToBoolean
+ * consumers (`if`, `?:`, `!`, `&&`) and member, element and non-null
+ * consumers (`o.k.y` must throw on undefined; `o.k?.y` throws under the IR)
+ * among them. `+` is absent because the move-only scan admits `<dynamic> + v`
+ * and from-ast then demotes it — an untracked gap that predates S1, named in
+ * plan/issues/7128-ir-standalone-define-property-open-object-carrier.md
+ * ("Corrections to the design", item 5).
+ */
+function isProvenReadConsumer(read: ts.PropertyAccessExpression): boolean {
+  const consumer = read.parent;
+  if (ts.isBinaryExpression(consumer)) return PROVEN_READ_OPERATORS.has(consumer.operatorToken.kind);
+  if (ts.isVariableDeclaration(consumer)) return consumer.initializer === read && ts.isIdentifier(consumer.name);
+  return ts.isReturnStatement(consumer) || ts.isThrowStatement(consumer);
 }
 
 /** The ToPropertyDescriptor fields of a data descriptor (§6.2.5.5). */
