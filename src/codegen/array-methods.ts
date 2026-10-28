@@ -89,7 +89,12 @@ import {
   registerEmitBoundsCheckedArrayGet,
   VOID_RESULT,
 } from "./shared.js";
-import { emitIncludesSearchValue, emitIndexOfAbsentSearchValue } from "./array-includes-search-value.js";
+import {
+  emitForwardSearchStart,
+  emitIncludesSearchValue,
+  emitIndexOfAbsentSearchValue,
+  evalSearchFromIndex,
+} from "./array-includes-search-value.js";
 import { emitUndefined, ensureGetUndefined } from "./expressions/late-imports.js";
 import { ensureExternSameValueZeroHelper, ensureExternStrictEqHelper, undefinedExternInstrs } from "./any-helpers.js";
 import {
@@ -2391,16 +2396,15 @@ export function compileArrayMethodCall(
       // wasi lanes keep their unconditional widening (no host globals exist).
       (ctx.standalone || ctx.wasi || hofRefElemClosureLaneSafe(ctx, callExpr)));
 
-  // (#3481) §23.1.3.1 `at(index)` step 3 and §23.1.3.14 `includes(x, fromIndex)`
-  // step 4 both run `? ToIntegerOrInfinity(...)`, whose ToNumber throws on a
-  // Symbol (§7.1.4 step 5). Both have TWO lowerings (native vec and the host
-  // fallback) that each read the argument as a number, so a symbol's `i32` id
-  // flowed through as an ordinary index — `[1,2].at(Symbol())` answered
-  // `undefined` instead of throwing. Guarding at the shared dispatch covers
-  // both arms once; the receiver is passed as a `before` operand so its side
-  // effects still run in §13.3.6.1 order.
+  // (#3481) `at(index)` (§23.1.3.1 step 3) and `includes(x, fromIndex)` (step 4)
+  // run `? ToIntegerOrInfinity(...)`, which throws on a Symbol (§7.1.4 step 5),
+  // but a symbol's `i32` id flowed through as an ordinary index. The receiver is
+  // a `before` operand so its side effects still run in §13.3.6.1 order.
+  // (#4765) Native `includes` is not guarded here: its throw must follow step
+  // 3's `len = 0` return, so `evalSearchFromIndex` emits it under that guard.
   {
-    const symbolIndexArg = methodName === "at" ? 0 : methodName === "includes" ? 1 : -1;
+    const hostIncludes = methodName === "includes" && receiverIsExternref && !ctx.standalone;
+    const symbolIndexArg = methodName === "at" ? 0 : hostIncludes ? 1 : -1;
     const indexArg = symbolIndexArg < 0 ? undefined : callExpr.arguments[symbolIndexArg];
     if (
       indexArg !== undefined &&
@@ -3624,62 +3628,13 @@ function compileArrayIndexOf(
     return ctx.fast ? { kind: "i32" } : { kind: "f64" };
   }
 
-  // fromIndex (optional 2nd arg, default 0)
+  // fromIndex (optional 2nd arg, default 0). (#3201) §23.1.3.14 step 3: if len
+  // is 0, return -1 BEFORE step 4's ToIntegerOrInfinity(fromIndex) — a throwing
+  // `valueOf` on the fromIndex object must NOT be observed on an empty array
+  // (indexOf/length-zero-returns-minus-one.js). The len==0 arm leaves iTmp at 0;
+  // the loop bound (effLenTmp == 0) then falls through to the -1 result.
   if (callExpr.arguments.length >= 2) {
-    // (#3201) §23.1.3.14 step 3: if len is 0, return -1 BEFORE step 4's
-    // ToIntegerOrInfinity(fromIndex) — a throwing `valueOf` on the fromIndex
-    // object must NOT be observed on an empty array
-    // (indexOf/length-zero-returns-minus-one.js). Compile the coercion into
-    // the main body, then splice it into a `len != 0` guard arm — spliced
-    // instrs are immediately re-embedded in fctx.body (nested arms ARE
-    // walked by flushLateImportShifts' recursive shiftBody), so no detached-
-    // array funcIdx staleness. The len==0 arm leaves iTmp at 0; the loop
-    // bound (effLenTmp == 0) then falls through to the -1 result.
-    const guardStart = fctx.body.length;
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
-    // Clamp negative fromIndex: if (fromIndex < 0) fromIndex = max(0, length + fromIndex)
-    const fromTmp = allocLocal(fctx, `__arr_iof_from_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "local.tee", index: fromTmp });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.lt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: lenTmp },
-        { op: "local.get", index: fromTmp },
-        { op: "i32.add" },
-        { op: "local.tee", index: fromTmp },
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: fromTmp },
-          ],
-        },
-      ],
-    });
-    fctx.body.push({ op: "local.get", index: fromTmp });
-    fctx.body.push({ op: "local.set", index: iTmp });
-    const guarded = fctx.body.splice(guardStart);
-    fctx.body.push({ op: "local.get", index: lenTmp });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: guarded,
-      else: [
-        { op: "i32.const", value: 0 },
-        { op: "local.set", index: iTmp },
-      ],
-    });
+    emitForwardSearchStart(ctx, fctx, callExpr.arguments[1]!, lenTmp, iTmp, "arr_iof");
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
     fctx.body.push({ op: "local.set", index: iTmp });
@@ -3834,44 +3789,16 @@ function compileArrayIncludes(
 
   const incNeverMatches = emitIncludesSearchValue(ctx, fctx, callExpr, valType, valTmp);
 
-  // fromIndex (optional 2nd arg, default 0)
+  // fromIndex (optional 2nd arg, default 0). (#4765) §23.1.3.16 step 3 returns
+  // false on `len = 0` BEFORE step 4 converts fromIndex
+  // (includes/length-zero-returns-false.js), so the conversion is deferred
+  // under the same length guard `indexOf` uses.
   if (callExpr.arguments.length >= 2) {
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
-    // Clamp negative fromIndex: if (fromIndex < 0) fromIndex = max(0, length + fromIndex)
-    const fromTmp = allocLocal(fctx, `__arr_inc_from_${fctx.locals.length}`, { kind: "i32" });
-    fctx.body.push({ op: "local.tee", index: fromTmp });
-    fctx.body.push({ op: "i32.const", value: 0 });
-    fctx.body.push({ op: "i32.lt_s" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: lenTmp },
-        { op: "local.get", index: fromTmp },
-        { op: "i32.add" },
-        { op: "local.tee", index: fromTmp },
-        { op: "i32.const", value: 0 },
-        { op: "i32.lt_s" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            { op: "i32.const", value: 0 },
-            { op: "local.set", index: fromTmp },
-          ],
-        },
-      ],
-    });
-    fctx.body.push({ op: "local.get", index: fromTmp });
+    emitForwardSearchStart(ctx, fctx, callExpr.arguments[1]!, lenTmp, iTmp, "arr_inc");
   } else {
     fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iTmp });
   }
-  fctx.body.push({ op: "local.set", index: iTmp });
 
   // (#2648) View-name-driven signedness for the packed i8/i16 element load.
   const getOp = elemGetOp(elemType, typedArraySearchSignedness(ctx, propAccess.expression));
@@ -10116,13 +10043,11 @@ function compileArrayLastIndexOf(
     // flushLateImportShifts), so no detached-array funcIdx staleness. The
     // len==0 arm sets iTmp to -1 (the same value the no-fromIndex default
     // `len - 1` yields on an empty array), so the reverse loop never runs.
+    // (#4765) The argument itself is still EVALUATED on an empty array — only
+    // its conversion is deferred.
+    const emitFromI32 = evalSearchFromIndex(ctx, fctx, callExpr.arguments[1]!, "arr_liof");
     const guardStart = fctx.body.length;
-    if (ctx.fast) {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "i32" });
-    } else {
-      compileExpression(ctx, fctx, callExpr.arguments[1]!, { kind: "f64" });
-      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    }
+    emitFromI32();
     fctx.body.push({ op: "local.set", index: iTmp });
     // If negative, add length: if (i < 0) i = len + i
     fctx.body.push({ op: "local.get", index: iTmp });
