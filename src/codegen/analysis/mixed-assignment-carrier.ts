@@ -273,10 +273,12 @@ function nullableSingleObjectAssignment(ctx: CodegenContext, value: ts.Expressio
 /**
  * (#4495) An explicit TypeScript annotation is the slot contract for every
  * write TypeScript checked against it — a violation is user error under
- * diagnostics-off compilation, the module-binding analysis's rule. A value
- * typed `any` / `unknown` is unchecked and keeps its own verdict: an annotated
+ * diagnostics-off compilation, the module-binding analysis's rule — so such a
+ * write counts as storing the declared (initializer's) tag. A value typed
+ * `any` / `unknown` is unchecked and keeps its own verdict: an annotated
  * `xs: any[]` must stay on the carrier to alias it (#7154), and a `string`
- * slot would null it (this issue).
+ * slot would null it (this issue). The #2917 struct-identity check is about
+ * representation, not type, and applies either way.
  */
 function storesUncheckedValue(ctx: CodegenContext, write: IdentifierWrite): boolean {
   const kind = identifierWriteFact(ctx.oracle, write)?.kind;
@@ -345,9 +347,9 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
         ? resolvedFacts[resolvedIndex++]!
         : unresolvedWithFacts[unresolvedIndex++]!;
     if (fact.target === decl.name) continue;
-    if (decl.type !== undefined && !storesUncheckedValue(ctx, fact.write)) continue;
     const value = fact.write.kind === "value" ? fact.write.expr : undefined;
-    const rawTag = identifierWriteTag(ctx.oracle, fact.write, initialTag);
+    const checkedByAnnotation = decl.type !== undefined && !storesUncheckedValue(ctx, fact.write);
+    const rawTag = checkedByAnnotation ? initialTag : identifierWriteTag(ctx.oracle, fact.write, initialTag);
     const assignedTag =
       rawTag === "mixed" && initialDomain === "object" && value && nullableSingleObjectAssignment(ctx, value)
         ? "object"
