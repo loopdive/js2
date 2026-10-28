@@ -323,3 +323,43 @@ Caveats:
   produced.
 - `--check` fails when the demoted count of any kind, or of a target's
   total, grows. It is not wired into CI: a full run takes about 12 minutes.
+
+## A1 — standalone-arm ratchet (Opus, 2026-10-28)
+
+Landed: `scripts/check-standalone-arms.mjs` (`pnpm run check:standalone-arms`),
+`scripts/standalone-arms-baseline.json` (per-directory, per-token), the
+`quality` step "Standalone-arm ratchet (#7143 A1)" in `.github/workflows/ci.yml`,
+and `tests/issue-7143-standalone-arms.test.ts`.
+
+**What it counts.** Source lines under `src/**/*.ts` matching each token, the
+`rg -c` unit of §1.1: `ctx.standalone`, `!ctx.standalone`, `noJsHost(`,
+`ctx.wasi`. Measured on `origin/main` = `df57a0e8e6`:
+
+| Token | Lines (§1.1, 10-25) | Lines (10-28) |
+| --- | --- | --- |
+| `ctx.standalone` | 1,728 | 1,685 |
+| `!ctx.standalone` | 604 | 590 |
+| `noJsHost(` | 282 | 275 |
+| `ctx.wasi` | 987 | 951 |
+
+The baseline equals the 10-28 column. The counts fell between 10-25 and 10-28,
+so that column, not §1.1, is the starting floor.
+
+**How it gates.** The default run is change-scoped and net per token, the same
+mechanism as `check-coercion-sites.mjs`. Each changed src file is counted at
+the base blob and in the working tree, and the run fails only when the
+change-set's net count of some token grew. Moving an arm between files nets to
+zero and passes. A reviewed one-off is granted with a `standalone-arms-allow:`
+list in the PR's own issue file. `--all` compares the whole tree with the
+committed baseline, and `--update` / `--update-on-decrease` write it.
+
+**Acceptance check, run by hand.** One synthetic line
+`export const __syntheticArm = (ctx: { standalone: boolean }) => ctx.standalone;`
+appended to `src/codegen/peephole.ts` gives
+`standalone-arms gate FAILED — this change-set adds ctx.standalone +1 on net`,
+exit 1. The unchanged tree passes with exit 0.
+
+**Not done here.** The committed baseline is not yet refreshed by main's
+post-merge sync (`baseline-summary-sync.yml`). The PR-path gate does not read
+it, so only `--all` can go stale. Wiring `--update-on-decrease` into that sync
+is a one-line follow-up for whoever owns it.
