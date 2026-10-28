@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
+import { aliasSweepCases } from "./issue-7166-alias-sweep.js";
 
 const LANES = [
   { lane: "gc", options: {} },
@@ -18,9 +19,10 @@ const LANES = [
   { lane: "wasi", options: { target: "wasi" } },
 ] as const;
 
-async function expectSameOnAllLanes(src: string, fileName: string): Promise<void> {
+async function expectSameOnAllLanes(src: string, fileName: string, skipWasi = false): Promise<void> {
   const expected = evaluateAsJs(src).test!();
   for (const { lane, options } of LANES) {
+    if (skipWasi && lane === "wasi") continue;
     const result = await compile(src, { fileName, ...options });
     expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
     const instance = await instantiateWithRuntime(result);
@@ -163,5 +165,86 @@ describe("#7166 receiver-returning array methods keep the receiver's identity", 
         `${FILL}const r = keys.sort();\nvar rv = keys;\nexport function test() { return ${expr}; }`,
         "probe.js",
       ));
+  }
+});
+
+// Review repros (PR #6947 round 2): an alias that escapes into a typed place,
+// a closure write to a local `let` alias, a destructuring `var` redeclaration.
+// The alias rule must decline for all of them and keep main's behaviour.
+const ENC = `function enc(s) { let h = s.length; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000003; return h; }\n`;
+const REPROS: [string, string][] = [
+  [
+    "module alias escapes (const t, [r], return)",
+    `const keys = []; keys.push("a");\nconst r = keys.sort();\nfunction g() { return r; }\nexport function test() { const t = r; const box = [r]; return enc(String(t === r) + (box[0] === r) + (g() === r)); }`,
+  ],
+  [
+    "module alias escapes (?:, { v }, f(r))",
+    `const keys = []; keys.push("a");\nconst r = keys.sort();\nconst flag = keys.length > 0;\nfunction f(x) { return x; }\nexport function test() { const t = flag ? r : []; const o = { v: r }; return enc(String(t === r) + (o.v === r) + (f(r) === r)); }`,
+  ],
+  [
+    "module alias copied then pushed",
+    `const keys = []; keys.push("a"); keys.push("b");\nconst r = keys;\nexport function test() { const t = r; t.push("z"); return r.length; }`,
+  ],
+  [
+    "local let alias written in a closure",
+    `export function test() {\n  const a = []; a.push("b"); a.push(1);\n  let r = a.sort();\n  const f = () => { r = ["q"]; };\n  f();\n  return enc(r.join());\n}`,
+  ],
+  [
+    "module var redeclared by an array pattern",
+    `const keys = []; keys.push("a");\nconst other = ["m"];\nvar r = keys;\nvar [r] = [other];\nexport function test() { r.push("o"); return enc(other.join() + (r === other)); }`,
+  ],
+  [
+    "module var redeclared by an object pattern",
+    `const keys = []; keys.push("a");\nconst other = ["m"];\nvar r = keys;\nvar { r } = { r: other };\nexport function test() { r.push("o"); return enc(other.join() + (r === other)); }`,
+  ],
+  [
+    "module var redeclared by a pattern in a block",
+    `const keys = []; keys.push("a");\nconst other = ["m"];\nvar r = keys;\n{ var [r] = [other]; }\nexport function test() { r.push("o"); return enc(other.join() + (r === other)); }`,
+  ],
+];
+
+describe("#7166 an alias that escapes or is rewritten keeps main's behaviour", () => {
+  for (const [name, src] of REPROS) it(name, () => expectSameOnAllLanes(`${ENC}${src}`, "probe.js"));
+  // Main answers this one wrongly too (the closure's store copies `b`); the
+  // alias rule must only not turn it into an `illegal cast` trap.
+  it("local let alias written in a closure from an evolving array does not trap", async () => {
+    const src = `${ENC}export function test() {\n  const a = []; a.push("b"); a.push(1);\n  const b = []; b.push("q");\n  let r = a;\n  const f = () => { r = b; };\n  f();\n  r.push("z");\n  return enc(b.join() + (r === b));\n}`;
+    for (const { lane, options } of LANES) {
+      const result = await compile(src, { fileName: "probe.js", ...options });
+      expect(result.success, lane).toBe(true);
+      const instance = await instantiateWithRuntime(result);
+      expect(typeof (instance.exports.test as () => unknown)(), lane).toBe("number");
+    }
+  });
+});
+
+// Generated use-form sweep (issue-7166-alias-sweep.ts). The default run is a
+// thinned slice; JS2WASM_FULL_SWEEP=1 runs every source × init. Measured on the
+// full sweep head vs main (a54cd9fb8a), 2026-10-28: 534 same, 180 fixed, 0
+// worse. The rows below fail IDENTICALLY on main and are skipped, not asserted:
+// an escaping alias declines to main's copy-on-flow, a typed `other` written
+// into a mixed alias copies on main too, and wasi's spread-call `Math.max` is a
+// separate gap.
+const ESCAPES_SAME_AS_MAIN = new Set([
+  "const t = r",
+  "[r]",
+  "{ v: r }",
+  "id(r)",
+  "return r",
+  "?: branch",
+  "|| operand",
+  "destructure",
+]);
+function sweepSameAsMain(name: string): "skip" | "no-wasi" | undefined {
+  const use = name.slice(name.indexOf(": ") + 2);
+  // A local string-element source keeps a typed slot, so its escapes are right.
+  if (ESCAPES_SAME_AS_MAIN.has(use) && (name.startsWith("module ") || name.includes(" mixed "))) return "skip";
+  if ((use === "r = other" || use === "destructuring write") && name.includes(" mixed ")) return "skip";
+  return use === "spread call" ? "no-wasi" : undefined;
+}
+describe("#7166 alias use-form sweep", () => {
+  for (const [name, src] of aliasSweepCases(process.env.JS2WASM_FULL_SWEEP === "1")) {
+    const known = sweepSameAsMain(name);
+    (known === "skip" ? it.skip : it)(name, () => expectSameOnAllLanes(src, "probe.js", known === "no-wasi"));
   }
 });

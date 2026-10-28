@@ -58,7 +58,7 @@ export function aliasedModuleGlobalVecType(
   decl: ts.VariableDeclaration,
   sourceType: (source: ts.VariableDeclaration) => ValType,
 ): ValType | undefined {
-  if (!decl.initializer || decl.type || !moduleBindingIsNeverReassigned(decl)) return undefined;
+  if (!decl.initializer || decl.type || isExported(decl)) return undefined;
   const source = aliasedIdentifier(decl.initializer);
   if (!source) return undefined;
   const sourceDecl = ctx.oracle.variableDeclarationOf(source);
@@ -90,55 +90,157 @@ export function aliasedModuleGlobalVecType(
     }
   }
   if (!type || type.kind !== "ref_null" || !isExternrefElementVec(ctx, type.typeIdx)) return undefined;
-  return type;
+  return aliasUsesAreSafe(ctx, decl, decl.getSourceFile()) ? type : undefined;
 }
 
+/** Array methods whose result is never the receiver and that take no callback. */
+const NON_ESCAPING_METHODS = new Set([
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "splice",
+  "slice",
+  "concat",
+  "indexOf",
+  "lastIndexOf",
+  "includes",
+  "join",
+  "toString",
+  "at",
+]);
+/** Callback methods: safe while every callback sees only `(element, index)`, never the array. */
+const CALLBACK_METHODS = new Set([
+  "map",
+  "filter",
+  "forEach",
+  "some",
+  "every",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "reduce",
+  "reduceRight",
+]);
+
 /**
- * A `const`, or a `let` / `var` whose name is never written again anywhere in
- * its file (`r = other` would store a typed vec into the externref-vec slot
- * and copy it). Name-based, so a same-spelled write elsewhere only declines.
+ * (#7166) The alias may share the source's externref-vec slot only when the
+ * vec can never reach a place typed from the checker's `T[]`, which would
+ * convert it by COPYING (`const t = r`, `[r]`, `{ v: r }`, `f(r)`, a return, a
+ * `?:` branch, a reassignment). So this is an allow-list: the binding has one
+ * declaration, the file has no `eval` / `with`, and every reference in
+ * `scope` resolves (through the oracle) to `decl` and is a recognised use —
+ * an element read or write, `.length`, a method that keeps the vec in (a
+ * receiver-returning one only while its own result is used the same way), an
+ * equality comparison, a `for…of`, or a spread. Anything else declines.
  */
-function moduleBindingIsNeverReassigned(decl: ts.VariableDeclaration): boolean {
-  if (!ts.isIdentifier(decl.name)) return false;
-  if (ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const) !== 0) return true;
+function aliasUsesAreSafe(ctx: CodegenContext, decl: ts.VariableDeclaration, scope: ts.Node): boolean {
+  if (!ts.isIdentifier(decl.name) || ctx.oracle.declarationsOf(decl.name).length !== 1) return false;
   const sourceFile = decl.getSourceFile();
-  let written = writtenNames.get(sourceFile);
-  if (!written) {
-    const names = new Set<string>();
-    const targets = (node: ts.Node): void => {
-      if (ts.isIdentifier(node)) names.add(node.text);
-      else ts.forEachChild(node, targets);
-    };
+  if (fileHasDynamicScope(sourceFile)) return false;
+  const name = decl.name.text;
+  let safe = true;
+  const visit = (node: ts.Node): void => {
+    if (!safe) return;
+    if (ts.isIdentifier(node) && node.text === name && node !== decl.name && isReference(node)) {
+      const target = ctx.oracle.variableDeclarationOf(node);
+      if (target === undefined ? true : target === decl && !isSafeUse(node)) safe = false;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return safe;
+}
+
+/** An identifier in a reference position (not a property name, label or key). */
+function isReference(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (ts.isPropertyAccessExpression(parent)) return parent.expression === id;
+  if (ts.isQualifiedName(parent)) return parent.left === id;
+  if (
+    (ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isEnumMember(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  if (ts.isBindingElement(parent) && parent.propertyName === id) return false;
+  if (ts.isLabeledStatement(parent) || ts.isBreakOrContinueStatement(parent)) return false;
+  return true;
+}
+
+/** `node` evaluates to the alias's vec: is that value used only in a recognised way? */
+function isSafeUse(node: ts.Expression): boolean {
+  let use: ts.Expression = node;
+  while (ts.isParenthesizedExpression(use.parent)) use = use.parent;
+  const parent = use.parent;
+  if (ts.isElementAccessExpression(parent)) return parent.expression === use;
+  if (ts.isForOfStatement(parent)) return parent.expression === use;
+  if (ts.isSpreadElement(parent))
+    return ts.isArrayLiteralExpression(parent.parent) || ts.isCallExpression(parent.parent);
+  if (ts.isExpressionStatement(parent)) return true;
+  if (ts.isBinaryExpression(parent)) {
+    const op = parent.operatorToken.kind;
+    return (
+      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      op === ts.SyntaxKind.EqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsToken
+    );
+  }
+  if (!ts.isPropertyAccessExpression(parent) || parent.expression !== use) return false;
+  const method = parent.name.text;
+  const call = parent.parent;
+  if (!ts.isCallExpression(call) || call.expression !== parent) return method === "length";
+  if (RECEIVER_RETURNING.has(method)) return isSafeUse(call);
+  if (NON_ESCAPING_METHODS.has(method)) return true;
+  return CALLBACK_METHODS.has(method) && call.arguments.length >= 1 && callbackSeesNoArray(call.arguments[0]!);
+}
+
+function callbackSeesNoArray(callback: ts.Expression): boolean {
+  if (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback)) return false;
+  // `reduce` passes (acc, element, index, array): the array is the fourth.
+  const call = callback.parent as ts.CallExpression;
+  const method = (call.expression as ts.PropertyAccessExpression).name.text;
+  const limit = method === "reduce" || method === "reduceRight" ? 3 : 2;
+  return callback.parameters.length <= limit && !callback.parameters.some((p) => p.dotDotDotToken);
+}
+
+function fileHasDynamicScope(sourceFile: ts.SourceFile): boolean {
+  let dynamic = dynamicScopeFiles.get(sourceFile);
+  if (dynamic === undefined) {
+    let found = false;
     const visit = (node: ts.Node): void => {
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-      ) {
-        targets(node.left);
-      } else if (
-        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-      ) {
-        targets(node.operand);
-      } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-        targets(node.initializer); // `for (r of …)` and `for (var r of …)` both write `r`
-      } else if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
-        // A redeclaration (`var r = …` twice) is a second write.
-        if (declaredNames.has(node.name.text)) names.add(node.name.text);
-        declaredNames.add(node.name.text);
+      if (found) return;
+      if (ts.isWithStatement(node) || (ts.isIdentifier(node) && (node.text === "eval" || node.text === "arguments"))) {
+        found = true;
+        return;
       }
       ts.forEachChild(node, visit);
     };
-    const declaredNames = new Set<string>();
     visit(sourceFile);
-    written = names;
-    writtenNames.set(sourceFile, written);
+    dynamic = found;
+    dynamicScopeFiles.set(sourceFile, dynamic);
   }
-  return !written.has(decl.name.text);
+  return dynamic;
 }
 
-const writtenNames = new WeakMap<ts.SourceFile, Set<string>>();
+const dynamicScopeFiles = new WeakMap<ts.SourceFile, boolean>();
+
+function isExported(decl: ts.VariableDeclaration): boolean {
+  const statement = decl.parent?.parent;
+  return (
+    statement !== undefined &&
+    ts.isVariableStatement(statement) &&
+    (statement.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false)
+  );
+}
 
 /** Declarations whose alias source is being typed (breaks `var a = b, b = a` cycles). */
 const typingSources = new Set<ts.VariableDeclaration>();
@@ -164,7 +266,7 @@ export function aliasedLocalVecType(
   const index = fctx.localMap.get(source.text);
   const type = index === undefined ? undefined : getLocalType(fctx, index);
   if (!type || type.kind !== "ref_null" || !isExternrefElementVec(ctx, type.typeIdx)) return undefined;
-  return type;
+  return aliasUsesAreSafe(ctx, decl, enclosingFunction(decl)) ? type : undefined;
 }
 
 function isOnlyBindingOfName(fn: ts.Node, binding: ts.VariableDeclaration): boolean {

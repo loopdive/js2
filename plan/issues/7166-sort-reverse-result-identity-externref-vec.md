@@ -76,21 +76,42 @@ vec by **copying** it. Same copy for a function-local `const a = []` pushed
 mixed kinds (`a` is the externref carrier from `inferArrayVecType`, `r` was
 typed `(string | number)[]`).
 
-**Fix.** `src/codegen/declarations/module-global-vec-alias.ts`: a binding
-whose initializer is an identifier (through parens / `!` / `satisfies` and
-receiver-returning `sort` / `reverse` / `fill` / `copyWithin` calls) naming a
-binding that already holds an **externref-element vec** takes that slot type.
+**Fix.** `src/codegen/declarations/module-global-vec-alias.ts`. A binding
+whose initializer is an identifier naming a binding that already holds an
+**externref-element vec** takes that slot type. The identifier may be wrapped
+in parens / `!` / `satisfies`, or reached through receiver-returning `sort` /
+`reverse` / `fill` / `copyWithin` calls. Module globals go through
+`moduleGlobalWasmType` in `src/codegen/declarations.ts`; locals go through the
+slot cascade in `src/codegen/statements/variables.ts`.
 
-- Module globals (`moduleGlobalWasmType`, `src/codegen/declarations.ts`): only
-  a `const`, or a `let` / `var` whose name is never written again in the file
-  (a later `r = other` would store a typed vec into the externref slot and
-  copy it). A hoisted `var` alias of a later array-literal `const` types the
-  source the way its own registration will.
-- Locals (slot cascade in `src/codegen/statements/variables.ts`): the source
-  local is looked up by name only when its declaration is the one binding of
-  that name in the function, so a shadow cannot be picked.
+The alias gets that slot only through an **allow-list** (review round 3). An
+alias whose vec can reach a place typed from the checker's `T[]` would be
+converted by copying, so every condition below must hold, or the binding keeps
+main's slot:
 
-Nothing changes for a binding whose source is not an externref-element vec.
+- the binding has exactly one declaration;
+- the file has no `eval`, `with` or `arguments`;
+- a module binding is not exported;
+- every reference to the name in the scope (the file, or the enclosing
+  function including its closures) resolves through `ctx.oracle` to this
+  declaration;
+- every reference is one of these uses:
+  - an element read or write;
+  - `.length`;
+  - a method that keeps the vec in (`push`, `pop`, `join`, `indexOf`, …);
+  - a callback method whose callback cannot see the array (`map`, `filter`, …
+    with at most `(element, index)` parameters);
+  - a receiver-returning call whose own result is used the same way;
+  - `===` / `!==` / `==` / `!=`;
+  - `for…of`;
+  - a spread into an array literal or a call;
+  - a discarded expression statement.
+
+Any other use declines. That covers an assignment, an argument, a return, an
+array or object literal, a `?:` / `||` operand, a destructuring, and a
+redeclaration. A local alias also requires the source declaration to be the
+only binding of its name in the function, because the name-keyed `localMap`
+is used to find it.
 
 **`typeof` of an externref element (round 2).** The element of such a vec has
 the checker type `string | number` (`$AnyValue`) but compiles to an externref.
@@ -103,26 +124,57 @@ externref by its runtime value through `__any_from_extern_honest`
 called from `src/codegen/typeof-delete.ts`). An externref that already holds an
 `$AnyValue` box is recovered unchanged, as before.
 
-**Tests.** `tests/equivalence/issue-7166-sort-reverse-identity.test.ts` —
-250 rows, gc native-first, standalone and wasi vs node:
+**Tests.**
 
-- sort, sort(cmp), reverse, fill, copyWithin, plain alias and
-  `a.sort().reverse()` on module-level and function-local evolving (for…in,
-  push, mixed), `any[]` (literal / empty), `number[]` and `string[]` vecs, each
-  checking `r === a`, `r.push(x)` visible through `a.length`, and the last
-  element; identity inside a function; typed reads through the aliased global.
-- `typeof r[i]`, `typeof r[i] === "…"`, `switch (typeof r[i])`, `typeof` in a
-  loop, `r[0] + 1`, `r[0].length`, `r[0] === "b"` on the source and on
-  `r = a` / `r = a.reverse()`, module and local, mixed / string / number
-  elements.
-- Reassigned aliases: `let` / `var` `r = keys` then `r = other` or
-  `r = mk()`, and an unreassigned `let r = keys.sort()`, module and local.
+- `tests/equivalence/issue-7166-sort-reverse-identity.test.ts`: 328 asserted
+  rows plus 36 skipped sweep rows. Every row runs on gc native-first,
+  standalone and wasi against node.
+- The sweep cases come from `tests/equivalence/issue-7166-alias-sweep.ts`.
 
-**Bytes (unoptimized, base a54cd9fb8a vs head).** 13 playground examples and 2,574 distinct
-equivalence-suite programs (recorded from the gate run) × gc / standalone /
-wasi. Every playground example and 2,475 equivalence programs are identical on
-all three lanes. The 99 that differ are all programs of the new #7166 test
-file.
+Coverage:
+
+- **Receiver-returning methods.** sort, sort(cmp), reverse, fill, copyWithin,
+  the plain alias and `a.sort().reverse()`. Receivers: module-level and
+  function-local evolving arrays (for…in, push, mixed), `any[]` (literal and
+  empty), `number[]` and `string[]`.
+- **Element operations.** `typeof r[i]`, `typeof r[i] === "…"`,
+  `switch (typeof r[i])`, `typeof` in a loop, `r[0] + 1`, `r[0].length` and
+  `r[0] === "b"`. These run on the source and on aliases, module and local,
+  with mixed, string and number elements.
+- **Reassigned aliases.** `let` / `var` `r = keys` followed by `r = other` or
+  `r = mk()`, module and local.
+- **Review round-2 repros.** An alias escaping into `const t = r`, `[r]`, a
+  return, `?:`, `{ v: r }` and `f(r)`. A local `let` alias written in a
+  closure. A `var r` redeclared by an array pattern, by an object pattern, and
+  by a pattern in a block.
+- **Generated use-form sweep.** 28 uses (safe uses and escapes) × module /
+  local × `const` / `let` × 3 sources × 3 initializers = 954 programs with
+  `JS2WASM_FULL_SWEEP=1`. The default run is a 106-program slice.
+
+Full sweep, head vs main a54cd9fb8a, all three lanes:
+
+| result | rows |
+|---|---|
+| same and correct | 534 |
+| fixed | 180 |
+| worse | 0 |
+| wrong on both | 240 |
+
+The 240 rows that are wrong on both are skipped by a rule in the test that
+matches them exactly:
+
+- escapes of a module or mixed-element alias, which decline to main's
+  copy-on-flow;
+- a typed `other` written into a mixed alias;
+- wasi's spread-call `Math.max`.
+
+**Bytes (unoptimized, base a54cd9fb8a vs head, round 3).** The corpus is the
+13 playground examples plus 2,652 distinct equivalence-suite programs, recorded
+from the gate run, each compiled on gc, standalone and wasi.
+
+- Every playground example is identical on all three lanes.
+- 2,485 equivalence programs are identical on all three lanes.
+- The 167 that differ are all programs from the #7166 test file.
 
 **Left out.**
 
