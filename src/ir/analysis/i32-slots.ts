@@ -609,24 +609,19 @@ export function makePlannedI32Probe(slots: ReadonlySet<ts.VariableDeclaration>):
 // Pure token/op tables shared with `from-ast.ts`'s emitter
 // ---------------------------------------------------------------------------
 
+/** The `js.bit*` IrBinop of each bitwise operator token. */
+export const JS_BITWISE_BINOPS = {
+  [ts.SyntaxKind.AmpersandToken]: "js.bitand",
+  [ts.SyntaxKind.BarToken]: "js.bitor",
+  [ts.SyntaxKind.CaretToken]: "js.bitxor",
+  [ts.SyntaxKind.LessThanLessThanToken]: "js.shl",
+  [ts.SyntaxKind.GreaterThanGreaterThanToken]: "js.shr_s",
+  [ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken]: "js.shr_u",
+} as const satisfies Partial<Record<ts.SyntaxKind, IrBinop>>;
+
 /** The `js.bit*` IrBinop for a bitwise operator token, or null. */
 export function jsBitwiseBinop(k: ts.SyntaxKind): IrBinop | null {
-  switch (k) {
-    case ts.SyntaxKind.AmpersandToken:
-      return "js.bitand";
-    case ts.SyntaxKind.BarToken:
-      return "js.bitor";
-    case ts.SyntaxKind.CaretToken:
-      return "js.bitxor";
-    case ts.SyntaxKind.LessThanLessThanToken:
-      return "js.shl";
-    case ts.SyntaxKind.GreaterThanGreaterThanToken:
-      return "js.shr_s";
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
-      return "js.shr_u";
-    default:
-      return null;
-  }
+  return JS_BITWISE_BINOPS[k as keyof typeof JS_BITWISE_BINOPS] ?? null;
 }
 
 /** Signed native i32 magnitude compare for a relational operator token. */

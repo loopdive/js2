@@ -153,7 +153,7 @@ import {
   conditionalJoinFamily,
   isComparisonResultOperator,
   isEqualityOperator,
-  isF64CompoundAssignOperator,
+  isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
@@ -4165,7 +4165,7 @@ function phase1MutatingStatementVerdict(
     // before the RHS), which is why this is a separate arm and not a widening
     // of the `=` ones.
     if (
-      isF64CompoundAssignOperator(op) &&
+      isSelectableNumberCompound(op) &&
       (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
     ) {
       if (!isPhase1MutableMemberTarget(expr.left, scope, localClasses)) {
@@ -4568,7 +4568,7 @@ function isPhase1StatementListInScope(
       // shape; mirror it here for `<early return>; x -= n; return ...`.
       if (
         ts.isBinaryExpression(s.expression) &&
-        isF64CompoundAssignOperator(s.expression.operatorToken.kind) &&
+        isSelectableNumberCompound(s.expression.operatorToken.kind) &&
         ts.isIdentifier(s.expression.left)
       ) {
         if (isUnrepresentableModuleBinding(s.expression.left)) {
@@ -5486,9 +5486,7 @@ function isPhase1ForUpdateExpr(
     const moduleBinding = currentModuleBindingResolver?.(expr.left);
     if (moduleBinding) {
       if (currentSubjectIsModuleInit) {
-        if (op !== ts.SyntaxKind.EqualsToken && !isF64CompoundAssignOperator(op)) {
-          return false;
-        }
+        if (op !== ts.SyntaxKind.EqualsToken && !isSelectableNumberCompound(op)) return false;
         if (!scope.has(expr.left.text)) return false;
         if (op === ts.SyntaxKind.EqualsToken && !currentModuleBindingResolver?.(expr.left, expr.right)) return false;
         return isPhase1Expr(expr.right, scope, localClasses);
@@ -5498,7 +5496,7 @@ function isPhase1ForUpdateExpr(
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // Plain or compound assignment to an identifier in scope.
-    if (op === ts.SyntaxKind.EqualsToken || isF64CompoundAssignOperator(op)) {
+    if (op === ts.SyntaxKind.EqualsToken || isSelectableNumberCompound(op)) {
       if (!scope.has(expr.left.text)) return false;
       if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) return false;
       if (!isPhase1Expr(expr.right, scope, localClasses)) return false;
@@ -5900,20 +5898,18 @@ function isPhase1BodyStatement(
       }
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
-      if (isF64CompoundAssignOperator(op)) {
-        if (ts.isIdentifier(stmt.expression.left)) {
-          if (isUnrepresentableModuleBinding(stmt.expression.left)) {
-            return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-          }
-          if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
-            return shapeNo("body-module-compound", stmt.expression);
-          }
-          if (!scope.has(stmt.expression.left.text)) return false;
-          if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
-          if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
-          clearProjectionBinding(stmt.expression.left.text);
-          return true;
+      if (isSelectableNumberCompound(op) && ts.isIdentifier(stmt.expression.left)) {
+        if (isUnrepresentableModuleBinding(stmt.expression.left)) {
+          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
         }
+        if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
+          return shapeNo("body-module-compound", stmt.expression);
+        }
+        if (!scope.has(stmt.expression.left.text)) return false;
+        if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
+        if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
+        clearProjectionBinding(stmt.expression.left.text);
+        return true;
       }
     }
     // Slice 12 (#1280): postfix `i++` / `i--` / prefix `++i` / `--i`
@@ -8726,6 +8722,12 @@ function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
     "composite" in plan ||
     currentSelectionOptions?.supportsSymbolicMathHelpers === true
   );
+}
+
+/** (#7183) A numeric compound assignment the lane lowers: `**=` needs the `math.pow` provider `**` does. */
+function isSelectableNumberCompound(op: ts.SyntaxKind): boolean {
+  if (op === ts.SyntaxKind.AsteriskAsteriskEqualsToken) return selectorMathPlanEnabled(IR_MATH_METHOD_TABLE.pow);
+  return isNumberCompoundAssignOperator(op);
 }
 
 function selectorSupportsNumberToString(): boolean {

@@ -139,6 +139,10 @@ describe("#7144 — writes, increments, `??` and `null` compares: selector ⇔ f
       for (const [spelling, op] of [
         ["+=", ts.SyntaxKind.PlusEqualsToken],
         ["-=", ts.SyntaxKind.MinusEqualsToken],
+        // (#7183) the operators `emitNumberBinary` added to the compound set.
+        ["%=", ts.SyntaxKind.PercentEqualsToken],
+        ["**=", ts.SyntaxKind.AsteriskAsteriskEqualsToken],
+        ["|=", ts.SyntaxKind.BarEqualsToken],
       ] as const) {
         for (const value of [PRODUCERS.number!, PRODUCERS.string!, PRODUCERS.boolean!, PRODUCERS.dynamic!]) {
           await expectAgreement(
