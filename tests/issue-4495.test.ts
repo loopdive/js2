@@ -24,11 +24,16 @@ const PRELUDE = `function id(x) { return x; }
 function chk(a, e) { if (a !== e) throw new Error('got ' + a + ' want ' + e); }
 `;
 
-async function runScript(body: string, lane: "standalone" | "gc", inFunction: boolean): Promise<void> {
+async function runScript(
+  body: string,
+  lane: "standalone" | "gc",
+  inFunction: boolean,
+  fileName: string,
+): Promise<void> {
   const src = inFunction ? `${PRELUDE}function f() { ${body} }\nf();\n` : `${PRELUDE}${body}\n`;
   const r = await compile(src, {
     ...(lane === "standalone" ? { target: "standalone" as const } : {}),
-    fileName: "issue-4495.js",
+    fileName,
     skipSemanticDiagnostics: true,
     deferTopLevelInit: true,
   });
@@ -39,11 +44,16 @@ async function runScript(body: string, lane: "standalone" | "gc", inFunction: bo
   (instance.exports as { __module_init: () => void }).__module_init();
 }
 
-function bothLanesBothScopes(name: string, body: string, scopes: readonly boolean[] = [false, true]): void {
+function bothLanesBothScopes(
+  name: string,
+  body: string,
+  scopes: readonly boolean[] = [false, true],
+  fileName = "issue-4495.js",
+): void {
   for (const lane of ["standalone", "gc"] as const) {
     for (const inFunction of scopes) {
       it(`${name} [${lane}, ${inFunction ? "function local" : "module binding"}]`, async () => {
-        await runScript(body, lane, inFunction);
+        await runScript(body, lane, inFunction, fileName);
       });
     }
   }
@@ -146,8 +156,56 @@ describe("#4495 review 1 — a rest target stores into the binding's own slot", 
   );
   bothLanesBothScopes("guarded rest into a string local", `var y = 's'; if (id(false)) [...y] = [1]; chk(y, 's');`);
   // A member read dispatches on the widened slot, not the initializer's type.
-  // (An element read `y[1]` still takes the stale string arm: residual A, as on main.)
   bothLanesBothScopes("member read after rest into a string local", `var y = 's'; [...y] = [1, 2]; chk(y.length, 2);`);
+});
+
+// Review 2, finding 1: every read of a rest-written binding dispatches on its
+// slot. Module scope regressed here once the old shadow local was gone — the
+// number and boolean rows silently answered `null`.
+describe("#4495 review 2 — reads of a rest-written binding", () => {
+  bothLanesBothScopes("length after rest into a number", `var y = 0; [...y] = [1, 2]; chk('' + y.length, '2');`);
+  bothLanesBothScopes("length after rest into a boolean", `var y = true; [...y] = [1, 2]; chk('' + y.length, '2');`);
+  bothLanesBothScopes("method call after rest into a number", `var y = 0; [...y] = [1, 2]; chk(y.join('-'), '1-2');`);
+  bothLanesBothScopes("method call after rest into a string", `var y = 's'; [...y] = [1, 2]; chk(y.join('-'), '1-2');`);
+  bothLanesBothScopes(
+    "looped rest into a number",
+    `var y = 0; for (var i = 0; i < 2; i++) [...y] = [1, 2, 3]; chk('' + y.length, '3');`,
+  );
+  bothLanesBothScopes("length after rest into a string", `var y = 's'; [...y] = [1, 2]; chk(y.length, 2);`);
+  bothLanesBothScopes(
+    "rest after a hole",
+    `var r = 'r'; [, ...r] = [1, 2, 3]; chk(r.length, 2); chk(r.join(), '2,3');`,
+  );
+  bothLanesBothScopes("element read after rest into a string", `var y = 's'; [...y] = [1, 2]; chk(y[0], 1);`);
+  bothLanesBothScopes("element read after rest into a number", `var y = 0; [...y] = [1, 2]; chk(y[1], 2);`);
+  // Controls: a declared method keeps its native arm on a widened string slot.
+  bothLanesBothScopes("string method on a widened string", `var r = 'ab'; r = id('xy'); chk(r.toUpperCase(), 'XY');`);
+  bothLanesBothScopes("string element on a widened string", `var r = 'ab'; r = id('xy'); chk(r[1], 'y');`);
+});
+
+describe("#4495 review 2 — a literal source with a spread, a hole or fewer elements", () => {
+  bothLanesBothScopes("[a, b] = [...[1, 2]]", `var a = 'a', b = 'b'; [a, b] = [...[1, 2]]; chk('' + a + b, '12');`);
+  // `typeof`, not `'' + b`: ToString of an f64 hole marker is wrong at module
+  // scope even for `var b = x[1]` — a separate defect, filed under #7186.
+  bothLanesBothScopes(
+    "[a, b] = [1, ,]",
+    `var a = 'a', b = 'b'; [a, b] = [1, ,]; chk('' + a, '1'); chk(typeof b, 'undefined');`,
+  );
+  bothLanesBothScopes(
+    "[a, b] = [1]",
+    `var a = 'a', b = 'b'; [a, b] = [1]; chk('' + a, '1'); chk(typeof b, 'undefined');`,
+  );
+});
+
+// Review 2, nit 4: the module analysis applies the same annotation rule as the
+// function-local one — an `any` value written into an annotated slot widens it.
+describe("#4495 review 2 — an annotated binding still widens for an any value", () => {
+  bothLanesBothScopes(
+    "[r] = v with v: any",
+    `let r: string = 'a'; const v: any = id([1]); [r] = v; chk('' + r, '1');`,
+    [false, true],
+    "issue-4495.ts",
+  );
 });
 
 describe("#4495 review 1 — a nested pattern's default does not hide its source", () => {

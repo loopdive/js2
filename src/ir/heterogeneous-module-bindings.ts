@@ -67,10 +67,16 @@ function isModuleScoped(node: ts.Node): boolean {
 }
 
 /** Whether `write` can outgrow the specialized slot selected for `declTag`. */
-function assignmentWidens(oracle: HeterogeneousBindingOracle, declTag: JsTag, write: IdentifierWrite): boolean {
-  if (write.kind === "value" && write.expr.kind === ts.SyntaxKind.ThisKeyword) return true;
+function assignmentWidens(
+  oracle: HeterogeneousBindingOracle,
+  declaration: ts.VariableDeclaration,
+  declTag: JsTag,
+  write: IdentifierWrite,
+): boolean {
+  const annotated = declaration.type !== undefined;
+  if (!annotated && write.kind === "value" && write.expr.kind === ts.SyntaxKind.ThisKeyword) return true;
   // (#4495) Shared with the function-local analysis: what the write stores.
-  const assignedTag = identifierWriteTag(oracle, write, declTag);
+  const assignedTag = identifierWriteTag(oracle, write, declTag, annotated);
   // `mixed` is unconstrainable, not evidence that the value keeps declTag.
   return assignedTag === "mixed" || assignedTag !== declTag;
 }
@@ -137,17 +143,10 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
     const cachedTag = declTagCache.get(declaration);
     if (cachedTag !== undefined) return cachedTag;
     let tag: JsTag | "none" = "none";
-    if (
-      declaration.type === undefined &&
-      declaration.initializer &&
-      ts.isIdentifier(declaration.name) &&
-      isModuleScoped(declaration)
-    ) {
-      // An explicit TypeScript annotation is the representation contract. The
-      // diagnostics-off compiler consistently treats an assignment that
-      // violates it as user error; widening from the initializer would make
-      // codegen disagree with the checker-backed IR binding ABI. JavaScript
-      // and inferred TypeScript declarations remain fully flow-widened.
+    if (declaration.initializer && ts.isIdentifier(declaration.name) && isModuleScoped(declaration)) {
+      // An explicit annotation constrains only the writes TypeScript checked
+      // against it (see `identifierWriteTag`); an `any` / `unknown` value still
+      // widens, as in the function-local analysis.
       const candidate = oracle.staticJsTypeOf(declaration.initializer);
       if (candidate !== "mixed" && HETEROGENEOUS_PRIMITIVE_SLOT_TAGS.has(candidate)) tag = candidate;
       // A SYNTACTIC `void 0` is the downlevelled shape of an unassigned `let`
@@ -194,8 +193,9 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
     if (declaration !== undefined && declaration.getSourceFile() === sourceFile) {
       const declTag = initializerTagOf(declaration);
       if (declTag !== "none") {
-        if (assignmentWidens(oracle, declTag, write)) widened.add(target.text);
-        const rhs = write.kind === "value" ? unwrapIdentifier(write.expr) : undefined;
+        if (assignmentWidens(oracle, declaration, declTag, write)) widened.add(target.text);
+        // A checked write into an annotated binding stores its declared type.
+        const rhs = write.kind === "value" && declaration.type === undefined ? unwrapIdentifier(write.expr) : undefined;
         if (rhs !== undefined) {
           const rhsDeclaration = oracle.variableDeclarationOf(rhs);
           if (

@@ -9,7 +9,7 @@
  * boxed externref carrier.
  */
 import { ts, forEachChild } from "../../ts-api.js";
-import { identifierWriteFact, identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
+import { identifierWriteTag, jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { WidenedCarrierOracle } from "../../checker/usage-inference.js";
 import type { ValType } from "../../ir/types.js";
 import { annexBExistingVarUpdateNames } from "../annexb-cancel.js";
@@ -271,21 +271,6 @@ function nullableSingleObjectAssignment(ctx: CodegenContext, value: ts.Expressio
 }
 
 /**
- * (#4495) An explicit TypeScript annotation is the slot contract for every
- * write TypeScript checked against it — a violation is user error under
- * diagnostics-off compilation, the module-binding analysis's rule — so such a
- * write counts as storing the declared (initializer's) tag. A value typed
- * `any` / `unknown` is unchecked and keeps its own verdict: an annotated
- * `xs: any[]` must stay on the carrier to alias it (#7154), and a `string`
- * slot would null it (this issue). The #2917 struct-identity check is about
- * representation, not type, and applies either way.
- */
-function storesUncheckedValue(ctx: CodegenContext, write: IdentifierWrite): boolean {
-  const kind = identifierWriteFact(ctx.oracle, write)?.kind;
-  return kind === "any" || kind === "unknown";
-}
-
-/**
  * Decide whether the initialized binding must use a carrier that can represent
  * assignments from more than one JavaScript domain. The scope index preserves
  * exact declaration identity; only oracle-unresolved targets inside a `with`
@@ -348,8 +333,8 @@ export function bindingHasMixedAssignmentCarrier(ctx: CodegenContext, decl: ts.V
         : unresolvedWithFacts[unresolvedIndex++]!;
     if (fact.target === decl.name) continue;
     const value = fact.write.kind === "value" ? fact.write.expr : undefined;
-    const checkedByAnnotation = decl.type !== undefined && !storesUncheckedValue(ctx, fact.write);
-    const rawTag = checkedByAnnotation ? initialTag : identifierWriteTag(ctx.oracle, fact.write, initialTag);
+    // An annotation fixes the tag, not the struct: the #2917 check below still applies.
+    const rawTag = identifierWriteTag(ctx.oracle, fact.write, initialTag, decl.type !== undefined);
     const assignedTag =
       rawTag === "mixed" && initialDomain === "object" && value && nullableSingleObjectAssignment(ctx, value)
         ? "object"

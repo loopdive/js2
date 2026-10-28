@@ -41,6 +41,7 @@
  * name, so a same-named local in an unrelated function cannot force a module
  * global to widen (the #3364 bare-name-keying failure mode).
  */
+import type { JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
 import {
   collectHeterogeneouslyAssignedModuleVarNames,
@@ -249,6 +250,34 @@ export function memberReceiverStaticType(ctx: CodegenContext, fctx: FunctionCont
   return ts.isIdentifier(receiver) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, receiver)
     ? ctx.checker.getAnyType()
     : ctx.checker.getTypeAtLocation(receiver);
+}
+
+/** {@link memberReceiverStaticType} as a JS tag: a widened binding's tag is `mixed`. */
+export function receiverStaticJsType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+): JsTag | "mixed" {
+  return ts.isIdentifier(receiver) && slotIsDynamicButStaticallyPrimitive(ctx, fctx, receiver)
+    ? "mixed"
+    : ctx.oracle.staticJsTypeOf(receiver);
+}
+
+/**
+ * {@link memberReceiverStaticType} for a method call. The stale type still
+ * routes the methods it declares, whose native arms take the externref carrier
+ * (`r = id('x'); r.toUpperCase()`). A method it lacks can only live on a value a
+ * reaching write stored (`[...s] = [1, 2]; s.join()`), and only the dynamic arms
+ * can dispatch that.
+ */
+export function methodReceiverStaticType(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  method: ts.PropertyAccessExpression,
+): ts.Type {
+  return ctx.oracle.signatureOf(method) === undefined
+    ? memberReceiverStaticType(ctx, fctx, method.expression)
+    : ctx.checker.getTypeAtLocation(method.expression);
 }
 
 /**

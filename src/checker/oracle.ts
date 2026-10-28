@@ -1284,12 +1284,21 @@ export function identifierWriteFact(
  * a ToNumeric write-back the initializer's own numeric tag (`x++` keeps a
  * number a number and a bigint a bigint, but turns a string or a boolean into
  * a number).
+ *
+ * An `annotated` binding's annotation is the slot contract for every write
+ * TypeScript checked against it — a violation is user error under
+ * diagnostics-off compilation — so such a write stores `initialTag`. A value
+ * typed `any` / `unknown` is unchecked and keeps its own verdict: a `string`
+ * slot would null it.
  */
 export function identifierWriteTag(
   oracle: Pick<TypeOracle, "typeFactOf" | "propertyFactOf">,
   write: IdentifierWrite,
   initialTag: JsTag,
+  annotated: boolean,
 ): JsTag | "mixed" {
+  const fact = identifierWriteFact(oracle, write);
+  if (annotated && fact?.kind !== "any" && fact?.kind !== "unknown") return initialTag;
   switch (write.kind) {
     case "numeric":
       return initialTag === "bigint" ? "bigint" : "number";
@@ -1297,9 +1306,7 @@ export function identifierWriteTag(
       return "string";
     case "rest":
       return "object";
-    default: {
-      const fact = identifierWriteFact(oracle, write);
+    default:
       return (fact && jsTagOfFact(fact)) ?? "mixed";
-    }
   }
 }

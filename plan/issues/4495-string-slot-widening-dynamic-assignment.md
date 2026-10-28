@@ -26,6 +26,9 @@ loc-budget-allow:
   # 2026-10-28 (#4495 review round 2 prep): +1 line, the import of
   # memberReceiverStaticType. The receiver-type line is a one-for-one swap; the
   # logic lives beside its stale-type guard in heterogeneous-scalar-var-widening.ts.
+  # 2026-10-28 (#4495 review round 2): +3 more — receiverMayBeNativeStringAtRuntime
+  # takes the receiver type as an optional parameter, so prettier splits its signature;
+  # the element-read call sites are one-for-one swaps.
   - src/codegen/property-access.ts
 ---
 
@@ -426,9 +429,9 @@ baseline).
 
 ### Residuals — NOT fixed here, need their own issues
 
-Not filed: `claim-issue.mjs --allocate` refused (the open-PR id scan needs `gh`
-GraphQL, which is unavailable in this session) and the safe choice was not to
-pass `--allow-unscanned`. Each is a separate mechanism:
+Item 1 is filed as [#7184](7184-widened-binding-stale-checker-type-reads.md),
+and item 2 is fixed. Items 3 and 4 are outside this issue's write analysis and
+have no id yet. Each is a separate mechanism:
 
 1. **A widened binding's READS still carry the initializer's checker type.**
    `var r = 'r'; r = id(1); var s = r; '' + s` traps: `s` takes its slot from
@@ -499,8 +502,14 @@ came from the shadow local itself — straight-line code read the fresh vec
 local. The store now lands in the binding's own, correctly widened slot, and
 `y.length` reads it through the stale checker type `string` and traps,
 exactly as `var y = 's'; y = id([1, 2]); y.length` traps in every cell on all
-three trees. Loud, not silent; the shadow local is what made the conditional
-and looped rows above wrong.
+three trees. The shadow local is what made the conditional and looped rows
+above wrong.
+
+**Correction (round 2).** This paragraph called the trade "loud, not silent".
+That was wrong. The number and boolean twins (`var y = 0` / `var y = true`,
+then `[...y] = [1, 2]; '' + y.length`) answered a silent `null` at module
+scope, and `[, ...r] = [1, 2, 3]; r.length` trapped. Round 2 fixed every row:
+see "Review round 2" below.
 
 ### 2 — one write enumerator (fixed)
 
@@ -629,8 +638,9 @@ Right on 4/4 cells each, where base trapped and the first head answered
 and `({ a: r } = { a: id(1) })` (the first round's residual 2). Also right
 now, wrong on base: the cross-type swap `var a = 'x', b = 1; [a, b] = [b, a]`,
 `var b = true; [b] = ['s']` and `var n = 0; ({ n } = { n: 'q' })`. A pattern
-with a rest keeps its context and stays right (`[r, ...rest] = [1, 2, 3]`,
-`[, ...r] = [1, 2, 3]`).
+with a rest keeps its context, and `[r, ...rest] = [1, 2, 3]` stays right.
+(This section also claimed `[, ...r] = [1, 2, 3]` stays right. It did not:
+`r.length` trapped once `r` was read as an array. Round 2 fixed it.)
 
 ### 7 — quality (fixed)
 
@@ -689,10 +699,15 @@ exclusion is the `updates: false` option.
   import), granted in this file's frontmatter; the oracle ratchet nets
   `ctx.checker` −1.
 
-### Residuals — not fixed here, still unfiled
+### Residuals — not fixed here, filed in round 2
 
-As in the first round, no ids were allocated (`claim-issue.mjs --allocate`
-needs the open-PR scan); each is a separate mechanism.
+Each is a separate mechanism, and each now has its own issue:
+
+- A: [#7184](7184-widened-binding-stale-checker-type-reads.md)
+- B: [#7185](7185-module-scope-for-head-writes-module-global.md)
+- C, D and E: [#7186](7186-destructuring-assignment-lowering-residuals.md)
+
+Round 2 fixed A's element-read row.
 
 - **A. Stale checker type on reads of a widened binding** (the first round's
   residual 1, wider now): element reads (`y[1]` after a rest write into a
@@ -718,7 +733,7 @@ needs the open-PR scan); each is a separate mechanism.
   answers the default on all three trees, while the equivalence spelling
   (issue-1550 #6) passes everywhere — a harness-option difference, not traced.
 
-### Follow-ups (not done here)
+### Follow-ups (not done here) — filed as [#7187](7187-fold-private-write-walkers-and-stripparens.md)
 
 Two more private write walkers remain outside the shared enumerator:
 `src/ir/dynamic-local-widening.ts` (#3795 — deliberately narrow, and it only

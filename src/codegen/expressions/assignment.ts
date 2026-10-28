@@ -2131,11 +2131,12 @@ function compileArrayDestructuringAssignment(
     if (isVecStruct) return arrDef!.element;
     // Tuple: field type at index i
     const field = typeDef.fields[i];
-    return field ? field.type : { kind: "f64" };
+    return field ? field.type : { kind: "externref" };
   };
 
   // Helper: emit instructions to get element i onto the stack
   const emitElementGet = (i: number) => {
+    if (!isVecStruct && i >= typeDef.fields.length) return emitUndefined(ctx, fctx); // (#4495) a shorter source tuple
     fctx.body.push({ op: "local.get", index: tmpLocal });
     if (isVecStruct) {
       fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // get data array

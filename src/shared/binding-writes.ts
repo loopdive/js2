@@ -132,7 +132,7 @@ function propertySource(source: ts.Expression | undefined, name: ts.PropertyName
   if (!ts.isObjectLiteralExpression(source)) return { kind: "property", object: source, key };
   let found: WriteSource = UNKNOWN;
   for (const property of source.properties) {
-    if (ts.isSpreadAssignment(property) || !property.name) return UNKNOWN;
+    if (ts.isSpreadAssignment(property)) return UNKNOWN;
     const propertyName = literalKey(property.name);
     if (propertyName === undefined) return UNKNOWN;
     if (propertyName !== key) continue;

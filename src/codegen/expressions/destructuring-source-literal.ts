@@ -102,6 +102,10 @@ function contextLowersAsVec(ctx: CodegenContext, literal: Literal): boolean {
 
 function sourceOutgrowsPattern(ctx: CodegenContext, root: Literal): boolean {
   const literals = sourceLiterals(root);
+  // A spread's values are not positions of the pattern's tuple at all.
+  if (literals.some((literal) => ts.isArrayLiteralExpression(literal) && literal.elements.some(ts.isSpreadElement))) {
+    return true;
+  }
   if (literals.some((literal) => contextLowersAsVec(ctx, literal))) return false;
   return literals.some((literal) =>
     storedValues(literal).some((value) => !isLiteral(stripParens(value)) && valueOutgrowsContext(ctx, value)),
