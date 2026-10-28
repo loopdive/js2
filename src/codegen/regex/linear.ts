@@ -4,7 +4,7 @@
  * the SAME `[op, a, b]` bytecode the backtracking VM runs (`vm.ts`).
  *
  * This is the executable specification for the Wasm twin
- * (`__regex_search_linear`, `src/codegen/native-regex-linear.ts`), which
+ * (`__regex_search_linear`, `src/codegen/regex-runtime/linear-search.ts`), which
  * mirrors it step for step.
  *
  * Algorithm (Thompson simulation with Pike's priority-ordered thread lists,

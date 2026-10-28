@@ -9,16 +9,16 @@ updated: 2026-10-28
 loc-budget-allow:
   # 2026-10-28 (#2723 Slice A): +7 lines — the two seams where __regex_run /
   # __regex_search hand an exhausted search to the linear PikeVM. The PikeVM
-  # itself lives in native-regex-linear.ts; only the call sites stay here.
+  # itself lives in regex-runtime/linear-search.ts; only the call sites stay here.
   - src/codegen/native-regex.ts
 func-budget-allow:
   # 2026-10-28 (#2723 Slice A): +2 / +4 lines — the hand-off splice points
   # (budget-exhaustion branch, post-attempt result test). Both bodies are
-  # built by helpers in native-regex-linear.ts.
+  # built by helpers in regex-runtime/linear-search.ts.
   - src/codegen/native-regex.ts::ensureRegexRun
   - src/codegen/native-regex.ts::ensureRegexSearch
 import-cycles-allow:
-  - largestSccSize: 725 # 2026-10-28 (#2723 Slice A): new helper native-regex-linear.ts, called by native-regex.ts and using its frame/class-match emitters
+  - largestSccSize: 725 # 2026-10-28 (#2723 Slice A): new helper regex-runtime/linear-search.ts, called by native-regex.ts and using its frame/class-match emitters
 goal: standalone-mode
 feasibility: hard
 depends_on: []
@@ -489,7 +489,7 @@ moment a backtracking attempt exhausts its step budget — instead of throwing
   VMs share (consumer test, BOL/EOL/WBOUND, forward code-point read),
   extracted from `vm.ts` so the two VMs differ only in scheduling.
   `vm.ts`'s `search` hands off to `searchLinear` on budget exhaustion.
-- `src/codegen/native-regex-linear.ts` — the Wasm twin
+- `src/codegen/regex-runtime/linear-search.ts` — the Wasm twin
   (`__regex_linear_safe`, `__regex_search_linear` + three helpers), written
   with the `regex-runtime/dsl.ts` named-label builder; threads reuse
   `$__ReFrame`.

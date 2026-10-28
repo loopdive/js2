@@ -28,7 +28,7 @@ import { buildIndexedAnchoredLiteralAltSearch } from "./regex-anchored-alt-index
 import { ReOp } from "./regex/bytecode.js";
 import { frameStackPushInstrs } from "./regex-scratch-pool.js";
 import { REGEX_STEP_CAP, REGEX_STEP_CAP_LEN_SATURATION, REGEX_STEP_CAP_PER_UNIT } from "./regex/vm.js";
-import { regexRunBudgetHandoff, regexSearchBudgetFallback } from "./native-regex-linear.js";
+import { regexRunBudgetHandoff, regexSearchBudgetFallback } from "./regex-runtime/linear-search.js";
 
 /**
  * Runtime-compiled `^(?:literal|literal|...)$` programs with no flags use this

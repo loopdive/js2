@@ -8057,7 +8057,7 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
-      "path": "src/codegen/native-regex-linear.ts",
+      "path": "src/codegen/regex-runtime/linear-search.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",

@@ -20,11 +20,11 @@
  * `sp` is unused (every thread in a list sits at that list's position), and
  * `caps` is shared copy-on-write between forked threads.
  */
-import type { Instr, LocalDef, ValType } from "../ir/types.js";
-import type { CodegenContext } from "./context/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { emitClassMatch, ensureFrameTypes, regexI32ArrayType } from "./native-regex.js";
-import { INSTR_WIDTH, ReOp } from "./regex/bytecode.js";
+import type { Instr, LocalDef, ValType } from "../../ir/types.js";
+import type { CodegenContext } from "../context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { emitClassMatch, ensureFrameTypes, regexI32ArrayType } from "../native-regex.js";
+import { INSTR_WIDTH, ReOp } from "../regex/bytecode.js";
 import {
   I32,
   Locals,
@@ -58,8 +58,8 @@ import {
   whileLoop,
   and,
   type X,
-} from "./regex-runtime/dsl.js";
-import { addFuncType } from "./registry/types.js";
+} from "./dsl.js";
+import { addFuncType } from "../registry/types.js";
 
 /** The opcodes `isLinearSafe` accepts, as a bitmask over `ReOp` values. */
 const LINEAR_OP_MASK = [
