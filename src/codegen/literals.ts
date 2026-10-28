@@ -46,7 +46,7 @@ import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) share
 import { spreadSourceNeedsRuntimeCopy } from "./object-model/object-spread-extern-source.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
-import { literalContextualType } from "./destructuring-source-literal.js"; // (#4495)
+import { literalContextualType } from "./expressions/destructuring-source-literal.js"; // (#4495)
 import { isForeignEvalNode } from "./expressions/eval-source.js";
 import { emitUndefined, patchStructNewForAddedField } from "./expressions/late-imports.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#5158) absent tuple slot === undefined

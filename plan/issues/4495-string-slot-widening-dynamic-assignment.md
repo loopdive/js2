@@ -18,7 +18,7 @@ related: [4206, 4205, 4500]
 architect_spec: required
 loc-budget-allow:
   # 2026-10-28 (#4495 review round 1): +1 line — the import of the new
-  # src/codegen/destructuring-source-literal.ts. The two call sites are
+  # src/codegen/expressions/destructuring-source-literal.ts. The two call sites are
   # one-for-one line swaps; every line of logic lives in the new module. (The
   # earlier +7 grant for numeric-property-analysis.ts is gone: that file now
   # shrinks by 20 lines, its private write walk replaced by the shared one.)
@@ -604,7 +604,7 @@ shared enumerator.
 The value was lost before it reached the slot: a literal a destructuring
 pattern receives is contextually typed by the PATTERN, so `[r] = [1]` built a
 `[string]` tuple and stored `null` for the `1`. New
-`src/codegen/destructuring-source-literal.ts`: `literalContextualType` is the
+`src/codegen/expressions/destructuring-source-literal.ts`: `literalContextualType` is the
 contextual type the array and object literal lowerers start from, and for
 such a source it answers none, so they fall back to the literal's own type.
 `literals.ts` changes by one import plus two one-for-one line swaps (and loses

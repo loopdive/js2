@@ -23,10 +23,10 @@
  *   literal's own type is a tuple of its full length, and the rest lowering
  *   reads only a vec.
  */
-import { jsTagOfFact } from "../checker/oracle.js";
-import { stripParens } from "../shared/binding-writes.js";
-import { ts } from "../ts-api.js";
-import type { CodegenContext } from "./context/types.js";
+import { jsTagOfFact } from "../../checker/oracle.js";
+import { stripParens } from "../../shared/binding-writes.js";
+import { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
 
 type Literal = ts.ArrayLiteralExpression | ts.ObjectLiteralExpression;
 
