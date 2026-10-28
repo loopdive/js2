@@ -437,6 +437,17 @@ jobs:
           git fetch --no-tags --depth=200 origin main 2>/dev/null || true
           pnpm run check:coercion-sites
 
+      - name: Standalone-arm ratchet (#7143 A1)
+        if: steps.npm_compat.outputs.only != 'true'
+        # CHANGE-SCOPED + NET-PER-TOKEN like check:coercion-sites: fails only when
+        # THIS change-set adds net `ctx.standalone` / `!ctx.standalone` /
+        # `noJsHost(` / `ctx.wasi` lines under src/. Track A (#6979 S7-c) is
+        # collapsing these arms; relocation is net-neutral. Reviewed one-offs:
+        # `standalone-arms-allow:` frontmatter in the PR's own issue file.
+        run: |
+          git fetch --no-tags --depth=200 origin main 2>/dev/null || true
+          pnpm run check:standalone-arms
+
       - name: Issue integrity + link gate (#1616)
         if: steps.npm_compat.outputs.only != 'true'
         # Fails on duplicate IDs, filename/frontmatter ID mismatch, dangling
