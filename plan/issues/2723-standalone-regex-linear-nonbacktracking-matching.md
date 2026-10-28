@@ -1,11 +1,24 @@
 ---
 id: 2723
 title: "standalone RegExp: linear (non-backtracking) matching path — retire the step-limit band-aid + ReDoS (arXiv:2311.17620)"
-status: ready
+status: in-progress
 sprint: current
 priority: medium
 horizon: l
-updated: 2026-08-12
+updated: 2026-10-28
+loc-budget-allow:
+  # 2026-10-28 (#2723 Slice A): +7 lines — the two seams where __regex_run /
+  # __regex_search hand an exhausted search to the linear PikeVM. The PikeVM
+  # itself lives in native-regex-linear.ts; only the call sites stay here.
+  - src/codegen/native-regex.ts
+func-budget-allow:
+  # 2026-10-28 (#2723 Slice A): +2 / +4 lines — the hand-off splice points
+  # (budget-exhaustion branch, post-attempt result test). Both bodies are
+  # built by helpers in native-regex-linear.ts.
+  - src/codegen/native-regex.ts::ensureRegexRun
+  - src/codegen/native-regex.ts::ensureRegexSearch
+import-cycles-allow:
+  - largestSccSize: 725 # 2026-10-28 (#2723 Slice A): new helper native-regex-linear.ts, called by native-regex.ts and using its frame/class-match emitters
 goal: standalone-mode
 feasibility: hard
 depends_on: []
@@ -454,3 +467,92 @@ acorn profile. Those runtime-constructed patterns keep the step cap and keep the
 existing anchored-literal-alternation fast path; closing the conformance gap for
 *them* would need the generic linear VM after all, and is deliberately deferred
 until the specializer has landed and the residual is worth pricing.
+
+---
+
+## 2026-10-28 — Slice A landed: linear PikeVM as the budget-exhaustion fallback
+
+### What was built (and how it differs from both plans above)
+
+A **linear PikeVM over the existing bytecode** that takes over a search the
+moment a backtracking attempt exhausts its step budget — instead of throwing
+`RangeError: regular expression step limit exceeded`.
+
+- `src/codegen/regex/linear.ts` — TS reference (executable spec):
+  `isLinearSafe(prog)`, `searchLinear(prog, classTable, nSlots, input,
+  start, sticky)`. Priority-ordered thread lists (SPLIT `a` before `b`),
+  one admission per state per position, copy-on-write per-thread capture
+  arrays; the first thread to reach MATCH wins and drops every
+  lower-priority thread, so the result (index **and** captures, including
+  the #1960 CLEAR reset) is exactly what the backtracker reports.
+- `src/codegen/regex/match-units.ts` — the per-op predicates both reference
+  VMs share (consumer test, BOL/EOL/WBOUND, forward code-point read),
+  extracted from `vm.ts` so the two VMs differ only in scheduling.
+  `vm.ts`'s `search` hands off to `searchLinear` on budget exhaustion.
+- `src/codegen/native-regex-linear.ts` — the Wasm twin
+  (`__regex_linear_safe`, `__regex_search_linear` + three helpers), written
+  with the `regex-runtime/dsl.ts` named-label builder; threads reuse
+  `$__ReFrame`.
+- `native-regex.ts` — two seams only: `__regex_run` returns -1 instead of
+  throwing when the program is linear-safe; `__regex_search` then answers
+  the rest of the scan (from that start position, honouring sticky) with
+  one `__regex_search_linear` pass.
+
+Why this shape rather than the original Slice A (generic default linear VM +
+compile-time router) or the AOT emitter (#4237): the backtracker **stays the
+fast path** for every normal match, so the #4237 measurement's objection — a
+generic PikeVM is slower per character than a backtracker — does not apply:
+the PikeVM only ever runs on searches the backtracker could not finish. The
+total cost of such a search is bounded by budget + O(|prog|·|s|), i.e.
+linear in the subject. Because the check is a runtime scan of the program,
+**runtime-constructed patterns** (`new RegExp(src)`, the 82 % of acorn's
+regex traffic the AOT plan cannot reach) get the fix too. #4237's
+compile-time specialization is untouched and still composes on top.
+
+Scope gate: emitted only on the host-free targets
+(`targetProfile.environment !== "javascript"`). In practice that is
+standalone: `--target wasi` has no RegExp engine enabled today (it refuses
+regex literals at compile time), and picks this up when it gets one. The
+JS-host lane runs the same native engine, but its output is verified
+byte-identical (sha256 of five regex programs × `web`/`node`, before vs
+after) and it keeps the step-cap RangeError.
+
+### Linear-safe subset (what the PikeVM claims)
+
+CHAR, CHARI, ANY, CLASS, CPCLASS (surrogate pairs via a pending-trail state),
+SPLIT, JMP, SAVE, CLEAR, BOL, EOL, WBOUND, MATCH — every flag (`i m s u y g`).
+**Declined, stay on backtracking with the cap:** BACKREF (NP-hard — the cap
+is the correct defence), LOOKAROUND (needs §4.3/§4.4), PROGRESS (a
+nullable-body loop, e.g. `(a*)*`, `(?:a|)+` — its scratch slot breaks the
+state+position dedup; needs the §4.1 BEGIN_LOOP/END_LOOP construction).
+
+### Acceptance — what this slice meets
+
+| Goal | Status |
+| --- | --- |
+| Feasibility ACs 1–4 (verdict, effort, slice ladder, first-slice scope, what stays on backtracking) | met earlier (plan above); first slice now built |
+| Spurious step-limit `RangeError` retired | **met for the linear-safe subset** on standalone, literal and runtime-constructed patterns |
+| ReDoS immunity | **met for the linear-safe subset**: total work ≤ step budget + O(\|prog\|·\|s\|) |
+| Same answers as native JS | 12 equivalence cases (`test`/`exec`/sticky/`replace` g/`split`/`search`/`match` g/`u`/`m`+`\b`/`i`+`s`/dynamic) — all fail on the base engine (RangeError), pass now; 23-pattern × 18-subject × every start × sticky differential vs the backtracker and V8 |
+| Lookaround correctness / linearity | **not met** — Slices C/D |
+| Nullable-body loops linear | **not met** — needs §4.1 |
+| JS-host lane | unchanged by design (byte-identical) |
+
+test262: the standalone baseline (`test262-standalone-current.jsonl`,
+fetched 2026-10-28) has **zero** rows failing with the step-limit message, so
+no test262 row was expected to flip; see the PR for the scoped RegExp run.
+
+### What remains
+
+1. **§4.1 nullable loops** — lower star/plus with a nullable body without
+   PROGRESS on the linear path, so `(a*)*`-style programs become linear-safe.
+2. **Slice C/D lookarounds** (§4.4 streaming lookbehind, §4.3 oracle).
+3. **§4.6 capture representation** — this slice copies the whole capture
+   array on SAVE/CLEAR (O(|r|) per write; still linear in |s|). Switch to
+   cons-cell sharing if a capture-heavy pathological case shows up.
+4. **JS-host lane** — gets the fallback when its byte-identity constraint is
+   lifted (or never, if the lane is retired first).
+5. **dead-export baseline** — the new reference-VM functions (`linear.ts`,
+   `match-units.ts`) are test-only like `vm.ts`'s, so `check:dead-exports`
+   flags them; banking them needs `audit-legacy-reachability.mjs --update`,
+   which this PR deliberately did not run (baseline edits need sign-off).
