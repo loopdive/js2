@@ -18,12 +18,16 @@ language_feature: arrays
 related: [7151, 7146]
 # 2026-10-27 (#7166): one import + one slot-cascade arm in each file; the
 # logic lives in src/codegen/declarations/module-global-vec-alias.ts.
+# 2026-10-28 (#7166 round 2): typeof-delete.ts gains one import + one call
+# (the helper lives in anyvalue-elem-materialize.ts).
 loc-budget-allow:
   - src/codegen/declarations.ts
   - src/codegen/statements/variables.ts
+  - src/codegen/typeof-delete.ts
 func-budget-allow:
   - src/codegen/declarations.ts::collectDeclarations
   - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
 ---
 
 # #7166 — `sort`/`reverse` return a different reference than the receiver
@@ -76,28 +80,55 @@ typed `(string | number)[]`).
 whose initializer is an identifier (through parens / `!` / `satisfies` and
 receiver-returning `sort` / `reverse` / `fill` / `copyWithin` calls) naming a
 binding that already holds an **externref-element vec** takes that slot type.
-Module globals: `moduleGlobalWasmType` in `src/codegen/declarations.ts`
-(a hoisted `var` alias of a later array-literal `const` types the source the
-way its own registration will). Locals: the slot cascade in
-`src/codegen/statements/variables.ts`. Nothing changes for any binding whose
-source is not an externref-element vec.
+
+- Module globals (`moduleGlobalWasmType`, `src/codegen/declarations.ts`): only
+  a `const`, or a `let` / `var` whose name is never written again in the file
+  (a later `r = other` would store a typed vec into the externref slot and
+  copy it). A hoisted `var` alias of a later array-literal `const` types the
+  source the way its own registration will.
+- Locals (slot cascade in `src/codegen/statements/variables.ts`): the source
+  local is looked up by name only when its declaration is the one binding of
+  that name in the function, so a shadow cannot be picked.
+
+Nothing changes for a binding whose source is not an externref-element vec.
+
+**`typeof` of an externref element (round 2).** The element of such a vec has
+the checker type `string | number` (`$AnyValue`) but compiles to an externref.
+`typeof a[i]` fed it to `__any_typeof` through a bare `ref.cast` (trap
+"illegal cast"), and `typeof a[i] === "…"` boxed it with the legacy tag-5 wrap
+(every value read as "string"). This trapped on `main` for a function-local
+source; the alias rule spread it to every alias. Both forms now classify the
+externref by its runtime value through `__any_from_extern_honest`
+(`externrefOperandAsAnyValue` in `src/codegen/anyvalue-elem-materialize.ts`,
+called from `src/codegen/typeof-delete.ts`). An externref that already holds an
+`$AnyValue` box is recovered unchanged, as before.
 
 **Tests.** `tests/equivalence/issue-7166-sort-reverse-identity.test.ts` —
-112 rows, gc native-first, standalone and wasi vs node: sort, sort(cmp),
-reverse, fill, copyWithin, plain alias and `a.sort().reverse()` on
-module-level and function-local evolving (for…in, push, mixed), `any[]`
-(literal / empty), `number[]` and `string[]` vecs, each checking `r === a`,
-`r.push(x)` visible through `a.length`, and the last element; plus identity
-inside a function and typed reads (`r[0]`, element string methods, `join`,
-`indexOf`, `map`, `for…of`, `var` alias) through the aliased global.
+250 rows, gc native-first, standalone and wasi vs node:
 
-**Bytes (unoptimized, base a54cd9fb8a vs head).** 13 playground examples and
-2,436 distinct equivalence-suite programs × gc / standalone / wasi: every
-playground example identical; 2,401 equivalence programs identical on all
-three lanes; the 35 that differ are all programs of the new #7166 test file.
+- sort, sort(cmp), reverse, fill, copyWithin, plain alias and
+  `a.sort().reverse()` on module-level and function-local evolving (for…in,
+  push, mixed), `any[]` (literal / empty), `number[]` and `string[]` vecs, each
+  checking `r === a`, `r.push(x)` visible through `a.length`, and the last
+  element; identity inside a function; typed reads through the aliased global.
+- `typeof r[i]`, `typeof r[i] === "…"`, `switch (typeof r[i])`, `typeof` in a
+  loop, `r[0] + 1`, `r[0].length`, `r[0] === "b"` on the source and on
+  `r = a` / `r = a.reverse()`, module and local, mixed / string / number
+  elements.
+- Reassigned aliases: `let` / `var` `r = keys` then `r = other` or
+  `r = mk()`, and an unreassigned `let r = keys.sort()`, module and local.
 
-**Left out.** `a.slice()` / `concat` results are new arrays by spec and are not
-aliasing. A `let r = a` later reassigned to a typed array literal keeps the
-externref-carrier slot (it holds the literal as a dynamic vec — correct, but
-not the typed fast path). Linear backend (`src/codegen-linear/`) not examined:
-it does not use these vec slot types.
+**Bytes (unoptimized, base a54cd9fb8a vs head).** 13 playground examples and 2,574 distinct
+equivalence-suite programs (recorded from the gate run) × gc / standalone /
+wasi. Every playground example and 2,475 equivalence programs are identical on
+all three lanes. The 99 that differ are all programs of the new #7166 test
+file.
+
+**Left out.**
+
+- `slice` / `concat` results are new arrays by spec, so they are not aliases.
+- Pre-existing on `main`, unchanged:
+  - `(2).length` on a number element is not `undefined`.
+  - wasi reads `a[0].length` through a module-level source as `undefined`.
+  - Passing the alias to a `string[]` parameter still copies.
+- The Linear backend (`src/codegen-linear/`) was not examined.

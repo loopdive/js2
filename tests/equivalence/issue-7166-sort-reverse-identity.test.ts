@@ -78,6 +78,85 @@ describe("#7166 receiver-returning array methods keep the receiver's identity", 
     ["for…of", `(() => { let s = ""; for (const x of r) s += x; return s === "ab" ? 1 : 0; })()`],
     ["var alias", `(rv === keys ? 1 : 0) + rv.length * 10`],
   ];
+  // `typeof` and other static-type-driven reads of an element: the checker
+  // types it `string | number`, the slot holds externrefs (B1, PR #6947 round 2).
+  const KIND = `function kind(t) { return t.length * 1000 + t.charCodeAt(0) * 10 + t.charCodeAt(1) % 10; }\n`;
+  const elementOps: [string, string][] = [
+    ["typeof [0]", `kind(typeof R[0])`],
+    ["typeof [1]", `kind(typeof R[1])`],
+    [
+      "typeof === literal",
+      `(typeof R[0] === "string" ? 1 : 0) + (typeof R[1] === "number" ? 2 : 0) + (typeof R[1] !== "string" ? 4 : 0)`,
+    ],
+    [
+      "switch (typeof [i])",
+      `(() => { let n = 0; for (let i = 0; i < R.length; i++) switch (typeof R[i]) { case "number": n += 1; break; case "string": n += 10; break; default: n += 100; } return n; })()`,
+    ],
+    [
+      "typeof in a loop",
+      `(() => { let n = 0; for (let i = 0; i < R.length; i++) n = n * 7 + kind(typeof R[i]); return n; })()`,
+    ],
+    ["[0] + 1", `String(R[0] + 1).length`],
+    ["[0].length", `R[0].length`],
+    ["[0] === literal", `(R[0] === "b" ? 1 : 0) + (R[1] === 1 ? 2 : 0)`],
+  ];
+  const ELEMENTS: [string, string][] = [
+    ["mixed", `a.push("b"); a.push(1);`],
+    ["string", `a.push("b"); a.push("c");`],
+    ["number", `a.push(2); a.push(1);`],
+  ];
+  for (const [ename, fill] of ELEMENTS) {
+    for (const [alias, init] of [
+      ["a", ""],
+      ["r = a", "const r = a;\n"],
+      ["r = a.reverse()", "const r = a.reverse();\n"],
+    ]) {
+      for (const [oname, op] of elementOps) {
+        if (ename !== "string" && oname === "[0].length") continue; // `(2).length` is a separate gap
+        // wasi reads `a[0].length` through the source binding as undefined on main too.
+        if (alias === "a" && oname === "[0].length") continue;
+        const R = alias === "a" ? "a" : "r";
+        const expr = op.replaceAll("R", R);
+        const decl = `const a = [];\n${fill}\n${init}`;
+        it(`module-level ${ename} ${alias}: ${oname}`, () =>
+          expectSameOnAllLanes(`${KIND}${decl}export function test() { return ${expr}; }`, "probe.js"));
+        it(`function-local ${ename} ${alias}: ${oname}`, () =>
+          expectSameOnAllLanes(`${KIND}export function test() {\n${decl}return ${expr};\n}`, "probe.js"));
+      }
+    }
+  }
+  // A module `let` / `var` alias that is later reassigned keeps the checker's
+  // slot (B2): the reassigned array must stay the same array.
+  const REASSIGNED: [string, string][] = [
+    [
+      "let = other",
+      `let r = keys;\nconst other = ["m"];\nfunction run() { r = other; r.push("o"); return (other.length * 10) + (r === other ? 1 : 0); }\n`,
+    ],
+    [
+      "var = other",
+      `var r = keys;\nconst other = ["m"];\nfunction run() { r = other; r.push("o"); return (other.length * 10) + (r === other ? 1 : 0); }\n`,
+    ],
+    [
+      "let = mk()",
+      `let r = keys;\nfunction mk() { const g = ["g"]; return g; }\nfunction run() { const m = mk(); r = m; r.push("o"); return (m.length * 10) + (r === m ? 1 : 0); }\n`,
+    ],
+    [
+      "let .sort(), not reassigned",
+      `let r = keys.sort();\nfunction run() { r.push("o"); return (keys.length * 10) + (r === keys ? 1 : 0); }\n`,
+    ],
+  ];
+  for (const [name, body] of REASSIGNED) {
+    it(`module-level reassigned alias: ${name}`, () =>
+      expectSameOnAllLanes(
+        `const keys = [];\nkeys.push("a");\n${body}export function test() { return run(); }`,
+        "probe.js",
+      ));
+    it(`function-local reassigned alias: ${name}`, () =>
+      expectSameOnAllLanes(
+        `export function test() {\nconst keys = [];\nkeys.push("a");\n${body}return run();\n}`,
+        "probe.js",
+      ));
+  }
   for (const [name, expr] of reads) {
     it(`module-level sorted alias: ${name}`, () =>
       expectSameOnAllLanes(

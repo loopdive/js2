@@ -58,7 +58,7 @@ export function aliasedModuleGlobalVecType(
   decl: ts.VariableDeclaration,
   sourceType: (source: ts.VariableDeclaration) => ValType,
 ): ValType | undefined {
-  if (!decl.initializer || decl.type) return undefined;
+  if (!decl.initializer || decl.type || !moduleBindingIsNeverReassigned(decl)) return undefined;
   const source = aliasedIdentifier(decl.initializer);
   if (!source) return undefined;
   const sourceDecl = ctx.oracle.variableDeclarationOf(source);
@@ -93,6 +93,53 @@ export function aliasedModuleGlobalVecType(
   return type;
 }
 
+/**
+ * A `const`, or a `let` / `var` whose name is never written again anywhere in
+ * its file (`r = other` would store a typed vec into the externref-vec slot
+ * and copy it). Name-based, so a same-spelled write elsewhere only declines.
+ */
+function moduleBindingIsNeverReassigned(decl: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(decl.name)) return false;
+  if (ts.isVariableDeclarationList(decl.parent) && (decl.parent.flags & ts.NodeFlags.Const) !== 0) return true;
+  const sourceFile = decl.getSourceFile();
+  let written = writtenNames.get(sourceFile);
+  if (!written) {
+    const names = new Set<string>();
+    const targets = (node: ts.Node): void => {
+      if (ts.isIdentifier(node)) names.add(node.text);
+      else ts.forEachChild(node, targets);
+    };
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      ) {
+        targets(node.left);
+      } else if (
+        (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+      ) {
+        targets(node.operand);
+      } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+        targets(node.initializer); // `for (r of …)` and `for (var r of …)` both write `r`
+      } else if (ts.isVariableDeclaration(node) && node.initializer && ts.isIdentifier(node.name)) {
+        // A redeclaration (`var r = …` twice) is a second write.
+        if (declaredNames.has(node.name.text)) names.add(node.name.text);
+        declaredNames.add(node.name.text);
+      }
+      ts.forEachChild(node, visit);
+    };
+    const declaredNames = new Set<string>();
+    visit(sourceFile);
+    written = names;
+    writtenNames.set(sourceFile, written);
+  }
+  return !written.has(decl.name.text);
+}
+
+const writtenNames = new WeakMap<ts.SourceFile, Set<string>>();
+
 /** Declarations whose alias source is being typed (breaks `var a = b, b = a` cycles). */
 const typingSources = new Set<ts.VariableDeclaration>();
 
@@ -111,10 +158,37 @@ export function aliasedLocalVecType(
   const sourceDecl = ctx.oracle.variableDeclarationOf(source);
   if (!sourceDecl || sourceDecl === decl || enclosingFunction(sourceDecl) !== enclosingFunction(decl)) return undefined;
   if (ts.isSourceFile(enclosingFunction(decl))) return undefined;
+  // `localMap` is keyed by name: only trust it when `sourceDecl` is the one
+  // binding of that name in this function, so a shadow cannot be picked.
+  if (!isOnlyBindingOfName(enclosingFunction(decl), sourceDecl)) return undefined;
   const index = fctx.localMap.get(source.text);
   const type = index === undefined ? undefined : getLocalType(fctx, index);
   if (!type || type.kind !== "ref_null" || !isExternrefElementVec(ctx, type.typeIdx)) return undefined;
   return type;
+}
+
+function isOnlyBindingOfName(fn: ts.Node, binding: ts.VariableDeclaration): boolean {
+  if (!ts.isIdentifier(binding.name)) return false;
+  const name = binding.name.text;
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (node !== fn && ts.isFunctionLike(node)) {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === name) count++;
+      return;
+    }
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name
+    ) {
+      count++;
+    } else if (ts.isClassDeclaration(node) && node.name?.text === name) {
+      count++;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn, visit);
+  return count === 1;
 }
 
 function enclosingFunction(node: ts.Node): ts.Node {

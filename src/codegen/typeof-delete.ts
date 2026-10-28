@@ -41,6 +41,7 @@ import {
 } from "./arguments-object-mop.js"; // (#4555)
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, ensureAnyHelpers, isAnyValue, skipTransparentExpressions } from "./shared.js";
+import { externrefOperandAsAnyValue } from "./anyvalue-elem-materialize.js"; // (#7166)
 import { compileStringLiteral } from "./string-ops.js";
 import { emitDynamicWithDelete, findWithBinding, resolveWithBinding } from "./with-scope.js";
 import {
@@ -2097,6 +2098,7 @@ export function compileTypeofExpression(
     if (typeofIdx !== undefined) {
       const operandType = compileExpression(ctx, fctx, operand);
       if (operandType === null) return null;
+      externrefOperandAsAnyValue(ctx, fctx, operandType);
       fctx.body.push({ op: "call", funcIdx: typeofIdx });
       return { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
     }
@@ -2483,7 +2485,7 @@ export function compileTypeofComparison(
       // (#6981) The declared type is `any`, but a usage-specialized slot (an
       // `any` local only ever written numbers → `f64`) arrives unboxed. Box it
       // so the tag read sees an `$AnyValue`, never a scalar.
-      if (!isAnyValue(operandType, ctx)) {
+      if (!isAnyValue(operandType, ctx) && !externrefOperandAsAnyValue(ctx, fctx, operandType)) {
         coerceType(ctx, fctx, operandType, { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx });
       }
       // Get the tag field
