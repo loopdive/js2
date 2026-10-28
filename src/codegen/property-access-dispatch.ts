@@ -38,6 +38,7 @@ import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-
 import { dynamicReadCrossesStandaloneLink, isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
+import { arrayLibMethodSpecLength } from "./array-method-value.js"; // (#4765)
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
 import { promiseProtoMemberSpecLength } from "./promise-dynamic-member-read.js"; // (#6651 D5)
 import { emitSymbolDescLoad, ensureNativeSymbolBoundaryBridge } from "./symbol-native.js";
@@ -3110,7 +3111,7 @@ export function tryLengthAndNameReads(
         // accepts: `function f(x = 42, y) {}` has `length === 0`, not 1. See
         // function-expected-argument-count.ts for the measured divergence table.
         const sig = lengthSigs[0]!;
-        const paramCount = expectedArgumentCountOfSignature(sig);
+        const paramCount = arrayLibMethodSpecLength(sig) ?? expectedArgumentCountOfSignature(sig); // (#4765)
         fctx.body.push({ op: "f64.const", value: paramCount });
         return { kind: "f64" };
       }
