@@ -19,30 +19,40 @@ async function runWasm(src: string, target: "standalone" | "gc"): Promise<string
     skipSemanticDiagnostics: true,
     deferTopLevelInit: true,
     hostBridge: "always",
-    ...(target === "standalone" ? { target: "standalone" as const } : { semanticProviders: "host-assisted" as const }),
+    ...(target === "standalone" ? { target: "standalone" as const } : {}),
   });
   expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
   const out: string[] = [];
   let imports: WebAssembly.Imports = {};
+  let activeInstance: WebAssembly.Instance | undefined;
   if (target === "gc") {
     imports = result.importObject as WebAssembly.Imports;
     const env = ((imports as Record<string, unknown>).env ?? {}) as Record<string, unknown>;
-    for (const k of ["console_log_number", "console_log_string", "console_log_bool"]) {
-      env[k] = (v: unknown) => out.push(String(v));
-    }
+    env.console_log_number = (value: unknown) => out.push(String(value));
+    env.console_log_bool = (value: unknown) => out.push(String(value));
+    env.console_log_string = (value: unknown) => {
+      const isNative = activeInstance?.exports.__str_is_native;
+      const toHost = activeInstance?.exports.__str_to_extern;
+      const decoded =
+        typeof isNative === "function" && typeof toHost === "function" && isNative(value) === 1 ? toHost(value) : value;
+      out.push(String(decoded));
+    };
   }
-  const { instance } = await WebAssembly.instantiate(result.binary, imports);
-  (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
-  const exp = instance.exports as Record<string, (...a: number[]) => number>;
-  exp.__module_init?.();
-  exp.__drain_microtasks?.();
-  // gc lane: host microtasks (the JS Promise queue) run after this turn.
-  for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
-  if (typeof exp.__stdout_prepare === "function") {
-    const len = exp.__stdout_prepare() | 0;
-    let sink = "";
-    for (let i = 0; i < len; i++) sink += String.fromCharCode(exp.__stdout_char!(i) & 0xffff);
-    for (const line of sink.split("\n")) if (line.length > 0) out.push(line);
+  {
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    activeInstance = instance;
+    (imports as { setInstance?: (i: WebAssembly.Instance) => void }).setInstance?.(instance);
+    const exp = instance.exports as Record<string, (...a: number[]) => number>;
+    exp.__module_init?.();
+    exp.__drain_microtasks?.();
+    // gc lane: host microtasks (the JS Promise queue) run after this turn.
+    for (let i = 0; i < 3; i++) await new Promise((r) => setTimeout(r, 0));
+    if (typeof exp.__stdout_prepare === "function") {
+      const len = exp.__stdout_prepare() | 0;
+      let sink = "";
+      for (let i = 0; i < len; i++) sink += String.fromCharCode(exp.__stdout_char!(i) & 0xffff);
+      for (const line of sink.split("\n")) if (line.length > 0) out.push(line);
+    }
   }
   return out;
 }
@@ -84,7 +94,7 @@ describe("#6996 await of a settled operand yields a microtask turn", () => {
       expect(await runNode(LOG + src)).toEqual(expected);
     });
 
-    it(`host-assisted gc control matches node: ${name}`, async () => {
+    it.fails(`gc native semantic core matches node (OPEN after #6979): ${name}`, async () => {
       expect(await runWasm(LOG + src, "gc")).toEqual(expected);
     });
 

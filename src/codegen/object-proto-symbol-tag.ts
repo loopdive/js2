@@ -54,7 +54,7 @@ import { addFuncType } from "./registry/types.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
-import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import {
   OBJECT_PROTO_TOSTRING_CLASSIFY_FN,
@@ -81,7 +81,6 @@ export function ensureObjectProtoSymbolTagFn(ctx: CodegenContext): number | unde
   const existing = ctx.funcMap.get(OBJECT_PROTO_SYMBOL_TAG_FN);
   if (existing !== undefined) return existing;
   if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return undefined;
-  if (!usesNativeSymbolProvider(ctx)) return undefined;
 
   ensureObjectRuntime(ctx);
   ensureSymbolCarrier(ctx);

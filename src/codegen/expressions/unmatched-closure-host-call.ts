@@ -25,12 +25,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
-import {
-  ensureHostCallFallbackImports,
-  type HostCallFallbackPlan,
-  planHostCallFallback,
-} from "./host-call-fallback.js";
-import { flushLateImportShifts } from "./late-imports.js";
+import { type HostCallFallbackPlan } from "./host-call-fallback.js";
 
 /** (#6769 S7c) The standalone arm's plan: the argument-carrier local. */
 type UnmatchedClosureApplyPlan = { apply: true; argsLocal: number };
@@ -54,12 +49,7 @@ export function reserveUnmatchedClosureHostCall(
       argsLocal: allocLocal(fctx, `__unmatched_args_${fctx.locals.length}`, { kind: "externref" }),
     };
   }
-  if (ctx.targetProfile.semanticProviders === "native-first") return undefined;
-  const plan = planHostCallFallback(call.arguments.length);
-  if (!plan.fixedArity) return undefined;
-  ensureHostCallFallbackImports(ctx, plan);
-  flushLateImportShifts(ctx, fctx);
-  return plan;
+  return undefined;
 }
 
 /**

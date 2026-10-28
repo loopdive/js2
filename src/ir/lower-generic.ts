@@ -1929,6 +1929,57 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const op of dyn.emitArgumentsLength(instr.formals)) emitter.pushRaw(out, op);
         return;
       }
+      case "dyn.current_this": {
+        // #7106 S3c — the invocation's `this`, legacy's receiver ladder.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.current_this (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitCurrentThis(instr.strict)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.global_object": {
+        // #7106 — the realm's global object (legacy's `emitNativeGlobalThisObject`).
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.global_object (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitGlobalObject()) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.instanceof_fn": {
+        // #7106 S3c — OrdinaryHasInstance against F's per-function prototype.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.instanceof_fn (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitInstanceOfFunction(instr.target.name)) emitter.pushRaw(out, op);
+        return;
+      }
+      case "dyn.instanceof": {
+        // #7106 — legacy's generic runtime operator over two carriers.
+        const dyn = resolver.resolveDynamicLowering?.();
+        if (!dyn) {
+          throw new Error(
+            `ir/lower: resolver cannot lower dyn.instanceof (resolveDynamicLowering missing/null) (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        emitValue(instr.target, out);
+        // pushraw-ok(#7106): same opaque Instr[] contract as emitBox
+        for (const op of dyn.emitInstanceOf()) emitter.pushRaw(out, op);
+        return;
+      }
       case "dyn.publish_argc": {
         // #7106 S1i — the call site's argument count, legacy's `emitSetArgc`.
         const dyn = resolver.resolveDynamicLowering?.();
@@ -2105,7 +2156,7 @@ export function lowerIrFunctionBody<S, Slot>(
         emitValue(instr.key, out);
         emitValue(instr.value, out);
         // pushraw-ok(#3795): backend-provided dynamic store sequence is rejected by non-Wasm backend legality
-        for (const op of dyn.emitMemberSet()) emitter.pushRaw(out, op);
+        for (const op of dyn.emitMemberSet(instr.sloppy === true)) emitter.pushRaw(out, op);
         return;
       }
       case "string.const":
@@ -3899,8 +3950,14 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "dyn.construct":
       return [instr.callee, ...instr.args];
     case "dyn.arguments_length":
+    case "dyn.current_this":
+    case "dyn.global_object":
     case "dyn.publish_argc":
       return [];
+    case "dyn.instanceof":
+      return [instr.value, instr.target];
+    case "dyn.instanceof_fn":
+      return [instr.value];
     case "dyn.own_property":
       return [instr.receiver, instr.key];
     case "dyn.eq":

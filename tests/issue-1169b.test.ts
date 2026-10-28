@@ -5,8 +5,8 @@
 // Each case compiles the same source twice — once with the legacy path
 // (experimentalIR off) and once through the IR (experimentalIR on) — and
 // asserts the exported function returns the same value for the same inputs.
-// Both string backends are exercised (`nativeStrings: true` and
-// `nativeStrings: false`) for cases whose result is JS-representable.
+// The native-strings backend (`nativeStrings: true`) is exercised for
+// cases whose result is JS-representable.
 //
 // The test suite is the gate for #1169b: if any case here fails with
 // experimentalIR on, the slice 2 widening is wrong.
@@ -168,15 +168,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe("#1169b — IR slice 2 (host strings)", () => {
-  for (const c of CASES) {
-    it(c.name, async () => {
-      const { legacy, ir } = await dualRun(c.source, c.fn, c.args, { nativeStrings: false });
-      // IR must produce the same outcome (value or error mode) as legacy.
-      expect(ir).toStrictEqual(legacy);
-    });
-  }
-});
+// (#6979) host-strings variant removed with the host-assisted profile.
 
 // Native-strings mode: skip string-returning cases (they return opaque
 // (ref $NativeString) values that vitest's toStrictEqual chokes on).
@@ -210,11 +202,6 @@ const COVERAGE_SOURCES = [
 describe("#1169b — slice 2 functions reach the IR path without errors", () => {
   for (const src of COVERAGE_SOURCES) {
     const label = src.slice(0, 60);
-    it(`host: ${label}`, async () => {
-      const r = await compile(src, { experimentalIR: true, nativeStrings: false });
-      expect(r.success).toBe(true);
-      expect(irFallbacks(r)).toEqual([]);
-    });
     it(`native: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);

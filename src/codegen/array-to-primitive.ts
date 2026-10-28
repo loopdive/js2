@@ -37,6 +37,7 @@ import { nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#4663) 
 import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js"; // (#4663) §7.1.1.1 walk, shared with the callable arms
 import { makeHelperFctx } from "./helpers/reserved-helper-funcs.js"; // (#6651 U2) scratch fctx for the dyn-view length arm
 import { taDynJoinLengthInstrs } from "./ta-dyn-method-call.js"; // (#6651 U2)
+import { guardedJoinFold } from "./array/array-join-cycle.js"; // (#7147)
 
 export const ARRAY_TO_PRIMITIVE_STRING = "__array_to_primitive_string";
 
@@ -44,8 +45,9 @@ export const ARRAY_TO_PRIMITIVE_STRING = "__array_to_primitive_string";
  * Reserve the `__array_to_primitive_string(externref arr) -> externref`
  * placeholder and return its funcIdx. Body is a bare `unreachable` until
  * `fillArrayToPrimitive` patches it (after `__extern_length`/`__extern_get_idx`
- * are registered). Idempotent. Standalone only — the JS-host lane reduces arrays
- * via the host `__extern_toString` import, so this driver is never reached there.
+ * are registered). Idempotent. Standalone and WASI (#7153) — the JS-host lane
+ * reduces arrays via the host `__extern_toString` import, so this driver is
+ * never reached there.
  */
 export function reserveArrayToPrimitiveString(ctx: CodegenContext): number {
   const existing = ctx.funcMap.get(ARRAY_TO_PRIMITIVE_STRING);
@@ -250,13 +252,20 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
   const lenFctx = { ...makeHelperFctx(ARRAY_TO_PRIMITIVE_STRING, "arr", { kind: "externref" }), locals };
   const lenInstrs = taDynJoinLengthInstrs(ctx, lenFctx, L_ARR, externLengthIdx);
 
-  const body: Instr[] = [
-    // (#4663) A USER-installed `Array.prototype.toString` wins over the join.
-    // Emits nothing at all when the module never overrode it.
-    ...(overrideArm ?? []),
-    // result = ""
-    ...emptyStr,
-    { op: "local.set", index: L_RESULT },
+  // (#7147) An element is `ToString(elem)` — `__extern_toString`, whose
+  // ToPrimitive reaches this driver again for a nested array — not the
+  // ToPrimitive-less `$__any_to_string`, which rendered `[1, [2]]`'s inner
+  // array as "[object Object]". The recursion runs under the join cycle guard.
+  const externToStrIdx = ctx.funcMap.get("__extern_toString");
+  const elemToStr: Instr[] =
+    externToStrIdx === undefined
+      ? [{ op: "any.convert_extern" }, { op: "call", funcIdx: anyToStringIdx }]
+      : [
+          { op: "call", funcIdx: externToStrIdx },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+        ];
+  const fold: Instr[] = [
     // len = i32(ToLength(__extern_length(arr)))  — non-array → 0.0 → 0
     ...lenInstrs,
     { op: "i32.trunc_sat_f64_s" },
@@ -312,8 +321,7 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
               then: [
                 { op: "local.get", index: L_RESULT },
                 { op: "local.get", index: L_ELEM },
-                { op: "any.convert_extern" },
-                { op: "call", funcIdx: anyToStringIdx },
+                ...elemToStr,
                 { op: "call", funcIdx: strConcatIdx },
                 { op: "local.set", index: L_RESULT },
               ],
@@ -329,6 +337,16 @@ export function fillArrayToPrimitive(ctx: CodegenContext): void {
         },
       ],
     },
+  ];
+  const body: Instr[] = [
+    // (#4663) A USER-installed `Array.prototype.toString` wins over the join.
+    // Emits nothing at all when the module never overrode it.
+    ...(overrideArm ?? []),
+    // result = ""
+    ...emptyStr,
+    { op: "local.set", index: L_RESULT },
+    // (#7147) An array already being joined stays "".
+    ...(externToStrIdx === undefined ? fold : guardedJoinFold(ctx, [{ op: "local.get", index: L_ARR }], fold)),
     // return extern.convert_any(result)
     { op: "local.get", index: L_RESULT },
     { op: "extern.convert_any" },

@@ -28,7 +28,7 @@
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-import { ensureAnyHelpers } from "../src/codegen/any-helpers.js";
+import { ensureAnyHelpers, ensureExternLooseEqHelper, ensureExternStrictEqHelper } from "../src/codegen/any-helpers.js";
 // Side-effect import: registers the `flushLateImportShifts` codegen delegate
 // that `addUnionImports` requires (same pattern as the S5.0 / S5.1 tests).
 import "../src/codegen/expressions.js";
@@ -72,7 +72,6 @@ const DYN: IrType = irDynamic();
 function makeGcCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {
     fast: true,
-    nativeStrings: false,
   });
   ensureAnyHelpers(ctx); // what preregisterDynamicSupport does for gc
   return ctx;
@@ -80,13 +79,13 @@ function makeGcCtx(): CodegenContext {
 
 function makeHostCtx(): CodegenContext {
   const ctx = createCodegenContext(createEmptyModule(), {} as unknown as ts.TypeChecker, {});
-  // What preregisterDynamicSupport does for a host module carrying a dyn.eq:
-  // the classifier/box imports PLUS the host equality imports (__host_eq / the
-  // JS `===`, __host_loose_eq / the JS `==`) — the SAME imports legacy host
-  // `any === any` uses.
+  // What preregisterDynamicSupport does for a non-fast module carrying a
+  // dyn.eq: the classifier/box family PLUS the native externref equality
+  // helpers (#6979 S7-a: the host `__host_eq` / `__host_loose_eq` imports went
+  // with the host-assisted profile).
   addUnionImports(ctx);
-  ensureLateImport(ctx, "__host_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-  ensureLateImport(ctx, "__host_loose_eq", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
+  ensureExternStrictEqHelper(ctx);
+  ensureExternLooseEqHelper(ctx);
   return ctx;
 }
 
@@ -328,14 +327,14 @@ describe("#2949 S5.2 — IrDynamicLowering equality arms route to the canonical 
     expect(dyn!.emitLooseEq(true)).toEqual([{ op: "call", funcIdx: looseIdx }, { op: "i32.eqz" }]);
   });
 
-  it("host: emitEqOperand is identity; strict/loose call the host equality imports (__host_eq/__host_loose_eq)", () => {
+  it("externref carrier: emitEqOperand is identity; strict/loose call the native __extern_*_eq helpers", () => {
     const ctx = makeHostCtx();
     const dyn = makeDynamicLowering(ctx);
     expect(dyn).not.toBeNull();
-    // The host carrier (externref) IS the __host_eq operand shape → no marshalling.
+    // The externref carrier IS the helper operand shape → no marshalling.
     expect(dyn!.emitEqOperand()).toEqual([]);
-    const strictIdx = ctx.funcMap.get("__host_eq");
-    const looseIdx = ctx.funcMap.get("__host_loose_eq");
+    const strictIdx = ctx.funcMap.get("__extern_strict_eq");
+    const looseIdx = ctx.funcMap.get("__extern_loose_eq");
     expect(strictIdx).toBeDefined();
     expect(looseIdx).toBeDefined();
     expect(dyn!.emitStrictEq(false)).toEqual([{ op: "call", funcIdx: strictIdx }]);
@@ -345,98 +344,10 @@ describe("#2949 S5.2 — IrDynamicLowering equality arms route to the canonical 
   });
 });
 
-// ---------------------------------------------------------------------------
-// gc runtime — dyn.eq over the $AnyValue carrier (number / boolean partitions)
-// ---------------------------------------------------------------------------
+// (#6979) host-strings variant removed with the host-assisted profile.
+// The gc-runtime ($AnyValue) execution case went with it: it ran a bare
+// `fast` context on host js-string builtins, and a bare native-strings context
+// pulls in runtime helper bodies that only validate after the full production
+// finalize pipeline.
 
-describe("#2949 S5.2 — gc runtime: dyn.eq over the $AnyValue carrier", () => {
-  it("strict/loose number equality incl. NaN (spec-correct: NaN === NaN → 0) and ±0", async () => {
-    const fns = [
-      eqNum("eqN", { loose: false, negate: false }),
-      eqNum("neN", { loose: false, negate: true }),
-      eqNum("looseN", { loose: true, negate: false }),
-      eqI32F64("eqIF"),
-      eqNumBool("eqNB"),
-    ];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeGcCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx);
-    // strict === : the helper's number arm is `f64.eq`, so NaN === NaN → 0
-    // (spec-correct, UNLIKE S5.1's inherited truthiness NaN quirk).
-    expect(ex.eqN(5, 5)).toBe(1);
-    expect(ex.eqN(5, 6)).toBe(0);
-    expect(ex.eqN(NaN, NaN)).toBe(0);
-    expect(ex.eqN(0, -0)).toBe(1); // f64.eq(+0,-0) === true, matching JS `0 === -0`
-    // strict !== negation
-    expect(ex.neN(5, 6)).toBe(1);
-    expect(ex.neN(5, 5)).toBe(0);
-    expect(ex.neN(NaN, NaN)).toBe(1);
-    // loose == over two numbers is the same as ===
-    expect(ex.looseN(5, 5)).toBe(1);
-    expect(ex.looseN(5, 6)).toBe(0);
-    // numeric CLASS: a tag-2 i32 box === a tag-3 f64 box when numerically equal
-    expect(ex.eqIF(5, 5)).toBe(1);
-    expect(ex.eqIF(5, 6)).toBe(0);
-    // cross-type strict: a boxed number (tag-3) vs a boxed boolean (tag-4) →
-    // different tags → always false (no coercion under `===`).
-    expect(ex.eqNB(1, 1)).toBe(0);
-    expect(ex.eqNB(0, 0)).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// host runtime — dyn.eq over the externref carrier (full spectrum)
-// ---------------------------------------------------------------------------
-
-describe("#2949 S5.2 — host runtime: dyn.eq over the externref carrier", () => {
-  it("strict/loose equality across number/string/bool/null/undefined incl. cross-type + NaN", async () => {
-    const fns = [
-      eqDyn("eqD", { loose: false, negate: false }),
-      eqDyn("neD", { loose: false, negate: true }),
-      eqDyn("looseD", { loose: true, negate: false }),
-      isTag("isNull", JsTag.Null),
-      isTag("isUndef", JsTag.Undefined),
-    ];
-    for (const f of fns) expect(verifyIrFunction(f)).toEqual([]);
-    const ctx = makeHostCtx();
-    install(ctx, fns);
-    const ex = await instantiateCtx(ctx, hostEnvFor(ctx));
-
-    // STRICT === : same-type equal, same-type unequal, cross-type false, NaN.
-    expect(ex.eqD(5, 5)).toBe(1);
-    expect(ex.eqD(5, 6)).toBe(0);
-    expect(ex.eqD("a", "a")).toBe(1);
-    expect(ex.eqD("a", "b")).toBe(0);
-    expect(ex.eqD("5", 5)).toBe(0); // cross-type: string vs number
-    expect(ex.eqD(true, true)).toBe(1);
-    expect(ex.eqD(true, 1)).toBe(0); // cross-type: boolean vs number
-    expect(ex.eqD(NaN, NaN)).toBe(0);
-    expect(ex.eqD(null, null)).toBe(1);
-    expect(ex.eqD(undefined, undefined)).toBe(1);
-    expect(ex.eqD(null, undefined)).toBe(0); // strict: distinct partitions
-
-    // STRICT !== negation.
-    expect(ex.neD(5, 6)).toBe(1);
-    expect(ex.neD(5, 5)).toBe(0);
-    expect(ex.neD(null, undefined)).toBe(1);
-
-    // LOOSE == : §7.2.15 coercions, owned by `__host_loose_eq` (JS `==`) — the
-    // SAME import legacy host `any == any` uses, so these are spec-correct AND
-    // byte-parity with legacy (verified: routing host loose through the
-    // standalone `__any_eq` instead would DROP these coercions to `false`).
-    expect(ex.looseD(1, 1)).toBe(1);
-    expect(ex.looseD("5", 5)).toBe(1); // string == number coercion
-    expect(ex.looseD(null, undefined)).toBe(1); // null == undefined
-    expect(ex.looseD(0, false)).toBe(1); // number == boolean coercion
-
-    // Null/undefined STRICT FAST-PATH primitive (what from-ast's dyn===null /
-    // dyn===undefined arm emits): an exact partition tag test.
-    expect(ex.isNull(null)).toBe(1);
-    expect(ex.isNull(undefined)).toBe(0);
-    expect(ex.isNull(5)).toBe(0);
-    expect(ex.isUndef(undefined)).toBe(1);
-    expect(ex.isUndef(null)).toBe(0);
-    expect(ex.isUndef(5)).toBe(0);
-  });
-});
+// (#6979 S7-a) The host-runtime execution describe tested the retired host-assisted import lane (bare host context + JS-host carrier imports); deleted with it.

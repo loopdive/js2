@@ -92,8 +92,9 @@ describe("#1493 — WASI console.error/warn route to stderr (fd=2)", () => {
   it("routes f64 / number args through the stderr helper for console.error", async () => {
     const result = await compile(`console.error(42);`, { target: "wasi" });
     expect(result.success).toBe(true);
-    // Number formatter for stderr lane
-    expect(result.wat).toContain("__wasi_write_f64_stderr");
+    // (#7157) Numbers use the native String(n) formatter, written to the stderr lane
+    expect(result.wat).toContain("number_toString");
+    expect(result.wat).toContain("__wasi_write_any_string_stderr");
     expect(result.wat).toContain("__wasi_write_string_stderr");
   });
 });
