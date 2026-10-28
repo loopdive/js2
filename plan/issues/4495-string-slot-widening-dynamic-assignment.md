@@ -764,3 +764,111 @@ Both lanes identical. Playground corpus: 26/26 binaries byte-identical to the
 round-1 head. `tests/issue-4495.test.ts` 184/184 (one new case, four cells),
 `tests/binding-writes.test.ts` 35/35; every gate exits 0 against
 `origin/main`.
+
+## Review round 2 (opus, 2026-10-28)
+
+Fresh-context review of `f15ec37f69` (PR #6954, comment 6481360743): REQUEST
+CHANGES, with 2 blocking findings and 3 nits. Every row below was re-measured on
+the post-review head `3ca56f2f86`, with node as the oracle, on 4 cells
+(standalone and gc, module scope and function).
+
+### 1 — reads of a rest-written binding (fixed)
+
+On `3ca56f2f86`, `memberReceiverStaticType` already fixed the `.length` rows.
+Two kinds of read were still wrong:
+
+- **Method calls.** `y.join('-')` answered `null` at module scope. The generic
+  dynamic fallback in `compileReceiverMethodCall` read the checker type. A
+  function local is rescued there by `effectiveLocalCarrier`; a module global
+  was not.
+- **Element reads.** `y[0]` with `var y = 's'` trapped on 4/4 cells, on main
+  as well. The standalone string-exotic arm took the stale `string` tag.
+
+The fix adds two siblings of `memberReceiverStaticType` beside the same guard,
+`slotIsDynamicButStaticallyPrimitive`, in
+`heterogeneous-scalar-var-widening.ts`. No new predicate.
+
+- **`methodReceiverStaticType`.** This answers `any` only when the stale type
+  does not declare the method (`ctx.oracle.signatureOf(callee) === undefined`).
+  - A declared method keeps its native arm, so `r = id('xy'); r.toUpperCase()`
+    stays right. Sending every widened receiver dynamic broke that case: the
+    `any` path cannot call native string methods.
+  - `compileReceiverMethodCall` swaps it in at its two receiver-type lines.
+- **`receiverStaticJsType`.** This is the tag form (`mixed` for a widened
+  binding). `compileElementAccess` uses it, and passes the guarded type to
+  `receiverMayBeNativeStringAtRuntime` through a new optional parameter.
+
+| Program | node | 3ca56f2f86 | now |
+| --- | --- | --- | --- |
+| `var y=0; [...y]=[1,2]; ''+y.length` | `2` | right | right, 4/4 |
+| `var y=true; [...y]=[1,2]; ''+y.length` | `2` | right | right, 4/4 |
+| `var y=0; [...y]=[1,2]; y.join('-')` | `1-2` | `null` at module scope | right, 4/4 |
+| looped `[...y]=[1,2,3]; ''+y.length` | `3` | right | right, 4/4 |
+| `var y='s'; [...y]=[1,2]; y.length` | `2` | right | right, 4/4 |
+| `var y='s'; [...y]=[1,2]; y.join('-')` | `1-2` | wrong, 4/4 | right, 4/4 |
+| `var r='r'; [, ...r]=[1,2,3]; r.length` / `r.join()` | `2` / `2,3` | wrong | right, 4/4 |
+| `var y='s'; [...y]=[1,2]; y[0]` | `1` | trap, 4/4 (main too) | right, 4/4 |
+
+### 2 — residuals filed
+
+- [#7184](7184-widened-binding-stale-checker-type-reads.md): A, the other
+  stale-type reads (loose equality, initializers, call arguments, closure return).
+- [#7185](7185-module-scope-for-head-writes-module-global.md): B, module-scope
+  for-in and for-of pattern heads.
+- [#7186](7186-destructuring-assignment-lowering-residuals.md): C, D, E, the
+  rest element type, a short numeric source and ToString of the hole marker.
+- [#7187](7187-fold-private-write-walkers-and-stripparens.md): the two private
+  write walkers and the `stripParens` copies (nit 5).
+
+### 3 — literal source (fixed, one row moved to #7186)
+
+- **Spread.** A spread in a literal source now outgrows the pattern, so
+  `[a,b]=[...[1,2]]` is right on 4/4 cells.
+- **Short source.** Measuring nit 3 showed `[a,b]=[1]` with string slots was a
+  compile error on head ("struct field index out of range"); main trapped. The
+  literal's own tuple is shorter than the pattern. A tuple position past the
+  source now reads `undefined` (`emitElementGet`, `assignment.ts`).
+- **Hole.** `[a,b]=[1,,]` already gives `typeof b === 'undefined'`. Only
+  `'' + b` is wrong, and it is wrong for `var x=[1,,]; var b=x[1]` at module
+  scope too. That is ToString of the f64 hole marker, now #7186.
+- **Rest element type.** `[a,...r]=[1,'x',true]; r[0]` (`NaN`) is the
+  deliberate `contextLowersAsVec` exemption, now #7186.
+
+### 4 — one annotation rule (fixed)
+
+- The rule moved into `identifierWriteTag(oracle, write, initialTag, annotated)`.
+  It calls `identifierWriteFact` once per write.
+- Both analyses now apply it: an annotated binding takes its declared tag for
+  every checked write, and an `any`/`unknown` value keeps its own verdict.
+- The module analysis no longer skips annotated declarations. It does not
+  propagate a checked write into an annotated target.
+- The `.ts` repro `let r: string = 'a'; const v: any = id([1]); [r] = v; ''+r`
+  is right on 4/4 cells; the module cells trapped before.
+
+### 5 — quality (fixed or filed)
+
+- The `!property.name` branch in `propertySource` is gone.
+- `identifierWriteFact` is called once per write.
+- The `stripParens` fold is #7187.
+
+### Validation (all run by me, same box)
+
+- `tests/issue-4495.test.ts` and `tests/binding-writes.test.ts`: 279/279 pass.
+  That includes 60 new cells: 11 rest-read rows, 3 literal-source rows and
+  1 annotation row, each on 4 cells.
+- Equivalence files matching destructuring, closures, compound assignment,
+  typeof, rest, spread, assignment, element and string-method: 43 files,
+  395/395 pass.
+- **Byte identity vs `origin/main` `f3b5b1a0`.** The corpus was the 13 files
+  under `website/playground/examples/**/*.ts` plus 1,662 export templates from
+  `tests/equivalence/*.test.ts`, compiled on both lanes. 3,348 of 3,350
+  binaries are identical. The only difference is
+  `iterator-protocol-custom.test.ts#1`, +34 B on each lane: the
+  destructuring-literal change the round-2 review already attributed.
+- **Gates.** Each was run bare with `LOC_GATE_BASE` set to the `origin/main`
+  sha, and each exits 0:
+  - loc-budget, func-budget and coercion-sites;
+  - oracle ratchet (`getTypeAtLocation` −2, `ctx.checker` −2);
+  - dead-exports, import-cycles and compiler-boundaries inventory;
+  - flat-dir-budget and standalone-arms.
+- **Typecheck and lint.** `pnpm typecheck` and biome lint exit 0.
