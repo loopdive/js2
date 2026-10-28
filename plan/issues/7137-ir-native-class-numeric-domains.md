@@ -192,3 +192,47 @@ The fresh byte comparison against current main 699a2e71c7 again has exactly the
 two predecessor WASI changes and 58 identical records. The mixed-boundary WAT
 probe confirms `read` has an externref-to-f64 ABI; this is a legacy member-read
 boundary, not an unqualified success of the new typed-field producer.
+
+
+## Takeover integration and CI regression fix, 2026-10-28
+
+Integrated the #7136 predecessor as merged with main `b6250f09f8`; the merge
+had no conflicts and the numeric diff against that predecessor is unchanged.
+
+CI then failed `tests/equivalence/issue-6798-misc-semantics.test.ts`
+(i32-saturate). It was a compile error, not a wrong value:
+`class P { n: i32 = 0; set(v: number): i32 { this.n = v; return this.n; } }`
+stopped compiling with `class-method typeIdx parity mismatch`.
+
+Root cause: the class-shape descriptor (`buildIrClassShapes`) types member
+signatures from the checker, so `: i32` projects as f64. The legacy ABI pins the
+native annotation instead (`class-bodies.ts`, i32 result). Before this branch,
+`return this.n` (an i32 field) against that f64 result failed IR verification,
+which is a soft fallback. The new numeric return boundary converts it, so the
+body now lowers on the f64 ABI and reaches the class-member parity check. That
+check is a hard invariant. Getters and static methods with a native result
+regressed the same way. Main already failed this way for native parameters,
+setters and constant native results (`g(): i32 { return 1; }`).
+
+Fix: `irNativeSignatureDiverges` (next to `irNativeNumericFieldType`, same
+shared alias proof) defers any member whose parameters or result carry a
+non-f64 native pin. This applies to instance methods, accessors and statics,
+and those members compile on their legacy ABI. Callers of a deferred member
+also stay legacy. Values match a legacy-only compile, and the 6798 test is
+unchanged. A new 7137 control covers a method, getter, setter and static,
+asserting ToInt32 values and legacy ownership on both native targets. That
+control fails without the fix.
+
+Still open, and not changed here:
+- A constructor with a native parameter still hits the same hard parity check
+  on main. Deferring it would mean dropping the whole class shape.
+- Legacy re-types a method's native result to f64 when it compiles the body, so
+  `g(v: number): i32 { return v; }` returns 2147483648 in a legacy-only compile.
+- A legacy `: u32` member result widens as signed. Behind the corrected IR
+  constructor, it reads -1; before, the clamped constructor gave 2147483647.
+
+Qualification on the integrated head:
+- The PR's suites pass: 7137 72/72, 7136 70/70, and 3518 main lowering.
+- With `JS2WASM_IR_I32_DOMAIN=1`, they pass 142/142.
+- The six console-touching equivalence files and 6798 pass 98/98.
+- The remaining failures in the related suites match `b6250f09f8` row for row.

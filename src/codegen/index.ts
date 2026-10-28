@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { irNativeNumericFieldType } from "./declarations/ir-native-numeric-field.js";
+import { irNativeNumericFieldType, irNativeSignatureDiverges } from "./declarations/ir-native-numeric-field.js";
 import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
 import {
   emitGlobalEnvironmentKey,
@@ -1964,7 +1964,7 @@ function buildIrClassShapes(
       if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name) && computedMethodName === undefined) {
         continue;
       }
-      if (member.asteriskToken) continue; // generators → defer
+      if (member.asteriskToken || irNativeSignatureDiverges(ctx.oracle, member)) continue; // generators, native ABI → defer
       const methodName = ts.isPrivateIdentifier(member.name)
         ? privateMemberMangledName(member.name)
         : ts.isComputedPropertyName(member.name)
@@ -2022,7 +2022,7 @@ function buildIrClassShapes(
     // filter on `memberKind`, so these never leak into `class.call`
     // resolution.
     for (const member of stmt.members) {
-      if (!member.name) continue;
+      if (!member.name || (ts.isFunctionLike(member) && irNativeSignatureDiverges(ctx.oracle, member))) continue;
       const placement = placementFor(member);
       const placementTerminal = placement ? identityContext.terminalByUnitId.get(placement.unitId) : undefined;
       const nestedAccessorPlacement = placementTerminal?.containingTerminalOwnerId !== undefined;

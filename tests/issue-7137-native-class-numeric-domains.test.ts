@@ -6,7 +6,7 @@ import { irVal } from "../src/ir/nodes.js";
 import { coerceIrNumeric } from "../src/ir/numeric-slot-coercion.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
-async function runNative(source: string, target: "standalone" | "wasi", expected: number) {
+async function compileAndRun(source: string, target: "standalone" | "wasi") {
   const result = await compile(source, {
     target,
     fileName: "native-field.ts",
@@ -19,7 +19,12 @@ async function runNative(source: string, target: "standalone" | "wasi", expected
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   const instance = new WebAssembly.Instance(module, {});
   (instance.exports.__module_init as (() => void) | undefined)?.();
-  expect((instance.exports.run as () => number)()).toBe(expected);
+  return { result, value: (instance.exports.run as () => number)() };
+}
+
+async function runNative(source: string, target: "standalone" | "wasi", expected: number) {
+  const { result, value } = await compileAndRun(source, target);
+  expect(value).toBe(expected);
   const owners =
     result.irOutcomes?.filter((row) => row.unitKind === "function" || row.unitKind === "class-member") ?? [];
   expect(owners.length).toBeGreaterThanOrEqual(2);
@@ -171,29 +176,49 @@ for (const target of ["standalone", "wasi"] as const) {
       );
     });
     it("retains fallback when the parent's global storage owner is unprepared", async () => {
-      const result = await compile(
+      const { result, value } = await compileAndRun(
         `var count = 0;
         function take(): number { count = count + 1; return 4; }
         class Parent { value: number = take(); } class C extends Parent {}
         export function run(): number { return (new C()).value + count; }`,
-        {
-          target,
-          experimentalIR: true,
-          trackIrOutcomes: true,
-          skipSemanticDiagnostics: true,
-        },
+        target,
       );
-      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-      const module = new WebAssembly.Module(result.binary);
-      expect(WebAssembly.Module.imports(module)).toEqual([]);
-      const instance = new WebAssembly.Instance(module, {});
-      (instance.exports.__module_init as (() => void) | undefined)?.();
-      expect((instance.exports.run as () => number)()).toBe(5);
+      expect(value).toBe(5);
       for (const name of ["Parent_new", "run"]) {
         expect(
           result.irOutcomes?.find((row) => row.displayName === name),
           JSON.stringify(result.irOutcomes),
         ).toMatchObject({ legacyBodyEmitted: true });
+      }
+    });
+    // The class-shape descriptor types member signatures as f64; the legacy ABI
+    // pins i32 here. A claimed body on the f64 ABI failed the hard class-member
+    // parity check (a compile error), so these members stay legacy.
+    it("keeps native-annotated member signatures on their legacy ABI with ToInt32 values", async () => {
+      const { result, value } = await compileAndRun(
+        `type i32 = number;
+        class P {
+          n: i32 = 0;
+          put(v: number): i32 { this.n = v; return this.n; }
+          get read(): i32 { return this.n; }
+          set write(v: i32) { this.n = v; }
+          static of(p: P): i32 { return p.n; }
+        }
+        export function run(): number {
+          const p = new P();
+          const wrapped = p.put(2147483648);
+          p.write = 4294967298;
+          return wrapped + p.read * 10 + P.of(p) * 100;
+        }`,
+        target,
+      );
+      expect(value).toBe((2147483648 | 0) + (4294967298 | 0) * 110);
+      expect(result.irPostClaimErrors ?? []).toEqual([]);
+      for (const name of ["P_put", "P_get_read", "P_set_write", "P_of"]) {
+        expect(
+          result.irOutcomes?.find((row) => row.displayName === name),
+          JSON.stringify(result.irOutcomes),
+        ).toMatchObject({ irBodyEmitted: false, legacyBodyEmitted: true });
       }
     });
     it("preserves the boolean field brand", async () => {

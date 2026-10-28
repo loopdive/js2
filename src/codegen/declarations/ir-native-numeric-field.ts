@@ -14,3 +14,16 @@ export function irNativeNumericFieldType(oracle: TypeOracle, node: ts.Node): IrT
   if (annotation.typeName.text === "u32") return { kind: "val", val: native, signed: false };
   return annotation.typeName.text === "i32" ? { kind: "val", val: native } : null;
 }
+
+/**
+ * Member signatures are projected from the checker's `number` (f64), but the
+ * legacy ABI pins a native annotation on a parameter or result (`class-bodies.ts`).
+ * A non-f64 pin is an ABI the descriptor cannot reproduce, and a claimed body on
+ * the f64 ABI fails the hard class-member parity check, so the member stays legacy.
+ */
+export function irNativeSignatureDiverges(oracle: TypeOracle, member: ts.SignatureDeclaration): boolean {
+  return [member, ...member.parameters].some((decl) => {
+    const native = nativeTypeOfDeclaration(oracle, decl);
+    return native !== null && native.kind !== "f64";
+  });
+}

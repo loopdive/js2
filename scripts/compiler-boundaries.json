@@ -5051,7 +5051,7 @@
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
       "owner": "7137",
-      "nextBoundary": "Source-qualified native numeric field projection; move with exact class-layout preparation."
+      "nextBoundary": "Source-qualified native numeric field projection and member-signature ABI deferral; move with exact class-layout preparation."
     },
     {
       "path": "src/codegen/declarations/reassigned-function-binding-widening.ts",
