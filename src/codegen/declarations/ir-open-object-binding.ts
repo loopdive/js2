@@ -6,10 +6,10 @@
  * binding's store.
  */
 
-import { ts } from "../ts-api.js";
-import type { CodegenContext } from "./context/types.js";
-import { resolveSpillLocalValType } from "./statements/variables.js";
-import { widenedVarKeyFromDecl } from "./widened-var-key.js";
+import { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
+import { resolveSpillLocalValType } from "../statements/variables.js";
+import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 
 /**
  * The lane whose IR lowers an open carrier: standalone with the externref

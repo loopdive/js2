@@ -8569,7 +8569,7 @@
       "nextBoundary": "IR dyn.construct support (#7106 S3a): the per-arity wrapper over the legacy native-construct driver and the selector's plain-callee predicate; moves with the construct-driver backend split."
     },
     {
-      "path": "src/codegen/ir-open-object-binding.ts",
+      "path": "src/codegen/declarations/ir-open-object-binding.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
       "destination": "backend-wasmgc",
