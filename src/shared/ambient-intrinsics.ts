@@ -55,8 +55,10 @@ export function isAmbientIntrinsicName(name: string): boolean {
  *     `function Error() {}` the checker reports the lib declarations alone
  *     (measured, TypeScript 5.9), so the file is checked as well;
  *   - the value reaches only opaque uses — see {@link isOpaqueIntrinsicUse} —
- *     or, once the module's builtin-prototype companion is seeded, is the
- *     receiver of an exact `<Receiver>.prototype.<method>` value read (#7127,
+ *     or is the receiver of an exact `<Namespace>.<staticMethod>` value read
+ *     (#7189, {@link isExactStaticMethodValueRead}), or, once the module's
+ *     builtin-prototype companion is seeded, of an exact
+ *     `<Receiver>.prototype.<method>` value read (#7127,
  *     {@link isExactProtoMethodValueRead}).
  */
 export function isAmbientIntrinsicValueUse(
@@ -69,6 +71,7 @@ export function isAmbientIntrinsicValueUse(
     isLibOnlyBinding(node) &&
     !declaredNames(node.getSourceFile()).has(node.text) &&
     (isOpaqueIntrinsicUse(node) ||
+      isExactStaticMethodValueRead(node) ||
       (seed?.builtinProtoCompanionSeeded?.() === true && isExactProtoMethodValueRead(node)))
   );
 }
@@ -391,11 +394,9 @@ function staticMemberName(access: MemberAccess): string | undefined {
 
 /**
  * (#7127) The intrinsic itself (never an alias) is the receiver of
- * `<Receiver>.prototype.<method>`, read as a plain VALUE: not called (the
- * receiver would become `this`), not read further (`.call(x)` keeps the S1c
- * `Object.prototype.toString.call` arm and the legacy call paths), not a
- * write, `delete` or update target. The method value itself is an ordinary
- * function, so where it flows afterwards needs no tracking.
+ * `<Receiver>.prototype.<method>`, read as a plain value
+ * ({@link isPlainMethodValue}; not read further, so `.call(x)` keeps the S1c
+ * `Object.prototype.toString.call` arm and the legacy call paths).
  */
 function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
   const protoAccess = memberAccessOf(node);
@@ -403,7 +404,68 @@ function isExactProtoMethodValueRead(node: ts.Identifier): boolean {
   if (staticMemberName(protoAccess) !== "prototype") return false;
   const methodAccess = memberAccessOf(protoAccess);
   const method = methodAccess && staticMemberName(methodAccess);
-  if (methodAccess === undefined || method === undefined || !PROTO_METHOD_NAMES.has(method)) return false;
+  return methodAccess !== undefined && method !== undefined && PROTO_METHOD_NAMES.has(method)
+    ? isPlainMethodValue(methodAccess)
+    : false;
+}
+
+/**
+ * (#7189) Static methods measured exact as `<Namespace>.<m>` values through
+ * the realm read (`dyn.member_get` off `dyn.global_object`): typeof, `name`
+ * and `length` of the value and its identity across reads answer as node on
+ * standalone and gc, and legacy's own `globalThis.<Namespace>.<m>` is
+ * identical to its static `<Namespace>.<m>` read for every entry. Left out:
+ * `Object.create` (legacy answers its `length` wrongly), data members
+ * (`Array.prototype` is #7127's) and unmeasured methods.
+ */
+const STATIC_METHOD_NAMES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Array", new Set(["isArray", "from", "of"])],
+  [
+    "Object",
+    new Set([
+      "defineProperty",
+      "defineProperties",
+      "getOwnPropertyDescriptor",
+      "getOwnPropertyNames",
+      "getPrototypeOf",
+      "setPrototypeOf",
+      "keys",
+      "values",
+      "entries",
+      "assign",
+      "is",
+      "hasOwn",
+      "isExtensible",
+      "preventExtensions",
+      "seal",
+      "isSealed",
+      "freeze",
+      "isFrozen",
+    ]),
+  ],
+]);
+
+/**
+ * (#7189) The intrinsic itself is the receiver of `<Namespace>.<staticMethod>`
+ * read as a plain value (`var __isArray = Array.isArray`, propertyHelper.js).
+ * A CALL keeps legacy's static builtin arms (`Object.getPrototypeOf(x)` there
+ * is type-directed; the dynamic route answers primitives wrongly).
+ */
+function isExactStaticMethodValueRead(node: ts.Identifier): boolean {
+  const methodAccess = memberAccessOf(node);
+  const method = methodAccess && staticMemberName(methodAccess);
+  return methodAccess !== undefined && method !== undefined && STATIC_METHOD_NAMES.get(node.text)?.has(method) === true
+    ? isPlainMethodValue(methodAccess)
+    : false;
+}
+
+/**
+ * The method read is used as a plain VALUE: not called (the receiver would
+ * become `this`), not read further, not a write, `delete` or update target.
+ * The method value itself is an ordinary function, so where it flows
+ * afterwards needs no tracking.
+ */
+function isPlainMethodValue(methodAccess: MemberAccess): boolean {
   if (memberAccessOf(methodAccess) !== undefined) return false;
   let use: ts.Node = methodAccess;
   while (use.parent && ts.isParenthesizedExpression(use.parent)) use = use.parent;
