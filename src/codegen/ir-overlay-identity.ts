@@ -393,19 +393,30 @@ export function projectIrIntegrationLoweringPlans(
     }
     if (!existing) directCalls.set(call, directCall);
   };
+  const identity = plan.identityPlan.identityContext;
   for (const { unitId } of ownerProjection.entries) {
-    const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(unitId);
-    if (!declaration) continue;
     if (!plan.directCallResolver) continue;
-    let collected: ReadonlyMap<ts.CallExpression, import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan>;
+    // A function's calls sit under its declaration; `<module-init>` has none,
+    // its calls sit under the top-level statements it owns (#7197).
+    const declaration = identity.declarationByUnitId.get(unitId);
+    const unit = identity.unitByUnitId.get(unitId);
+    const source = unit ? identity.sourceFileBySourceId.get(unit.sourceId) : undefined;
+    const roots: readonly ts.Node[] = declaration
+      ? [declaration]
+      : unit?.kind === "module-init" && source
+        ? (identity.moduleInitPopulationBySourceFile.get(source) ?? [])
+        : [];
+    const collected = new Map<ts.CallExpression, import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan>();
     try {
-      collected = collectIrDirectCallLoweringPlansByIdentity(declaration, unitId, {
-        identityContext: plan.identityPlan.identityContext,
-        resolver: plan.directCallResolver,
-        activeOwnerUnitIds,
-        signaturesByUnitId: callableSignaturesByUnitId,
-        targetsByLegacyName: directCallTargets,
-      });
+      for (const root of roots)
+        for (const entry of collectIrDirectCallLoweringPlansByIdentity(root, unitId, {
+          identityContext: identity,
+          resolver: plan.directCallResolver,
+          activeOwnerUnitIds,
+          signaturesByUnitId: callableSignaturesByUnitId,
+          targetsByLegacyName: directCallTargets,
+        }))
+          collected.set(...entry);
     } catch (error) {
       mismatch(
         `direct-call identity for ${unitId} disagrees with the retained source projection: ${error instanceof Error ? error.message : String(error)}`,
