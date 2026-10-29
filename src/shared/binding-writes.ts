@@ -21,15 +21,7 @@ import { ts } from "../ts-api.js";
  * a computed key.
  */
 export function isLexicalBindingWrite(identifier: ts.Identifier): boolean {
-  return isWriteTarget(identifier);
-}
-
-/**
- * (#7189) {@link isLexicalBindingWrite} for any assignment target, a member
- * access included: `[Array.isArray] = xs` writes `Array.isArray`.
- */
-export function isWriteTarget(expression: ts.Expression): boolean {
-  let target: ts.Node = expression;
+  let target: ts.Node = identifier;
   for (;;) {
     const parent = target.parent;
     if (!parent) return false;

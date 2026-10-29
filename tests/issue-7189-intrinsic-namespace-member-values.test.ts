@@ -52,11 +52,7 @@ const CLAIMING: Record<string, string> = Object.fromEntries(
     ]),
   ),
 );
-// The propertyHelper.js prelude's static half. `__getOwnPropertyDescriptor` and
-// `__getOwnPropertyNames` are left out: either global name alone
-// (`var __getOwnPropertyNames = 1`) already fails the module-init build on
-// main — it collides with the runtime helper of the same name (recorded in the
-// #7189 issue, not fixed here).
+// The propertyHelper.js prelude's static half (its helper-named lines: `HELPER_NAMED`).
 CLAIMING.propertyHelperPrelude = `var __isArray = Array.isArray;
 var __defineProperty = Object.defineProperty;
 if (typeof __isArray !== "function" || __defineProperty.length !== 3) { throw "#prelude"; }`;
@@ -114,6 +110,8 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
     });
     it.each([
       ["a call", `Array.isArray(1);`],
+      ["a string coercion", `var s = "" + Array.isArray;`],
+      ["a call argument", `String(Array.isArray);`],
       ["a further read", `var n = Array.isArray.length;`],
       ["an unlisted member", `var f = Array.fromAsync;`],
       ["an assignment target", `Array.isArray = null;`],
@@ -126,6 +124,34 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
       expect(intrinsicUseVerdicts(source, "Array")).toEqual([false]);
     });
   });
+
+  // (#7189 review) A script `var` named like an object-runtime helper
+  // (`__getOwnPropertyNames`) is its own binding, not that helper: it claims
+  // and runs instead of failing the build when the helper registers late.
+  const HELPER_NAMED: Record<string, string> = {
+    descriptorAlias: `var __getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;`,
+    namesAlias: `var __getOwnPropertyNames = Object.getOwnPropertyNames;`,
+    staticPrelude: `var __isArray = Array.isArray;
+var __defineProperty = Object.defineProperty;
+var __getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+var __getOwnPropertyNames = Object.getOwnPropertyNames;`,
+    numberValue: `var __getOwnPropertyDescriptor = 1; if (__getOwnPropertyDescriptor !== 1) { throw "#1"; }`,
+  };
+  for (const [name, source] of Object.entries(HELPER_NAMED)) {
+    for (const target of TARGETS) {
+      it(`a helper-named var claims and runs: ${name} (${lane(target)})`, async () => {
+        expect(await run(target, source)).toEqual({ claimed: true, threw: false });
+      });
+    }
+  }
+
+  // A coercion of the value is not a measured position: no claim, so nothing to withdraw.
+  for (const target of TARGETS) {
+    it(`a coerced static-method value stays legacy (${lane(target)})`, async () => {
+      const source = `if (("" + Object.is).indexOf("function") !== 0) { throw "#c"; }`;
+      expect(await run(target, source)).toEqual({ claimed: false, threw: false });
+    });
+  }
 
   // A failing check still throws from the IR body.
   it("a failing static-value check throws from the IR body (standalone)", async () => {

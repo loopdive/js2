@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import ts from "typescript";
 
-import { isWriteTarget } from "./binding-writes.js";
-
 /**
  * (#7106) Ambient intrinsics the IR reads as VALUES — `assert.throws(TypeError,
  * fn)`, `typeof Symbol`. Each is a property of the realm's
@@ -467,19 +465,21 @@ function isExactStaticMethodValueRead(node: ts.Identifier): boolean {
 }
 
 /**
- * The method read is used as a plain VALUE: not called (the receiver would
- * become `this`), not read further, not a `delete` or numeric-unary operand,
- * and not written — `isWriteTarget` follows destructuring and for-in/of heads.
- * The method value itself is an ordinary function, so where it flows
- * afterwards needs no tracking.
+ * The method read sits in a measured value position: a `var` initializer, the
+ * right side of `=`, a `typeof` / `!` operand or an equality operand — the
+ * positions where its typeof, identity, `name` and `length` were measured
+ * exact. Anything else (a call, a further read, a write or destructuring
+ * target, a coercion such as `"" + f`) is refused rather than reasoned about.
  */
 function isPlainMethodValue(methodAccess: MemberAccess): boolean {
-  if (memberAccessOf(methodAccess) !== undefined || isWriteTarget(methodAccess)) return false;
+  if (memberAccessOf(methodAccess) !== undefined) return false;
   const use = outermostParenthesized(methodAccess);
   const parent = use.parent;
   if (parent === undefined) return false;
-  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === use) return false;
-  if (ts.isTaggedTemplateExpression(parent) && parent.tag === use) return false;
-  if (ts.isDeleteExpression(parent)) return false;
-  return !ts.isPrefixUnaryExpression(parent) || parent.operator === ts.SyntaxKind.ExclamationToken;
+  if (ts.isTypeOfExpression(parent)) return true;
+  if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
+  if (ts.isVariableDeclaration(parent)) return parent.initializer === use;
+  if (!ts.isBinaryExpression(parent)) return false;
+  const operator = parent.operatorToken.kind;
+  return EQUALITY_OPERATORS.has(operator) || (operator === ts.SyntaxKind.EqualsToken && parent.right === use);
 }

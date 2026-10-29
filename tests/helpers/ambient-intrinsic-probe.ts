@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Shared by the ambient-intrinsic IR tests (#7118, #7189): compile a script,
-// run its `<module-init>`, report whether the IR claimed it; and ask the
-// admission predicate directly, against a real checker with the lib loaded.
+// run its `<module-init>` and report whether the IR claimed it (with no
+// post-claim error); and ask the admission predicate directly, against a real
+// checker with the lib loaded.
 
 import { expect } from "vitest";
 
@@ -39,6 +40,8 @@ export async function runModuleInit(
     ...(target ? { target } : {}),
   });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  // A claim is never withdrawn after the fact (#7189: claim-then-demote is a selector bug).
+  expect(result.irPostClaimErrors ?? []).toEqual([]);
   const imports = target ? {} : buildImports(result.imports, {}, result.stringPool);
   const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
   let threw = false;

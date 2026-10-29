@@ -1,10 +1,11 @@
 ---
 id: 7189
 title: "IR: admit exact static-method VALUE reads off ambient namespace intrinsics (`Array.isArray`, `Object.defineProperty`, …)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-10-29
 updated: 2026-10-29
+completed: 2026-10-29
 priority: high
 horizon: s
 feasibility: medium
@@ -15,6 +16,14 @@ goal: ir-full-coverage
 parent: 7106
 related: [7118, 7123, 7127]
 assignee: "ttraenkler/js2-17"
+# 2026-10-29: +1 line in `scriptVarHomeSlot`. A script `var` named like an
+# object-runtime helper (`var __getOwnPropertyDescriptor = …`, propertyHelper.js)
+# is no longer mistaken for a merged `function` once that helper registers into
+# `funcMap` between selection and build. That mismatch failed the build
+# (`selection-preparation-mismatch`). The predicate is shared by selection and
+# build, so the check cannot move to a smaller file without splitting it.
+loc-budget-allow:
+  - src/codegen/index.ts
 ---
 
 ## Problem
@@ -86,8 +95,10 @@ IR vs legacy vs node:
   - The intrinsic itself, never an alias, must be the receiver of
     `<NS>.<m>`, where `<m>` is in a measured `STATIC_METHOD_NAMES` table:
     `Array` {isArray, from, of}, and `Object` with 18 methods.
-  - The read must be a plain value: not called, not read further, and not a
-    write, `delete` or update target.
+  - The read must sit in a measured value position: a `var` initializer, the
+    right side of `=`, a `typeof` or `!` operand, or an equality operand.
+    Every other position is refused, including calls, further reads, writes,
+    destructuring, `delete` and coercions such as `"" + f`.
 - **Reuse / duplicate removed.** #7127's `isExactProtoMethodValueRead` ends in
   the same plain-value check. That tail moves into one `isPlainMethodValue`
   helper, used by both arms, so the two cannot drift.
@@ -114,11 +125,13 @@ First pass: **NOT MET**. Findings and what was done about them:
 1. **Fixed.** `isPlainMethodValue` re-implemented the write-target test and
    missed destructuring targets (`[Array.isArray] = xs`,
    `({ a: Object.keys } = o)`, `for ([Array.of] of xs)`).
-   - It now calls the shared `isWriteTarget` (`src/shared/binding-writes.ts`),
-     extracted from `isLexicalBindingWrite`. That function's body is
-     unchanged; it now delegates.
+   - First fixed by calling a shared `isWriteTarget` extracted from
+     `src/shared/binding-writes.ts`.
+   - That was superseded by the second review's position allowlist (below).
+     No write position is admitted, and `binding-writes.ts` is back to
+     main's version.
    - The four hand-rolled branches (assignment, postfix, update, for-in/of
-     head) are gone, and #7127's arm gains the same coverage.
+     head) are gone either way, and #7127's arm gains the same coverage.
 2. **Fixed.** Two parenthesis climbs became one `outermostParenthesized`.
 3. **Fixed.** Both arms now end in plain `&&` instead of `cond ? … : false`.
    The new arm checks its receiver table before it walks the AST, as the
@@ -139,18 +152,44 @@ First pass: **NOT MET**. Findings and what was done about them:
    unlisted member, an assignment, array and object destructuring, a for-of
    head, `delete` and a numeric unary.
 
-## Found, not fixed
+## Fixed along the way: helper-named script vars
 
 `var __getOwnPropertyDescriptor = 1;` (and the same for
-`__getOwnPropertyNames`) fails the module-init build on main with
+`__getOwnPropertyNames`) failed the module-init build on main with
 `declaration '<name>' no longer resolves to the direct top-level binding
-selected for this unit`. This is a selector/preparation mismatch (an
-invariant error, so a compile error rather than a demotion). These globals
-share their names with object-runtime helpers (`src/stdlib/object-runtime.ts`).
-The propertyHelper.js prelude declares both, so it hits the same mismatch once
-its other lines claim. That does not happen today:
-`Function.prototype.call.bind(…)` still refuses the unit before build.
-Owner: the #7106 propertyHelper lane.
+selected for this unit`. That is a `selection-preparation-mismatch` invariant,
+so a compile error, not a demotion.
+
+- **Cause.** `scriptVarHomeSlot` (`src/codegen/index.ts`) treats a `funcMap`
+  entry of the same name as a `function` merged with the `var`. The
+  object-runtime helper `__getOwnPropertyDescriptor` registers into `funcMap`
+  only when the IR body needs the runtime (`preregisterDynamicSupport`), which
+  happens after selection. So selection saw the slot and the build did not.
+- **Why it became urgent.** This PR's first commit made the propertyHelper
+  static lines claimable, so `var __getOwnPropertyDescriptor =
+  Object.getOwnPropertyDescriptor;` alone went from compiling (legacy) to a
+  compile error. The second review caught this.
+- **Fix.** A `funcMap` entry that is only an object-runtime helper
+  (`OBJECT_RUNTIME_HELPER_NAMES`, not a source `function`) no longer counts as
+  that merged function. Selection and build now agree, and these vars claim
+  and run.
+- **Rejected alternative.** Refusing every helper-named var broke
+  `issue-7106-prophelper-dyn-delete` (`var __hasOwnProperty = …`, also a
+  helper name, with a claim-then-withdraw on `hasK`), so it was dropped.
+
+## Second review (2026-10-29, REQUEST CHANGES on `a3c9d055`)
+
+1. **Fixed.** The new compile errors above.
+2. **Fixed.** `("" + Object.is).indexOf(…)` was claimed and then withdrawn
+   (`operand-coercion-unsupported`). `isPlainMethodValue` now admits only the
+   measured positions. Because the check is shared, #7127's proto arm gets the
+   same limit, and the #7118 tests still pass. The shared test runner now
+   asserts that `irPostClaimErrors` is empty on every run. This also removed
+   the need for the `isWriteTarget` extraction from the first review: an
+   allowlist has no write position.
+3. **Fixed.** `status: done`.
+4. **Stated in the PR body.** gc output changes for these reads, because the
+   native-first gc lane now claims them.
 
 ## Left
 
