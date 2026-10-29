@@ -857,17 +857,17 @@ export function planIrCompilation(
   currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
   currentDynamicRuntimeBuildable = options?.dynamicRuntimeBuildable ?? true;
   const fallbackReasons = new Map<string, IrFallbackReason>();
-  // (#2856 Step-1) Parallel to `fallbackReasons`: the opt-in reject-arm detail
-  // for `body-shape-rejected` entries (populated only when JS2WASM_IR_SHAPE_DIAG=1).
-  const fallbackDetails = new Map<string, string>();
+  const fallbackDetails = new Map<string, string>(); // (#2856 Step-1) reject-arm detail, JS2WASM_IR_SHAPE_DIAG=1 only
   const captureShapeDetail = (name: string, reason: IrFallbackReason): void => {
     if (!SHAPE_DIAG_ON) return;
-    if (reason !== "body-shape-rejected") return;
-    // A `body-shape-rejected` that reached an as-yet-uninstrumented helper arm
-    // (e.g. inside `isPhase1ObjectLiteral` / `isPhase1TryStatement` /
-    // `isPhase1ClosureLiteral`) records nothing; label it `unattributed-arm`
-    // so the histogram still accounts for all rejections (completeness).
-    fallbackDetails.set(name, takeShapeRejectDetail() ?? "unattributed-arm:helper-internal");
+    // Uninstrumented arms record nothing: label body-shape ones (completeness); typed ones keep theirs (#7143).
+    const detail =
+      takeShapeRejectDetail() ?? (reason === "body-shape-rejected" ? "unattributed-arm:helper-internal" : undefined);
+    if (detail !== undefined) fallbackDetails.set(name, detail);
+  };
+  const rejectClassMember = (name: string, arm: string, node: ts.Node): void => {
+    fallbackReasons.set(name, "class-member-unsupported");
+    if (SHAPE_DIAG_ON) fallbackDetails.set(name, `${arm}:${ts.SyntaxKind[node.kind]}`);
   };
   // Track unnamed FunctionDeclarations too (rare but possible — `default`
   // export of an anonymous function, etc.) so callers can see them.
@@ -1009,7 +1009,7 @@ export function planIrCompilation(
         memberName = `${className}_${methodNameRaw}`;
         if (staticInstanceMethodCollisions.has(methodNameRaw)) {
           individuallyClaimedClassMembers.delete(memberName);
-          if (trackFallbacks) fallbackReasons.set(memberName, "class-member-unsupported");
+          if (trackFallbacks) rejectClassMember(memberName, "class-static-instance-collision", member);
           continue;
         }
         memberNode = member;
@@ -1079,7 +1079,7 @@ export function planIrCompilation(
                 );
         if (!exactDescriptor) {
           individuallyClaimedClassMembers.delete(memberName);
-          if (trackFallbacks) fallbackReasons.set(memberName, "class-member-unsupported");
+          if (trackFallbacks) rejectClassMember(memberName, "class-no-exact-descriptor", memberNode);
           continue;
         }
       }
