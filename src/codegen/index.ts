@@ -4265,9 +4265,10 @@ function scriptVarHomeSlot(ctx: CodegenContext, declaration: ts.VariableDeclarat
     return undefined;
   }
   if (ctx.sloppyImplicitGlobals.has(name)) return undefined;
-  // (#7106) `var g` merged with `function g`: the checker gives the script
-  // `var` its own symbol, but the binding (and its slot) is the function's.
-  if (ctx.funcMap.has(name) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
+  // (#7106) `var g` merged with `function g` owns the function's slot; (#7189) a same-named object-runtime
+  // helper (`__getOwnPropertyNames`) is not that `function` and can enter `funcMap` after selection.
+  const helperOnly = omObjectRuntime.OBJECT_RUNTIME_HELPER_NAMES.has(name) && !ctx.topLevelFunctionNames.has(name);
+  if ((ctx.funcMap.has(name) && !helperOnly) || ctx.liveFuncBindingGlobals?.has(name)) return undefined;
   const globalIdx = ctx.moduleGlobals.get(name);
   const global = globalIdx === undefined ? undefined : ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
   return global?.name === `__mod_${name}` ? global : undefined;
