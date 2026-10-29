@@ -143,3 +143,19 @@ commit.
     failing assertion in these programs throws.
 - **Verified OK by the review:** gc and WASI byte-identity; selector and
   lowering predicate agreement; hoisting; redeclaration; writes elsewhere.
+
+## Revalidation after merging main (post-#6972, base `736bafd5fe`)
+
+- **Standalone test262 (`runTest262File`).** The 126 files plus the 9 ES5
+  rows that #6972's merge group tripped on: 98 pass, 22 fail and 15 compile
+  errors on both base and head, with 0 flips.
+  - All 9 named ES5 rows pass.
+  - All 17 ES5 rows among the 126 pass.
+- **Census (126 rows).**
+  - `vardecl-let-closure`: 126 → 34.
+  - Zero-legacy: 0 → 0.
+  - Post-claim errors (23) and compile failures (10) are the same rows as on
+    base.
+- **Regression suite.** `tests/issue-{7106,7195,7197,7193,7198,7113,7132,7130,3783,1169}*`
+  (66 files, 646 tests): 12 failures, the same 12 as on base.
+- **Gates.** Green with `LOC_GATE_BASE` set to the new main tip.
