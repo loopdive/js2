@@ -24,10 +24,7 @@ loc-budget-allow:
 # 2026-10-29 (revive onto main): the #7144 walk learns the two carrier sources
 # this slice adds to from-ast (`this`, a call through a dynamic slot).
   - src/ir/select-planned-closure-operands.ts
-# 2026-10-22 (re-merge after #6829 landed): this PR's scan-arm growth was granted
-# by the #7106 issue file while #6829 sat in its diff; restated here (stranded grants).
 func-budget-allow:
-  - src/ir/select.ts::scanExprInner
 # 2026-10-29 (revive onto main): +5 in the #7144 walk for the two carrier
 # sources (`this`, a call through a read local) and the shared
 # `callsThroughCarrier` predicate its two call arms now read.

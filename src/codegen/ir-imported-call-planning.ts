@@ -23,8 +23,7 @@ import {
   certifyImportedIrCall,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
-  isFunctionObjectChainedWrite,
-  isFunctionObjectMemberRead,
+  isFunctionObjectReceiverUse,
   functionObjectStoreRoot,
   type IrSelection,
 } from "../ir/select.js";
@@ -86,19 +85,7 @@ export function hasPreparedFunctionObjectReference(
     sourceOwnerUnitId(identifier) !== ownerUnitId
   )
     return false;
-  const access = identifier.parent;
-  const use = access.parent;
-  if (
-    !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
-    access.expression !== identifier ||
-    access.questionDotToken !== undefined ||
-    !(
-      (ts.isCallExpression(use) && use.expression === access && !use.questionDotToken) ||
-      (ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
-      isFunctionObjectMemberRead(access)
-    )
-  )
-    return false;
+  if (!isFunctionObjectReceiverUse(identifier, { chainedWrite: false })) return false;
   const unitId = plan.target.binding.unitId;
   const declaration = identity.identityContext.declarationByUnitId.get(unitId);
   const resolved = ctx.oracle.valueDeclarationOf(identifier);
@@ -858,17 +845,7 @@ export function planIrImportedCalls(options: PlanIrImportedCallsOptions): IrImpo
       const visit = (node: ts.Node): void => {
         if (ts.isIdentifier(node)) {
           const access = node.parent;
-          const use = access?.parent;
-          const isReceiver =
-            (ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) &&
-            access.expression === node &&
-            access.questionDotToken === undefined &&
-            ((ts.isCallExpression(use) && use.expression === access) ||
-              (ts.isBinaryExpression(use) &&
-                use.left === access &&
-                use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
-              isFunctionObjectChainedWrite(access) ||
-              isFunctionObjectMemberRead(access));
+          const isReceiver = isFunctionObjectReceiverUse(node, { chainedWrite: true });
           // (#7106 S3c) A self-guarded constructor used as a value: the `new F(…)`
           // callee (`dyn.construct`) or the `x instanceof F` operand
           // (`dyn.instanceof_fn`, which reads the plan's exact unit target).
