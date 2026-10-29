@@ -75,25 +75,29 @@ function node(source: string): number | "threw" {
   }
 }
 
-const SINK = `/** @returns {number} */ function sink() { return 0; }\n`;
+const SINK = `function sink() { return 0; }\n`;
 
 describe("#7197 — direct calls in <module-init>", () => {
+  // Each callee records its call on a separate function object (`sink`), so a
+  // dropped or duplicated call changes `out()`. The callees themselves stay
+  // plain functions: a callee with members of its own joins the component
+  // through the function-object route, which worked before.
   it.each([
-    ["a top-level call", `function f() { return 1; }\nf();\nexport function out() { return 7; }`],
+    ["a top-level call", `${SINK}function f() { sink.n = 7; }\nf();\nexport function out() { return sink.n; }`],
     [
       "a call whose callee throws",
       `/** @returns {void} */ function f() { throw "x"; }\nf();\nexport function out() { return 7; }`,
     ],
     [
       "a member closure calling its receiver beside a call statement",
-      `/** @returns {number} */ function subject() { return 0; }
+      `/** @returns {number} */ function subject() { subject.n = 5; return 0; }
 subject.f = function (m, k) { if (k === 9) return; subject(); throw m; };
 subject.f(1, 9);
-export function out() { var n = 0; try { subject.f(2, 0); } catch (e) { if (e === 2) n = 1; } return n; }`,
+export function out() { var n = 0; try { subject.f(2, 0); } catch (e) { if (e === 2) n = 1; } return n * 10 + subject.n; }`,
     ],
     [
       "calls to two functions in order",
-      `${SINK}function a() { return 1; }\nfunction b() { return 2; }\na();\nb();\nexport function out() { return 3; }`,
+      `${SINK}function a() { sink.a = 1; }\nfunction b() { sink.b = 2; }\na();\nb();\nexport function out() { return sink.a * 10 + sink.b; }`,
     ],
   ])(
     "claims %s on every lane and agrees with legacy and node",

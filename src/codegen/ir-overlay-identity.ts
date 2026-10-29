@@ -394,43 +394,42 @@ export function projectIrIntegrationLoweringPlans(
     if (!existing) directCalls.set(call, directCall);
   };
   const identity = plan.identityPlan.identityContext;
-  for (const { unitId } of ownerProjection.entries) {
-    if (!plan.directCallResolver) continue;
-    // A function's calls sit under its declaration; `<module-init>` has none,
-    // its calls sit under the top-level statements it owns (#7197).
-    const declaration = identity.declarationByUnitId.get(unitId);
-    const unit = identity.unitByUnitId.get(unitId);
-    const source = unit ? identity.sourceFileBySourceId.get(unit.sourceId) : undefined;
-    const roots: readonly ts.Node[] = declaration
-      ? [declaration]
-      : unit?.kind === "module-init" && source
-        ? (identity.moduleInitPopulationBySourceFile.get(source) ?? [])
-        : [];
-    const collected = new Map<ts.CallExpression, import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan>();
-    try {
-      for (const root of roots)
-        for (const entry of collectIrDirectCallLoweringPlansByIdentity(root, unitId, {
-          identityContext: identity,
-          resolver: plan.directCallResolver,
-          activeOwnerUnitIds,
-          signaturesByUnitId: callableSignaturesByUnitId,
-          targetsByLegacyName: directCallTargets,
-        }))
-          collected.set(...entry);
-    } catch (error) {
-      mismatch(
-        `direct-call identity for ${unitId} disagrees with the retained source projection: ${error instanceof Error ? error.message : String(error)}`,
-      );
+  const resolver = plan.directCallResolver;
+  if (resolver)
+    for (const { unitId } of ownerProjection.entries) {
+      // A function's calls sit under its declaration. Only `<module-init>` has
+      // none; its calls sit under the top-level statements it owns (#7197).
+      const declaration = identity.declarationByUnitId.get(unitId);
+      const unit = identity.unitByUnitId.get(unitId);
+      const source = unit && identity.sourceFileBySourceId.get(unit.sourceId);
+      const roots: readonly ts.Node[] = declaration
+        ? [declaration]
+        : (source && identity.moduleInitPopulationBySourceFile.get(source)) || [];
+      const collected = new Map<ts.CallExpression, import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan>();
+      try {
+        for (const root of roots)
+          for (const entry of collectIrDirectCallLoweringPlansByIdentity(root, unitId, {
+            identityContext: identity,
+            resolver,
+            activeOwnerUnitIds,
+            signaturesByUnitId: callableSignaturesByUnitId,
+            targetsByLegacyName: directCallTargets,
+          }))
+            collected.set(...entry);
+      } catch (error) {
+        mismatch(
+          `direct-call identity for ${unitId} disagrees with the retained source projection: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      for (const [call, directCall] of collected) {
+        // The projected callable ABI is authoritative for every exact active
+        // source edge. In particular, a prepared suspending async target keeps
+        // its numeric fulfillment type in `signaturesByUnitId`, while calls to
+        // its source slot observe the Promise-returning externref ABI. A stale
+        // pre-projection plan would otherwise unbox that Promise as a number.
+        retainDirectCall(call, directCall);
+      }
     }
-    for (const [call, directCall] of collected) {
-      // The projected callable ABI is authoritative for every exact active
-      // source edge. In particular, a prepared suspending async target keeps
-      // its numeric fulfillment type in `signaturesByUnitId`, while calls to
-      // its source slot observe the Promise-returning externref ABI. A stale
-      // pre-projection plan would otherwise unbox that Promise as a number.
-      retainDirectCall(call, directCall);
-    }
-  }
   const countedStringAppends = new Map<
     ts.ForStatement,
     import("../ir/ast-lowering-plans.js").IrCountedStringAppendLoweringPlan
