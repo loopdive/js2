@@ -172,3 +172,23 @@ this change still adds exactly the one provider file to the SCC and the one
 files pass 84/84; the six console-touching equivalence files pass 92/92. The two
 #4462 rows and three #5386 gc rows that fail here fail identically on
 `b6250f09f8`.
+
+## Review round, 2026-10-29
+
+- **Claim never turns legacy-compilable into a CE.** With the WASI console
+  claim, `type i32 = number; class C { v: i32 = … } … c.v = c.v + 1` reached
+  `lowerBinary` with an `i32` field read against an `f64` literal and threw the
+  "Phase 1 requires matching operand types" invariant. Widening the `i32` to
+  f64 is not a fix: legacy computes it in wrapping i32 arithmetic
+  (`-2147483648`), while f64-add-then-store saturates (`2147483647`). The
+  i32-vs-f64 mismatch now demotes to legacy as a capability gap, like the
+  packed i8/i16 case beside it. Witness: `issue-7136` "falls back, rather than
+  failing" on standalone and WASI. Native i32 arithmetic in the IR is the
+  open follow-up.
+- **Byte changes, restated:** gc is identical; standalone and WASI change
+  wherever a dynamic `console.log(v: any)` is newly claimed (not only WASI
+  `classes.ts`/`algorithms.ts`). Every changed binary the review ran prints the
+  same output as legacy, or better.
+- **Disclosed: BigInt renders by target.** `out(10n)` through
+  `__ir_console_format_value` prints `10` on standalone and `[object Object]`
+  on WASI; node prints `10n`, legacy WASI printed `[object]`.

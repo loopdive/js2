@@ -180,6 +180,16 @@ for (const target of ["standalone", "wasi"] as const) {
       expect(stdout).toBe("2147483647\n");
     });
 
+    it("falls back, rather than failing, for a native i32 field read inside f64 arithmetic", async () => {
+      const source = `type i32 = number; class C { v: i32 = 2147483647; }
+        export function main(): void { const c = new C(); c.v = c.v + 1; console.log(c.v); }`;
+      const legacy = await execute(source, target, false, "main");
+      const ir = await execute(source, target, true, "main");
+      expect(ir.result.irOutcomes?.find((o) => o.displayName === "main")).toMatchObject({ irBodyEmitted: false });
+      expect(ir.stdout).toBe(legacy.stdout);
+      expect(ir.stdout).toBe("-2147483648\n");
+    });
+
     it("evaluates the dynamic source expression once", async () => {
       const source = `var count = 0;
         function take(value: any): any { count = count + 1; return value; }

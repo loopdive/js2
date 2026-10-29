@@ -1681,7 +1681,7 @@ function namesDeferredHostSurface(expr: ts.Identifier, localClasses: ReadonlySet
  *   3. the call shape is the one the builder lowers, so the claim cannot become
  *      a post-claim demote.
  */
-function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: ReadonlySet<string>): boolean {
+function namesHostFreeConsoleSurface(expr: ts.Identifier, localClasses: Pick<ReadonlySet<string>, "has">): boolean {
   if (currentSelectionOptions?.supportsNativeConsoleOutput !== true) return false;
   if (expr.text !== "console" || localClasses.has("console")) return false;
   if (currentDeferredHostGlobalResolver === null || currentDeferredHostGlobalResolver(expr) === undefined) return false;
@@ -3382,7 +3382,7 @@ function dynamicUsesAreMoveOnly(
       }
       // String conversion and native console rendering consume one carrier.
       const toStringArg =
-        hostFreeConsoleArgument(e, (id) => namesHostFreeConsoleSurface(id, new Set())) ??
+        hostFreeConsoleArgument(e, (id) => namesHostFreeConsoleSurface(id, currentLocalClassDeclarations)) ??
         (dynNames.has("String") ? null : ambientStringToStringCall(e));
       if (toStringArg !== null) {
         if (expectDyn) return false;
