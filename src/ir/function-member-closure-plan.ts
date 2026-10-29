@@ -37,15 +37,14 @@ export interface IrFunctionMemberClosures {
 }
 
 /**
- * (#7198) The initializer of a script var whose slot is the dynamic home is a
- * planned closure: the ordinary module-binding store boxes it into the carrier.
+ * (#7198) A script var's initializer is a planned closure. Into the dynamic
+ * home, the ordinary module-binding store boxes it into the carrier.
  */
-export function isDynamicHomeClosure(
+export function isPlannedScriptVarClosure(
   closures: IrFunctionMemberClosures | undefined,
   initializer: ts.Expression,
-  slotIsDynamic: boolean,
 ): boolean {
-  return slotIsDynamic && ts.isFunctionExpression(initializer) && closures?.resolve(initializer)?.site === "script-var";
+  return ts.isFunctionExpression(initializer) && closures?.resolve(initializer)?.site === "script-var";
 }
 
 /** Walk actual final allocation instructions, without guessing a layout array position. */

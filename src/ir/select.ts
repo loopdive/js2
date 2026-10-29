@@ -55,7 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { isDynamicHomeClosure } from "./function-member-closure-plan.js";
+import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { storedObjectStaticAliasMethod, uncurriedObjectAliasMethod } from "./uncurried-object-alias.js";
@@ -6927,10 +6927,9 @@ function isPhase1VarDecl(stmt: ts.VariableStatement, scope: Set<string>, localCl
     // annotated, body is a Phase-1 tail, no generator/async/named).
     if (
       (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer)) &&
-      !isDynamicHomeClosure(
-        currentSelectionOptions?.functionMemberClosures,
-        d.initializer,
-        directModuleBinding?.valueKind.kind === "dynamic",
+      !(
+        directModuleBinding?.valueKind.kind === "dynamic" &&
+        isPlannedScriptVarClosure(currentSelectionOptions?.functionMemberClosures, d.initializer)
       )
     ) {
       if (!isConst) return shapeNo("vardecl-let-closure", d.initializer);

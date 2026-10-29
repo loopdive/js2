@@ -44,7 +44,7 @@ closure plan for the initializer and a store into the carrier.
 
 ## Measurement: missing plan vs. shapes to keep refusing
 
-On the 126 rows, after the change, 30 still carry `vardecl-let-closure`. Each
+On the 126 rows, after the change, 34 still carry `vardecl-let-closure`. Each
 is a shape the member-closure planner does not prove, and it stays refused:
 
 - empty bodies (`function() {}`, 7);
@@ -52,7 +52,11 @@ is a shape the member-closure planner does not prove, and it stays refused:
 - arrows, including defaults and rest parameters;
 - async and generators.
 
-Calls to the binding stay refused at select: a direct call `f()`, at the top
+A binding with any reference that is not a value use stays refused too. The
+boxed carrier is not legacy's function object, so `f.name`, `f.p = 1`,
+`f.length` or `f()` would see a different object. The allowed value uses are
+a call argument, a `typeof` operand and a plain `=` target. Calls to the
+binding also stay refused at select: a direct call `f()`, at the top
 level or from a nested closure, and a reassigned binding.
 
 ## Implementation Plan
@@ -61,8 +65,10 @@ level or from a nested closure, and a reassigned binding.
   `scriptVarSite`, next to `memberAssignmentSite` and `callArgumentSite`, in the
   same shape. The planner (`planMemberClosure`, #6977) proves the body, the
   raw-versus-logical adapter and the open-body key exactly as for the other
-  sites. Calls inside the body get #7197's module-init direct-call plans.
-  Standalone only, like the call-argument site.
+  sites. The site requires every reference to the binding (found through
+  `ctx.oracle.declarationsOf`) to be a value use. Calls inside the body get
+  #7197's module-init direct-call plans. Standalone only, like the
+  call-argument site.
 - **Select.** `src/ir/select.ts`, `isPhase1VarDecl`: a planned script-var
   closure into a dynamic slot skips the Slice 3 `const`-closure arm and takes
   the ordinary module-binding write.
@@ -71,7 +77,7 @@ level or from a nested closure, and a reassigned binding.
   dynamic store converts a closure value through
   `functionObjects.functionObjectDynamicValue`, the existing producer for a
   closure → carrier (callable pack + `IR_DYN_CALL_BOX_FN`). No new boxing arm.
-- **Reuse / no duplicate.** One predicate, `isDynamicHomeClosure`
+- **Reuse / no duplicate.** One predicate, `isPlannedScriptVarClosure`
   (`src/ir/function-member-closure-plan.ts`), serves both select and lowering.
   The site union gains `"script-var"`. `plannedClosureOperandRefusal` treats
   every non-member-assignment site as a new shape (`site !== "member-assignment"`),
@@ -92,14 +98,14 @@ level or from a nested closure, and a reassigned binding.
 
 ## Test Results (base origin/main 8de8a22511)
 
-- **Issue test.** `tests/issue-7198-script-var-closures.test.ts` passes 6/6 on
-  head and fails 3/6 on base: all 3 claimed cases fail there, while the
-  refused cases already refuse.
+- **Issue test.** `tests/issue-7198-script-var-closures.test.ts` passes 8/8 on
+  head. On base, the 3 claimed cases fail; the 5 refused cases (including
+  `f.name` and `f.p`) already refuse.
 - **Output changes.** gc and WASI are byte-identical on the 13 playground
   examples and the 3 probe modules (prelude + `print`). Standalone changes only
   on the probe modules, which now claim `<module-init>`.
 - **Census (126 affected rows).** `vardecl-let-closure` drops from 126 rows to
-  30. Post-claim errors (23) and compile failures (10) are the same rows as on
+  34. Post-claim errors (23) and compile failures (10) are the same rows as on
   base, so no new ones. Zero-legacy stays 0 → 0, because other refusals now
   block these rows:
   - `expr-ident-not-in-scope`, 148;
@@ -108,3 +114,32 @@ level or from a nested closure, and a reassigned binding.
     script-var lane.
 - **Standalone test262 (`runTest262File`, the 126 files).** 89 pass, 22 fail
   and 15 compile errors on both base and head, with 0 status flips.
+
+## Review (adversarial, fresh context, 2026-10-29)
+
+Verdict on the first push: FINDINGS. Both blockers were fixed in the second
+commit.
+
+- **B1, fixed.** `f.name` on a claimed binding miscompiled: the boxed carrier
+  is not legacy's function object. The planner now refuses unless every
+  reference is a value use.
+- **B2, fixed.** `f.p = 1` was claimed and then withdrawn
+  (`property assignment on dynamic`). It is refused at plan time by the same
+  rule.
+- **N1, fixed.** The closure store branch is now tied to the planned
+  script-var predicate, not to any closure value in a widened slot.
+- **N2, fixed.** The predicate dropped its pass-through flag, and callers AND
+  the slot kind.
+- **N3, fixed.** The predicate checks syntax before it resolves the plan.
+- **N4, fixed.** Stale comments updated.
+- **N5.**
+  - Fixed: the defensive `?.` is dropped.
+  - Rebutted: `isCurrent` keeps the parent-link check. The site has no
+    resolver target to re-check, unlike the siblings.
+- **N6.**
+  - Fixed: `f.name` and `f.p` added as refused cases.
+  - Kept: `observe` stays a throw / no-throw oracle. A standalone Wasm
+    exception payload is not readable from the test without a host, and every
+    failing assertion in these programs throws.
+- **Verified OK by the review:** gc and WASI byte-identity; selector and
+  lowering predicate agreement; hoisting; redeclaration; writes elsewhere.

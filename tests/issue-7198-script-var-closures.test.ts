@@ -3,7 +3,8 @@
 // #7198 — a script `var f = function () {}` at the top level of a standalone
 // `<module-init>` (test262's `var print = function …` prelude) is planned as a
 // member closure and stored into the binding's dynamic home, boxed into the
-// carrier by the function-object producer. Before, the selector refused every
+// carrier by the function-object producer. Every reference to the binding
+// must pass it on as a value. Before, the selector refused every
 // non-`const` closure initializer (`vardecl-let-closure`), so the whole
 // `<module-init>` fell back to legacy. Shapes the planner does not prove stay
 // refused at select: nothing is claimed and then withdrawn.
@@ -63,6 +64,10 @@ const CLAIMED: readonly [name: string, body: string][] = [
 ];
 
 const REFUSED: readonly [name: string, body: string][] = [
+  // The boxed carrier is not legacy's function object: a member read or write
+  // on the binding would see a different object (#7198 review).
+  ["a `name` read on the binding", `var f = function () { throw "x"; };\nassert(f.name === "f", "name");`],
+  ["a property write on the binding", `var f = function () { throw "x"; };\nf.p = 1;\nassert(f.p === 1, "p");`],
   [
     "a direct call from a nested closure",
     `var f = function () { throw "x"; };\nassert.throws("x", function () { f(); });`,

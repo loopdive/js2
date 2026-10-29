@@ -48,7 +48,7 @@ import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./sel
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { IR_ASYNC_CONSOLE_LOG_STRING_FN, IR_ASYNC_NUMBER_TO_STRING_FN } from "./async-semantic-runtime.js";
 import { ts, forEachChild } from "../ts-api.js";
-import { isDynamicHomeClosure } from "./function-member-closure-plan.js";
+import { isPlannedScriptVarClosure } from "./function-member-closure-plan.js";
 import { isLexicalBindingWrite } from "../shared/binding-writes.js";
 import { bodyWritesIdentifier, isWriteToConstDeclaration } from "./const-binding-writes.js"; // (#7014)
 import { isLogicalAssignmentFunctionTarget } from "./logical-assignment-name-targets.js";
@@ -4294,9 +4294,11 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   // body — the observable storage would never be written. Demote.
   const moduleBinding = cx.moduleBindings?.get(name);
   if (moduleBinding) requireMatchingModuleBindingOwner(moduleBinding, cx.ownerUnitId, cx.funcName);
+  const dynamicHomeClosure =
+    moduleBinding?.type.kind === "dynamic" && isPlannedScriptVarClosure(cx.functionMemberClosures, d.initializer);
   if (
     moduleBinding &&
-    !isDynamicHomeClosure(cx.functionMemberClosures, d.initializer, moduleBinding.type.kind === "dynamic") &&
+    !dynamicHomeClosure &&
     (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))
   ) {
     demoteToLegacy(
@@ -4378,7 +4380,7 @@ function lowerVariableDeclaration(d: ts.VariableDeclaration, isConst: boolean, c
   let value = promoteI32Slot
     ? lowerAsI32(d.initializer as ts.Expression, cx, "canon")
     : lowerExpr(d.initializer, cx, hint);
-  if (widenDynamic && cx.builder.typeOf(value).kind === "closure") {
+  if (dynamicHomeClosure) {
     value = functionObjects.functionObjectDynamicValue(value, d.initializer, functionObjectLoweringHost(cx));
   } else if (widenDynamic && cx.builder.typeOf(value).kind !== "dynamic") {
     const boxed = boxConcreteToDynamic(value, cx.builder.typeOf(value), d.initializer, cx);

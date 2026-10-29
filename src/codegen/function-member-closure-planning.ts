@@ -412,9 +412,10 @@ function callArgumentSite(
 /**
  * (#7198) A script `var f = function () {}` at the top level. The selector
  * admits it only when the slot is the dynamic home, where the closure is boxed
- * into the carrier; callers dispatch it by the canonical wrapper type. Calls in
- * its body get #7197's module-init direct-call plans. Standalone target only,
- * like the call-argument site.
+ * into the carrier. The boxed value is not legacy's function object (its `name`
+ * and own properties differ), so every reference must pass the binding on as
+ * a value. Calls in its body get #7197's module-init direct-call plans.
+ * Standalone target only, like the call-argument site.
  */
 function scriptVarSite(
   ctx: CodegenContext,
@@ -423,7 +424,7 @@ function scriptVarSite(
 ): FunctionClosureSite | undefined {
   const declaration = expression.parent;
   const list = declaration.parent;
-  const statement = list?.parent;
+  const statement = list.parent;
   if (
     ctx.targetProfile.target !== "standalone" ||
     !ts.isVariableDeclaration(declaration) ||
@@ -432,7 +433,8 @@ function scriptVarSite(
     !ts.isVariableDeclarationList(list) ||
     (list.flags & ts.NodeFlags.BlockScoped) !== 0 ||
     !ts.isVariableStatement(statement) ||
-    !ts.isSourceFile(statement.parent)
+    !ts.isSourceFile(statement.parent) ||
+    !scriptVarReferencesAreValueUses(ctx, declaration)
   )
     return;
   const ownerUnitId = identity.moduleInitUnitIdBySourceFile.get(expression.getSourceFile());
@@ -447,7 +449,34 @@ function scriptVarSite(
   };
 }
 
-/** Exact raw-versus-logical adapter proof for one same-source member assignment or call argument. */
+/** Every reference is a call argument, a `typeof` operand or a plain `=` target. */
+function scriptVarReferencesAreValueUses(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+  const name = (declaration.name as ts.Identifier).text;
+  let valueUsesOnly = true;
+  const visit = (node: ts.Node): void => {
+    if (!valueUsesOnly) return;
+    if (
+      ts.isIdentifier(node) &&
+      node.text === name &&
+      node !== declaration.name &&
+      ctx.oracle.declarationsOf(node).includes(declaration)
+    ) {
+      const parent = node.parent;
+      valueUsesOnly =
+        (ts.isCallExpression(parent) && parent.arguments.includes(node)) ||
+        ts.isTypeOfExpression(parent) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.left === node &&
+          parent.operatorToken.kind === ts.SyntaxKind.EqualsToken);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.getSourceFile());
+  return valueUsesOnly;
+}
+
+/** Exact raw-versus-logical adapter proof for one same-source member assignment, call argument or script var. */
 function planMemberClosure(
   ctx: CodegenContext,
   identity: IrPlanningIdentityContext,
