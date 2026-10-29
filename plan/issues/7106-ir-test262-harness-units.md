@@ -2032,3 +2032,13 @@ Each row passes on main `8de8a22511` and failed to compile at the #6972 head
   `expressions/assignment`) change bytes: five were claimed and then demoted
   post-claim, one (`charAt(void 0)`) moves from IR to legacy.
   `tests/issue-7106-module-init-string-position-args.test.ts`.
+- **A value-position write to a dynamic module binding**
+  (`language/statements/for/head-init-expr-check-empty-inc-empty-syntax.js`,
+  `for (count = 0; ; )`). `isPhase1Expr` admitted `x = v` as a value whenever
+  `x` is a dynamic module binding (added with #4259), but no builder arm
+  lowers a value-position assignment: `lowerBinary`'s capability table defers
+  `=`, so the claim ended in "internal capability violation". Statement, tail,
+  chained and for-update writes are admitted and lowered by their own arms, so
+  the admission had no consumer that could lower it. It is removed: the
+  for-head initializer, a call argument and every other value position now
+  refuse at select. `tests/issue-7106-module-init-value-assignment.test.ts`.

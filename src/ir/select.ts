@@ -11270,12 +11270,6 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
       return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
     }
-    if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
-      const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);
-      if (dynamicModuleWrite?.valueKind.kind === "dynamic") {
-        return isPhase1Expr(expr.right, scope, localClasses);
-      }
-    }
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       if (
         (!declaredExpressionHasExactFamily(expr.left, "boolean", scope) ||
