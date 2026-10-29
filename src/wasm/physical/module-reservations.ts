@@ -803,13 +803,22 @@ export class PhysicalModuleReservations {
     } else this.#fail("completion requires a defined function or global");
   }
 
-  fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
+  /** Shared fill preconditions; owned fills recheck them after copy callbacks. */
+  #requireFunctionFill(token: FunctionReservation): void {
     this.#require("filling");
     this.#owned(token);
     if (token.kind !== "function") this.#fail("function fill requires a defined-function token");
     if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+  }
+
+  #validateFunctionDefinition(definition: { locals: LocalDef[]; body: Instr[] }): void {
     for (const local of definition.locals) this.#validateValue(local.type);
     this.#validateInstructions(definition.body);
+  }
+
+  fillFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
+    this.#requireFunctionFill(token);
+    this.#validateFunctionDefinition(definition);
     token.object.locals = definition.locals;
     token.object.body = definition.body;
     this.#filledFunctions.set(token, { ...definition, snapshot: this.#captureFunction(token.object) });
@@ -825,20 +834,13 @@ export class PhysicalModuleReservations {
    * after publication. Legacy fillFunction retains live caller-data semantics.
    */
   fillOwnedFunction(token: FunctionReservation, definition: { locals: LocalDef[]; body: Instr[] }): void {
-    this.#require("filling");
-    this.#owned(token);
-    if (token.kind !== "function") this.#fail("function fill requires a defined-function token");
-    if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+    this.#requireFunctionFill(token);
     try {
       const data = copyOwnedFunctionDefinition(definition);
       // Capture may invoke proxy traps: do not carry reservation authority across it.
-      this.#require("filling");
-      this.#owned(token);
-      if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
-      for (const local of data.locals) this.#validateValue(local.type);
-      this.#validateInstructions(data.body);
-      this.#require("filling");
-      if (this.#filledFunctions.has(token)) this.#fail(`duplicate function fill ${token.key}`);
+      this.#requireFunctionFill(token);
+      this.#validateFunctionDefinition(data);
+      this.#requireFunctionFill(token);
       publishOwnedFunctionDefinition(token.object, data.locals, data.body);
       const snapshot = this.#captureFunction(token.object);
       const shell = data.immutable ? this.#captureFunction(ownedFunctionShell(token.object)) : undefined;
@@ -851,6 +853,7 @@ export class PhysicalModuleReservations {
       this.#verifyLayout();
       if (this.#state !== "filling") this.#fail("owned closing audit changed ledger phase");
     } catch (error) {
+      if (this.#state === "failed") throw error; // Already prefixed by #fail.
       this.#fail(error instanceof Error ? error.message : String(error));
     }
   }

@@ -1,6 +1,8 @@
 # Owned function publication — isolated main-based evidence
 
-Base: eef2ba9c3cef97d383f4f93658291f04fde75a2d. This change adds the explicit
+Base: eef2ba9c3cef97d383f4f93658291f04fde75a2d. The replacement PR on
+loopdive/js2 merges the #6925 replacement and main on top; see the issue file for
+its output-finalization release fix. This change adds the explicit
 copying API plus four existing main producers: Boolean, string output, BigInt to
 Number, Number classifier. Integration-only ToBoolean and other pending changes
 are excluded. Full IR migration, native graph adoption and retirement remain open.
@@ -44,10 +46,17 @@ C reviews the published head and an explicit release decision is recorded.
 
 ## Reproduction
 
-Node used: /Users/thomas/.nvm/versions/node/v25.9.0/bin/node.
+Node used: v25.9.0.
+
+The raw `.log` files and the `base-inputs/` source copies are no longer in this
+tree (`.gitattributes` routes `*.log` through LFS, and they were raw blobs; the
+copies are reproducible with `git show eef2ba9c:<path>`). Both remain reachable
+from the original review head `11ad93a464`, e.g.
+`git show 11ad93a464:plan/log/3527-owned-function-review-20261026/baseline.log`.
 Copy the archived configs to .tmp, then run vitest with --config
 .tmp/vitest.owned-review.config.mjs. Final tests use production source directly.
-For exact-main comparison, copy base-inputs and legacy-identity.test.ts to .tmp;
+For exact-main comparison, write the five base files to .tmp/base-inputs with
+`git show eef2ba9c:<path>` and copy legacy-identity.test.ts to .tmp;
 the baseline config overlays only the five named source files. To reproduce the
 historical ledger failure, restore that test from the recorded base in an isolated
 checkout; its repaired pin is intentionally different now. Set

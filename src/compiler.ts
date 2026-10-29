@@ -72,6 +72,7 @@ import {
   type FailureTelemetry,
 } from "./compiler/output.js";
 import { stampAllocationOwners } from "./wasm/physical/allocation-owner.js";
+import { releaseOwnedFunctions } from "./wasm/physical/owned-function-data.js";
 import {
   gateEmittedModule,
   pushSourceAnchoredDiagnostic,
@@ -1249,7 +1250,7 @@ interface PreparedWitFinalization {
 /** Shared output contract; generation and its diagnostics finish before entry. */
 function finalizePipelineModule(
   input: PipelineOutputContext,
-  mod: WasmModule,
+  emitted: WasmModule,
   telemetry: Partial<FailureTelemetry> | undefined,
   output: {
     targetProfile: ReturnType<typeof resolveCompileTargetProfile>;
@@ -1262,6 +1263,8 @@ function finalizePipelineModule(
   const { errors, options, entryAst, diagnosticAnchor } = input;
   const { targetProfile, emitWatOutput, emitSourceMap } = output;
   const targetEnvironment = targetProfile.environment;
+  // The steps below rewrite function bodies in place; ledger-owned bodies stay locked.
+  const mod = releaseOwnedFunctions(emitted);
 
   // Step 2b: Apply C ABI transformations if requested (linear target only).
   let cHeader: string | undefined;

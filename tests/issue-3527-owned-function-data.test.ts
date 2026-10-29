@@ -325,6 +325,13 @@ describe.sequential("owned function admission", () => {
     expect(pair[1]).toBe(body[0]);
     expect(body.values().next().value).toBe(body[0]);
   });
+  it("reports a ledger validation failure with a single prefix", () => {
+    const f = setup();
+    expect(() =>
+      f.tx.fillOwnedFunction(f.token, { locals: [], body: [{ op: "call", funcIdx: 999 }] as Instr[] }),
+    ).toThrow(/^physical module reservations: (?!physical module reservations:)/);
+    expect(f.tx.state).toBe("failed");
+  });
   it.each(["accessor", "cycle", "hole", "symbol", "extra-index"])("rejects unsupported input: %s", (kind) => {
     const f = setup(),
       d = definition();

@@ -207,6 +207,48 @@ export function createOwnedFunctionSnapshotStore<T extends object, S>() {
   return freeze(store) as { readonly get: (key: T) => S | undefined; readonly set: (key: T, value: S) => void };
 }
 
+/** Plain mutable copies of owned payloads; shared references are preserved. */
+function thawOwnedFunctionDefinition(locals: LocalDef[], body: Instr[]) {
+  const copies = new NativeMap<object, object>();
+  function thaw(value: unknown): unknown {
+    if (value === null || typeof value !== "object") return value;
+    const prior = apply(mapGet, copies, [value]);
+    if (prior) return prior;
+    if (isView(value)) {
+      const bytes = value as Uint8Array,
+        length = apply(byteLength, bytes, []);
+      const result = new NativeUint8Array(length);
+      for (let index = 0; index < length; index++) result[index] = bytes[index]!;
+      apply(mapSet, copies, [value, result]);
+      return result;
+    }
+    const array = isArray(value),
+      result = array ? [] : {};
+    apply(mapSet, copies, [value, result]);
+    const keys = ownKeys(value);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      if (!array || key !== "length") own(result, key, thaw(descriptor(value, key)!.value));
+    }
+    return result;
+  }
+  return { locals: thaw(locals) as LocalDef[], body: thaw(body) as Instr[] };
+}
+
+/**
+ * Owned payloads stay locked for as long as the ledger can audit them, so output
+ * finalizers that rewrite bodies in place (widening, allocation-owner stamping)
+ * take this released view instead: owned functions become plain mutable clones,
+ * every other function object is shared unchanged. The input is never mutated.
+ */
+export function releaseOwnedFunctions<M extends { functions: WasmFunction[] }>(module: M): M {
+  if (!module.functions.some((fn) => isPrivatelyCopiedFrozenArray(fn.body))) return module;
+  const functions = module.functions.map((fn) =>
+    isPrivatelyCopiedFrozenArray(fn.body) ? { ...fn, ...thawOwnedFunctionDefinition(fn.locals, fn.body) } : fn,
+  );
+  return { ...module, functions };
+}
+
 /** Allocation provenance only: neither ledger ownership nor recursive immutability. */
 export function isPrivatelyCopiedFrozenArray(value: unknown): boolean {
   return apply(weakHas, immutableArrays, [value]);

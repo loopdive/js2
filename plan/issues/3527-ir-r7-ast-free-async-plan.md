@@ -45,6 +45,10 @@ files:
 loc-budget-allow:
   - src/ir/from-ast.ts
   - src/codegen/ir-prepared-free-functions.ts
+  # 2026-10-29 (#3527 owned-fill finalization): +3 / +1 wiring lines (import and
+  # one releaseOwnedFunctions call); the logic lives in wasm/physical/owned-function-data.ts.
+  - src/compiler.ts
+  - src/compiler/ir-program-presentation.ts
 func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
 import-cycles-allow:
@@ -2630,3 +2634,53 @@ before the next full audit. Lock the copied view's shape/prototype, publish a fi
 non-enumerable length and captured iterator, and retain mutable indexed bytes plus
 full content audits. Cover both concrete emitters and prototype substitution. This
 is an owned-path correction; legacy caller-owned bytes remain unchanged.
+
+### 2026-10-29 — replacement PR: release owned payloads to output finalization
+
+The fork-only head of PR 6928 is replaced by a PR from `claude/takeover-6928`,
+stacked on the PR 6925 replacement (`FunctionSnapshot` is now
+`PhysicalDataSnapshot`) and merged with main.
+
+Review blocker: frozen owned bodies crashed the in-place output finalizers —
+`widenNonDefaultableTypes` assigns `local.type` and `blockType.type`;
+`stampAllocationOwners` assigns `fn.body` and pushes locals — and
+`copyModuleData` rejects the private array prototype. Fix at the consumer
+boundary, not in the ledger: `releaseOwnedFunctions(module)`
+(`owned-function-data.ts`) returns a view in which each owned function is a
+plain mutable clone (`Array.prototype` arrays, `Object.prototype` records,
+fresh `Uint8Array` bytes, shared references preserved) and every other function
+object is shared unchanged; it never mutates its input. `finalizePipelineModule`
+runs on that view, and `beginPreparedPresentationFinalization` copies it.
+Releasing at `seal()` was rejected: the ledger and producers keep auditing after
+seal (`assertCompletedReservation` in the `requireCompleted*` receipts and
+`emittedSupportFunctionReceipts`), the producer tests pin that owned
+`locals`/`body` stay non-writable and non-configurable for the ledger's whole
+life, and making them writable would trade that lock for a weaker
+identity-only audit. Legacy functions keep their in-place finalization.
+`tests/issue-3527-owned-function-finalization.test.ts` runs real boolean-box
+`emitAcceptedIrProgram` output through the stamp and widen steps and requires
+byte equality with the same program filled through `fillFunction`. With
+`releaseOwnedFunctions` stubbed to identity it fails ("Cannot assign to read
+only property 'body'"; 2 of 4 reported failed before the run stopped); with
+the fix it passes 4/4. The `copyModuleData` path is covered by
+its precondition only (the released view holds only the prototypes and writable
+descriptors it accepts), not end to end, because no public compile reaches an
+owned producer yet.
+
+Also fixed: the doubled "physical module reservations:" error prefix (with a
+test); the duplicated fill preconditions, now one private helper shared with
+`fillFunction`; and the review directory's raw `.log` blobs plus `base-inputs/`
+source copies, removed from the tree. LFS upload is not reachable from the
+session, so they were not renormalized; they stay reachable from `11ad93a464`.
+
+Documented residuals (review nits 2–4, not addressed here):
+
+- **Non-plain data inside the ledger.** Owned payloads are frozen,
+  private-prototype arrays and null-prototype records, so `instanceof Array`,
+  `hasOwnProperty` and the `getPrototypeOf(x) === Array.prototype` validators
+  do not hold for them; only `releaseOwnedFunctions` output is plain.
+- **Two fill mechanisms.** `fillOwnedFunction` (4 producers) and `fillFunction`
+  (~85 sites) coexist with no stated end state; `native-bigint-number.ts` still
+  deep-captures and re-compares its own bodies.
+- **Audit cost.** An owned fill runs five layout audits against one for a legacy
+  fill, which contradicts the "cheaper audits" motivation.
