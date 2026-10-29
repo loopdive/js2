@@ -11129,8 +11129,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isPrefixUnaryExpression(expr)) {
     if (!isPhase1PrefixOp(expr.operator))
       return shapeNo(`expr-prefix-op-${ts.tokenToString(expr.operator) ?? expr.operator}`, expr);
-    // `!` is ToBoolean of any value, so a dynamic carrier operand (`dyn.truthy`)
-    // carries no module representation to misread.
+    // A member read off the certified descriptor alias is a dynamic carrier
+    // (`dyn.truthy`), not a module slot; uncertified operands stay refused.
     if (
       expr.operator === ts.SyntaxKind.ExclamationToken &&
       !moduleInfluenceIsExactBoolean(expr.operand, scope) &&
@@ -11218,8 +11218,8 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     ) {
       return shapeNo("expr-module-value-nullish", expr);
     }
-    // Operands that passed the exact-boolean gate above pass here too; this
-    // refuses module values on the dynamic logical-value path.
+    // Refuses a module value on the dynamic logical-value path
+    // (`o || moduleNumber`); typed boolean operands pass.
     if (binOp === ts.SyntaxKind.AmpersandAmpersandToken || binOp === ts.SyntaxKind.BarBarToken) {
       for (const operand of [expr.left, expr.right]) {
         if (!moduleInfluenceIsExactBoolean(operand, scope)) {

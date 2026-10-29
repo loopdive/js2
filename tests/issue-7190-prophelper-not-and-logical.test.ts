@@ -107,6 +107,14 @@ const FIXTURES: Record<string, string> = {
     verifyNotEnumerable(o, "hidden");
     verifyConfigurable(o, "c");
   `,
+  // The `!` exemption covers only a member read off the alias call: `!` over
+  // the bare call stays refused.
+  "not-boundary": `
+    function noDesc(obj, k) { return !__getOwnPropertyDescriptor(obj, k); }
+    var s = Symbol("s");
+    assert.sameValue(noDesc({}, s), true);
+    assert.sameValue(noDesc({ a: 1 }, "a"), false);
+  `,
   "absent-property-descriptor-read-throws": `
     var o = {};
     assert.throws(TypeError, function () { verifyNotEnumerable(o, "missing"); });
@@ -245,6 +253,11 @@ describe("#7190 propertyHelper — `!` over a descriptor read and `&&` over exac
       expect(refusal(result, "pick")).toMatch(/^expr-module-value-logical:/);
     },
   );
+
+  it("standalone: `!` over the bare descriptor alias call stays refused", { timeout: 180_000 }, async () => {
+    const result = await compileAssembled(join(fixtureDir, "not-boundary.js"));
+    expect(refusal(result, "noDesc")).toMatch(/^expr-module-value-not:/);
+  });
 
   for (const name of Object.keys(FIXTURES)) {
     it(`standalone: ${name} passes as in node`, { timeout: 180_000 }, async () => {

@@ -41,6 +41,7 @@ import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { isAnyStringSlot } from "./native-strings-shared.js";
 import { readEnv } from "../env.js";
 
 /**
@@ -193,11 +194,12 @@ export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (posit
       // (#7119) Off the fast lane the dynamic carrier is externref, and the
       // IR reconciles it with legacy's nullable native-string slot but not
       // with any other reference slot inferred from the call sites (a vec for
-      // `ask([1, 2])`, a typed array, and — #7190 — the NON-null string slot of
-      // `verifyNotEnumerable(o, "x")`): the same guaranteed parity withdrawal
-      // as a fnctor-instance slot.
+      // `ask([1, 2])`, a typed array, and — #7190 — the non-null string slot
+      // legacy registers at selection time for `verifyNotEnumerable(o, "x")`,
+      // even though the emitted signature is later relaxed to `ref null`): the
+      // same guaranteed parity withdrawal as a fnctor-instance slot.
       const slot = legacyParamSlot(ctx, position);
-      const reconciledString = slot?.kind === "ref_null" && slot.typeIdx === ctx.anyStrTypeIdx;
+      const reconciledString = slot?.kind === "ref_null" && isAnyStringSlot(ctx, slot);
       if (!ctx.fast && (slot?.kind === "ref" || slot?.kind === "ref_null") && !reconciledString) return true;
       return legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index);
     }

@@ -109,9 +109,11 @@ except the native string, which it says the IR reconciles. The main merge
 actually reconciles.
 
 Measured:
-- `mk(K, v)` with `v` only a string literal: legacy's slot is
-  `(ref null $AnyString)`. The IR claims it with the same signature, so it is
-  reconciled.
+- `mk(K, v)` called inside a function with a string literal `v` (the S3a
+  shape): legacy's slot is `(ref null $AnyString)`, the IR claims it with the
+  same signature, so it is reconciled. Called at top level (`mk(K, "a")`), the
+  slot is the non-null `ref`, and main claims it and then withdraws it; this
+  branch refuses it before the claim (review 2, finding (c)).
 - `verifyNotEnumerable(o, "x")`, `verifyConfigurable(o, "c")`,
   `notEnum(obj, k)` (the #7106 dyn-delete pin) and `joined(a, sep)`: legacy's
   slot is the non-null `(ref $AnyString)`. The IR withdraws the claim at the
@@ -203,3 +205,32 @@ in about a dozen more codegen sites (`index.ts` `scriptVarSlotIsStringHome`,
 
 After the fixes: `tests/issue-7190-*` head 23/23; base fails exactly the 5
 IR-unit checks (standalone and gc), and every runtime check passes on both.
+
+## Adversarial review 2 — merged head `f42f91ae` (2026-10-29)
+
+This was a fresh-context agent, given the diff against main and the plan.
+**Verdict: quality goal met, no blocking items.**
+
+Soundness questions:
+- **(a), (b), (d) held under probing:**
+  - (a) A JSDoc-boolean module var with non-boolean storage and reassigned
+    module booleans either ran correctly or were refused before the claim, as on main.
+  - (b) The `!` exemption keeps the alias-call arm's gates and lowers through `dyn.truthy`.
+  - (d) Both `isAnyStringSlot` call sites behave exactly as before.
+- **(c) held.** The narrowed exemption lost 0 IR bodies in a 426-file sweep
+  (harness self-tests plus `built-ins/Object/getOwnPropertyDescriptor`):
+  - gained isEnumerable ×34, verifyEnumerable ×32, verifyNotEnumerable ×32 and
+    verifyNotConfigurable ×32;
+  - post-claim errors went from 58 to 55, because the verifyConfigurable
+    withdrawals are gone.
+
+| # | finding | resolution |
+| --- | --- | --- |
+| 1 | the `&&`/`\|\|` comment named a gate that does not exist on that branch | rewritten to say what it refuses (`o \|\| moduleNumber`) |
+| 2 | the `!` comment's argument would justify exempting every dynamic operand | it now says why only the certified alias member read is exempt |
+| 3 | `reconciledString` checked the string type inline | uses `isAnyStringSlot` |
+| 3a/3b | twins of `isAnyStringSlot` in `declarations.ts:1523`, `program-abi-fnctor-planning.ts:100` and `index.ts:4250` | left, with the other near-copies, for the separate cleanup below. `declarations.ts`'s twin omits the `nativeStrings` check, so folding it is not provably byte-identical without a gc A/B. |
+| 3c | the probe derives the owner and index next to `legacyParamSlot` | left: #7119's code, needed for `legacyPositionCarriesFnctorInstance(name, index)` |
+| 4 | "non-null" holds only at selection time; the emitted WAT shows `ref null` | the comment says so |
+| 5 | no test for where the `!` exemption stops | `not-boundary` fixture: `!__getOwnPropertyDescriptor(obj, k)` stays `expr-module-value-not` |
+| 6 | the refusal-provider setup is copied across test files | test-only, left |
