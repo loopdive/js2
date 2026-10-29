@@ -22,15 +22,33 @@
  *    unsafe spill / stem collision) still falls back to the host lane, because
  *    only there a legacy `__gen_*` buffer exists to mix into.
  *
- * So the CURRENT invariants, asserted from the binary's import section:
- *  1. all-drivable async-gen module → native carrier, ZERO imports;
- *  2. non-drivable async-gen module → the generator host lane fires
- *     (legacy `__gen_*` imports present), while standalone exception handling
- *     remains native (`__get_caught_exception` absent; #2997);
+ * #7010 retires that host-buffer fallback on host-free targets. The history
+ * above explains the former carrier gate; it is not current standalone support.
+ * The current invariants are:
+ *  1. all-drivable async-gen module → native carrier, valid Wasm, ZERO imports;
+ *  2. the same non-drivable stem-collision module → the specific #7010 refusal,
+ *     with no emitted binary, rather than an unavailable host-buffer import;
  *  3. non-async-gen module → native carrier, no host Promise imports.
+ * Refusal is a bounded unsupported-shape contract, not a runtime/conformance pass.
  */
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { jsOracle, runNativeFirst } from "./helpers/native-generator-contract.js";
+
+// Near-pair to the unchanged refused two-object-method source below: distinct
+// generator stems are independently driven, and BOTH yielded values contribute
+// to the observed result.
+const DISTINCT_STEM_NATIVE = `
+const o1 = { async *first(): AsyncGenerator<number> { yield 1; } };
+const o2 = { async *second(): AsyncGenerator<number> { yield 2; } };
+export async function test(): Promise<number> {
+  const p = await Promise.resolve(7);
+  let total = 0;
+  for await (const x of o1.first()) { total += x; }
+  for await (const x of o2.second()) { total += x; }
+  return p + total;
+}
+`;
 
 async function standaloneBinaryImports(src: string): Promise<string[]> {
   const r = await compile(src, { fileName: "t.ts", target: "standalone", nativeStrings: true });
@@ -39,7 +57,7 @@ async function standaloneBinaryImports(src: string): Promise<string[]> {
   return WebAssembly.Module.imports(new WebAssembly.Module(r.binary)).map((i) => `${i.module}.${i.name}`);
 }
 
-describe("#2980/#3132 Promise-lane carrier gates (standalone, post-widen)", () => {
+describe("#2980/#3132/#7010 native Promise carriers and generator refusal contracts", () => {
   it("all-drivable async-gen module: Promise.reject stays NATIVE (#3132 PR-2 — no host imports at all)", async () => {
     const imports = await standaloneBinaryImports(`
       export async function* g() { yield Promise.reject(new Error("x")); }
@@ -61,13 +79,21 @@ describe("#2980/#3132 Promise-lane carrier gates (standalone, post-widen)", () =
     expect(imports).toEqual([]);
   });
 
-  it("NON-drivable async-gen module (stem collision): the #2980 host fallback still fires", async () => {
-    // Two object-literal async-gen methods share the stem `g` → the second is
-    // non-drivable (stem collision) → `moduleHasNonDrivableAsyncGen` → both
-    // carrier gates OFF → the gens run on the legacy `__gen_*` HOST buffer.
-    // This is the still-live #2980 lane: the module must be host-consistent
-    // (legacy buffer imports present), never a native $Promise mixed into it.
-    const imports = await standaloneBinaryImports(`
+  it("distinct async-gen stems: native-first executes both receivers JS-equally without generator host imports", async () => {
+    expect(await jsOracle(DISTINCT_STEM_NATIVE)).toBe("10");
+    expect(await runNativeFirst(DISTINCT_STEM_NATIVE)).toBe("10");
+  });
+
+  it("distinct async-gen stems: standalone emits valid Wasm with zero imports", async () => {
+    expect(await standaloneBinaryImports(DISTINCT_STEM_NATIVE)).toEqual([]);
+  });
+
+  it("NON-drivable async-gen module (stem collision): #7010 refuses the unavailable host buffer", async () => {
+    // Preserve the original two-method collision and Promise consumer unchanged.
+    // #7010 removes the old standalone host-buffer route; this exact unsupported
+    // shape must report that refusal, not silently mix native and host carriers.
+    const r = await compile(
+      `
       const o1 = { async *g(): AsyncGenerator<number> { yield 1; } };
       const o2 = { async *g(): AsyncGenerator<number> { yield 2; } };
       export async function f(): Promise<number> {
@@ -76,11 +102,19 @@ describe("#2980/#3132 Promise-lane carrier gates (standalone, post-widen)", () =
         for await (const x of o2.g()) { void x; }
         return p;
       }
-    `);
-    expect(imports).toContain("env.__gen_next");
-    // #2997 moves standalone exception handling to standardized Wasm EH even
-    // when an unrelated generator shape still requires the legacy host buffer.
-    expect(imports).not.toContain("env.__get_caught_exception");
+    `,
+      { fileName: "t.ts", target: "standalone", nativeStrings: true },
+    );
+    expect(r.success).toBe(false);
+    expect(r.errors.length).toBeGreaterThan(0);
+    for (const error of r.errors) {
+      expect(error.message).toMatch(/generator-no-host-free-lowering:[^\n]*#7010/);
+    }
+    // No successful artifact can hide an unavailable host buffer or the old
+    // host-exception lane. The native positive controls above still require
+    // compilation, Wasm validation and an actually decoded empty import section.
+    expect(r.binary.byteLength).toBe(0);
+    expect(r.imports ?? []).toEqual([]);
   });
 
   it("NON-async-gen module: Promise.reject stays NATIVE (widen wins, unchanged since #2980)", async () => {

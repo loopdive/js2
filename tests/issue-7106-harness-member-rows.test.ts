@@ -14,6 +14,9 @@
 // `message = message.toString();`, a method call on a dynamic receiver, was
 // the other until the #7106 Stage 4 brand-dispatch wrapper
 // (`__ir_dyn_mcall_<m>_<n>`) gave the IR legacy's primitive/vec arms.
+// Behind row 2, assert.compareArray's `String(message)` calls are #7113's
+// standalone `closure-carrier-helper-call` cut (`String(carrier)` in a closure
+// that mints a carrier join needs `prepared-dynamic-helper-abi`, wasi-only).
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
@@ -141,14 +144,18 @@ assert.notSameValue(1, 2);
 `;
   const ROW_2 = `return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]";`;
   const SYMBOL_MESSAGE = `message = message.toString();`;
+  const STRING_MESSAGE = `+ String(message)`;
 
-  /** `stub` replaces the refused harness line (row 2) with an IR-buildable twin. */
+  /** `stub` replaces the refused harness lines (row 2, `String(message)`) with IR-buildable twins. */
   function assemble(source: string, stub: boolean): string {
     const assembled = assembleOriginalHarness(source, parseMeta(source) as never).primary.source;
     expect(assembled).toContain(ROW_2);
     // No longer stubbed: the wrapper lowers it (and it ships IR below).
     expect(assembled).toContain(SYMBOL_MESSAGE);
-    return stub ? assembled.replace(ROW_2, `return "[" + String(arrayLike) + "]";`) : assembled;
+    expect(assembled).toContain(STRING_MESSAGE);
+    return stub
+      ? assembled.replace(ROW_2, `return "[" + String(arrayLike) + "]";`).replaceAll(STRING_MESSAGE, `+ message`)
+      : assembled;
   }
 
   async function compileHarness(source: string) {
@@ -172,13 +179,13 @@ assert.notSameValue(1, 2);
     exports.test?.();
   }
 
-  it("the unstubbed harness keeps <module-init> legacy, on row 2 alone", async () => {
+  it("the unstubbed harness keeps <module-init> legacy, on row 2 and `String(message)`", async () => {
     const result = await compileHarness(assemble(BODY, false));
     expect(result.success).toBe(true);
-    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "array-method-unsupported" });
+    expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "operand-coercion-unsupported" });
   }, 60_000);
 
-  it("with row 2 stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
+  it("with row 2 and `String(message)` stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
     const assembled = assemble(BODY, true);
     vm.runInContext(assembled, vm.createContext({ console }));
     const result = await compileHarness(assembled);

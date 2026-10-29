@@ -43,8 +43,9 @@ describe("WASI target", () => {
     expect(result.success).toBe(true);
 
     expect(result.wat).toContain("fd_write");
-    // Should have the number-to-string helper
-    expect(result.wat).toContain("__wasi_write_f64");
+    // (#7157) The native String(n) formatter, then the string writer
+    expect(result.wat).toContain("number_toString");
+    expect(result.wat).toContain("__wasi_write_any_string");
   });
 
   it("compiles console.log with boolean argument", async () => {
@@ -52,8 +53,9 @@ describe("WASI target", () => {
     expect(result.success).toBe(true);
 
     expect(result.wat).toContain("fd_write");
-    // Should have the i32-to-string helper
-    expect(result.wat).toContain("__wasi_write_i32");
+    // (#7157) A boolean selects the "true" / "false" data segment, not the i32 formatter
+    expect(result.wat).toContain("__wasi_write_string");
+    expect(result.wat).not.toContain("__wasi_write_i32");
   });
 
   it("compiles multiple console.log arguments with space separation", async () => {

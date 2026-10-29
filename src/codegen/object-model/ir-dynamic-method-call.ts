@@ -44,7 +44,8 @@ import { compileExpression, flushLateImportShifts } from "../shared.js";
 import { coerceType } from "../type-coercion.js";
 import { emitUndefined, ensureLateImport } from "../expressions/late-imports.js";
 import { emitThrowTypeError, noJsHost } from "../js-errors.js";
-import { captureReceiverSequence, publishReceiverHelper, receiverHelperContext } from "../ir-dynamic-construct.js";
+import { captureReceiverSequence } from "../ir-dynamic-construct.js";
+import { helperFunctionContext, publishHelperFunction } from "../helpers/ir-helper-function.js";
 
 const RECEIVER = "__ir_dmc_recv";
 const METHOD_VALUE = "__ir_dmc_fn";
@@ -120,7 +121,7 @@ export function ensureIrDynamicMethodCallHelper(
   const existing = ctx.funcMap.get(name);
   if (existing !== undefined) return existing;
 
-  const helper = receiverHelperContext(
+  const helper = helperFunctionContext(
     name,
     [RECEIVER, ...Array.from({ length: arity }, (_, index) => argumentName(index))].map((param) => ({
       name: param,
@@ -166,5 +167,5 @@ export function ensureIrDynamicMethodCallHelper(
     return undefined;
   }
   flushLateImportShifts(ctx, helper);
-  return publishReceiverHelper(ctx, helper, [EXTERNREF]);
+  return publishHelperFunction(ctx, helper);
 }

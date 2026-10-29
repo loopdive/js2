@@ -29,7 +29,6 @@ import {
   isCollectionCarrierClass,
   isRuntimeCollectionStructHeritage,
 } from "./classes/standalone-collection-carrier.js"; // (#6754)
-import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
 import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; // native standalone Promise-subclass super(executor)
 import { emitPromiseSubclassProtoLink, isStandalonePromiseSuperForwarder } from "./promise-subclass-proto-link.js"; // (#6651 D4)
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
@@ -59,11 +58,7 @@ import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) re
 import { definedFuncAt } from "./func-space.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { emitNativeConstructRuntimeArgv } from "./expressions/new-super.js"; // (#5383 S67) runtime-length `super(...spread)` across the link
-import {
-  emitSuperCallBindThis,
-  emitSuperInitializedFlagStore,
-  ensureSuperInitializedFlagLocal,
-} from "./classes/derived-ctor-this-guard.js"; // (#5350 r3 / #6772 S1b) runtime this-initialised flag
+import { emitSuperCallBindThis, ensureSuperInitializedFlagLocal } from "./classes/derived-ctor-this-guard.js"; // (#5350 r3 / #6772 S1b) runtime this-initialised flag
 import {
   emitCtorFallthroughOverride,
   emitSaveParentOverride,
@@ -99,6 +94,7 @@ import {
   isNativeGeneratorCandidate,
   registerNativeGenerator,
 } from "./generators-native.js"; // (#2571) native method-generator lowering
+import { refuseEagerGeneratorBuffer } from "./generator-eager-refusal.js";
 import {
   cacheStringLiterals,
   extractConstantDefault,
@@ -227,40 +223,6 @@ function getParentPrototypeLookupName(ctx: CodegenContext, parentName: string): 
   const info = ctx.externClasses.get(parentName);
   if (!info) return parentName;
   return [...info.namespacePath, info.className].join(".") || info.className;
-}
-
-/**
- * (#2637 B2) True when `className` is a `class … extends Promise` (transitively)
- * with a user-declared constructor, in JS-host mode. These are the only classes
- * for which the run-on-host-`this` constructor body (`${className}_new__onhost`)
- * + the `__register_promise_subclass_ctor` registration are emitted: V8's
- * `NewPromiseCapability(C)` performs `new C(internalExecutor)`, and the runtime
- * (`__promise_subclass_ctor`, runtime.ts) runs the registered closure on the
- * capability promise.
- *
- * `classBuiltinParentMap` already records the transitive builtin ancestor
- * (collection propagates it for multi-level chains, see collectClassDeclaration
- * lines ~588-608), so a direct `=== "Promise"` check covers `class A extends
- * Promise` and `class B extends A` alike. Standalone/WASI has no JS host, so
- * `__promise_subclass_ctor` / the registration import are unsatisfiable there —
- * return false (standalone keeps the #1941 fallback; the synthesized-subclass
- * path is JS-host-only).
- *
- * Default-constructor subclasses (no `ctor`) are excluded: they have no user
- * body to run, so the runtime's bare forwarder (the #1977 identity-only path)
- * is correct and no registration is needed.
- */
-function isPromiseSubclassWithUserCtor(
-  ctx: CodegenContext,
-  className: string,
-  ctor: ts.ConstructorDeclaration | undefined,
-): boolean {
-  if (ctor === undefined) return false;
-  // Gate EXACTLY as `resolvePromiseSubclassName` (the combinator/value-read
-  // emitter) does, so the `__onhost` body + registration are emitted iff the
-  // combinator path will reference them.
-  if (isStandalonePromiseActive(ctx)) return false;
-  return ctx.classBuiltinParentMap.get(className) === "Promise";
 }
 
 function countStaticallyKnownArgs(
@@ -444,7 +406,7 @@ function resolveStandaloneBuiltinSuperCtorIdx(
   arity: number,
 ): number | null | undefined {
   const hostFree = ctx.wasi || ctx.standalone;
-  if (!hostFree && ctx.targetProfile.semanticProviders !== "native-first") return undefined;
+
   if (isWasiErrorName(parentName)) {
     emitWasiErrorConstructor(ctx, parentName, arity);
     return ctx.funcMap.get(`__new_${parentName}`) ?? null;
@@ -1572,27 +1534,6 @@ export function collectClassDeclaration(
   // does not regress. Pre-registering here (Phase 2) keeps the funcIdx stable
   // for the closure materialization that happens during Phase-3 body
   // compilation (`emitPromiseSubclassCtor`), regardless of compile order.
-  if (isPromiseSubclassWithUserCtor(ctx, className, ctor)) {
-    const onHostName = `${ctorName}__onhost`;
-    const onHostTypeIdx = addFuncType(ctx, ctorParams, [{ kind: "externref" }], `${onHostName}_type`);
-    const onHostFuncIdx = mintDefinedFunc(ctx);
-    const onHostKey = classMemberFuncKey(ctx, onHostName);
-    ctx.funcMap.set(onHostKey, onHostFuncIdx);
-    pushProgramAbiClassCallable(ctx, decl, "promise-subclass-onhost", onHostFuncIdx, {
-      name: onHostKey,
-      typeIdx: onHostTypeIdx,
-      locals: [],
-      body: [],
-      exported: false,
-    });
-    // Mirror the ctor's optional / rest call-site metadata under the onhost
-    // name too, so the onhost body's default-param machinery (param-index
-    // based) and any super-arg forwarding behave identically to `_new`.
-    const ctorOptionals = ctx.funcOptionalParams.get(ctorName);
-    if (ctorOptionals) ctx.funcOptionalParams.set(onHostName, ctorOptionals);
-    const ctorRest = ctx.funcRestParams.get(ctorName);
-    if (ctorRest) ctx.funcRestParams.set(onHostName, ctorRest);
-  }
 
   // (#1965) Register the constructor-init function `${className}_init`:
   // `(...ctorParams, self: ref $struct) -> (ref $struct)`. It carries the
@@ -3204,9 +3145,6 @@ function compileClassBodiesInner(
   // collectClassDeclaration). It mirrors the direct-new ctor body but binds
   // `this`/`$__self` to V8's NewPromiseCapability promise (`__current_this`)
   // instead of allocating its own — see the function for the correctness trap.
-  if (isPromiseSubclassWithUserCtor(ctx, className, ctor)) {
-    emitPromiseSubclassOnHostCtor(ctx, decl, funcByName, className, ctor!);
-  }
 
   // Compile methods (instance and static)
   // Track which methods have been compiled to avoid overwriting when
@@ -3543,6 +3481,8 @@ function compileClassBodiesInner(
       ) {
         emitAsyncGenerator(ctx, fctx, member);
         fctx.body.push({ op: "return" });
+      } else if (isGeneratorMethod && member.body && refuseEagerGeneratorBuffer(ctx, fctx, member)) {
+        // (#7010) No host-free lowering for this generator method — refused.
       } else if (isGeneratorMethod && member.body) {
         // Generator method: eagerly evaluate body, collect yields into a buffer,
         // then wrap with __create_generator to return a Generator-like object.
@@ -3950,216 +3890,6 @@ function compileClassBodiesInner(
 }
 
 /**
- * (#2637 B2.3) Fill `${className}_new__onhost` — the run-on-host-`this` variant
- * of a `class … extends Promise` user constructor.
- *
- * THE CORRECTNESS TRAP: the direct-new body `${className}_new` (the B1 path)
- * calls `__new_Promise(exec)` to ALLOCATE its own host Promise into `$__self`.
- * Under V8's `NewPromiseCapability(C)` the runtime synthesizes a JS ctor that
- * does `super(exec)` (allocating V8's capability promise) and then calls the
- * registered wasm body on THAT instance. If we registered `${className}_new`
- * directly, it would call `__new_Promise` AGAIN — a SECOND promise — and run
- * the user side effects on the wrong `$__self`, leaving V8's real `this`
- * untouched. So we emit this SEPARATE body whose `$__self` is BOUND to the
- * host-provided `this` (reachable as `__current_this`, installed by
- * `__call_fn_method_1`), and whose `super(exec)` is lowered in `onHost` mode
- * (no `__new_Promise`; arguments evaluated for side effects only; proto/brand
- * wiring re-applied to the host promise). `${className}_new` is left untouched,
- * so the B1 direct-new path does not regress.
- *
- * Only invoked for `isPromiseSubclassWithUserCtor` classes, which are always
- * externref-backed with `splitInit = false` and a user `ctor` — a strict
- * subset of the direct-new shape, so this mirrors only that lane.
- */
-function emitPromiseSubclassOnHostCtor(
-  ctx: CodegenContext,
-  decl: ts.ClassDeclaration | ts.ClassExpression,
-  funcByName: Map<string, number>,
-  className: string,
-  ctor: ts.ConstructorDeclaration,
-): void {
-  const onHostName = `${className}_new__onhost`;
-  const onHostLocalIdx = funcByName.get(classMemberFuncKey(ctx, onHostName));
-  if (onHostLocalIdx === undefined) return; // not pre-registered (defensive)
-  const func = ctx.mod.functions[onHostLocalIdx]!;
-
-  // Build the param list identically to the direct-new ctor (#2086 shared
-  // prefix rule + user ctor params). A Promise subclass has no struct parent
-  // init to forward to, so `implicitPrefixParams` is empty in practice, but we
-  // compute it from the same helper for parity.
-  const params: { name: string; type: ValType }[] = [];
-  const { prefixParams: implicitPrefixParams } = computeImplicitDerivedCtorPrefix(ctx, decl, className, ctor);
-  params.push(...implicitPrefixParams);
-  for (let pi = 0; pi < ctor.parameters.length; pi++) {
-    const param = ctor.parameters[pi]!;
-    const paramName = ts.isIdentifier(param.name) ? param.name.text : `__param${pi}`;
-    const paramType = ctx.checker.getTypeAtLocation(param);
-    let wasmType = widenJsDefaultGuessSlot(param, resolveWasmType(ctx, paramType));
-    if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
-      wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
-    }
-    params.push({ name: paramName, type: wasmType });
-  }
-
-  const fctx: FunctionContext = {
-    name: onHostName,
-    params,
-    locals: [],
-    localMap: new Map(),
-    returnType: { kind: "externref" },
-    body: [],
-    blockDepth: 0,
-    breakStack: [],
-    continueStack: [],
-    labelMap: new Map(),
-    savedBodies: [],
-    isConstructor: true,
-    isDerivedConstructor: ctx.classParentMap.has(className),
-    enclosingClassName: className,
-    // The host installs the capability promise into `__current_this` before
-    // dispatching this body via `__call_fn_method_1`; `this` reads that global.
-    readsCurrentThis: true,
-  };
-  fctx.activationEntryBody = fctx.body;
-
-  // Re-resolve the function type now that all struct types are registered
-  // (parity with the direct-new ctor's re-resolution).
-  {
-    const resolvedParams = params.map((p) => p.type);
-    const updatedTypeIdx = addFuncType(ctx, resolvedParams, [{ kind: "externref" }], `${onHostName}_type`);
-    if (updatedTypeIdx !== func.typeIdx) func.typeIdx = updatedTypeIdx;
-  }
-
-  for (let i = 0; i < params.length; i++) {
-    fctx.localMap.set(params[i]!.name, i);
-  }
-
-  // `$__self` (the instance) is the host-provided `this`: read `__current_this`
-  // (externref) instead of allocating via `__new_Promise`. This is the heart of
-  // the run-on-host-`this` mode.
-  const selfLocal = allocLocal(fctx, "__self", { kind: "externref" });
-  const currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
-  fctx.body.push({ op: "global.get", index: currentThisGlobalIdx });
-  fctx.body.push({ op: "local.set", index: selfLocal });
-  fctx.localMap.set("this", selfLocal);
-  ctx.currentFunc = fctx;
-
-  // The host-side Promise species constructor is invoked by V8 through the
-  // dynamic closure bridge. Materialize its ordinary `arguments` object when
-  // the source constructor reads it (the bridge seeds `__argc` so the object
-  // preserves the native call's argument count). The direct-new constructor
-  // path remains unchanged; this is only the run-on-host capability path.
-  if (needsImplicitArgumentsObject(ctor)) {
-    emitArgumentsObject(
-      ctx,
-      fctx,
-      params.map((param) => param.type),
-      0,
-      /* unmapped */ true,
-      ctor.parameters,
-    );
-  }
-
-  // Default-value initialization for ctor params with initializers — identical
-  // to the direct-new ctor path (defaultInitBase = 0 for a user ctor).
-  {
-    const defaultInitParams = ctor.parameters;
-    const defaultArgcLocal = defaultInitParams.some((param, i) => {
-      if (!param.initializer) return false;
-      return paramDefaultNeedsArgc(params[i]?.type);
-    })
-      ? cacheParamDefaultArgc(ctx, fctx)
-      : undefined;
-    for (let i = 0; i < defaultInitParams.length; i++) {
-      const param = defaultInitParams[i]!;
-      if (!param.initializer) continue;
-      const paramIdx = i;
-      const paramType = params[paramIdx]!.type;
-      if (paramType.kind === "externref") {
-        ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
-        flushLateImportShifts(ctx, fctx);
-      }
-      const savedBody = pushBody(fctx);
-      const ctorIsArrayPatternExternref = ts.isArrayBindingPattern(param.name) && paramType.kind === "externref";
-      const ctorPrevForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
-      if (ctorIsArrayPatternExternref) {
-        (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
-      }
-      let ctorDfltType: ValType | null;
-      try {
-        ctorDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
-      } finally {
-        if (ctorIsArrayPatternExternref) {
-          (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = ctorPrevForceVec;
-        }
-      }
-      if (ctorDfltType && !valTypesMatch(ctorDfltType, paramType)) {
-        coerceType(ctx, fctx, ctorDfltType, paramType);
-      }
-      fctx.body.push({ op: "local.set", index: paramIdx });
-      const thenInstrs = fctx.body;
-      popBody(fctx, savedBody);
-      emitClassParamDefaultCheck(ctx, fctx, paramIdx, paramType, thenInstrs, i, defaultArgcLocal);
-    }
-  }
-
-  // A Promise subclass user ctor always calls `super(exec)` (a derived ctor
-  // that never does is a ReferenceError on construct, handled by the direct-new
-  // body; the runtime only reaches this body after V8's own `super(exec)` has
-  // already constructed `this`). Compile the body statements; `super(...)` is
-  // lowered in run-on-host mode (skip `__new_Promise`, keep `$__self`).
-  const ctorMissingSuper = ctor.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
-  if (ctorMissingSuper) {
-    emitThrowReferenceError(
-      ctx,
-      fctx,
-      "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-    );
-  } else if (ctor.body) {
-    if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-      const presize = new Map<ts.VariableDeclaration, StringBuilderPresizeInfo>();
-      const builders = detectStringBuilders(ctx, ctor.body, presize);
-      if (builders.size > 0) fctx.pendingStringBuilders = builders;
-      if (presize.size > 0) fctx.stringBuilderPresize = presize;
-    }
-    hoistVarDeclarations(ctx, fctx, ctor.body.statements);
-    hoistLetConstWithTdz(ctx, fctx, ctor.body.statements);
-    for (const stmt of ctor.body.statements) {
-      if (
-        ts.isExpressionStatement(stmt) &&
-        ts.isCallExpression(stmt.expression) &&
-        stmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword
-      ) {
-        compileSuperCall(ctx, fctx, className, selfLocal, stmt.expression, [], /* onHost */ true);
-        emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
-        continue;
-      }
-      compileStatement(ctx, fctx, stmt);
-    }
-  }
-
-  // NB: intentionally NO `__tag_user_class` tagging and NO
-  // `emitSetSubclassProto` here (unlike the direct-new ctor). V8 constructed
-  // `this` via `new C(exec)` where `C` is the `__promise_subclass_ctor`
-  // synthetic, so the instance's [[Prototype]] is already `C.prototype` and
-  // `instance instanceof SubPromise` / `instance.constructor === SubPromise`
-  // resolve through the engine's native prototype walk against that SAME
-  // synthetic (the #1977 identity unification — the value-read `SubPromise`
-  // returns `C`). Touching either registry here would re-point identity to the
-  // unrelated `subclassCtors`/`__tag_user_class` synthetic and break asserts
-  // #1/#2.
-
-  // Return the (host-provided) instance.
-  fctx.body.push({ op: "local.get", index: selfLocal });
-
-  cacheStringLiterals(ctx, fctx);
-  deduplicateLocals(fctx);
-  func.locals = fctx.locals;
-  func.body = fctx.body;
-  ctx.currentFunc = null;
-}
-
-/**
  * Compile a super(args) call inside a child constructor.
  * This runs the parent constructor's field-initialization logic inline:
  * for each parent field, evaluate the corresponding super argument and
@@ -4337,7 +4067,6 @@ export function compileSuperCall(
     // ignores their values.
     if (
       builtinParent === "Promise" &&
-      isStandalonePromiseActive(ctx) &&
       args.length > 0 &&
       !ts.isSpreadElement(args[0]!) &&
       emitStandalonePromiseFromExecutorValue(ctx, fctx, () => compileExternrefArgument(ctx, fctx, args[0]!))

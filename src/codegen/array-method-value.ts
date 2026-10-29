@@ -1,6 +1,7 @@
 import ts from "typescript";
 import type { ValType } from "../ir/types.js";
 import { ARRAY_METHODS } from "./array-methods.js";
+import { arrayProtoMethodSpecLength } from "./array-object-proto.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression } from "./expressions.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
@@ -65,4 +66,26 @@ export function tryCompileArrayMethodValue(
   fctx.body.push(...stringConstantExternrefInstrs(ctx, methodName));
   fctx.body.push({ op: "call", funcIdx: methodIdx });
   return { kind: "externref" };
+}
+
+/**
+ * (#4765) The spec `length` of an `Array.prototype` method VALUE whose static
+ * type is its `lib.*.d.ts` signature — `[].slice.length`, `var s = [].push;
+ * s.length` — or `undefined` for any other signature.
+ *
+ * The generic `Function.length` fold counts the declaration's leading required
+ * parameters (§15.1.5), and the lib spells these methods with optional and rest
+ * parameters the spec does not count that way: `slice(start?, end?)` answered
+ * 0 for a spec 2, `push(...items)` 0 for a spec 1. The answer here comes from
+ * the table the standalone `Array.prototype` glue already reports, so the
+ * instance spelling and `Array.prototype.<m>.length` cannot disagree.
+ */
+export function arrayLibMethodSpecLength(sig: ts.Signature): number | undefined {
+  const decl = sig.getDeclaration?.();
+  if (decl === undefined || !decl.getSourceFile().isDeclarationFile) return undefined;
+  const owner = decl.parent;
+  if (!owner || !ts.isInterfaceDeclaration(owner)) return undefined;
+  if (owner.name.text !== "Array" && owner.name.text !== "ReadonlyArray") return undefined;
+  const name = decl.name;
+  return name !== undefined && ts.isIdentifier(name) ? arrayProtoMethodSpecLength(name.text) : undefined;
 }

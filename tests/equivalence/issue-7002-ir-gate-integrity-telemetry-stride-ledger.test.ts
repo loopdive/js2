@@ -90,13 +90,11 @@ const PARITY_CASES: { name: string; fileName: string; source: () => string }[] =
  * top-level function. Same behaviour, different type/function order. Tracked as
  * #7071 — when that lands, the assertion below fails and this entry must go.
  */
-const KNOWN_BYTE_DIVERGENCE: ReadonlyMap<string, string> = new Map([
-  ["gc:website/playground/examples/js/async.ts", "#7071"],
-]);
+const KNOWN_BYTE_DIVERGENCE: ReadonlyMap<string, string> = new Map();
 
 const TARGETS: { name: string; options: CompileOptions }[] = [
   { name: "standalone", options: { target: "standalone" } },
-  { name: "gc", options: { semanticProviders: "host-assisted" } },
+  { name: "gc", options: {} },
 ];
 
 describe("#7002 trackIrOutcomes is observation-only", () => {

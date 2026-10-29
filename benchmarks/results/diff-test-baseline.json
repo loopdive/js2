@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-10-17T10:22:52.979Z",
+  "generatedAt": "2026-10-26T09:04:51.074Z",
   "total": 120,
-  "match": 116,
-  "mismatch": 2,
+  "match": 117,
+  "mismatch": 1,
   "results": [
     {
       "file": "array/01-basic.js",
@@ -286,7 +286,7 @@
     },
     {
       "file": "generators/04-sent-values.js",
-      "outcome": "runtime_error"
+      "outcome": "compile_error"
     },
     {
       "file": "generators/05-yield-star.js",
@@ -294,7 +294,7 @@
     },
     {
       "file": "generators/06-closure-state.js",
-      "outcome": "mismatch"
+      "outcome": "match"
     },
     {
       "file": "numeric/01-basic-arithmetic.js",

@@ -315,16 +315,9 @@ describe("#3521 dormant source-qualified fnctor argument projection", () => {
 
     const contextMutations: readonly [string, CodegenContext][] = [
       ["host target", { ...exactContext, standalone: false }],
-      ["host strings", { ...exactContext, nativeStrings: false }],
       ["WASI target", { ...exactContext, wasi: true }],
       ["fast mode", { ...exactContext, fast: true }],
-      [
-        "non-native semantic provider",
-        {
-          ...exactContext,
-          targetProfile: { ...exactContext.targetProfile, semanticProviders: "host-assisted" },
-        },
-      ],
+      // (#6979) host-strings variant removed with the host-assisted profile.
     ];
     for (const [label, context] of contextMutations) {
       expect(irFnctorArgumentProjectionRouteIsActive(context, EXACT_ROUTE), label).toBe(false);

@@ -451,17 +451,26 @@ export function makeIrRegExpExpressionPredicate(checker: ts.TypeChecker): (expr:
  * binding resolver, this exposes no source storage capability, so backends
  * without module-global lowering can still distinguish the real lib `Math`
  * object from a source declaration or parameter with the same name.
+ *
+ * `quantifier` picks how many of the symbol's declarations must be
+ * declaration-file ones: `"some"` (the default) is the ambient test;
+ * `"every"` (#7118) is the stricter lib-only test — a script's
+ * `function Number() {}` merges with the lib's `declare var Number`, so
+ * "some" calls it ambient and "every" does not.
  */
-export function makeIrAmbientBindingPredicate(checker: ts.TypeChecker): (node: ts.Identifier) => boolean {
+export function makeIrAmbientBindingPredicate(
+  checker: ts.TypeChecker,
+  quantifier: "some" | "every" = "some",
+): (node: ts.Identifier) => boolean {
   return (node) => {
     try {
       const symbol = checker.getSymbolAtLocation(node);
-      return (
-        symbol !== undefined &&
-        [symbol.valueDeclaration, ...(symbol.declarations ?? [])].some(
-          (declaration) => declaration?.getSourceFile().isDeclarationFile === true,
-        )
+      if (symbol === undefined) return false;
+      const declarations = [symbol.valueDeclaration, ...(symbol.declarations ?? [])].filter(
+        (declaration): declaration is ts.Declaration => declaration !== undefined,
       );
+      const isLib = (declaration: ts.Declaration): boolean => declaration.getSourceFile().isDeclarationFile;
+      return quantifier === "some" ? declarations.some(isLib) : declarations.length > 0 && declarations.every(isLib);
     } catch {
       return false;
     }
@@ -757,6 +766,8 @@ interface IrModuleBindingResolverSurface<TIdentity, TInspection> {
   readonly isDirectModuleBinding: (node: ts.Identifier) => boolean;
   /** True when the identifier resolves to an ambient declaration-file symbol. */
   readonly isAmbientBinding: (node: ts.Identifier) => boolean;
+  /** (#7118) Every declaration of the identifier's symbol is a lib one. */
+  readonly isLibOnlyBinding: (node: ts.Identifier) => boolean;
   /** Resolve a local variable use to its exact declaration for alias tracking. */
   readonly localVariableDeclaration: (node: ts.Identifier) => ts.VariableDeclaration | undefined;
   /** Resolve any same-source local value use to its exact lexical declaration. */
@@ -2314,9 +2325,8 @@ export function makeIrLegacyModuleBindingResolver(
         return false;
       }
     },
-    isAmbientBinding(node: ts.Identifier): boolean {
-      return isAmbientBinding(node);
-    },
+    isAmbientBinding,
+    isLibOnlyBinding: makeIrAmbientBindingPredicate(checker, "every"),
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       try {
         return localVariableDeclaration(node, checker);
@@ -2622,6 +2632,10 @@ export function makeIrModuleBindingResolver(
       ownerAt(node);
       return legacy.isAmbientBinding(node);
     },
+    isLibOnlyBinding(node: ts.Identifier): boolean {
+      ownerAt(node);
+      return legacy.isLibOnlyBinding(node);
+    },
     localVariableDeclaration(node: ts.Identifier): ts.VariableDeclaration | undefined {
       ownerAt(node);
       return legacy.localVariableDeclaration(node);
@@ -2754,6 +2768,7 @@ export function projectIrModuleBindingResolverToLegacy(
     inspectDirectBinding,
     isDirectModuleBinding: (node: ts.Identifier) => resolver.isDirectModuleBinding(node),
     isAmbientBinding: (node: ts.Identifier) => resolver.isAmbientBinding(node),
+    isLibOnlyBinding: (node: ts.Identifier) => resolver.isLibOnlyBinding(node),
     localVariableDeclaration: (node: ts.Identifier) => resolver.localVariableDeclaration(node),
     localValueDeclaration: (node: ts.Identifier) => resolver.localValueDeclaration(node),
     externCallArgumentsMatch: (call: ts.CallExpression | ts.NewExpression) => resolver.externCallArgumentsMatch(call),

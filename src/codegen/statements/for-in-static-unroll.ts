@@ -84,24 +84,35 @@ export function emitForInStaticUnroll(
   // narrow slice of #4138; a receiver that is genuinely POLYMORPHIC at
   // runtime still unrolls one static shape, and closed structs remain
   // non-enumerable through the dynamic runtime — both stay open in #4138.
-  const exprType = ctx.checker.getTypeAtLocation(stmt.expression).getNonNullableType();
-  const props = exprType.getProperties();
-  if (props.length === 0) return;
+  // (#7156) The key list comes from the oracle: a provable `new C()` of a
+  // simple class chain yields only its own fields (no `#x`, methods,
+  // accessors or statics), base class first and integer keys ahead; a spread
+  // literal is ordered as it is built. The whole compilation is passed so a
+  // method name assigned anywhere keeps the old list. Every other receiver,
+  // and a backend that cannot answer, gets the checker's raw property list.
+  const keys =
+    ctx.oracle.forInStaticKeysOf(stmt.expression, ctx.callableSourceFiles) ??
+    ctx.checker
+      .getTypeAtLocation(stmt.expression)
+      .getNonNullableType()
+      .getProperties()
+      .map((p) => p.name);
+  if (keys.length === 0) return;
 
   const savedBody = pushBody(fctx);
   shiftLoopDepths(fctx, 2);
   fctx.breakStack.push(1); // break = exit $break, past every remaining iteration
   fctx.continueStack.push(0); // continue = exit this iteration's block
 
-  for (const prop of props) {
+  for (const key of keys) {
     const savedIteration = pushBody(fctx);
     // (#51) Materialize each enumerated key via the dual-mode helper. Under
     // nativeStrings `stringGlobalMap` holds a `-1` sentinel global, so the old
     // `global.get <sentinel>` reached binary emit as "global index out of
     // range — -1". `stringConstantExternrefInstrs` emits the NativeString
     // inline (externref) standalone and a host `global.get` only under GC.
-    addStringConstantGlobal(ctx, prop.name);
-    for (const instr of stringConstantExternrefInstrs(ctx, prop.name)) fctx.body.push(instr);
+    addStringConstantGlobal(ctx, key);
+    for (const instr of stringConstantExternrefInstrs(ctx, key)) fctx.body.push(instr);
     fctx.body.push({ op: "local.set", index: keyLocal });
     emitCallTargetWrite?.();
     compileBody();

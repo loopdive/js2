@@ -34,7 +34,6 @@ import { collectBlockScopedNames, discardBlockScopedShadows, saveBlockScopedShad
 import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
 import { expressionRunsUserCode, looseEqualityCoercesAnOperand } from "./module-init-collection.js"; // (#4433) bare `typeof f();` · (#5270 R3-F1) loose-eq guard
-import { noJsHost } from "./js-errors.js";
 
 // Sub-module imports — statement-family functions
 import {
@@ -345,9 +344,7 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
  */
 function isOrdinaryFunctionDeclaration(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
   return (
-    (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
-    stmt.asteriskToken === undefined &&
-    !(stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
+    stmt.asteriskToken === undefined && !(stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
   );
 }
 

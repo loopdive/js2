@@ -645,17 +645,16 @@ export interface CompileOptions {
    * Semantic implementation policy, independent of the execution environment,
    * platform capabilities, and the JS value bridge (#4397).
    *
-   * `"native-first"` (default since #6708 S6, in every environment) lowers
-   * with the Wasm-native semantic core even when JavaScript instantiates the
-   * module; JS boundary wrappers remain enabled according to `hostBridge`,
-   * and explicit platform APIs remain available. `"host-assisted"` is the
-   * compatibility profile — byte-identical to the pre-S6 JS-host default —
-   * scheduled for removal in S7. `"auto"` is a deprecated alias of the
-   * default (warns once per process). Omitting the option while passing
-   * `nativeStrings: false` keeps the pre-S6 host-assisted profile (deprecated).
+   * `"native-first"` — the default and, since #6979, the only accepted
+   * spelling — lowers with the Wasm-native semantic core even when
+   * JavaScript instantiates the module; JS boundary wrappers remain enabled
+   * according to `hostBridge`, and explicit platform APIs remain available.
+   * The removed `"host-assisted"` / `"auto"` spellings, and `nativeStrings:
+   * false` on the JS target, are compile errors; host semantics for a single
+   * family are the named `hostAccelerators`.
    */
   semanticProviders?: import("./target-profile.js").SemanticProviderSelection;
-  /** (#6978) Families that use the JS host's provider under native-first (JS target only). */
+  /** (#6978) Families that use the JS host's provider instead of the native one (JS target only). */
   hostAccelerators?: readonly import("./target-profile.js").HostAcceleratorFamily[];
   /**
    * (#86) NOT a real option — declared `never` so `compile(src, { standalone:

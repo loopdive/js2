@@ -27,9 +27,17 @@ export function prepareNumberConversionResolver(
       const symbol = checker.getSymbolAtLocation(node);
       // A bare constructor alias can subsequently be stored/rebound by arbitrary
       // consumers. Admit only direct calls, never infer identity through aliases.
+      // (#7106 module-init lever B) The receiver of a member access
+      // (`Number.MAX_VALUE`, `Number.prototype.x`) and the callee of
+      // `new Number(…)` leave the binding itself untouched — neither reads
+      // `Number` as a value that could be stored or rebound. test262 bodies
+      // read the constants beside their `Number(v)` calls, so those spellings
+      // keep the plan.
       if (
         symbol === ambient &&
-        !(ts.isCallExpression(node.parent) && node.parent.expression === node && shape(node.parent))
+        !(ts.isCallExpression(node.parent) && node.parent.expression === node && shape(node.parent)) &&
+        !(ts.isPropertyAccessExpression(node.parent) && node.parent.expression === node) &&
+        !(ts.isNewExpression(node.parent) && node.parent.expression === node)
       )
         invalidated = true;
       // Conservatively reject global-object escape, computed writes, reflective

@@ -211,15 +211,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe("#1169d — IR slice 4 (host strings)", () => {
-  for (const c of CASES) {
-    it(c.name, async () => {
-      const { legacy, ir } = await dualRun(c.source, c.fn, c.args, { nativeStrings: false });
-      expect(ir).toStrictEqual(legacy);
-    });
-  }
-});
-
+// (#6979) host-strings variant removed with the host-assisted profile.
 describe("#1169d — IR slice 4 (native strings, legacy-parity)", () => {
   for (const c of CASES) {
     it(c.name, async () => {
@@ -250,11 +242,6 @@ const COVERAGE_SOURCES = [
 describe("#1169d — slice 4 functions reach the IR path without errors", () => {
   for (const src of COVERAGE_SOURCES) {
     const label = src.slice(0, 80).replace(/\n/g, " ");
-    it(`host: ${label}`, async () => {
-      const r = await compile(src, { experimentalIR: true, nativeStrings: false });
-      expect(r.success).toBe(true);
-      expect(irFallbacks(r)).toEqual([]);
-    });
     it(`native: ${label}`, async () => {
       const r = await compile(src, { experimentalIR: true, nativeStrings: true });
       expect(r.success).toBe(true);

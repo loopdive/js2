@@ -21,7 +21,6 @@ import {
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts, valTypesMatch } from "../shared.js";
 import { evaluateConstantCondition } from "../statements/control-flow.js";
-import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.js";
 // (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
 import { analyzeTdzAccess, topLevelConstInitializedBeforeAnyUserCode } from "./identifiers.js";
@@ -45,16 +44,11 @@ function compileConditionalExpression(
   expr: ts.ConditionalExpression,
   expectedType?: ValType,
 ): ValType | null {
-  const hostBigIntExpected = (branch: ts.Expression): ValType | undefined => {
-    if (!usesHostBigIntCarrier(ctx)) return undefined;
-    return ctx.oracle.staticJsTypeOf(branch) === "bigint" ? { kind: "externref" } : undefined;
-  };
-
   // Constant-folding: if the condition is a compile-time constant, emit only the taken branch.
   const constResult = evaluateConstantCondition(expr.condition);
   if (constResult !== undefined) {
     const branch = constResult ? expr.whenTrue : expr.whenFalse;
-    return compileExpression(ctx, fctx, branch, hostBigIntExpected(branch));
+    return compileExpression(ctx, fctx, branch);
   }
 
   const condType = compileExpression(ctx, fctx, expr.condition);
@@ -66,7 +60,7 @@ function compileConditionalExpression(
   }
 
   const savedBody = pushBody(fctx);
-  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue, hostBigIntExpected(expr.whenTrue));
+  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue);
   // If the then-branch is void (no value on stack), push a default value
   // so the ternary has a consistent result. JS treats void as undefined → NaN for numbers.
   if (!thenResultType) {
@@ -81,7 +75,7 @@ function compileConditionalExpression(
   // function after the else branch pulled in a helper.
   fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
-  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse, hostBigIntExpected(expr.whenFalse));
+  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
   if (!elseResultType) {
     fctx.body.push({ op: "f64.const", value: NaN });
   }
