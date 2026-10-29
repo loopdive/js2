@@ -84,6 +84,13 @@ function exactHostHelperName(instr: IrInstr, types: ReadonlyMap<IrValueId, IrTyp
   return operand !== undefined && asVal(operand)?.kind === "f64" ? "__box_number" : null;
 }
 
+/** The callable each host-carrier `emitTagTest` partition arm calls. */
+const TAG_TEST_HELPERS: ReadonlyMap<number, "__typeof_undefined" | "__typeof_object" | "__typeof_function"> = new Map([
+  [JS_TAG_IDS.Undefined, "__typeof_undefined"],
+  [JS_TAG_IDS.Object, "__typeof_object"],
+  [JS_TAG_IDS.Function, "__typeof_function"],
+] as const);
+
 /** Value → IrType for one body, the same population `valueTypesOf` visits. */
 function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
   const types = new Map<IrValueId, IrType>();
@@ -201,25 +208,38 @@ export function prepareDynamicInstructionSupportForUnits(input: {
             functionObjects &&
             !ctx.fast &&
             carrierValType.kind === "externref" &&
-            (instr.kind === "dyn.truthy" || instr.kind === "dyn.typeof" || (instr.kind === "dyn.eq" && !instr.loose))
+            (instr.kind === "dyn.truthy" ||
+              instr.kind === "dyn.typeof" ||
+              instr.kind === "dyn.to_string" ||
+              (instr.kind === "dyn.eq" && !instr.loose))
           ) {
+            // The host-carrier arms of `makeDynamicLowering` (`emitToBoolean`,
+            // `emitTypeof`, `emitToString`, `emitStrictEq`): one call each;
+            // the native-string re-tag after `__typeof` / `__extern_toString`
+            // calls nothing.
             const name =
               instr.kind === "dyn.truthy"
                 ? "__is_truthy"
                 : instr.kind === "dyn.typeof"
                   ? "__typeof"
-                  : "__extern_strict_eq";
+                  : instr.kind === "dyn.to_string"
+                    ? "__extern_toString"
+                    : "__extern_strict_eq";
             const params: readonly ValType[] =
               instr.kind === "dyn.eq" ? [{ kind: "externref" }, { kind: "externref" }] : [{ kind: "externref" }];
             const results: readonly ValType[] =
-              instr.kind === "dyn.typeof" ? [{ kind: "externref" }] : [{ kind: "i32" }];
+              instr.kind === "dyn.typeof" || instr.kind === "dyn.to_string"
+                ? [{ kind: "externref" }]
+                : [{ kind: "i32" }];
             bindExact(instr, name, params, results);
             return;
           }
           // (#7106 Stage 4) `message === undefined` / `thrown === null` over the
-          // externref carrier: the host tag.test arms `emitTagTest` emits —
-          // Undefined calls `__typeof_undefined`, Null is a bare `ref.is_null`
-          // (no callable). Other partitions stay unnamed (unmeasured).
+          // externref carrier, and (#7193) the Object / Function partition
+          // tests `in`'s receiver check emits: the host tag.test arms of
+          // `emitTagTest`. Null is a bare `ref.is_null` (no callable); Object
+          // reads `__typeof_object` beside a `ref.is_null`. Other partitions
+          // stay unnamed (unmeasured).
           if (
             native &&
             functionObjects &&
@@ -232,11 +252,12 @@ export function prepareDynamicInstructionSupportForUnits(input: {
               planned.set(instr, []);
               return;
             }
-            if (instr.tagId !== JS_TAG_IDS.Undefined) {
+            const name = TAG_TEST_HELPERS.get(instr.tagId);
+            if (name === undefined) {
               nameable = false;
               return;
             }
-            bindExact(instr, "__typeof_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+            bindExact(instr, name, [{ kind: "externref" }], [{ kind: "i32" }]);
             return;
           }
           // (#7106 Stage 4) `var x;` / missing-member reads produce the

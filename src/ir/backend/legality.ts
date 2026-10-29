@@ -35,6 +35,7 @@ export type IrBackendTargetCapability =
   | "native-own-property-descriptor"
   | "native-number-conversion"
   | "prepared-dynamic-helper-abi"
+  | "prepared-carrier-loose-equality"
   | "native-dynamic-member-read"
   | "planned-closure-direct-call"
   | "native-dynamic-loose-equality";
@@ -159,11 +160,21 @@ export function supportsIrBackendTargetCapability(
       // ("direct call … has no exact AST-site plan").
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
     case "prepared-dynamic-helper-abi":
-      // (#7113) A planned member closure inside a prepared `<module-init>`
-      // component binds the carrier's loose-equality / `in` helpers by
-      // Program ABI identity on WASI. Standalone and the native-first gc lane
-      // (projected as standalone) have no symbolic ref for them yet and
-      // withdraw at preparation (`implicit-support-reference-unavailable`).
+      // (#7113, #7193) A planned member closure inside a prepared
+      // `<module-init>` component binds the carrier's `String` / `in` helpers
+      // by Program ABI identity (`prepared-dynamic-support.ts` names the exact
+      // physical symbols). The native-first gc lane projects as standalone.
+      return (
+        profile.backend === "wasmgc" &&
+        profile.fast !== true &&
+        (profile.target === "standalone" || profile.target === "wasi")
+      );
+    case "prepared-carrier-loose-equality":
+      // (#7113, #7193) A loose `==` / `!=` on the carrier in that closure.
+      // The binding exists on standalone too, but standalone's
+      // `__extern_loose_eq` classifies an object operand without legacy's
+      // ToPrimitive step, so `{ valueOf() { return 2 } } == 2` traps on an
+      // illegal cast and `[2] != "2"` answers true.
       return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
     case "native-number-conversion":
       // (#7106 module-init lever B) `Number(v)` through the host-free

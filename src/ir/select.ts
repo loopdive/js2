@@ -765,6 +765,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
       | "native-own-property-descriptor"
       | "native-number-conversion"
       | "prepared-dynamic-helper-abi"
+      | "prepared-carrier-loose-equality"
       | "native-dynamic-member-read"
       | "planned-closure-direct-call"
       | "native-dynamic-loose-equality",
@@ -7178,6 +7179,8 @@ function isPhase1ClosureLiteral(
     declaredFamily: currentSelectionOptions?.classifyDeclaredPrimitiveExpression,
     preparedDynamicHelpers:
       currentSelectionOptions?.supportsBackendCapability?.("prepared-dynamic-helper-abi") === true,
+    preparedLooseEquality:
+      currentSelectionOptions?.supportsBackendCapability?.("prepared-carrier-loose-equality") === true,
     nativeDynamicMemberRead:
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-member-read") === true,
     directCalls: currentSelectionOptions?.supportsBackendCapability?.("planned-closure-direct-call") === true,

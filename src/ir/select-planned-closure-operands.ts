@@ -55,8 +55,10 @@ export interface PlannedClosureFamilySources {
   ) => "number" | "boolean" | "string" | "reference" | "nullish" | undefined;
   /** The checker's declared primitive family (a call to a JSDoc-typed function, a module binding, …). */
   readonly declaredFamily?: (expr: ts.Expression) => IrDeclaredPrimitiveExpressionFamily | undefined;
-  /** (#7113) The lane binds the carrier's loose-equality / `in` helpers in a prepared component. */
+  /** (#7113, #7193) The lane binds the carrier's `String` / `in` helpers in a prepared component. */
   readonly preparedDynamicHelpers?: boolean;
+  /** (#7193) The lane's carrier loose `==` / `!=` is sound in a prepared component (`in` reads the flag above). */
+  readonly preparedLooseEquality?: boolean;
   /** (#7113, #7177) The lane's dynamic member read handles string and vec receivers. */
   readonly nativeDynamicMemberRead?: boolean;
   /** (#7113, #7178) The lane's loose equality ToPrimitives an object carrier without trapping. */
@@ -461,7 +463,7 @@ export function plannedClosureOperandRefusal(
     const right = unwrapParens(expr.right);
     const leftProof = operandProof(left);
     const rightProof = operandProof(right);
-    if (!sources.preparedDynamicHelpers && carrierHelperOperator(op, leftProof.family, rightProof.family)) {
+    if (!sources.preparedLooseEquality && carrierHelperOperator(op, leftProof.family, rightProof.family)) {
       return { arm: "closure-carrier-helper-operator", node: expr };
     }
     if (

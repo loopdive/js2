@@ -380,8 +380,9 @@ export function throwOperandAdmissible(family: OperandFamily): boolean {
  * inside `<module-init>`) must bind by Program ABI identity: a loose `==` /
  * `!=` with a carrier operand (an `undefined` / `null` operand has its own
  * fold) and `in` on a carrier receiver. A lane without that binding
- * (`prepared-dynamic-helper-abi`) withdraws them at preparation, after the
- * claim, so the selector refuses them there instead.
+ * (`prepared-dynamic-helper-abi` for `in`, `prepared-carrier-loose-equality`
+ * for `==` / `!=`) withdraws or miscompiles them after the claim, so the
+ * selector refuses them there instead.
  */
 export function carrierHelperOperator(op: ts.SyntaxKind, left: OperandFamily, right: OperandFamily): boolean {
   if (op === ts.SyntaxKind.InKeyword) return right === "dynamic";
@@ -442,8 +443,8 @@ export function carrierMethodCallAdmissible(receiver: OperandFamily): boolean {
 /**
  * (#7113) `String(v)` over the carrier calls a dynamic-runtime helper that a
  * prepared component binds by Program ABI identity, like
- * {@link carrierHelperOperator}: standalone and native gc withdraw it at
- * preparation (`late-preparation-unsupported`).
+ * {@link carrierHelperOperator} (`prepared-dynamic-helper-abi`): a lane
+ * without it withdraws at preparation (`late-preparation-unsupported`).
  */
 export function carrierHelperCall(callee: string, argument: OperandFamily): boolean {
   return callee === "String" && argument === "dynamic";
