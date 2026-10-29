@@ -102,7 +102,7 @@ import { ensureObjectProtoToStringRuntimeHelper } from "../codegen/object-proto-
 import { ensureIrStringCarrierHelper, IR_STRING_CARRIER_HELPER } from "../codegen/ir-string-carrier.js";
 import {
   ensureIrDynamicMethodCallHelper,
-  irDynamicMethodCallWrapperLane,
+  irTemplateWrapperLane,
 } from "../codegen/object-model/ir-dynamic-method-call.js";
 import { irDynamicMethodCallIsNameable, parseIrDynamicMethodCallHelperName } from "./dynamic-method-call-names.js";
 import {
@@ -7022,7 +7022,7 @@ function makeFromAstResolver(
       return !ctx.fast;
     },
     dynamicMethodCallWrapper(method: string, arity: number) {
-      return irDynamicMethodCallWrapperLane(ctx) && irDynamicMethodCallIsNameable(method, arity);
+      return irTemplateWrapperLane(ctx) && irDynamicMethodCallIsNameable(method, arity);
     },
     // (#7106) the selector's `dynamicInstanceOfAtLegacyParity`, asked again per site.
     dynamicInstanceOfAtLegacyParity: (site: ts.BinaryExpression) => irDynamicInstanceOfAtLegacyParity(ctx, site),
