@@ -122,7 +122,8 @@ function closedScalarBodyKey(
  * (`allowThis`), and a `return <value>` unless the ABI has a result
  * (`returnsValue`; a bare `return;` there is refused, it would yield
  * `undefined`). The key records every node plus each identifier's resolved
- * declaration, so `isCurrent` sees a rebinding as staleness.
+ * declaration, so `isCurrent` sees a rebinding as staleness. A free identifier
+ * naming a script-level variable is refused (#7195, `isScriptLevelBinding`).
  *
  * (#7195) `identifierCalls: false` also refuses a bare `f()` / `Symbol()`:
  * a call-argument site brings no callee unit into the component, so
@@ -161,12 +162,31 @@ function openBodyKey(
         return;
       }
       const declaration = oracle.valueDeclarationOf(node);
+      if (declaration !== undefined && isScriptLevelBinding(declaration, expression.getSourceFile())) {
+        ok = false;
+        return;
+      }
       facts.push(node.text, declaration === undefined ? -1 : declaration.pos);
     }
     ts.forEachChild(node, visit);
   };
   for (const statement of expression.body.statements) visit(statement);
   return ok && expression.body.statements.length > 0 ? JSON.stringify(facts) : undefined;
+}
+
+/**
+ * (#7195) A `var` / `let` / `const` (or destructured / catch) binding outside
+ * every function: a closure inside `<module-init>` cannot capture it ("captures
+ * non-local binding … not in slice 3"), so reading or writing one would
+ * withdraw after the claim. Function declarations are not bindings here, and a
+ * lib global (`undefined`, `NaN`) is not in the source.
+ */
+function isScriptLevelBinding(declaration: ts.Declaration, source: ts.SourceFile): boolean {
+  if (!ts.isVariableDeclaration(declaration) && !ts.isBindingElement(declaration)) return false;
+  if (declaration.getSourceFile() !== source) return false;
+  for (let node: ts.Node | undefined = declaration.parent; node; node = node.parent)
+    if (ts.isFunctionLike(node)) return false;
+  return true;
 }
 
 /** Does `expression`'s own body (no nested function, which every plan refuses) read `this`? */
@@ -239,6 +259,10 @@ interface FunctionClosureSite {
   readonly ownerUnitId: IrUnitId;
   /** The store goes through `F.p.x`, not `F.x` (a possible fnctor prototype method). */
   readonly chained: boolean;
+  /** The result must be void (a callback argument's result is unused). */
+  readonly requiresVoid: boolean;
+  /** Bare `f()` calls may appear: the site's receiver unit joins the component. */
+  readonly identifierCalls: boolean;
   isCurrent(): boolean;
 }
 
@@ -322,6 +346,8 @@ function memberAssignmentSite(
     kind: "member-assignment",
     ownerUnitId,
     chained: holder !== receiver,
+    requiresVoid: false,
+    identifierCalls: true,
     isCurrent: () =>
       expression.parent === assignment &&
       assignment.right === expression &&
@@ -372,6 +398,8 @@ function callArgumentSite(
     kind: "call-argument",
     ownerUnitId,
     chained: false,
+    requiresVoid: true,
+    identifierCalls: false,
     isCurrent: () =>
       expression.parent === call &&
       call.arguments[index] === expression &&
@@ -439,7 +467,7 @@ function planMemberClosure(
     oracleSignature.declaredArity !== expression.parameters.length ||
     oracleSignature.params.length !== expression.parameters.length ||
     (oracleSignature.returns.kind !== "boolean" && !returnsVoid && !returnsString) ||
-    (site.kind === "call-argument" && !returnsVoid)
+    (site.requiresVoid && !returnsVoid)
   )
     return;
   const physical = operations.computeSignature(expression);
@@ -505,7 +533,7 @@ function planMemberClosure(
   }
   const bodyKeyOf = (): string | undefined =>
     returnsVoid || returnsString
-      ? openBodyKey(expression, ctx.oracle, returnsString, readsThis, site.kind === "member-assignment")
+      ? openBodyKey(expression, ctx.oracle, returnsString, readsThis, site.identifierCalls)
       : closedScalarBodyKey(expression, ctx.oracle, parameters);
   const bodyKey = bodyKeyOf();
   if (bodyKey === undefined) return;
