@@ -34,6 +34,8 @@ const byteValues = uint8Prototype.values;
 const iteratorNext = getPrototype(apply(arrayPrototype.values, [], [])).next;
 const privateArrayPrototype = create(null);
 const immutableArrays = new WeakSet<object>();
+/** Bodies published by an owned fill: the release criterion, distinct from copy provenance. */
+const ownedBodies = new WeakSet<object>();
 const weakHas = WeakSet.prototype.has,
   weakAdd = WeakSet.prototype.add;
 
@@ -183,6 +185,7 @@ export function copyOwnedFunctionDefinition(definition: { locals: LocalDef[]; bo
 export function publishOwnedFunctionDefinition(target: object, locals: LocalDef[], body: Instr[]): void {
   define(target, "locals", dataDescriptor(locals, true, false, false));
   define(target, "body", dataDescriptor(body, true, false, false));
+  apply(weakAdd, ownedBodies, [body]);
 }
 
 /** Preserve the old snapshot's complete enumerable shell, excluding only protected owned payloads. */
@@ -242,11 +245,17 @@ function thawOwnedFunctionDefinition(locals: LocalDef[], body: Instr[]) {
  * every other function object is shared unchanged. The input is never mutated.
  */
 export function releaseOwnedFunctions<M extends { functions: WasmFunction[] }>(module: M): M {
-  if (!module.functions.some((fn) => isPrivatelyCopiedFrozenArray(fn.body))) return module;
-  const functions = module.functions.map((fn) =>
-    isPrivatelyCopiedFrozenArray(fn.body) ? { ...fn, ...thawOwnedFunctionDefinition(fn.locals, fn.body) } : fn,
-  );
-  return { ...module, functions };
+  // Indexed loop, not live array methods: like the rest of this module, the
+  // release must not depend on mutable Array.prototype.
+  const functions: WasmFunction[] = [];
+  let released = false;
+  for (let index = 0; index < module.functions.length; index++) {
+    const fn = module.functions[index]!;
+    const owned = apply(weakHas, ownedBodies, [fn.body]);
+    functions[index] = owned ? { ...fn, ...thawOwnedFunctionDefinition(fn.locals, fn.body) } : fn;
+    released ||= owned;
+  }
+  return released ? { ...module, functions } : module;
 }
 
 /** Allocation provenance only: neither ledger ownership nor recursive immutability. */

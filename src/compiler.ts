@@ -1337,7 +1337,7 @@ function finalizePipelineModule(
   // Requested prepared WIT must be complete before any final artifacts are emitted.
   let preparedCapabilities: ReturnType<typeof buildCapabilityRequirements> | undefined;
   if (wit) {
-    const view = preparedPresentationWitView(wit.presentation, mod);
+    const view = preparedPresentationWitView(wit.presentation, emitted);
     preparedCapabilities = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
     const rendered = renderPreparedWit(view, {
       ...(typeof options.wit === "object" ? options.wit : {}),

@@ -2657,15 +2657,24 @@ seal (`assertCompletedReservation` in the `requireCompleted*` receipts and
 `locals`/`body` stay non-writable and non-configurable for the ledger's whole
 life, and making them writable would trade that lock for a weaker
 identity-only audit. Legacy functions keep their in-place finalization.
-`tests/issue-3527-owned-function-finalization.test.ts` runs real boolean-box
-`emitAcceptedIrProgram` output through the stamp and widen steps and requires
-byte equality with the same program filled through `fillFunction`. With
-`releaseOwnedFunctions` stubbed to identity it fails ("Cannot assign to read
-only property 'body'"; 2 of 4 reported failed before the run stopped); with
-the fix it passes 4/4. The `copyModuleData` path is covered by
-its precondition only (the released view holds only the prototypes and writable
-descriptors it accepts), not end to end, because no public compile reaches an
-owned producer yet.
+`tests/issue-3527-owned-function-finalization.test.ts` drives the real
+`runPreparedIrPipelinePresentation` with every ledger fill routed through
+`fillOwnedFunction`, and requires binary, WAT and WIT equal to the legacy fill
+in three cases: standalone allocation-owner stamp plus widening, prepared WIT,
+and the detached mixed finalization (`copyModuleData`). Each production call
+site is load-bearing: removing the release in `finalizePipelineModule` fails
+the first two cases ("Cannot assign to read only property"), removing it before
+`copyModuleData` fails the third (`unsupported-prototype`).
+
+Follow-up review of `c63605e2` (REQUEST CHANGES) found the prepared WIT path
+broken by the released view: `preparedPresentationWitView` checks module
+identity, so it now receives the emitted module (`foreign module` before; the
+WIT case above covers it). Owned bodies are now marked in a dedicated
+`ownedBodies` set at publication instead of reusing the copy-provenance
+predicate, and the release is a single indexed pass. The separate `thaw`
+traversal stays: it copies already-validated ledger data to plain objects,
+while `copyOwnedFunctionDefinition` validates hostile input and hardens it, so
+sharing one walker would put both contracts behind flags.
 
 Also fixed: the doubled "physical module reservations:" error prefix (with a
 test); the duplicated fill preconditions, now one private helper shared with
