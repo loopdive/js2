@@ -629,8 +629,11 @@ export function run() { var n = 0; ${calls} return n; }`;
           legacyBodyEmitted: true,
           stage: "select",
         });
-        // The walk's refusal, or an earlier shape refusal on a lane that has one.
-        expect(["operand-coercion-unsupported", "body-shape-rejected"]).toContain(rows[0]?.code);
+        // The walk's refusal, an earlier shape refusal on a lane that has one,
+        // or the RegExp-literal refusal where host RegExp is off.
+        expect(["operand-coercion-unsupported", "body-shape-rejected", "regexp-constructor-unsupported"]).toContain(
+          rows[0]?.code,
+        );
         expect(
           (result.irPostClaimErrors ?? []).filter((error) => error.func !== "run"),
           JSON.stringify(lane),
