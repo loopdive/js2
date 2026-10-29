@@ -32,6 +32,11 @@ func-budget-allow:
   - src/ir/integration.ts::preregisterDynamicSupport
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/select.ts::dynamicUsesAreMoveOnly
+# 2026-10-29 (merge of main after #6967): +3 is prettier wrapping the one added
+# `wrapped` argument of `carrierMethodCallAdmissible` in the nested
+# `callRefusal`; main's post-merge baseline re-set this ceiling below the size
+# the PR already passed at.
+  - src/ir/select-planned-closure-operands.ts::plannedClosureOperandRefusal
 # 2026-10-24 (#7119 review): the builder is its own module,
 # src/codegen/object-model/ir-dynamic-method-call.ts, which integration imports
 # like the S3a/S3c wrapper module; the module joins the codegen SCC.
