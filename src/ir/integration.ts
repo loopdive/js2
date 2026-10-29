@@ -100,6 +100,7 @@ import {
   buildModuleInitPrologueCall, // (#7106) GDI prologue replay — see module-init-prologue-patch.ts
   moduleInitPrologueMayEmit,
   retireModuleInitPrologueHelper,
+  isNativeI32FieldRead,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { emitJsonStringifyValue } from "../codegen/json-codec-native.js";
@@ -2582,6 +2583,7 @@ export function compileIrPathFunctions(
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
+      isNativeI32FieldRead: (expr) => isNativeI32FieldRead(ctx.checker, expr),
       supportsLiteralStringReplace: true,
       ...(loweringPlans?.fnctorNativeStringBoundaries
         ? {

@@ -155,6 +155,7 @@ import {
   isEqualityOperator,
   isF64CompoundAssignOperator,
   isStrictEqualityOperator,
+  nativeI32OperandsAdmissible,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
 export type { IrFallbackReason } from "../shared/contracts/ir-preparation-failure.js";
@@ -613,6 +614,8 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * licence; the call shape must also be one the builder lowers.
    */
   readonly supportsNativeConsoleOutput?: boolean;
+  /** (#7136) Checker proof that an operand reads a native-i32 class field (an i32 IR slot). */
+  readonly isNativeI32FieldRead?: (expr: ts.Expression) => boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -11086,6 +11089,9 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     if (binOp === ts.SyntaxKind.CommaToken) {
       if (selectorValuePositionComma(expr, scope, localClasses)) return true;
       return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
+    }
+    if (!nativeI32OperandsAdmissible(expr, currentSelectionOptions)) {
+      return capabilityNo("operand-coercion-unsupported", "expr-native-i32-operand", expr);
     }
     if (binOp === ts.SyntaxKind.EqualsToken && ts.isIdentifier(expr.left)) {
       const dynamicModuleWrite = currentModuleBindingResolver?.(expr.left, expr.right);

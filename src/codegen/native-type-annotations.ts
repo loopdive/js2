@@ -230,3 +230,18 @@ export function isInt32Literal(expr: ts.Expression): boolean {
   const v = Number(e.text.replace(/_/g, ""));
   return Number.isInteger(v) && v >= -2147483648 && v <= 2147483647;
 }
+
+/**
+ * (#7136) A read of a class field whose declaration carries a native
+ * i32-storage annotation (`v: i32`, #323). The IR reads such a field as an i32
+ * slot, not as the f64 its checker type `number` implies.
+ */
+export function isNativeI32FieldRead(checker: ts.TypeChecker, expr: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(expr)) return false;
+  const declaration = checker.getSymbolAtLocation(expr.name)?.valueDeclaration;
+  return (
+    declaration !== undefined &&
+    ts.isPropertyDeclaration(declaration) &&
+    nativeTypeOfDeclaration(checker, declaration)?.kind === "i32"
+  );
+}
