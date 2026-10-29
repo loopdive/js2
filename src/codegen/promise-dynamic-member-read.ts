@@ -74,7 +74,6 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ensurePromiseNativeProtoGlue } from "./array-object-proto.js";
 import { builtinBrandOffsetOf } from "./builtin-brands.js";
-import { isStandalonePromiseActive } from "./async-scheduler.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
@@ -131,7 +130,6 @@ export function demandPromiseDynamicMember(ctx: CodegenContext, member: string, 
   if (!ctx.standalone || ctx.wasi) return;
   const isData = PROMISE_PROTO_DATA_KEYS.has(member);
   if (!isData && !PROMISE_PROTO_MEMBERS.has(member)) return;
-  if (!isStandalonePromiseActive(ctx)) return;
   let demanded = demandedByCtx.get(ctx);
   if (demanded?.has(member)) return;
   const brand = ensurePromiseNativeProtoGlue(ctx);

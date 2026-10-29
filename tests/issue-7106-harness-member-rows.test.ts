@@ -13,7 +13,10 @@
 // (`compareArray.format`'s `Array.prototype.map.call(…)` body) and
 // assert.compareArray's `message = message.toString();`, a method call on a
 // dynamic receiver, which #7110 keeps legacy (the IR's dynamic method call has
-// no primitive/vec brand arms on the host-free lanes).
+// no primitive/vec brand arms on the host-free lanes). Behind them,
+// assert.compareArray's `String(message)` calls are #7113's standalone
+// `closure-carrier-helper-call` cut (`String(carrier)` in a closure that mints
+// a carrier join needs `prepared-dynamic-helper-abi`, wasi-only today).
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
@@ -141,16 +144,19 @@ assert.notSameValue(1, 2);
 `;
   const ROW_2 = `return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]";`;
   const SYMBOL_MESSAGE = `message = message.toString();`;
+  const STRING_MESSAGE = `+ String(message)`;
 
-  /** `stub` replaces the two refused harness lines with IR-buildable twins. */
+  /** `stub` replaces the refused harness lines with IR-buildable twins. */
   function assemble(source: string, stub: boolean): string {
     const assembled = assembleOriginalHarness(source, parseMeta(source) as never).primary.source;
     expect(assembled).toContain(ROW_2);
     expect(assembled).toContain(SYMBOL_MESSAGE);
+    expect(assembled).toContain(STRING_MESSAGE);
     return stub
       ? assembled
           .replace(ROW_2, `return "[" + String(arrayLike) + "]";`)
-          .replace(SYMBOL_MESSAGE, `message = String(message);`)
+          .replace(SYMBOL_MESSAGE, `message = "" + message;`)
+          .replaceAll(STRING_MESSAGE, `+ message`)
       : assembled;
   }
 
@@ -181,7 +187,7 @@ assert.notSameValue(1, 2);
     expect(initRow(result)).toMatchObject({ irBodyEmitted: false, code: "body-shape-rejected" });
   }, 60_000);
 
-  it("with the two refused lines stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
+  it("with the refused lines stubbed, every harness unit and <module-init> ship IR bodies and agree with node", async () => {
     const assembled = assemble(BODY, true);
     vm.runInContext(assembled, vm.createContext({ console }));
     const result = await compileHarness(assembled);

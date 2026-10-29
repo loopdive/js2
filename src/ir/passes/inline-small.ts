@@ -701,10 +701,16 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
     }
     case "dyn.arguments_length":
     case "dyn.current_this":
+    case "dyn.global_object":
       return inst; // no operands (#7106 S1e/S3c)
     case "dyn.instanceof_fn": {
       const v = mapId(rename, inst.value);
       return v === inst.value ? inst : { ...inst, value: v };
+    }
+    case "dyn.instanceof": {
+      const value = mapId(rename, inst.value);
+      const target = mapId(rename, inst.target);
+      return value === inst.value && target === inst.target ? inst : { ...inst, value, target };
     }
     case "dyn.publish_argc":
       return inst; // no operands (#7106 S1e/S1i)

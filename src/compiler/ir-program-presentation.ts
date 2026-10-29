@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { absoluteFuncIndex } from "../emit/resolve-layout.js";
 import { ts } from "../ts-api.js";
+import { checkPreparedPresentationProfile } from "./prepared-pipeline-boundary.js";
 import type { PipelineOutputContext } from "../compiler.js";
 import type { CompileResult } from "../index.js";
 import type { IrWholeProgramPreparationInput } from "../ir/program-preparation.js";
@@ -262,13 +263,7 @@ function capturePresentation(request: IrProgramPresentationRequest, gap: GapReco
         sourceFile: source.fileName,
       });
   }
-  if (
-    backend.target !== "host" ||
-    policy.target !== backend.target ||
-    policy.backend !== backend.backend ||
-    (backend.backend !== "wasmgc" && backend.backend !== "linear")
-  )
-    gap("backend", "option-association", "only matching wasmgc:host or linear:host projections are admitted");
+  checkPreparedPresentationProfile(options, backend, policy, gap);
   if (
     (options.target === "linear" ? "linear" : "wasmgc") !== backend.backend ||
     (options.moduleName ?? "module") !== backend.moduleName ||
@@ -749,7 +744,7 @@ function joinStartup(
       (row, index) =>
         row.sourceId !== program.inventory.sources[index]?.id ||
         row.gaps.length ||
-        row.invocation.target !== "host" ||
+        row.invocation.target !== input.policy.target ||
         row.executable !== (row.evaluations.length > 0 || row.liveSeeds.length > 0),
     )
   )
@@ -859,6 +854,9 @@ export function prepareIrProgramPresentation(request: IrProgramPresentationReque
   if (result.kind !== "emitted") return result;
   const { program, emission } = result;
   const mod = emission.module;
+  const physical = emittedPhysicalSetupPlan(emission);
+  if (physical.backend !== capture.backend.backend || physical.target !== capture.backend.target)
+    gap("backend", "physical-profile", "completed physical plan must belong to the selected backend and target");
   emittedSupportFunctionReceipts(emission);
   const captures = joinDeclarations(program, capture, gap);
   const signatures: Record<string, ExportSignature> = Object.create(null);

@@ -49,7 +49,6 @@ describe("#3520 complete production Program ABI global population", () => {
     const result = generateModule(ast, {
       experimentalIR: true,
       trackIrOutcomes: true,
-      nativeStrings: false,
     });
     const hardErrors = result.errors.filter((error) => error.severity !== "warning");
     expect(hardErrors, hardErrors.map((error) => error.message).join("\n")).toEqual([]);

@@ -92,14 +92,8 @@ import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
   ensurePromiseSettleFunctions,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
-import {
-  ensureNativeSymbolBoundaryBridge,
-  ensureSymbolCarrier,
-  ensureSymbolRegistry,
-  usesNativeSymbolProvider,
-} from "./symbol-native.js";
+import { ensureNativeSymbolBoundaryBridge, ensureSymbolCarrier, ensureSymbolRegistry } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
 import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
@@ -272,11 +266,22 @@ function tryEmitBuiltinNamespaceConstantValue(
   builtinName: string,
   propName: string,
 ): ValType | undefined {
+  const value = builtinNamespaceConstantValue(builtinName, propName);
+  if (value === undefined) return undefined;
+  fctx.body.push({ op: "f64.const", value });
+  return { kind: "f64" };
+}
+
+/**
+ * (#7106) The numeric value of `<Math|Number>.<prop>` — the one table behind
+ * legacy's dot read, its reflective read and the IR's fold
+ * (`irAmbientNamespaceConstant`); undefined for any other pair. Own keys only:
+ * `Math["constructor"]` is not a constant.
+ */
+export function builtinNamespaceConstantValue(builtinName: string, propName: string): number | undefined {
   const table =
     builtinName === "Math" ? MATH_CONSTANT_VALUES : builtinName === "Number" ? NUMBER_CONSTANT_VALUES : undefined;
-  if (!table || !(propName in table)) return undefined;
-  fctx.body.push({ op: "f64.const", value: table[propName]! });
-  return { kind: "f64" };
+  return table !== undefined && Object.hasOwn(table, propName) ? table[propName] : undefined;
 }
 
 /**
@@ -1145,12 +1150,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // the same native registry / scheduler used by direct calls.
     case "Symbol.for":
     case "Symbol.keyFor":
-      if (!usesNativeSymbolProvider(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       ensureObjectRuntime(ctx);
       ensureNativeSymbolBoundaryBridge(ctx);
       ensureSymbolCarrier(ctx);
@@ -1160,12 +1159,6 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       break;
     case "Promise.resolve":
     case "Promise.reject":
-      if (!isStandalonePromiseActive(ctx)) {
-        paramTypes = [{ kind: "externref" }];
-        returnType = { kind: "externref" };
-        genericThrowBody = true;
-        break;
-      }
       // Register the whole settle substrate before the closure function is
       // minted. The emitters below then append instructions only, avoiding a
       // mid-body function-index registration hazard.

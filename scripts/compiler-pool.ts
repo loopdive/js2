@@ -19,6 +19,8 @@ import {
   refusePreparedArtifactPaths,
   validatePreparedJobResponse,
   validatePreparedExecutionJobResponse,
+  capturePreparedFrontendJobExpectation,
+  validatePreparedFrontendJobResponse,
 } from "./test262-prepared-request.mjs";
 
 const validatedPreparedResults = new WeakMap<object, Readonly<Record<string, unknown>>>();
@@ -66,6 +68,8 @@ export interface TestResult {
   isException?: boolean;
   runtimeNegativePass?: boolean;
   runtimeNegativeNoThrow?: boolean;
+  /** Frontend-only rejection DATA; never evidence that IR was emitted or executed. */
+  preparedFrontendReport?: Readonly<Record<string, unknown>>;
   /** (#2939/#2940) vacuity correction: a `fail` whose harness callback never ran. */
   vacuous?: boolean;
   /**
@@ -103,6 +107,7 @@ type QueueItem = {
   id: number;
   msg: Record<string, any>;
   preparedRequest?: NonNullable<ReturnType<typeof capturePreparedJobRequest>>;
+  preparedFrontendExpectation?: ReturnType<typeof capturePreparedFrontendJobExpectation>;
   /** Timeout ceiling in ms — applied from dispatch time, not enqueue time (#1227). */
   timeoutMs: number;
   label?: string;
@@ -218,7 +223,17 @@ export class CompilerPool {
             : undefined;
         try {
           if (!this.#preparedChildren.has(proc)) throw new Error("PREPARED_TRANSPORT_INVALID: non-builtin worker");
-          if (active.job.msg.execute === true)
+          let frontendReport: Readonly<Record<string, unknown>> | undefined;
+          if (active.job.msg.execute === true && Object.hasOwn(msg, "preparedFrontendReport")) {
+            frontendReport = validatePreparedFrontendJobResponse(
+              msg,
+              active.job.preparedRequest,
+              active.job.msg.source,
+              active.job.id,
+              proc.pid,
+              active.job.preparedFrontendExpectation,
+            );
+          } else if (active.job.msg.execute === true)
             validatePreparedExecutionJobResponse(
               msg,
               active.job.preparedRequest,
@@ -236,7 +251,12 @@ export class CompilerPool {
             );
           else if (msg.ok !== false || typeof msg.error !== "string" || msg.error.trim().length === 0)
             throw new Error("PREPARED_TRANSPORT_INVALID: unknown strict response");
-          if (active.job.msg.execute === true)
+          if (frontendReport)
+            validatedPreparedResults.set(
+              msg,
+              Object.freeze({ frontendPathVerified: true, preparedFrontendReport: frontendReport }),
+            );
+          else if (active.job.msg.execute === true)
             validatedPreparedResults.set(
               msg,
               Object.freeze({
@@ -312,7 +332,6 @@ export class CompilerPool {
     target?: "gc" | "linear" | "wasi" | "standalone",
     // (#2119) false ⇒ keep mapped arguments for script tests; see runTest.
     inferModuleStrictArguments?: boolean,
-    semanticProviders?: "auto" | "native-first" | "host-assisted",
     requestOptions?: PreparedPoolOptions,
   ): Promise<PoolResult> {
     const prepared = capturePreparedJobRequest(requestOptions, target);
@@ -326,7 +345,6 @@ export class CompilerPool {
         wasmPath,
         metaPath,
         target,
-        semanticProviders,
         inferModuleStrictArguments,
         ...(prepared
           ? { wholeProgram: prepared.wholeProgram, backend: prepared.backend, target: prepared.target }
@@ -347,6 +365,8 @@ export class CompilerPool {
       isNegative?: boolean;
       isRuntimeNegative?: boolean;
       expectedErrorType?: string;
+      /** Preserve upstream negative.phase; resolution is not frontend-certified. */
+      negativePhase?: "parse" | "early" | "resolution" | "runtime";
       /** Execute literal upstream harness source; success is module-init completion. */
       originalHarness?: boolean;
       /** Wait for the upstream doneprintHandle completion marker. */
@@ -361,7 +381,6 @@ export class CompilerPool {
       metaPath?: string;
       label?: string;
       target?: "gc" | "linear" | "wasi" | "standalone";
-      semanticProviders?: "auto" | "native-first" | "host-assisted";
       // (#2119) false ⇒ do not infer module-strictness (→ keep mapped
       // arguments) despite the synthetic `export function test()` wrapper.
       inferModuleStrictArguments?: boolean;
@@ -411,6 +430,7 @@ export class CompilerPool {
         isNegative: opts.isNegative || false,
         isRuntimeNegative: opts.isRuntimeNegative || false,
         expectedErrorType: opts.expectedErrorType,
+        negativePhase: opts.negativePhase,
         originalHarness: opts.originalHarness || false,
         asyncTest: opts.asyncTest || false,
         fixtureFiles: opts.fixtureFiles,
@@ -421,7 +441,6 @@ export class CompilerPool {
         target: forwarded.target ?? opts.target,
         wholeProgram: forwarded.wholeProgram,
         backend: forwarded.backend,
-        semanticProviders: opts.semanticProviders,
         inferModuleStrictArguments: opts.inferModuleStrictArguments,
         scriptGoal: opts.scriptGoal,
         // (#3461) forwarded only in fast native-harness mode; undefined ⇒ the
@@ -454,6 +473,10 @@ export class CompilerPool {
         id,
         msg,
         preparedRequest: capturePreparedJobRequest(msg),
+        preparedFrontendExpectation:
+          msg.execute === true && msg.wholeProgram !== undefined
+            ? capturePreparedFrontendJobExpectation(msg)
+            : undefined,
         timeoutMs,
         label,
         resolve: (result) => {

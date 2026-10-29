@@ -199,3 +199,241 @@ export function validatePreparedExecutionJobResponse(message, request, source, j
   )
     fail("active execution job/profile/source reporting mismatch");
 }
+
+// Frontend rejection is a distinct compiler observation. These DATA packets
+// never establish emission, physical lowering, runtime construction or execution.
+function frontendRecord(value, detail) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+  )
+    fail(`${detail} must be a plain DATA record`);
+  return value;
+}
+
+function frontendData(value) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype || Reflect.ownKeys(value).length !== value.length + 1)
+      fail("frontend DATA array has extra or missing fields");
+    return Object.freeze(Array.from({ length: value.length }, (_, index) => frontendData(data(value, String(index)))));
+  }
+  frontendRecord(value, "frontend metadata");
+  const copy = Object.create(null);
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== "string")) fail("frontend metadata has a symbol field");
+  for (const key of keys.sort()) {
+    const field = data(value, key);
+    // IPC drops undefined record fields; omit them in the producer snapshot too.
+    if (field !== undefined) Object.defineProperty(copy, key, { value: frontendData(field), enumerable: true });
+  }
+  return Object.freeze(copy);
+}
+
+/** Snapshot the active job's expectation before dispatch; no compiler authority. */
+export function capturePreparedFrontendJobExpectation(job) {
+  frontendRecord(job, "frontend job");
+  const fixtureFiles = data(job, "fixtureFiles");
+  const fixtures = fixtureFiles === undefined ? undefined : frontendData(frontendRecord(fixtureFiles, "fixtures"));
+  if (fixtures && Object.values(fixtures).some((text) => typeof text !== "string")) fail("fixture source must be text");
+  return Object.freeze({
+    isNegative: data(job, "isNegative"),
+    isRuntimeNegative: data(job, "isRuntimeNegative"),
+    negativePhase: data(job, "negativePhase"),
+    expectedErrorType: data(job, "expectedErrorType"),
+    originalHarness: data(job, "originalHarness"),
+    entryFile: data(job, "entryFile"),
+    requiresEntrySelfImportGraph: data(job, "requiresEntrySelfImportGraph"),
+    fixtureFiles: fixtures,
+  });
+}
+
+function frontendExpectedPhase(expectation) {
+  if (
+    data(expectation, "isNegative") !== true ||
+    data(expectation, "isRuntimeNegative") !== false ||
+    data(expectation, "expectedErrorType") !== "SyntaxError"
+  )
+    fail("frontend report requires an exact non-runtime SyntaxError negative");
+  const expected = data(expectation, "negativePhase");
+  if (expected !== "parse" && expected !== "early") fail("frontend negative phase is unavailable");
+  return expected;
+}
+
+function frontendPhaseMatches(phase, expected) {
+  // The shared early-error owner also supplies static SyntaxErrors required by
+  // Test262 parse negatives that TypeScript's syntactic parser accepts.
+  return expected === "parse" ? phase === "syntax" || phase === "early" : phase === "early";
+}
+
+// Match the public virtual-source spelling without importing the compiler or
+// invoking another parser. This normalizes paths only, never source contents.
+function frontendFileName(name) {
+  if (typeof name !== "string" || name.length === 0) fail("frontend source filename missing");
+  if (name.startsWith("file:")) {
+    const url = new URL(name);
+    if (url.protocol !== "file:" || url.search || url.hash) fail("unsupported frontend source URL");
+    name = (url.hostname && url.hostname !== "localhost" ? `/${url.hostname}` : "") + decodeURIComponent(url.pathname);
+  }
+  const parts = [];
+  for (const part of name.replaceAll("\\", "/").split("/")) {
+    if (part === "..") parts.pop();
+    else if (part !== "" && part !== ".") parts.push(part);
+  }
+  const normalized = parts.join("/");
+  return /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(normalized) ? normalized : `${normalized}.ts`;
+}
+
+function frontendSources(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) fail("frontend full source graph missing");
+  const names = new Set();
+  const sources = frontendData(rows).map((row) => {
+    frontendRecord(row, "frontend source");
+    if (Reflect.ownKeys(row).length !== 2) fail("unknown frontend source fields");
+    const file = frontendFileName(data(row, "file"));
+    const text = data(row, "text");
+    if (typeof text !== "string" || names.has(file)) fail("frontend source text/identity mismatch");
+    names.add(file);
+    return Object.freeze({ file, sourceSha256: hash(text) });
+  });
+  return Object.freeze(sources.sort((left, right) => (left.file < right.file ? -1 : left.file > right.file ? 1 : 0)));
+}
+
+function frontendExpectedSources(expectation, source) {
+  if (typeof source !== "string") fail("active frontend source missing");
+  const fixtures = data(expectation, "fixtureFiles");
+  const entryFile = data(expectation, "entryFile");
+  const graph =
+    fixtures !== undefined &&
+    (Reflect.ownKeys(fixtures).length > 0 || data(expectation, "requiresEntrySelfImportGraph") === true);
+  if (!graph)
+    return frontendSources([
+      { file: data(expectation, "originalHarness") === true ? "test.js" : "test.ts", text: source },
+    ]);
+  if (data(expectation, "originalHarness") !== true || typeof entryFile !== "string")
+    fail("active frontend fixture entry missing");
+  const rows = Reflect.ownKeys(fixtures).map((file) => ({ file, text: data(fixtures, file) }));
+  rows.push({ file: entryFile, text: source });
+  return frontendSources(rows);
+}
+
+function frontendAssociation(request, source, jobId, workerPid, expectation) {
+  if (
+    !Number.isSafeInteger(jobId) ||
+    jobId < 0 ||
+    !Number.isSafeInteger(workerPid) ||
+    workerPid <= 0 ||
+    typeof source !== "string" ||
+    !request ||
+    (request.backend !== "wasmgc" && request.backend !== "linear") ||
+    (request.target !== "standalone" && request.target !== "wasi")
+  )
+    fail("active frontend job/process/profile association missing");
+  const captured = capturePreparedFrontendJobExpectation(expectation);
+  return { expectedPhase: frontendExpectedPhase(captured), sources: frontendExpectedSources(captured, source) };
+}
+
+function frontendDiagnostics(diagnostics) {
+  const copied = frontendData(diagnostics);
+  if (!Array.isArray(copied) || copied.length === 0) fail("actual frontend diagnostics missing");
+  for (const diagnostic of copied) {
+    frontendRecord(diagnostic, "frontend diagnostic");
+    if (
+      typeof data(diagnostic, "message") !== "string" ||
+      data(diagnostic, "message").trim().length === 0 ||
+      !Number.isSafeInteger(data(diagnostic, "line")) ||
+      data(diagnostic, "line") < 0 ||
+      !Number.isSafeInteger(data(diagnostic, "column")) ||
+      data(diagnostic, "column") < 0
+    )
+      fail("located frontend diagnostic missing");
+  }
+  if (!copied.some((diagnostic) => data(diagnostic, "severity") === "error")) fail("frontend error diagnostic missing");
+  return copied;
+}
+
+/** SAME failed result, queried from the worker's actual compiler namespace only. */
+export function observePreparedFrontendJobResult(compiler, result, request, source, jobId, workerPid, expectation) {
+  const expected = frontendAssociation(request, source, jobId, workerPid, expectation);
+  if (typeof compiler.requiredPreparedFrontendFailure !== "function") fail("compiler frontend reporter unavailable");
+  const observed = compiler.requiredPreparedFrontendFailure(result);
+  if (!observed) fail("actual frontend rejection is unavailable");
+  if (data(result, "success") !== false) fail("frontend rejection requires the actual failed result");
+  const phase = data(observed, "phase");
+  if (
+    data(observed, "schema") !== "test262-required-prepared-frontend-failure-v1" ||
+    !frontendPhaseMatches(phase, expected.expectedPhase) ||
+    data(observed, "backend") !== request.backend ||
+    data(observed, "target") !== request.target ||
+    JSON.stringify(frontendSources(data(observed, "sources"))) !== JSON.stringify(expected.sources)
+  )
+    fail("actual frontend phase/profile/full source graph differs");
+  const diagnostics = frontendDiagnostics(data(observed, "diagnostics"));
+  const errors = frontendDiagnostics(data(result, "errors")).map((row) => JSON.stringify(row));
+  if (!diagnostics.every((diagnostic) => errors.includes(JSON.stringify(diagnostic))))
+    fail("actual frontend diagnostics differ from the same result");
+  return Object.freeze({
+    schema: "test262-prepared-frontend-report-v1",
+    requestVersion: 1,
+    jobId,
+    workerPid,
+    backend: request.backend,
+    target: request.target,
+    sourceSha256: hash(source),
+    sources: expected.sources,
+    phase,
+    expectedPhase: expected.expectedPhase,
+    errorType: "SyntaxError",
+    diagnostics,
+  });
+}
+
+/** Validate reporting from the active builtin child; never a portable capability. */
+export function validatePreparedFrontendJobResponse(message, request, source, jobId, workerPid, expectation) {
+  const expected = frontendAssociation(request, source, jobId, workerPid, expectation);
+  if (
+    data(message, "id") !== jobId ||
+    data(message, "status") !== "pass" ||
+    data(message, "preparedExecutionReport") !== undefined ||
+    data(message, "preparedReport") !== undefined ||
+    data(message, "runtimeNegativePass") === true ||
+    data(message, "binary") !== undefined
+  )
+    fail("frontend response cannot claim emission or execution");
+  const report = frontendRecord(data(message, "preparedFrontendReport"), "frontend report");
+  const keys = [
+    "schema",
+    "requestVersion",
+    "jobId",
+    "workerPid",
+    "backend",
+    "target",
+    "sourceSha256",
+    "sources",
+    "phase",
+    "expectedPhase",
+    "errorType",
+    "diagnostics",
+  ];
+  if (Reflect.ownKeys(report).length !== keys.length) fail("unknown frontend reporting fields");
+  const copied = frontendData(report);
+  const r = Object.fromEntries(keys.map((key) => [key, data(copied, key)]));
+  if (
+    r.schema !== "test262-prepared-frontend-report-v1" ||
+    r.requestVersion !== 1 ||
+    r.jobId !== jobId ||
+    r.workerPid !== workerPid ||
+    r.backend !== request.backend ||
+    r.target !== request.target ||
+    r.sourceSha256 !== hash(source) ||
+    r.expectedPhase !== expected.expectedPhase ||
+    !frontendPhaseMatches(r.phase, expected.expectedPhase) ||
+    r.errorType !== "SyntaxError" ||
+    JSON.stringify(r.sources) !== JSON.stringify(frontendData(expected.sources))
+  )
+    fail("active frontend job/process/profile/source/phase reporting mismatch");
+  frontendDiagnostics(r.diagnostics);
+  return copied;
+}

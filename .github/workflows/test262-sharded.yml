@@ -2151,14 +2151,15 @@ jobs:
         run: |
           mkdir -p ir-measurement/ir/runs
           cat ir-shards/test262-measurement-ir-standalone-results-*.jsonl > ir-measurement/results.jsonl
-          node --input-type=module <<'NODE'
-          import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-          const files = readdirSync('ir-shards').filter(name => name.endsWith('.complete.json')).sort();
-          if (files.length !== 102) throw new Error(`Expected 102 completion manifests, got ${files.length}`);
-          writeFileSync('ir-measurement/completion.json', JSON.stringify(files.map(name => JSON.parse(readFileSync(`ir-shards/${name}`, 'utf8')))));
-          NODE
+          # The validator takes one --manifest per shard file (as the other
+          # lanes pass them); a single file holding an array of all 102 reads
+          # as one malformed manifest and fails every run.
+          manifests=()
+          for manifest in ir-shards/*.complete.json; do
+            manifests+=(--manifest "$manifest")
+          done
           node scripts/validate-test262-completeness.mjs --input ir-measurement/results.jsonl \
-            --manifest ir-measurement/completion.json --expected-shards 102
+            "${manifests[@]}" --expected-shards 102
       - name: Build requested IR report including compiler failures
         env:
           INCLUDE_PROPOSALS: ${{ github.event_name != 'workflow_dispatch' && '1' || (inputs.include_proposals && '1' || '0') }}

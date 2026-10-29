@@ -31,8 +31,13 @@ export type IrBackendTargetCapability =
   | "native-arguments-length"
   | "native-current-this"
   | "native-own-property-test"
+  | "host-dynamic-method-call"
   | "native-own-property-descriptor"
-  | "native-dynamic-value-call";
+  | "native-number-conversion"
+  | "prepared-dynamic-helper-abi"
+  | "native-dynamic-member-read"
+  | "planned-closure-direct-call"
+  | "native-dynamic-loose-equality";
 
 /**
  * The target facts needed by pre-claim capability checks. Keep this smaller
@@ -132,9 +137,37 @@ export function supportsIrBackendTargetCapability(
         profile.fast !== true &&
         (profile.target === "standalone" || profile.target === "wasi")
       );
-    case "native-dynamic-value-call":
-      // (#7106 Stage 4) a bare call through a dynamic value: the native
-      // IsCallable + `__apply_closure` member-call runtime (host-free lanes).
+    case "host-dynamic-method-call":
+      // (#7117) `recv.m(…)` on a dynamic receiver through the generic
+      // `__ir_dyn_method_call_N` → `__extern_method_call`. The host lane binds
+      // the real JS call; the native object runtime dispatches open-`$Object`
+      // methods only and answers `undefined` for primitive / vec / Map / …
+      // receivers, where legacy dispatches by brand.
+      return profile.backend === "wasmgc" && profile.allowHostImports;
+    case "native-dynamic-member-read":
+    // (#7113, #7177) A property / element read on the boxed-any carrier in
+    // a planned member closure. WASI's IR read has no string or vec
+    // receiver arm and answers `undefined` (`.length`, `[i]`), so only the
+    // standalone regime (native gc projects as standalone) is admitted.
+    case "native-dynamic-loose-equality":
+    // (#7113, #7178) Loose `==` / `!=` on the carrier against a non-string:
+    // WASI's helper ToPrimitives an object / array operand by an illegal
+    // cast and traps.
+    case "planned-closure-direct-call":
+      // (#7113) A direct call to a module function from a planned member
+      // closure: WASI mints no AST-site call plan for it and withdraws
+      // ("direct call … has no exact AST-site plan").
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "standalone";
+    case "prepared-dynamic-helper-abi":
+      // (#7113) A planned member closure inside a prepared `<module-init>`
+      // component binds the carrier's loose-equality / `in` helpers by
+      // Program ABI identity on WASI. Standalone and the native-first gc lane
+      // (projected as standalone) have no symbolic ref for them yet and
+      // withdraw at preparation (`implicit-support-reference-unavailable`).
+      return profile.backend === "wasmgc" && profile.fast !== true && profile.target === "wasi";
+    case "native-number-conversion":
+      // (#7106 module-init lever B) `Number(v)` through the host-free
+      // `js.number.from-value` provider (legacy's emitter over a template).
       return (
         profile.backend === "wasmgc" &&
         profile.fast !== true &&

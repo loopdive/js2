@@ -327,3 +327,48 @@ export function superMethodCallIsBuildable(
   }
   return undefined;
 }
+
+/**
+ * (#7129) The primitive kind of the ONE literal every value `return` of
+ * `body` yields (`return 42`, `return -1`, `return 'A'`, the same literal on
+ * several paths), else `null`. The checker widens a single return literal to
+ * `number` / `string` for an unannotated signature, so the kind equals the
+ * legacy-registered slot. Two distinct literals (`return 1` and `return 2`)
+ * infer the union `1 | 2`, which legacy's class descriptor does not register,
+ * so they answer `null` here. A bare `return;` or any other expression (a
+ * call, an identifier, a template with substitutions) answers `null`. Boolean
+ * literals are deliberately excluded: the class-method slot legacy registers
+ * for an inferred `boolean` does not match the IR's bool signature (typeIdx
+ * parity mismatch, measured 2026-10-22), so such a method stays legacy.
+ * Returns inside nested functions and classes belong to those, not to `body`.
+ */
+export function uniformLiteralReturnKind(body: ts.Block): "f64" | "string" | null {
+  let kind: "f64" | "string" | null = null;
+  let value: number | string | undefined;
+  let ok = true;
+  const literal = (expr: ts.Expression): { kind: "f64" | "string"; value: number | string } | null => {
+    while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+    if (ts.isPrefixUnaryExpression(expr)) {
+      if (!ts.isNumericLiteral(expr.operand)) return null;
+      if (expr.operator === ts.SyntaxKind.MinusToken) return { kind: "f64", value: -Number(expr.operand.text) };
+      return expr.operator === ts.SyntaxKind.PlusToken ? { kind: "f64", value: Number(expr.operand.text) } : null;
+    }
+    if (ts.isNumericLiteral(expr)) return { kind: "f64", value: Number(expr.text) };
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr))
+      return { kind: "string", value: expr.text };
+    return null;
+  };
+  const visit = (node: ts.Node): void => {
+    if (!ok) return;
+    if (ts.isReturnStatement(node)) {
+      const next = node.expression ? literal(node.expression) : null;
+      if (next === null || (kind !== null && (kind !== next.kind || value !== next.value))) ok = false;
+      else ({ kind, value } = next);
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) return;
+    forEachChild(node, visit);
+  };
+  forEachChild(body, visit);
+  return ok ? kind : null;
+}

@@ -11,7 +11,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitUndefined, shiftLateImportIndices } from "./expressions/late-imports.js";
+import { emitUndefined } from "./expressions/late-imports.js";
 import {
   addUnionImports,
   ensureLetConstBindingPatternTdzFlags,
@@ -24,16 +24,15 @@ import {
   undefinedPreservingBindingSourceType,
 } from "../checker/type-mapper.js";
 import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
-import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
+import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
-import { usesNativeJsErrors } from "./js-errors.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
 // (#3178) done/value reads on native IteratorResult structs — late-bound via
 // shared.ts (a static member-get-dispatch.ts import here is an eval-time cycle).
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureExternRestObject } from "./object-runtime.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
+import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
 import {
   canonicalUndefinedExternInstrs,
@@ -699,37 +698,23 @@ export function buildDestructureNullThrow(ctx: CodegenContext, fctx?: FunctionCo
   // works under wasmtime, with no `__throw_type_error` host import. The
   // constructor is registered in funcMap as an internal function, so
   // ensureLateImport resolves it without adding an import (no index shift).
-  if (usesNativeJsErrors(ctx)) {
-    emitWasiErrorConstructor(ctx, "TypeError", 1);
-    // #1623 — resolve `__new_TypeError` through ensureLateImport (NOT a raw
-    // `funcMap.get`). The constructor is an in-module function whose index is
-    // computed eagerly; later import additions shift every function index, and
-    // only the ensureLateImport / flushLateImportShifts bookkeeping keeps an
-    // already-emitted `call` index in sync. A raw `funcMap.get` snapshot goes
-    // stale and lowered to `call <wrong-fn>` (e.g. the enclosing function,
-    // observed as "throw expected externref, found call of type f64"). This
-    // mirrors the proven path in `emitThrowTypeError` (expressions/helpers.ts).
-    const newTypeErrorIdx = ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
-    const tagIdx = ensureExnTag(ctx);
-    if (newTypeErrorIdx !== undefined && fctx) {
-      flushLateImportShifts(ctx, fctx);
-      const funcIdx = ctx.funcMap.get("__new_TypeError")!;
-      return [...pushMsg(), { op: "call", funcIdx }, { op: "throw", tagIdx }];
-    }
-    // Degrade to throwing the raw string with the same tag.
-    return [...pushMsg(), { op: "throw", tagIdx }];
-  }
-  // JS-host: prefer the host import so the caller sees a genuine JS TypeError
-  // (constructor-matching tests such as `({constructor}) => constructor ===
-  // TypeError` pass). Fall back to wasm throw+tag when a FunctionContext isn't
-  // available for late-import flush.
-  const throwIdx = ensureLateImport(ctx, "__throw_type_error", [{ kind: "externref" }], []);
-  if (throwIdx !== undefined && fctx) {
-    flushLateImportShifts(ctx, fctx);
-    const funcIdx = ctx.funcMap.get("__throw_type_error")!;
-    return [...pushMsg(), { op: "call", funcIdx }, { op: "unreachable" }];
-  }
+  emitWasiErrorConstructor(ctx, "TypeError", 1);
+  // #1623 — resolve `__new_TypeError` through ensureLateImport (NOT a raw
+  // `funcMap.get`). The constructor is an in-module function whose index is
+  // computed eagerly; later import additions shift every function index, and
+  // only the ensureLateImport / flushLateImportShifts bookkeeping keeps an
+  // already-emitted `call` index in sync. A raw `funcMap.get` snapshot goes
+  // stale and lowered to `call <wrong-fn>` (e.g. the enclosing function,
+  // observed as "throw expected externref, found call of type f64"). This
+  // mirrors the proven path in `emitThrowTypeError` (expressions/helpers.ts).
+  const newTypeErrorIdx = ensureLateImport(ctx, "__new_TypeError", [{ kind: "externref" }], [{ kind: "externref" }]);
   const tagIdx = ensureExnTag(ctx);
+  if (newTypeErrorIdx !== undefined && fctx) {
+    flushLateImportShifts(ctx, fctx);
+    const funcIdx = ctx.funcMap.get("__new_TypeError")!;
+    return [...pushMsg(), { op: "call", funcIdx }, { op: "throw", tagIdx }];
+  }
+  // Degrade to throwing the raw string with the same tag.
   return [...pushMsg(), { op: "throw", tagIdx }];
 }
 
@@ -887,41 +872,15 @@ export function destructureParamObjectExternref(
       // proven open-object hash lookup, so there is no runtime string parsing
       // and no delimiter false-match. The host/gc branch below is byte-identical
       // to the prior behaviour.
-      if (ctx.targetProfile.semanticProviders === "native-first") {
-        // The param is an externref (already an open `$Object` at runtime), so
-        // no `materializeStructAsObject` reification is needed here.
-        const ok = emitNativeObjectRest(
-          ctx,
-          fctx,
-          () => fctx.body.push({ op: "local.get", index: paramIdx }),
-          excludedKeys,
-          restIdx,
-        );
-        getIdx = ctx.funcMap.get("__extern_get");
-        if (!ok) continue;
-        if (isDecl) emitLocalTdzInit(fctx, restName);
-        continue;
-      }
-      let restObjIdx = ctx.funcMap.get("__extern_rest_object");
-      if (restObjIdx === undefined) {
-        const importsBefore = ctx.numImportFuncs;
-        const restObjType = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
-        addImport(ctx, "env", "__extern_rest_object", { kind: "func", typeIdx: restObjType });
-        shiftLateImportIndices(ctx, fctx, importsBefore, ctx.numImportFuncs - importsBefore);
-        restObjIdx = ctx.funcMap.get("__extern_rest_object");
-        getIdx = ctx.funcMap.get("__extern_get");
-      }
-      if (restObjIdx === undefined) continue;
-      const excludedStr = excludedKeys.join(",");
-      addStringConstantGlobal(ctx, excludedStr);
-      const excludedStrIdx = ctx.stringGlobalMap.get(excludedStr);
-      if (excludedStrIdx === undefined) continue;
-      fctx.body.push({ op: "local.get", index: paramIdx });
-      // #1623 — nativeStrings has a -1 sentinel global index; materialize the
-      // key string inline as externref instead of `global.get -1`.
-      for (const instr of stringConstantExternrefInstrs(ctx, excludedStr)) fctx.body.push(instr);
-      fctx.body.push({ op: "call", funcIdx: restObjIdx });
-      fctx.body.push({ op: "local.set", index: restIdx });
+      const ok = emitNativeObjectRest(
+        ctx,
+        fctx,
+        () => fctx.body.push({ op: "local.get", index: paramIdx }),
+        excludedKeys,
+        restIdx,
+      );
+      getIdx = ctx.funcMap.get("__extern_get");
+      if (!ok) continue;
       if (isDecl) emitLocalTdzInit(fctx, restName);
       continue;
     }
