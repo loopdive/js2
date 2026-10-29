@@ -187,3 +187,18 @@ Main merged #7117 (#6845) in its final form, #7113's operand walk (#7144) and
   non-callable member. `carrierMethodCallAdmissible(receiver, wrapped)` now
   admits it; a user method name on the generic call stays refused.
 
+## Wrapper-object receivers (2026-10-29, owner decision: option a)
+
+`issue-6610`'s `wrapperReceiver` regressed: a primitive wrapper object
+(`new Number(x)`, `Object(sym)`) can read a built-in method value through its
+native prototype (#4248), and the own-method branch's reflective
+`f.call(recv, …)` on it throws, where main kept the call legacy (#7117).
+The wrapper now tests the receiver first: a `$Object` carrying the internal
+`[[PrimitiveValue]]` slot with no OWN `m` takes legacy's brand branch
+`recv.m(…)`; an own `m` on the wrapper, and every other callable `f`, keeps
+the own-method branch. Two `__obj_find` lookups, as legacy's `__extern_get`
+wrapper arm does; no host import, no target arm. Measured per method in
+isolated modules: `toPrecision` on `new Number` went -1 → 1;
+`toString`/`valueOf` on Number/String/Boolean/Symbol wrappers were and stay
+correct; `toFixed` through any receiver throws on legacy too (pre-existing).
+

@@ -16,7 +16,7 @@
 // be an IR body that calls the wrapper.
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult } from "../src/index.js";
+import { compile, compileMulti, type CompileResult } from "../src/index.js";
 
 type Lane = "standalone" | "default";
 
@@ -227,6 +227,78 @@ subject.label = function (message) {
     (instance.exports.__module_init as () => void)();
     expect(wrong(checks, (instance.exports.run as () => number)(), expected)).toEqual([]);
   }, 60_000);
+
+  it("takes the brand branch first for a primitive wrapper object; IR = legacy = node (#6610)", async () => {
+    // #7119 option (a): a wrapper object (`new Number(x)`, `Object(sym)`) can
+    // read a BUILT-IN method value through its native prototype (#4248), and a
+    // reflective `f.call(recv, …)` on it threw (#6610 `wrapperReceiver`;
+    // measured -1 here without the brand-first test). An OWN method on the
+    // wrapper keeps the own-method branch. One module per method: what a
+    // module contains (a `.toString` store, other members) reroutes legacy's
+    // wrapper calls (#1397), so the shapes are measured in isolation, compiled
+    // like the #6610 suite (host-free, compileMulti).
+    type Case = { prelude: string; rows: string[]; legacyGap?: true };
+    const cases: Record<string, Case> = {
+      toPrecision: {
+        prelude: `function f(x, p) { return x.toPrecision(p); }`,
+        rows: [`f(new Number(1234.5678), 3) === "1.23e+3"`, `f(1234.5678, 3) === "1.23e+3"`],
+      },
+      // Legacy's own any-receiver `toFixed` throws on standalone, for a
+      // primitive too (pre-existing, outside the wrapper): IR = legacy only.
+      toFixed: {
+        prelude: `function f(x, p) { return x.toFixed(p); }`,
+        rows: [`f(new Number(2.5), 1) === "2.5"`, `f(2.5, 1) === "2.5"`],
+        legacyGap: true,
+      },
+      toString: {
+        prelude: `function f(x) { return x.toString(); }\nvar sym = Symbol("s");`,
+        rows: [
+          `f(new Number(5)) === "5"`,
+          `f(new String("q")) === "q"`,
+          `f(new Boolean(true)) === "true"`,
+          `f(Object(sym)) === "Symbol(s)"`,
+        ],
+      },
+      valueOf: {
+        prelude: `function f(x) { return x.valueOf(); }\nvar sym = Symbol("s");`,
+        rows: [
+          `f(new Number(5)) === 5`,
+          `f(new String("q")) === "q"`,
+          `f(new Boolean(false)) === false`,
+          `f(Object(sym)) === sym`,
+        ],
+      },
+      ownMethod: {
+        prelude: `function f(x) { return x.toString(); }
+var own = new Number(5);
+own.toString = function () { return "own"; };`,
+        rows: [`f(own) === "own"`, `f(new Number(6)) === "6"`],
+      },
+    };
+    const answers = async ({ prelude, rows }: Case, experimentalIR: boolean) => {
+      const entry = "/__main.js";
+      const source = `${prelude}
+${rows.map((check, i) => `export function c${i}() { try { return (${check}) ? 1 : 0; } catch (e) { return -1; } }`).join("\n")}`;
+      const result = await compileMulti({ [entry]: source }, entry, {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+        hostBridge: "off",
+        trackIrOutcomes: true,
+        ...(experimentalIR ? {} : { experimentalIR: false }),
+      } as never);
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      (instance.exports as { __module_init?: () => void }).__module_init?.();
+      return { result, values: rows.map((_, i) => (instance.exports[`c${i}`] as () => number)()) };
+    };
+    for (const [name, testCase] of Object.entries(cases)) {
+      const ir = await answers(testCase, true);
+      expect(row(ir.result, "f")?.irBodyEmitted, name).toBe(true);
+      expect(ir.values, name).toEqual((await answers(testCase, false)).values);
+      if (!testCase.legacyGap) expect(ir.values, name).toEqual(testCase.rows.map(() => 1));
+    }
+  }, 120_000);
 
   it("throws TypeError for a non-callable or nullish receiver property and reads a getter once", async () => {
     // The getter is on `push`, not `join`: a `{ join: 1 }` literal in the same
