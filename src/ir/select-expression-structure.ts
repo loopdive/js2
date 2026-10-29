@@ -69,22 +69,35 @@ function resolveFunctionObjectReceiver(
   node: ts.Identifier,
   resolver: IrImportedFunctionResolver | undefined,
 ): IrResolvedFunctionTarget | undefined {
+  return isFunctionObjectReceiverUse(node, { chainedWrite: true })
+    ? resolver?.resolveTopLevelFunctionValue(node)
+    : undefined;
+}
+
+/**
+ * (#7106) Is `node` used only as the receiver of a function object's member:
+ * a member call `F.x(…)`, a member write `F.x = v`, a member read
+ * `var v = F.x` (`isFunctionObjectMemberRead`) or, with `chainedWrite`, a
+ * chained write `F.p.x = v`? Each lowers to the boxed function object followed
+ * by a dynamic member operation. An optional access or call is never one. The
+ * selector, the planner and the prepared revalidation all ask this one
+ * question; the revalidation does not admit chained writes.
+ */
+export function isFunctionObjectReceiverUse(node: ts.Identifier, opts: { readonly chainedWrite: boolean }): boolean {
   const access = node.parent;
   if (
     !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
     access.expression !== node ||
     access.questionDotToken !== undefined
   )
-    return;
+    return false;
   const use = access.parent;
-  if (
-    !(ts.isCallExpression(use) && use.expression === access) &&
-    !(ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) &&
-    !isFunctionObjectChainedWrite(access) &&
-    !isFunctionObjectMemberRead(access)
-  )
-    return;
-  return resolver?.resolveTopLevelFunctionValue(node);
+  return (
+    (ts.isCallExpression(use) && use.expression === access && !use.questionDotToken) ||
+    (ts.isBinaryExpression(use) && use.left === access && use.operatorToken.kind === ts.SyntaxKind.EqualsToken) ||
+    (opts.chainedWrite && isFunctionObjectChainedWrite(access)) ||
+    (ts.isPropertyAccessExpression(access) && isFunctionObjectMemberRead(access))
+  );
 }
 
 /**
@@ -94,10 +107,9 @@ function resolveFunctionObjectReceiver(
  * get. Only the declaration-initializer position: an update/delete operand or
  * a destructuring target is not a plain read.
  */
-export function isFunctionObjectMemberRead(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): boolean {
+export function isFunctionObjectMemberRead(access: ts.PropertyAccessExpression): boolean {
   const declaration = access.parent;
   return (
-    ts.isPropertyAccessExpression(access) &&
     ts.isIdentifier(access.name) &&
     ts.isVariableDeclaration(declaration) &&
     declaration.initializer === access &&
@@ -142,6 +154,53 @@ export function isFunctionObjectReceiver(
   resolver: IrImportedFunctionResolver | undefined,
 ): boolean {
   return resolveFunctionObjectReceiver(node, resolver) !== undefined;
+}
+
+/**
+ * (#7106 Stage 4) The `var` locals of `fn`'s own body initialized by a
+ * function-object member read (`var format = compareArray.format;`) and never
+ * written again — no second declaration, assignment or update (a nested
+ * function, which could capture one, is refused by every member-closure plan).
+ * Each holds the dynamic carrier for its whole life.
+ */
+export function functionObjectReadLocals(
+  fn: ts.FunctionExpression,
+  resolver: IrImportedFunctionResolver | undefined,
+): ReadonlySet<string> {
+  const candidates = new Map<string, number>();
+  const written = new Set<string>();
+  const parameters = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
+  const visit = (node: ts.Node): void => {
+    if (node !== fn.body && ts.isFunctionLike(node)) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const read =
+        node.initializer !== undefined &&
+        ts.isPropertyAccessExpression(node.initializer) &&
+        ts.isIdentifier(node.initializer.expression) &&
+        isFunctionObjectReceiver(node.initializer.expression, resolver);
+      candidates.set(node.name.text, read ? (candidates.get(node.name.text) ?? 0) + 1 : Number.POSITIVE_INFINITY);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left)
+    )
+      written.add(node.left.text);
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(node.operand)
+    )
+      written.add(node.operand.text);
+    forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return new Set(
+    [...candidates].flatMap(([name, count]) =>
+      count === 1 && !written.has(name) && !parameters.has(name) ? [name] : [],
+    ),
+  );
 }
 
 /**

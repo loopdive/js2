@@ -97,7 +97,7 @@ import {
   unwrapTypeErasedExpression,
   identifierIsValueReference,
   isFunctionObjectReceiver,
-  isFunctionObjectMemberRead,
+  functionObjectReadLocals,
   isFunctionObjectStoredValue,
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
@@ -109,8 +109,7 @@ import {
 export {
   effectiveIrParamTypeNode,
   effectiveIrReturnTypeNode,
-  isFunctionObjectChainedWrite,
-  isFunctionObjectMemberRead,
+  isFunctionObjectReceiverUse,
   functionObjectStoreRoot,
 } from "./select-expression-structure.js";
 import type { IrHostDateSnapshotResolver } from "./host-date.js";
@@ -6433,49 +6432,20 @@ let currentClosureDynamicParamNames: ReadonlySet<string> = new Set();
 // (#7106 Stage 4) The planned member closure's `var x = F.member;` locals: each
 // holds the dynamic carrier for its whole life (one declaration, never stored).
 let currentClosureFunctionObjectReadLocals: ReadonlySet<string> = new Set();
-
-/**
- * (#7106 Stage 4) The `var` locals of `fn`'s own body that are initialized by a
- * function-object member read (`var format = compareArray.format;`) and are
- * never written again — no second declaration, assignment, update or nested
- * function capture (a nested function is refused by every member-closure plan).
- */
-function functionObjectReadLocals(fn: ts.FunctionExpression): ReadonlySet<string> {
-  const candidates = new Map<string, number>();
-  const written = new Set<string>();
-  const parameters = new Set(fn.parameters.flatMap((p) => (ts.isIdentifier(p.name) ? [p.name.text] : [])));
-  const visit = (node: ts.Node): void => {
-    if (node !== fn.body && ts.isFunctionLike(node)) return;
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      const read =
-        node.initializer !== undefined &&
-        (ts.isPropertyAccessExpression(node.initializer) || ts.isElementAccessExpression(node.initializer)) &&
-        ts.isIdentifier(node.initializer.expression) &&
-        isFunctionObjectMemberRead(node.initializer) &&
-        isFunctionObjectReceiver(node.initializer.expression, currentSelectionOptions?.functionObjectValues);
-      candidates.set(node.name.text, read ? (candidates.get(node.name.text) ?? 0) + 1 : Number.POSITIVE_INFINITY);
-    }
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      ts.isIdentifier(node.left)
-    )
-      written.add(node.left.text);
-    if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(node.operand)
-    )
-      written.add(node.operand.text);
-    forEachChild(node, visit);
-  };
-  visit(fn.body);
-  return new Set(
-    [...candidates].flatMap(([name, count]) =>
-      count === 1 && !written.has(name) && !parameters.has(name) ? [name] : [],
-    ),
-  );
+// Computed once per plan: the shape walk and the #7144 operand walk both read it.
+const closureReadLocalsByPlan = new WeakMap<
+  import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
+  ReadonlySet<string>
+>();
+function closureFunctionObjectReadLocals(
+  plan: import("./function-member-closure-plan.js").IrFunctionMemberClosurePlan,
+): ReadonlySet<string> {
+  let locals = closureReadLocalsByPlan.get(plan);
+  if (locals === undefined) {
+    locals = functionObjectReadLocals(plan.expression, currentSelectionOptions?.functionObjectValues);
+    closureReadLocalsByPlan.set(plan, locals);
+  }
+  return locals;
 }
 
 /**
@@ -7261,7 +7231,7 @@ function isPhase1ClosureLiteral(
       currentSelectionOptions?.supportsBackendCapability?.("native-dynamic-loose-equality") === true,
     isGlobalUndefined: (expression) => isUnshadowedUndefinedIdentifier(expression, scope),
     wrappedMethodCall: dynamicMethodCallTakesWrapper,
-    functionObjectReadLocals: functionObjectReadLocals(plan.expression),
+    functionObjectReadLocals: closureFunctionObjectReadLocals(plan),
   });
   return refusal === null || capabilityNo("operand-coercion-unsupported", refusal.arm, refusal.node);
 }
@@ -7312,7 +7282,7 @@ function withFunctionMemberClosureState<T>(
   const outerSafeVarLists = currentIrSafeVarDeclarationLists;
   const outerClosureDynamicNames = currentClosureDynamicParamNames;
   const outerClosureReadLocals = currentClosureFunctionObjectReadLocals;
-  currentClosureFunctionObjectReadLocals = functionObjectReadLocals(plan.expression);
+  currentClosureFunctionObjectReadLocals = closureFunctionObjectReadLocals(plan);
   currentClosureDynamicParamNames = new Set(
     [...plan.dynamicParameterIndices].flatMap((index) => {
       const { name } = plan.expression.parameters[index]!;
