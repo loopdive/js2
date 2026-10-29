@@ -502,7 +502,7 @@ export function plannedClosureOperandRefusal(
       statements.length > 0 &&
       ts.isThrowStatement(statements[statements.length - 1]!) &&
       !walk(body!, ts.isReturnStatement);
-    newShape = plan.site === "call-argument" || mintsJoin || throwOnly;
+    newShape = plan.site !== "member-assignment" || mintsJoin || throwOnly;
     return newShape;
   };
 

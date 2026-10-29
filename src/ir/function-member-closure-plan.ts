@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { ts } from "../ts-api.js";
+import { ts } from "../ts-api.js";
 import type { IrUnitId } from "./identity.js";
 import { forEachInstrDeep, type IrClosureSignature, type IrFunction, type IrInstr, type IrTypeRef } from "./nodes.js";
 
@@ -9,8 +9,11 @@ export interface IrFunctionMemberClosurePlan {
   readonly expression: ts.FunctionExpression;
   readonly ownerUnitId: IrUnitId;
   readonly sourceUnitId: IrUnitId;
-  /** (#7195) `F.m = function () {}`, or a callback argument of a top-level `F.m(…)` call. */
-  readonly site: "member-assignment" | "call-argument";
+  /**
+   * (#7195) `F.m = function () {}`, a callback argument of a top-level
+   * `F.m(…)` call, or (#7198) a script `var f = function () {}`.
+   */
+  readonly site: "member-assignment" | "call-argument" | "script-var";
   /** Actual canonical wrapper ABI, including raw externref user slots. */
   readonly signature: IrClosureSignature;
   /** Only these exact raw parameters acquire logical dynamic SSA at entry. */
@@ -31,6 +34,18 @@ export interface IrFunctionMemberClosures {
     instruction: Extract<IrInstr, { kind: "closure.new" }>,
     refs: readonly IrTypeRef[] | undefined,
   ): void;
+}
+
+/**
+ * (#7198) The initializer of a script var whose slot is the dynamic home is a
+ * planned closure: the ordinary module-binding store boxes it into the carrier.
+ */
+export function isDynamicHomeClosure(
+  closures: IrFunctionMemberClosures | undefined,
+  initializer: ts.Expression,
+  slotIsDynamic: boolean,
+): boolean {
+  return slotIsDynamic && ts.isFunctionExpression(initializer) && closures?.resolve(initializer)?.site === "script-var";
 }
 
 /** Walk actual final allocation instructions, without guessing a layout array position. */
