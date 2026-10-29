@@ -166,6 +166,44 @@ describe("#7106 — Array.prototype.<m>.call on the ambient Array lowers through
     expect(await run(result)).toBe(expected);
   });
 
+  it("refuses before claiming the #6972 review shapes, and keeps the harness row claimed", async () => {
+    // `fmt` called only with a vec / typed array: legacy types `x` from the
+    // call sites, past the carrier (`dynamicCarrierDivergesFromLegacy`). With
+    // an object literal the IR projects `x` as a struct the carrier cannot
+    // box: the move-only scan proves every concrete operand boxable first.
+    const fmt = `function fmt(x) { return Array.prototype.map.call(x, String).join(", "); }`;
+    const repros = [
+      `${fmt}\nexport function run() { return fmt([1, 2]) === "1, 2" ? 1 : 0; }`,
+      `${fmt}\nexport function run() { return fmt([]) === "" ? 1 : 0; }`,
+      `${fmt}\nexport function run() { return fmt([1, , 3]) === "1, , 3" ? 1 : 0; }`,
+      `${fmt}\nexport function run() { return fmt(new Int8Array([4, 5])) === "4, 5" ? 1 : 0; }`,
+      `${fmt}\nexport function run() { return fmt({ length: 2, 0: "a", 1: "b" }) === "a, b" ? 1 : 0; }`,
+    ];
+    for (const source of repros) {
+      const result = await compileStandalone(source);
+      expect(outcome(result, "fmt")?.irBodyEmitted, source).toBe(false);
+      const legacy = await compile(source, {
+        fileName: "test.js",
+        allowJs: true,
+        target: "standalone",
+        skipSemanticDiagnostics: true,
+        experimentalIR: false,
+      } as Parameters<typeof compile>[1]);
+      expect(await run(result), source).toBe(await run(legacy));
+    }
+    // node parity except the hole row (legacy's own `[1, , 3]` gap, unchanged).
+    for (const source of repros.filter((_, i) => i !== 2)) {
+      expect(await run(await compileStandalone(source)), source).toBe(node(source));
+    }
+    // The harness row: the borrow result feeds `+`, not a typed return, and the
+    // receiver is the carrier (array-like and array callers) — still claimed.
+    const harness = `function f(arrayLike) { return "[" + Array.prototype.map.call(arrayLike, String).join(", ") + "]"; }
+export function run() { return f([1, 2]) === "[1, 2]" && f({ length: 1, 0: "a" }) === "[a]" ? 1 : 0; }`;
+    const claimed = await compileStandalone(harness);
+    expect(outcome(claimed, "f")?.irBodyEmitted).toBe(true);
+    expect(await run(claimed)).toBe(node(harness));
+  }, 90_000);
+
   it("never borrows through a shadowed `Array`, and still answers like node", async () => {
     const source = program(
       `function shadowed(Array, a) { return Array.prototype.join.call(a, "-"); }

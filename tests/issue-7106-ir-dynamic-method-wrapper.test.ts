@@ -300,6 +300,41 @@ ${rows.map((check, i) => `export function c${i}() { try { return (${check}) ? 1 
     }
   }, 120_000);
 
+  it("refuses before claiming when legacy types the receiver parameter past the carrier (#6970 review)", async () => {
+    // Call sites with only an array (or string) argument give legacy a vec /
+    // string parameter slot, while the IR keeps the receiver as the externref
+    // carrier: a guaranteed `function typeIdx parity mismatch` withdrawal, so
+    // the selector declines it up front (`dynamicCarrierDivergesFromLegacy`).
+    const repros = [
+      `function ask(x) { return x.join(); }\nexport function run() { return ask([1, 2]) === "1,2" ? 1 : 0; }`,
+      `function ask(x, a) { return x.join(a); }\nexport function run() { try { return ask("abc", "-") === "abc" ? 1 : 0; } catch (e) { return -1; } }`,
+      `function ask(x, a) { return x.push(a); }\nexport function run() { try { return ask("abc", 1) === 4 ? 1 : 0; } catch (e) { return -1; } }`,
+      `function ask(x, a, b) { return x.slice(a, b).length; }\nexport function run() { return ask([1, 2, 3, 4], 1, 3); }`,
+    ];
+    for (const source of repros) {
+      const result = await compileOn(source, "standalone");
+      expect(row(result, "ask")?.irBodyEmitted, source).toBe(false);
+      expect(result.irPostClaimErrors ?? [], source).toEqual([]);
+      const legacy = await compileOn(source, "standalone", { experimentalIR: false });
+      const got = ((await instantiate(result, "standalone")).exports.run as () => number)();
+      expect(got, source).toBe(((await instantiate(legacy, "standalone")).exports.run as () => number)());
+    }
+    // node parity where legacy has it (the string receivers' `join`/`push`
+    // TypeError is legacy's own gap, unchanged here).
+    for (const source of [repros[0]!, repros[3]!]) {
+      const got = (
+        (await instantiate(await compileOn(source, "standalone"), "standalone")).exports.run as () => number
+      )();
+      expect(got, source).toBe(node(source));
+    }
+    // A mixed caller keeps the claim: legacy's slot is the carrier there.
+    const mixed = `function ask(x) { return x.join(); }
+export function run() { return ask([1, 2]) === "1,2" && ask({ join: function () { return "j"; } }) === "j" ? 1 : 0; }`;
+    const claimed = await compileOn(mixed, "standalone");
+    expect(row(claimed, "ask")?.irBodyEmitted).toBe(true);
+    expect(((await instantiate(claimed, "standalone")).exports.run as () => number)()).toBe(node(mixed));
+  }, 90_000);
+
   it("throws TypeError for a non-callable or nullish receiver property and reads a getter once", async () => {
     // The getter is on `push`, not `join`: a `{ join: 1 }` literal in the same
     // module makes legacy's any-receiver read of an accessor `join` answer a

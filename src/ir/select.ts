@@ -155,7 +155,7 @@ import {
   conditionalJoinFamily,
   isComparisonResultOperator,
   isEqualityOperator,
-  isF64CompoundAssignOperator,
+  isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
 } from "./analysis/operand-admissibility.js";
 import { selectVecSearchOrJoin, type IrArrayElementFamily } from "./array-methods/selection.js";
@@ -2270,7 +2270,7 @@ function whyNotIrClaimable(
     dynNames.size > 0 ||
     isDynamicReturn ||
     subjectHasAmbientThis() ||
-    containsReceiverFirstDynamicMethodCall(body) ||
+    containsCarrierAbiCall(body) ||
     bodyCallsDynamicParamCallee(body, typeMap) ||
     containsDynamicCarrierForInHead(body)
   ) {
@@ -3025,6 +3025,19 @@ function concreteDynamicEqualityOperandIsBuildable(candidate: ts.Expression, all
   );
 }
 
+/**
+ * Does a concrete operand box onto the dynamic carrier (`boxConcreteToDynamic`)?
+ * A value the assignment rule proves scalar, or a number/boolean/string
+ * PARAMETER, which boxes by its slot's own family (a lattice `bool` slot
+ * carries the `irBool` brand), like the dynamic-equality operands.
+ */
+function concreteOperandBoxesOntoCarrier(concrete: ts.Expression): boolean {
+  return (
+    (ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text)) ||
+    concreteDynamicAssignmentOperandIsBuildable(concrete)
+  );
+}
+
 function concreteDynamicAssignmentOperandIsBuildable(candidate: ts.Expression): boolean {
   if (expressionIsProvenNumber(candidate)) return true;
   if (currentSelectionOptions?.classifyPrimitiveExpression?.(candidate) === "string") return true;
@@ -3069,14 +3082,9 @@ function dynamicMethodCallTakesWrapper(name: string, arity: number): boolean {
 }
 
 /**
- * True when the current body contains an exact receiver-first dynamic method
- * call (#3793 retained function object or #4387 inherited Array HOF).
- *
- * Such calls always use the boxed-dynamic closed-dispatch ABI, so they must
- * run through {@link dynamicUsesAreMoveOnly} even when the enclosing
- * declaration has no dynamic parameter/result. The scan then proves both the
- * result position and every argument bridge before the selector claims the
- * function.
+ * The exact receiver-first dynamic method call plan (#3793 retained function
+ * object or #4387 inherited Array HOF), which uses the boxed-dynamic
+ * closed-dispatch ABI ({@link containsCarrierAbiCall}).
  */
 function receiverFirstDynamicMethodPlan(call: ts.CallExpression): { readonly arity: number } | undefined {
   return (
@@ -3099,12 +3107,22 @@ function isStoredObjectDescriptorAliasCall(call: ts.CallExpression, shadowed: (n
   );
 }
 
-function containsReceiverFirstDynamicMethodCall(body: ts.Block): boolean {
+/**
+ * Does the body make a call whose operands cross the boxed-dynamic ABI — an
+ * exact receiver-first dynamic method call, or (#7106 compareArray.format) an
+ * `Array.prototype.<m>.call(…)` borrow? Either runs the move-only scan even
+ * with no dynamic parameter or result, which proves every operand is the
+ * carrier or a concrete value the carrier boxes before the claim.
+ */
+function containsCarrierAbiCall(body: ts.Block): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
     if (node !== body && isFunctionLike(node)) return;
-    if (ts.isCallExpression(node) && receiverFirstDynamicMethodPlan(node) !== undefined) {
+    if (
+      ts.isCallExpression(node) &&
+      (receiverFirstDynamicMethodPlan(node) !== undefined || ambientArrayPrototypeBorrowCall(node) !== null)
+    ) {
       found = true;
       return;
     }
@@ -3341,10 +3359,7 @@ function dynamicUsesAreMoveOnly(
       for (const argument of e.arguments ?? []) {
         const dynamic = isDynShaped(argument);
         const concrete = unwrap(argument);
-        // A scalar-typed parameter (propagation gave it f64/bool/string) boxes
-        // through `boxConcreteToDynamic` exactly like a literal operand.
-        const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
-        if (!dynamic && !boxableParam && !concreteDynamicAssignmentOperandIsBuildable(concrete)) return false;
+        if (!dynamic && !concreteOperandBoxesOntoCarrier(concrete)) return false;
         if (!scanExpr(argument, dynamic)) return false;
       }
       return true;
@@ -3370,7 +3385,12 @@ function dynamicUsesAreMoveOnly(
       const arrayBorrow = dynNames.has("Array") ? null : ambientArrayPrototypeBorrowCall(e);
       if (arrayBorrow !== null) {
         if (!expectDyn || !currentDynamicRuntimeBuildable) return false;
-        return [arrayBorrow.receiver, ...arrayBorrow.args].every((operand) => scanExpr(operand, isDynShaped(operand)));
+        // A concrete operand is boxed onto the carrier, as the dynamic method call's arguments are.
+        return [arrayBorrow.receiver, ...arrayBorrow.args].every((operand) =>
+          isDynShaped(operand)
+            ? scanExpr(operand, true)
+            : concreteOperandBoxesOntoCarrier(unwrap(operand)) && scanExpr(operand, false),
+        );
       }
       const receiverFirstMethod = receiverFirstDynamicMethodPlan(e);
       if (receiverFirstMethod !== undefined) {
@@ -3462,10 +3482,7 @@ function dynamicUsesAreMoveOnly(
             continue;
           }
           const concrete = unwrap(argument);
-          const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
-          if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false)) {
-            return false;
-          }
+          if (!concreteOperandBoxesOntoCarrier(concrete) || !scanExpr(concrete, false)) return false;
         }
         return true;
       }
@@ -3484,12 +3501,7 @@ function dynamicUsesAreMoveOnly(
             if (!scanExpr(argument, true)) return false;
           } else {
             const concrete = unwrap(argument);
-            // (#7106 census arm 4) A number/boolean/string PARAMETER boxes by
-            // its slot's own family (a lattice `bool` slot carries the
-            // `irBool` brand), like the dynamic-equality operands.
-            const boxableParam = ts.isIdentifier(concrete) && currentDynEqualityBoxableParamNames.has(concrete.text);
-            if (!(boxableParam || concreteDynamicAssignmentOperandIsBuildable(concrete)) || !scanExpr(concrete, false))
-              return false;
+            if (!concreteOperandBoxesOntoCarrier(concrete) || !scanExpr(concrete, false)) return false;
           }
         }
         return true;
@@ -4199,8 +4211,8 @@ function phase1MutatingStatementVerdict(
     // before the RHS), which is why this is a separate arm and not a widening
     // of the `=` ones.
     if (
-      isF64CompoundAssignOperator(op) &&
-      (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
+      (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left)) &&
+      isSelectableNumberCompound(expr, scope, localClasses)
     ) {
       if (!isPhase1MutableMemberTarget(expr.left, scope, localClasses)) {
         return { ok: false, arm: "member-compound-target", node: expr.left };
@@ -4602,8 +4614,8 @@ function isPhase1StatementListInScope(
       // shape; mirror it here for `<early return>; x -= n; return ...`.
       if (
         ts.isBinaryExpression(s.expression) &&
-        isF64CompoundAssignOperator(s.expression.operatorToken.kind) &&
-        ts.isIdentifier(s.expression.left)
+        ts.isIdentifier(s.expression.left) &&
+        isSelectableNumberCompound(s.expression, scope, localClasses)
       ) {
         if (isUnrepresentableModuleBinding(s.expression.left)) {
           return shapeNo("nontail-module-storage-unrepresentable", s.expression);
@@ -5520,9 +5532,7 @@ function isPhase1ForUpdateExpr(
     const moduleBinding = currentModuleBindingResolver?.(expr.left);
     if (moduleBinding) {
       if (currentSubjectIsModuleInit) {
-        if (op !== ts.SyntaxKind.EqualsToken && !isF64CompoundAssignOperator(op)) {
-          return false;
-        }
+        if (op !== ts.SyntaxKind.EqualsToken && !isSelectableNumberCompound(expr, scope, localClasses)) return false;
         if (!scope.has(expr.left.text)) return false;
         if (op === ts.SyntaxKind.EqualsToken && !currentModuleBindingResolver?.(expr.left, expr.right)) return false;
         return isPhase1Expr(expr.right, scope, localClasses);
@@ -5532,7 +5542,7 @@ function isPhase1ForUpdateExpr(
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // Plain or compound assignment to an identifier in scope.
-    if (op === ts.SyntaxKind.EqualsToken || isF64CompoundAssignOperator(op)) {
+    if (op === ts.SyntaxKind.EqualsToken || isSelectableNumberCompound(expr, scope, localClasses)) {
       if (!scope.has(expr.left.text)) return false;
       if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) return false;
       if (!isPhase1Expr(expr.right, scope, localClasses)) return false;
@@ -5934,20 +5944,18 @@ function isPhase1BodyStatement(
       }
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
-      if (isF64CompoundAssignOperator(op)) {
-        if (ts.isIdentifier(stmt.expression.left)) {
-          if (isUnrepresentableModuleBinding(stmt.expression.left)) {
-            return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-          }
-          if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
-            return shapeNo("body-module-compound", stmt.expression);
-          }
-          if (!scope.has(stmt.expression.left.text)) return false;
-          if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
-          if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
-          clearProjectionBinding(stmt.expression.left.text);
-          return true;
+      if (ts.isIdentifier(stmt.expression.left) && isSelectableNumberCompound(stmt.expression, scope, localClasses)) {
+        if (isUnrepresentableModuleBinding(stmt.expression.left)) {
+          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
         }
+        if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
+          return shapeNo("body-module-compound", stmt.expression);
+        }
+        if (!scope.has(stmt.expression.left.text)) return false;
+        if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
+        if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
+        clearProjectionBinding(stmt.expression.left.text);
+        return true;
       }
     }
     // Slice 12 (#1280): postfix `i++` / `i--` / prefix `++i` / `--i`
@@ -8838,6 +8846,44 @@ function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
   );
 }
 
+/**
+ * (#7183) A numeric compound assignment the lane lowers. `a **= b` is `a = a ** b`,
+ * so it is admitted by the same exact-exponentiation predicate as `**`.
+ */
+function isSelectableNumberCompound(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
+    return exactNumericExponentiationAdmissible(expr, scope, localClasses);
+  }
+  return isNumberCompoundAssignOperator(expr.operatorToken.kind);
+}
+
+/**
+ * #4787 — the one admission for `a ** b` and (#7183) `a **= b`: a prepared
+ * single-source top-level function with two exact checker-proven numeric
+ * operands. Everything else is a typed pre-claim Unsupported, including
+ * provider-unavailable lanes.
+ */
+function exactNumericExponentiationAdmissible(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (!exactNumericExponentiationContextReady()) {
+    return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
+  }
+  if (
+    !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
+    !exactNumericExponentiationOperand(expr.right, scope, localClasses)
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
+  }
+  return true;
+}
+
 function selectorSupportsNumberToString(): boolean {
   return (
     currentSelectionOptions?.supportsNumberToString === true ||
@@ -11171,20 +11217,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
     // #4787 — `**` is the first bounded operator retirement checkpoint. Do
-    // not let the shared claim row widen the old shape walk: only a prepared
-    // single-source top-level function with two exact checker-proven numeric
-    // operands may reach the semantic `math.pow` builder arm. Everything else
-    // is a typed pre-claim Unsupported, including provider-unavailable lanes.
+    // not let the shared claim row widen the old shape walk: only operands
+    // `exactNumericExponentiationAdmissible` proves may reach the semantic
+    // `math.pow` builder arm.
     if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
-      if (!exactNumericExponentiationContextReady()) {
-        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
-      }
-      if (
-        !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
-        !exactNumericExponentiationOperand(expr.right, scope, localClasses) ||
-        !isPhase1Expr(expr.left, scope, localClasses) ||
-        !isPhase1Expr(expr.right, scope, localClasses)
-      ) {
+      if (!exactNumericExponentiationAdmissible(expr, scope, localClasses)) return false;
+      if (!isPhase1Expr(expr.left, scope, localClasses) || !isPhase1Expr(expr.right, scope, localClasses)) {
         return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
       }
       return true;
