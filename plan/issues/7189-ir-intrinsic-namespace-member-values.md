@@ -95,10 +95,11 @@ IR vs legacy vs node:
   - The intrinsic itself, never an alias, must be the receiver of
     `<NS>.<m>`, where `<m>` is in a measured `STATIC_METHOD_NAMES` table:
     `Array` {isArray, from, of}, and `Object` with 18 methods.
-  - The read must sit in a measured value position: a `var` initializer, the
-    right side of `=`, a `typeof` or `!` operand, or an equality operand.
-    Every other position is refused, including calls, further reads, writes,
-    destructuring, `delete` and coercions such as `"" + f`.
+  - The read must sit in a measured value position: a `var` initializer, a
+    `typeof` or `!` operand, or a strict-equality operand. Every other
+    position is refused, including calls, further reads, writes,
+    destructuring, `delete`, coercions such as `"" + f`, loose equality
+    (#7194) and the right side of `=`.
 - **Reuse / duplicate removed.** #7127's `isExactProtoMethodValueRead` ends in
   the same plain-value check. That tail moves into one `isPlainMethodValue`
   helper, used by both arms, so the two cannot drift.
@@ -151,6 +152,24 @@ First pass: **NOT MET**. Findings and what was done about them:
 8. **Fixed.** Direct predicate tests now cover a call, a further read, an
    unlisted member, an assignment, array and object destructuring, a for-of
    head, `delete` and a numeric unary.
+
+## Third review (2026-10-29, REQUEST CHANGES on `ad652311`)
+
+The `scriptVarHomeSlot` fix was verified sound. The remaining findings were
+all in the positions `isPlainMethodValue` admitted:
+
+1. **Fixed.** Loose equality (`Object.is == 1`, `Array.isArray != 1`) was
+   claimed and then trapped with `illegal cast`; this is the #7194
+   carrier-`==` bug. Only `===` / `!==` are admitted now. The strict set is
+   split out of this file's `EQUALITY_OPERATORS`, which is now the strict set
+   plus `==` / `!=`, so nothing is duplicated.
+2. **Fixed.** A chained assignment (`var a = b = Array.isArray`) was a compile
+   error, because from-ast takes `=` only as a statement. The `=` RHS position
+   is dropped rather than mirrored: `src/shared` cannot reach the selector's
+   assignment arm, and no measured case needs it.
+3. **Fixed by 1.** `Object.keys == null` is no longer claimed and then
+   withdrawn. All three shapes are tests, with the empty-`irPostClaimErrors`
+   assertion.
 
 ## Fixed along the way: helper-named script vars
 

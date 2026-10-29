@@ -127,9 +127,13 @@ const OPAQUE: UsePosition = { kind: "opaque" };
 const MEMBER: UsePosition = { kind: "member" };
 const OTHER: UsePosition = { kind: "other" };
 
-const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+const STRICT_EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
   ts.SyntaxKind.EqualsEqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsEqualsToken,
+]);
+
+const EQUALITY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ...STRICT_EQUALITY_OPERATORS,
   ts.SyntaxKind.EqualsEqualsToken,
   ts.SyntaxKind.ExclamationEqualsToken,
 ]);
@@ -465,11 +469,12 @@ function isExactStaticMethodValueRead(node: ts.Identifier): boolean {
 }
 
 /**
- * The method read sits in a measured value position: a `var` initializer, the
- * right side of `=`, a `typeof` / `!` operand or an equality operand — the
- * positions where its typeof, identity, `name` and `length` were measured
- * exact. Anything else (a call, a further read, a write or destructuring
- * target, a coercion such as `"" + f`) is refused rather than reasoned about.
+ * The method read sits in a measured value position: a `var` initializer, a
+ * `typeof` / `!` operand or a strict-equality operand — where its typeof,
+ * identity, `name` and `length` were measured exact. Anything else is refused
+ * rather than reasoned about, including the right side of `=` (from-ast takes
+ * `=` only as a statement), loose equality (#7194: the carrier's `==` traps on
+ * a function operand) and coercions such as `"" + f`.
  */
 function isPlainMethodValue(methodAccess: MemberAccess): boolean {
   if (memberAccessOf(methodAccess) !== undefined) return false;
@@ -479,7 +484,5 @@ function isPlainMethodValue(methodAccess: MemberAccess): boolean {
   if (ts.isTypeOfExpression(parent)) return true;
   if (ts.isPrefixUnaryExpression(parent)) return parent.operator === ts.SyntaxKind.ExclamationToken;
   if (ts.isVariableDeclaration(parent)) return parent.initializer === use;
-  if (!ts.isBinaryExpression(parent)) return false;
-  const operator = parent.operatorToken.kind;
-  return EQUALITY_OPERATORS.has(operator) || (operator === ts.SyntaxKind.EqualsToken && parent.right === use);
+  return ts.isBinaryExpression(parent) && STRICT_EQUALITY_OPERATORS.has(parent.operatorToken.kind);
 }

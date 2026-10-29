@@ -112,6 +112,8 @@ describe("#7189 — static method values off ambient namespace intrinsics", () =
       ["a call", `Array.isArray(1);`],
       ["a string coercion", `var s = "" + Array.isArray;`],
       ["a call argument", `String(Array.isArray);`],
+      ["a loose-equality operand", `var b = Array.isArray == null;`],
+      ["the right side of =", `var f; f = Array.isArray;`],
       ["a further read", `var n = Array.isArray.length;`],
       ["an unlisted member", `var f = Array.fromAsync;`],
       ["an assignment target", `Array.isArray = null;`],
@@ -145,12 +147,26 @@ var __getOwnPropertyNames = Object.getOwnPropertyNames;`,
     }
   }
 
-  // A coercion of the value is not a measured position: no claim, so nothing to withdraw.
-  for (const target of TARGETS) {
-    it(`a coerced static-method value stays legacy (${lane(target)})`, async () => {
-      const source = `if (("" + Object.is).indexOf("function") !== 0) { throw "#c"; }`;
-      expect(await run(target, source)).toEqual({ claimed: false, threw: false });
+  // Unmeasured positions stay legacy — no claim, so nothing to withdraw (the
+  // runner asserts `irPostClaimErrors` is empty): a coercion, loose equality
+  // (#7194 traps on a function operand), `== null`, and a chained assignment
+  // (from-ast takes `=` only as a statement).
+  const UNMEASURED_POSITIONS: Record<string, string> = {
+    coercion: `if (("" + Object.is).indexOf("function") !== 0) { throw "#c"; }`,
+    looseEqual: `if (Object.is == 1) { throw "#l"; }`,
+    looseNotEqual: `if (!(Array.isArray != 1)) { throw "#n"; }`,
+    looseNull: `if (Object.keys == null) { throw "#u"; }`,
+    chainedAssignment: `var a = b = Array.isArray; var b; if (a !== b) { throw "#a"; }`,
+  };
+  for (const [name, source] of Object.entries(UNMEASURED_POSITIONS)) {
+    it(`node agrees: ${name}`, () => {
+      expect(() => new Function(source)()).not.toThrow();
     });
+    for (const target of TARGETS) {
+      it(`${name} stays legacy and answers as node does (${lane(target)})`, async () => {
+        expect(await run(target, source)).toEqual({ claimed: false, threw: false });
+      });
+    }
   }
 
   // A failing check still throws from the IR body.
