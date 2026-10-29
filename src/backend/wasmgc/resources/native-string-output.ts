@@ -325,7 +325,7 @@ export function fillNativeStringOutputResources(
     tx.fillGlobal(pack.stdout.accumulator, [{ op: "ref.null", typeIdx: l.anyStrTypeIdx }]);
     tx.fillGlobal(pack.stdout.flat, [{ op: "ref.null", typeIdx: l.nativeStrTypeIdx }]);
   }
-  tx.fillFunction(
+  tx.fillOwnedFunction(
     pack.concat,
     buildStringConcatDefinition(layout, {
       flattenIdx: flatten.flatten.handle,
@@ -333,7 +333,7 @@ export function fillNativeStringOutputResources(
     }),
   );
   for (const batch of pack.batches)
-    tx.fillFunction(
+    tx.fillOwnedFunction(
       batch.function,
       buildStringBatchedConcatDefinition(layout, batch.arity, {
         flattenIdx: flatten.flatten.handle,
@@ -344,8 +344,11 @@ export function fillNativeStringOutputResources(
   if (pack.stdout) {
     const accGlobalIdx = tx.physicalIndex(pack.stdout.accumulator),
       flatGlobalIdx = tx.physicalIndex(pack.stdout.flat);
-    tx.fillFunction(pack.stdout.append, buildStdoutAppendDefinition({ accGlobalIdx, concatIdx: pack.concat.handle }));
-    tx.fillFunction(
+    tx.fillOwnedFunction(
+      pack.stdout.append,
+      buildStdoutAppendDefinition({ accGlobalIdx, concatIdx: pack.concat.handle }),
+    );
+    tx.fillOwnedFunction(
       pack.stdout.prepare,
       buildStdoutPrepareDefinition({
         accGlobalIdx,
@@ -354,7 +357,7 @@ export function fillNativeStringOutputResources(
         flattenIdx: flatten.flatten.handle,
       }),
     );
-    tx.fillFunction(
+    tx.fillOwnedFunction(
       pack.stdout.char,
       buildStdoutCharDefinition({
         flatGlobalIdx,
