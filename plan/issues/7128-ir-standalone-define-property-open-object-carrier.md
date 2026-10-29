@@ -406,13 +406,20 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
 5. **Narrower U1 and U2 than D1.**
    - U1 must be an expression statement, because a used result would alias
      the carrier.
-   - U2 is an ALLOW-list of consumers (review findings 1–3, PR #6957):
-     `===`/`!==`/`==`/`!=`, relational `<`/`<=`/`>`/`>=`, `-`/`*`/`/`/`%`
-     operands, an identifier binding's initializer, `return` and `throw`.
-     Every other consumer keeps the function on legacy: ToBoolean (`if`,
-     `while`, `?:`, `!`, `&&`, `||`), member/element/non-null (`o.k.y` must
-     throw TypeError on undefined, `o.k?.y` threw under the IR), parentheses,
-     array/object-literal positions, spreads and every write target.
+   - U2 admits a read `o.k` only where it is consumed DIRECTLY: one side of a
+     strict `===`/`!==` whose other side is a primitive literal, `null` or
+     `undefined` (review round 3, PR #6957). Rounds 1 and 2 used a wider
+     allow-list, and each round found a new failing shape in it:
+     - ToBoolean, `o.k.y` and `o.k?.y` (round 1);
+     - loose `== null` and `switch` through an alias (round 2);
+     - an alias `var y = o.k` passing the value on to `y.z` / `y?.z`, which
+       miscompiled, and `- * / %` with a string or boolean operand, which
+       demoted after the claim (round 3).
+     So every alias (`var y = o.k`, `y = o.k`, `return`, `throw`) and every
+     arithmetic, relational, loose-equality, ToBoolean, member, element and
+     non-null consumer now keeps the function on legacy, which is correct by
+     construction. A read used as a bare statement is refused by the scan
+     anyway.
    - U2 also refuses a key that `Object.prototype` owns (taken from
      `NATIVE_REALM_CATALOG`). `__dyn_member_get` on the open `$Object`
      answers undefined for an inherited key, so `var t = o.valueOf; t ? 1 : 0`
@@ -431,6 +438,11 @@ front of it, so S1 is groundwork and must not be tuned for a pass count.
      discriminant is refused (it demoted with "switch disc must lower to
      i32/f64"). Both reached the carrier through `o.k == null` and through
      the `var v = o.k` alias.
+   - **Still open, predates S1:** a catch binding compared loosely with null,
+     `try { throw null } catch (e) { return e == null ? 1 : 0 }`, claims and
+     demotes (`nullish-value-unsupported`) on base and head. The catch
+     binding takes a different scan route from the dynamic-value one fixed
+     above. No tracking issue exists yet.
    - Descriptor values are number, string and boolean literals only;
      `undefined` and `null` are deferred.
 6. **The admission is per subject.**

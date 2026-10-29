@@ -77,7 +77,7 @@ export function emptyObjectLiteralBinding(
  *   - U1: the target of an `Object.defineProperty` STATEMENT (its result would
  *     alias the carrier) with an `openCarrierDefinePlan`;
  *   - U2: a named read `o.k` whose key `Object.prototype` does not own and
- *     whose consumer is in `isProvenReadConsumer`. The IR reader
+ *     whose consumer is `isProvenReadConsumer`'s strict comparison. The IR reader
  *     (`__dyn_member_get`) answers undefined for an inherited key, where legacy
  *     and node see the `Object.prototype` method.
  *
@@ -116,38 +116,34 @@ const OBJECT_PROTOTYPE_KEYS: ReadonlySet<string> = new Set(
     .properties.flatMap((property) => (property.key.kind === "string" ? [property.key.value] : [])),
 );
 
-/** Binary operators whose operand the U2 read is measured for: equality, relational, `- * / %`. */
-const PROVEN_READ_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
-  ts.SyntaxKind.EqualsEqualsEqualsToken,
-  ts.SyntaxKind.ExclamationEqualsEqualsToken,
-  ts.SyntaxKind.EqualsEqualsToken,
-  ts.SyntaxKind.ExclamationEqualsToken,
-  ts.SyntaxKind.LessThanToken,
-  ts.SyntaxKind.LessThanEqualsToken,
-  ts.SyntaxKind.GreaterThanToken,
-  ts.SyntaxKind.GreaterThanEqualsToken,
-  ts.SyntaxKind.MinusToken,
-  ts.SyntaxKind.AsteriskToken,
-  ts.SyntaxKind.SlashToken,
-  ts.SyntaxKind.PercentToken,
-]);
-
 /**
- * An ALLOW-list of the consumers a U2 read `o.k` is proven for: a
- * `PROVEN_READ_OPERATORS` operand, an identifier binding's initializer, a
- * `return` or a `throw`. Everything else is refused by default, the ToBoolean
- * consumers (`if`, `?:`, `!`, `&&`) and member, element and non-null
- * consumers (`o.k.y` must throw on undefined; `o.k?.y` throws under the IR)
- * among them. `+` is absent because the move-only scan admits `<dynamic> + v`
- * and from-ast then demotes it — an untracked gap that predates S1, named in
- * plan/issues/7128-ir-standalone-define-property-open-object-carrier.md
- * ("Corrections to the design", item 5).
+ * The one consumer a U2 read `o.k` is proven for — consumed DIRECTLY, never
+ * passed on: one side of a strict `===`/`!==` whose other side is a primitive
+ * literal, `null` or `undefined`. Everything else stays on legacy, which is
+ * correct by construction:
+ *   - an alias (`var y = o.k`, `y = o.k`, `return`, `throw`) hands the value to
+ *     the dynamic-value scan, whose own gaps (`y.z` must throw on undefined,
+ *     `y?.z`) then miscompile;
+ *   - arithmetic, relational and loose-equality operands demote after the claim
+ *     for some operand kinds (`o.k - "2"`, `o.k == null`), as does `+` — an
+ *     untracked gap that predates S1, named in
+ *     plan/issues/7128-ir-standalone-define-property-open-object-carrier.md
+ *     ("Corrections to the design", item 5);
+ *   - ToBoolean, member, element and non-null consumers.
+ * Three review rounds on PR #6957 each found a new failing shape in a wider
+ * rule; this one is the set they proved exact.
  */
 function isProvenReadConsumer(read: ts.PropertyAccessExpression): boolean {
   const consumer = read.parent;
-  if (ts.isBinaryExpression(consumer)) return PROVEN_READ_OPERATORS.has(consumer.operatorToken.kind);
-  if (ts.isVariableDeclaration(consumer)) return consumer.initializer === read && ts.isIdentifier(consumer.name);
-  return ts.isReturnStatement(consumer) || ts.isThrowStatement(consumer);
+  if (!ts.isBinaryExpression(consumer)) return false;
+  const op = consumer.operatorToken.kind;
+  if (op !== ts.SyntaxKind.EqualsEqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsEqualsToken) return false;
+  const other = consumer.left === read ? consumer.right : consumer.left;
+  return (
+    isPrimitiveLiteral(other) ||
+    other.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(other) && other.text === "undefined")
+  );
 }
 
 /** The ToPropertyDescriptor fields of a data descriptor (§6.2.5.5). */

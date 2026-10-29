@@ -61,12 +61,10 @@ const CLAIMED: Record<string, string> = {
   "configurable redefine and a second key": `export function f() { var o = {}; Object.defineProperty(o, "a", { value: 1, configurable: true }); Object.defineProperty(o, "a", { value: 3 }); Object.defineProperty(o, "b", { value: 2 }); return (o.a === 3 ? 1 : 0) + (o.b === 2 ? 2 : 0); }`,
   "non-configurable redefine throws TypeError": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); try { Object.defineProperty(o, "x", { value: 2 }); return 0; } catch (e) { return e instanceof TypeError ? 1 : 2; } }`,
   "same-value redefine is allowed": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 1 }); Object.defineProperty(o, "x", { value: 1 }); return o.x === 1 ? 1 : 0; }`,
-  "relational and arithmetic consumers": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return (o.x > 2 ? 1 : 0) + (o.x - 1 === 2 ? 2 : 0) + (o.x * 2 === 6 ? 4 : 0); }`,
-  "loose equality and division": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return (o.x == 3 ? 1 : 0) + (o.x / 3 === 1 ? 2 : 0) + (o.x % 2 === 1 ? 4 : 0); }`,
-  "read flows into a local": `export function f() { var o = {}; ${DEFINE} var y = o.x; return y === 2010 ? 1 : 0; }`,
-  "a local initialized by a read, then tested": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); var y = o.x; if (y) return 1; return 0; }`,
-  "thrown read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); try { throw o.x; } catch (e) { return e === 3 ? 1 : 0; } }`,
-  "no define, every reference a read": `export function f() { var o = {}; var y = o.x; return o.y === undefined && y === undefined ? 1 : 0; }`,
+  "!== against a literal": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return o.x !== 3 ? 0 : 1; }`,
+  "literal on the left": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "s" }); return "s" === o.x ? 1 : 0; }`,
+  "=== null on an absent key": `export function f() { var o = {}; ${DEFINE} return o.y === null ? 0 : 1; }`,
+  "no define, every reference a read": `export function f() { var o = {}; return o.x === undefined && o.y === undefined ? 1 : 0; }`,
 };
 
 const REFUSED: Record<string, string> = {
@@ -111,6 +109,22 @@ const REFUSED_AT_SELECT: Record<string, string> = {
   "null == read": `export function f() { var o = {}; return null == o.y ? 1 : 0; }`,
   "local from a read, then == null": `export function f() { var o = {}; Object.defineProperty(o, "y", { value: 1 }); var v = o.y; return v == null ? 1 : 0; }`,
   "switch on a local from a read": `export function f() { var o = {}; var v = o.y; switch (v) { case 3: return 1; } return 0; }`,
+  // Round 3 (PR #6957): the read is consumed only directly; an alias, a
+  // return/throw and every arithmetic, relational or loose-equality operand stay
+  // on legacy. The first six were claimed before this round.
+  "relational and arithmetic consumers": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return (o.x > 2 ? 1 : 0) + (o.x - 1 === 2 ? 2 : 0) + (o.x * 2 === 6 ? 4 : 0); }`,
+  "loose equality and division": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return (o.x == 3 ? 1 : 0) + (o.x / 3 === 1 ? 2 : 0) + (o.x % 2 === 1 ? 4 : 0); }`,
+  "read flows into a local": `export function f() { var o = {}; ${DEFINE} var y = o.x; return y === 2010 ? 1 : 0; }`,
+  "a local initialized by a read, then tested": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); var y = o.x; if (y) return 1; return 0; }`,
+  "thrown read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); try { throw o.x; } catch (e) { return e === 3 ? 1 : 0; } }`,
+  "read as a statement": `export function f() { var o = {}; ${DEFINE} o.x; return 1; }`,
+  "assigned read": `export function f() { var o = {}; var y; y = o.x; return y === undefined ? 1 : 0; }`,
+  "alias, then a member read that must throw": `export function f() { var o = {}; var y = o.x; try { var t = y.z; return 1; } catch (e) { return e instanceof TypeError ? 2 : 3; } }`,
+  "alias, then optional chaining": `export function f() { var o = {}; var y = o.x; return y?.z === undefined ? 1 : 0; }`,
+  "string read - string": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "5" }); return o.x - "2"; }`,
+  "string - string read": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "5" }); return "9" - o.x; }`,
+  "string read % string local": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "5" }); var s = "3"; return o.x % s; }`,
+  "string read * true": `export function f() { var o = {}; Object.defineProperty(o, "x", { value: "5" }); return o.x * true; }`,
 };
 
 describe("#7128 S1 — standalone open-carrier Object.defineProperty", () => {
@@ -156,11 +170,11 @@ describe("#7128 S1 — standalone open-carrier Object.defineProperty", () => {
     expect(await run(ir.binary)).toBe(1);
   });
 
-  it("claims a returned read (TS source: the .js return type does not resolve)", async () => {
+  it("keeps a returned read on legacy (TS source: the .js return type does not resolve)", async () => {
     const source = `export function f() { var o = {}; Object.defineProperty(o, "x", { value: 3 }); return o.x; }`;
     const ir = await build(source, "standalone", true, "issue-7128.ts");
     expect(ir.irPostClaimErrors ?? []).toEqual([]);
-    expect(irBodies(ir)).toContain("f");
+    expect(irBodies(ir)).not.toContain("f");
     expect(await run(ir.binary)).toBe(3);
   });
 
