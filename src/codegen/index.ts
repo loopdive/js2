@@ -1,7 +1,10 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
-import { irNativeNumericFieldType, irNativeSignatureDiverges } from "./declarations/ir-native-numeric-field.js";
+import {
+  irNativeI32SlotRead,
+  irNativeNumericFieldType,
+  irNativeSignatureDiverges,
+} from "./declarations/ir-native-numeric-field.js";
 import { nativeConsoleOutputAvailable } from "./helpers/ir-native-console.js";
-import { isNativeI32FieldRead } from "./native-type-annotations.js";
 import {
   emitGlobalEnvironmentKey,
   emitGlobalEnvironmentObject,
@@ -852,7 +855,7 @@ installObjectModelPorts(() => ({
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
-  isNativeI32FieldRead,
+  irNativeI32SlotRead,
   hasExportModifier,
   hasDeclareModifier,
   hasAsyncModifier,
@@ -3322,7 +3325,7 @@ function planIrOverlay(
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
-      isNativeI32FieldRead: (expr) => isNativeI32FieldRead(ast.checker, expr),
+      isNativeI32FieldRead: (expr) => irNativeI32SlotRead(ctx, ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,

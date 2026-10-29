@@ -238,16 +238,18 @@ export function isInt32Literal(expr: ts.Expression): boolean {
 }
 
 /**
- * (#7136) A read of a class field whose declaration carries a native
- * i32-storage annotation (`v: i32`, #323). The IR reads such a field as an i32
- * slot, not as the f64 its checker type `number` implies.
+ * (#7136) The declaration of a class field read whose annotation is a native
+ * i32-storage alias (`v: i32`, #323): its struct slot is an i32.
  */
-export function isNativeI32FieldRead(checker: ts.TypeChecker, expr: ts.Expression): boolean {
-  if (!ts.isPropertyAccessExpression(expr)) return false;
+export function nativeI32FieldDeclaration(
+  checker: ts.TypeChecker,
+  expr: ts.Expression,
+): ts.PropertyDeclaration | undefined {
+  if (!ts.isPropertyAccessExpression(expr)) return undefined;
   const declaration = checker.getSymbolAtLocation(expr.name)?.valueDeclaration;
-  return (
-    declaration !== undefined &&
+  return declaration !== undefined &&
     ts.isPropertyDeclaration(declaration) &&
     nativeTypeOfDeclaration(checker, declaration)?.kind === "i32"
-  );
+    ? declaration
+    : undefined;
 }

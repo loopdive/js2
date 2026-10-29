@@ -2,7 +2,7 @@
 import { ts } from "../../ts-api.js";
 import { hostFreeEnvironment, type CodegenContext } from "../context/types.js";
 import type { IrType } from "../../ir/nodes.js";
-import { nativeTypeOfDeclaration } from "../native-type-annotations.js";
+import { nativeI32FieldDeclaration, nativeTypeOfDeclaration } from "../native-type-annotations.js";
 
 /**
  * Recover source domains only after the shared native-alias proof succeeds.
@@ -33,4 +33,15 @@ export function irNativeSignatureDiverges(ctx: CodegenContext, member: ts.Signat
       return native !== null && native.kind !== "f64";
     })
   );
+}
+
+/**
+ * (#7136) A field read the IR keeps as an i32 slot: a native-i32 field, except
+ * a uint32 field that a no-host lane reads back as a Number (#7137).
+ */
+export function irNativeI32SlotRead(ctx: CodegenContext, checker: ts.TypeChecker, expr: ts.Expression): boolean {
+  const declaration = nativeI32FieldDeclaration(checker, expr);
+  if (declaration === undefined) return false;
+  const type = irNativeNumericFieldType(ctx, declaration);
+  return !(type?.kind === "val" && type.signed === false);
 }

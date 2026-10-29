@@ -614,7 +614,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    * licence; the call shape must also be one the builder lowers.
    */
   readonly supportsNativeConsoleOutput?: boolean;
-  /** (#7136) Checker proof that an operand reads a native-i32 class field (an i32 IR slot). */
+  /** (#7136) Checker proof that an operand reads a class field the IR keeps as an i32 slot. */
   readonly isNativeI32FieldRead?: (expr: ts.Expression) => boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
