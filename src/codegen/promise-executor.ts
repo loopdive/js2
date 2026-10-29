@@ -47,16 +47,8 @@ import {
   PROMISE_STATE_PENDING,
   DENO_PROMISE_HOOK_INIT,
   buildDenoPromiseHookCall,
-  // (#3125) `ensurePromiseExecutorClosures` + its interface moved to
-  // async-scheduler.ts: the thenable-assimilation job (built inside
-  // `ensurePromiseSettleFunctions`) needs the same settle closures, and this
-  // module already imports from async-scheduler (the reverse import would be
-  // an eval-time cycle).
   ensurePromiseExecutorClosures,
-  // (#5197 Slice B) One factory for the settle-closure `struct.new` sequence —
-  // the metadata slots must agree byte-for-byte across all three mint sites.
   buildPromiseSettleClosureInstrs,
-  isStandalonePromiseActive,
 } from "./async-scheduler.js";
 
 /**
@@ -77,8 +69,6 @@ export function emitStandalonePromiseFromExecutor(
   fctx: FunctionContext,
   executorArg: ts.Expression,
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
-
   // Start narrow: inline arrow / (non-async, non-generator) function expression.
   // Widen to identifier-bound closures later. Anything else → host fallback.
   if (!(ts.isArrowFunction(executorArg) || ts.isFunctionExpression(executorArg))) return false;
@@ -283,8 +273,6 @@ export function emitStandalonePromiseFromExecutorValue(
   fctx: FunctionContext,
   compileExecutorValue: () => void,
 ): boolean {
-  if (!isStandalonePromiseActive(ctx)) return false;
-
   const exnTag = ensureExnTag(ctx);
   const closures = ensurePromiseExecutorClosures(ctx);
   if (!closures) return false;

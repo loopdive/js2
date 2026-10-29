@@ -25,10 +25,10 @@
 // `any`) keeps its boxed `externref` params, so non-number args survive.
 
 import { compile } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
+import { buildImports, wrapExports } from "../src/runtime.js";
 import { describe, expect, it } from "vitest";
 
-const HOST_COMPILE_OPTIONS = { fileName: "t.ts", semanticProviders: "host-assisted" as const };
+const HOST_COMPILE_OPTIONS = { fileName: "t.ts" } as const;
 
 /** Compile in host mode, instantiate, and return the exported `test()` value. */
 async function runTest(src: string): Promise<unknown> {
@@ -36,10 +36,8 @@ async function runTest(src: string): Promise<unknown> {
   expect(r.success, r.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")).toBe(true);
   const imports = buildImports(r.imports, {}, r.stringPool);
   const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
-  const exports = instance.exports as Record<string, (...a: unknown[]) => unknown>;
-  if ((imports as { setExports?: (e: unknown) => void }).setExports) {
-    (imports as { setExports: (e: unknown) => void }).setExports(exports);
-  }
+  (imports as { setInstance?: (value: WebAssembly.Instance) => void }).setInstance?.(instance);
+  const exports = wrapExports(instance, { signatures: r.exportSignatures });
   return exports.test();
 }
 
@@ -122,13 +120,14 @@ describe("#3471 — numeric-kernel param inference is NOT regressed", () => {
     const r = await compile(src, {
       fileName: "lodash-base-to-string.js",
       allowJs: true,
-      semanticProviders: "host-assisted",
     });
     expect(r.success, r.errors.map((e) => e.message).join("\n")).toBe(true);
     expect(r.wat ?? "").not.toMatch(/\(func \$baseToString \(param f64\)/);
     const imports = buildImports(r.imports, {}, r.stringPool);
     const { instance } = await WebAssembly.instantiate(r.binary, imports as WebAssembly.Imports);
-    expect((instance.exports.baseToString as (value: string) => string)("Foo")).toBe("Foo");
+    (imports as { setInstance?: (value: WebAssembly.Instance) => void }).setInstance?.(instance);
+    const exports = wrapExports(instance, { signatures: r.exportSignatures });
+    expect((exports.baseToString as (value: string) => string)("Foo")).toBe("Foo");
   });
 
   it("a recursive numeric kernel still narrows its param to f64", async () => {

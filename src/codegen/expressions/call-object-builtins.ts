@@ -165,8 +165,7 @@ function emitStoredObjectAssignCall(ctx: CodegenContext, fctx: FunctionContext, 
   const targetLocal = allocLocal(fctx, `__stored_assign_tgt_${fctx.locals.length}`, externRef);
   fctx.body.push({ op: "local.set", index: targetLocal });
 
-  const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
-  const nativeBuilders = nativeSemanticProviders ? ensureObjVecBuilders(ctx) : undefined;
+  const nativeBuilders = ensureObjVecBuilders(ctx);
   const arrNewIdx = nativeBuilders?.newIdx ?? ensureLateImport(ctx, "__js_array_new", [], [externRef]);
   const arrPushIdx = nativeBuilders?.pushIdx ?? ensureLateImport(ctx, "__js_array_push", [externRef, externRef], []);
   const assignIdx = ensureLateImport(ctx, "__object_assign", [externRef, externRef], [externRef]);

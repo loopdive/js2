@@ -3,8 +3,9 @@
 // #7147 — native-first `[1, [2]].join(",")` stringified the nested array
 // element as "[object Object]" instead of through Array.prototype.toString (a
 // recursive join with ",", "" for an array already being joined — the cycle
-// guard). Each row is diffed against native JS on the gc (native-first) and
-// standalone lanes.
+// guard). Each row is diffed against native JS on the gc (native-first),
+// standalone and wasi lanes. #7153 — wasi printed "[object Object]" for every
+// nested element: its `__to_primitive` vec arm never reserved the driver.
 import { describe, expect, it } from "vitest";
 import { compile } from "../../src/index.js";
 import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
@@ -13,10 +14,22 @@ import { evaluateAsJs, instantiateWithRuntime } from "./helpers.js";
 // digest of the string and both lanes compare numbers.
 const ENC = `function enc(s: string): number { let h = s.length; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 1000003; return h; }\n`;
 
-async function expectSameOnBothLanes(body: string): Promise<void> {
+// Rows the wasi lane cannot run here: `flat()` is a wasi compile error (#2717),
+// and a module that can throw imports WASI, which this harness does not provide.
+const NOT_ON_WASI = new Set([
+  "flat().join",
+  "throwing element leaves no stale cycle frame",
+  `exception from JSON.parse("{") inside a nested join`,
+  `exception from decodeURIComponent("%") inside a nested join`,
+]);
+
+async function expectSameOnAllLanes(name: string, body: string): Promise<void> {
   const src = `${ENC}function value(): string { ${body} }\nexport function test(): number { return enc(value()); }`;
   const expected = evaluateAsJs(src).test!();
-  for (const target of [undefined, "standalone"] as const) {
+  const targets = NOT_ON_WASI.has(name)
+    ? ([undefined, "standalone"] as const)
+    : ([undefined, "standalone", "wasi"] as const);
+  for (const target of targets) {
     const lane = target ?? "gc";
     const result = await compile(src, { fileName: "probe.ts", ...(target ? { target } : {}) });
     expect(result.success, `${lane}: ${result.errors.map((e) => e.message).join("\n")}`).toBe(true);
@@ -33,11 +46,14 @@ describe("#7147 native join stringifies nested arrays via Array.prototype.toStri
     ['+ ""', `return [1, [2]] + "";`],
     ["[].toString() and [[]].join()", `return [].toString() + "|" + [[]].join() + "|";`],
     ["flat().join", `return [1, [2, [3, [4]]]].flat().join(",");`],
-    // Arrays are filled by `push`: a literal-initialised `any[]` that later
-    // receives an array drops its earlier elements, a separate gap.
     [
       "cyclic array",
       `const a: any[] = []; a.push(1); a.push(2); a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`,
+    ],
+    // (#7154) The same cycle built on a literal-initialised `any[]`.
+    [
+      "cyclic array on a literal",
+      `const a: any[] = [1, 2]; a.push(a); return a.join() + "|" + String(a) + "|" + [a, a].join(";");`,
     ],
     [
       "mutual cycle",
@@ -66,8 +82,17 @@ describe("#7147 native join stringifies nested arrays via Array.prototype.toStri
       `function* g(a: any[]): Generator<string> { yield a.join(); } const a: any[] = []; a.push(1); a.push(2); a.push(a); return g(a).next().value;`,
     ],
     ["mixed nested", `return [1, "a", [true, null, undefined, [2]]].join();`],
+    ["custom separator over nested arrays", `return [1, [2, [3, 4]], 5].join(" - ");`],
+    [
+      "nested arrays holding objects / null / undefined",
+      `return [[{}, null], [undefined, [{}]], {}].join("/") + "|" + String([null, [undefined]]);`,
+    ],
+    [
+      "cycle one level down, template and custom separator",
+      'const a: any[] = []; a.push(1); a.push([2, a]); return `${a}` + "|" + a.join(" ; ");',
+    ],
     ["string sub-arrays", `return [["a", "b"], ["c"]].join(";");`],
     ["JSON.stringify unaffected", `return JSON.stringify([1, [2, ["x"]]]);`],
   ];
-  for (const [name, body] of rows) it(name, () => expectSameOnBothLanes(body));
+  for (const [name, body] of rows) it(name, () => expectSameOnAllLanes(name, body));
 });

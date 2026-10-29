@@ -33,7 +33,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { compile } from "../src/index.js";
+import { compile, wrapExports } from "../src/index.js";
 import { buildImports, instantiateWasm } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 import { mixedBenchmarks } from "../benchmarks/suites/mixed.js";
@@ -229,17 +229,11 @@ describe("#3907 cross-lane numeric result equality", () => {
  * `number_toString`, which is why the search inside the formatter came up
  * empty.
  *
- * ## Why these run with `nativeStrings: false`
- *
- * `fast: true` auto-enables `nativeStrings`, and a `NativeString` (a WasmGC
- * i16 array) is not a JS string across the export boundary — it reads back as
- * `null`, and calling `.length` on the formatter's result traps with
- * "dereferencing a null pointer". **That trap is pre-existing and byte-identical
- * on the base branch**, measured both before and after this change; it is
- * #3912's remaining half (the `import-collector.ts` gate plus
- * `emitNativeStringRefFromExternref`), not something #3907 introduced or can
- * fix. Pinning the observable half here is deliberate: it locks in the
- * representation fix now, and #3912 unlocks the other configuration later.
+ * (#6979) host-strings variant removed with the host-assisted profile: these
+ * used to pin `{ fast: true, nativeStrings: false }` because a `NativeString`
+ * read back as `null` across a raw export. Both lanes now run on native strings
+ * and the result is read through `wrapExports`, which marshals the native
+ * string back to a JS string.
  */
 const FORMATTER_CASES: ReadonlyArray<{ name: string; source: string; expected: string }> = [
   {
@@ -261,16 +255,17 @@ const FORMATTER_CASES: ReadonlyArray<{ name: string; source: string; expected: s
 
 describe("#3907 formatter results agree across lanes", () => {
   for (const testCase of FORMATTER_CASES) {
-    it(`${testCase.name} — host-call and gc-native agree`, async () => {
+    it(`${testCase.name} — fast and non-fast lanes agree`, async () => {
       expect(runAsJs(testCase.source)).toBe(testCase.expected);
 
-      for (const options of [{ fast: false }, { fast: true, nativeStrings: false }] as const) {
+      for (const options of [{ fast: false }, { fast: true }] as const) {
         const result = await compile(testCase.source, options);
         expect(result.success, result.errors.map((e) => e.message).join("; ")).toBe(true);
         const imports = buildImports(result.imports, {}, result.stringPool);
         const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
         imports.setInstance?.(instance);
-        const run = (instance.exports as Record<string, unknown>).run as () => string;
+        const exports = wrapExports(instance, { signatures: result.exportSignatures });
+        const run = exports.run as () => string;
         expect(run()).toBe(testCase.expected);
       }
     });

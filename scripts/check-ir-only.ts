@@ -133,7 +133,6 @@ const defaultCompileSeedEntry: CompileSeedEntry = (source, entry) =>
   compile(source, {
     fileName: entry,
     trackIrOutcomes: true,
-    semanticProviders: "host-assisted",
   });
 
 const standaloneCompileSeedEntry: CompileSeedEntry = (source, entry) =>

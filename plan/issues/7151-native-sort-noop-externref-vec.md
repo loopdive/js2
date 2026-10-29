@@ -1,10 +1,11 @@
 ---
 id: 7151
 title: "Native-first: comparator-less Array.prototype.sort() is a no-op on module-level externref-element arrays"
-status: ready
+status: done
 sprint: current
 created: 2026-10-25
 updated: 2026-10-25
+completed: 2026-10-25
 priority: high
 horizon: s
 feasibility: medium
@@ -15,6 +16,13 @@ language_feature: builtins
 goal: correctness
 parent: 6979
 related: [7146, 2502, 3579]
+# 2026-10-25: +3 lines in `compileArrayDefaultToStringSort` — the #2379
+# externref bail now first asks the shared no-host SortCompare builder
+# (`prepareExternVecDefaultSortCompare`, in src/codegen/array/array-sort-value.ts)
+# and hands it to the merge sort; the lowering itself lives in the subsystem
+# module, only the call + import land in the god-file.
+loc-budget-allow:
+  - src/codegen/array-methods.ts
 ---
 
 # #7151 — comparator-less `sort()` is a no-op on module-level externref vecs
@@ -65,3 +73,53 @@ externref global, so `keys.sort().join(",")` prints `"z,y"` (node `"y,z"`).
    `tests/issue-7146-array-join-vec-type.test.ts`'s rows to use **unordered**
    keys once this lands (they use ordered keys by design today so they cannot
    mask it).
+
+## Resolution (2026-10-25, revised 2026-10-26 after review)
+
+Cause confirmed: the module-level array is a `$__vec_externref`, and in
+native-string mode `compileArrayDefaultToStringSort` bailed on an externref
+element (#2379: its string branch `ref.cast`s to `$AnyString`, invalid for a
+boxed-any element), so the caller emitted the #2502 no-op. On the no-host lanes
+(standalone / WASI, which gc native-first is) that bail now first asks
+`prepareExternVecDefaultSortCompare` (`src/codegen/array/array-sort-value.ts`)
+for a SortCompare over externref elements and feeds it to the same
+`emitStableMergeSort` the typed vecs use:
+
+- holes (`$Hole`) sort last, behind the undefineds, which sort behind every
+  value (spec: SortIndexedProperties leaves the holes trailing);
+- every other element goes through the coercion engine's spec ToString
+  (`ensureSpecExternrefToStringProvider`, deps via `prepareArrayLikeToString`),
+  so a Symbol element throws TypeError and an element's throwing `toString`
+  propagates; the strings compare with `__str_compare`.
+
+The undefined test (`externUndefinedTest`) and the sorts-last frame are shared
+with the `Array.prototype.sort` value body's `sortCompareGreater` (bytes
+unchanged there). Host-assisted gc is untouched (`native` is false there).
+
+Left out (all also wrong on the merge-base):
+
+- Native-first with `JS2WASM_NATIVE_REGIME_JS=0` (host-connected, not
+  `ctx.standalone`) keeps the #2379 bail, so its sort is still a no-op; the fix
+  there would need the host ToString arm, which is JS-host work. Defect.
+- #7164: `g.length = 3` on an externref vec fills the grown slots with JS
+  `null` instead of holes, so `g.sort()` orders them as values and a following
+  `join` traps.
+- #7165: a typed string vec holding `undefined` (`["c", undefined,
+  "a"].sort()`) traps with a null dereference on the native lanes.
+- #7166: `a.sort() === a` (and `a.reverse() === a`) is `false` on gc
+  native-first and standalone for a module-level externref vec.
+- #7167: `Array.prototype.sort.call(arrayLike)` leaves the array-like unsorted
+  on standalone.
+- The host-assisted lane orders `undefined` by its string `"undefined"` rather
+  than last (`[undefined, "zz"].sort()` gives `undefined|zz`; V8 `zz|undefined`).
+  Untouched: host lane. Defect.
+- On wasi, `i in g` / `g.hasOwnProperty(i)` answer wrongly for a holey `any[]`
+  even without `sort` (`["b", , "a"]`: `1 in g` is `true`), and on gc
+  native-first / standalone `hasOwnProperty` reports a hole as own. The test's
+  hole row therefore runs on gc native-first and standalone only, via `in`.
+  Defect.
+- On wasi, `console.log(<inline call result>)` prints `[object]` for a string
+  result (`console.log(s.join())`), with or without `sort`; a bound value prints
+  correctly, which is how the test's wasi lane logs. Defect.
+
+probe/test reference: tests/issue-7151-native-sort-externref-vec.test.ts

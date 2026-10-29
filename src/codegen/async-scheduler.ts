@@ -1667,7 +1667,6 @@ export function exportDrainMicrotasksIfRegistered(ctx: CodegenContext): void {
 /** Register the two settlement notifications used only by the JS value edge. */
 export function ensureNativePromiseBoundaryBridge(ctx: CodegenContext): void {
   if (
-    ctx.targetProfile.semanticProviders !== "native-first" ||
     ctx.targetProfile.environment !== "javascript" ||
     ctx.targetProfile.hostValueInterop === "off" ||
     ctx.strictNoHostImports
@@ -4598,97 +4597,6 @@ export function emitStandalonePromiseFinally(
     },
     { op: "local.get", index: chainedLocal },
     { op: "extern.convert_any" },
-  );
-}
-
-/**
- * #1326/#4397 — Check whether native Promise codegen (`$Promise` carrier:
- * construction, async-fn return wrap, `await` unwrap) is active. Native-first
- * JS builds use the same carrier and add only explicit boundary adapters.
- *
- * **THE #2980 CARRIER WIDEN IS FLIPPED (2026-07-10, stakeholder-approved):**
- * `--target standalone` now takes the native `$Promise` lane too, except for
- * modules containing an async generator ({@link widenAsyncGenFallback} keeps
- * their whole promise pipeline host-consistent). This is exactly the semantics
- * the ratified rule-1 decision measure validated (plan/issues/2980):
- * 07-09 full A/B net **+18** with the fallback (async-generator bucket
- * −4→+0), 07-10 six-bucket confirmation net **+20** with NO bucket ≤ −2
- * (class-async supplement included). The pairing constraint (#2978/#2934-3b,
- * PR #2833) landed 2026-07-10 before this flip, per the tradeoff doc
- * (plan/log/2980-carrier-widen-tradeoff.md §6.4).
- *
- * History (why this was wasi-only for so long): AG0 (#2865) widened
- * prematurely and measured **−31** — the `flags:[async]` harness settles
- * synchronously, so a native `$Promise` result was an undrained struct. The
- * PATH-B drive layers (#2895/#2906 slices, #2483 host-drive, #3035 `.then`
- * receiver bridge, #2979 value carrier) landed since; the 07-02 measure was
- * still −51, and the residual classes were then fixed one by one (#3035,
- * #2906 3d-i/ii/iii, the async-gen fallback) until the sign flipped. Both
- * carrier gates flip TOGETHER (the AG0-safe coupling — no per-construct
- * gating; see #2980 rule 2).
- */
-export function isStandalonePromiseActive(ctx: CodegenContext): boolean {
-  return (
-    ctx.targetProfile.semanticProviders === "native-first" ||
-    ctx.wasi === true ||
-    (ctx.standalone === true && !widenAsyncGenFallback(ctx))
-  );
-}
-
-/**
- * (#2980 conservative Promise-lane fallback, #3132 PR-2 refinement) Keep BOTH
- * standalone carrier gates OFF for a module that WILL emit a legacy `__gen_*`
- * host buffer — there a native `$Promise` fed into the gen's legacy buffer /
- * host `.then` over `__gen_next` is mishandled (the 07-09 async-generator −4).
- *
- * #2980 keyed this on `moduleHasAsyncGen` (ANY async gen ⇒ carrier off) — safe
- * but blunt: it also blocked modules whose async gens ALL drive host-free, which
- * have NO legacy buffer to mix into. #3132 PR-2 refines it to
- * `moduleHasNonDrivableAsyncGen` — off ONLY when at least one async gen falls to
- * the legacy buffer (method / unbounded body / rest param / unsafe spill / stem
- * collision). An all-drivable module keeps the carrier ON, so its driven gens
- * settle through the native `$Promise` and lose their `env::Promise_*` /
- * `__get_caught_exception` imports (host-free floor). The verdict is computed
- * pre-body in `collectDeclarations` with the SAME drive-shape predicate the emit
- * gate uses (`asyncGenDrivableUnderCarrier`), so a module judged all-drivable
- * never falls a gen to the buffer at emit — no mixing. CONSERVATIVE: any doubt
- * ⇒ non-drivable ⇒ carrier off (pre-#2980 host-consistent behaviour). WASI
- * (carrier always on) + gc/host unaffected (standalone-only check).
- */
-function widenAsyncGenFallback(ctx: CodegenContext): boolean {
-  return ctx.moduleHasNonDrivableAsyncGen === true;
-}
-
-// (#2980) The `JS2WASM_ASYNC_CARRIER_WIDEN` measurement instrument is RETIRED
-// with the flip (2026-07-10): the measured on-arm IS now the production
-// behaviour of both carrier gates, so the env toggle would be a no-op. The
-// recorded A/B protocol + harness stay in `scripts/measure/` and
-// plan/issues/2980 for any future re-measure need.
-
-/**
- * (#2895/#2980) Gate for the **native `.then` / `.catch` chaining** lowering
- * (`emitStandalonePromiseThen`) — flipped WITH {@link isStandalonePromiseActive}
- * (the AG0-safe coupling; #2980 rule 2: one gate, one flip, one measure).
- *
- * Widen safety, measured: the historical −601 stack-imbalance hazard of this
- * lowering on `--target standalone` is retired by #3035's runtime `ref.test`
- * receiver bridge (non-native receivers keep the exact host `.then` path) —
- * the promise-then-all bucket measured **+12** under the widen (07-10
- * confirmation A/B), with zero invalid-Wasm anywhere in the 322-file sample.
- *
- * Async-generator modules take {@link widenAsyncGenFallback} to the HOST lane
- * entirely — including the former #2865 receiver-directed arm
- * (`getDrainFuncIdxForWasiStart(ctx) !== null`), which this widened predicate
- * subsumes for every other standalone module (the widen is a superset of
- * "driven machinery registered"). That exact semantics — bridge off for
- * async-gen modules, on for everything else — is what the rule-1 measure
- * validated (async-generator bucket net 0, zero regressions).
- */
-export function isStandaloneThenChainNativeActive(ctx: CodegenContext): boolean {
-  return (
-    ctx.targetProfile.semanticProviders === "native-first" ||
-    ctx.wasi === true ||
-    (ctx.standalone === true && !widenAsyncGenFallback(ctx))
   );
 }
 

@@ -689,12 +689,12 @@
   },
   {
     "edition": "ES2016",
-    "pass": 107,
-    "fail": 10,
+    "pass": 108,
+    "fail": 9,
     "ce": 7,
     "skip": 0,
     "total": 124,
-    "pct": 86,
+    "pct": 87,
     "features": [
       {
         "name": "exponentiation",
@@ -707,12 +707,12 @@
       },
       {
         "name": "Array.prototype.includes",
-        "pass": 27,
-        "fail": 2,
+        "pass": 28,
+        "fail": 1,
         "ce": 0,
         "skip": 0,
         "total": 29,
-        "pct": 93
+        "pct": 97
       },
       {
         "name": "u180e",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4721,
-    "fail": 661,
+    "pass": 4722,
+    "fail": 660,
     "ce": 63,
     "skip": 0,
     "total": 5445,

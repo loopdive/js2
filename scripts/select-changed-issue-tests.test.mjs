@@ -23,7 +23,6 @@ const pinned = [
   "tests/issue-1128-dstr-tdz.test.ts",
   "tests/issue-1528-closure-construct.test.ts",
   "tests/issue-1712-capture-closure-dispatch.test.ts",
-  "tests/issue-2637-b2-ctor-closure-registration.test.ts",
   "tests/issue-3036-late-microtask-closure.test.ts",
   "tests/issue-3520-closure-host-bridge-abi.test.ts",
   "tests/issue-6419-closure-area-red-on-main.test.ts",
