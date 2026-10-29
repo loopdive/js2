@@ -47,14 +47,61 @@ import { emitThrowTypeError } from "../js-errors.js";
 import { captureReceiverSequence } from "../ir-dynamic-construct.js";
 import { helperFunctionContext, publishHelperFunction } from "../helpers/ir-helper-function.js";
 import { irTemplateWrapperLane } from "../helpers/template-wrapper.js";
+import { ensureObjectRuntime, WRAPPER_PRIMITIVE_KEY } from "../object-runtime.js";
+import { nativeStringLiteralInstrs } from "../native-strings.js";
 // The bridge reads the lane through this module, its one codegen edge for the wrapper.
 export { irTemplateWrapperLane };
 
 const RECEIVER = "__ir_dmc_recv";
 const METHOD_VALUE = "__ir_dmc_fn";
+const BRAND_FIRST = "__ir_dmc_brand_first";
 const argumentName = (index: number): string => `__ir_dmc_arg${index}`;
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
+
+/**
+ * (#7119, option a) Does `recv` take legacy's brand branch FIRST? A primitive
+ * wrapper object (`new Number(x)`, `Object(sym)`: a `$Object` carrying the
+ * internal `[[PrimitiveValue]]` slot) with no OWN `method` reads a built-in
+ * method value through its native prototype (#4248), and a reflective
+ * `f.call(recv, …)` on that value throws where legacy's brand dispatch answers
+ * (#6610 `wrapperReceiver`). An own `method` on the wrapper is a user value and
+ * keeps the own-method branch. Leaves an i32 on the stack.
+ */
+function wrapperBrandFirstInstrs(ctx: CodegenContext, method: string): Instr[] {
+  const { objectTypeIdx } = ensureObjectRuntime(ctx);
+  const objFind = ctx.funcMap.get("__obj_find");
+  if (objFind === undefined) throw new Error("ir/dynamic-method-call: __obj_find is not registered");
+  const found = (key: string): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    ...nativeStringLiteralInstrs(ctx, key),
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: objFind },
+    { op: "ref.is_null" },
+  ];
+  const i32: Instr = { op: "i32.const", value: 0 };
+  return [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: objectTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: I32 },
+      then: [
+        ...found(WRAPPER_PRIMITIVE_KEY),
+        {
+          op: "if",
+          blockType: { kind: "val", type: I32 },
+          then: [i32],
+          else: found(method),
+        },
+      ],
+      else: [{ ...i32 }],
+    },
+  ];
+}
 
 interface Template {
   /** `recv.m` */
@@ -123,8 +170,10 @@ export function ensureIrDynamicMethodCallHelper(
     EXTERNREF,
   );
   const methodValue = allocLocal(helper, METHOD_VALUE, EXTERNREF);
+  const brandFirst = allocLocal(helper, BRAND_FIRST, I32);
   const { read, own, branded, missing } = template(method, arity);
   const errorsBefore = ctx.errors.length;
+  helper.body.push(...wrapperBrandFirstInstrs(ctx, method), { op: "local.set", index: brandFirst });
 
   ensureLateImport(ctx, "__is_callable", [EXTERNREF], [I32]);
   flushLateImportShifts(ctx, helper);
@@ -132,7 +181,14 @@ export function ensureIrDynamicMethodCallHelper(
   helper.body.push({ op: "local.set", index: methodValue });
   const isCallable = ctx.funcMap.get("__is_callable");
   if (isCallable === undefined) throw new Error("ir/dynamic-method-call: __is_callable is not registered");
-  helper.body.push({ op: "local.get", index: methodValue }, { op: "call", funcIdx: isCallable });
+  // own-method branch: a callable `f` the receiver does not take brand-first.
+  helper.body.push(
+    { op: "local.get", index: methodValue },
+    { op: "call", funcIdx: isCallable },
+    { op: "local.get", index: brandFirst },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+  );
 
   // Every completed sequence stays parked until the join, so a late import a
   // later branch registers still shifts its call indices.
@@ -153,7 +209,8 @@ export function ensureIrDynamicMethodCallHelper(
     then,
     else: otherwise,
   });
-  helper.body.push(branch(ownBranch, [...missingTest, branch(brandedBranch, notAFunction)]));
+  const takesBrand: Instr[] = [{ op: "local.get", index: brandFirst }, ...missingTest, { op: "i32.or" }];
+  helper.body.push(branch(ownBranch, [...takesBrand, branch(brandedBranch, notAFunction)]));
 
   if (ctx.errors.length !== errorsBefore) {
     ctx.errors.length = errorsBefore;
