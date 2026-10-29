@@ -41,7 +41,6 @@ import ts from "typescript";
 import type { CodegenContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
 import { definedFuncAt } from "./func-space.js";
-import { isAnyStringSlot } from "./native-strings-shared.js";
 import { readEnv } from "../env.js";
 
 /**
@@ -128,13 +127,12 @@ export function legacyPositionCarriesFnctorInstance(
   name: string | undefined,
   position: "return" | number,
 ): boolean {
-  return name !== undefined && slotCarriesFnctorInstance(ctx, legacyFunctionSlot(ctx, name, position));
-}
-
-function slotCarriesFnctorInstance(ctx: CodegenContext, slot: ValType | undefined): boolean {
   if (!fnctorTypedInstancesEnabled()) return false;
-  if (!ctx.standalone || ctx.fnctorReservedTypeIdx.size === 0) return false;
-  if (slot?.kind !== "ref" && slot?.kind !== "ref_null") return false;
+  if (!ctx.standalone || name === undefined) return false;
+  if (ctx.fnctorReservedTypeIdx.size === 0) return false;
+  const slot = legacySignatureSlot(ctx, name, position);
+  if (slot === undefined) return false;
+  if (slot.kind !== "ref" && slot.kind !== "ref_null") return false;
   for (const reserved of ctx.fnctorReservedTypeIdx.values()) {
     if (reserved === slot.typeIdx) return true;
   }
@@ -142,12 +140,12 @@ function slotCarriesFnctorInstance(ctx: CodegenContext, slot: ValType | undefine
 }
 
 /**
- * The registered legacy slot at `position` of the top-level declaration
- * `name` (`ctx.funcMap` → `ctx.mod.types`, the artifact the parity guard
- * compares against); `undefined` when it is not registered (IR-first
- * ordering, bare selector).
+ * The registered legacy slot of `name`'s parameter `position` (or its result):
+ * `ctx.funcMap` → `ctx.mod.types`, the artifact the parity guard compares
+ * against. `undefined` when it is not registered (IR-first ordering, bare
+ * selector).
  */
-function legacyFunctionSlot(ctx: CodegenContext, name: string, position: "return" | number): ValType | undefined {
+function legacySignatureSlot(ctx: CodegenContext, name: string, position: "return" | number): ValType | undefined {
   const funcIdx = ctx.funcMap.get(name);
   if (funcIdx === undefined) return undefined;
   const legacyFunction = definedFuncAt(ctx, funcIdx);
@@ -157,31 +155,29 @@ function legacyFunctionSlot(ctx: CodegenContext, name: string, position: "return
   return position === "return" ? signature.results[0] : signature.params[position];
 }
 
+/** The registered legacy slot of a top-level declaration's parameter. */
 function legacyParamSlot(ctx: CodegenContext, parameter: ts.ParameterDeclaration): ValType | undefined {
   const owner = parameter.parent;
   if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return undefined;
   const index = owner.parameters.indexOf(parameter);
-  return index < 0 ? undefined : legacyFunctionSlot(ctx, owner.name.text, index);
+  return index < 0 ? undefined : legacySignatureSlot(ctx, owner.name.text, index);
 }
 
-/** (#7106 item 1) Is the registered legacy slot of this parameter plain externref? */
+/**
+ * (#7106 item 1) Is the registered legacy slot for parameter `index` of the
+ * top-level declaration `name` plain externref? `false` when it is not
+ * registered.
+ */
 export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.ParameterDeclaration): boolean {
   return legacyParamSlot(ctx, parameter)?.kind === "externref";
 }
 
 /**
- * Does the IR's dynamic carrier diverge from the legacy slot at this
- * position? Takes the AST node the selector is standing on (a parameter, or
- * the owning declaration for the return position) and reads the legacy slot
- * itself, so `select.ts` stays checker- and context-free. The slot diverges
- * when it carries:
+ * (#4612) Selector-facing adapter for {@link legacyPositionCarriesFnctorInstance}:
+ * takes the AST node the selector is standing on (a parameter, or the owning
+ * declaration for the return position) and derives the legacy slot name +
+ * ordinal itself, so `select.ts` stays checker- and context-free.
  *
- * - (#4612) a refined fnctor-instance struct ({@link legacyPositionCarriesFnctorInstance});
- * - (#7190, parameters) the native string type: an implicit-any parameter
- *   whose call sites all pass strings (`verifyNotEnumerable(o, "x")`) gets
- *   that slot from `inferImplicitAnyParamType`.
- *
- * Either way a dynamic-carrier claim could only end at the parity guard.
  * Only top-level `FunctionDeclaration`s carry a `ctx.funcMap` slot under their
  * source name; class members and unnamed declarations answer `false` (their
  * parity is enforced by the hard `abi-type-index-mismatch` invariant, not by
@@ -190,8 +186,20 @@ export function legacyParamSlotIsExternref(ctx: CodegenContext, parameter: ts.Pa
 export function makeIrDynamicCarrierDivergenceProbe(ctx: CodegenContext): (position: ts.Node) => boolean {
   return (position: ts.Node): boolean => {
     if (ts.isParameter(position)) {
+      const owner = position.parent;
+      if (!ts.isFunctionDeclaration(owner) || owner.name === undefined) return false;
+      const index = owner.parameters.indexOf(position);
+      if (index < 0) return false;
+      // (#7119) Off the fast lane the dynamic carrier is externref, and the
+      // IR reconciles it with legacy's nullable native-string slot but not
+      // with any other reference slot inferred from the call sites (a vec for
+      // `ask([1, 2])`, a typed array, and — #7190 — the NON-null string slot of
+      // `verifyNotEnumerable(o, "x")`): the same guaranteed parity withdrawal
+      // as a fnctor-instance slot.
       const slot = legacyParamSlot(ctx, position);
-      return slotCarriesFnctorInstance(ctx, slot) || (slot !== undefined && isAnyStringSlot(ctx, slot));
+      const reconciledString = slot?.kind === "ref_null" && slot.typeIdx === ctx.anyStrTypeIdx;
+      if (!ctx.fast && (slot?.kind === "ref" || slot?.kind === "ref_null") && !reconciledString) return true;
+      return legacyPositionCarriesFnctorInstance(ctx, owner.name.text, index);
     }
     if (ts.isFunctionDeclaration(position) && position.name !== undefined) {
       return legacyPositionCarriesFnctorInstance(ctx, position.name.text, "return");

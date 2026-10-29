@@ -35,6 +35,13 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import {
+  coerceIrNumeric,
+  numericFieldSourceValue,
+  isNumericIrSlot,
+  numericFieldUpdate,
+} from "./numeric-slot-coercion.js";
+import { lowerNativeConsoleLine } from "./console-lowering.js";
 import { boxNativeInKey, lowerNativeIn } from "./native-in.js";
 import * as functionObjects from "./function-object-lowering.js";
 import { expressionIsDefinitelyBoolean, unwrapTypeErasedExpression } from "./select-expression-structure.js";
@@ -49,17 +56,21 @@ import {
   binaryOperandsAdmissible,
   compoundWriteAdmissible,
   incrementSlotAdmissible,
+  isNumberBinaryOperator,
+  isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   isUndefinedCompareOperand,
   nullComparisonFolds,
   undefinedCompareOperandAdmissible,
   nullishLeftAdmissible,
   nullValueAdmissible,
+  numberCompoundBinaryOperator,
   slotWriteVerdict,
   conditionalJoinArmFamily,
   conditionalJoinFamily,
   throwOperandAdmissible,
   type AdditiveProof,
+  type NumberBinaryOperator,
   type OperandFamily,
 } from "./analysis/operand-admissibility.js"; // (#7144)
 import { IR_CLOSURE_UNDEFINED } from "./core/closure-invocation-callables.js";
@@ -86,6 +97,7 @@ import {
   IR_DYN_METHOD_CALL_1_FN,
   IR_DYN_STRING_REPLACE_FN,
 } from "../codegen/dyn-ops.js";
+import { irDynamicMethodCallHelperName, irDynamicMethodCallNeedsWrapper } from "./dynamic-method-call-names.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "./regexp-runtime-contract.js";
 import { IR_NATIVE_MAP_GET_NUM_FN, IR_NATIVE_MAP_NEW_FN, IR_NATIVE_MAP_SET_NUM_FN } from "../codegen/ir-native-map.js"; // (#4461) native $Map adapter ABI
 // (#1373b C-1) Leaf-module async helpers (no codegen/index cycle).
@@ -104,7 +116,7 @@ import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-s
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
-  COMPOUND_TO_BITWISE_TOKEN,
+  compoundBitwiseToken,
   counterStepAssignment,
   I32_COMPARE_BINOPS,
   i32IdentityBitwiseOperand,
@@ -113,6 +125,7 @@ import {
   isCanonI32Lowerable,
   type IsPromotedI32,
   isWrapI32Lowerable,
+  JS_BITWISE_BINOPS,
   jsBitwiseBinop,
   peelExpr,
   referencesPromotedI32Slot,
@@ -226,7 +239,7 @@ import {
   stringElementReadLowerable,
 } from "./capability.js";
 import type { IrStandaloneDomOperation } from "./dom-capability.js";
-import { IR_CONSOLE_METHODS, IR_CONSOLE_SINK_APPEND_FN, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
+import { IR_CONSOLE_METHODS, IR_NUMBER_TO_STRING_NATIVE_FN } from "./host-free-runtime.js";
 import type { IrLowerResolver, IrVecLowering } from "./lower.js";
 import {
   allocateLiftedFunctionArtifact,
@@ -544,13 +557,13 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    */
   nativeNumberToFixedAvailable?(): boolean;
   /**
-   * (#4462) Does this lane have the host-free console sink (#3469's
-   * `__stdout_append`)? Consulted by the console capability row
+   * Does this lane have native console output? Consulted by its capability row
    * (`consoleSurfaceCapability`) on BOTH sides of the claim boundary, so a
-   * standalone module that never minted the sink defers rather than claiming a
-   * call with nothing to lower to.
+   * target without an output provider defers before claiming a call.
    */
-  standaloneConsoleSinkAvailable?(): boolean;
+  nativeConsoleOutputAvailable?(): boolean;
+  /** (#7137) No-host lanes recover native i32/u32 class-field domains; gc keeps its bytes. */
+  nativeNumericDomains?(): boolean;
   /**
    * (#2955 slice 5) Strategy query: how does this mode iterate a
    * `string`-typed for-of iterable? `"char-loop"` = the native fast path
@@ -878,6 +891,12 @@ export interface IrFromAstResolver extends PreparedAsyncFromAstResolver {
    * unbox. Fast AnyValue carriers return false.
    */
   dynamicCarrierIsExternref?(): boolean;
+  /**
+   * (#7106 Stage 4) True when this lane lowers `recv.<method>(…arity args)` on
+   * a dynamic receiver through the `__ir_dyn_mcall_<m>_<n>` brand-dispatch
+   * wrapper (host-free, non-fast lanes).
+   */
+  dynamicMethodCallWrapper?(method: string, arity: number): boolean;
   /** (#7106 module-init lever A) The constant a `Number.<CONST>` / `Math.<CONST>` read folds to, else undefined. */
   ambientNamespaceConstant?(expr: ts.PropertyAccessExpression): number | undefined;
   /**
@@ -1970,11 +1989,7 @@ export function lowerFunctionAstToIr(
   if (cx.argumentsLength) cx.argumentsLength.value = builder.emitDynArgumentsLength(fn.parameters.length);
   // (#7106 S3c) OrdinaryCallBindThis binds `this` once, at entry.
   if (options.ambientThisStrict !== undefined && ts.isFunctionDeclaration(fn) && !options.moduleInitUnit) {
-    scope.set("this", {
-      kind: "local",
-      value: builder.emitDynCurrentThis(options.ambientThisStrict),
-      type: irDynamic(),
-    });
+    bindEntryThis(scope, builder, options.ambientThisStrict);
   }
   if (stmts.length === 0 && emptyVoidBody) terminateImplicitSourceReturn(cx, []);
   else lowerStatementList(stmts, cx);
@@ -2392,21 +2407,6 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       ts.isElementAccessExpression(s.expression.left)
     ) {
       lowerElementStore(s.expression.left, s.expression.right, cx);
-      return false;
-    }
-    // #3787 / #2856 — a body-level compound assignment followed by a
-    // return has the same slot semantics as the already-supported form
-    // inside loop/body buffers. Reuse the shared lowering instead of
-    // requiring the assignment to be nested in a block-owning statement.
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      (s.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken ||
-        s.expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken ||
-        s.expression.operatorToken.kind === ts.SyntaxKind.AsteriskEqualsToken ||
-        s.expression.operatorToken.kind === ts.SyntaxKind.SlashEqualsToken) &&
-      ts.isIdentifier(s.expression.left)
-    ) {
-      lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
       return false;
     }
     // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
@@ -2943,6 +2943,15 @@ function lowerTail(stmt: ts.Statement, cx: LowerCtx): void {
  *     route through the slot — this preserves the cross-iteration value
  *     semantics without requiring SSA phi nodes.
  */
+/**
+ * (#7106) OrdinaryCallBindThis: bind `this` once at entry through
+ * `dyn.current_this` — the receiver the caller installed, else legacy's
+ * unbound answer for this strictness.
+ */
+function bindEntryThis(scope: Map<string, ScopeBinding>, builder: IrFunctionBuilder, strict: boolean): void {
+  scope.set("this", { kind: "local", value: builder.emitDynCurrentThis(strict), type: irDynamic() });
+}
+
 type ScopeBinding =
   | { kind: "local"; value: IrValueId; type: IrType; stringEncoding?: Encoding }
   | {
@@ -3934,7 +3943,7 @@ function lowerPromotedI32CompoundAssignment(
     withMutationSourceSite(cx, id, () => lowerPromotedI32CompoundAssignment(id, slotIndex, compoundOp, rhs, cx));
     return;
   }
-  const bitwiseToken = COMPOUND_TO_BITWISE_TOKEN[compoundOp as keyof typeof COMPOUND_TO_BITWISE_TOKEN];
+  const bitwiseToken = compoundBitwiseToken(compoundOp);
   if (bitwiseToken !== undefined) {
     const lhs = cx.builder.emitSlotRead(slotIndex);
     const rhsValue = lowerBitwiseOperand(rhs, null, cx);
@@ -4599,9 +4608,9 @@ function lowerObjectPattern(pattern: ts.ObjectBindingPattern, source: IrValueId,
     }
     const v =
       sourceType.kind === "class"
-        ? cx.builder.emitClassGet(source, propName, field.type)
+        ? numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(source, propName, field.type))
         : cx.builder.emitObjectGet(source, propName, field.type);
-    cx.scope.set(localName, { kind: "local", value: v, type: field.type });
+    cx.scope.set(localName, { kind: "local", value: v, type: cx.builder.typeOf(v) });
   }
 }
 
@@ -4699,48 +4708,10 @@ function isPrimitiveTypeNode(node: ts.TypeNode): boolean {
   );
 }
 
-/**
- * (#3673) Bridge a plain numeric SSA value to a plain numeric target type.
- *
- * A native type annotation (`pos: i32`, `#323`) makes a class field or a local
- * a Wasm `i32` while the surrounding JS-typed expressions still produce `f64`.
- * `this.pos = 0` therefore hands an `f64` const to an `i32` field, which the
- * assignment sites used to reject outright — so an `i32`-annotated class threw
- * out of `from-ast` and (under the #2138 IR-first gate) failed the compile.
- *
- * This inserts exactly the conversion the LEGACY path inserts at the same seam
- * (`coerceType` in `codegen/type-coercion.ts`): saturating truncation when
- * narrowing, signed/unsigned widening when widening. It deliberately handles
- * ONLY unbranded i32/f32/f64 scalars — a `boolean`/`symbol`-branded i32 keeps
- * its brand-specific boxing rules and must not be silently reinterpreted, and
- * every non-`val` type (string/object/closure/…) still falls through to the
- * caller's mismatch error.
- *
- * Returns `null` when no sound conversion applies, so callers keep their
- * existing "reject and fall back" behaviour.
- */
-function coerceIrNumeric(value: IrValueId, target: IrType, cx: LowerCtx): IrValueId | null {
-  const from = cx.builder.typeOf(value);
-  if (from.kind !== "val" || target.kind !== "val") return null;
-  const f = from.val;
-  const t = target.val;
-  // Brands are load-bearing at the box seam — never coerce across them.
-  if (f.kind === "i32" && (f.boolean || f.symbol)) return null;
-  if (t.kind === "i32" && (t.boolean || t.symbol)) return null;
-  if (f.kind === t.kind) return null; // caller's equality check already covers this
-  if (f.kind === "f64" && t.kind === "i32") {
-    return cx.builder.emitUnary("i32.trunc_sat_f64_s", value, irVal({ kind: "i32" }));
-  }
-  if (f.kind === "i32" && t.kind === "f64") {
-    // `signed === false` marks the uint32 domain (#1126). Widening it needs
-    // `f64.convert_i32_u`, which the IR unop set does not carry — bail rather
-    // than emit the signed conversion, which would read `-1 >>> 0` back as -1
-    // instead of 2^32-1 (`tests/issue-1817`).
-    if (from.signed === false) return null;
-    return cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-  }
-  return null;
-}
+const nativeNumericDomains = (cx: LowerCtx): boolean => cx.resolver?.nativeNumericDomains?.() === true;
+/** Compound field updates take native i32/u32 slots only where the lane recovers their domains. */
+const laneNumericSlot = (type: IrType, cx: LowerCtx): boolean =>
+  nativeNumericDomains(cx) ? isNumericIrSlot(type) : asVal(type)?.kind === "f64";
 
 /** Short debug string for IrType, used in error messages. */
 function describeIrType(t: IrType): string {
@@ -6471,7 +6442,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
         `ir/from-ast: class ${recvType.shape.className} has no field "${propName}" in ${cx.funcName}`,
       );
     }
-    return cx.builder.emitClassGet(recv, propName, field.type);
+    return numericFieldSourceValue(cx.builder, cx.builder.emitClassGet(recv, propName, field.type));
   }
 
   if (recvType.kind === "extern") {
@@ -7095,12 +7066,12 @@ function lowerElementStore(lhs: ts.ElementAccessExpression, rhs: ts.Expression, 
  */
 function lowerElementCompound(
   lhs: ts.ElementAccessExpression,
-  compoundOp: ts.SyntaxKind,
+  op: NumberBinaryOperator,
   rhs: ts.Expression | null,
   cx: LowerCtx,
 ): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
-    withMutationSourceSite(cx, lhs, () => lowerElementCompound(lhs, compoundOp, rhs, cx));
+    withMutationSourceSite(cx, lhs, () => lowerElementCompound(lhs, op, rhs, cx));
     return;
   }
   if (lhs.questionDotToken) {
@@ -7108,14 +7079,6 @@ function lowerElementCompound(
       "element-store-unsupported",
       "build",
       `ir/from-ast: optional-chained compound element write (a?.[i] += v) not in IR scope (${cx.funcName})`,
-    );
-  }
-  const binop = compoundF64Binop(compoundOp);
-  if (binop === null) {
-    throw new IrUnsupportedError(
-      "compound-assign-unsupported",
-      "build",
-      `ir/from-ast: compound element assign op ${ts.SyntaxKind[compoundOp]} not in IR scope (${cx.funcName})`,
     );
   }
   if (cx.resolver?.isTypedArrayViewExpr?.(lhs.expression)) {
@@ -7202,9 +7165,10 @@ function lowerElementCompound(
       `ir/from-ast: compound element write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (5) binop, then (6) the store tail — the same fast/provider fork
-  // `lowerElementStore` uses, keyed off the SAME bounds proof as the read.
-  const result = cx.builder.emitBinary(binop, oldValue, rhsValue, IR_F64);
+  // (5) binop — `++`/`--` has no RHS node — then (6) the store tail: the
+  // same fast/provider fork `lowerElementStore` uses, keyed off the SAME
+  // bounds proof as the read.
+  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx);
   if (proven) {
     cx.builder.emitVecSet(recv, idxI32, result);
     return;
@@ -8833,62 +8797,12 @@ function lowerNativeNumberToString(value: IrValueId, funcName: string, cx: Lower
   return r;
 }
 
-/**
- * (#4462) Render one already-lowered `console.<m>` argument to `IrType.string`
- * for the host-free sink.
- *
- * Dispatch is on the LOWERED IR type, not the checker type — deliberately, and
- * for the same reason `emitStandaloneStdoutAppendValue` dispatches on the
- * compiled ValType (#3469): the static type of a `console.log` argument can be
- * `any` while the value that actually arrives is a native string. Carriers with
- * no host-free rendering demote through the typed UNSUPPORTED channel rather
- * than silently printing nothing.
- */
-function lowerHostFreeConsoleArgument(value: IrValueId, cx: LowerCtx, methodName: string): IrValueId {
-  const valueType = cx.builder.typeOf(value);
-  if (valueType.kind === "string") return value;
-  if (valueType.kind === "val" && valueType.val.kind === "f64") {
-    if (cx.resolver?.nativeNumberToStringAvailable?.() !== true) {
-      throw new IrUnsupportedError(
-        "primitive-method-unsupported",
-        "build",
-        `ir/from-ast: console.${methodName} numeric argument needs a host-free number formatter (${cx.funcName})`,
-      );
-    }
-    return lowerNativeNumberToString(value, cx.funcName, cx);
-  }
-  if (irTypeIsBoolean(valueType)) return lowerBooleanToString(cx.builder, value);
-  // A number that propagation narrowed to i32 is still a number; widen and use
-  // the same formatter so `console.log(x|0)` prints what `x.toString()` would.
-  if (valueType.kind === "val" && valueType.val.kind === "i32" && valueType.val.boolean !== true) {
-    const widened = cx.builder.emitUnary("f64.convert_i32_s", value, irVal({ kind: "f64" }));
-    return lowerHostFreeConsoleArgument(widened, cx, methodName);
-  }
-  throw new IrUnsupportedError(
-    "method-call-unsupported",
-    "build",
-    `ir/from-ast: console.${methodName} argument of type ${describeIrType(valueType)} has no host-free rendering (${cx.funcName})`,
-  );
-}
-
-/**
- * (#4462) `console.<m>(arg)` with NO JS host: render the argument to the native
- * string carrier and append it to the in-module `__stdout_acc` rope — #3469's
- * sink, the one legacy already uses at `--target standalone`, kept host-free so
- * #2961's import-leak gate stays green.
- *
- * The trailing newline is CONCATENATED rather than appended by a second call, so
- * one console call produces one rope node. Output is identical to legacy's
- * append-arg-then-append-"\n" either way; this just costs one call instead of
- * two. Statement-position only, so there is no value to return.
- */
+/** Evaluate the source once; native rendering and newline/channel emission share one module. */
 function lowerHostFreeConsoleCall(argExpr: ts.Expression, cx: LowerCtx, methodName: string): null {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== argExpr)
     return withNodeSourceSite(cx, argExpr, () => lowerHostFreeConsoleCall(argExpr, cx, methodName));
-  const argVal = lowerExpr(argExpr, cx, { kind: "string" });
-  const rendered = lowerHostFreeConsoleArgument(argVal, cx, methodName);
-  const line = cx.builder.emitStringConcat(rendered, cx.builder.emitStringConst("\n"));
-  cx.builder.emitCall(irRuntimeFuncRef(IR_CONSOLE_SINK_APPEND_FN), [line], null);
+  const value = lowerExpr(argExpr, cx, { kind: "string" });
+  lowerNativeConsoleLine(cx.builder, value, methodName, cx.resolver?.nativeNumberToStringAvailable?.() === true);
   return null;
 }
 
@@ -8980,7 +8894,7 @@ function tryLowerConsoleMethodCall(
     cx.resolver?.consoleArgVariant !== undefined
   ) {
     const jsHost = cx.resolver?.jsHostExterns?.() === true;
-    const hostFreeSink = cx.resolver?.standaloneConsoleSinkAvailable?.() === true;
+    const hostFreeSink = cx.resolver?.nativeConsoleOutputAvailable?.() === true;
     assertNotDeferred(consoleSurfaceCapability(jsHost, hostFreeSink), `console.${methodName}`, cx.funcName);
     if (!statementPosition) {
       demoteToLegacy(
@@ -9839,15 +9753,31 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       return result;
     }
-    if (expr.arguments.length > 1 || expr.arguments.some(ts.isSpreadElement)) {
+    if (expr.arguments.some(ts.isSpreadElement)) {
       throw new IrUnsupportedError(
         "method-call-unsupported",
         "build",
-        `ir/from-ast: dynamic method .${methodName}(...) supports at most one non-spread argument (${cx.funcName})`,
+        `ir/from-ast: dynamic method .${methodName}(...) has a spread argument (${cx.funcName})`,
       );
     }
-    const key = cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String));
-    const dynamicArgs: IrValueId[] = [recv, key];
+    const arity = expr.arguments.length;
+    // (#7106 Stage 4) Off the host lanes a built-in method name (and any wider
+    // call) takes the call's [[Get]] plus legacy's brand dispatch, wrapped per
+    // (method, arity). The selector admits a built-in on the generic call only
+    // where `host-dynamic-method-call` holds.
+    const wrapped =
+      irDynamicMethodCallNeedsWrapper(methodName, arity) &&
+      cx.resolver?.dynamicMethodCallWrapper?.(methodName, arity) === true;
+    if (!wrapped && arity > 1) {
+      throw new IrUnsupportedError(
+        "method-call-unsupported",
+        "build",
+        `ir/from-ast: dynamic method .${methodName}/${arity} has no brand-dispatch wrapper on this lane (${cx.funcName})`,
+      );
+    }
+    const dynamicArgs: IrValueId[] = wrapped
+      ? [recv]
+      : [recv, cx.builder.emitBox(cx.builder.emitStringConst(methodName), irDynamic(JS_TAG_IDS.String))];
     for (const argument of expr.arguments) {
       const value = lowerExpr(argument, cx, irDynamic());
       const valueType = cx.builder.typeOf(value);
@@ -9861,7 +9791,11 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
       }
       dynamicArgs.push(dynamicValue);
     }
-    const target = expr.arguments.length === 0 ? IR_DYN_METHOD_CALL_0_FN : IR_DYN_METHOD_CALL_1_FN;
+    const target = wrapped
+      ? irDynamicMethodCallHelperName(methodName, arity)
+      : arity === 0
+        ? IR_DYN_METHOD_CALL_0_FN
+        : IR_DYN_METHOD_CALL_1_FN;
     const result = cx.builder.emitCall(irRuntimeFuncRef(target), dynamicArgs, irDynamic());
     if (result === null) {
       // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
@@ -10744,7 +10678,7 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     const rawValue = lowerExpr(expr.right, cx, fieldType);
     const newValue = irTypeEquals(cx.builder.typeOf(rawValue), fieldType)
       ? rawValue
-      : (coerceIrNumeric(rawValue, fieldType, cx) ?? rawValue);
+      : (coerceIrNumeric(cx.builder, rawValue, fieldType, nativeNumericDomains(cx)) ?? rawValue);
     const newValueType = cx.builder.typeOf(newValue);
     if (!irTypeEquals(newValueType, fieldType)) {
       demoteToLegacy(
@@ -10827,19 +10761,19 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
  *  - `++`/`--` in statement position is the same lowering with a synthetic
  *    `1` RHS — the discarded result makes prefix and postfix identical.
  *
- * Restricted to PLAIN f64 fields on object / class shapes. Accessor-backed
+ * Restricted to plain numeric fields on object / class shapes. Accessor-backed
  * properties and extern receivers turn the read and the write into CALLS whose
  * re-entrancy this desugaring does not model, so they demote TYPED (the
  * function falls back to the legacy body rather than being approximated).
  */
 function lowerPropertyCompound(
   lhs: ts.PropertyAccessExpression,
-  compoundOp: ts.SyntaxKind,
+  op: NumberBinaryOperator,
   rhs: ts.Expression | null,
   cx: LowerCtx,
 ): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== lhs) {
-    withNodeSourceSite(cx, lhs, () => lowerPropertyCompound(lhs, compoundOp, rhs, cx));
+    withNodeSourceSite(cx, lhs, () => lowerPropertyCompound(lhs, op, rhs, cx));
     return;
   }
   if (lhs.questionDotToken !== undefined) {
@@ -10847,14 +10781,6 @@ function lowerPropertyCompound(
       "property-write-unsupported",
       "build",
       `ir/from-ast: optional-chained compound property write (o?.x += v) not in IR scope (${cx.funcName})`,
-    );
-  }
-  const binop = compoundF64Binop(compoundOp);
-  if (binop === null) {
-    throw new IrUnsupportedError(
-      "compound-assign-unsupported",
-      "build",
-      `ir/from-ast: compound property assign op ${ts.SyntaxKind[compoundOp]} not in IR scope (${cx.funcName})`,
     );
   }
   const fieldName = irPrivateFieldName(lhs.name);
@@ -10878,11 +10804,11 @@ function lowerPropertyCompound(
     );
   }
   const fieldType = field.type;
-  if (asVal(fieldType)?.kind !== "f64") {
+  if (!laneNumericSlot(fieldType, cx)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write to non-f64 field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write to non-numeric field ".${fieldName}" (${describeIrType(fieldType)}) in ${cx.funcName}`,
     );
   }
   // (2) READ — strictly before the RHS.
@@ -10891,23 +10817,23 @@ function lowerPropertyCompound(
       ? cx.builder.emitClassGet(recv, fieldName, fieldType)
       : cx.builder.emitObjectGet(recv, fieldName, fieldType);
   // (3) RHS — a synthetic `1` for `++`/`--`.
-  const rhsValue =
-    rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, fieldType);
-  if (asVal(cx.builder.typeOf(rhsValue))?.kind !== "f64") {
+  const rhsValue = rhs === null ? cx.builder.emitConst({ kind: "f64", value: 1 }, IR_F64) : lowerExpr(rhs, cx, IR_F64);
+  if (!laneNumericSlot(cx.builder.typeOf(rhsValue), cx)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
+      `ir/from-ast: compound property write RHS must be numeric (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (4) binop, then (5) the write tail.
-  const result = cx.builder.emitBinary(binop, oldValue, rhsValue, IR_F64);
-  if (!irTypeEquals(cx.builder.typeOf(result), fieldType)) {
+  // (4) binop in source Number space — `++`/`--` has no RHS node — then (5) the write tail.
+  const result = numericFieldUpdate(cx.builder, oldValue, rhsValue, fieldType, (left, right) =>
+    emitNumberBinary(op, left, right, lhs, rhs, cx),
+  );
+  if (result === null) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
       "build",
-      `ir/from-ast: compound property result ${describeIrType(cx.builder.typeOf(result))} does not match field ` +
-        `${describeIrType(fieldType)} in ${cx.funcName}`,
+      `ir/from-ast: compound property result cannot convert to ${describeIrType(fieldType)} in ${cx.funcName}`,
     );
   }
   if (recvType.kind === "class") cx.builder.emitClassSet(recv, fieldName, result);
@@ -10916,7 +10842,8 @@ function lowerPropertyCompound(
 
 /**
  * (#5163) Dispatch the mutating expression-statement shapes this issue adopted:
- * chained assignment, member compound assignment, and `++`/`--` on any target.
+ * chained assignment, and compound assignment and `++`/`--` on any target
+ * (#7183 folded the identifier compound arm in from both dispatchers).
  * Returns `true` when it handled the statement.
  *
  * Shared verbatim by BOTH statement dispatchers (`lowerStatementList` and
@@ -10937,15 +10864,21 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
       lowerChainedAssignment(expr, cx);
       return true;
     }
-    // S1/S2 — `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms because
-    // the old value must be READ before the RHS is evaluated (ES §13.15.2).
-    if (compoundF64Binop(op) !== null) {
+    // `x %= e;` / S1/S2 `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms
+    // because the old value must be READ before the RHS is evaluated
+    // (ES §13.15.2).
+    const binaryOp = numberCompoundBinaryOperator(op);
+    if (binaryOp !== undefined) {
+      if (ts.isIdentifier(expr.left)) {
+        lowerCompoundAssignment(expr.left, op, expr.right, cx);
+        return true;
+      }
       if (ts.isPropertyAccessExpression(expr.left)) {
-        lowerPropertyCompound(expr.left, op, expr.right, cx);
+        lowerPropertyCompound(expr.left, binaryOp, expr.right, cx);
         return true;
       }
       if (ts.isElementAccessExpression(expr.left)) {
-        lowerElementCompound(expr.left, op, expr.right, cx);
+        lowerElementCompound(expr.left, binaryOp, expr.right, cx);
         return true;
       }
     }
@@ -10956,19 +10889,18 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
   // compound helper with a synthetic `1`.
   if (!ts.isPostfixUnaryExpression(expr) && !ts.isPrefixUnaryExpression(expr)) return false;
   if (expr.operator !== ts.SyntaxKind.PlusPlusToken && expr.operator !== ts.SyntaxKind.MinusMinusToken) return false;
-  const compoundOp =
-    expr.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusEqualsToken : ts.SyntaxKind.MinusEqualsToken;
+  const stepOp = expr.operator === ts.SyntaxKind.PlusPlusToken ? ts.SyntaxKind.PlusToken : ts.SyntaxKind.MinusToken;
   const operand = expr.operand;
   if (ts.isIdentifier(operand)) {
     lowerIncrementDecrement(operand, expr.operator, cx);
     return true;
   }
   if (ts.isPropertyAccessExpression(operand)) {
-    lowerPropertyCompound(operand, compoundOp, null, cx);
+    lowerPropertyCompound(operand, stepOp, null, cx);
     return true;
   }
   if (ts.isElementAccessExpression(operand)) {
-    lowerElementCompound(operand, compoundOp, null, cx);
+    lowerElementCompound(operand, stepOp, null, cx);
     return true;
   }
   return false;
@@ -11163,7 +11095,7 @@ function lowerCheckedClassFieldSet(
   // JavaScript expressions remain number-valued at the source boundary.
   const newValue = irTypeEquals(cx.builder.typeOf(rawValue), field.type)
     ? rawValue
-    : (coerceIrNumeric(rawValue, field.type, cx) ?? rawValue);
+    : (coerceIrNumeric(cx.builder, rawValue, field.type, nativeNumericDomains(cx)) ?? rawValue);
   const newValueType = cx.builder.typeOf(newValue);
   if (!irTypeEquals(newValueType, field.type)) {
     demoteToLegacy(
@@ -11423,7 +11355,7 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
         return cx.builder.emitIntrinsic("js.number.unbox", [value]);
       }
     }
-    return value;
+    return (nativeNumericDomains(cx) ? coerceIrNumeric(cx.builder, value, declared, true) : null) ?? value;
   }
   // Only the externref (TS `any`) declared-result case can mismatch here;
   // native scalar / matching-ref returns already line up via the hint.
@@ -12494,13 +12426,7 @@ function lowerForUpdateExpr(expr: ts.Expression, cx: LowerCtx): void {
       lowerIdentifierAssignment(expr.left, expr.right, cx);
       return;
     }
-    if (
-      (op === ts.SyntaxKind.PlusEqualsToken ||
-        op === ts.SyntaxKind.MinusEqualsToken ||
-        op === ts.SyntaxKind.AsteriskEqualsToken ||
-        op === ts.SyntaxKind.SlashEqualsToken) &&
-      ts.isIdentifier(expr.left)
-    ) {
+    if (isNumberCompoundAssignOperator(op) && ts.isIdentifier(expr.left)) {
       lowerCompoundAssignment(expr.left, op, expr.right, cx);
       return;
     }
@@ -12985,21 +12911,6 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
         // (#2856 C2) element store `arr[i] = v;` in a body buffer.
         if (ts.isElementAccessExpression(stmt.expression.left)) {
           lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
-          return;
-        }
-      }
-      // Compound assignment `<id> <op>= <expr>` — desugar to
-      // `<id> = <id> <binop> <expr>`. The binop maps from the
-      // compound-assignment token kind. This keeps the lowering
-      // straightforward; the optimizer can fold redundant reads later.
-      if (
-        op === ts.SyntaxKind.PlusEqualsToken ||
-        op === ts.SyntaxKind.MinusEqualsToken ||
-        op === ts.SyntaxKind.AsteriskEqualsToken ||
-        op === ts.SyntaxKind.SlashEqualsToken
-      ) {
-        if (ts.isIdentifier(stmt.expression.left)) {
-          lowerCompoundAssignment(stmt.expression.left, op, stmt.expression.right, cx);
           return;
         }
       }
@@ -13629,33 +13540,11 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
 }
 
 /**
- * (#5163) The compound-assignment token → f64 binop map, factored out of
- * `lowerCompoundAssignment` so the property (S1) and element (S2) compound
- * lowerings share ONE table with the identifier one. `null` = an operator
- * outside the f64 arithmetic set (`%=`, `**=`, `&&=`, the bitwise compounds),
- * which every caller demotes on rather than approximating.
- */
-function compoundF64Binop(compoundOp: ts.SyntaxKind): IrBinop | null {
-  switch (compoundOp) {
-    case ts.SyntaxKind.PlusEqualsToken:
-      return "f64.add";
-    case ts.SyntaxKind.MinusEqualsToken:
-      return "f64.sub";
-    case ts.SyntaxKind.AsteriskEqualsToken:
-      return "f64.mul";
-    case ts.SyntaxKind.SlashEqualsToken:
-      return "f64.div";
-    default:
-      return null;
-  }
-}
-
-/**
- * Lower `<id> <op>= <expr>` by desugaring to `<id> = <id> <binop> <expr>`.
- * The binop is the arithmetic/comparison operator implied by the
- * compound-assignment token (e.g. `+=` → `f64.add` for f64 operands).
- * Only handles f64 operands in slice 6 — i32 (boolean) compound
- * assignment is rare and deferred.
+ * Lower `<id> <op>= <expr>` by desugaring to `<id> = <id> <op> <expr>`: a
+ * string `+=` concatenates, a dynamic `+=` is the dynamic `+`, and every
+ * numeric compound applies its binary operator through `emitNumberBinary`
+ * (#7183) — the producer the binary form uses. i32-promoted slots keep their
+ * own all-i32 lowering (#3741).
  */
 function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, rhs: ts.Expression, cx: LowerCtx): void {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== id) {
@@ -13801,10 +13690,11 @@ function lowerCompoundAssignment(id: ts.Identifier, compoundOp: ts.SyntaxKind, r
     );
   }
 
-  const binop = compoundF64Binop(compoundOp);
-  // invariant (producer-promise): `compoundWriteAdmissible` admits exactly the f64 binop operators — #7144.
-  if (binop === null) throw new Error(`ir/from-ast: admitted compound operator has no f64 binop in ${cx.funcName}`);
-  const result = cx.builder.emitBinary(binop, lhs, rhsValue, irVal({ kind: "f64" }));
+  const binaryOp = numberCompoundBinaryOperator(compoundOp);
+  // invariant (producer-promise): `compoundWriteAdmissible` admits exactly the numeric compound operators — #7144.
+  if (binaryOp === undefined)
+    throw new Error(`ir/from-ast: admitted compound operator has no binary form in ${cx.funcName}`);
+  const result = emitNumberBinary(binaryOp, lhs, rhsValue, id, rhs, cx);
   if (storage.kind === "moduleGlobal") {
     cx.builder.emitGlobalSet(storage.globalRef, result);
     return;
@@ -15135,6 +15025,11 @@ function peelParensExpr(e: ts.Expression): ts.Expression {
 
 function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   const candidate = peelParensExpr(expr);
+  // (#7106 Stage 4) A `this` bound through `dyn.current_this` is the carrier.
+  if (candidate.kind === ts.SyntaxKind.ThisKeyword) {
+    const binding = cx.scope.get("this");
+    return binding?.kind === "local" && binding.type.kind === "dynamic";
+  }
   if (ts.isIdentifier(candidate)) {
     const binding = cx.scope.get(candidate.text);
     if (!binding) return false;
@@ -15147,6 +15042,9 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   }
   if (ts.isCallExpression(candidate)) {
     if (ts.isIdentifier(candidate.expression)) {
+      // (#7106 Stage 4) A call THROUGH a dynamic binding (`format(actual)`)
+      // returns whatever the called value returns: the carrier.
+      if (cx.scope.has(candidate.expression.text)) return expressionProducesDynamic(candidate.expression, cx);
       return cx.calleeTypes?.get(candidate.expression.text)?.returnType?.kind === "dynamic";
     }
     return (
@@ -15554,6 +15452,11 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       `ir/from-ast: operator '${ts.tokenToString(op) ?? op}' has no lowering for ${ltVal.kind} operands in ${cx.funcName}`,
     );
   }
+  // (#7183) Every numeric compound assignment reaches the same emitter through
+  // its binary operator. `**` cannot arrive here: the unconditional early
+  // dispatch above narrows it out of `op`, and the emitter itself enforces the
+  // exact-operand proofs, so a lost dispatch fails as an invariant.
+  if (isNumberBinaryOperator(op)) return emitNumberBinary(op, lhs, rhs, expr.left, expr.right, cx);
 
   const isF64 = ltVal.kind === "f64";
   const isI32 = ltVal.kind === "i32";
@@ -15573,30 +15476,80 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
   const i32Unsigned = isI32 && !lhsSigned && !rhsSigned;
 
   let binop: IrBinop;
-  let resultType: IrType;
+  switch (op) {
+    // #1126 Stage 3 — magnitude compares accept f64 OR i32 operands.
+    // i32 operands emit native `i32.{lt,le,gt,ge}_{s,u}` based on
+    // signedness; f64 keeps the legacy `f64.lt` etc. The result is
+    // always i32 (bool), boolean-BRANDED since #4503 (`${x > 0}` vs `${1}`).
+    case ts.SyntaxKind.LessThanToken:
+      binop = isF64 ? "f64.lt" : i32Unsigned ? "i32.lt_u" : "i32.lt_s";
+      break;
+    case ts.SyntaxKind.LessThanEqualsToken:
+      binop = isF64 ? "f64.le" : i32Unsigned ? "i32.le_u" : "i32.le_s";
+      break;
+    case ts.SyntaxKind.GreaterThanToken:
+      binop = isF64 ? "f64.gt" : i32Unsigned ? "i32.gt_u" : "i32.gt_s";
+      break;
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      binop = isF64 ? "f64.ge" : i32Unsigned ? "i32.ge_u" : "i32.ge_s";
+      break;
+    case ts.SyntaxKind.EqualsEqualsEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+      // Slice 14 (#1228) — externref operands need ref-equality semantics
+      // that the IR doesn't model (no `ref.eq` between externrefs in
+      // WasmGC); `binaryOperandsAdmissible` refuses them above, so the
+      // function falls back to legacy rather than emitting an invalid `i32.eq`.
+      binop = isF64 ? "f64.eq" : "i32.eq";
+      break;
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+      binop = isF64 ? "f64.ne" : "i32.ne";
+      break;
+    // `&&` / `||` (#1820), `??`, `,`, `in`, `instanceof` and `**` are
+    // intercepted at the top of `lowerBinary`. If any reach here the early
+    // dispatch is missing.
+    default:
+      demoteToLegacy(
+        "operand-coercion-unsupported",
+        `ir/from-ast: unsupported binary operator ${ts.tokenToString(op)} in ${cx.funcName}`,
+      );
+  }
 
+  return cx.builder.emitBinary(binop, lhs, rhs, IR_BOOL);
+}
+
+/**
+ * (#7183) Emit `left <op> right` for two already-lowered number operands — the
+ * one producer of number arithmetic, shared by `lowerBinary` and every
+ * compound assignment (`x op= v` is `x = x op v`). `left` / `right` are the
+ * operands' source expressions: `%` reads its range proofs and divisor helper
+ * from them, `**` its operand proofs and intrinsic site. `right` is `null` for
+ * a member `++`/`--`, whose synthetic `1` has no source; only `%` and `**` read
+ * it, and `numberOperandSource` refuses the null there.
+ */
+function emitNumberBinary(
+  op: NumberBinaryOperator,
+  lhs: IrValueId,
+  rhs: IrValueId,
+  left: ts.Expression,
+  right: ts.Expression | null,
+  cx: LowerCtx,
+): IrValueId {
   switch (op) {
     case ts.SyntaxKind.PlusToken:
-      binop = "f64.add";
-      resultType = irVal({ kind: "f64" });
-      break;
+      return cx.builder.emitBinary("f64.add", lhs, rhs, IR_F64);
     case ts.SyntaxKind.MinusToken:
-      binop = "f64.sub";
-      resultType = irVal({ kind: "f64" });
-      break;
+      return cx.builder.emitBinary("f64.sub", lhs, rhs, IR_F64);
     case ts.SyntaxKind.AsteriskToken:
-      binop = "f64.mul";
-      resultType = irVal({ kind: "f64" });
-      break;
+      return cx.builder.emitBinary("f64.mul", lhs, rhs, IR_F64);
     case ts.SyntaxKind.SlashToken:
-      binop = "f64.div";
-      resultType = irVal({ kind: "f64" });
-      break;
+      return cx.builder.emitBinary("f64.div", lhs, rhs, IR_F64);
     // AOT-proven integer operands lower directly to signed-i64 remainder.
     // Unknown operands get an inline integrality/range guard and the exact
     // `__fmod` helper only in the fallback arm. Negative proof (fractional,
     // non-finite, out-of-i64, or zero-divisor constants) skips speculation.
     case ts.SyntaxKind.PercentToken: {
+      const divisor = numberOperandSource(right, op, cx);
       const rangeContext = cx.oracle
         ? { oracle: cx.oracle }
         : cx.checker
@@ -15606,98 +15559,27 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
         cx.builder,
         lhs,
         rhs,
-        remainderFastPathPlan(rangeContext, expr.left, expr.right),
-        fmodRefFor(expr.right, cx.checker, cx.oracle),
+        remainderFastPathPlan(rangeContext, left, divisor),
+        fmodRefFor(divisor, cx.checker, cx.oracle),
       );
     }
-    // #1126 Stage 3 — magnitude compares accept f64 OR i32 operands.
-    // i32 operands emit native `i32.{lt,le,gt,ge}_{s,u}` based on
-    // signedness; f64 keeps the legacy `f64.lt` etc. The result is
-    // always i32 (bool), boolean-BRANDED since #4503 (`${x > 0}` vs `${1}`).
-    case ts.SyntaxKind.LessThanToken:
-      binop = isF64 ? "f64.lt" : i32Unsigned ? "i32.lt_u" : "i32.lt_s";
-      resultType = IR_BOOL;
-      break;
-    case ts.SyntaxKind.LessThanEqualsToken:
-      binop = isF64 ? "f64.le" : i32Unsigned ? "i32.le_u" : "i32.le_s";
-      resultType = IR_BOOL;
-      break;
-    case ts.SyntaxKind.GreaterThanToken:
-      binop = isF64 ? "f64.gt" : i32Unsigned ? "i32.gt_u" : "i32.gt_s";
-      resultType = IR_BOOL;
-      break;
-    case ts.SyntaxKind.GreaterThanEqualsToken:
-      binop = isF64 ? "f64.ge" : i32Unsigned ? "i32.ge_u" : "i32.ge_s";
-      resultType = IR_BOOL;
-      break;
-    case ts.SyntaxKind.EqualsEqualsEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsToken:
-      // Slice 14 (#1228) — externref operands need ref-equality semantics
-      // that the IR doesn't model (no `ref.eq` between externrefs in
-      // WasmGC); `binaryOperandsAdmissible` refuses them above, so the
-      // function falls back to legacy rather than emitting an invalid `i32.eq`.
-      binop = isF64 ? "f64.eq" : "i32.eq";
-      resultType = IR_BOOL;
-      break;
-    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-    case ts.SyntaxKind.ExclamationEqualsToken:
-      binop = isF64 ? "f64.ne" : "i32.ne";
-      resultType = IR_BOOL;
-      break;
-    // `&&` / `||` are intercepted at the top of `lowerBinary` (#1820) and
-    // lowered to a short-circuiting `IrInstrIf` before the eager operand
-    // lowering above — they never reach this switch.
-    // Slice 11 (#1169n) — bitwise ops on f64 operands. Each lowers to
-    // ToInt32 + i32 op + convert back; the lowerer's `case "binary"`
-    // arm dispatches on the `js.*` prefix to emit the multi-instr
-    // sequence using a per-function scratch local pair. Result is
-    // always f64.
-    //
-    // #1126 Stage 3 — also accept i32 operands. The lowerer's fast path
-    // (in `lower.ts:case "binary"`) detects two i32 operands and emits
-    // the native `i32.*` op directly, skipping the ToInt32 dance. The
-    // result type stays f64 here so callers / returns / arithmetic
-    // consumers don't need to be aware of an i32-narrowed value — the
-    // lowerer tails the fast path with `f64.convert_i32_*`. Chained
-    // bitwise composition (where the f64 round-trip could be skipped)
-    // is left for a future Stage; the per-op fast path already covers
-    // the cost-dominant cases (bool|bool, bool&bool, compare-result
-    // bitwise reductions).
-    case ts.SyntaxKind.AmpersandToken:
-      binop = "js.bitand";
-      resultType = irVal({ kind: "f64" });
-      break;
-    case ts.SyntaxKind.BarToken:
-      binop = "js.bitor";
-      resultType = irVal({ kind: "f64" });
-      break;
-    case ts.SyntaxKind.CaretToken:
-      binop = "js.bitxor";
-      resultType = irVal({ kind: "f64" });
-      break;
-    case ts.SyntaxKind.LessThanLessThanToken:
-      binop = "js.shl";
-      resultType = irVal({ kind: "f64" });
-      break;
-    case ts.SyntaxKind.GreaterThanGreaterThanToken:
-      binop = "js.shr_s";
-      resultType = irVal({ kind: "f64" });
-      break;
-    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
-      binop = "js.shr_u";
-      resultType = irVal({ kind: "f64" });
-      break;
-    // Slice 11 (#1169n) — `%`, `**`, `in`, `instanceof` are intercepted by
-    // the early-fallback check at the top of `lowerBinary`; `??` is handled
-    // by `lowerNullish`. If any reach here the early-dispatch is missing.
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+      return emitExactNumericExponentiation(lhs, rhs, left, numberOperandSource(right, op, cx), cx);
+    // Slice 11 (#1169n) — ToInt32 each operand, the i32 op, back to f64: the
+    // lowerer's `js.*` arm emits that sequence, and (#1126 Stage 3) the native
+    // `i32.*` op alone when both operands are already i32. The result stays
+    // f64 so no consumer sees an i32-narrowed value.
     default:
-      demoteToLegacy(
-        "operand-coercion-unsupported",
-        `ir/from-ast: unsupported binary operator ${ts.tokenToString(op)} in ${cx.funcName}`,
-      );
+      return cx.builder.emitBinary(JS_BITWISE_BINOPS[op], lhs, rhs, IR_F64);
   }
+}
 
-  return cx.builder.emitBinary(binop, lhs, rhs, resultType);
+function numberOperandSource(right: ts.Expression | null, op: NumberBinaryOperator, cx: LowerCtx): ts.Expression {
+  // invariant (producer-promise): only a member `++`/`--` passes no right operand, and it applies `+`/`-` — #7183.
+  if (right === null) {
+    throw new Error(`ir/from-ast: '${ts.tokenToString(op)}' lowered without its right operand in ${cx.funcName}`);
+  }
+  return right;
 }
 
 /**
@@ -15928,25 +15810,6 @@ function checkerProvesExactNumericExponentOperand(expr: ts.Expression, cx: Lower
 function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerExactNumericExponentiation(expr, cx));
-  const plan = IR_MATH_METHOD_TABLE.pow;
-  if (plan.intrinsic !== "math.pow") {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      `ir/from-ast: #4787 exponentiation plan is not math.pow in ${cx.funcName}`,
-    );
-  }
-  if (
-    !checkerProvesExactNumericExponentOperand(expr.left, cx) ||
-    !checkerProvesExactNumericExponentOperand(expr.right, cx)
-  ) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      `ir/from-ast: #4787 exponentiation operands lost their exact checker-proven number types in ${cx.funcName}`,
-    );
-  }
-
   let lhs: IrValueId;
   let rhs: IrValueId;
   try {
@@ -15963,6 +15826,37 @@ function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx
     }
     throw error;
   }
+  return emitNumberBinary(ts.SyntaxKind.AsteriskAsteriskToken, lhs, rhs, expr.left, expr.right, cx);
+}
+
+/**
+ * (#4787, #7183) `**` through the semantic `math.pow` intrinsic, sited at its
+ * left operand (where both `a ** b` and `a **= b` start). The selector admits
+ * both forms through one exact-operand predicate, so a missing checker proof or
+ * a non-f64 value is a claim/build mismatch.
+ */
+function emitExactNumericExponentiation(
+  lhs: IrValueId,
+  rhs: IrValueId,
+  left: ts.Expression,
+  right: ts.Expression,
+  cx: LowerCtx,
+): IrValueId {
+  if (!checkerProvesExactNumericExponentOperand(left, cx) || !checkerProvesExactNumericExponentOperand(right, cx)) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 exponentiation operands lost their exact checker-proven number types in ${cx.funcName}`,
+    );
+  }
+  const plan = IR_MATH_METHOD_TABLE.pow;
+  if (plan.intrinsic !== "math.pow") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 exponentiation plan is not math.pow in ${cx.funcName}`,
+    );
+  }
   const lhsType = cx.builder.typeOf(lhs);
   const rhsType = cx.builder.typeOf(rhs);
   if (lhsType.kind !== "val" || lhsType.val.kind !== "f64" || rhsType.kind !== "val" || rhsType.val.kind !== "f64") {
@@ -15972,8 +15866,8 @@ function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx
       `ir/from-ast: #4787 exponentiation requires f64 operands, got ${describeIrType(lhsType)} and ${describeIrType(rhsType)} in ${cx.funcName}`,
     );
   }
-  const source = expr.getSourceFile();
-  const position = source.getLineAndCharacterOfPosition(expr.getStart(source));
+  const source = left.getSourceFile();
+  const position = source.getLineAndCharacterOfPosition(left.getStart(source));
   const result = cx.builder.emitIntrinsic(plan.intrinsic, [lhs, rhs], {
     line: position.line + 1,
     column: position.character,
@@ -17251,6 +17145,13 @@ function liftClosureBody(
       };
       if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", parameter, bindParameter);
       else bindParameter();
+    }
+    // (#7106 Stage 4) The lifted closure binds its own `this` at entry too.
+    const thisStrict = functionMemberClosure.thisStrict;
+    if (thisStrict !== undefined) {
+      const bindThis = (): void => bindEntryThis(scope, builder, thisStrict);
+      if (sourceScope) withGeneratedSourceSite(sourceScope, "binding-scaffold", expr, bindThis);
+      else bindThis();
     }
     // (#7106 Stage 4) A reassigned parameter (`message += ' '` in assert.js's
     // `sameValue`) reads through mutable storage, seeded from its entry value

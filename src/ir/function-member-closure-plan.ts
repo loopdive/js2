@@ -9,10 +9,17 @@ export interface IrFunctionMemberClosurePlan {
   readonly expression: ts.FunctionExpression;
   readonly ownerUnitId: IrUnitId;
   readonly sourceUnitId: IrUnitId;
+  /** (#7195) `F.m = function () {}`, or a callback argument of a top-level `F.m(…)` call. */
+  readonly site: "member-assignment" | "call-argument";
   /** Actual canonical wrapper ABI, including raw externref user slots. */
   readonly signature: IrClosureSignature;
   /** Only these exact raw parameters acquire logical dynamic SSA at entry. */
   readonly dynamicParameterIndices: ReadonlySet<number>;
+  /**
+   * (#7106 Stage 4) The body reads its own `this`: bound once at entry through
+   * `dyn.current_this` with this strictness. Absent → the body never reads it.
+   */
+  readonly thisStrict?: boolean;
   /** Rechecks original AST, checker, source inventory, receiver and physical ABI. */
   isCurrent(): boolean;
 }

@@ -198,13 +198,24 @@ export function irInstanceOfFunctionHelperName(functionName: string): string {
   return `${IR_INSTANCEOF_FN_PREFIX}${functionName}`;
 }
 
-/** Collect what `emit` pushes into a detached sequence. */
-function captureReceiverSequence(helper: FunctionContext, emit: () => void): Instr[] {
+/**
+ * Collect what `emit` pushes into a detached sequence. With `park`, the
+ * sequence (and the outer body while `emit` runs) stays in `savedBodies`, so a
+ * late import registered afterwards still shifts its call indices; the caller
+ * unparks once it has joined the sequences (#7119).
+ */
+export function captureReceiverSequence(
+  helper: FunctionContext,
+  emit: () => void,
+  opts?: { readonly park: boolean },
+): Instr[] {
   const outer = helper.body;
   const captured: Instr[] = [];
+  if (opts?.park) helper.savedBodies.push(outer);
   helper.body = captured;
   emit();
   helper.body = outer;
+  if (opts?.park) helper.savedBodies.splice(helper.savedBodies.lastIndexOf(outer), 1, captured);
   return captured;
 }
 

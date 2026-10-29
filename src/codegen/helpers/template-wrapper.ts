@@ -9,6 +9,18 @@
  * wrapper.
  */
 import { ts } from "../../ts-api.js";
+import type { CodegenContext } from "../context/types.js";
+import { noJsHost } from "../js-errors.js";
+
+/**
+ * The lanes every template-built IR wrapper serves: host-free and non-fast,
+ * where legacy's `any` (the template's parameter type) is the IR's externref
+ * carrier. A host lane's adapter may refuse a legacy import the emitters reach
+ * (`__js_array_new` under the native-first kill switch, measured, #7119).
+ */
+export function irTemplateWrapperLane(ctx: CodegenContext): boolean {
+  return noJsHost(ctx) && !ctx.fast;
+}
 
 /**
  * Parse a template function `text` in its own detached file and return the

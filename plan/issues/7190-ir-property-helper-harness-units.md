@@ -64,8 +64,9 @@ for `verifyConfigurable` and `verifyEnumerable`.
    measured (`arguments.length`, a store in `try`).
 4. **Call-site-narrowed string parameter** — every helper a test calls with
    string-only keys, verifyProperty among them (`verifyProperty(this,
-   "Boolean", …)` in most files). Today that is a pre-claim refusal (this
-   issue); the next step is to project legacy's string slot into the IR.
+   "Boolean", …)` in most files). Today that is a pre-claim refusal (see
+   below). Projecting legacy's string slot into the IR is the fix, once a
+   concrete string can stand in for the carrier (`this.x = s`, `new K(s)`).
 5. verifyProperty's descriptor `var` (1, but the most-called helper).
 6. verifyPrimordial* object literal (2); verifyCallableProperty's logical value
    (1); verifyAccessorProperty's `desc` (1); verifyEqualTo's type identity (1);
@@ -98,27 +99,38 @@ Slices 1 and 2 ship here, plus the pre-claim refusal from the finding above.
 - **No lowering change:** from-ast already lowers `!dyn` through `dyn.truthy`,
   and the move-only scan already admits the read.
 
-### Pre-claim refusal — legacy's narrowed string parameter
+### Pre-claim refusal: legacy's non-null string parameter
 
-- **Module:** `src/codegen/fnctor-typed-instances.ts`, in the existing
-  `dynamicCarrierDivergesFromLegacy` probe (#4612) that the selector consults
-  before resolving a parameter as dynamic.
-- **Arm:** `legacyParamSlotIsNativeString` answers true when legacy's
-  registered slot is the native string type. The parameter then reports
-  `param-dynamic-carrier-diverges-from-legacy`, before the claim.
-- **Duplicate removed:** the slot lookup (`funcMap` → `mod.types` → param or
-  result), written out twice (`legacyPositionCarriesFnctorInstance`,
-  `legacyParamSlotIsExternref`), is one helper, `legacyFunctionSlot`. The
-  #4612 adapter doc comment had drifted above the wrong function; it is back
-  on `makeIrDynamicCarrierDivergenceProbe`.
+The first push refused every native-string legacy slot in the
+`dynamicCarrierDivergesFromLegacy` probe (#4612). Main's #7119 (`4240084f13`)
+then rewrote that probe: it refuses every call-site-inferred reference slot
+except the native string, which it says the IR reconciles. The main merge
+(2026-10-29) keeps #7119's probe and narrows its exemption to what the IR
+actually reconciles.
+
+Measured:
+- `mk(K, v)` with `v` only a string literal: legacy's slot is
+  `(ref null $AnyString)`. The IR claims it with the same signature, so it is
+  reconciled.
+- `verifyNotEnumerable(o, "x")`, `verifyConfigurable(o, "c")`,
+  `notEnum(obj, k)` (the #7106 dyn-delete pin) and `joined(a, sep)`: legacy's
+  slot is the non-null `(ref $AnyString)`. The IR withdraws the claim at the
+  parity guard.
+
+So only the nullable string slot is exempt (`reconciledString`). The non-null
+one is refused before the claim, with no post-claim error, as on the first
+push.
+
+Projecting the slot into the IR as `string` (ranking item 4) was tried and
+measured. It refuses S3a's `E(message)`, whose `this.message = message` needs
+the dynamic carrier, and through the call graph also `mk`. Item 4 therefore
+needs an IR string-to-carrier box at those sites first.
 
 ### Acceptance criteria
 
 - isEnumerable, verifyEnumerable, verifyNotEnumerable and
   verifyNotConfigurable ship IR bodies in a standalone compile of the literal
   harness when keys are mixed (symbol and string).
-- With string-only keys, verifyNotEnumerable and verifyConfigurable are
-  refused at `select`; neither appears in `irPostClaimErrors`.
 - Each helper's passing and throwing paths (data, accessor, symbol-keyed,
   non-configurable and absent properties) pass standalone as in node, with the
   literal harness. The upstream harness self-tests for these helpers pass.
@@ -171,9 +183,9 @@ met**, with one blocking finding. All findings are now resolved:
 
 | # | finding | resolution |
 | --- | --- | --- |
-| 1 (blocking) | `legacyParamSlotIsNativeString` repeated the native-string slot test word for word (`index.ts` projection, `irFieldTypeMatchesLegacyValType`) | one predicate, `isAnyStringSlot` in `native-strings-shared.ts`, used at all three sites; the other near-copies are listed below |
-| 2 | the probe looked up the parameter's legacy slot twice | the probe reads the slot once; the fnctor test is `slotCarriesFnctorInstance(ctx, slot)` |
-| 3 | stale comments on the probe and in `resolveParamType` | both name the native-string arm |
+| 1 (blocking) | `legacyParamSlotIsNativeString` repeated the native-string slot test word for word (`index.ts` projection, `irFieldTypeMatchesLegacyValType`) | one predicate, `isAnyStringSlot` in `native-strings-shared.ts`. It replaces the two `index.ts` copies; since the main merge the probe arm is #7119's, narrowed (see above). The other near-copies are listed below |
+| 2 | the probe looked up the parameter's legacy slot twice | fixed; since the main merge it is #7119's probe, which reads the slot once |
+| 3 | stale comments on the probe and in `resolveParamType` | `resolveParamType`'s comment now names #7119's arm; the probe doc is main's |
 | 4 | the `&&`/`\|\|` module check only bites on the dynamic path | comment added |
 | 5 | the tests pinned only the generic refusal code, standalone only, with no `\|\|` case | the tests assert the refusal detail, run gc as well as standalone, add an `\|\|` fixture and a still-refused negative (`o \|\| nonIndexNumericPropertyName`) |
 

@@ -11,10 +11,6 @@
 //     in verifyNotEnumerable / verifyNotConfigurable. The operand is a dynamic
 //     carrier (`dyn.truthy`), not a module storage slot.
 //
-// A helper whose call sites all pass string keys gets a native-string `name`
-// slot from legacy; the IR's dynamic carrier would only reach the parity guard
-// (claim, then withdraw). That case is now refused before the claim.
-//
 // Each fixture is compiled against the LITERAL upstream harness
 // (`runTest262File`, standalone) and run in node against the same assembled
 // source, so both the passing and the throwing paths of each helper are
@@ -92,12 +88,6 @@ const FIXTURES: Record<string, string> = {
     verifyNotConfigurable(o, "fixed");
     assert.throws(Test262Error, function () { verifyNotConfigurable(o, shown); });
   `,
-  "string-keys": `
-    var o = { c: 1 };
-    Object.defineProperty(o, "hidden", { value: 1, enumerable: false });
-    verifyNotEnumerable(o, "hidden");
-    verifyConfigurable(o, "c");
-  `,
   // `||` over two exact-boolean alias calls ships; a dynamic `||` whose
   // other operand is a numeric module var stays refused.
   "logical-or": `
@@ -109,6 +99,13 @@ const FIXTURES: Record<string, string> = {
     assert.sameValue(hasEither(o, s, s), false);
     assert.sameValue(pick(0), 4294967295);
     assert.sameValue(pick("v"), "v");
+  `,
+  // String-only keys: legacy narrows `name` to a non-null native string.
+  "string-keys": `
+    var o = { c: 1 };
+    Object.defineProperty(o, "hidden", { value: 1, enumerable: false });
+    verifyNotEnumerable(o, "hidden");
+    verifyConfigurable(o, "c");
   `,
   "absent-property-descriptor-read-throws": `
     var o = {};
@@ -132,8 +129,8 @@ const SELF_TESTS = [
 ];
 
 const UNLOCKED_UNITS = ["isEnumerable", "verifyEnumerable", "verifyNotEnumerable", "verifyNotConfigurable"];
-// verifyConfigurable was already IR-claimable; with string-only keys it was
-// claimed and then withdrawn at the parity guard on main.
+// verifyConfigurable was already IR-claimable; with string-only keys main
+// claims it and then withdraws it at the parity guard.
 const NEVER_WITHDRAWN = [...UNLOCKED_UNITS, "verifyConfigurable"];
 
 let fixtureDir = "";
@@ -231,7 +228,7 @@ describe("#7190 propertyHelper — `!` over a descriptor read and `&&` over exac
       expect(WebAssembly.validate(result.binary)).toBe(true);
     });
 
-    it(`${lane}: string-only keys are refused before the claim, not withdrawn`, { timeout: 180_000 }, async () => {
+    it(`${lane}: a non-null string slot is refused before the claim, not withdrawn`, { timeout: 180_000 }, async () => {
       const result = await compileAssembled(join(fixtureDir, "string-keys.js"), lane);
       for (const name of ["verifyNotEnumerable", "verifyConfigurable"]) {
         expect(refusal(result, name), name).toMatch(/^param-dynamic-carrier-diverges-from-legacy:/);
