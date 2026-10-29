@@ -8,8 +8,10 @@
  * deletion PR was racing new arms. This gate stops the growth: a change-set may
  * not add net arm lines, and every collapse banks automatically.
  *
- * Counted unit: source LINES matching each token (the `rg -c` unit the plan's
- * §1.1 table uses), over `src/**\/*.ts`:
+ * Counted unit: source LINES matching each token as a whole word, over
+ * `src/**\/*.ts`. A field that merely shares the prefix (`ctx.wasiFdWriteIdx`,
+ * `ctx.standaloneGlobalThisImport`) is provider state, not a mode branch, so it
+ * does not count; the plan's §1.1 `rg -c` table counted those too.
  *   - `ctx.standalone`   — any standalone-mode branch or flag read
  *   - `!ctx.standalone`  — the host-only else arm (the deletion target)
  *   - `noJsHost(`        — the combined standalone|wasi predicate
@@ -47,10 +49,10 @@ const BASELINE_PATH = fileURLToPath(new URL("./standalone-arms-baseline.json", i
 const ALLOW_KEY = "standalone-arms-allow";
 
 export const TOKENS = [
-  ["ctx.standalone", /ctx\.standalone/],
-  ["!ctx.standalone", /!ctx\.standalone/],
+  ["ctx.standalone", /ctx\.standalone\b/],
+  ["!ctx.standalone", /!ctx\.standalone\b/],
   ["noJsHost(", /noJsHost\(/],
-  ["ctx.wasi", /ctx\.wasi/],
+  ["ctx.wasi", /ctx\.wasi\b/],
 ];
 
 /** Per-token count of matching lines in one file's text. */
