@@ -153,7 +153,7 @@ import {
   conditionalJoinFamily,
   isComparisonResultOperator,
   isEqualityOperator,
-  isF64CompoundAssignOperator,
+  isNumberCompoundAssignOperator,
   isStrictEqualityOperator,
   nativeI32OperandsAdmissible,
 } from "./analysis/operand-admissibility.js";
@@ -615,7 +615,7 @@ export interface IrSelectionOptions extends IrAsyncSelectionOptions {
    */
   readonly supportsNativeConsoleOutput?: boolean;
   /** (#7136) Checker proof that an operand reads a native-i32 class field (an i32 IR slot). */
-  readonly isNativeI32FieldRead?: (expr: ts.Expression) => boolean;
+  readonly isNativeI32SlotRead?: (expr: ts.Expression) => boolean;
   /**
    * True when the active backend explicitly supports the selector's exact
    * literal-string `String.replace(search, replacement)` slice. Backends
@@ -860,17 +860,17 @@ export function planIrCompilation(
   currentDynMemberReadBuildable = options?.dynMemberReadBuildable ?? true;
   currentDynamicRuntimeBuildable = options?.dynamicRuntimeBuildable ?? true;
   const fallbackReasons = new Map<string, IrFallbackReason>();
-  // (#2856 Step-1) Parallel to `fallbackReasons`: the opt-in reject-arm detail
-  // for `body-shape-rejected` entries (populated only when JS2WASM_IR_SHAPE_DIAG=1).
-  const fallbackDetails = new Map<string, string>();
+  const fallbackDetails = new Map<string, string>(); // (#2856 Step-1) reject-arm detail, JS2WASM_IR_SHAPE_DIAG=1 only
   const captureShapeDetail = (name: string, reason: IrFallbackReason): void => {
     if (!SHAPE_DIAG_ON) return;
-    if (reason !== "body-shape-rejected") return;
-    // A `body-shape-rejected` that reached an as-yet-uninstrumented helper arm
-    // (e.g. inside `isPhase1ObjectLiteral` / `isPhase1TryStatement` /
-    // `isPhase1ClosureLiteral`) records nothing; label it `unattributed-arm`
-    // so the histogram still accounts for all rejections (completeness).
-    fallbackDetails.set(name, takeShapeRejectDetail() ?? "unattributed-arm:helper-internal");
+    // Uninstrumented arms record nothing: label body-shape ones (completeness); typed ones keep theirs (#7143).
+    const detail =
+      takeShapeRejectDetail() ?? (reason === "body-shape-rejected" ? "unattributed-arm:helper-internal" : undefined);
+    if (detail !== undefined) fallbackDetails.set(name, detail);
+  };
+  const rejectClassMember = (name: string, arm: string, node: ts.Node): void => {
+    fallbackReasons.set(name, "class-member-unsupported");
+    if (SHAPE_DIAG_ON) fallbackDetails.set(name, `${arm}:${ts.SyntaxKind[node.kind]}`);
   };
   // Track unnamed FunctionDeclarations too (rare but possible — `default`
   // export of an anonymous function, etc.) so callers can see them.
@@ -1012,7 +1012,7 @@ export function planIrCompilation(
         memberName = `${className}_${methodNameRaw}`;
         if (staticInstanceMethodCollisions.has(methodNameRaw)) {
           individuallyClaimedClassMembers.delete(memberName);
-          if (trackFallbacks) fallbackReasons.set(memberName, "class-member-unsupported");
+          if (trackFallbacks) rejectClassMember(memberName, "class-static-instance-collision", member);
           continue;
         }
         memberNode = member;
@@ -1082,7 +1082,7 @@ export function planIrCompilation(
                 );
         if (!exactDescriptor) {
           individuallyClaimedClassMembers.delete(memberName);
-          if (trackFallbacks) fallbackReasons.set(memberName, "class-member-unsupported");
+          if (trackFallbacks) rejectClassMember(memberName, "class-no-exact-descriptor", memberNode);
           continue;
         }
       }
@@ -4168,8 +4168,8 @@ function phase1MutatingStatementVerdict(
     // before the RHS), which is why this is a separate arm and not a widening
     // of the `=` ones.
     if (
-      isF64CompoundAssignOperator(op) &&
-      (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left))
+      (ts.isPropertyAccessExpression(expr.left) || ts.isElementAccessExpression(expr.left)) &&
+      isSelectableNumberCompound(expr, scope, localClasses)
     ) {
       if (!isPhase1MutableMemberTarget(expr.left, scope, localClasses)) {
         return { ok: false, arm: "member-compound-target", node: expr.left };
@@ -4571,8 +4571,8 @@ function isPhase1StatementListInScope(
       // shape; mirror it here for `<early return>; x -= n; return ...`.
       if (
         ts.isBinaryExpression(s.expression) &&
-        isF64CompoundAssignOperator(s.expression.operatorToken.kind) &&
-        ts.isIdentifier(s.expression.left)
+        ts.isIdentifier(s.expression.left) &&
+        isSelectableNumberCompound(s.expression, scope, localClasses)
       ) {
         if (isUnrepresentableModuleBinding(s.expression.left)) {
           return shapeNo("nontail-module-storage-unrepresentable", s.expression);
@@ -5489,9 +5489,7 @@ function isPhase1ForUpdateExpr(
     const moduleBinding = currentModuleBindingResolver?.(expr.left);
     if (moduleBinding) {
       if (currentSubjectIsModuleInit) {
-        if (op !== ts.SyntaxKind.EqualsToken && !isF64CompoundAssignOperator(op)) {
-          return false;
-        }
+        if (op !== ts.SyntaxKind.EqualsToken && !isSelectableNumberCompound(expr, scope, localClasses)) return false;
         if (!scope.has(expr.left.text)) return false;
         if (op === ts.SyntaxKind.EqualsToken && !currentModuleBindingResolver?.(expr.left, expr.right)) return false;
         return isPhase1Expr(expr.right, scope, localClasses);
@@ -5501,7 +5499,7 @@ function isPhase1ForUpdateExpr(
       return isPhase1Expr(expr.right, scope, localClasses);
     }
     // Plain or compound assignment to an identifier in scope.
-    if (op === ts.SyntaxKind.EqualsToken || isF64CompoundAssignOperator(op)) {
+    if (op === ts.SyntaxKind.EqualsToken || isSelectableNumberCompound(expr, scope, localClasses)) {
       if (!scope.has(expr.left.text)) return false;
       if (projectionBindingMutationIsUnsupported(expr.left.text, expr)) return false;
       if (!isPhase1Expr(expr.right, scope, localClasses)) return false;
@@ -5903,20 +5901,18 @@ function isPhase1BodyStatement(
       }
       // Compound assignment `<id> <op>= <expr>` — desugars to
       // `<id> = <id> <op> <expr>`. Same scope check applies.
-      if (isF64CompoundAssignOperator(op)) {
-        if (ts.isIdentifier(stmt.expression.left)) {
-          if (isUnrepresentableModuleBinding(stmt.expression.left)) {
-            return shapeNo("body-module-storage-unrepresentable", stmt.expression);
-          }
-          if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
-            return shapeNo("body-module-compound", stmt.expression);
-          }
-          if (!scope.has(stmt.expression.left.text)) return false;
-          if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
-          if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
-          clearProjectionBinding(stmt.expression.left.text);
-          return true;
+      if (ts.isIdentifier(stmt.expression.left) && isSelectableNumberCompound(stmt.expression, scope, localClasses)) {
+        if (isUnrepresentableModuleBinding(stmt.expression.left)) {
+          return shapeNo("body-module-storage-unrepresentable", stmt.expression);
         }
+        if (currentModuleBindingResolver?.(stmt.expression.left) && !currentSubjectIsModuleInit) {
+          return shapeNo("body-module-compound", stmt.expression);
+        }
+        if (!scope.has(stmt.expression.left.text)) return false;
+        if (projectionBindingMutationIsUnsupported(stmt.expression.left.text, stmt.expression)) return false;
+        if (!isPhase1Expr(stmt.expression.right, scope, localClasses)) return false;
+        clearProjectionBinding(stmt.expression.left.text);
+        return true;
       }
     }
     // Slice 12 (#1280): postfix `i++` / `i--` / prefix `++i` / `--i`
@@ -8731,6 +8727,44 @@ function selectorMathPlanEnabled(plan: IrMathMethodPlan): boolean {
   );
 }
 
+/**
+ * (#7183) A numeric compound assignment the lane lowers. `a **= b` is `a = a ** b`,
+ * so it is admitted by the same exact-exponentiation predicate as `**`.
+ */
+function isSelectableNumberCompound(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (expr.operatorToken.kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken) {
+    return exactNumericExponentiationAdmissible(expr, scope, localClasses);
+  }
+  return isNumberCompoundAssignOperator(expr.operatorToken.kind);
+}
+
+/**
+ * #4787 — the one admission for `a ** b` and (#7183) `a **= b`: a prepared
+ * single-source top-level function with two exact checker-proven numeric
+ * operands. Everything else is a typed pre-claim Unsupported, including
+ * provider-unavailable lanes.
+ */
+function exactNumericExponentiationAdmissible(
+  expr: ts.BinaryExpression,
+  scope: ReadonlySet<string>,
+  localClasses: ReadonlySet<string>,
+): boolean {
+  if (!exactNumericExponentiationContextReady()) {
+    return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
+  }
+  if (
+    !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
+    !exactNumericExponentiationOperand(expr.right, scope, localClasses)
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
+  }
+  return true;
+}
+
 function selectorSupportsNumberToString(): boolean {
   return (
     currentSelectionOptions?.supportsNumberToString === true ||
@@ -11064,20 +11098,12 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
   if (ts.isBinaryExpression(expr)) {
     const binOp = expr.operatorToken.kind;
     // #4787 — `**` is the first bounded operator retirement checkpoint. Do
-    // not let the shared claim row widen the old shape walk: only a prepared
-    // single-source top-level function with two exact checker-proven numeric
-    // operands may reach the semantic `math.pow` builder arm. Everything else
-    // is a typed pre-claim Unsupported, including provider-unavailable lanes.
+    // not let the shared claim row widen the old shape walk: only operands
+    // `exactNumericExponentiationAdmissible` proves may reach the semantic
+    // `math.pow` builder arm.
     if (binOp === ts.SyntaxKind.AsteriskAsteriskToken) {
-      if (!exactNumericExponentiationContextReady()) {
-        return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-context", expr);
-      }
-      if (
-        !exactNumericExponentiationOperand(expr.left, scope, localClasses) ||
-        !exactNumericExponentiationOperand(expr.right, scope, localClasses) ||
-        !isPhase1Expr(expr.left, scope, localClasses) ||
-        !isPhase1Expr(expr.right, scope, localClasses)
-      ) {
+      if (!exactNumericExponentiationAdmissible(expr, scope, localClasses)) return false;
+      if (!isPhase1Expr(expr.left, scope, localClasses) || !isPhase1Expr(expr.right, scope, localClasses)) {
         return capabilityNo("operand-coercion-unsupported", "expr-exponentiation-operand", expr);
       }
       return true;

@@ -2510,6 +2510,85 @@ space-free temporary directory pass. Initial failure logs are retained locally.
 No baseline, test expectation, CI workflow or global architecture rule was
 weakened for these environment failures.
 
+
+
+### 2026-10-26 — readable physical-validation review boundary
+
+Implementation plan: extract the existing filled-function snapshot traversal from
+`src/wasm/physical/module-reservations.ts` into the physical-layer module
+`src/wasm/physical/data-snapshot.ts`. Reuse the pinned historical textual oracle
+through `tests/helpers/physical-snapshot-oracle.ts`; remove its duplicate from
+the filled-function comparison tests. Preserve every ledger observation and
+keep the other descriptor/global/publication/recgroup domains on their original
+textual algorithm. Quality acceptance: one function snapshot implementation,
+one shared test oracle, no validation cache or new ownership layer.
+
+The initial isolated candidate broadened structural matching to the remaining
+domains. Public global-initializer controls disproved equivalent behavior when
+a getter replaces map, freeze, stringify, numeric toString, padStart, or join.
+All six fail on the rejected candidate. The extraction-only candidate and the
+exact upstream ledger pass those controls. The broader optimization is rejected;
+its patch and raw failures are retained in
+`plan/log/3527-physical-snapshot-review-20261026/` for C's review.
+
+The 316-case baseline and candidate runs each pass 315 and fail the same existing
+canonical module-record declaration hash assertion. Neither arm changes that
+file; the failure is preserved, not rebaselined, at this stage (the receipt
+repair below later corrects the stale pin). The first isolation run
+also exposed test fixtures calling integration-only batch methods; those tests
+now use the upstream scalar authentication boundary. No native integration
+speedup, complete producer population, both-backend qualification, or frontend
+retirement is claimed. Recursive owner validation still requires architectural
+work after this independently readable observation contract is reviewed.
+
+
+Final extraction-only run after shared-oracle cleanup, before the receipt
+repair: 315/316, with the same baseline declaration-hash failure. The three default-compiler binary/WAT
+controls pass 3/3 in both arms with exact equality. Fresh-context read-only
+review (`snapshot_extraction_review`) reports no actionable findings in the
+final production extraction; it independently confirms unchanged traversal and
+oracle literal. C's broader recursive-validation architecture review remains open.
+
+### 2026-10-26 — repair the canonical declaration receipt with provenance
+
+Read-only history audit identifies commit
+`2d0610751954975e0ec634ab83b181a28530454f` as the sole cause of the preserved
+canonical declaration pin failure: it adds `FieldDef.optional?: true` plus its
+five-line documentation. The current module-records file is byte-identical to
+that commit, and removing exactly those six added lines restores its entire
+parent file and the old receipt. Refresh the pinned receipt to that authorized
+schema, retaining all existing declaration/order/type/documentation controls
+and adding negative controls for the optional field type and its documentation.
+This repairs the known baseline test; it does not broaden the snapshot matcher
+or grant an exemption from live mutation observation.
+
+The repaired eight-file selection passes 316/316. Follow-up read-only review
+confirms all previous assertions remain intact and both new mutations have
+unique target checks; no actionable findings. Historical 315/316 failures
+remain preserved alongside the final log in the review evidence directory.
+
+### 2026-10-26 — refresh the physical snapshot review head
+
+Merge upstream main `3b6489436318e8f863ef474e41797b48911eac59` into the
+physical snapshot extraction branch. The sole conflict was the independent
+append-only evidence sections in this issue; preserve both, including the
+realm comparison closing audit that has now landed. No source conflict or
+additional algorithm change was needed. The refreshed tree passes 316/316
+snapshot controls and 38/38 realm layout/completion controls. All five source
+ratchets pass against this exact main base; the dead-export gate proves only
+preservation, not full closure or retirement. PR 6925 retains `hold` pending
+C's independent review of the refreshed head.
+
+### 2026-10-29 — replacement PR on loopdive/js2
+
+The fork-only head of PR 6925 is replaced by a PR from `claude/takeover-6925`,
+merged with main `cb3ff519ad`. It removes the review `.log` files, which
+were committed as raw blobs although `.gitattributes` routes `*.log` through
+LFS (they stay reachable from review head `746d2fcaec`; see the evidence
+README), and documents the snapshot observation limits in the
+`data-snapshot.ts` header.
+No behaviour or sha256 pin changes.
+
 ## Implementation Plan — close realm completion comparison mutation window (2026-10-26)
 
 Canonical initializer comparison may invoke Proxy traps after an earlier realm anchor has been compared. Reaudit the completed source initializer through the existing physical ledger before returning the layout owner; this checks every completed resource, including both anchors. Keep the existing checks, layout and emitted bodies unchanged. Add genuine filling/sealed controls using the existing realm fixture: healthy transparent Proxy, late realm-anchor mutation and late function-prototype-anchor mutation. Prove the defect against unchanged main, then run the layout regression and targeted type/lint checks. Quality criterion: one existing audit call, no new validator, cache, ABI or producer. This is a bounded integrity correction, not complete runtime or IR migration qualification.

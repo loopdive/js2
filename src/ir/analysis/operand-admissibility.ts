@@ -230,13 +230,13 @@ export function nativeI32OperandsAdmissible(
   expr: ts.BinaryExpression,
   evidence:
     | {
-        readonly isNativeI32FieldRead?: (operand: ts.Expression) => boolean;
+        readonly isNativeI32SlotRead?: (operand: ts.Expression) => boolean;
         readonly classifyPrimitiveExpression?: (operand: ts.Expression) => string | undefined;
       }
     | undefined,
 ): boolean {
   const op = expr.operatorToken.kind;
-  const isNativeI32 = evidence?.isNativeI32FieldRead;
+  const isNativeI32 = evidence?.isNativeI32SlotRead;
   if (!isNativeI32 || !isTypedBinaryOperator(op) || (!isNativeI32(expr.left) && !isNativeI32(expr.right))) return true;
   const family = (operand: ts.Expression): OperandFamily =>
     isNativeI32(operand)
@@ -299,8 +299,8 @@ export function nullValueAdmissible(consumer: OperandFamily): boolean {
  * `lowerCompoundAssignment` for an identifier slot (an i32-promoted counter has
  * its own lowering): `+=` concatenates into a string slot only with a string
  * value (string-evidence then also requires an encoding), and is the dynamic
- * `+` into a dynamic slot with a boxable value; `+= -= *= /=` are f64
- * arithmetic on an f64 slot with an f64 value (or `void x`, whose NaN is
+ * `+` into a dynamic slot with a boxable value; every numeric compound is
+ * number arithmetic on an f64 slot with an f64 value (or `void x`, whose NaN is
  * ToNumber(undefined)). Nothing else lowers.
  */
 export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, value: OperandFamily): boolean {
@@ -308,23 +308,49 @@ export function compoundWriteAdmissible(op: ts.SyntaxKind, slot: OperandFamily, 
     if (slot === "string") return value === "string";
     if (slot === "dynamic") return boxableIntoDynamic(value);
   }
-  // ToNumber(undefined) is the NaN sentinel the f64 arithmetic reads.
-  return isF64CompoundAssignOperator(op) && slot === "number" && (value === "number" || value === "undefined");
+  // ToNumber(undefined) is the NaN sentinel the number arithmetic reads.
+  return isNumberCompoundAssignOperator(op) && slot === "number" && (value === "number" || value === "undefined");
 }
 
 /**
- * (#5163) The compound-assignment operators the IR desugars to an f64 binop
- * (`compoundF64Binop` in from-ast is their producer). The selector's
- * compound-statement arms admit exactly these, so an operator outside the set
- * is refused at selection instead of demoting at build.
+ * (#5163, #7183) The numeric compound assignments and the binary operator each
+ * applies: `x op= v` is `x = x op v`, lowered by from-ast's `emitNumberBinary`
+ * like the binary form. The selector's compound-statement arms admit exactly
+ * these keys, so an operator outside the table is refused at selection instead
+ * of demoting at build.
  */
-export function isF64CompoundAssignOperator(op: ts.SyntaxKind): boolean {
-  return (
-    op === ts.SyntaxKind.PlusEqualsToken ||
-    op === ts.SyntaxKind.MinusEqualsToken ||
-    op === ts.SyntaxKind.AsteriskEqualsToken ||
-    op === ts.SyntaxKind.SlashEqualsToken
-  );
+const NUMBER_COMPOUND_BINARY_OPERATORS = {
+  [ts.SyntaxKind.PlusEqualsToken]: ts.SyntaxKind.PlusToken,
+  [ts.SyntaxKind.MinusEqualsToken]: ts.SyntaxKind.MinusToken,
+  [ts.SyntaxKind.AsteriskEqualsToken]: ts.SyntaxKind.AsteriskToken,
+  [ts.SyntaxKind.SlashEqualsToken]: ts.SyntaxKind.SlashToken,
+  [ts.SyntaxKind.PercentEqualsToken]: ts.SyntaxKind.PercentToken,
+  [ts.SyntaxKind.AsteriskAsteriskEqualsToken]: ts.SyntaxKind.AsteriskAsteriskToken,
+  [ts.SyntaxKind.AmpersandEqualsToken]: ts.SyntaxKind.AmpersandToken,
+  [ts.SyntaxKind.BarEqualsToken]: ts.SyntaxKind.BarToken,
+  [ts.SyntaxKind.CaretEqualsToken]: ts.SyntaxKind.CaretToken,
+  [ts.SyntaxKind.LessThanLessThanEqualsToken]: ts.SyntaxKind.LessThanLessThanToken,
+  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken]: ts.SyntaxKind.GreaterThanGreaterThanToken,
+  [ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken]: ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+} as const;
+
+/** The binary operators on two number operands (`+ - * / % ** & | ^ << >> >>>`). */
+export type NumberBinaryOperator =
+  (typeof NUMBER_COMPOUND_BINARY_OPERATORS)[keyof typeof NUMBER_COMPOUND_BINARY_OPERATORS];
+
+const NUMBER_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set(Object.values(NUMBER_COMPOUND_BINARY_OPERATORS));
+
+export function isNumberBinaryOperator(op: ts.SyntaxKind): op is NumberBinaryOperator {
+  return NUMBER_BINARY_OPERATORS.has(op);
+}
+
+/** The binary operator a numeric compound assignment applies, or `undefined`. */
+export function numberCompoundBinaryOperator(op: ts.SyntaxKind): NumberBinaryOperator | undefined {
+  return NUMBER_COMPOUND_BINARY_OPERATORS[op as keyof typeof NUMBER_COMPOUND_BINARY_OPERATORS];
+}
+
+export function isNumberCompoundAssignOperator(op: ts.SyntaxKind): boolean {
+  return numberCompoundBinaryOperator(op) !== undefined;
 }
 
 /** `lowerIncrementDecrement`: `++` / `--` lower on an f64 or a dynamic slot. */

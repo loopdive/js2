@@ -14329,6 +14329,11 @@
       "layer": "wasm-physical"
     },
     {
+      "path": "src/wasm/physical/data-snapshot.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
+    },
+    {
       "path": "src/wasm/physical/function-handles.ts",
       "state": "clean",
       "layer": "wasm-physical"

@@ -3321,7 +3321,7 @@ function planIrOverlay(
       supportsNumberToString: irNativeNumberToStringAvailable(ctx),
       supportsNumberToFixed: irNativeNumberToFixedAvailable(ctx),
       supportsNativeConsoleOutput: nativeConsoleOutputAvailable(ctx),
-      isNativeI32FieldRead: (expr) => isNativeI32FieldRead(ast.checker, expr),
+      isNativeI32SlotRead: (expr) => isNativeI32FieldRead(ast.checker, expr),
       supportsStringArrayLiterals: !ctx.fast && (jsHostExterns || ctx.nativeStrings),
       supportsHostIndirectEval: jsHostExterns && !ctx.nativeStrings,
       ...backendCapabilitySelectionOptions,
