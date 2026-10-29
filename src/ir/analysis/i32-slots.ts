@@ -65,6 +65,7 @@ import { forEachChild, ts } from "../../ts-api.js";
 import type { IrBinop } from "../nodes.js";
 import { collectI32CoercedLocals } from "./i32-coerced-locals.js";
 import { detectI32LoopVar } from "./loop-shape.js";
+import { numberCompoundBinaryOperator } from "./operand-admissibility.js";
 
 const I32_MIN = -2147483648;
 const I32_MAX = 2147483647;
@@ -393,13 +394,7 @@ function writeShapesAreLowerable(
         if (!(isProvenCounter && isCounterStepAssignment(node.right, name))) {
           if (!isCanonI32Lowerable(node.right, promoted)) ok = false;
         }
-      } else if (
-        k === ts.SyntaxKind.AmpersandEqualsToken ||
-        k === ts.SyntaxKind.BarEqualsToken ||
-        k === ts.SyntaxKind.CaretEqualsToken ||
-        k === ts.SyntaxKind.LessThanLessThanEqualsToken ||
-        k === ts.SyntaxKind.GreaterThanGreaterThanEqualsToken
-      ) {
+      } else if (compoundBitwiseToken(k) !== undefined) {
         // Bitwise compound assignment always yields an exact int32.
       } else if (
         (k === ts.SyntaxKind.PlusEqualsToken || k === ts.SyntaxKind.MinusEqualsToken) &&
@@ -633,16 +628,14 @@ export const I32_COMPARE_BINOPS = {
 } as const satisfies Partial<Record<ts.SyntaxKind, IrBinop>>;
 
 /**
- * The plain bitwise operator a bitwise COMPOUND assignment desugars to.
- * `>>>=` is absent for the same reason `>>>` is absent from `isBitwiseToken`.
+ * The plain bitwise operator a bitwise COMPOUND assignment desugars to, or
+ * `undefined`. `>>>=` is absent for the same reason `>>>` is absent from
+ * `isBitwiseToken`.
  */
-export const COMPOUND_TO_BITWISE_TOKEN = {
-  [ts.SyntaxKind.AmpersandEqualsToken]: ts.SyntaxKind.AmpersandToken,
-  [ts.SyntaxKind.BarEqualsToken]: ts.SyntaxKind.BarToken,
-  [ts.SyntaxKind.CaretEqualsToken]: ts.SyntaxKind.CaretToken,
-  [ts.SyntaxKind.LessThanLessThanEqualsToken]: ts.SyntaxKind.LessThanLessThanToken,
-  [ts.SyntaxKind.GreaterThanGreaterThanEqualsToken]: ts.SyntaxKind.GreaterThanGreaterThanToken,
-} as const satisfies Partial<Record<ts.SyntaxKind, ts.SyntaxKind>>;
+export function compoundBitwiseToken(k: ts.SyntaxKind): ts.SyntaxKind | undefined {
+  const op = numberCompoundBinaryOperator(k);
+  return op !== undefined && isBitwiseToken(op) ? op : undefined;
+}
 
 /**
  * Does `e` read at least one i32-promoted slot? This is the gate that keeps

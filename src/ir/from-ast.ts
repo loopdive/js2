@@ -108,7 +108,7 @@ import { isIncreasingStep, loopBodyMutatesIndexOrArray } from "./analysis/loop-s
 import { countedStringAppendPlanIsCurrent } from "./analysis/counted-string-append.js";
 // (#3741) native-i32 slot storage for provably-int32 mutable locals
 import {
-  COMPOUND_TO_BITWISE_TOKEN,
+  compoundBitwiseToken,
   counterStepAssignment,
   I32_COMPARE_BINOPS,
   i32IdentityBitwiseOperand,
@@ -2399,18 +2399,6 @@ function lowerStatementListPrefix(stmts: readonly ts.Statement[], i: number, cx:
       lowerElementStore(s.expression.left, s.expression.right, cx);
       return false;
     }
-    // #3787 / #2856 — a body-level compound assignment followed by a
-    // return has the same slot semantics as the already-supported form
-    // inside loop/body buffers. Reuse the shared lowering instead of
-    // requiring the assignment to be nested in a block-owning statement.
-    if (
-      ts.isBinaryExpression(s.expression) &&
-      isNumberCompoundAssignOperator(s.expression.operatorToken.kind) &&
-      ts.isIdentifier(s.expression.left)
-    ) {
-      lowerCompoundAssignment(s.expression.left, s.expression.operatorToken.kind, s.expression.right, cx);
-      return false;
-    }
     // (#4459) Value-discarding statement — `x + 1;`, `x;`, `1;`,
     // `cond ? a : b;`. The expression evaluates for its effects and its
     // SSA result is simply never consumed (a discarded ternary becomes an
@@ -3936,7 +3924,7 @@ function lowerPromotedI32CompoundAssignment(
     withMutationSourceSite(cx, id, () => lowerPromotedI32CompoundAssignment(id, slotIndex, compoundOp, rhs, cx));
     return;
   }
-  const bitwiseToken = COMPOUND_TO_BITWISE_TOKEN[compoundOp as keyof typeof COMPOUND_TO_BITWISE_TOKEN];
+  const bitwiseToken = compoundBitwiseToken(compoundOp);
   if (bitwiseToken !== undefined) {
     const lhs = cx.builder.emitSlotRead(slotIndex);
     const rhsValue = lowerBitwiseOperand(rhs, null, cx);
@@ -7196,10 +7184,10 @@ function lowerElementCompound(
       `ir/from-ast: compound element write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (5) binop — `++`/`--` has no RHS node, and its `+`/`-` reads no operand
-  // source — then (6) the store tail: the same fast/provider fork
-  // `lowerElementStore` uses, keyed off the SAME bounds proof as the read.
-  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs ?? lhs, cx);
+  // (5) binop — `++`/`--` has no RHS node — then (6) the store tail: the
+  // same fast/provider fork `lowerElementStore` uses, keyed off the SAME
+  // bounds proof as the read.
+  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx);
   if (proven) {
     cx.builder.emitVecSet(recv, idxI32, result);
     return;
@@ -10887,9 +10875,8 @@ function lowerPropertyCompound(
       `ir/from-ast: compound property write RHS must be f64 (got ${describeIrType(cx.builder.typeOf(rhsValue))}) in ${cx.funcName}`,
     );
   }
-  // (4) binop — `++`/`--` has no RHS node, and its `+`/`-` reads no operand
-  // source — then (5) the write tail.
-  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs ?? lhs, cx);
+  // (4) binop — `++`/`--` has no RHS node — then (5) the write tail.
+  const result = emitNumberBinary(op, oldValue, rhsValue, lhs, rhs, cx);
   if (!irTypeEquals(cx.builder.typeOf(result), fieldType)) {
     throw new IrUnsupportedError(
       "compound-assign-unsupported",
@@ -10904,7 +10891,8 @@ function lowerPropertyCompound(
 
 /**
  * (#5163) Dispatch the mutating expression-statement shapes this issue adopted:
- * chained assignment, member compound assignment, and `++`/`--` on any target.
+ * chained assignment, and compound assignment and `++`/`--` on any target
+ * (#7183 folded the identifier compound arm in from both dispatchers).
  * Returns `true` when it handled the statement.
  *
  * Shared verbatim by BOTH statement dispatchers (`lowerStatementList` and
@@ -10925,10 +10913,15 @@ function lowerAdoptedMutatingStatement(expr: ts.Expression, cx: LowerCtx): boole
       lowerChainedAssignment(expr, cx);
       return true;
     }
-    // S1/S2 — `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms because
-    // the old value must be READ before the RHS is evaluated (ES §13.15.2).
+    // `x %= e;` / S1/S2 `o.x += e;` / `a[i] *= e;`. Separate from the `=` arms
+    // because the old value must be READ before the RHS is evaluated
+    // (ES §13.15.2).
     const binaryOp = numberCompoundBinaryOperator(op);
     if (binaryOp !== undefined) {
+      if (ts.isIdentifier(expr.left)) {
+        lowerCompoundAssignment(expr.left, op, expr.right, cx);
+        return true;
+      }
       if (ts.isPropertyAccessExpression(expr.left)) {
         lowerPropertyCompound(expr.left, binaryOp, expr.right, cx);
         return true;
@@ -12969,14 +12962,6 @@ function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
           lowerElementStore(stmt.expression.left, stmt.expression.right, cx);
           return;
         }
-      }
-      // Compound assignment `<id> <op>= <expr>` — desugar to
-      // `<id> = <id> <binop> <expr>`. The binop maps from the
-      // compound-assignment token kind. This keeps the lowering
-      // straightforward; the optimizer can fold redundant reads later.
-      if (isNumberCompoundAssignOperator(op) && ts.isIdentifier(stmt.expression.left)) {
-        lowerCompoundAssignment(stmt.expression.left, op, stmt.expression.right, cx);
-        return;
       }
     }
     // Slice 12 (#1280): postfix `i++` / `i--` and prefix `++i` / `--i` as
@@ -15508,8 +15493,10 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
       `ir/from-ast: operator '${ts.tokenToString(op) ?? op}' has no lowering for ${ltVal.kind} operands in ${cx.funcName}`,
     );
   }
-  // (#7183) `**` reaches the same emitter through `lowerExactNumericExponentiation`,
-  // and every numeric compound assignment through its binary operator.
+  // (#7183) Every numeric compound assignment reaches the same emitter through
+  // its binary operator. `**` cannot arrive here: the unconditional early
+  // dispatch above narrows it out of `op`, and the emitter itself enforces the
+  // exact-operand proofs, so a lost dispatch fails as an invariant.
   if (isNumberBinaryOperator(op)) return emitNumberBinary(op, lhs, rhs, expr.left, expr.right, cx);
 
   const isF64 = ltVal.kind === "f64";
@@ -15577,14 +15564,16 @@ function lowerBinary(expr: ts.BinaryExpression, cx: LowerCtx, hint: IrType): IrV
  * one producer of number arithmetic, shared by `lowerBinary` and every
  * compound assignment (`x op= v` is `x = x op v`). `left` / `right` are the
  * operands' source expressions: `%` reads its range proofs and divisor helper
- * from them, `**` its intrinsic site.
+ * from them, `**` its operand proofs and intrinsic site. `right` is `null` for
+ * a member `++`/`--`, whose synthetic `1` has no source; only `%` and `**` read
+ * it, and `numberOperandSource` refuses the null there.
  */
 function emitNumberBinary(
   op: NumberBinaryOperator,
   lhs: IrValueId,
   rhs: IrValueId,
   left: ts.Expression,
-  right: ts.Expression,
+  right: ts.Expression | null,
   cx: LowerCtx,
 ): IrValueId {
   switch (op) {
@@ -15601,6 +15590,7 @@ function emitNumberBinary(
     // `__fmod` helper only in the fallback arm. Negative proof (fractional,
     // non-finite, out-of-i64, or zero-divisor constants) skips speculation.
     case ts.SyntaxKind.PercentToken: {
+      const divisor = numberOperandSource(right, op, cx);
       const rangeContext = cx.oracle
         ? { oracle: cx.oracle }
         : cx.checker
@@ -15610,12 +15600,12 @@ function emitNumberBinary(
         cx.builder,
         lhs,
         rhs,
-        remainderFastPathPlan(rangeContext, left, right),
-        fmodRefFor(right, cx.checker, cx.oracle),
+        remainderFastPathPlan(rangeContext, left, divisor),
+        fmodRefFor(divisor, cx.checker, cx.oracle),
       );
     }
     case ts.SyntaxKind.AsteriskAsteriskToken:
-      return emitExactNumericExponentiation(lhs, rhs, left, cx);
+      return emitExactNumericExponentiation(lhs, rhs, left, numberOperandSource(right, op, cx), cx);
     // Slice 11 (#1169n) — ToInt32 each operand, the i32 op, back to f64: the
     // lowerer's `js.*` arm emits that sequence, and (#1126 Stage 3) the native
     // `i32.*` op alone when both operands are already i32. The result stays
@@ -15623,6 +15613,14 @@ function emitNumberBinary(
     default:
       return cx.builder.emitBinary(JS_BITWISE_BINOPS[op], lhs, rhs, IR_F64);
   }
+}
+
+function numberOperandSource(right: ts.Expression | null, op: NumberBinaryOperator, cx: LowerCtx): ts.Expression {
+  // invariant (producer-promise): only a member `++`/`--` passes no right operand, and it applies `+`/`-` — #7183.
+  if (right === null) {
+    throw new Error(`ir/from-ast: '${ts.tokenToString(op)}' lowered without its right operand in ${cx.funcName}`);
+  }
+  return right;
 }
 
 /**
@@ -15853,17 +15851,6 @@ function checkerProvesExactNumericExponentOperand(expr: ts.Expression, cx: Lower
 function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx): IrValueId {
   if (cx.sourceMap && cx.sourceMapState!.active.get(cx.builder) !== expr)
     return withNodeSourceSite(cx, expr, () => lowerExactNumericExponentiation(expr, cx));
-  if (
-    !checkerProvesExactNumericExponentOperand(expr.left, cx) ||
-    !checkerProvesExactNumericExponentOperand(expr.right, cx)
-  ) {
-    throw new IrInvariantError(
-      "selection-preparation-mismatch",
-      "build",
-      `ir/from-ast: #4787 exponentiation operands lost their exact checker-proven number types in ${cx.funcName}`,
-    );
-  }
-
   let lhs: IrValueId;
   let rhs: IrValueId;
   try {
@@ -15884,11 +15871,25 @@ function lowerExactNumericExponentiation(expr: ts.BinaryExpression, cx: LowerCtx
 }
 
 /**
- * (#4787) `**` through the semantic `math.pow` intrinsic, sited at its left
- * operand (where both `a ** b` and `a **= b` start). Every caller has proved
- * both operands numbers, so a non-f64 value is a claim/build mismatch.
+ * (#4787, #7183) `**` through the semantic `math.pow` intrinsic, sited at its
+ * left operand (where both `a ** b` and `a **= b` start). The selector admits
+ * both forms through one exact-operand predicate, so a missing checker proof or
+ * a non-f64 value is a claim/build mismatch.
  */
-function emitExactNumericExponentiation(lhs: IrValueId, rhs: IrValueId, site: ts.Expression, cx: LowerCtx): IrValueId {
+function emitExactNumericExponentiation(
+  lhs: IrValueId,
+  rhs: IrValueId,
+  left: ts.Expression,
+  right: ts.Expression,
+  cx: LowerCtx,
+): IrValueId {
+  if (!checkerProvesExactNumericExponentOperand(left, cx) || !checkerProvesExactNumericExponentOperand(right, cx)) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "build",
+      `ir/from-ast: #4787 exponentiation operands lost their exact checker-proven number types in ${cx.funcName}`,
+    );
+  }
   const plan = IR_MATH_METHOD_TABLE.pow;
   if (plan.intrinsic !== "math.pow") {
     throw new IrInvariantError(
@@ -15906,8 +15907,8 @@ function emitExactNumericExponentiation(lhs: IrValueId, rhs: IrValueId, site: ts
       `ir/from-ast: #4787 exponentiation requires f64 operands, got ${describeIrType(lhsType)} and ${describeIrType(rhsType)} in ${cx.funcName}`,
     );
   }
-  const source = site.getSourceFile();
-  const position = source.getLineAndCharacterOfPosition(site.getStart(source));
+  const source = left.getSourceFile();
+  const position = source.getLineAndCharacterOfPosition(left.getStart(source));
   const result = cx.builder.emitIntrinsic(plan.intrinsic, [lhs, rhs], {
     line: position.line + 1,
     column: position.character,

@@ -5,14 +5,20 @@
 // binary operator uses, so each operator must be IR-claimed in every compound
 // position (top-level statement, loop body, `for` update, member target) with
 // zero post-claim errors, and agree with node on the ToInt32 / remainder /
-// exponentiation edges.
+// exponentiation edges. `**=` is admitted by the same exact-exponentiation
+// predicate as `**` (#4787), so it is claimed exactly where `x = x ** v` is.
 
 import { describe, expect, it } from "vitest";
 
 import { analyzeSource } from "../src/checker/index.js";
 import { compile, type CompileResult } from "../src/index.js";
+import {
+  makeIrDeclaredPrimitiveExpressionClassifier,
+  makeIrPrimitiveExpressionClassifier,
+} from "../src/ir/module-bindings.js";
 import { planIrCompilation } from "../src/ir/select.js";
 import { buildImports } from "../src/runtime.js";
+import { ts } from "../src/ts-api.js";
 
 const LANES = ["standalone", "gc"] as const;
 type Lane = (typeof LANES)[number];
@@ -97,6 +103,12 @@ const POSITIONS = {
 } as const;
 type Position = keyof typeof POSITIONS;
 
+/** `**`'s exact operands are slots and parameters, never a member read, so `o.v **= b` stays legacy like `o.v = o.v ** b`. */
+function claimedPositions(op: Operator): readonly Position[] {
+  const all = Object.keys(POSITIONS) as Position[];
+  return op === "**" ? all.filter((position) => position !== "property" && position !== "element") : all;
+}
+
 function sourceFor(op: Operator): string {
   return Object.entries(POSITIONS)
     .map(([name, body]) => `export function ${name}(a: number, b: number): number { ${body(op)} }`)
@@ -121,12 +133,27 @@ async function exportsOf(result: CompileResult, lane: Lane): Promise<Record<stri
   return exports;
 }
 
+function irClaimed(result: CompileResult, unitKind: string, name: string): boolean {
+  const row = result.irOutcomes?.find((entry) => entry.unitKind === unitKind && entry.displayName.endsWith(name));
+  if (!row) throw new Error(`missing IR outcome for ${unitKind} ${name}`);
+  return row.irBodyEmitted && !row.legacyBodyEmitted;
+}
+
 function expectIrClaimed(result: CompileResult, names: readonly string[], label: string): void {
   expect(result.irPostClaimErrors ?? [], label).toEqual([]);
-  for (const name of names) {
-    const row = result.irOutcomes?.find((entry) => entry.unitKind === "function" && entry.displayName === name);
-    expect(row, `${label}: ${name}`).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
-  }
+  for (const name of names) expect(irClaimed(result, "function", name), `${label}: ${name}`).toBe(true);
+}
+
+/** A module-binding resolver that lets selection run its exact `**` context check without a real program. */
+function inertModuleBindingResolver() {
+  const resolver = ((_: ts.Identifier) => undefined) as unknown as Record<string, unknown>;
+  return new Proxy(resolver, {
+    get(target, property) {
+      if (property === "supportsHostNumberToString") return false;
+      if (property in target) return target[property];
+      return () => undefined;
+    },
+  });
 }
 
 describe("#7183 — numeric compound assignment through emitNumberBinary", () => {
@@ -134,7 +161,11 @@ describe("#7183 — numeric compound assignment through emitNumberBinary", () =>
     it(`'${op}=' is IR-claimed in every compound position and matches node`, async () => {
       for (const lane of LANES) {
         const result = await compileLane(sourceFor(op), lane, `issue-7183-${lane}.ts`);
-        expectIrClaimed(result, Object.keys(POSITIONS), `${lane} ${op}=`);
+        expectIrClaimed(result, claimedPositions(op), `${lane} ${op}=`);
+        for (const position of Object.keys(POSITIONS) as Position[]) {
+          if (claimedPositions(op).includes(position)) continue;
+          expect(irClaimed(result, "function", position), `${lane} ${op}= ${position} stays legacy`).toBe(false);
+        }
         const exports = await exportsOf(result, lane);
         for (const position of Object.keys(POSITIONS) as Position[]) {
           for (const [a, b] of edges(op)) {
@@ -148,16 +179,70 @@ describe("#7183 — numeric compound assignment through emitNumberBinary", () =>
   }
 
   it("refuses `**=` before claim on a lane without the `math.pow` provider", () => {
-    const { sourceFile } = analyzeSource(`
+    const analysis = analyzeSource(`
       export function pow(a: number, b: number): number { let x = a; x **= b; return x; }
       export function rem(a: number, b: number): number { let x = a; x %= b; return x; }
     `);
-    const selected = (supportsSymbolicMathHelpers: boolean) => [
-      ...planIrCompilation(sourceFile, { experimentalIR: true, trackFallbacks: true, supportsSymbolicMathHelpers })
-        .funcs,
-    ];
-    expect(selected(true).sort()).toEqual(["pow", "rem"]);
-    expect(selected(false)).toEqual(["rem"]);
+    const selected = (supportsSymbolicMathHelpers: boolean) => {
+      const plan = planIrCompilation(analysis.sourceFile, {
+        experimentalIR: true,
+        trackFallbacks: true,
+        resolveModuleBinding: inertModuleBindingResolver() as never,
+        classifyPrimitiveExpression: makeIrPrimitiveExpressionClassifier(analysis.checker),
+        classifyDeclaredPrimitiveExpression: makeIrDeclaredPrimitiveExpressionClassifier(analysis.checker),
+        supportsSymbolicMathHelpers,
+      });
+      return { funcs: [...plan.funcs].sort(), fallbacks: plan.fallbacks };
+    };
+    expect(selected(true).funcs).toEqual(["pow", "rem"]);
+    const withoutProvider = selected(false);
+    expect(withoutProvider.funcs).toEqual(["rem"]);
+    expect(withoutProvider.fallbacks).toContainEqual(
+      expect.objectContaining({ name: "pow", reason: "operand-coercion-unsupported" }),
+    );
+  });
+
+  // Review of PR #6963: `**=` used to need only the provider, so these were
+  // claimed while their `x = x ** b` twins were refused. Each compound form must
+  // now be claimed exactly when its binary twin is, and still match node.
+  it("admits `**=` exactly where its `x = x ** b` twin is admitted", async () => {
+    const cases = [
+      {
+        label: "local slot",
+        claimed: true,
+        unit: ["function", "pw"],
+        source: (step: string) => `export function pw(a: number, b: number): number { let x = a; ${step}; return x; }`,
+        run: (exports: Record<string, Function>) => exports.pw!(3, 4),
+        expected: 81,
+      },
+      {
+        label: "class-field method",
+        claimed: false,
+        unit: ["class-member", "_pw"],
+        source: (step: string) =>
+          `export class C { v = 3; pw(b: number): number { let x = this.v; ${step}; return x; } }`,
+        run: null,
+        expected: null,
+      },
+      {
+        label: "module-level binding",
+        claimed: false,
+        unit: ["module-init", ""],
+        source: (step: string) => `let x = 3; const b = 2; ${step}; export function get(): number { return x; }`,
+        run: (exports: Record<string, Function>) => exports.get!(),
+        expected: 9,
+      },
+    ] as const;
+    for (const { label, claimed, unit, source, run, expected } of cases) {
+      for (const lane of LANES) {
+        for (const step of ["x **= b", "x = x ** b"]) {
+          const result = await compileLane(source(step), lane, `issue-7183-pow-gate-${lane}.ts`);
+          expect(result.irPostClaimErrors ?? [], `${lane} ${label}: ${step}`).toEqual([]);
+          expect(irClaimed(result, unit[0], unit[1]), `${lane} ${label}: ${step} claimed`).toBe(claimed);
+          if (run !== null) expect(run(await exportsOf(result, lane)), `${lane} ${label}: ${step}`).toBe(expected);
+        }
+      }
+    }
   });
 
   it("claims the i32-promoted bitwise compounds (#3741's arm) and keeps their wrap", async () => {

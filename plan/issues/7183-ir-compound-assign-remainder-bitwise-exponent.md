@@ -22,6 +22,10 @@ loc-budget-allow:
   # `math.pow` provider gate for `**=` (it reads the selection options, so it
   # cannot leave select.ts), after folding two nested ifs at the call sites.
   # The same change-set shrinks src/ir/from-ast.ts by 66 lines.
+  # 2026-10-29 (PR #6963 review): the gate became
+  # `exactNumericExponentiationAdmissible`, the one predicate `**` and `**=`
+  # share, extracted from `isPhase1Expr`'s `**` arm (it reads the selector's
+  # module state, so it stays in select.ts).
   - src/ir/select.ts
 ---
 
@@ -130,9 +134,12 @@ Implemented as planned, measured 2026-10-28 against base `f3b5b1a00f`
   `jsBitwiseBinop` table is now the typed record `JS_BITWISE_BINOPS`, matching
   its sibling `I32_COMPARE_BINOPS`.
 - Selector: all five `select.ts` sites use `isSelectableNumberCompound`. It is
-  the shared predicate plus one lane gate: `**=` needs the `math.pow` provider,
-  as `**` does. The linear backend selects with
-  `supportsSymbolicMathHelpers: false`.
+  the shared predicate, except that `**=` goes through
+  `exactNumericExponentiationAdmissible`, the predicate `**` uses: the
+  `math.pow` provider, the exact-exponentiation context (no module init, a
+  top-level function declaration, a prepared single-source resolver), and
+  checker-proven exact number operands. The linear backend selects with
+  `supportsSymbolicMathHelpers: false`. (Revised after review; see below.)
 - The string `+=` arm and the i32-promoted arm
   (`lowerPromotedI32CompoundAssignment`) are unchanged. The i32-promoted
   bitwise arm is now reachable for the first time: the selector never
@@ -225,10 +232,57 @@ and biome are clean.
   same for `**`, `**=` and `Math.pow`, and the same for legacy `**=` on base.
   The spec allows implementation-approximated results, but the subnormal
   underflow is worth its own issue.
-- `COMPOUND_TO_BITWISE_TOKEN` (`i32-slots.ts`) is a subset of the new table
-  without `>>>=`, kept for the pinned-unchanged i32-promoted arm.
+- ~~`COMPOUND_TO_BITWISE_TOKEN` is a subset table~~: folded after review.
 - The selector's nontail and body identifier-compound arms are near-duplicates
   that differ only in rejection labels. Folding them changes `ir-fallbacks`
-  buckets, so that belongs in its own issue.
+  buckets, so that belongs in its own issue: #7192.
 - Compile output of the async-generator test262 file above depends on what the
   same process compiled before it. This is a determinism bug.
+
+## Review follow-up (PR #6963, 2026-10-29)
+
+The fresh-context review (APPROVE WITH NITS) raised five findings and one
+observation. Each is fixed or rebutted:
+
+1. **`**=` gate looser than `**`'s — fixed.** `**=` now goes through
+   `exactNumericExponentiationAdmissible`, the predicate `**` uses (extracted
+   from `isPhase1Expr`'s `**` arm). On the lowering side the checker-proof
+   assertion moved from `lowerExactNumericExponentiation` into
+   `emitExactNumericExponentiation`, so `a ** b` and `a **= b` reach one
+   emitter with one proof. Consequence: `**=` is claimed exactly where
+   `x = x ** b` is — not in class methods, module init, or on member targets
+   (`o.v **= b`, `xs[0] **= b`), which now stay legacy.
+2. **Three bitwise-compound lists — fixed.** `COMPOUND_TO_BITWISE_TOKEN` and
+   the hand-written chain in `writeShapesAreLowerable` are replaced by
+   `compoundBitwiseToken(op)`, derived from `numberCompoundBinaryOperator` +
+   `isBitwiseToken`.
+3. **Three identifier-compound dispatch sites in from-ast — two folded, one
+   kept, selector side filed.** The statement-list and `lowerStmt` dispatchers
+   now reach `lowerCompoundAssignment` through `lowerAdoptedMutatingStatement`,
+   the helper they already share. `lowerForUpdateExpr` keeps its arm: the
+   update clause has its own grammar (no member targets) and its own `=` arm.
+   The selector's near-duplicate arms are #7192.
+4. **`rhs ?? lhs` — fixed.** `emitNumberBinary` takes `right: ts.Expression |
+   null`; `%` and `**` read it through `numberOperandSource`, which throws on
+   null.
+5. **`lowerBinary`'s intercept must exclude `**` — rebutted, covered by 1.**
+   `op === **` returns unconditionally earlier in `lowerBinary`, so TypeScript
+   already narrows `**` out of `op` there (`op !== AsteriskAsteriskToken` does
+   not compile). The operand proofs now live in the emitter, so even a lost
+   early dispatch fails as an invariant instead of silently skipping them.
+6. Observation (unused promoted-arm scratch locals): pre-existing, no action.
+
+**Byte identity vs the pre-review head (`f6324d0a`):** the playground,
+cutover and equivalence corpus (`scripts/legacy-reach-corpus.mjs`, 1,527
+programs — the test262 submodule was not checked out) plus 51 operator probes
+(promoted i32 loops for every operator, slot / member / for-update compounds,
+a hash loop) × standalone and gc = 3,156 rows. Six differ: the `member-**`,
+`class-pow` and `module-pow` probes, the three shapes finding 1 moves to
+legacy. Everything else, including the reviewer's five programs and every
+i32-promoted probe, is byte-identical.
+
+**Tests:** the #7183 file pins the shared gate (each compound form claimed
+iff its `x = x ** b` twin is: local slot yes; class method and module-level
+binding no; member `**=` no) and the provider gate with a prepared context.
+A mutation run against the pre-review sources fails the new test. The #7144
+module-init harness now expects `**=` unclaimed, as `**` is there.
